@@ -354,7 +354,22 @@ impl Codegen<'_> {
                     .map(|(left, right)| left.abs_diff(*right).saturating_add(1))
                     .fold(1u32, u32::saturating_mul);
                 automatic.array_type = Some(IrVpiArrayType::Static.c_code());
-                None
+                automatic.element = self.vpi_fixed_element_shape(typespecs, element, dynamic);
+                // A fixed-size array of strings or handles is a container.
+                let container = match &automatic.storage {
+                    IrVpiAutoStorage::Container(container) => Some(*container),
+                    IrVpiAutoStorage::Formal(position) => model.funcs[function]
+                        .formals
+                        .get(*position)
+                        .and_then(|formal| formal.container),
+                    _ => None,
+                };
+                match container {
+                    Some(container) => model.containers.get(container).and_then(|container| {
+                        self.vpi_static_container_shape(dynamic, typespecs, descriptor, container)
+                    }),
+                    _ => None,
+                }
             }
             TypeShape::Container { .. } => {
                 let container = match &automatic.storage {
@@ -412,6 +427,47 @@ impl Codegen<'_> {
                 }),
         };
         automatic.shape = shape.map(|shape| dynamic.intern(shape));
+    }
+
+    /// The shape of an element of a fixed-size array whose leaf element
+    /// is a packed or real value: what VPI reads and writes when the
+    /// array is kept as one packed image or as real cells. `None` for
+    /// other leaves (an unpacked structure element is typed by its
+    /// typespec).
+    fn vpi_fixed_element_shape(
+        &self,
+        typespecs: &mut TypespecTable,
+        element: &TypeDescriptor,
+        dynamic: &mut IrVpiDynamic,
+    ) -> Option<usize> {
+        let shape = match &element.shape {
+            TypeShape::Real { shortreal } => IrVpiShape::Real {
+                shortreal: *shortreal,
+            },
+            TypeShape::PackedAtom { .. } => self.vpi_packed_shape(
+                typespecs,
+                element,
+                element.info.width.filter(|width| *width > 0)?,
+                element.info.signed,
+                element.two_state,
+            ),
+            TypeShape::Aggregate(layout)
+                if matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ) =>
+            {
+                self.vpi_packed_shape(
+                    typespecs,
+                    element,
+                    element.info.width.filter(|width| *width > 0)?,
+                    element.info.signed,
+                    element.two_state,
+                )
+            }
+            _ => return None,
+        };
+        Some(dynamic.intern(shape))
     }
 
     /// The layout of every class: its name, base and properties in object
@@ -572,6 +628,31 @@ impl Codegen<'_> {
         }
     }
 
+    /// The objects `vpiImport` of a class method returns (37.12 detail 4):
+    /// the package items references reached through the method's import
+    /// declarations, as for a module-level task or function.
+    fn vpi_method_imports(&self, method: NodeId) -> Vec<crate::sim::ir::IrVpiImport> {
+        let mut imports = Vec::new();
+        for child in &self.node(method).children {
+            if !matches!(self.kind(*child), NodeKind::Other)
+                || !matches!(
+                    self.db.semantic_detail(*child),
+                    Some("ExplicitImport" | "WildcardImport")
+                )
+            {
+                continue;
+            }
+            for item in self.db.imported_items(*child) {
+                if let Some(object) = self.vpi_import_object(*item) {
+                    if !imports.contains(&object) {
+                        imports.push(object);
+                    }
+                }
+            }
+        }
+        imports
+    }
+
     /// The methods (each followed by its arguments) and parameters `class`
     /// declares, in declaration order (37.27).
     fn vpi_class_items(
@@ -607,7 +688,9 @@ impl Codegen<'_> {
                     ..
                 } => {
                     let method = items.len();
+                    let imports = self.vpi_method_imports(*child);
                     items.push(IrVpiClassItem {
+                        imports,
                         // 8.21: a pure method is virtual.
                         is_virtual: *is_virtual || *is_pure || self.db.is_virtual_prototype(*child),
                         is_static: *is_static,

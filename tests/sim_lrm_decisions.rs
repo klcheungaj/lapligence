@@ -2264,6 +2264,33 @@ fn a19_d82_frame_automatic_elements() {
 }
 
 #[test]
+fn a19_d83_fixed_automatic_elements() {
+    run_vpi_decision(
+        "A19-D83_fixed_automatic_elements",
+        &["task $d83(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D83_fixed_automatic_elements.out"),
+    );
+}
+
+#[test]
+fn a19_d84_automatic_members_and_names() {
+    run_vpi_decision(
+        "A19-D84_automatic_members_and_names",
+        &["task $d84(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D84_automatic_members_and_names.out"),
+    );
+}
+
+#[test]
+fn a19_d85_method_imports_and_definition_events() {
+    run_vpi_decision(
+        "A19-D85_method_imports_and_definition_events",
+        &["task $d85()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D85_method_imports_and_definition_events.out"),
+    );
+}
+
+#[test]
 fn a19_d75_frame_origins() {
     run_vpi_decision(
         "A19-D75_frame_origins",

@@ -268,6 +268,9 @@ pub struct IrVpiClassItem {
     pub(in crate::sim) value: Option<super::IrVpiConstant>,
     /// The method item (index in its class's items) an argument belongs to.
     pub(in crate::sim) owner: Option<usize>,
+    /// The package items name references in a method reached through its
+    /// import declarations (37.12 detail 4), in declaration order.
+    pub(in crate::sim) imports: Vec<super::IrVpiImport>,
     /// Root entry in [`IrModel::vpi_code`] of a constraint.
     pub(in crate::sim) code: Option<u32>,
     /// The object field holding a constraint's hidden `constraint_mode`

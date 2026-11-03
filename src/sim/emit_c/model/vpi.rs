@@ -601,6 +601,34 @@ pub(super) fn render_vpi_metadata(
             Some((scope, object))
         })
         .collect::<Vec<_>>();
+    // A class method's imports are keyed by its item in the class item
+    // table with LLG_VPI_IMPORT_CLASS set, after every catalog row.
+    let mut first_item = 0usize;
+    for class in &model.vpi_dynamic().classes {
+        for (index, item) in class.items.iter().enumerate() {
+            let Some(key) = u32::try_from(first_item + index)
+                .ok()
+                .filter(|key| *key < IMPORT_CLASS)
+            else {
+                continue;
+            };
+            for import in &item.imports {
+                let object = match import {
+                    crate::sim::ir::IrVpiImport::Row(key) => indices
+                        .get(key.as_str())
+                        .and_then(|row| u32::try_from(*row).ok()),
+                    crate::sim::ir::IrVpiImport::Class(class) => u32::try_from(*class)
+                        .ok()
+                        .filter(|class| *class < IMPORT_CLASS)
+                        .map(|class| class | IMPORT_CLASS),
+                };
+                if let Some(object) = object {
+                    scope_imports.push(((key | IMPORT_CLASS) as usize, object));
+                }
+            }
+        }
+        first_item += class.items.len();
+    }
     scope_imports.sort_by_key(|(row, _)| *row);
     let mut listed = std::collections::HashSet::new();
     scope_imports.retain(|pair| listed.insert(*pair));

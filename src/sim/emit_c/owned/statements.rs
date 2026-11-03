@@ -130,6 +130,7 @@ impl Frame<'_, '_> {
                     self.new_fixed_array(*index)?
                 };
                 self.fixed_arrays.insert(*index, pointer);
+                self.vpi_auto_bind(VpiAutoKey::Array(*index));
             }
             IrStmt::NativeValueDeclare(index) => {
                 let pointer = self.new_native_value(self.ctx.model.native_values[*index].ty);

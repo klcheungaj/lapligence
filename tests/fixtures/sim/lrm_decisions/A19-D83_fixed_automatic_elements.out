@@ -1,0 +1,90 @@
+step 1
+  tb.t.arr array size=4
+    range size=4
+    arr[0] tb.t.arr[0] int member=1 auto=1 parent=arr size=32 bin=00000000000000000000000000001010
+    arr[1] tb.t.arr[1] int member=1 auto=1 parent=arr size=32 bin=00000000000000000000000000001011
+    arr[2] tb.t.arr[2] int member=1 auto=1 parent=arr size=32 bin=00000000000000000000000000001100
+    arr[3] tb.t.arr[3] int member=1 auto=1 parent=arr size=32 bin=00000000000000000000000000001101
+    by index 1:
+    arr[1] tb.t.arr[1] int member=1 auto=1 parent=arr size=32 bin=00000000000000000000000000001011
+    by index 7: NULL error=1
+  tb.t.lar array size=3
+    range size=3
+    lar[1] tb.t.lar[1] logic member=1 auto=1 parent=lar size=8 bin=00000001
+    lar[2] tb.t.lar[2] logic member=1 auto=1 parent=lar size=8 bin=xxxx0010
+    lar[3] tb.t.lar[3] logic member=1 auto=1 parent=lar size=8 bin=00000011
+    by index 3:
+    lar[3] tb.t.lar[3] logic member=1 auto=1 parent=lar size=8 bin=00000011
+    by index 7: NULL error=1
+  tb.t.m2 array size=6
+    range size=2
+    range size=3
+    m2[0][0] tb.t.m2[0][0] int member=1 auto=1 parent=m2 size=32 bin=00000000000000000000000000000001
+    m2[0][1] tb.t.m2[0][1] int member=1 auto=1 parent=m2 size=32 bin=00000000000000000000000000000010
+    m2[0][2] tb.t.m2[0][2] int member=1 auto=1 parent=m2 size=32 bin=00000000000000000000000000000011
+    m2[1][0] tb.t.m2[1][0] int member=1 auto=1 parent=m2 size=32 bin=00000000000000000000000000000100
+    m2[1][1] tb.t.m2[1][1] int member=1 auto=1 parent=m2 size=32 bin=00000000000000000000000000000101
+    m2[1][2] tb.t.m2[1][2] int member=1 auto=1 parent=m2 size=32 bin=00000000000000000000000000000110
+    by index 0: NULL error=1
+    by index 7: NULL error=1
+  tb.t.fa array size=3
+    range size=3
+    fa[0] tb.t.fa[0] int member=1 auto=1 parent=fa size=32 bin=00000000000000000000000000000011
+    fa[1] tb.t.fa[1] int member=1 auto=1 parent=fa size=32 bin=00000000000000000000000000000100
+    fa[2] tb.t.fa[2] int member=1 auto=1 parent=fa size=32 bin=00000000000000000000000000000101
+    by index 2:
+    fa[2] tb.t.fa[2] int member=1 auto=1 parent=fa size=32 bin=00000000000000000000000000000101
+    by index 7: NULL error=1
+  tb.t.ra array size=2
+    range size=2
+    ra[0] tb.t.ra[0] int member=1 auto=1 parent=ra size=32 bin=00000000000000000000000000000001
+    ra[1] tb.t.ra[1] int member=1 auto=1 parent=ra size=32 bin=00000000000000000000000000000010
+    by index 0:
+    ra[0] tb.t.ra[0] int member=1 auto=1 parent=ra size=32 bin=00000000000000000000000000000001
+    by index 7: NULL error=1
+  tb.t.fo array size=2
+    range size=2
+    fo[0] tb.t.fo[0] int member=1 auto=1 parent=fo size=32 bin=00000000000000000000000000010101
+    fo[1] tb.t.fo[1] int member=1 auto=1 parent=fo size=32 bin=00000000000000000000000000010110
+    by index 1:
+    fo[1] tb.t.fo[1] int member=1 auto=1 parent=fo size=32 bin=00000000000000000000000000010110
+    by index 7: NULL error=1
+  tb.t.rd array size=2
+    range size=2
+    rd[0] tb.t.rd[0] real member=1 auto=1 parent=rd value=0.50
+    rd[1] tb.t.rd[1] real member=1 auto=1 parent=rd value=1.50
+    by index 1:
+    rd[1] tb.t.rd[1] real member=1 auto=1 parent=rd value=1.50
+    by index 7: NULL error=1
+  tb.t.sa array size=2
+    range size=2
+    sa[0] tb.t.sa[0] string member=1 auto=1 parent=sa value=s0
+    sa[1] tb.t.sa[1] string member=1 auto=1 parent=sa value=s1
+    by index 0:
+    sa[0] tb.t.sa[0] string member=1 auto=1 parent=sa value=s0
+    by index 7: NULL error=1
+  tb.t.q array size=1
+    q[0] tb.t.q[0] int member=1 auto=1 parent=q size=32 bin=00000000000000000000000000000111
+    by index 0:
+    q[0] tb.t.q[0] int member=1 auto=1 parent=q size=32 bin=00000000000000000000000000000111
+    by index 7: NULL error=1
+  tb.dq var select tb.dq[0]
+  tb.dq var select tb.dq[1]
+  m2 by multi index [1][2]:
+    m2[1][2] tb.t.m2[1][2] int member=1 auto=1 parent=m2 size=32 bin=00000000000000000000000000000110
+  by name:
+    m2[1][2] tb.t.m2[1][2] int member=1 auto=1 parent=m2 size=32 bin=00000000000000000000000000000110
+    put m2[1][2]=66 error=0
+    arr[1] tb.t.arr[1] int member=1 auto=1 parent=arr size=32 bin=00000000000000000000000000001011
+    put arr[1]=93 error=0
+    put lar[2]=5a error=0
+    put fa[0]=8 error=0
+    put ra[1]=92 error=0
+    put fo[1]=82 error=0
+    put rd[1]=9.75 error=0
+    put sa[1]=P error=0
+in task: arr[1]=93 lar[2]=5a m2[1][2]=66 rd[1]=9.75 sa[1]=P fa[0]=8 ra[1]=92 fo[1]=82 q[0]=7
+after: a2=1,92 o2=21,82 f3[0]=3
+step 2
+  tb.t.arr by name after its frame ended: NULL error=0
+  held arr[1] after its frame ended: error=1

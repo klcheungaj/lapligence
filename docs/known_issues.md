@@ -2291,12 +2291,14 @@ of a handle or value; `vpi_handle_by_name` of such an object returns NULL
 with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
-  container), the elements of fixed-size automatic arrays and of array or
-  structure formals passed by `ref` or by value (llg keeps them as packed
-  images or descriptors with no element cells; a frame lists them under
-  `vpiAutomatics` without elements, decisions A19-D76, A19-D82), the members
-  of automatic unpacked structures and unions (listed with their field count
-  and, by 37.17 detail 11, no value), automatics by name (`tb.t.q`) and the
+  container); among frame automatics (decisions A19-D76, A19-D82 to
+  A19-D84), the elements and members of automatics llg keeps as
+  descriptor-backed values rather than one packed image or real cells
+  (fixed-size arrays wider than the packed transport or of more than one
+  dimension of strings or handles, structures holding a string, real,
+  handle or unpacked array member, arrays of such structures; listed under
+  `vpiAutomatics` with their size and no elements or members), the
+  elements of an unpacked array member of an automatic structure, and the
   automatic variables of blocks inside a task or function (llg models no
   block frames, decisions A19-D44, A19-D76), named event array
   properties of classes, tasks and functions of packages, the
@@ -2392,11 +2394,10 @@ with no error status, as for a name that denotes nothing (S42-D11):
   its relations and `vpiDecompile` are those of the expression;
 - every property, relation and iteration the catalog marks `unsupported`
   (after the ADV-019 closure, 2026-11: only `vpi_put_value` to a
-  sequential UDP). `vpiImport` lists no imports declared inside a class
-  method (a class item, not a catalog scope); the elements of a class
-  definition's event array property are not objects (they name no event),
-  and an event of an event array property takes no `cbValueChange`, as an
-  event property does not (decision A19-D80). Rows the catalog marks `error` are refused on purpose,
+  sequential UDP). An event of a class definition's event array property
+  is reached only by index (it names no event: no value, waiters or put,
+  decision A19-D85), and an event of an event array property takes no
+  `cbValueChange`, as an event property does not (decision A19-D80). Rows the catalog marks `error` are refused on purpose,
   as industry-standard behaviour refuses them (decision A19-D65); among
   them the bodies, variables and formal defaults of sequence and property
   declarations, `expect` relations, the list operation of an instance

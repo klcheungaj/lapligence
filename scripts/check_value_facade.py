@@ -32,7 +32,10 @@ METADATA = {
     'rt/llg_vpi_services.c': ('object', 'object->net'),
     # Class item rows (method results, arguments, parameters) carry declared widths.
     'rt/llg_vpi_dynamic.c': ('item', 'shape'),
-    'rt/llg_vpi_runtime.c': ('element', 'place.shape', 'shape'),
+    # Frame automatics' parts (fixed-array elements, structure members): the
+    # part, its stored shape, typespec and member node carry declared widths.
+    'rt/llg_vpi_runtime.c': ('element', 'node', 'part', 'part.shape', 'place.shape', 'shape',
+                             'stored', 'typespec'),
     'rt/llg_wave.c': ('g_wave.regs[alias]', 'g_wave.regs[i]', 'reg'),
     'rt/scheduler/activations.c': ('binding->descriptor',),
     'rt/scheduler/concurrent_assertions.c': ('local',),

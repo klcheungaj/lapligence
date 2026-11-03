@@ -32,7 +32,8 @@ See the [runtime retainer inventory](../rt/scheduler/readme.md#frame-resident-ce
 In a VPI catalog model a subprogram with frame automatics (decision A19-D76)
 keeps an activation array of their cell addresses (`_llg_vpi_autos_<n>`, C
 stack or coroutine frame), stored where each formal or top-level local is
-bound. The frame ends (`llg_vpi_frame_exit`) before any scope end or jump
+bound; a real fixed-array local stores its `double` array when declared
+(A19-D83). The frame ends (`llg_vpi_frame_exit`) before any scope end or jump
 releases the scope holding those locals, so the runtime never reads a
 released cell (decision A19-D78); outlined runs hold no such locals.
 

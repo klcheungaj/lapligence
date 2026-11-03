@@ -267,6 +267,8 @@ pub(super) struct Frame<'a, 'm> {
 enum VpiAutoKey {
     Name(String),
     Container(usize),
+    /// A fixed-size real array: its `double` cells.
+    Array(usize),
 }
 
 fn pending(feature: &str) -> String {
@@ -1085,6 +1087,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 .containers
                 .get(container)
                 .map(|bound| format!("&{bound}")),
+            VpiAutoKey::Array(array) => self.fixed_arrays.get(array).cloned(),
         };
         if let Some(address) = address {
             self.line(format!(

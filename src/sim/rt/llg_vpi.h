@@ -560,12 +560,17 @@ uint64_t llg_vpi_frame_enter(const char* full_name);
  * per-subprogram table. The activation's address array holds, for each row,
  * the storage of the variable's value shape (an sv4_t, double, llg_string_t,
  * void* handle or container), a packed `ref` formal's llg_ref_t
- * (LLG_VPI_AUTO_REF), or nothing (LLG_VPI_AUTO_NO_VALUE). */
+ * (LLG_VPI_AUTO_REF), the packed image or real cells of a fixed-size array
+ * or unpacked structure (LLG_VPI_AUTO_IMAGE, LLG_VPI_AUTO_REALS), or nothing
+ * (LLG_VPI_AUTO_NO_VALUE). */
 typedef struct {
     const char* name;
     int32_t type;             /* vpiType */
     uint32_t line;
-    uint32_t shape;           /* value shape index + 1 in the dynamic tables; 0: none */
+    /* Value shape index + 1 in the dynamic tables (0: none); for an array
+     * with LLG_VPI_AUTO_IMAGE or LLG_VPI_AUTO_REALS, its element's shape
+     * (0: an unpacked structure element, typed by the typespec). */
+    uint32_t shape;
     uint32_t typespec;        /* typespec index + 1; 0: none */
     uint32_t size;            /* vpiSize of a fixed-size unpacked array */
     int32_t array_type;       /* vpiArrayType of an array variable, else 0 */
@@ -578,6 +583,13 @@ typedef struct {
 #define LLG_VPI_AUTO_NO_VALUE 0x04u
 /* vpiSigned of a fixed-size unpacked array: its elements are signed. */
 #define LLG_VPI_AUTO_SIGNED 0x08u
+/* The storage is one packed image (an sv4_t, or with LLG_VPI_AUTO_REF the
+ * llg_ref_t of one) of a fixed-size unpacked array, whose leftmost element
+ * (row-major) holds the most significant bits, or of an unpacked structure
+ * or union, laid out as the typespec's member nodes give. */
+#define LLG_VPI_AUTO_IMAGE 0x10u
+/* The storage is the double cells of a fixed-size real array, row-major. */
+#define LLG_VPI_AUTO_REALS 0x20u
 /* llg_vpi_frame_enter for a subprogram with automatic variables: `autos`
  * is its table, ended by a row with a NULL name; `slots` is the
  * activation's address array, zeroed by the model before it stores any

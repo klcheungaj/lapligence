@@ -2352,22 +2352,26 @@ impl Codegen<'_> {
         // emitted if it has none.
         model.vpi_scope_imports = scope_imports
             .into_iter()
-            .filter_map(|(scope, item)| {
-                let object = match self.kind(item) {
-                    NodeKind::ClassDef => IrVpiImport::Class(*self.class_nodes.get(&item)?),
-                    NodeKind::Var { .. }
-                    | NodeKind::Array { .. }
-                    | NodeKind::Net { .. }
-                    | NodeKind::NamedEvent
-                    | NodeKind::Param { .. }
-                    | NodeKind::FuncTask { .. } => IrVpiImport::Row(self.vpi_full_name(item)),
-                    _ => return None,
-                };
-                Some((scope, object))
-            })
+            .filter_map(|(scope, item)| Some((scope, self.vpi_import_object(item)?)))
             .collect();
         model.vpi_dynamic = dynamic;
         Ok(())
+    }
+
+    /// The `vpiImport` object of imported package item `item`: a class
+    /// definition by layout, any other instance item by catalog key; `None`
+    /// for a typedef or an enum constant (no instance item, 37.10).
+    pub(super) fn vpi_import_object(&self, item: NodeId) -> Option<IrVpiImport> {
+        Some(match self.kind(item) {
+            NodeKind::ClassDef => IrVpiImport::Class(*self.class_nodes.get(&item)?),
+            NodeKind::Var { .. }
+            | NodeKind::Array { .. }
+            | NodeKind::Net { .. }
+            | NodeKind::NamedEvent
+            | NodeKind::Param { .. }
+            | NodeKind::FuncTask { .. } => IrVpiImport::Row(self.vpi_full_name(item)),
+            _ => return None,
+        })
     }
 
     /// Build the expression and statement objects of the catalog rows in

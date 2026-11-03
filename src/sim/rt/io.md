@@ -310,7 +310,15 @@ about 4%); a
 layer, failing once that frame has ended (A19-D77). The elements of a dynamic, queue or
 associative array automatic are dynamic-layer elements whose container row is
 `DYN_AUTO_ROW` with the frame serial in `right`, resolved through the frame
-stacks at each query (A19-D82). A model ends a frame
+stacks at each query (A19-D82). The elements of a fixed-size array automatic
+and the members of an unpacked structure automatic are parts of its `SLOT_AUTO`
+handle (`count` = element offset + 1, `lsb` = member node + 1): a packed image
+(`LLG_VPI_AUTO_IMAGE`, the leftmost element in the most significant bits, also
+behind a `ref` descriptor) or a `double` array (`LLG_VPI_AUTO_REALS`) is read
+and written in place, with the same ended-frame error (A19-D83, A19-D84).
+`vpi_handle_by_name` finds an automatic, element or member of the innermost
+live activation of the named subprogram once the static lookup fails (A19-D84).
+A model ends a frame
 before releasing the value scopes that hold its body locals, so
 cbEndOfFrame still reads them (A19-D78).
 Module paths and timing checks (VPI-T1) are unnamed `vpiModPath`/`vpiTchk`
