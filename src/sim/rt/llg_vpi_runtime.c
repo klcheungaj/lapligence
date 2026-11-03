@@ -281,6 +281,7 @@ static vpiHandle rts_callbacks(vpiHandle reference, const llg_vpi_slot_t* slot) 
 /* The parent of every code row, built on the first vpiUse query. */
 static int rts_code_parents(void) {
     if (g_vpi.code_parents) return 1;
+    (void)code_nodes();
     if (!g_vpi.code || !g_vpi.code->node_count) return 0;
     uint32_t count = g_vpi.code->node_count;
     uint32_t* parents = (uint32_t*)calloc(count, sizeof(*parents));

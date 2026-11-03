@@ -454,11 +454,58 @@ processes or clock edges, at the cost of a few bytes per object.
   registration indexed 60,000 catalog rows and 400,000 expression rows
   (+17 ms). The `gen64` designs keep about 0.4 ms of start-up with the
   catalog. Frame records with an application loaded cost
-  up to 5% on call-heavy designs (`rec`, `calls`). The catalog dominates
-  compile time on large designs (`many-registers-10k`: 0.6 s without, about
-  15-19 s with it); its expression and statement rows are about 60% of that
-  and the object rows about 7%. Mach-O and PE executables still relocate
-  the catalog at start.
+  up to 5% on call-heavy designs (`rec`, `calls`). Mach-O and PE
+  executables still relocate the catalog's storage references at start.
+
+### Packed VPI catalog rows
+
+- **Trade-off:** the catalog's object rows and expression/statement rows
+  were C struct initializers (`many-registers-10k`: 60,000 object rows and
+  400,000 code rows, 112 MB of C), and parsing them was nearly all of a
+  large catalog model's compile time. Packing them into a string-literal
+  blob that the runtime decodes moves that work to the first VPI use and
+  writes the rows into heap and zero storage instead of reading them from
+  the executable.
+- **Decision:** catalog models emit the rows packed (`llg_vpi_packed_t`,
+  [model lifecycle](../src/sim/emit_c/model/readme.md),
+  [I/O, VPI](../src/sim/rt/io.md)): one string pool, varint streams,
+  symbol and storage-reference tables. Decoding runs inside the lazy
+  indexing step, so models whose run loads no application, or whose
+  application only registers system tasks, never decode. Type, dynamic,
+  UDP and call-site tables stay initializers (small, or read at start-up).
+  Not done: sharing code rows per module definition (each instance's rows
+  name its own catalog rows and scopes, so sharing needs a per-instance
+  base in every handle and relation), and packing the statement coverage
+  tables, which non-catalog models with `$coverage_*` share.
+- **Evidence:** model C compile, `-O3` with the model build's flags, pinned,
+  median of 3 (seconds; plain is identical before and after):
+
+  | design | plain gcc / clang | catalog before gcc / clang | catalog after gcc / clang | C MB plain / before / after |
+  | --- | --- | --- | --- | --- |
+  | many-registers-10k | 0.44 / 0.49 | 14.57 / 13.49 | 2.06 / 1.95 | 2.66 / 111.75 / 29.01 |
+  | many-masked-20k | 0.44 / 0.46 | 14.30 / 13.91 | 1.38 / 1.28 | 3.70 / 114.24 / 23.74 |
+  | gen64_proto | 0.32 / 0.24 | 0.48 / 0.44 | 0.35 / 0.26 | 0.15 / 1.95 / 0.46 |
+  | mixed_perf | 5.08 / 2.72 | 6.42 / 4.76 | 5.17 / 2.94 | 1.15 / 17.65 / 3.87 |
+  | udp_perf | 9.24 / 4.34 | 11.28 / 6.78 | 9.47 / 4.39 | 3.34 / 22.91 / 6.00 |
+  | tasks | 0.93 / 0.53 | 1.34 / 1.02 | 1.05 / 0.61 | 0.28 / 4.36 / 1.42 |
+
+  What remains on `many-registers-10k` (gcc, by removing one table at a
+  time): the statement coverage tables of a catalog model (70,000 counters,
+  their item table and the counter pointers in the instance records) about
+  0.8 s, the blob about 0.3 s. Run time is unchanged (pinned medians of 7
+  to 9 rounds within 2% of before on every design, with and without an
+  application; models without an application never decode). The first VPI
+  use that reaches a design object decodes the object rows before it
+  validates and indexes; the code rows wait for the first expression or
+  statement query. On a shared host (load 7-13), first use on
+  `many-registers-10k` went from 17 to 28 ms, `many-masked-20k` 20 to
+  36 ms, `tasks` 0.37 to 0.21 ms, `gen64_proto` 0.25 to 0.57 ms; most of the
+  added time is page faults on the object rows, which are now written
+  instead of read from the executable. Peak RSS after first use fell
+  (`many-registers-10k` 97.5 to 83.2 MB, `many-masked-20k` 181 to
+  176 MB), because the code rows are no longer resident until asked for.
+  Decoding the code rows on first access costs about 19 ms on
+  `many-registers-10k` (400,000 rows, two thirds of it page faults).
 
 ## Rejected or deferred
 

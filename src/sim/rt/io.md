@@ -108,10 +108,14 @@ Packed catalog rows (`llg_vpi_packed_t`, `llg_vpi_model_packed`): a catalog
 model emits its object rows and expression/statement rows as one blob
 instead of C initializers (a large catalog's initializers were most of its
 C compile time), with `llg_vpi_objects` zero and the code tables' `nodes`
-NULL. `vpi_ready` first decodes them (`catalog_unpack`): the string pool is
-copied to the heap and the rows' names point into it; connections,
-dimensions, instance properties, timing and code rows are heap arrays; the
-heap is released by `llg_vpi_shutdown`. Stream values are varints of the
+NULL. `vpi_ready` first decodes the object rows (`catalog_unpack`): the
+string pool is copied to the heap and the rows' names point into it;
+connections, dimensions, instance properties and timing are heap arrays.
+The code rows are decoded and validated on the first access to them
+(`code_nodes`, through `code_at`), so an application that never asks for an
+expression or statement never pays for them (on `many-registers-10k` they
+are 400,000 of the 460,000 rows). The heap is released by
+`llg_vpi_shutdown`. Stream values are varints of the
 `pack_alphabet` characters (five data bits, `0x20` while more follow; signed
 values zigzag). Object stream: the totals of connections, dimension pairs,
 instances, timings and declared delays, then per row: type (symbol), name,
@@ -273,7 +277,7 @@ recomputed from the net-to-net port links. Continuous assignment bits are
 Expression and statement objects (ADV-019 families 3 and 4) live in
 `llg_vpi_code_tables_t` (registered by `llg_vpi_model_code`, NULL without a
 catalog): one 48-byte `llg_vpi_code_t` per expression or statement
-(decoded from the packed rows on first use), its
+(decoded from the packed rows on first access), its
 children contiguous after it with the relation that reaches each (`role`),
 plus interned texts (names, literal digits), file names and select ranges.
 Process, task, function and named-block rows, connections and call-site

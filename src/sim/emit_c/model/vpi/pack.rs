@@ -1,8 +1,9 @@
 //! Packed VPI catalog tables (`llg_vpi_packed_t`).
 //!
 //! A catalog model's object rows and expression/statement rows are written
-//! as one byte blob that the runtime decodes on the first VPI use that can
-//! reach a design object, instead of as C struct initializers: compilers
+//! as one byte blob that the runtime decodes when they are first needed (the
+//! object rows on the first VPI use that can reach a design object, the code
+//! rows on the first access to one), instead of as C struct initializers: compilers
 //! spend most of a large catalog model's build parsing those initializers
 //! (hundreds of thousands of rows of designated fields), while a string
 //! literal of the same information parses in a fraction of the time.

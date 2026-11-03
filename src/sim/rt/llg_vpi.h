@@ -548,10 +548,11 @@ int llg_vpi_model_code(const llg_vpi_code_tables_t* tables);
  * strings), the object stream (`object_bytes`) and the code stream
  * (`code_bytes`). `symbols` holds the values of the symbolic constants
  * the streams name by index, `refs` the model storage the object rows
- * point at, in stream order. The runtime decodes the rows into the object
- * array and an owned code array on the first VPI use that can reach a
- * design object, right before validating and indexing them; the stream
- * layout is documented in io.md. Registered right after
+ * point at, in stream order. The runtime decodes the object rows into the
+ * object array on the first VPI use that can reach a design object, right
+ * before validating and indexing them, and the code rows into an owned
+ * array on the first access to one; the stream layout is documented in
+ * io.md. Registered right after
  * llg_vpi_model_init. */
 #define LLG_VPI_PACK_ROW 4096u
 typedef struct {

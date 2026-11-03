@@ -344,6 +344,7 @@ typedef struct {
      * code rows behind `code_value`, which `code` then names. */
     const llg_vpi_packed_t* packed;
     int unpacked;
+    int code_pending;             /* packed code rows not decoded yet (code_nodes) */
     char* pack_pool;
     llg_vpi_conn_t* pack_conns;
     int64_t* pack_dims;
@@ -424,6 +425,8 @@ static vpiHandle svc_put_string_delayed(llg_vpi_slot_t* slot, p_vpi_value input,
 static int svc_strength_bind(struct llg_vpi_cb* cb);
 static int svc_strength_changed(struct llg_vpi_cb* cb);
 static int code_tables_valid(const llg_vpi_code_tables_t* t);
+static int code_nodes_valid(const llg_vpi_code_tables_t* t);
+static const llg_vpi_code_t* code_nodes(void);
 static int catalog_unpack(void);
 static PLI_INT32 unsupported_property(void);
 
@@ -4408,6 +4411,7 @@ static vpiHandle iterate_declarations(int type, vpiHandle reference) {
         vpi_error("LLG_VPI_RELATION", "sequence and property declarations iterate from a scope");
         return NULL;
     }
+    (void)code_nodes();
     uint32_t total = g_vpi.code ? g_vpi.code->node_count : 0u, count = 0;
     for (uint32_t i = 0; i < total; ++i) {
         const llg_vpi_code_t* node = &g_vpi.code->nodes[i];
@@ -5209,9 +5213,8 @@ static vpiHandle statement_lhs(const llg_vpi_stmt_t* stmt) {
 #define LLG_VPI_MAX_EVAL_DEPTH 4096
 
 static const llg_vpi_code_t* code_at(uint32_t index) {
-    return g_vpi.code && g_vpi.code->nodes && index < g_vpi.code->node_count
-               ? &g_vpi.code->nodes[index]
-               : NULL;
+    const llg_vpi_code_t* nodes = code_nodes();
+    return nodes && index < g_vpi.code->node_count ? &nodes[index] : NULL;
 }
 
 static int code_is_select(int type) {
@@ -5319,11 +5322,19 @@ static int code_tables_valid(const llg_vpi_code_tables_t* t) {
             if (object->conns[i].ref.code > nodes) return 0;
     }
     if (!t) return 1;
-    if ((t->node_count && !t->nodes) || (t->text_count && !t->texts) ||
+    /* Packed rows are decoded and checked on first use (code_nodes). */
+    if ((t->node_count && !t->nodes && !g_vpi.code_pending) ||
+        (t->text_count && !t->texts) ||
         (t->file_count && !t->files) || (t->range_count && !t->ranges) ||
         (t->span_count && !t->spans) ||
         t->node_count >= (uint32_t)INT32_MAX)
         return 0;
+    return t->nodes ? code_nodes_valid(t) : 1;
+}
+
+/* The rows of the code tables: children follow their parents, references
+ * are in range. */
+static int code_nodes_valid(const llg_vpi_code_tables_t* t) {
     uint32_t typespecs = g_vpi.types ? g_vpi.types->typespec_count : 0u;
     for (uint32_t i = 0; i < t->node_count; ++i) {
         const llg_vpi_code_t* node = &t->nodes[i];
@@ -5660,13 +5671,8 @@ static void pack_objects(pack_reader_t* r) {
         r->bad = 1;
 }
 
-/* Decode the code stream into an owned row array behind `code_value`. */
-static void pack_code(pack_reader_t* r) {
-    const llg_vpi_code_tables_t* tables = g_vpi.code;
-    if (!tables || tables->nodes || !tables->node_count) {
-        if (pack_pos(r) != r->end) r->bad = 1;
-        return;
-    }
+/* Decode the code stream into an owned row array. */
+static void pack_code(pack_reader_t* r, const llg_vpi_code_tables_t* tables) {
     g_vpi.pack_code = (llg_vpi_code_t*)calloc(tables->node_count, sizeof(llg_vpi_code_t));
     if (!g_vpi.pack_code) {
         r->bad = 1;
@@ -5693,9 +5699,36 @@ static void pack_code(pack_reader_t* r) {
         node->typespec = (uint32_t)pack_uint(r);
         node->span = (uint32_t)pack_uint(r);
     }
+}
+
+/* The code rows. Packed rows are decoded and validated on the first call,
+ * not with the catalog: most applications never ask for an expression or
+ * statement, and the rows are most of a large catalog. A corrupt stream
+ * reports an error and leaves no rows. */
+static const llg_vpi_code_t* code_nodes(void) {
+    if (!g_vpi.code_pending) return g_vpi.code ? g_vpi.code->nodes : NULL;
+    g_vpi.code_pending = 0;
+    const llg_vpi_packed_t* packed = g_vpi.packed;
+    const llg_vpi_code_tables_t* tables = g_vpi.code;
+    pack_reader_t reader;
+    memset(&reader, 0, sizeof(reader));
+    reader.chunks = packed->chunks;
+    reader.packed = packed;
+    size_t start = (size_t)packed->pool_bytes + packed->object_bytes;
+    pack_seek(&reader, start, start + packed->code_bytes);
+    pack_code(&reader, tables);
     g_vpi.code_value = *tables;
     g_vpi.code_value.nodes = g_vpi.pack_code;
     g_vpi.code = &g_vpi.code_value;
+    if (reader.bad || pack_pos(&reader) != reader.end || !code_nodes_valid(g_vpi.code)) {
+        free(g_vpi.pack_code);
+        g_vpi.pack_code = NULL;
+        g_vpi.code_value.nodes = NULL;
+        g_vpi.code_value.node_count = 0;
+        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid packed VPI expression and statement rows");
+        g_vpi.failed = 1;
+    }
+    return g_vpi.code->nodes;
 }
 
 static void catalog_unpack_release(void) {
@@ -5715,8 +5748,8 @@ static void catalog_unpack_release(void) {
     g_vpi.pack_code = NULL;
 }
 
-/* Decode the packed rows once, right before the catalog is validated and
- * indexed. Every stream read is bounds-checked and the streams must be
+/* Decode the packed object rows once, right before the catalog is
+ * validated and indexed (the code rows wait for code_nodes). Every stream read is bounds-checked and the streams must be
  * consumed exactly; the decoded rows then go through the same validation
  * as rows a model emits directly. */
 static int catalog_unpack(void) {
@@ -5749,12 +5782,13 @@ static int catalog_unpack(void) {
     pack_seek(r, packed->pool_bytes, (size_t)packed->pool_bytes + packed->object_bytes);
     if (!r->bad) pack_objects(r);
     if (pack_pos(r) != r->end || r->next_ref != packed->ref_count) r->bad = 1;
-    pack_seek(r, (size_t)packed->pool_bytes + packed->object_bytes, (size_t)total);
-    if (!r->bad) pack_code(r);
-    if (pack_pos(r) != r->end) r->bad = 1;
-    int ok = !r->bad;
-    if (!ok) {
-        g_vpi.code = code;
+    /* Code rows wait for code_nodes; without code tables there are none. */
+    if (code && !code->nodes && code->node_count)
+        g_vpi.code_pending = packed->code_bytes != 0;
+    else if (packed->code_bytes)
+        r->bad = 1;
+    if (r->bad) {
+        g_vpi.code_pending = 0;
         catalog_unpack_release();
         return 0;
     }
@@ -8249,6 +8283,7 @@ static int links_ready(void) {
             }
         }
     }
+    (void)code_nodes();
     for (uint32_t index = 0; ok && g_vpi.code && index < g_vpi.code->node_count; ++index) {
         const llg_vpi_code_t* node = &g_vpi.code->nodes[index];
         if (node->type != vpiForce) continue;

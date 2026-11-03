@@ -53,8 +53,9 @@ pool, varint streams, a symbol table holding the C constants the streams
 name and a reference table of the model storage the rows point at, written
 as a `char[][LLG_VPI_PACK_ROW]` blob of short string literals (each piece
 stays far below MSVC's 16,380-character literal limit). The object array is
-zero storage and the code tables' `nodes` is NULL; the runtime decodes both
-on first VPI use ([I/O](../../rt/io.md)). Struct initializers for these rows
+zero storage and the code tables' `nodes` is NULL; the runtime decodes the
+object rows on first VPI use and the code rows on first access to them
+([I/O](../../rt/io.md)). Struct initializers for these rows
 were most of a large catalog model's compile time; a string literal of the
 same data parses in a fraction of it. Only catalog models register the blob
 (`llg_vpi_model_packed`), so models without the catalog are unchanged.
