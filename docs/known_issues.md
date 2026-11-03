@@ -1548,32 +1548,34 @@ strings get one).
 ## `ref` formals in fork-join branches
 
 **Status:** open (FIN-001 G3, F09-04). Illegal forms are rejected with their
-location; one legal form is rejected as unsupported. Packed, real, string and
-event `ref` formals work in `fork ... join` branches
-(`sim_010/ref_formal_fork_join`).
+location; one legal form is rejected as unsupported. Packed, real, string,
+event and handle (class, chandle, virtual interface, semaphore, mailbox)
+`ref` formals work in `fork ... join` branches
+(`sim_010/ref_formal_fork_join`, `sim_010/ref_formal_fork_join_handles`).
 
 ### Symptom
 
-A branch of a `fork ... join` inside a task that reads or writes a class,
-chandle or other handle `ref` formal of that task is legal (SV 9.3.2
-restricts only `join_any`/`join_none`; SV 13.5.2) but stops with "a
-fork-join branch that reads or writes a handle `ref` formal is not
-supported". Inside `join_any`/`join_none` a reference outside a fork
-block-item initializer is illegal (SV 9.3.2) and rejects with its location;
-block-item initializers (`fork automatic int k = r; ... join_none`) execute.
+A branch of a `fork ... join` inside a task that reads or writes a
+`process` `ref` formal of that task is legal (SV 9.3.2 restricts only
+`join_any`/`join_none`; SV 13.5.2) but stops with "a fork-join branch that
+reads or writes a process `ref` formal is not supported". Inside
+`join_any`/`join_none` a reference outside a fork block-item initializer is
+illegal (SV 9.3.2) and rejects with its location; block-item initializers
+(`fork automatic int k = r; ... join_none`) execute.
 
 ### Cause
 
-A `join` branch receives a packed, real, string or event `ref` formal's
-descriptor (`rN`) in an opaque slot of its capture frame and names the
-formal as the task does. A handle `ref` formal has a second parameter, the
-actual's change marker that stores publish and waits observe, which no
-branch slot carries yet.
+A `join` branch receives a `ref` formal's descriptor (`rN`) in an opaque
+slot of its capture frame and names the formal as the task does; a handle
+formal's change marker follows in a slot the fork's branches share. A
+process `ref` formal aliases the caller's counted process slot; stores
+through it retain the process but publish no marker, so a branch waiting on
+it would never wake (a probe deadlocks).
 
 ### Intended direction
 
-Capture the marker pointer in a second opaque slot and bind it under the
-formal's marker parameter name in the branch. Estimate: half a day.
+Publish the marker on stores to a process `ref` formal as handle stores do,
+then capture it like other handle formals. Estimate: half a day.
 
 ### Reproduce
 

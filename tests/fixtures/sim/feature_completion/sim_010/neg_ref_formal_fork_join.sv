@@ -1,13 +1,12 @@
-// FIN-001 G3 (F09-04): a fork-join branch that writes a class-handle `ref`
-// formal of its task is legal (SV 9.3.2, 13.5.2) but not supported: the
-// branch would not bind the actual's change marker, so llg rejects it
-// instead of losing the write.
+// FIN-001 G3 (F09-04): a fork-join branch that writes a process-handle
+// `ref` formal of its task is legal (SV 9.3.2, 13.5.2) but not supported: a
+// process formal aliases the caller's counted slot, which the branch would
+// not bind, so llg rejects it instead of losing the write.
 module tb;
-  class C; int v; endclass
-  C h;
-  task automatic t(ref C r);
+  process h;
+  task automatic t(ref process r);
     fork
-      #1 r = new;
+      #1 r = process::self();
       #2 $display("%0d", r == null);
     join
   endtask

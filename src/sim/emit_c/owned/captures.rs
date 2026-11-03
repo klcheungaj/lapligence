@@ -8,6 +8,10 @@ pub(super) enum CapturedValue {
     Borrowed(String),
     /// A slot of a shared activation frame: (frame expression, slot).
     Shared(String, u32),
+    /// The change marker of handle `ref` formal `.0` (`.1`, NULL for an
+    /// actual no other process can name). A fork shares it among its
+    /// branches through one holder slot (see `captured_fork`).
+    RefMarker(usize, String),
     /// The address of a string copied into the frame.
     String(String),
     /// A string evaluated for the capture; copied into the frame, then
@@ -53,6 +57,9 @@ impl Frame<'_, '_> {
         captures: impl Iterator<Item = (StorageRef, &'e IrExpr)>,
     ) -> Result<Vec<(StorageRef, CapturedValue)>, String> {
         let mut values = Vec::new();
+        // `ref` formals whose descriptor is already captured: a handle
+        // formal's second capture passes its change marker.
+        let mut captured_formals = Vec::new();
         for (storage, initial) in captures {
             check_capture(storage)?;
             if storage.kind() == StorageKind::Event {
@@ -163,7 +170,15 @@ impl Frame<'_, '_> {
                                 "fork capture of a `ref` formal requires its descriptor".to_owned()
                             );
                         }
-                        self.scalar("void*", format!("(void*)(uintptr_t)r{index}"))
+                        if captured_formals.contains(index) {
+                            let marker = super::super::model::handle_marker_param(*index);
+                            let marker = self.scalar("void*", format!("(void*){marker}"));
+                            values.push((storage, CapturedValue::RefMarker(*index, marker)));
+                            continue;
+                        } else {
+                            captured_formals.push(*index);
+                            self.scalar("void*", format!("(void*)(uintptr_t)r{index}"))
+                        }
                     }
                     IrExprKind::ObjectQuery(query) => match query.as_ref() {
                         IrObjectQuery::HandleCapture(handle) => self.chandle(handle)?,
@@ -214,10 +229,12 @@ impl Frame<'_, '_> {
                         storage.slot()
                     ));
                 }
-                CapturedValue::Handle(handle) => self.line(format!(
-                    "llg_frame_capture_opaque({access}, {}u, {handle});",
-                    storage.slot()
-                )),
+                CapturedValue::Handle(handle) | CapturedValue::RefMarker(_, handle) => {
+                    self.line(format!(
+                        "llg_frame_capture_opaque({access}, {}u, {handle});",
+                        storage.slot()
+                    ))
+                }
                 CapturedValue::Shared(frame, slot) => self.line(format!(
                     "llg_frame_alias_slot({access}, {}u, {frame}, {slot}u);",
                     storage.slot()
@@ -414,7 +431,7 @@ impl Frame<'_, '_> {
         }
         if storage.kind() == StorageKind::Opaque {
             if let IrExprKind::FormalRead(index) = initial.kind() {
-                return self.bind_ref_formal_capture(*index, storage, source);
+                return self.bind_ref_formal_capture(*index, false, storage, source);
             }
             let binding = self.native_local(name, NativeKind::Chandle);
             self.line(format!(
@@ -458,9 +475,12 @@ impl Frame<'_, '_> {
     /// Bind the descriptor of `ref` formal `index` that a fork-join branch
     /// captured under its parameter name (`rN`), so formal reads, stores,
     /// selects and waits in the branch emit exactly as in the subroutine.
-    fn bind_ref_formal_capture(
+    /// With `marker`, bind a handle formal's change marker parameter, which
+    /// the branch captured in the slot after the descriptor's.
+    pub(super) fn bind_ref_formal_capture(
         &mut self,
         index: usize,
+        marker: bool,
         storage: StorageRef,
         source: &str,
     ) -> Result<(), String> {
@@ -472,23 +492,39 @@ impl Frame<'_, '_> {
             .get(index)
             .filter(|formal| formal.is_ref())
             .ok_or("captured `ref` formal is not a `ref` formal")?;
-        let name = format!("r{index}");
+        if marker && !formal.chandle {
+            return Err("only a handle `ref` formal captures a change marker".to_owned());
+        }
+        let name = if marker {
+            super::super::model::handle_marker_param(index)
+        } else {
+            format!("r{index}")
+        };
         let ty = super::super::model::owned_frame_param_fields(function)
             .into_iter()
             .find(|(_, field)| *field == name)
             .map(|(ty, _)| ty)
             .ok_or("captured `ref` formal has no descriptor parameter")?;
-        let load = format!(
-            "({ty})(uintptr_t)llg_frame_read_opaque({source}, {}u)",
-            storage.slot()
-        );
+        let load = if marker {
+            // The holder slot keeps the caller's marker, else allocates the
+            // one the branches share.
+            format!(
+                "({ty})llg_frame_read_opaque({source}, {slot}u) ? ({ty})llg_frame_read_opaque({source}, {slot}u) : llg_frame_opaque_marker({source}, {slot}u, 1)",
+                slot = storage.slot()
+            )
+        } else {
+            format!(
+                "({ty})(uintptr_t)llg_frame_read_opaque({source}, {}u)",
+                storage.slot()
+            )
+        };
         if self.layout.storage() == FrameStorage::CoFrame {
             self.frame_field(&ty, &name)?;
             self.line(format!("{name} = {load};"));
         } else {
             self.line(format!("{ty} {name} = {load};"));
         }
-        if formal.event {
+        if formal.event && !marker {
             self.event_bindings
                 .first_mut()
                 .expect("event scope")
@@ -537,6 +573,32 @@ impl Frame<'_, '_> {
                 )?,
             );
         }
+        // The branches of one fork share each handle `ref` formal's change
+        // marker through one holder slot: the caller's marker, or one the
+        // first branch that stores or waits allocates there (an actual no
+        // other process can name has none, but sibling branches can).
+        let mut holders: Vec<(usize, String)> = Vec::new();
+        for values in &mut prepared {
+            for (_, value) in values.iter_mut() {
+                let CapturedValue::RefMarker(index, marker) = value else {
+                    continue;
+                };
+                let holder =
+                    if let Some((_, holder)) = holders.iter().find(|(formal, _)| formal == index) {
+                        holder.clone()
+                    } else {
+                        let holder = self.declare(
+                            "llg_frame_t*",
+                            "marker_holder",
+                            "llg_frame_new(1ULL)".into(),
+                        );
+                        self.line(format!("llg_frame_capture_opaque({holder}, 0u, {marker});"));
+                        holders.push((*index, holder.clone()));
+                        holder
+                    };
+                *value = CapturedValue::Shared(holder, 0);
+            }
+        }
         let join_kind = kind;
         if join_kind == IrJoinKind::Detached {
             if target.is_some() {
@@ -570,6 +632,9 @@ impl Frame<'_, '_> {
                 c_string_literal(branch.label())
             ));
             self.line(format!("llg_frame_release({frame});"));
+        }
+        for (_, holder) in holders {
+            self.line(format!("llg_frame_release({holder});"));
         }
         if !branches.is_empty() && join_kind != IrJoinKind::None {
             self.await_arm(

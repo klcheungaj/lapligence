@@ -83,8 +83,23 @@ fn render_with_frame(
         IrPreFn::Branch { c_name, body } | IrPreFn::CapturedBranch { c_name, body, .. } => {
             frame.cell_eligibility = frame_cells::CellEligibility::analyze(ctx, body);
             if let IrPreFn::CapturedBranch { captures, .. } = pre {
+                // A handle `ref` formal's second capture is its change marker.
+                let mut captured_formals = Vec::new();
                 for capture in captures {
                     let storage = capture.storage();
+                    if let IrExprKind::FormalRead(index) = capture.initial().kind() {
+                        if storage.kind() == StorageKind::Opaque {
+                            let marker = captured_formals.contains(index);
+                            captured_formals.push(*index);
+                            frame.bind_ref_formal_capture(
+                                *index,
+                                marker,
+                                storage,
+                                "llg_proc_frame(self)",
+                            )?;
+                            continue;
+                        }
+                    }
                     let name = format!("_fc{}_{}", storage.frame().index(), storage.slot());
                     frame.bind_capture(
                         &name,
