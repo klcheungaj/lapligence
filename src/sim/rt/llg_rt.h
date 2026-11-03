@@ -563,7 +563,10 @@ typedef struct llg_net_alias_span llg_net_alias_span_t;
 
 // One intrusive interval-tree node per driver. Generated models provide an
 // exact-size mutable array; no node is allocated while a contribution moves.
-// Inactive drivers are electrically all-Z and are absent from the tree.
+// Inactive drivers are electrically all-Z and are absent from the tree. A
+// selected driver that turns all-Z over exactly its indexed range stays in
+// the tree, still active: Z adds no drive, and its node is reused when it
+// drives again.
 struct llg_net_driver_index {
     uint32_t low;
     uint32_t high;

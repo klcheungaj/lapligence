@@ -1837,6 +1837,17 @@ static void test_llg_net(void) {
                 net.width, test_temp(SV4_C(63, 32)), 4, 0), 0);
         CHECK(sv4_same(test_temp(sv4_part_select(net.resolved, 66, 63)),
                        test_temp(SV4_Z(4))));
+        // Turning off over its own range keeps the node; Z adds no drive.
+        CHECK(index[0].active && index[0].low == 63 && index[0].high == 66 &&
+              index[1].active && index[2].active);
+
+        // A Z write over another range releases it.
+        llg_net_write_selected(
+            &net, 0, test_temp(SV4_Z(4)),
+            sv4_select_plan_indexed(
+                net.width, test_temp(SV4_C(10, 32)), 4, 0), 0);
+        CHECK(sv4_same(test_temp(sv4_part_select(net.resolved, 66, 63)),
+                       test_temp(SV4_Z(4))));
         CHECK(!index[0].active && index[1].active && index[2].active);
 
         sv4_destroy(&net.resolved);
