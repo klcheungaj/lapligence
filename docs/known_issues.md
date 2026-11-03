@@ -2331,9 +2331,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   A19-D21, A19-D23);
 - structure objects (ADV-019 family 2; their relations are in the
   catalog): elements of multidimensional primitive arrays, and `vpiIndex`
-  of an element of a multidimensional instance array; `vpi_put_value` to a
-  sequential UDP (38.34 sets it with no delay; the path measured would cost
-  VPI models with delayed sequential UDPs run time); `vpiReturn` of an automatic function and the argument
+  of an element of a multidimensional instance array; `vpiReturn` of an automatic function and the argument
   variables of an automatic task or function, and the string, chandle,
   class and event arguments of a static one (decisions A19-D53, A19-D57); a fork branch started inside a task has no frame of that task
   (its frame stack starts empty);
@@ -2393,8 +2391,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
   the size and value of the formal it is passed to (a call snapshot) while
   its relations and `vpiDecompile` are those of the expression;
 - every property, relation and iteration the catalog marks `unsupported`
-  (after the ADV-019 closure, 2026-11: only `vpi_put_value` to a
-  sequential UDP). An event of a class definition's event array property
+  (after the ADV-019 closure and the sequential UDP put, A19-D74, 2026-11:
+  none). An event of a class definition's event array property
   is reached only by index (it names no event: no value, waiters or put,
   decision A19-D85), and an event of an event array property takes no
   `cbValueChange`, as an event property does not (decision A19-D80). Rows the catalog marks `error` are refused on purpose,
@@ -2452,9 +2450,6 @@ with no error status, as for a name that denotes nothing (S42-D11):
   They are declared and defined so that applications link, and return
   NULL, 0 or nothing with an `LLG_VPI_UNSUPPORTED` error without reading or
   writing their arguments;
-- `vpi_put_value` to a sequential UDP (38.34 lists it): the UDP state is
-  generated static storage that the catalog does not reach, and a put must
-  also republish the output without stepping the table;
 - `vpi_put_value` with force or release on strings, class properties and
   container elements, and delayed puts to properties and elements
   (decision A19-D23), and delayed puts to named events (A19-D8).
