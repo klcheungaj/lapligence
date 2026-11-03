@@ -550,7 +550,10 @@ members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
 properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
-compound or nonblocking writes to a record element of a resizable container;
+a nonblocking write of a member of a fixed-array record element (whole
+elements take nonblocking writes; compound writes to members of any element
+work, and the frontend rejects nonblocking writes to elements of resizable
+containers);
 a run-time index into a native member array of more than 64 elements, and
 one into an array of records nested in a native record that selects a
 handle member or anything but one string, real or integral member

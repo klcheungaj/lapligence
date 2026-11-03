@@ -584,6 +584,33 @@ impl Codegen<'_> {
             .map(|(_, selection, path)| (selection, path))
     }
 
+    /// Whether `node` names a member of a record element of container
+    /// storage, or a select inside one, with constant or run-time indices.
+    pub(in crate::sim::codegen) fn names_element_member(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
+                parts.iter().skip(1).any(|part| !part.is_empty())
+                    && refs
+                        .first()
+                        .copied()
+                        .flatten()
+                        .is_some_and(|first| self.record_element_of(first).is_some())
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
+                self.db
+                    .array_select_path(node)
+                    .is_some_and(|(owner, _)| self.record_element_of(owner).is_some())
+                    || self.names_element_member(*base)
+            }
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => self.names_element_member(*base),
+            _ => false,
+        }
+    }
+
     /// `element_member_path` with the node naming the whole element.
     pub(super) fn element_member_parts(
         &self,

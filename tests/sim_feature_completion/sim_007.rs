@@ -452,6 +452,11 @@ fn container_elements_hold_records_with_container_members() {
     );
     sim_cli::reject_case(
         SUITE,
+        "bad_record_element_leaf_nba",
+        "a nonblocking assignment to a member of a record element in `tb` is not supported; assign the whole element",
+    );
+    sim_cli::reject_case(
+        SUITE,
         "bad_record_element_member_ref",
         "a queue or dynamic-array member of a container record element as the ref actual of `q` in `tb` is not supported",
     );

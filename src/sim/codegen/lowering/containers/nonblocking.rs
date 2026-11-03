@@ -63,6 +63,14 @@ impl Codegen<'_> {
             })));
             return Ok(Some(IrStmt::Block(statements)));
         }
+        // A member write goes through an access into the element's value
+        // tree, which a later whole-element write may replace before the NBA
+        // region; only whole elements are deferred.
+        if self.names_element_member(self.p30_unwrap_cast(lhs)) {
+            return Err(format!(
+                "a nonblocking assignment to a member of a record element in `{path}` is not supported; assign the whole element"
+            ));
+        }
         // One element.
         let Some((target, indices)) = self.container_element_path(lhs) else {
             return Ok(None);
