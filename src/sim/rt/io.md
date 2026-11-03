@@ -102,7 +102,38 @@ table (`vpi_slots_ready`); the catalog is validated and indexed (`vpi_ready`)
 on the first use that can reach a design object (a call site of a registered
 task compiles at start-up and is one), so an application that only registers
 system tasks and functions the design never calls pays nothing per catalog
-row. Slots made inside a compiletf/calltf (argument handles and
+row.
+
+Packed catalog rows (`llg_vpi_packed_t`, `llg_vpi_model_packed`): a catalog
+model emits its object rows and expression/statement rows as one blob
+instead of C initializers (a large catalog's initializers were most of its
+C compile time), with `llg_vpi_objects` zero and the code tables' `nodes`
+NULL. `vpi_ready` first decodes them (`catalog_unpack`): the string pool is
+copied to the heap and the rows' names point into it; connections,
+dimensions, instance properties, timing and code rows are heap arrays; the
+heap is released by `llg_vpi_shutdown`. Stream values are varints of the
+`pack_alphabet` characters (five data bits, `0x20` while more follow; signed
+values zigzag). Object stream: the totals of connections, dimension pairs,
+instances, timings and declared delays, then per row: type (symbol), name,
+full name, definition name, file (strings: pool offset + 1), line, width,
+`is_signed | is_real << 1 | is_net << 2`, parent (row + 1), time unit,
+subtype and flags (symbols), left, right, dimension count and pairs, port
+index, target (row + 1), constant (string), real constant (IEEE bits),
+typespec, detail (symbol), connection count and connections (kind and const
+type symbols, object, offset, select width, left, right, width, signed,
+code, direction symbol, value string, role symbol, edge, condition),
+activation declaration and instance, timing (0, or 1 then op count with an
+ops reference when nonzero, declared count and values, count, polarity and
+data polarity symbols, ifnone, delay), shape, code, instance (0, or 1 then
+its fields), strength (0, or 1 then two symbols), and the reference mask
+(`PACK_REF_*`) whose set bits take the next `refs` entries in bit order.
+Code stream, per row: type, subtype, role, qualifier and flags (symbols),
+width, file, line (difference from the previous row), object, scope + 1
+(difference from the previous row), first child (difference from the row
+index), count, data, typespec, span. The emitter side is
+`src/sim/emit_c/model/vpi/pack.rs`; any decode error (an overrun, an index
+out of range, a stream not consumed exactly) fails the first use like an
+invalid catalog. Slots made inside a compiletf/calltf (argument handles and
 iterators, element/select arguments) are owned by that invocation and released
 when it returns; the call handle itself persists per call site with its user
 data (every request shares it; releasing it is a no-op, 37.2.2). sizetf runs once per registration after the first site's compiletf with no
@@ -241,7 +272,8 @@ recomputed from the net-to-net port links. Continuous assignment bits are
 `SLOT_CABIT` slots on the assignment's row.
 Expression and statement objects (ADV-019 families 3 and 4) live in
 `llg_vpi_code_tables_t` (registered by `llg_vpi_model_code`, NULL without a
-catalog): one 48-byte `llg_vpi_code_t` per expression or statement, its
+catalog): one 48-byte `llg_vpi_code_t` per expression or statement
+(decoded from the packed rows on first use), its
 children contiguous after it with the relation that reaches each (`role`),
 plus interned texts (names, literal digits), file names and select ranges.
 Process, task, function and named-block rows, connections and call-site

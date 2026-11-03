@@ -282,8 +282,9 @@ typedef struct {
     int8_t cell_define;       /* vpiCellInstance */
     int8_t automatic;         /* vpiAutomatic: the default lifetime */
 } llg_vpi_instance_t;
-/* One catalog row. Generated models emit a static array of these; the
- * runtime only borrows it and indexes it on the first VPI use. */
+/* One catalog row. Generated models emit a zero static array of these and
+ * the packed rows (llg_vpi_packed_t); the runtime fills the array from them
+ * and indexes it on the first VPI use. */
 /* A sequential UDP instance that takes vpi_put_value (IEEE 1800-2009
  * 38.34), emitted only into a model that keeps the VPI catalog: its state
  * digit (0, 1, 2 for X), the inertial driver handle of its delayed output
@@ -537,6 +538,34 @@ int llg_vpi_model_types(const llg_vpi_type_tables_t* tables);
 /* The expression and statement tables, borrowed like the catalog and
  * validated on the first VPI use; NULL for a model generated without them. */
 int llg_vpi_model_code(const llg_vpi_code_tables_t* tables);
+
+/* Packed catalog rows. A model generated with the catalog leaves its
+ * object array zero and its code tables' `nodes` NULL and emits their rows
+ * as one blob instead (compilers parse a string literal far faster than
+ * hundreds of thousands of struct initializers). The blob is `chunk_count`
+ * rows of LLG_VPI_PACK_ROW bytes, each LLG_VPI_PACK_ROW - 1 payload bytes
+ * and a NUL; its payload is a string pool of `pool_bytes` (NUL-terminated
+ * strings), the object stream (`object_bytes`) and the code stream
+ * (`code_bytes`). `symbols` holds the values of the symbolic constants
+ * the streams name by index, `refs` the model storage the object rows
+ * point at, in stream order. The runtime decodes the rows into the object
+ * array and an owned code array on the first VPI use that can reach a
+ * design object, right before validating and indexing them; the stream
+ * layout is documented in io.md. Registered right after
+ * llg_vpi_model_init. */
+#define LLG_VPI_PACK_ROW 4096u
+typedef struct {
+    const char* chunks;
+    uint32_t chunk_count;
+    uint32_t pool_bytes;
+    uint32_t object_bytes;
+    uint32_t code_bytes;
+    const int64_t* symbols;
+    uint32_t symbol_count;
+    const void* const* refs;
+    uint32_t ref_count;
+} llg_vpi_packed_t;
+int llg_vpi_model_packed(const llg_vpi_packed_t* packed);
 /* How the model was generated for vpi_put_delays: `writable` is 1 when every
  * delay the catalog names is runtime storage (generated for VPI
  * applications), `delay_select` the min:typ:max operand the model uses (0

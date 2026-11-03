@@ -279,12 +279,16 @@ fn generated_model_omits_the_catalog_by_default() {
     let with = generate(true);
     assert!(without.contains("static llg_vpi_model_object_t* const llg_vpi_objects = NULL;"));
     assert!(!without.contains("\"tb.mem\""));
-    assert!(with.contains("static llg_vpi_model_object_t llg_vpi_objects[] = {"));
-    assert!(with.contains("\"tb.mem\""));
+    // Catalog rows are packed (`llg_vpi_packed_t`): names live in the
+    // blob's string pool, NUL-terminated.
+    assert!(with.contains("static llg_vpi_model_object_t llg_vpi_objects["));
+    assert!(with.contains("tb.mem\\000"));
+    assert!(!without.contains("llg_vpi_packed"));
     // Expression and statement objects (ADV-019 families 3 and 4) are
     // generated only for VPI models.
     assert!(without.contains("llg_vpi_code_tables = NULL;"));
-    assert!(!without.contains("llg_vpi_code_rows"));
-    assert!(with.contains("static const llg_vpi_code_t llg_vpi_code_rows[] = {"));
+    assert!(!without.contains("llg_vpi_code_value"));
+    assert!(with.contains("static const llg_vpi_code_tables_t llg_vpi_code_value = { NULL, "));
+    assert!(with.contains("llg_vpi_model_packed(llg_vpi_packed)"));
     assert!(without.len() < with.len());
 }

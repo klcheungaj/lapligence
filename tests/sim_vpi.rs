@@ -297,6 +297,25 @@ fn vpi_array_metadata_validates_packed_and_real_element_shapes() {
 }
 
 #[test]
+fn vpi_packed_catalog_decodes_on_first_use_and_rejects_corrupt_blobs() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    sim_harness::with_frontend_temp_cwd("vpi-packed-catalog", |dir| {
+        let source = include_str!("fixtures/sim/vpi/vpi_packed_catalog.c");
+        let executable = sim::build::build_model_cmake(dir, &[("vpi_packed_catalog.c", source)])
+            .map_err(|error| error.to_string())?;
+        let output = sim_harness::run_executable_output(&executable)?;
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, b"vpi packed catalog ok\n");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        Ok(())
+    })
+    .expect("VPI packed catalog decoding");
+}
+
+#[test]
 fn vpi_partitioned_net_arrays_keep_declared_shapes_and_values() {
     sim_harness::with_frontend_temp_cwd("vpi-partitioned-nets", |dir| {
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))

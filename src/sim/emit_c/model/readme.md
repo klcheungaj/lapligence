@@ -42,6 +42,20 @@ waveform registrations) use argument tables and loops in their original order;
 registrations still fail startup. Generated identifiers are standard C (never
 `$`, checked by the all-fixture lint).
 
+The VPI catalog (`model/vpi.rs`) emits its object rows and expression/
+statement rows packed (`model/vpi/pack.rs`, `llg_vpi_packed_t`): one string
+pool, varint streams, a symbol table holding the C constants the streams
+name and a reference table of the model storage the rows point at, written
+as a `char[][LLG_VPI_PACK_ROW]` blob of short string literals (each piece
+stays far below MSVC's 16,380-character literal limit). The object array is
+zero storage and the code tables' `nodes` is NULL; the runtime decodes both
+on first VPI use ([I/O](../../rt/io.md)). Struct initializers for these rows
+were most of a large catalog model's compile time; a string literal of the
+same data parses in a fraction of it. Only catalog models register the blob
+(`llg_vpi_model_packed`), so models without the catalog are unchanged.
+Type, dynamic, UDP and call-site tables stay C initializers (small, or read
+at start-up).
+
 `names.rs` owns source-name escapes (encoding: `ident` docs). Lowering retains raw source components separately from
 display paths: never pass encoded components through `ident` again. Keep the
 source diagnostic labels, VPI and waveform metadata, design/export

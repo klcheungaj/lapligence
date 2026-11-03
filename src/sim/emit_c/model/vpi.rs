@@ -3,6 +3,7 @@
 use super::*;
 
 mod dynamic;
+mod pack;
 use crate::sim::ir::{
     IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
     IrVpiContainer, IrVpiInstance, IrVpiObject, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
@@ -537,8 +538,10 @@ fn render_udp_puts(
 
 /// Emit the VPI object catalog. The catalog is generated from owned
 /// metadata, so aliases retain separate HDL names while pointing at the
-/// canonical runtime-visible value. The runtime only borrows it: models
-/// that never load a VPI application do not index or validate it.
+/// canonical runtime-visible value. Its object and code rows are packed
+/// ([`pack`]) and unpacked by the runtime on the first VPI use that can
+/// reach a design object: models that never load a VPI application do not
+/// decode, index or validate it.
 /// Returns the definition of the UDP put records ([`render_udp_puts`]),
 /// which the caller emits after the coroutine metadata.
 pub(super) fn render_vpi_metadata(
@@ -634,84 +637,82 @@ pub(super) fn render_vpi_metadata(
     scope_imports.retain(|pair| listed.insert(*pair));
     render_vpi_typespecs(model.vpi_typespecs(), &scope_typedefs, &scope_imports, out);
     dynamic::render_vpi_dynamic(model, &indices, out);
-    for (index, entry) in entries.iter().enumerate() {
-        if entry.dims.is_empty() {
-            continue;
-        }
-        out.push_str(&format!(
-            "static const int64_t llg_vpi_dims_{index}[] = {{ {} }};\n",
-            entry
-                .dims
-                .iter()
-                .map(|(left, right)| format!("{left}LL, {right}LL"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    let object = |name: &str| indices.get(name).copied();
-    for (index, entry) in entries.iter().enumerate() {
-        if entry.conns.is_empty() {
-            continue;
-        }
-        out.push_str(&format!(
-            "static const llg_vpi_conn_t llg_vpi_conns_{index}[] = {{\n"
-        ));
-        for conn in &entry.conns {
-            let timing = if conn.role == crate::sim::ir::IrVpiConnRole::Connection {
-                String::new()
-            } else {
-                format!(
-                    ", .role = {}, .edge = 0x{:02x}, .condition = {}u",
-                    conn.role.c_code(),
-                    conn.edge,
-                    conn.condition.map_or(0, |index| index + 1)
-                )
-            };
-            out.push_str(&format!(
-                "    {{ {{ .width = {}, .is_signed = {}, .ref_kind = {}{} }}, .direction = {}, .value = {}{timing} }},\n",
-                conn.width,
-                u8::from(conn.signed),
-                arg_reference(&conn.reference, &object),
-                code_field(conn.code),
-                if conn.direction == crate::sim::ir::IrVpiDirection::None {
-                    "0"
-                } else {
-                    conn.direction.c_code()
-                },
-                conn.value
-                    .as_deref()
-                    .map_or_else(|| "NULL".to_owned(), c_string_literal),
-            ));
-        }
-        out.push_str("};\n");
-    }
     let timing = render_vpi_timing(model, &entries, out);
-    for (index, entry) in entries.iter().enumerate() {
-        let Some(instance) = &entry.instance else {
-            continue;
-        };
-        let optional = |text: &Option<String>| {
-            text.as_deref()
-                .map(c_string_literal)
-                .unwrap_or_else(|| "NULL".to_owned())
-        };
-        out.push_str(&format!(
-            "static const llg_vpi_instance_t llg_vpi_instance_{index} = {{ .def_file = {}, \
-.def_line = {}, .library = {}, .cell = {}, .config = {}, .net_type = {}, \
-.unconnected_drive = {}, .cell_define = {}, .automatic = {} }};\n",
-            optional(&instance.def_file),
-            instance.def_line,
-            c_string_literal(&instance.library),
-            c_string_literal(&instance.cell),
-            optional(&instance.config),
-            instance.net_type,
-            instance.unconnected_drive,
-            u8::from(instance.cell_define),
-            u8::from(instance.automatic),
-        ));
-    }
     let (udp_puts, udp_put_definition) = render_udp_puts(&entries, udp_sites, out);
-    out.push_str("static llg_vpi_model_object_t llg_vpi_objects[] = {\n");
+    let mut pack = pack::Pack::default();
+    pack_objects(&entries, &indices, &timing, &udp_puts, &mut pack);
+    let objects = pack.take_stream();
+    // Zero storage the runtime fills from the packed rows on the first VPI
+    // use that can reach a design object (`llg_vpi_model_packed`).
+    out.push_str(&format!(
+        "static llg_vpi_model_object_t llg_vpi_objects[{}];\n\
+         static const size_t llg_vpi_object_count = {}u;\n",
+        entries.len().max(1),
+        entries.len()
+    ));
+    render_vpi_code(model, &indices, &mut pack, out);
+    let code = pack.take_stream();
+    pack.render(&objects, &code, "llg_vpi_packed_value", out);
+    out.push_str("static const llg_vpi_packed_t* const llg_vpi_packed = &llg_vpi_packed_value;\n");
+    udp_put_definition
+}
+
+/// The extra start-up registration of a catalog model: its packed rows
+/// (`llg_vpi_model_packed`), registered right after `llg_vpi_model_init`.
+/// Empty for a model without the catalog, whose start-up is unchanged.
+pub(in crate::sim::emit_c) fn vpi_packed_registration(model: &IrModel) -> &'static str {
+    if model.vpi_catalog {
+        " || !llg_vpi_model_packed(llg_vpi_packed)"
+    } else {
+        ""
+    }
+}
+
+/// Bits of the reference mask that ends a packed object row: which
+/// `llg_vpi_model_object_t` pointers to model storage follow in the
+/// reference table, in this order (`catalog_unpack`).
+const REF_PACKED: u64 = 0x01;
+const REF_REAL: u64 = 0x02;
+const REF_NET: u64 = 0x04;
+const REF_EVENT: u64 = 0x08;
+const REF_STORAGE: u64 = 0x10;
+const REF_DEPENDENCY: u64 = 0x20;
+
+/// Write the object stream: the totals the decoder allocates for, then one
+/// record per catalog row with the fields of `llg_vpi_model_object_t` in
+/// the order `catalog_unpack` reads them.
+fn pack_objects(
+    entries: &[Entry],
+    indices: &std::collections::HashMap<&str, usize>,
+    timing: &[Option<(Option<String>, usize)>],
+    udp_puts: &[Option<usize>],
+    pack: &mut pack::Pack,
+) {
+    let row = |path: Option<&str>| {
+        path.and_then(|path| indices.get(path).copied())
+            .map_or(0, |row| row as u64 + 1)
+    };
+    pack.uint(entries.iter().map(|entry| entry.conns.len() as u64).sum());
+    pack.uint(entries.iter().map(|entry| entry.dims.len() as u64).sum());
+    pack.uint(
+        entries
+            .iter()
+            .filter(|entry| entry.instance.is_some())
+            .count() as u64,
+    );
+    pack.uint(
+        entries
+            .iter()
+            .filter(|entry| entry.timing.is_some())
+            .count() as u64,
+    );
+    pack.uint(
+        entries
+            .iter()
+            .filter_map(|entry| entry.timing.as_ref())
+            .map(|timing| timing.declared.len() as u64)
+            .sum(),
+    );
     for (index, entry) in entries.iter().enumerate() {
         let path = strip_marker(&entry.full);
         let parts = split_name(path);
@@ -730,28 +731,6 @@ pub(super) fn render_vpi_metadata(
             }
         } else {
             path.to_owned()
-        };
-        let pointer = |index: Option<usize>| {
-            index.map_or_else(
-                || "NULL".to_owned(),
-                |index| format!("&llg_vpi_objects[{index}]"),
-            )
-        };
-        let parent = pointer(
-            parent_path
-                .as_deref()
-                .and_then(|path| indices.get(path).copied()),
-        );
-        let target = pointer(
-            entry
-                .port_target
-                .as_deref()
-                .and_then(|path| indices.get(path).copied()),
-        );
-        let optional = |text: &Option<String>| {
-            text.as_deref()
-                .map(c_string_literal)
-                .unwrap_or_else(|| "NULL".to_owned())
         };
         let mut flags = Vec::new();
         if entry.two_state {
@@ -813,41 +792,14 @@ pub(super) fn render_vpi_metadata(
                 flags.push(flag);
             }
         }
-        let dynamic =
-            entry
-                .dynamic
-                .as_ref()
-                .map_or_else(String::new, |(storage, dependency, shape)| {
-                    format!(
-                        ", .storage = {storage}, .dependency = {dependency}, .shape = {}u",
-                        shape + 1
-                    )
-                });
-        let dynamic = match udp_puts[index] {
-            Some(record) => format!("{dynamic}, .storage = &llg_vpi_udp_puts[{record}]"),
-            None => dynamic,
-        };
-        let (declaration, instance) = entry.activation.unwrap_or((0, 0));
-        let mut definition = if entry.instance.is_some() {
-            format!(", .instance = &llg_vpi_instance_{index}")
-        } else {
-            String::new()
-        };
-        if let Some((strength0, strength1)) = entry.strength {
-            definition.push_str(&format!(", .strength = {strength0} | {strength1} << 8"));
-        }
         let (constant, real_constant) = match &entry.constant {
-            Some(IrVpiConstant::Bits(digits)) => (c_string_literal(digits), "0.0".to_owned()),
+            Some(IrVpiConstant::Bits(digits)) => (Some(digits.as_str()), 0.0),
             Some(IrVpiConstant::Text(text)) => {
                 flags.push("LLG_VPI_OBJ_TEXT");
-                (c_string_literal(text), "0.0".to_owned())
+                (Some(text.as_str()), 0.0)
             }
-            // `{:e}` prints the shortest round-trip form, a valid C literal.
-            Some(IrVpiConstant::Real(value)) if value.is_finite() => {
-                ("NULL".to_owned(), format!("{value:e}"))
-            }
-            Some(IrVpiConstant::Real(_)) => ("NULL".to_owned(), "0.0".to_owned()),
-            None => ("NULL".to_owned(), "0.0".to_owned()),
+            Some(IrVpiConstant::Real(value)) if value.is_finite() => (None, *value),
+            Some(IrVpiConstant::Real(_)) | None => (None, 0.0),
         };
         let flags = if flags.is_empty() {
             "0u".to_owned()
@@ -855,56 +807,193 @@ pub(super) fn render_vpi_metadata(
             flags.join(" | ")
         };
         let (left, right) = entry.range.unwrap_or((0, 0));
-        let conns = if entry.conns.is_empty() {
-            "NULL".to_owned()
-        } else {
-            format!("llg_vpi_conns_{index}")
+        pack.symbol(entry.type_code);
+        pack.string(Some(&entry.name));
+        pack.string(Some(&display_name(&path)));
+        pack.string(entry.definition_name.as_deref());
+        pack.string(entry.file.as_deref());
+        pack.uint(u64::from(entry.line));
+        pack.uint(u64::from(entry.width));
+        pack.uint(u64::from(entry.signed) | u64::from(entry.real) << 1 | u64::from(entry.net) << 2);
+        pack.uint(row(parent_path.as_deref()));
+        pack.uint(entry.time_unit_fs);
+        pack.symbol(entry.subtype);
+        pack.symbol(&flags);
+        pack.int(left);
+        pack.int(right);
+        pack.uint(entry.dims.len() as u64);
+        for (left, right) in &entry.dims {
+            pack.int(i64::from(*left));
+            pack.int(i64::from(*right));
+        }
+        pack.uint(u64::from(entry.port_index));
+        pack.uint(row(entry.port_target.as_deref()));
+        pack.string(constant);
+        pack.uint(real_constant.to_bits());
+        pack.uint(entry.typespec.map_or(0, |typespec| typespec as u64 + 1));
+        pack.symbol(entry.detail);
+        pack.uint(entry.conns.len() as u64);
+        for conn in &entry.conns {
+            pack_conn(conn, indices, pack);
+        }
+        let (declaration, instance) = entry.activation.unwrap_or((0, 0));
+        pack.uint(u64::from(declaration));
+        pack.uint(u64::from(instance));
+        match (&entry.timing, &timing[index]) {
+            (Some(entry_timing), Some((ops, op_count))) => {
+                pack.uint(1);
+                pack.uint(*op_count as u64);
+                if let Some(ops) = ops {
+                    pack.reference(ops.clone());
+                }
+                pack.uint(entry_timing.declared.len() as u64);
+                for value in &entry_timing.declared {
+                    pack.int(*value);
+                }
+                pack.uint(u64::from(entry_timing.count));
+                pack.symbol(if entry_timing.polarity.is_empty() {
+                    "0"
+                } else {
+                    entry_timing.polarity
+                });
+                pack.symbol(if entry_timing.data_polarity.is_empty() {
+                    "0"
+                } else {
+                    entry_timing.data_polarity
+                });
+                pack.flag(entry_timing.has_ifnone);
+                pack.uint(entry_timing.delay.map_or(0, |entry| u64::from(entry) + 1));
+            }
+            _ => pack.uint(0),
+        }
+        pack.uint(
+            entry
+                .dynamic
+                .as_ref()
+                .map_or(0, |(_, _, shape)| *shape as u64 + 1),
+        );
+        pack.uint(entry.code.map_or(0, |code| u64::from(code) + 1));
+        match &entry.instance {
+            Some(instance) => {
+                pack.uint(1);
+                pack.string(instance.def_file.as_deref());
+                pack.uint(u64::from(instance.def_line));
+                pack.string(Some(&instance.library));
+                pack.string(Some(&instance.cell));
+                pack.string(instance.config.as_deref());
+                pack.symbol(instance.net_type);
+                pack.symbol(instance.unconnected_drive);
+                pack.flag(instance.cell_define);
+                pack.flag(instance.automatic);
+            }
+            None => pack.uint(0),
+        }
+        match entry.strength {
+            Some((strength0, strength1)) => {
+                pack.uint(1);
+                pack.symbol(strength0);
+                pack.symbol(strength1);
+            }
+            None => pack.uint(0),
+        }
+        // Pointers to model storage, in mask order. A sequential UDP's put
+        // record replaces any dynamic storage.
+        let present = |text: &str| (text != "NULL").then(|| text.to_owned());
+        let (storage, dependency) = entry
+            .dynamic
+            .as_ref()
+            .map_or((None, None), |(storage, dependency, _)| {
+                (present(storage), present(dependency))
+            });
+        let storage = match udp_puts[index] {
+            Some(record) => Some(format!("&llg_vpi_udp_puts[{record}]")),
+            None => storage,
         };
-        let (dims, dim_count) = if entry.dims.is_empty() {
-            ("NULL".to_owned(), 0)
-        } else {
-            (format!("llg_vpi_dims_{index}"), entry.dims.len())
-        };
-        out.push_str(&format!(
-            "    {{ .type = {}, .name = {}, .full_name = {}, .definition_name = {}, .file = {}, .line = {}, \
-.width = {}u, .is_signed = {}, .is_real = {}, .is_net = {}, .packed = {}, .real = {}, .parent = {}, \
-.time_unit_fs = {}ULL, .subtype = {}, .flags = {}, .left = {left}LL, .right = {right}LL, \
-.dims = {dims}, .dim_count = {dim_count}u, .port_index = {}u, .target = {target}, .net = {}, \
-.constant = {constant}, .real_constant = {real_constant}, .typespec = {}u, .detail = {}, \
-.event = {}, .conns = {conns}, .conn_count = {}u, .activation_declaration = {declaration}u, \
-.activation_instance = {instance}u, .timing = {}{}{dynamic}{definition} }},\n",
-            entry.type_code,
-            c_string_literal(&entry.name),
-            c_string_literal(&display_name(&path)),
-            optional(&entry.definition_name),
-            optional(&entry.file),
-            entry.line,
-            entry.width,
-            u8::from(entry.signed),
-            u8::from(entry.real),
-            u8::from(entry.net),
-            entry.packed,
-            entry.real_value,
-            parent,
-            entry.time_unit_fs,
-            entry.subtype,
-            flags,
-            entry.port_index,
-            entry.net_pointer,
-            entry.typespec.map_or(0, |typespec| typespec + 1),
-            entry.detail,
-            entry.event,
-            entry.conns.len(),
-            timing[index],
-            code_field(entry.code),
-        ));
+        let references = [
+            (REF_PACKED, present(&entry.packed)),
+            (REF_REAL, present(&entry.real_value)),
+            (REF_NET, present(&entry.net_pointer)),
+            (REF_EVENT, present(&entry.event)),
+            (REF_STORAGE, storage),
+            (REF_DEPENDENCY, dependency),
+        ];
+        let mut mask = 0;
+        for (bit, reference) in references {
+            if let Some(reference) = reference {
+                mask |= bit;
+                pack.reference(reference);
+            }
+        }
+        pack.uint(mask);
     }
-    out.push_str("};\n");
-    out.push_str(
-        "static const size_t llg_vpi_object_count = sizeof(llg_vpi_objects) / sizeof(llg_vpi_objects[0]);\n",
-    );
-    render_vpi_code(model, &indices, out);
-    udp_put_definition
+}
+
+/// One `llg_vpi_conn_t` of a packed object row.
+fn pack_conn(
+    conn: &IrVpiConn,
+    indices: &std::collections::HashMap<&str, usize>,
+    pack: &mut pack::Pack,
+) {
+    let object = |name: &str| indices.get(name).map(|row| *row as i64);
+    // (kind, const_type, object, offset, select_width, left, right)
+    let expression = ("LLG_VPI_ARG_EXPRESSION", "0", -1, 0, 0, 0, 0);
+    let reference = match &conn.reference {
+        IrVpiArgRef::Expression => expression,
+        IrVpiArgRef::Constant(kind) => ("LLG_VPI_ARG_CONSTANT", *kind, -1, 0, 0, 0, 0),
+        IrVpiArgRef::Object(name) => object(name).map_or(expression, |row| {
+            ("LLG_VPI_ARG_OBJECT", "0", row, 0, 0, 0, 0)
+        }),
+        IrVpiArgRef::Select {
+            object: name,
+            lsb,
+            width,
+            left,
+            right,
+        } => object(name).map_or(expression, |row| {
+            (
+                "LLG_VPI_ARG_SELECT",
+                "0",
+                row,
+                u64::from(*lsb),
+                *width,
+                *left,
+                *right,
+            )
+        }),
+        IrVpiArgRef::Element {
+            object: name,
+            index,
+        } => object(name).map_or(expression, |row| {
+            ("LLG_VPI_ARG_ELEMENT", "0", row, *index, 0, 0, 0)
+        }),
+    };
+    let (kind, const_type, row, offset, select_width, left, right) = reference;
+    pack.symbol(kind);
+    pack.symbol(const_type);
+    pack.int(row);
+    pack.uint(offset);
+    pack.uint(u64::from(select_width));
+    pack.int(left);
+    pack.int(right);
+    pack.uint(u64::from(conn.width));
+    pack.flag(conn.signed);
+    pack.uint(conn.code.map_or(0, |code| u64::from(code) + 1));
+    pack.symbol(if conn.direction == crate::sim::ir::IrVpiDirection::None {
+        "0"
+    } else {
+        conn.direction.c_code()
+    });
+    pack.string(conn.value.as_deref());
+    // A plain connection leaves role, edge and condition zero.
+    if conn.role == crate::sim::ir::IrVpiConnRole::Connection {
+        pack.symbol("0");
+        pack.uint(0);
+        pack.uint(0);
+    } else {
+        pack.symbol(conn.role.c_code());
+        pack.uint(u64::from(conn.edge));
+        pack.uint(conn.condition.map_or(0, |index| u64::from(index) + 1));
+    }
 }
 
 /// The `.code` initializer of a catalog row, connection or argument that
@@ -921,10 +1010,10 @@ fn code_field(code: Option<u32>) -> String {
 fn render_vpi_code(
     model: &IrModel,
     indices: &std::collections::HashMap<&str, usize>,
+    pack: &mut pack::Pack,
     out: &mut String,
 ) {
     use std::collections::HashMap;
-    use std::fmt::Write as _;
     let codes = model.vpi_code();
     if codes.is_empty() {
         out.push_str("static const llg_vpi_code_tables_t* const llg_vpi_code_tables = NULL;\n");
@@ -943,8 +1032,11 @@ fn render_vpi_code(
     let mut ranges = Vec::<(i64, i64)>::new();
     let mut range_index = HashMap::<(i64, i64), usize>::new();
     let mut spans = Vec::<(u32, u32, u32)>::new();
-    let mut rows = String::with_capacity(codes.len() * 72);
-    for code in codes {
+    // Lines, scopes and first children follow the row order closely, so
+    // they are packed as differences (`catalog_unpack_code`).
+    let mut previous_line = 0i64;
+    let mut previous_scope = 0i64;
+    for (row_index, code) in codes.iter().enumerate() {
         let span = code.span.map_or(0, |span| {
             spans.push(span);
             spans.len()
@@ -985,25 +1077,24 @@ fn render_vpi_code(
             -1
         };
         let scope = row(code.scope);
-        let _ = writeln!(
-            rows,
-            "    {{ {}, {}, {}, {}, {flags}, {}u, {}u, {}u, {object}, {}u, {}u, {}u, {data}u, {}u, {span}u }},",
-            code.type_code,
-            code.subtype,
-            code.role,
-            code.qualifier,
-            code.width,
-            code.file.map_or(0, |file| u64::from(file) + 1),
-            code.line,
-            scope + 1,
-            code.first,
-            code.count,
-            code.typespec.map_or(0, |typespec| typespec + 1),
-        );
+        pack.symbol(code.type_code);
+        pack.symbol(code.subtype);
+        pack.symbol(code.role);
+        pack.symbol(code.qualifier);
+        pack.symbol(&flags);
+        pack.uint(u64::from(code.width));
+        pack.uint(code.file.map_or(0, |file| u64::from(file) + 1));
+        pack.int(i64::from(code.line) - previous_line);
+        previous_line = i64::from(code.line);
+        pack.int(object);
+        pack.int(scope + 1 - previous_scope);
+        previous_scope = scope + 1;
+        pack.int(i64::from(code.first) - row_index as i64);
+        pack.uint(u64::from(code.count));
+        pack.uint(data as u64);
+        pack.uint(code.typespec.map_or(0, |typespec| typespec as u64 + 1));
+        pack.uint(span as u64);
     }
-    out.push_str("static const llg_vpi_code_t llg_vpi_code_rows[] = {\n");
-    out.push_str(&rows);
-    out.push_str("};\n");
     let list = |name: &str, items: Vec<String>, ty: &str, out: &mut String| {
         if items.is_empty() {
             return "NULL".to_owned();
@@ -1055,7 +1146,7 @@ fn render_vpi_code(
     );
     let (udps, udp_count) = render_vpi_udps(model, out);
     out.push_str(&format!(
-        "static const llg_vpi_code_tables_t llg_vpi_code_value = {{ llg_vpi_code_rows, {}u, \
+        "static const llg_vpi_code_tables_t llg_vpi_code_value = {{ NULL, {}u, \
 {texts}, {text_count}u, {files}, {file_count}u, {ranges}, {range_count}u, {spans}, {span_count}u, \
 {udps}, {udp_count}u }};\n\
 static const llg_vpi_code_tables_t* const llg_vpi_code_tables = &llg_vpi_code_value;\n",
@@ -1131,11 +1222,16 @@ llg_vpi_udp_directions_{index}, {}u, llg_vpi_udp_entries_{index}, llg_vpi_udp_li
     ("llg_vpi_udps".to_owned(), udps.len())
 }
 
-/// The delay records of the timing rows (`llg_vpi_timing_t`): the model
-/// values each row's delays live in, as `llg_sdf_op_t` operations on the
-/// path, check and gate pools, and its declared values. Returns the
-/// `.timing` initializer of every entry.
-fn render_vpi_timing(model: &IrModel, entries: &[Entry], out: &mut String) -> Vec<String> {
+/// The model values each timing row's delays live in (`llg_vpi_timing_t`
+/// ops), as `llg_sdf_op_t` operations on the path, check and gate pools.
+/// Emits the ops arrays and returns, per entry, the array's name (`None`
+/// without targets) and length; `None` for an entry without timing. The
+/// rest of a row's timing (declared values, polarity) is packed.
+fn render_vpi_timing(
+    model: &IrModel,
+    entries: &[Entry],
+    out: &mut String,
+) -> Vec<Option<(Option<String>, usize)>> {
     let row_starts = super::storage::path_row_starts(model);
     let check_starts = super::storage::timing_check_starts(model);
     let path_row = |set: u32, destination: u32, path: u32| {
@@ -1150,7 +1246,7 @@ fn render_vpi_timing(model: &IrModel, entries: &[Entry], out: &mut String) -> Ve
     let mut fields = Vec::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
         let Some(timing) = &entry.timing else {
-            fields.push("NULL".to_owned());
+            fields.push(None);
             continue;
         };
         // A target outside the model's pools (no such row) is left out:
@@ -1201,58 +1297,15 @@ fn render_vpi_timing(model: &IrModel, entries: &[Entry], out: &mut String) -> Ve
                 Some(format!("{{ {target}, .first = {limit}u }}"))
             })
             .collect::<Vec<_>>();
-        if !ops.is_empty() {
-            out.push_str(&format!(
-                "static const llg_sdf_op_t llg_vpi_ops_{index}[] = {{ {} }};\n",
-                ops.join(", ")
-            ));
-        }
-        if !timing.declared.is_empty() {
-            out.push_str(&format!(
-                "static const int64_t llg_vpi_declared_{index}[] = {{ {} }};\n",
-                timing
-                    .declared
-                    .iter()
-                    .map(|value| if *value == i64::MIN {
-                        "(-9223372036854775807LL - 1)".to_owned()
-                    } else {
-                        format!("{value}LL")
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+        if ops.is_empty() {
+            fields.push(Some((None, 0)));
+            continue;
         }
         out.push_str(&format!(
-            "static const llg_vpi_timing_t llg_vpi_timing_{index} = {{ .ops = {}, .op_count = {}u, \
-             .declared = {}, .declared_count = {}u, .count = {}u, .polarity = {}, \
-             .data_polarity = {}, .has_ifnone = {}, .delay = {}u }};\n",
-            if ops.is_empty() {
-                "NULL".to_owned()
-            } else {
-                format!("llg_vpi_ops_{index}")
-            },
-            ops.len(),
-            if timing.declared.is_empty() {
-                "NULL".to_owned()
-            } else {
-                format!("llg_vpi_declared_{index}")
-            },
-            timing.declared.len(),
-            timing.count,
-            if timing.polarity.is_empty() {
-                "0"
-            } else {
-                timing.polarity
-            },
-            if timing.data_polarity.is_empty() {
-                "0"
-            } else {
-                timing.data_polarity
-            },
-            u8::from(timing.has_ifnone),
-            timing.delay.map_or(0, |entry| u64::from(entry) + 1),
+            "static const llg_sdf_op_t llg_vpi_ops_{index}[] = {{ {} }};\n",
+            ops.join(", ")
         ));
-        fields.push(format!("&llg_vpi_timing_{index}"));
+        fields.push(Some((Some(format!("llg_vpi_ops_{index}")), ops.len())));
     }
     fields
 }
@@ -1639,7 +1692,11 @@ pub(super) fn render_vpi_compile_calls(model: &IrModel, out: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{arg_reference, member_tree, render_vpi_metadata, render_vpi_typespecs};
+    use super::pack::{Code, Rendered};
+    use super::{
+        arg_reference, member_tree, render_vpi_metadata, render_vpi_typespecs, IrVpiArgRef,
+        IrVpiConstant, IrVpiTiming,
+    };
     use crate::sim::ir::{
         IrModel, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
         IrVpiTypespecMember,
@@ -1762,21 +1819,20 @@ mod tests {
         });
         let mut out = String::new();
         let _ = render_vpi_metadata(&model, &Default::default(), &mut out);
+        let rendered = Rendered::parse(&out);
+        let objects = rendered.objects(rendered.object_count.expect("count"));
         let row = |name: &str| {
-            out.lines()
-                .find(|line| line.contains(&format!(".full_name = \"{name}\"")))
-                .unwrap_or_else(|| panic!("{name}: {out}"))
-                .to_owned()
+            objects
+                .iter()
+                .find(|object| object.full_name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("{name}: {objects:?}"))
         };
         let blk = row("tb.blk");
-        assert!(blk.contains("LLG_VPI_OBJ_ACTIVATION"), "{blk}");
-        assert!(
-            blk.contains(".activation_declaration = 7u, .activation_instance = 3u"),
-            "{blk}"
-        );
+        assert!(blk.flags.contains("LLG_VPI_OBJ_ACTIVATION"), "{blk:?}");
+        assert_eq!(blk.activation, (7, 3));
         let other = row("tb.other");
-        assert!(!other.contains("LLG_VPI_OBJ_ACTIVATION"), "{other}");
-        assert!(other.contains(".activation_declaration = 0u"), "{other}");
+        assert!(!other.flags.contains("LLG_VPI_OBJ_ACTIVATION"), "{other:?}");
+        assert_eq!(other.activation, (0, 0));
     }
 
     /// A generated primitive name keeps its hidden source-order key but
@@ -1805,8 +1861,16 @@ mod tests {
         });
         let mut out = String::new();
         let _ = render_vpi_metadata(&model, &Default::default(), &mut out);
-        assert!(out.contains(".full_name = \"tb.and$1\""), "{out}");
+        let rendered = Rendered::parse(&out);
+        assert_eq!(rendered.object_count, Some(3));
+        let objects = rendered.objects(3);
+        let names = objects
+            .iter()
+            .map(|object| object.full_name.as_deref().unwrap_or(""))
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["tb", "tb.and$1", "tb"]);
         assert!(!out.contains('\u{1e}'), "{out}");
+        assert!(!rendered.pool.contains(&0x1e), "{objects:?}");
     }
 
     #[test]
@@ -1897,33 +1961,293 @@ mod tests {
         model.vpi_code_files = vec!["t.sv".to_owned()];
         let mut out = String::new();
         let _ = render_vpi_metadata(&model, &Default::default(), &mut out);
+        let code = Rendered::parse(&out).code(4);
+        let row = |type_code: &str, subtype: &str, role: &str, flags: &str| Code {
+            type_code: type_code.to_owned(),
+            subtype: subtype.to_owned(),
+            role: role.to_owned(),
+            qualifier: "0".to_owned(),
+            flags: flags.to_owned(),
+            ..Code::default()
+        };
+        let add = Code {
+            width: 32,
+            file: 1,
+            line: 4,
+            object: -1,
+            scope: 1,
+            first: 1,
+            count: 2,
+            ..row("vpiOperation", "vpiAddOp", "0", "0u")
+        };
+        let a = Code {
+            object: 1,
+            data: 1,
+            ..row("0", "0", "vpiOperand", "LLG_VPI_CODE_ALIAS")
+        };
+        let two = Code {
+            width: 32,
+            object: -1,
+            data: 2,
+            ..row(
+                "vpiConstant",
+                "vpiDecConst",
+                "vpiOperand",
+                "LLG_VPI_CODE_SIGNED",
+            )
+        };
+        let again = Code {
+            object: 1,
+            data: 1,
+            ..row("0", "0", "0", "LLG_VPI_CODE_ALIAS")
+        };
+        assert_eq!(code, [add, a, two, again]);
         assert!(
             out.contains(
-                "{ vpiOperation, vpiAddOp, 0, 0, 0u, 32u, 1u, 4u, -1, 1u, 1u, 2u, 0u, 0u, 0u },"
+                "{ NULL, 4u, llg_vpi_code_texts, 2u, llg_vpi_code_files, 1u, NULL, 0u, NULL, 0u, NULL, 0u }"
             ),
             "{out}"
         );
         assert!(
-            out.contains(
-                "{ 0, 0, vpiOperand, 0, LLG_VPI_CODE_ALIAS, 0u, 0u, 0u, 1, 0u, 0u, 0u, 1u, 0u, 0u },"
-            ),
-            "{out}"
-        );
-        assert!(
-            out.contains("{ vpiConstant, vpiDecConst, vpiOperand, 0, LLG_VPI_CODE_SIGNED, 32u, 0u, 0u, -1, 0u, 0u, 0u, 2u, 0u, 0u },"),
+            out.contains("static llg_vpi_model_object_t llg_vpi_objects[2];\n"),
             "{out}"
         );
         assert!(
             out.contains(
-                "{ 0, 0, 0, 0, LLG_VPI_CODE_ALIAS, 0u, 0u, 0u, 1, 0u, 0u, 0u, 1u, 0u, 0u },"
+                "static const llg_vpi_packed_t* const llg_vpi_packed = &llg_vpi_packed_value;\n"
             ),
             "{out}"
         );
-        assert!(
-            out.contains(
-                "{ llg_vpi_code_rows, 4u, llg_vpi_code_texts, 2u, llg_vpi_code_files, 1u, NULL, 0u, NULL, 0u, NULL, 0u }"
-            ),
-            "{out}"
+    }
+
+    /// Every field of a catalog row survives packing: the decoder (the C
+    /// `pack_objects` layout, mirrored by `Rendered::objects`) reads back
+    /// what the entries hold, references in mask order.
+    #[test]
+    fn packed_object_rows_round_trip_every_field() {
+        use super::{pack, pack_objects, Entry};
+        use crate::sim::ir::{
+            IrSdfTarget, IrVpiConn, IrVpiConnRole, IrVpiDirection, IrVpiInstance,
+        };
+        let mut top = Entry::scope("tb".to_owned(), "tb".to_owned(), "vpiModule");
+        top.top = true;
+        top.instance = Some(IrVpiInstance {
+            def_file: Some("t.sv".to_owned()),
+            def_line: 3,
+            library: "work".to_owned(),
+            config: None,
+            cell: "tb".to_owned(),
+            cell_define: true,
+            automatic: false,
+            net_type: "vpiWire",
+            unconnected_drive: "vpiHighZ",
+        });
+        top.file = Some("t.sv".to_owned());
+        top.line = 3;
+        top.time_unit_fs = 1_000_000;
+        let mut mem = Entry::scope("tb\u{1f}mem".to_owned(), "mem".to_owned(), "vpiRegArray");
+        mem.dims = vec![(0, 7), (-3, i32::MAX)];
+        mem.range = Some((i64::MIN, i64::MAX));
+        mem.width = 9;
+        mem.signed = true;
+        mem.net = true;
+        mem.packed = "&G_mem".to_owned();
+        mem.net_pointer = "&g_net_1".to_owned();
+        mem.subtype = "vpiReg";
+        mem.typespec = Some(4);
+        mem.constant = Some(IrVpiConstant::Text("caf\u{e9} \"q\"??".to_owned()));
+        mem.qualifiers.scalared = true;
+        let mut assign = Entry::scope(
+            "tb\u{1f}\u{1e}1".to_owned(),
+            "assign".to_owned(),
+            "vpiContAssign",
+        );
+        assign.unnamed = true;
+        assign.port_target = Some("tb\u{1f}mem".to_owned());
+        assign.strength = Some(("vpiStrongDrive", "vpiPullDrive"));
+        assign.code = Some(41);
+        assign.detail = "vpiAssignStmt";
+        assign.conns = vec![
+            IrVpiConn {
+                reference: IrVpiArgRef::Select {
+                    object: "tb\u{1f}mem".to_owned(),
+                    lsb: 3,
+                    width: 2,
+                    left: 4,
+                    right: 3,
+                },
+                width: 2,
+                signed: true,
+                direction: IrVpiDirection::Output,
+                role: IrVpiConnRole::TchkRef,
+                edge: 0x12,
+                condition: Some(1),
+                ..IrVpiConn::default()
+            },
+            IrVpiConn {
+                reference: IrVpiArgRef::Constant("vpiBinaryConst"),
+                width: 4,
+                value: Some("10xz".to_owned()),
+                code: Some(7),
+                ..IrVpiConn::default()
+            },
+            IrVpiConn {
+                reference: IrVpiArgRef::Object("tb\u{1f}gone".to_owned()),
+                ..IrVpiConn::default()
+            },
+        ];
+        assign.timing = Some(IrVpiTiming {
+            targets: vec![(0, IrSdfTarget::Gate { slot: 0 })],
+            declared: vec![i64::MIN, 0, 5],
+            count: 3,
+            polarity: "vpiPositive",
+            data_polarity: "",
+            has_ifnone: true,
+            delay: Some(9),
+        });
+        let mut real = Entry::scope("tb\u{1f}r".to_owned(), "r".to_owned(), "vpiParameter");
+        real.constant = Some(IrVpiConstant::Real(-1.25e-300));
+        real.activation = Some((2, 5));
+        real.real_value = "&G_r".to_owned();
+        real.event = "&G_e".to_owned();
+        real.dynamic = Some(("&G_s".to_owned(), "NULL".to_owned(), 6));
+        let entries = vec![top, mem, assign, real];
+        let indices = super::catalog_indices(&entries);
+        let timing = vec![
+            None,
+            None,
+            Some((Some("llg_vpi_ops_2".to_owned()), 1)),
+            None,
+        ];
+        let udp_puts = vec![None, None, None, Some(0)];
+        let mut packer = pack::Pack::default();
+        pack_objects(&entries, &indices, &timing, &udp_puts, &mut packer);
+        let objects = packer.take_stream();
+        let mut out = String::new();
+        packer.render(&objects, &Vec::new(), "llg_vpi_packed_value", &mut out);
+        let rows = Rendered::parse(&out).objects(4);
+        let symbol = |text: &str| text.to_owned();
+        let some = |text: &str| Some(text.to_owned());
+
+        assert_eq!(rows[0].type_code, "vpiModule");
+        assert_eq!(rows[0].flags, "LLG_VPI_OBJ_TOP");
+        assert_eq!(rows[0].file, some("t.sv"));
+        assert_eq!(
+            (rows[0].line, rows[0].time_unit_fs, rows[0].parent),
+            (3, 1_000_000, 0)
+        );
+        assert_eq!(
+            rows[0].instance,
+            Some(pack::Instance {
+                def_file: some("t.sv"),
+                def_line: 3,
+                library: some("work"),
+                cell: some("tb"),
+                config: None,
+                net_type: symbol("vpiWire"),
+                unconnected_drive: symbol("vpiHighZ"),
+                cell_define: 1,
+                automatic: 0,
+            })
+        );
+
+        let mem = &rows[1];
+        assert_eq!(mem.full_name, some("tb.mem"));
+        assert_eq!(mem.parent, 1);
+        assert_eq!((mem.width, mem.bits), (9, 0b101));
+        assert_eq!((mem.left, mem.right), (i64::MIN, i64::MAX));
+        assert_eq!(mem.dims, [(0, 7), (-3, i64::from(i32::MAX))]);
+        assert_eq!(
+            mem.flags,
+            "LLG_VPI_OBJ_RANGE | LLG_VPI_OBJ_SCALARED | LLG_VPI_OBJ_TEXT"
+        );
+        assert_eq!(mem.constant, some("caf\u{e9} \"q\"??"));
+        assert_eq!((mem.subtype.as_str(), mem.typespec), ("vpiReg", 5));
+        assert_eq!(
+            mem.refs,
+            [(1, "&G_mem".to_owned()), (4, "&g_net_1".to_owned())]
+        );
+
+        let assign = &rows[2];
+        assert_eq!(assign.name, some("assign"));
+        assert_eq!(assign.full_name, some("tb"));
+        assert_eq!(assign.flags, "LLG_VPI_OBJ_UNNAMED");
+        assert_eq!((assign.target, assign.code), (2, 42));
+        assert_eq!(assign.detail, "vpiAssignStmt");
+        assert_eq!(
+            assign.strength,
+            Some((symbol("vpiStrongDrive"), symbol("vpiPullDrive")))
+        );
+        assert_eq!(
+            assign.conns,
+            [
+                pack::Conn {
+                    kind: symbol("LLG_VPI_ARG_SELECT"),
+                    const_type: symbol("0"),
+                    object: 1,
+                    offset: 3,
+                    select_width: 2,
+                    left: 4,
+                    right: 3,
+                    width: 2,
+                    signed: 1,
+                    code: 0,
+                    direction: symbol("vpiOutput"),
+                    value: None,
+                    role: symbol("LLG_VPI_ROLE_TCHK_REF"),
+                    edge: 0x12,
+                    condition: 2,
+                },
+                pack::Conn {
+                    kind: symbol("LLG_VPI_ARG_CONSTANT"),
+                    const_type: symbol("vpiBinaryConst"),
+                    object: -1,
+                    width: 4,
+                    code: 8,
+                    direction: symbol("0"),
+                    value: some("10xz"),
+                    role: symbol("0"),
+                    ..pack::Conn::default()
+                },
+                pack::Conn {
+                    kind: symbol("LLG_VPI_ARG_EXPRESSION"),
+                    const_type: symbol("0"),
+                    object: -1,
+                    direction: symbol("0"),
+                    role: symbol("0"),
+                    ..pack::Conn::default()
+                },
+            ]
+        );
+        assert_eq!(
+            assign.timing,
+            Some(pack::Timing {
+                op_count: 1,
+                ops: some("llg_vpi_ops_2"),
+                declared: vec![i64::MIN, 0, 5],
+                count: 3,
+                polarity: symbol("vpiPositive"),
+                data_polarity: symbol("0"),
+                has_ifnone: 1,
+                delay: 10,
+            })
+        );
+        assert!(assign.refs.is_empty());
+
+        let real = &rows[3];
+        assert_eq!(real.real_constant.to_bits(), (-1.25e-300f64).to_bits());
+        assert_eq!(real.constant, None);
+        assert_eq!(real.activation, (2, 5));
+        assert_eq!(real.shape, 7);
+        assert_eq!(real.flags, "LLG_VPI_OBJ_ACTIVATION | LLG_VPI_OBJ_DYNAMIC");
+        // A sequential UDP's put record replaces the dynamic storage.
+        assert_eq!(
+            real.refs,
+            [
+                (2, "&G_r".to_owned()),
+                (8, "&G_e".to_owned()),
+                (16, "&llg_vpi_udp_puts[0]".to_owned())
+            ]
         );
     }
 }
