@@ -145,6 +145,9 @@ fn run_time_member_indices_select_native_record_elements() {
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select", expected, &[], &[]);
     sim_cli::run_case_backend_parity(SUITE, "member_select_limit", "xy []\n", &[], &[]);
+    let nested =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_nested.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_member_select_nested", nested, &[], &[]);
     sim_cli::reject_case_with_args(
         SUITE,
         "bad_member_select_limit",
@@ -440,7 +443,7 @@ fn container_elements_hold_records_with_container_members() {
     sim_cli::reject_case(
         SUITE,
         "bad_record_element_member_context",
-        "queue or dynamic-array member `q` of a container record element is only supported in assignment, call and system-task statements and whole-element copies",
+        "an expression that changes a queue or dynamic-array member of a container record element in `tb` is only supported as an assignment, call or system-task statement",
     );
     sim_cli::reject_case(
         SUITE,
@@ -449,9 +452,23 @@ fn container_elements_hold_records_with_container_members() {
     );
     sim_cli::reject_case(
         SUITE,
+        "bad_record_element_leaf_nba",
+        "a nonblocking assignment to a member of a record element in `tb` is not supported; assign the whole element",
+    );
+    sim_cli::reject_case(
+        SUITE,
         "bad_record_element_member_ref",
         "a queue or dynamic-array member of a container record element as the ref actual of `q` in `tb` is not supported",
     );
+}
+
+#[test]
+fn container_element_members_are_read_in_conditions_loops_and_initializers() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_007/record_element_member_contexts.out"
+    );
+    sim_cli::run_case_backend_parity(SUITE, "record_element_member_contexts", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "record_element_member_contexts", expected);
 }
 
 #[test]
@@ -472,4 +489,46 @@ fn string_cases_nested_member_arrays_and_call_result_members() {
         include_str!("../fixtures/sim/feature_completion/sim_007/native_record_selects.out");
     sim_cli::run_case_backend_parity(SUITE, "native_record_selects", expected, &[], &[]);
     sim_cli::run_case_after_db_drop(SUITE, "native_record_selects", expected);
+}
+
+#[test]
+fn multidimensional_native_arrays_select_elements_and_rows() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/native_multidim.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_multidim", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_multidim", expected);
+}
+
+#[test]
+fn multidimensional_native_arrays_ignore_invalid_indices() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_multidim_invalid.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_multidim_invalid", expected, &[], &[]);
+}
+
+#[test]
+fn multidimensional_native_arrays_take_nonblocking_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_multidim_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_multidim_nba", expected, &[], &[]);
+}
+
+#[test]
+fn multidimensional_native_row_boundaries_are_rejected_explicitly() {
+    sim_cli::reject_case(
+        SUITE,
+        "bad_multidim_row_equality",
+        "equality of a row or slice of a fixed array of strings, handles or native records in `tb` is not supported; compare whole arrays or elements",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_multidim_row_ref",
+        "ref actual of container formal `r` in `tb` must be a container variable of the same type",
+    );
+}
+
+#[test]
+fn delayed_nonblocking_writes_reach_fixed_native_arrays() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_delayed_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_delayed_nba", expected, &[], &[]);
 }

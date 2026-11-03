@@ -178,15 +178,7 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         node: NodeId,
     ) -> Result<Option<IrPlusArgTarget>, String> {
-        let container = match self.kind(node) {
-            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => {
-                self.container_of_select(node, *base)
-            }
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
-                self.container_of_select(node, *base)
-            }
-            _ => None,
-        };
+        let container = self.element_select(node).map(|(container, _)| container);
         let Some(container) = container.map(|container| container.ir) else {
             return Ok(None);
         };
@@ -630,15 +622,9 @@ impl Codegen<'_> {
         node: NodeId,
         tag: &str,
     ) -> Result<Option<(IrFileInputTarget, Option<StagedInput>)>, String> {
-        let selected = match self.kind(node) {
-            NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
-                .container_of_select(node, *base)
-                .map(|container| (container.ir, *index)),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
-                .container_of_select(node, *base)
-                .map(|container| (container.ir, indices[0])),
-            _ => None,
-        };
+        let selected = self
+            .element_select(node)
+            .map(|(container, index)| (container.ir, index));
         let Some((container, index)) = selected else {
             return Ok(None);
         };

@@ -512,7 +512,14 @@ void llg_chandle_nba_after(void** target, void* value, uint64_t ticks,
 void llg_dyn_value_nba(llg_dyn_value_array_t* target, sv4_t dst_start,
                        const llg_dyn_value_array_t* src, sv4_t src_start,
                        uint64_t count, int whole) {
-    llg_nba_t* n = new_nba(0);
+    llg_dyn_value_nba_after(target, dst_start, src, src_start, count, whole, 0);
+}
+
+void llg_dyn_value_nba_after(llg_dyn_value_array_t* target, sv4_t dst_start,
+                             const llg_dyn_value_array_t* src,
+                             sv4_t src_start, uint64_t count, int whole,
+                             uint64_t ticks) {
+    llg_nba_t* n = new_nba(ticks);
     if (!n) return;
     llg_dyn_value_array_t* payload = (llg_dyn_value_array_t*)llg_checked_calloc(
         1, sizeof(*payload), "nonblocking array value");

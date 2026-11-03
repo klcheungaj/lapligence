@@ -261,15 +261,6 @@ impl<'a> Codegen<'a> {
                 ));
             }
         }
-        let nested_runtime_dimension = dimensions
-            .iter()
-            .skip(1)
-            .any(|dimension| dimension.left.is_none() || dimension.right.is_none());
-        if nested_runtime_dimension && dimension_node.is_some() && known_dimension != Some(1) {
-            return Err(format!(
-                "{name} cannot select a nested runtime dimension in `{path}`"
-            ));
-        }
         let selected = known_dimension
             .and_then(|index| usize::try_from(index - 1).ok())
             .and_then(|index| dimensions.get(index).copied());
@@ -290,6 +281,17 @@ impl<'a> Codegen<'a> {
                     return Ok(Self::query_integer(value));
                 }
             }
+        }
+        // A fixed dimension selected by a constant is answered above, even
+        // below a runtime dimension or above a string element.
+        let nested_runtime_dimension = dimensions
+            .iter()
+            .skip(1)
+            .any(|dimension| dimension.left.is_none() || dimension.right.is_none());
+        if nested_runtime_dimension && dimension_node.is_some() && known_dimension != Some(1) {
+            return Err(format!(
+                "{name} cannot select a nested runtime dimension in `{path}`"
+            ));
         }
         let kind = match name {
             "$left" => IrArrayQueryKind::Left,

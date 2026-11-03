@@ -5027,3 +5027,27 @@ fn s06_d1_nested_element_invalid_index() {
         include_str!("fixtures/sim/lrm_decisions/S06-D1_nested_element_invalid_index.out"),
     );
 }
+
+#[test]
+fn s07_d1_multidim_native_invalid_index() {
+    run_decision(
+        "S07-D1_multidim_native_invalid_index",
+        include_str!("fixtures/sim/lrm_decisions/S07-D1_multidim_native_invalid_index.out"),
+    );
+}
+
+#[test]
+fn s07_d2_multidim_native_pattern_format() {
+    run_decision(
+        "S07-D2_multidim_native_pattern_format",
+        include_str!("fixtures/sim/lrm_decisions/S07-D2_multidim_native_pattern_format.out"),
+    );
+}
+
+#[test]
+fn s07_d3_comb_reads_element_member() {
+    run_decision(
+        "S07-D3_comb_reads_element_member",
+        include_str!("fixtures/sim/lrm_decisions/S07-D3_comb_reads_element_member.out"),
+    );
+}

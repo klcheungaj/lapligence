@@ -1117,6 +1117,48 @@ impl EmitCtx<'_, '_> {
     }
 
     pub(super) fn lower_foreach(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        // A queue or dynamic-array member of a container record element is
+        // iterated over a copy made when the loop starts. The copy is the
+        // loop's array only: the body names the element again and stages
+        // its own copies.
+        let array_declared = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Foreach {
+                array: Some(array), ..
+            }) => self.cg.container_globals.contains_key(array),
+            _ => true,
+        };
+        if !array_declared {
+            let expressions = self
+                .cg
+                .node(h)
+                .children
+                .iter()
+                .copied()
+                .filter(|child| matches!(self.cg.kind(*child), NodeKind::Expr(_)))
+                .collect::<Vec<_>>();
+            for expression in expressions {
+                if let Some(mut before) =
+                    self.cg.stage_expression_members(&self.path, expression)?
+                {
+                    let staged = self.cg.staged_element_member(expression);
+                    self.cg.end_element_member_staging();
+                    if let Some(staged) = staged {
+                        before.extend(
+                            self.lower_foreach_loops(h, Some(ContainerInfo { ir: staged }))?,
+                        );
+                        return Ok(vec![IrStmt::Block(before)]);
+                    }
+                }
+            }
+        }
+        self.lower_foreach_loops(h, None)
+    }
+
+    fn lower_foreach_loops(
+        &mut self,
+        h: NodeId,
+        staged: Option<ContainerInfo>,
+    ) -> Result<Vec<IrStmt>, String> {
         let (array, vars, dimensions, body) = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Foreach {
                 array,
@@ -1245,11 +1287,8 @@ impl EmitCtx<'_, '_> {
             return Ok(vec![IrStmt::Block(declarations)]);
         }
 
-        let Some(container) = self
-            .cg
-            .container_globals
-            .get(&array)
-            .cloned()
+        let Some(container) = staged
+            .or_else(|| self.cg.container_globals.get(&array).cloned())
             .or_else(|| self.cg.container_of_select(h, array))
         else {
             return Err(format!(

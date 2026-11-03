@@ -74,8 +74,9 @@ unknown: a known packed mismatch dominates, strings compare bytes, handles
 identities and reals numerically; `llg_{dyn,queue}[_value]_equal` compare
 whole containers element-wise. `llg_dyn_value_copy_range` and
 `llg_dyn_value_merge` serve fixed-array views (slices, ambiguous
-conditionals). A descriptor-array NBA (`llg_dyn_value_nba`, `is_values`)
-owns a deep copy of its payload from issue to commit or cancellation.
+conditionals). A descriptor-array NBA (`llg_dyn_value_nba`, delayed by
+`llg_dyn_value_nba_after`, `is_values`) owns a deep copy of its payload from
+issue to commit or cancellation.
 `llg_value_item_{to,from}_{dyn,queue,dyn_value,queue_value}` move a record's
 queue or dynamic-array member between its nested slot in a value (null when
 empty) and a standalone container; they never notify the slot's owner.

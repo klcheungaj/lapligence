@@ -284,15 +284,20 @@ Containers never travel as `IrFixedValue`.
 
 ## Fixed-array views, native tagged unions and native bindings (SIM-007)
 
-A one-dimensional fixed array of strings, handles or native records is an
-`IrContainer` of kind `Dynamic` with `initial_size` set: storage is created at
-the declared size and declared indices are normalized to storage positions at
-lowering (`fixed_view_ranges`). Whole-array `==`/`!=`/`===`/`!==` is
+A fixed array of strings, handles or native records is an `IrContainer` of
+kind `Dynamic` with `initial_size` set: storage is created at the declared
+size and declared indices are normalized to storage positions at lowering
+(`fixed_view_ranges`). A multidimensional one keeps its cells in row-major
+order (`fixed_view_dims`): an element select of every dimension is one
+storage position (-1 when any index is outside its own dimension, X bits kept)
+and a row select is the contiguous run of cells below it, so rows reuse the
+slice forms. Whole-array `==`/`!=`/`===`/`!==` is
 `IrContainerExpr::Equal` (element-wise; sizes must match). Slice reads and
 writes are `IrContainerStmt::CopyRange`, ambiguous conditionals
 `IrContainerStmt::Merge` (elements merge leaf by leaf: equal leaves survive,
-others take their default), and untimed NBAs `IrContainerStmt::Nonblocking`, which
-copies the source at issue and commits at NBA time. The legacy emitter
+others take their default), and NBAs `IrContainerStmt::Nonblocking`, which
+copies the source and evaluates its optional intra-assignment delay at issue
+and commits at NBA time of the current or delayed step. The legacy emitter
 rejects `CopyRange`, `Merge` and `Nonblocking`.
 
 A tagged union with string, real, record or class-handle members in a

@@ -174,8 +174,12 @@ temporaries get companions, filled after `GetValue` and copied back before
 an assignment, call or system-task statement naming an element's member
 stages it in a lexical container (`stage_element_members`), copied out before
 the statement and back after it when the statement can change it, so every
-container operation applies unchanged. Associative members and other
-contexts reject explicitly. A read-modify-write of one
+container operation applies unchanged. An expression outside such a
+statement (a condition, loop bound, `foreach` array, declaration initializer
+or timed assignment value) reads the member from a copy made before each
+evaluation (`stage_expression_members`, an `IrExprKind::Sequence`), gated by
+`element_staging_possible` so other designs pay no scan; such an expression
+that would change the member rejects, as do associative members. A read-modify-write of one
 element (`c[k] op= v`, `c[k]++`) needs an index free of side effects; an
 implicit conversion around a container index is stripped so X/Z bits reach the
 runtime's invalid-index check. Reject `ref` container formals (SIM-008), fork

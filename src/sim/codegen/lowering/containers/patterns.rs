@@ -16,10 +16,20 @@ impl<'a> Codegen<'a> {
             ));
         };
         if let Some(dimensions) = self.fixed_view_dims.get(&container).cloned() {
-            // A multidimensional class property: its nested positional
-            // pattern lists the cells in declaration (row-major) order.
+            // A multidimensional view: its nested pattern lists the cells in
+            // declaration (row-major) order.
+            let element = descriptor.and_then(|descriptor| match &descriptor.shape {
+                TypeShape::FixedArray { element, .. } => Some(element.as_ref().clone()),
+                _ => None,
+            });
             let mut cells = Vec::new();
-            self.flatten_multidimensional_pattern(path, &dimensions, operands, &mut cells)?;
+            self.flatten_multidimensional_pattern(
+                path,
+                &dimensions,
+                operands,
+                element.as_ref(),
+                &mut cells,
+            )?;
             return self.lower_container_source_values(path, container, cells);
         }
         let kind = self.model.containers[container].kind.clone();
@@ -33,43 +43,130 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// The cells of a positional pattern over `dimensions`, one nested
-    /// pattern per dimension, in row-major order (IEEE 1800-2009 10.9.1).
+    /// The cells of a pattern over `dimensions`, one nested pattern per
+    /// dimension, in row-major order (IEEE 1800-2009 10.9.1). A level is
+    /// positional (one item per index) or keyed: index keys name declared
+    /// indices of that dimension, and a `default:` or type-key value that
+    /// is not itself a pattern fills every cell below the index it covers.
     fn flatten_multidimensional_pattern(
         &mut self,
         path: &str,
         dimensions: &[(i32, i32)],
         operands: Vec<NodeId>,
+        element: Option<&TypeDescriptor>,
         cells: &mut Vec<NodeId>,
     ) -> Result<(), String> {
         let unsupported = || {
             format!(
-                "a multidimensional class property in `{path}` takes only nested positional assignment patterns with one item per index (SIM-011)"
+                "a multidimensional fixed array in `{path}` takes only nested assignment patterns whose items are elements or patterns"
             )
         };
         let Some(((left, right), inner)) = dimensions.split_first() else {
             return Err(unsupported());
         };
         let extent = (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1;
-        if u64::try_from(operands.len()).ok() != Some(extent)
-            || operands.iter().any(|operand| {
-                matches!(
-                    self.kind(*operand),
-                    NodeKind::Expr(ExprKind::TaggedPattern { .. })
-                )
-            })
-        {
-            return Err(unsupported());
+        let tagged = operands.iter().any(|operand| {
+            matches!(
+                self.kind(*operand),
+                NodeKind::Expr(ExprKind::TaggedPattern { .. })
+            )
+        });
+        // Each index of this dimension with its item and whether the item
+        // fills every cell below it (a default or type-key value).
+        let mut items = Vec::new();
+        if tagged {
+            let mut explicit = Vec::<(i128, NodeId)>::new();
+            let mut typed = None;
+            let mut default = None;
+            for operand in operands {
+                let NodeKind::Expr(ExprKind::TaggedPattern {
+                    key,
+                    key_type,
+                    value,
+                    ..
+                }) = self.kind(operand)
+                else {
+                    return Err(format!(
+                        "mixed positional and keyed assignment pattern in `{path}` is not supported"
+                    ));
+                };
+                let (key, key_type, value) = (key.clone(), key_type.clone(), *value);
+                let key = key.ok_or_else(unsupported)?;
+                let value = value.ok_or_else(unsupported)?;
+                if key == "default" {
+                    default = Some(value);
+                } else if let Some(index) = self.assignment_pattern_index_key(path, operand)? {
+                    let (left, right) = (i128::from(*left), i128::from(*right));
+                    if index < left.min(right) || index > left.max(right) {
+                        return Err(format!(
+                            "fixed-array assignment pattern index `{key}` is outside the declared range in `{path}`"
+                        ));
+                    }
+                    let offset = if left <= right {
+                        index - left
+                    } else {
+                        left - index
+                    };
+                    if explicit.iter().any(|(previous, _)| *previous == offset) {
+                        return Err(format!(
+                            "duplicate fixed-array assignment pattern index `{key}` in `{path}`"
+                        ));
+                    }
+                    explicit.push((offset, value));
+                } else if let Some(key_type) = key_type {
+                    let matches = element.is_some_and(|element| {
+                        super::super::collection::pattern_key_matches_type_descriptor(
+                            &key_type,
+                            element,
+                            element.two_state,
+                        )
+                    });
+                    if matches {
+                        typed = Some(value);
+                    }
+                } else {
+                    return Err(unsupported());
+                }
+            }
+            for offset in 0..i128::from(extent) {
+                let item = explicit
+                    .iter()
+                    .find(|(index, _)| *index == offset)
+                    .map(|(_, value)| (*value, false))
+                    .or(typed.map(|value| (value, true)))
+                    .or(default.map(|value| (value, true)))
+                    .ok_or_else(|| {
+                        format!(
+                            "fixed-array assignment pattern does not cover every index in `{path}`"
+                        )
+                    })?;
+                items.push(item);
+            }
+        } else {
+            if u64::try_from(operands.len()).ok() != Some(extent) {
+                return Err(unsupported());
+            }
+            items.extend(operands.into_iter().map(|operand| (operand, false)));
         }
         if inner.is_empty() {
-            cells.extend(operands);
+            cells.extend(items.into_iter().map(|(value, _)| value));
             return Ok(());
         }
-        for operand in operands {
-            let row = self
-                .assignment_pattern_operands(path, operand)?
-                .ok_or_else(unsupported)?;
-            self.flatten_multidimensional_pattern(path, inner, row, cells)?;
+        let below = inner
+            .iter()
+            .map(|(left, right)| (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
+            .product::<u64>();
+        for (value, fills) in items {
+            match self.assignment_pattern_operands(path, value)? {
+                Some(row) => {
+                    self.flatten_multidimensional_pattern(path, inner, row, element, cells)?
+                }
+                None if fills => {
+                    let below = usize::try_from(below).map_err(|_| unsupported())?;
+                    cells.extend(std::iter::repeat_n(value, below));
+                }
+                None => return Err(unsupported()),
+            }
         }
         Ok(())
     }

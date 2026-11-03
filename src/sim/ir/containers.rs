@@ -1,6 +1,6 @@
 //! Dynamically sized unpacked container storage and operations.
 
-use super::{IrChandleExpr, IrExpr, IrObjectType, IrStringExpr, IrValidationError};
+use super::{IrChandleExpr, IrDelay, IrExpr, IrObjectType, IrStringExpr, IrValidationError};
 
 /// Owned value shape used by a resizable container.
 ///
@@ -657,17 +657,19 @@ pub enum IrContainerStmt {
         dst: usize,
         src: usize,
     },
-    /// Untimed nonblocking write to persistent descriptor-backed array
-    /// storage: the whole of `src` (`dst_start` absent), or `count` source
-    /// elements from `src_start` written from storage position `dst_start`.
-    /// Source elements and the destination position are captured at issue
-    /// (SV 10.4.2).
+    /// Nonblocking write to persistent descriptor-backed array storage: the
+    /// whole of `src` (`dst_start` absent), or `count` source elements from
+    /// `src_start` written from storage position `dst_start`. Source
+    /// elements, the destination position and the delay are captured at
+    /// issue; the write commits in the NBA region `delay` ticks later
+    /// (now when absent, SV 10.4.2).
     Nonblocking {
         target: usize,
         dst_start: Option<IrExpr>,
         src: usize,
         src_start: IrExpr,
         count: u64,
+        delay: Option<IrDelay>,
     },
     /// Ambiguous-predicate conditional merge of two containers of `dst`'s
     /// kind and element type into `dst` (SV 11.4.11): elements merge leaf by
@@ -1723,6 +1725,7 @@ impl IrContainerStmt {
                 src,
                 src_start,
                 count,
+                ..
             } => {
                 let target = container_kind(model, *target, None)?;
                 let src = container_kind(model, *src, None)?;
@@ -2732,12 +2735,16 @@ impl IrContainerStmt {
             Self::Nonblocking {
                 dst_start,
                 src_start,
+                delay,
                 ..
             } => {
                 if let Some(dst_start) = dst_start {
                     visit(dst_start);
                 }
                 visit(src_start);
+                if let Some(IrDelay::Runtime { value, .. }) = delay {
+                    visit(value);
+                }
             }
             Self::Copy { .. }
             | Self::Merge { .. }
@@ -2849,12 +2856,16 @@ impl IrContainerStmt {
             Self::Nonblocking {
                 dst_start,
                 src_start,
+                delay,
                 ..
             } => {
                 if let Some(dst_start) = dst_start {
                     visit(dst_start);
                 }
                 visit(src_start);
+                if let Some(IrDelay::Runtime { value, .. }) = delay {
+                    visit(value);
+                }
             }
             Self::Copy { .. }
             | Self::Merge { .. }

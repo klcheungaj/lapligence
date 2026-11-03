@@ -1,6 +1,6 @@
-// SIM-007 boundary: a queue member of a queue's record element is staged
-// around assignment, call and system-task statements only; an `if`
-// condition (or a loop header) that names it is rejected explicitly.
+// SIM-007 boundary: a queue member of a queue's record element is read from
+// a copy in a condition or loop header, but an `if` condition that changes
+// it (`pop_back`) would change only the copy, so it is rejected explicitly.
 module tb;
     typedef struct { string s; int q[$]; } rec_t;
     rec_t r;
@@ -8,7 +8,7 @@ module tb;
     initial begin
         r.q = '{1, 2};
         list.push_back(r);
-        if (list[0].q.size() > 1) $display("two");
+        if (list[0].q.pop_back() > 1) $display("two");
         $finish(0);
     end
 endmodule

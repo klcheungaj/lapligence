@@ -189,7 +189,7 @@ impl<'a> Codegen<'a> {
         decl_value_to_const(Val::Bits(value))
     }
 
-    fn collect_unpacked_aggregate_decl_init(
+    pub(super) fn collect_unpacked_aggregate_decl_init(
         &mut self,
         path: &str,
         object: NodeId,

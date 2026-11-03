@@ -174,16 +174,7 @@ impl Codegen<'_> {
                 .ok_or_else(|| format!("container `{name}` has no recursive type descriptor"))?;
             match &descriptor.shape {
                 TypeShape::Container { element, .. } => lower_container_element(element)?,
-                TypeShape::FixedArray {
-                    dimensions,
-                    element,
-                } if Self::is_fixed_handle_element(element) => {
-                    if dimensions.len() != 1 {
-                        return Err(format!(
-                            "multidimensional fixed array `{name}` of {} elements in subroutine storage is not supported",
-                            element.name
-                        ));
-                    }
+                TypeShape::FixedArray { element, .. } if Self::is_fixed_handle_element(element) => {
                     lower_container_element(element)?
                 }
                 _ => {
@@ -280,13 +271,15 @@ impl Codegen<'_> {
     /// Caller operand of a container formal. A whole container of the
     /// formal's storage type passes directly (the call copies it); an input
     /// of another form is built in a temporary before the call when
-    /// `prelude` is available. Outputs require a container variable.
+    /// `prelude` is available. Outputs require a container variable, or a
+    /// row or slice of a fixed view when `after` takes its write-back.
     pub(in super::super) fn container_call_argument(
         &mut self,
         path: &str,
         formal: NodeId,
         actual: NodeId,
         prelude: Option<&mut Vec<IrStmt>>,
+        after: Option<&mut Vec<IrStmt>>,
     ) -> Result<IrCallArg, String> {
         let like = self.container_formal_type(formal)?;
         let name = self.node(formal).name.clone();
@@ -316,6 +309,31 @@ impl Codegen<'_> {
             ));
         }
         if direction != DbDirection::Input {
+            // A row or slice of a fixed view is written back after the call,
+            // selected when the write-back runs (as element actuals are,
+            // decision S13-D1); an inout copies it in first.
+            if let (Some(prelude), Some(after)) = (prelude, after) {
+                if self.fixed_view_slice(path, actual)?.is_some() {
+                    let temporary = self.container_temporary_like(like);
+                    prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                        temporary,
+                    ))));
+                    if direction == DbDirection::Inout {
+                        prelude.push(self.lower_container_into(path, formal, temporary, actual)?);
+                    }
+                    let (dst, dst_start, count) = self
+                        .fixed_view_slice(path, actual)?
+                        .ok_or("fixed-view output actual lost its slice")?;
+                    after.push(IrStmt::Container(Box::new(IrContainerStmt::CopyRange {
+                        dst,
+                        dst_start,
+                        src: temporary,
+                        src_start: super::super::containers::pattern_key_expr(0, 64, true, false),
+                        count,
+                    })));
+                    return Ok(IrCallArg::Container(temporary));
+                }
+            }
             return Err(format!(
                 "output actual of container formal `{name}` in `{path}` must be a container variable of the same type"
             ));

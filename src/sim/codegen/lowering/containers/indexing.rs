@@ -249,21 +249,228 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// A multidimensional class property is addressed whole (copies,
-    /// patterns, `%p`) or by memory file tasks; its rows, elements and
-    /// slices are not lowered, so selecting one is a located error rather
-    /// than an access to the wrong cell.
+    /// A multidimensional fixed view is addressed whole, by an element
+    /// select of every dimension ([`Self::multidimensional_element`]) or by
+    /// a row select ([`Self::fixed_view_slice`]); any other select (a
+    /// context that lowers only a one-dimensional index) is a located error
+    /// rather than an access to the wrong cell.
     pub(in super::super) fn reject_multidimensional_view(
         &self,
         path: &str,
         container: usize,
     ) -> Result<(), String> {
         match self.fixed_view_dims.get(&container) {
-            Some(_) => Err(format!(
+            Some(_) if self.model.containers[container].class_field.is_some() => Err(format!(
                 "selecting a row, element or slice of a multidimensional class property in `{path}` is not supported; it is accessed whole or through memory file tasks (SIM-011)"
+            )),
+            Some(_) => Err(format!(
+                "this select of a multidimensional fixed array of native elements in `{path}` is not supported; select one element or one row"
             )),
             None => Ok(()),
         }
+    }
+
+    /// The container and logical index of a select of one element: a
+    /// one-index select (`a[i]`, `q[i]`, `m["k"]`), or an element select of
+    /// every dimension of a multidimensional view, whose logical index is
+    /// the select itself (see [`Self::multidimensional_element`]).
+    pub(in super::super) fn element_select(&self, node: NodeId) -> Option<(ContainerInfo, NodeId)> {
+        if let Some(ir) = self.multidimensional_element(node) {
+            return Some((ContainerInfo { ir }, node));
+        }
+        let selected = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
+                .container_of_select(node, *base)
+                .map(|container| (container, *index)),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
+                .container_of_select(node, *base)
+                .map(|container| (container, indices[0])),
+            _ => None,
+        };
+        // One index of a multidimensional view selects a row, not an element.
+        selected.filter(|(container, _)| !self.fixed_view_dims.contains_key(&container.ir))
+    }
+
+    /// The view of `select` when it selects one element of every dimension
+    /// of a multidimensional fixed view (`s[i][j]` of `string s[2][3]`).
+    /// The select node itself then stands as the element's one logical
+    /// index: [`Self::lower_container_top_index`] maps all its indices to
+    /// one storage position.
+    pub(in super::super) fn multidimensional_element(&self, select: NodeId) -> Option<usize> {
+        if self.fixed_view_dims.is_empty() {
+            return None;
+        }
+        let NodeKind::Expr(ExprKind::ArraySelect { base, indices }) = self.kind(select) else {
+            return None;
+        };
+        let container = self.container_of_select(select, *base)?.ir;
+        (self.model.containers[container].class_field.is_none()
+            && self
+                .fixed_view_dims
+                .get(&container)
+                .is_some_and(|dimensions| dimensions.len() == indices.len()))
+        .then_some(container)
+    }
+
+    /// The storage position of the first cell selected by `indices` (one
+    /// index per leading dimension of `dimensions`) in a row-major view.
+    /// An index outside its dimension makes the position -1 and an unknown
+    /// index keeps X bits, so the runtime treats either as invalid
+    /// (SV 7.4.6). Constant indices fold to a constant position.
+    fn lower_view_position(
+        &mut self,
+        path: &str,
+        dimensions: &[(i32, i32)],
+        indices: &[NodeId],
+    ) -> Result<IrExpr, String> {
+        let extent = |(left, right): (i32, i32)| (i128::from(left) - i128::from(right)).abs() + 1;
+        let strides = dimensions
+            .iter()
+            .rev()
+            .scan(1i128, |stride, dimension| {
+                let current = *stride;
+                *stride *= extent(*dimension);
+                Some(current)
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>();
+        let offset = |(left, right): (i32, i32), index: i128| {
+            if left <= right {
+                index - i128::from(left)
+            } else {
+                i128::from(left) - index
+            }
+        };
+        let constants = indices
+            .iter()
+            .map(|index| {
+                self.eval_bits(*index)
+                    .ok()
+                    .filter(|value| !value.is_unknown())
+                    .and_then(|value| {
+                        if value.signed {
+                            value.to_i128()
+                        } else {
+                            value.to_u128().and_then(|value| value.try_into().ok())
+                        }
+                    })
+            })
+            .collect::<Option<Vec<_>>>();
+        if let Some(constants) = constants {
+            let mut position = 0i128;
+            for ((dimension, stride), index) in dimensions.iter().zip(&strides).zip(constants) {
+                let offset = offset(*dimension, index);
+                if !(0..extent(*dimension)).contains(&offset) {
+                    return Ok(pattern_key_expr(-1, 64, true, false));
+                }
+                position += offset * stride;
+            }
+            return Ok(pattern_key_expr(position, 64, true, false));
+        }
+        let mut offsets = Vec::with_capacity(indices.len());
+        for (dimension, index) in dimensions.iter().zip(indices) {
+            let index = self.lower_container_index(path, *index)?;
+            // One extra bit keeps the subtraction exact for every source width.
+            let width = index.width.max(32) + 1;
+            let index = IrExpr::convert_to(index, width, true);
+            let base = pattern_key_expr(i128::from(dimension.0), width, true, false);
+            let (a, b) = if dimension.0 <= dimension.1 {
+                (index, base)
+            } else {
+                (base, index)
+            };
+            offsets.push(IrExpr::new(
+                IrExprKind::Bin {
+                    op: IrBinOp::Sub,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                },
+                width,
+                true,
+                None,
+            ));
+        }
+        // Every valid offset times its stride fits in 64 bits (the view's
+        // cell count does); one more bit keeps the sum signed.
+        let width = offsets
+            .iter()
+            .map(|offset| offset.width)
+            .max()
+            .unwrap_or(0)
+            .max(64)
+            + 1;
+        let mut valid: Option<IrExpr> = None;
+        let mut position: Option<IrExpr> = None;
+        for ((offset, dimension), stride) in offsets.into_iter().zip(dimensions).zip(&strides) {
+            let offset = IrExpr::convert_to(offset, width, true);
+            // A negative offset is a large unsigned value, so one unsigned
+            // comparison checks both bounds.
+            let in_range = IrExpr::new(
+                IrExprKind::Bin {
+                    op: IrBinOp::Lt,
+                    a: Box::new(IrExpr::convert_to(offset.clone(), width, false)),
+                    b: Box::new(pattern_key_expr(extent(*dimension), width, false, false)),
+                },
+                1,
+                false,
+                None,
+            );
+            valid = Some(match valid {
+                None => in_range,
+                Some(valid) => IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::LogAnd,
+                        a: Box::new(valid),
+                        b: Box::new(in_range),
+                    },
+                    1,
+                    false,
+                    None,
+                ),
+            });
+            let term = if *stride == 1 {
+                offset
+            } else {
+                IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::Mul,
+                        a: Box::new(offset),
+                        b: Box::new(pattern_key_expr(*stride, width, true, false)),
+                    },
+                    width,
+                    true,
+                    None,
+                )
+            };
+            position = Some(match position {
+                None => term,
+                Some(position) => IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::Add,
+                        a: Box::new(position),
+                        b: Box::new(term),
+                    },
+                    width,
+                    true,
+                    None,
+                ),
+            });
+        }
+        let (Some(valid), Some(position)) = (valid, position) else {
+            return Ok(pattern_key_expr(0, 64, true, false));
+        };
+        Ok(IrExpr::new(
+            IrExprKind::Mux {
+                sel: Box::new(valid),
+                a: Box::new(position),
+                b: Box::new(pattern_key_expr(-1, width, true, false)),
+            },
+            width,
+            true,
+            None,
+        ))
     }
 
     pub(in super::super) fn container_of(&self, node: NodeId) -> Option<ContainerInfo> {
@@ -548,6 +755,14 @@ impl<'a> Codegen<'a> {
             return Some((container, prefix));
         }
         let container = self.container_of_select(node, base)?;
+        // One element of a multidimensional view is one logical index: the
+        // select itself, which lowers to the cell's storage position.
+        if self.multidimensional_element(node) == Some(container.ir) {
+            return Some((container.ir, vec![node]));
+        }
+        if self.fixed_view_dims.contains_key(&container.ir) {
+            return None;
+        }
         // The frontend flattens `d[i][b]` into one select; indices beyond the
         // container depth select bits of a packed element.
         if indices.len() > self.container_index_depth(container.ir) {
@@ -655,6 +870,15 @@ impl<'a> Codegen<'a> {
         container: usize,
         node: NodeId,
     ) -> Result<IrExpr, String> {
+        if let Some(dimensions) = self.fixed_view_dims.get(&container).cloned() {
+            if self.multidimensional_element(node) == Some(container) {
+                let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) else {
+                    unreachable!("a multidimensional element is an array select");
+                };
+                let indices = indices.clone();
+                return self.lower_view_position(path, &dimensions, &indices);
+            }
+        }
         self.reject_multidimensional_view(path, container)?;
         if matches!(
             self.model.containers[container].kind,
@@ -693,6 +917,73 @@ impl<'a> Codegen<'a> {
 }
 
 impl Codegen<'_> {
+    /// A row of a multidimensional fixed view (`s[i]` of `string s[2][3]`):
+    /// fewer indices than dimensions select the contiguous run of cells
+    /// below them, as its view, first storage position and cell count.
+    fn multidimensional_row(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<(usize, IrExpr, u64)>, String> {
+        if self.fixed_view_dims.is_empty() {
+            return Ok(None);
+        }
+        let NodeKind::Expr(ExprKind::ArraySelect { base, indices }) = self.kind(node) else {
+            return Ok(None);
+        };
+        let (base, indices) = (*base, indices.clone());
+        let Some(container) = self.container_of_select(node, base).map(|info| info.ir) else {
+            return Ok(None);
+        };
+        let Some(dimensions) = self.fixed_view_dims.get(&container).cloned() else {
+            return Ok(None);
+        };
+        if indices.len() >= dimensions.len() {
+            return Ok(None);
+        }
+        self.reject_class_view_select(path, container)?;
+        let count = dimensions[indices.len()..]
+            .iter()
+            .map(|(left, right)| (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
+            .product();
+        let start = self.lower_view_position(path, &dimensions, &indices)?;
+        Ok(Some((container, start, count)))
+    }
+
+    /// Whether `container` is a fixed-array view (one or more dimensions).
+    pub(in super::super) fn is_fixed_view(&self, container: usize) -> bool {
+        self.fixed_view_ranges.contains_key(&container)
+            || self.fixed_view_dims.contains_key(&container)
+    }
+
+    /// Whether `node` is a row of a multidimensional fixed view or a slice
+    /// of a fixed view (the selections [`Self::fixed_view_slice`] lowers).
+    pub(in super::super) fn is_fixed_view_slice(&self, node: NodeId) -> bool {
+        let node = self.p30_unwrap_cast(node);
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => self
+                .container_of_select(node, *base)
+                .and_then(|container| self.fixed_view_dims.get(&container.ir))
+                .is_some_and(|dimensions| indices.len() < dimensions.len()),
+            NodeKind::Expr(
+                ExprKind::PartSelect { base, .. } | ExprKind::IndexedPartSelect { base, .. },
+            ) => self
+                .container_of_select(node, *base)
+                .is_some_and(|container| self.is_fixed_view(container.ir)),
+            _ => false,
+        }
+    }
+
+    /// Rows and elements of multidimensional class properties stay
+    /// rejected (SIM-011): only whole accesses and memory file tasks reach
+    /// them.
+    fn reject_class_view_select(&self, path: &str, container: usize) -> Result<(), String> {
+        if self.model.containers[container].class_field.is_some() {
+            return self.reject_multidimensional_view(path, container);
+        }
+        Ok(())
+    }
+
     /// A slice of a fixed-array view (`a[l:r]`, `a[b+:w]`, `a[b-:w]`): its
     /// container, first storage position (signed, possibly out of range)
     /// and element count. Constant bounds are folded; an indexed base is
@@ -703,6 +994,9 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<(usize, IrExpr, u64)>, String> {
         let node = self.p30_unwrap_cast(node);
+        if let Some(row) = self.multidimensional_row(path, node)? {
+            return Ok(Some(row));
+        }
         let base = match self.kind(node) {
             NodeKind::Expr(ExprKind::PartSelect { base, .. })
             | NodeKind::Expr(ExprKind::IndexedPartSelect { base, .. }) => *base,

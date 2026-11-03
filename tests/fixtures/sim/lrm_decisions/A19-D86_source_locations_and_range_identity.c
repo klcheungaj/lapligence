@@ -5,8 +5,11 @@
 #include <stdio.h>
 #include <string.h>
 
+/* The file name without its directory; Windows paths use backslashes. */
 static const char* base(const char* file) {
     const char* slash = file ? strrchr(file, '/') : NULL;
+    const char* backslash = file ? strrchr(file, '\\') : NULL;
+    if (backslash && (!slash || backslash > slash)) slash = backslash;
     return slash ? slash + 1 : file;
 }
 

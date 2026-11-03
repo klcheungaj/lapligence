@@ -22,6 +22,11 @@ impl Codegen<'_> {
         let [left, right] = operands else {
             return Ok(None);
         };
+        if self.is_fixed_view_slice(*left) || self.is_fixed_view_slice(*right) {
+            return Err(format!(
+                "equality of a row or slice of a fixed array of strings, handles or native records in `{path}` is not supported; compare whole arrays or elements"
+            ));
+        }
         let left_container = self.container_of(self.p30_unwrap_cast(*left));
         let right_container = self.container_of(self.p30_unwrap_cast(*right));
         let (left, right) = match (left_container, right_container) {

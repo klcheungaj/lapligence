@@ -508,8 +508,9 @@ that commit; allocation failure is fatal, so no partial image is observed.
 
 **Status:** open; SIM-003 implements descriptor-backed native records for
 subroutine formals, results and locals; SIM-006 stores them as elements of
-queues, dynamic and associative arrays; SIM-007 adds one-dimensional fixed
-arrays of strings, handles and native records, run-time indices into native
+queues, dynamic and associative arrays; SIM-007 adds fixed
+arrays of strings, handles and native records (multidimensional ones as one
+row-major view), run-time indices into native
 member arrays, packed-member selects, record-element equality and tagged
 unions with native members in module/static variables, container members
 of module records and of subroutine record values, native records, strings
@@ -535,23 +536,28 @@ equality work, and assignment, call and system-task statements that name an
 element's member (`list[i].q.push_back(x)`, `x = list[i].q[j]`) copy that
 member out of the element and back, which costs time proportional to the
 member's size per statement. These legal forms still reject with
-explicit diagnostics: multidimensional fixed arrays of strings, handles or
-native records; associative members of container or fixed-array record
-elements; an element's container member named in a condition, loop header,
-`foreach`, declaration initializer or timing-controlled assignment, or as a
-nonblocking target or `ref` actual; records with container members in nonblocking
-assignments; static class
-properties of a record type with string, real or handle members and class
-properties of a record type with container members (instance properties of
-records with string, real or handle members are one value per object and
-records of integral leaves are fixed-width properties, SIM-011); equality of records with an associative member (and conditionals
+explicit diagnostics: equality of rows of multidimensional fixed arrays of
+strings, handles or native records, and such rows as `ref` actuals;
+associative members of container or fixed-array record
+elements; an element's container member changed by an expression outside an
+assignment, call or system-task statement (a condition or loop header that
+pops it), or named as the target of a timing-controlled assignment, a
+nonblocking target or a `ref` actual (reads in conditions, loop headers,
+`foreach`, initializers and timed assignment values copy the member at each
+evaluation); records with container members in nonblocking
+assignments; instance class properties of a record type with container
+members (instance properties of records with string, real or handle members
+are one value per object, records of integral leaves are fixed-width
+properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
-compound or nonblocking writes to a record element of a resizable container;
-delayed (`#d`) nonblocking writes to a fixed array of native elements; a
-run-time index into a native member array of more than 64 elements or with a
-side-effecting index; a run-time index into an array of records nested in a
-native record (`r.e[k].s`, which currently fails with a generic lowering
-diagnostic rather than a dedicated one); as the actual of a native record
+a nonblocking write of a member of a fixed-array record element (whole
+elements take nonblocking writes; compound writes to members of any element
+work, and the frontend rejects nonblocking writes to elements of resizable
+containers);
+a run-time index into a native member array of more than 64 elements, and
+one into an array of records nested in a native record that selects a
+handle member or anything but one string, real or integral member
+(`r.e[k].h.v`, `r.e[k].inner`; `r.e[k].s` works); as the actual of a native record
 `ref` formal, an element of a queue, dynamic, associative or fixed array of
 records, a run-time-indexed member, a member of a subroutine record, or any
 module, static or block record passed to a class method (whole subroutine
@@ -589,8 +595,8 @@ constant item paths resolved at lowering time. Module-level native records keep
 their per-member lowering, so whole-value transfers between the two
 representations go leaf by leaf, and a run-time member index is a bounded
 comparison chain over the declared leaves. Fixed arrays of native elements
-are fixed-size views of the container runtime, so per-element delayed update
-records and nested views are not modeled. A record member that is itself a
+are fixed-size views of the container runtime; a row of a multidimensional
+one is a run of cells, not a view of its own. A record member that is itself a
 resizable container is a companion container of a native value, but a nested
 dynamic array inside a container element's value: no container operation
 addresses that nested slot in place, so a statement stages a copy, and the
@@ -625,7 +631,7 @@ roots for forked automatic block records, strings and handles.
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
-`sim_011/neg_{record_container,static_record}_property.sv` and `sim_007/bad_tagged_*.sv`.
+`sim_011/neg_record_container_property.sv`, `sim_007/bad_multidim_row_*.sv` and `sim_007/bad_tagged_*.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 

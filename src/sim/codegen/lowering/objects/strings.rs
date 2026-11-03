@@ -14,6 +14,28 @@ impl Codegen<'_> {
         {
             return Ok(value);
         }
+        // Element container members read outside a staged statement are
+        // copied out first; the copies run as the predicate of a conditional
+        // that always selects the value.
+        if self.element_staging_possible {
+            if let Some(before) = self.stage_expression_members(path, node)? {
+                let value = self.lower_string(path, node);
+                self.end_element_member_staging();
+                return Ok(IrStringExpr::Conditional {
+                    predicate: Box::new(IrExpr::new(
+                        IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                            statements: before,
+                            value: super::super::containers::pattern_key_expr(1, 1, false, false),
+                        })),
+                        1,
+                        false,
+                        None,
+                    )),
+                    then: Box::new(value?),
+                    otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
+                });
+            }
+        }
         if let Some(value) = self.lower_object_random_state(path, node)? {
             return Ok(value);
         }
@@ -142,7 +164,7 @@ impl Codegen<'_> {
             for (idx, (io, is_out)) in formals.iter().enumerate() {
                 if self.is_subroutine_container(*io) {
                     let argument =
-                        self.container_call_argument(path, *io, bound[idx].expr, None)?;
+                        self.container_call_argument(path, *io, bound[idx].expr, None, None)?;
                     // `ref` formals pass by address with the outputs.
                     if *is_out || self.is_ref_formal(*io) {
                         out_args.push(argument);

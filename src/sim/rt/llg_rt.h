@@ -3490,6 +3490,13 @@ struct llg_dyn_value_array_t;
 void llg_dyn_value_nba(struct llg_dyn_value_array_t* target, sv4_t dst_start,
                        const struct llg_dyn_value_array_t* src, sv4_t src_start,
                        uint64_t count, int whole);
+// The same write committed in the NBA region `ticks` after issue (an
+// intra-assignment delay, SV 10.4.2).
+void llg_dyn_value_nba_after(struct llg_dyn_value_array_t* target,
+                             sv4_t dst_start,
+                             const struct llg_dyn_value_array_t* src,
+                             sv4_t src_start, uint64_t count, int whole,
+                             uint64_t ticks);
 // Selected writes retain only the plan's valid contiguous slice. Ascending
 // declared part-selects set reverse so queued bits remain in storage order.
 void llg_nba_selected_after(sv4_t* target, sv4_t value,

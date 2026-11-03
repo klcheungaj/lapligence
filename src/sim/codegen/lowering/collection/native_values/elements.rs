@@ -584,6 +584,33 @@ impl Codegen<'_> {
             .map(|(_, selection, path)| (selection, path))
     }
 
+    /// Whether `node` names a member of a record element of container
+    /// storage, or a select inside one, with constant or run-time indices.
+    pub(in crate::sim::codegen) fn names_element_member(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
+                parts.iter().skip(1).any(|part| !part.is_empty())
+                    && refs
+                        .first()
+                        .copied()
+                        .flatten()
+                        .is_some_and(|first| self.record_element_of(first).is_some())
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
+                self.db
+                    .array_select_path(node)
+                    .is_some_and(|(owner, _)| self.record_element_of(owner).is_some())
+                    || self.names_element_member(*base)
+            }
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => self.names_element_member(*base),
+            _ => false,
+        }
+    }
+
     /// `element_member_path` with the node naming the whole element.
     pub(super) fn element_member_parts(
         &self,
@@ -1054,6 +1081,56 @@ impl Codegen<'_> {
             }
             _ => self.collect_staged_members(h, false, &mut members, &mut nested),
         }
+        self.build_element_staging(path, members, nested, overwritten)
+    }
+
+    /// Stage the queue and dynamic-array members of container record
+    /// elements (and queues or dynamic arrays nested in container elements)
+    /// that the expression `node` reads: a condition, loop bound,
+    /// declaration initializer or the value of a timed assignment. Each is
+    /// copied out before every evaluation and never written back. `None`
+    /// when `node` names none; an expression that changes one is rejected.
+    /// The caller lowers `node` and then ends the staging with
+    /// `end_element_member_staging`.
+    pub(in crate::sim::codegen) fn stage_expression_members(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<Vec<IrStmt>>, String> {
+        if !self.element_staging_possible
+            || !self.staged_element_members.is_empty()
+            || !self.staged_nested_elements.is_empty()
+        {
+            return Ok(None);
+        }
+        let (mut members, mut nested) = (Vec::new(), Vec::new());
+        self.collect_staged_members(node, false, &mut members, &mut nested);
+        if members.is_empty() && nested.is_empty() {
+            return Ok(None);
+        }
+        // A changed nested element keeps the nested-element diagnostics.
+        if nested.iter().any(|(_, _, mutated)| *mutated) {
+            return Ok(None);
+        }
+        if members.iter().any(|member| member.mutated) {
+            return Err(format!(
+                "an expression that changes a queue or dynamic-array member of a container record element in `{path}` is only supported as an assignment, call or system-task statement"
+            ));
+        }
+        let (before, after) = self.build_element_staging(path, members, nested, None)?;
+        debug_assert!(after.is_empty(), "read-only staging writes nothing back");
+        Ok(Some(before))
+    }
+
+    /// The copy-out statements of `members` and `nested` and the write-back
+    /// statements of the changed ones.
+    fn build_element_staging(
+        &mut self,
+        path: &str,
+        members: Vec<StagedMember>,
+        nested: Vec<(NodeId, ElementSelection, bool)>,
+        overwritten: Option<NodeId>,
+    ) -> Result<(Vec<IrStmt>, Vec<IrStmt>), String> {
         let (mut before, mut after) = (Vec::new(), Vec::new());
         for member in members {
             let selection = self

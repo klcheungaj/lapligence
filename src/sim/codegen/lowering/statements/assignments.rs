@@ -793,6 +793,12 @@ impl EmitCtx<'_, '_> {
             );
         }
         self.reject_class_property_nba(lhs)?;
+        if let Some(statement) =
+            self.cg
+                .lower_fixed_view_nba(&self.path, lhs, rhs, Some(scaled_ticks.clone()))?
+        {
+            return Ok(vec![statement]);
+        }
         if self.cg.native_record_target(lhs) {
             return self.lower_delayed_native_record(h, lhs, rhs, false, scaled_ticks);
         }

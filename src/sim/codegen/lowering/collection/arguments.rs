@@ -491,15 +491,9 @@ impl<'a> Codegen<'a> {
         bound: &BoundArg,
         const_ref: bool,
     ) -> Result<Option<IrCallArg>, String> {
-        let container = match self.kind(bound.expr) {
-            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => {
-                self.container_of_select(bound.expr, *base)
-            }
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
-                self.container_of_select(bound.expr, *base)
-            }
-            _ => None,
-        };
+        let container = self
+            .element_select(bound.expr)
+            .map(|(container, _)| container);
         let Some(container) = container.map(|container| container.ir).filter(|container| {
             matches!(
                 self.model.containers[*container].kind,

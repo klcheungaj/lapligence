@@ -72,10 +72,30 @@ impl Codegen<'_> {
             }
             _ => {}
         }
-        // A fixed array of native elements is container storage.
+        // A fixed array of native elements is container storage; a row or
+        // slice of one is copied into a temporary before the statement, which
+        // a report read again later (`$monitor`, `$strobe`) cannot use.
         if matches!(descriptor.shape, TypeShape::FixedArray { .. }) {
             if let Some(container) = self.container_of(node) {
                 return Ok(pattern(IrPatternSource::Container(container.ir)));
+            }
+            if self.container_call_prelude.is_some()
+                && !self.deferred_display_args
+                && self.side_effect_free(node)
+            {
+                if let Some((view, _, count)) = self.fixed_view_slice(path, node)? {
+                    let temporary = self.selection_temporary(view, node, count);
+                    let build = self.lower_container_into(path, node, temporary, node)?;
+                    let prelude = self
+                        .container_call_prelude
+                        .as_mut()
+                        .ok_or("container call prelude closed while lowering its operand")?;
+                    prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                        temporary,
+                    ))));
+                    prelude.push(build);
+                    return Ok(pattern(IrPatternSource::Container(temporary)));
+                }
             }
         }
         let width = self.model.pattern_types[ty].width();
