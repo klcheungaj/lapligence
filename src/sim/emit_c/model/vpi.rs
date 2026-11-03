@@ -67,6 +67,9 @@ struct Entry {
     code: Option<u32>,
     instance: Option<IrVpiInstance>,
     strength: Option<(&'static str, &'static str)>,
+    /// `(state, gate process C name)` of a sequential UDP that takes
+    /// `vpi_put_value`.
+    udp_put: Option<(usize, String)>,
     implicit: bool,
     qualifiers: crate::sim::ir::IrVpiQualifiers,
 }
@@ -114,6 +117,7 @@ impl Entry {
             code: None,
             instance: None,
             strength: None,
+            udp_put: None,
             implicit: false,
             qualifiers: Default::default(),
         }
@@ -326,6 +330,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             code: object.code,
             instance: object.instance.as_deref().cloned(),
             strength: object.strength,
+            udp_put: object.udp_put.clone(),
             implicit: object.implicit,
             qualifiers: object.qualifiers,
         };
@@ -470,11 +475,77 @@ fn catalog_for(model: &IrModel) -> Vec<Entry> {
     catalog(model, &model.vpi_objects)
 }
 
+/// The gate process of a sequential UDP that takes `vpi_put_value` (38.34):
+/// the inertial driver handle of a delayed output (`None`: not delayed),
+/// the process's root descriptor and, for an instance of a shared body, its
+/// instance record and the record's `offsetof` in the root frame.
+pub(super) struct UdpPutSite {
+    pub(super) handle: Option<String>,
+    pub(super) desc: String,
+    pub(super) record: Option<(String, String)>,
+}
+
+/// [`UdpPutSite`]s by IR process C name.
+pub(super) type UdpPutSites = std::collections::HashMap<String, UdpPutSite>;
+
+/// The put records of the catalog's sequential UDPs and each row's record
+/// index. A UDP whose gate process has no site gets no record: its put is
+/// refused. The records name descriptors and instance records defined after
+/// the catalog, so the table is declared here (a tentative definition) and
+/// defined by the returned text, which the caller emits after them.
+fn render_udp_puts(
+    entries: &[Entry],
+    sites: &UdpPutSites,
+    out: &mut String,
+) -> (Vec<Option<usize>>, String) {
+    let mut records = Vec::new();
+    let indices = entries
+        .iter()
+        .map(|entry| {
+            let (state, process) = entry.udp_put.as_ref()?;
+            let site = sites.get(process)?;
+            let (record, offset) = site
+                .record
+                .as_ref()
+                .map_or(("NULL", "0"), |(record, offset)| {
+                    (record.as_str(), offset.as_str())
+                });
+            records.push(format!(
+                "    {{ &llg_udp_state_{state}.state, {}, &{}, {record}, {offset}, -1, 0u }},\n",
+                site.handle
+                    .as_deref()
+                    .map_or_else(|| "NULL".to_owned(), |handle| format!("&{handle}")),
+                site.desc,
+            ));
+            Some(records.len() - 1)
+        })
+        .collect();
+    if records.is_empty() {
+        return (indices, String::new());
+    }
+    out.push_str(&format!(
+        "static llg_vpi_udp_put_t llg_vpi_udp_puts[{}];\n",
+        records.len()
+    ));
+    let definition = format!(
+        "static llg_vpi_udp_put_t llg_vpi_udp_puts[{}] = {{\n{}}};\n",
+        records.len(),
+        records.concat()
+    );
+    (indices, definition)
+}
+
 /// Emit the VPI object catalog. The catalog is generated from owned
 /// metadata, so aliases retain separate HDL names while pointing at the
 /// canonical runtime-visible value. The runtime only borrows it: models
 /// that never load a VPI application do not index or validate it.
-pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
+/// Returns the definition of the UDP put records ([`render_udp_puts`]),
+/// which the caller emits after the coroutine metadata.
+pub(super) fn render_vpi_metadata(
+    model: &IrModel,
+    udp_sites: &UdpPutSites,
+    out: &mut String,
+) -> String {
     out.push_str("\n/* owned hierarchy catalog for the VPI bridge */\n");
     // A VPI application linked as a static archive (`--dpi-lib`, the Windows
     // route) has its startup table run before LLG_VPI_PLUGIN libraries; the
@@ -496,7 +567,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
              static const llg_vpi_code_tables_t* const llg_vpi_code_tables = NULL;\n",
         );
         dynamic::render_vpi_dynamic(model, &std::collections::HashMap::new(), out);
-        return;
+        return String::new();
     }
     let entries = catalog_for(model);
     let indices = catalog_indices(&entries);
@@ -639,6 +710,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
             u8::from(instance.automatic),
         ));
     }
+    let (udp_puts, udp_put_definition) = render_udp_puts(&entries, udp_sites, out);
     out.push_str("static llg_vpi_model_object_t llg_vpi_objects[] = {\n");
     for (index, entry) in entries.iter().enumerate() {
         let path = strip_marker(&entry.full);
@@ -751,6 +823,10 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
                         shape + 1
                     )
                 });
+        let dynamic = match udp_puts[index] {
+            Some(record) => format!("{dynamic}, .storage = &llg_vpi_udp_puts[{record}]"),
+            None => dynamic,
+        };
         let (declaration, instance) = entry.activation.unwrap_or((0, 0));
         let mut definition = if entry.instance.is_some() {
             format!(", .instance = &llg_vpi_instance_{index}")
@@ -828,6 +904,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         "static const size_t llg_vpi_object_count = sizeof(llg_vpi_objects) / sizeof(llg_vpi_objects[0]);\n",
     );
     render_vpi_code(model, &indices, out);
+    udp_put_definition
 }
 
 /// The `.code` initializer of a catalog row, connection or argument that
@@ -1684,7 +1761,7 @@ mod tests {
             ..IrVpiObject::default()
         });
         let mut out = String::new();
-        render_vpi_metadata(&model, &mut out);
+        let _ = render_vpi_metadata(&model, &Default::default(), &mut out);
         let row = |name: &str| {
             out.lines()
                 .find(|line| line.contains(&format!(".full_name = \"{name}\"")))
@@ -1727,7 +1804,7 @@ mod tests {
             ..IrVpiObject::default()
         });
         let mut out = String::new();
-        render_vpi_metadata(&model, &mut out);
+        let _ = render_vpi_metadata(&model, &Default::default(), &mut out);
         assert!(out.contains(".full_name = \"tb.and$1\""), "{out}");
         assert!(!out.contains('\u{1e}'), "{out}");
     }
@@ -1819,7 +1896,7 @@ mod tests {
         model.vpi_code = vec![add, a, two, again];
         model.vpi_code_files = vec!["t.sv".to_owned()];
         let mut out = String::new();
-        render_vpi_metadata(&model, &mut out);
+        let _ = render_vpi_metadata(&model, &Default::default(), &mut out);
         assert!(
             out.contains(
                 "{ vpiOperation, vpiAddOp, 0, 0, 0u, 32u, 1u, 4u, -1, 1u, 1u, 2u, 0u, 0u, 0u },"

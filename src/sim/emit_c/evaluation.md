@@ -283,7 +283,8 @@ statement renderer rejects it.
 A sequential definition emits one `static inline llg_udp_step_<t>` and each
 instance one file-scope state record (`IrModel::udp_states`) holding the
 base-3 code of its prior inputs and its state, initialized to all-X inputs
-and the initial value. `UdpStep` advances the record from the current input
+and the initial value; a catalog model also points the instance's VPI put
+record at it (`model/vpi.rs`, decision A19-D74). `UdpStep` advances the record from the current input
 digits; `UdpState` reads its state with one `sv4_fill`. While the next-state
 index `3^(n+1) * (1 + 2e)` (`e` inputs named with a transition) fits
 `UDP_SEQUENTIAL_DENSE_MAX_ENTRIES` (2^20 bytes) the step makes one index load

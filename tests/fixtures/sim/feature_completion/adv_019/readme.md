@@ -766,6 +766,62 @@ runs it in both optimizer modes with both value backends. Every line of
   reports `tb`, the module iterator from NULL reports NULL without an error,
   and once the bit-select reference is released vpiUse fails.
 
+## udp_put (38.34, 29.2, 28.16, decision A19-D74)
+
+`udp_put.sv` instantiates the rising-edge flip-flop `up_dff` (initial
+state 0) undelayed (`us`, `un`), with `#4` (`ud`), as the instance array
+`ua [1:0]` with `#(2, 3)` driving `qa`, and four times in the generate loop
+`g` with `#3` (one shared body); `uw` is the ten-input `up_wide` with `#1`,
+whose next-state index is above the dense limit; `ui` is the combinational
+`up_inv`. A clock change to 0 and a data change hold every state; an always
+procedure prints the outputs whenever one changes. `udp_put.c` puts `us` = 1
+from `cbStartOfSimulation`, places a value change callback on `clk`, and at
+each `$udp_put(n)` puts values, printing after each put its error level and
+`vpi_get_value` of the UDP. `adv_019::sequential_udp_put_sets_the_state_with_no_delay`
+runs it in both optimizer modes with both value backends. Every line of
+`udp_put.out` follows from these rules (SystemVerilog-1800-2009.txt):
+
+- 38.34 (L64235-L64237): "Sequential UDPs shall be set to the indicated
+  value with no delay regardless of any delay on the primitive instance.
+  Putting values to UDP instances shall be done using the vpiNoDelay flag.
+  Attempting to use the other delay modes shall result in an error." 29.2
+  (L48633-L48634): "Each UDP has exactly one output, which can be in one of
+  three states: 0, 1, or x. The three-state value z is not supported. In
+  sequential UDPs, the output always has the same value as the internal
+  state." So every put that succeeds sets the state and the output takes it
+  in the same time step, and a transition the instance delay had scheduled
+  is dropped (decision A19-D74). The value read right after a put is the
+  output before the put: the gate publishes the state later in that step.
+- Delays (28.16, Table 28-9): `0 1 d1` (L48394), `1 0 d2` (L48400), `x 0 d2`
+  (L48406); `ua` rises after 2 and falls after 3.
+- 0: `us` was put 1 before the run, so its first evaluation starts from
+  state 1; the inputs leave x for 0, which the `(?0)` and `*` rows hold:
+  `qs=1`; the other flip-flops hold their initial 0, which the delayed
+  ones also start at (29.7, L49064-L49065: "a delay specification on an
+  instantiated UDP does not delay the simulation time of the assignment of
+  this initial value to the output"); `uw` has no initial value and the change of `e3`..`e8`
+  matches no row, so it is x. `put tb.us ... value=x`: no output yet.
+- 10: `un`, `ua[0]`, `g[2].u` and `uw` take 1 at once whatever their delay;
+  the undelayed `un` publishes first, the delayed outputs as zero-delay
+  updates. `ui` is combinational: `level=3`, value 1 (`~0`).
+- 20: `d` and `clk` rise: `ud` schedules 1 for 24, `ua[1]` for 22, `g[0]`,
+  `g[1]` and `g[3]` for 23 (the others already hold 1); nothing prints.
+- 21: the put of 0 drops the pending transitions of `ud`, `ua[1]` and
+  `g[3]`, so they stay 0 and nothing happens at 22 or 24; `g[1]` put 0 then
+  1 takes 1 at once (`qg=0110`); `g[0]` rises at 23 (`qg=0111`).
+- 40: `uw` takes 0 from the integer value 0, `ua[1]` 1 from the string "1"
+  and `ua[0]` x from `vpiZ` (z is not a UDP state): `qa=1x`, `qw=0`. The put
+  with `vpiForceFlag` is an error and changes nothing.
+- 50: `ud` takes 1 and `uw` x (`vpiX`).
+- 60: the callback runs when `clk` rises, before the instances evaluate the
+  edge, and puts 1 to `un` and `ud`; the edge with `d` 0 then gives 0 from
+  that state. A put while the instance already has an input event to
+  evaluate in the same step is taken by that evaluation, whose output
+  change keeps the instance delay (decision A19-D74): `qs` and `qn` fall at
+  60 and `qd` after 4 (64). `uw` falls after its delay 1 (61); `ua` (x and
+  1 to 0) and `g[0]`..`g[2]` fall after 3 (63).
+- 70: `us` and `g[0].u` (a shared-body instance) take 1 at once.
+
 ## threads (37.25, 37.39, 37.40, 38.36.1)
 
 `threads.sv` runs an initial procedure that calls the automatic task `t1`

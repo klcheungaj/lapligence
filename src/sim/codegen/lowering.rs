@@ -1431,6 +1431,10 @@ struct Codegen<'a> {
     /// borrowed) → `model.udp_tables` index: later instances of a declaration
     /// skip conversion and hashing.
     udp_declaration_indices: HashMap<usize, usize>,
+    /// Gate node of each sequential UDP instance to its state index and the
+    /// C name of the gate process that publishes its output: the target of
+    /// a `vpi_put_value` (38.34) in the VPI catalog.
+    udp_gate_processes: HashMap<NodeId, (usize, String)>,
     /// Start value of the delayed driver being initialized: `Some` for a
     /// sequential UDP output with an `initial` value, which is not delayed
     /// (IEEE 1364-2001 8.5); `None` starts at X (decision S2-D4).
@@ -2145,6 +2149,7 @@ impl<'a> Codegen<'a> {
             dpi_site_ids: HashMap::new(),
             udp_table_indices: HashMap::new(),
             udp_declaration_indices: HashMap::new(),
+            udp_gate_processes: HashMap::new(),
             delayed_driver_start: None,
             static_formals: HashMap::new(),
             static_string_formals: HashMap::new(),

@@ -2566,8 +2566,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   applicable row is implemented, an extension, refused on purpose (`error`,
   decision A19-D65), `n/a`, or `unsupported` with its reason (statement
   processes, structure net members, switch values, class object names and
-  specparam expressions: A19-D62..D66; after the ADV-019 closure only
-  `vpi_put_value` to a sequential UDP stays unsupported; a frame's
+  specparam expressions: A19-D62..D66; after the ADV-019 closure and
+  `vpi_put_value` to a sequential UDP, A19-D74, no row stays unsupported; a frame's
   `vpiOrigin` and `vpiAutomatics` are served, decisions A19-D75..D78, with the
   elements of dynamic, queue and associative array automatics, the values of
   string and real `ref` formals and the field count of unpacked structures,
@@ -2650,7 +2650,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiSwitchArray`, `vpiUdpArray`) with `vpiRange`, element iteration,
   `vpi_handle_by_index` and the elements' `vpiIndex`, primitives (`vpiGate`,
   `vpiSwitch`, `vpiUdp`, `vpiPrimType`, `vpiPrimTerm` terminals with
-  `vpiExpr`, output value), `vpiContAssign` with `vpiLhs`/`vpiRhs` and its
+  `vpiExpr`, output value; `vpi_put_value` sets a sequential UDP with no
+  delay, decision A19-D74), `vpiContAssign` with `vpiLhs`/`vpiRhs` and its
   value, processes (`vpiProcess`: `vpiInitial`, `vpiAlways` with
   `vpiAlwaysType`, `vpiFinal`), task and function declarations
   (`vpiTaskFunc`, scopes with `vpiFuncType`, `vpiSize`, `vpiAutomatic`) and

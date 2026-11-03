@@ -122,6 +122,17 @@ names the application's, and puts write element by element through
 `llg_ba`/`llg_ba_d` like `vpi_put_value` with `vpiNoDelay`; with
 `vpiPropagateOff` they store through `llg_store_unpublished`/`_d`, which skip
 the publication, so no fanout is notified (A20-D5..D8).
+`vpi_put_value` to a sequential UDP (38.34, A19-D74) goes through the
+catalog's put record (`llg_vpi_udp_put_t`, emitted only into catalog
+models): it writes the state digit, drops the instance's pending inertial
+update (`llg_inertial_drop`), wakes the gate process like an input change
+(`llg_rt_thread_wake`; the processes are found once, on the first put, by
+root descriptor and shared-body instance record through
+`llg_rt_visit_processes`) and, when that woke it, queues a zero-delay call
+after it that makes the update its evaluation scheduled due now
+(`llg_inertial_due_now`); a gate already due to evaluate an input change
+keeps the instance delay. The gate's wait and body are those of a model
+without the catalog.
 `cbForce`/`cbRelease` use `llg_force_watch_hook` and `cbDisable`
 `llg_disable_watch_hook` (`llg_rt.h`): the runtime calls them after a force or
 release statement, or a `disable` that ended something, behind one unlikely

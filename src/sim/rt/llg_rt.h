@@ -843,6 +843,15 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
                                int slot, sv4_t value, sv4_t mask,
                                uint64_t rise, uint64_t fall,
                                uint64_t turn_off);
+// Drop the pending update of the driver behind `handle`, and move a
+// pending update due later to the current time (no driver or none pending:
+// no effect). A vpi_put_value to a delayed sequential UDP (IEEE 1800-2009
+// 38.34) drops the transition its instance delay scheduled, wakes the gate
+// process and, in a zero-delay call queued after it, makes the update that
+// evaluation scheduled due now: the state is published with no delay and
+// the evaluation path is unchanged.
+void llg_inertial_drop(llg_inertial_t** handle);
+void llg_inertial_due_now(llg_inertial_t** handle);
 
 // ── Module path delays ────────────────────────────────────────────────────────
 
@@ -2607,6 +2616,18 @@ size_t llg_rt_threads(int parent_slot, uint64_t parent_identity, int** slots,
                       uint64_t** identities);
 // Mark or clear LLG_RT_THREAD_ENTER delivery for a live thread.
 void llg_rt_thread_watch_enter(int slot, uint64_t identity, int on);
+// Call `visit` with the registry slot, identity, root descriptor and root
+// frame of each live process, in registry order. Only the VPI bridge calls
+// it, on demand; the frame is borrowed for the call.
+void llg_rt_visit_processes(void (*visit)(void* context, int slot, uint64_t identity,
+                                          const llg_co_desc_t* desc, const void* root),
+                            void* context);
+// Wake the live process (slot, identity) from its wait, as a change of a
+// value it waits on would: 2 when it was woken, 1 when it was already due
+// to run (or is held suspended), 0 when no such process lives. A VPI put to
+// a sequential UDP wakes the instance's gate process this way, so the
+// process publishes the new state with no extra wait dependency.
+int llg_rt_thread_wake(int slot, uint64_t identity);
 // Return the activation frame retained by a process, or NULL for ordinary
 // static-storage processes. The returned pointer is borrowed from `self`.
 llg_frame_t* llg_proc_frame(llg_proc_t* self);

@@ -63,6 +63,7 @@ test a19d69 sim_lrm_decisions::a19_d69_named_event_arrays
 test a19d71 sim_lrm_decisions::a19_d71_mailbox_semaphore_waiters
 test a19d72 sim_lrm_decisions::a19_d72_virtual_interface_properties
 test a19d73 sim_lrm_decisions::a19_d73_fixed_handle_array_elements
+test a19d74 sim_lrm_decisions::a19_d74_sequential_udp_put
 test a19d79 sim_lrm_decisions::a19_d79_scope_imports
 test a19d80 sim_lrm_decisions::a19_d80_class_event_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
@@ -1298,7 +1299,7 @@ node primitive 37.31 members=gate,switch,udp
   get vpiStrength0 implemented a19d35
   get vpiStrength1 implemented a19d35
   func vpi_get_value implemented walk
-  func vpi_put_value unsupported a put to a sequential UDP (38.34: no delay) costs VPI models with delayed sequential UDPs run time (a doorbell wait per gate evaluation, +5% to +13% measured); research track
+  func vpi_put_value implemented a19d74
   handle vpiPrimitiveArray implemented a19d28
   handle vpiModule implemented walk
   handle vpiDelay implemented a20d16

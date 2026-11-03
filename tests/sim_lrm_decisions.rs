@@ -2327,6 +2327,15 @@ fn a19_d78_end_of_frame_values() {
 }
 
 #[test]
+fn a19_d74_sequential_udp_put() {
+    run_vpi_decision(
+        "A19-D74_sequential_udp_put",
+        &["task $d74(int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D74_sequential_udp_put.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",
