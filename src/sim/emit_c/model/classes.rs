@@ -216,6 +216,24 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
     if (object && object->handle_dependency) llg_dependency_changed(object->handle_dependency);
 }
 "#);
+    let observed = observed_container_fields(model);
+    if !observed.is_empty() {
+        out.push_str(
+            r#"/* A container property some wait observes publishes every change on its
+ * object's handle marker, installed when the object is constructed; one
+ * toggle per change whatever its kind. */
+static void llg_class_container_notify(sv4_t* contents, sv4_t* shape, int change) {
+    (void)shape;
+    if (change) llg_dependency_changed(contents);
+}
+static sv4_t* llg_class_container_dependency(void* handle, uint32_t expected, size_t index) {
+    llg_class_field_t* field = llg_class_field_lookup(handle, expected, index);
+    if (!field || field->kind != 4) return llg_dependency_or_never(NULL);
+    return llg_class_handle_dependency(handle);
+}
+"#,
+        );
+    }
     for (index, class) in model.classes.iter().enumerate() {
         let allocate = if model.random.objects || model.random.threads {
             "alloc"
@@ -257,6 +275,11 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
                             };
                             out.push_str(&format!(
                                 "    {{ sv4_t size = sv4_from_u64({size}ULL, 64, 0); {function}(&{target}, size, NULL); sv4_destroy(&size); }}\n"
+                            ));
+                        }
+                        if observed.contains(&(index, field_index)) {
+                            out.push_str(&format!(
+                                "    {target}.contents_dependency = llg_class_handle_dependency(object); {target}.notify = llg_class_container_notify;\n"
                             ));
                         }
                     }
@@ -364,6 +387,44 @@ fn render_class_copy(
         });
     }
     out.push_str("    return object;\n}\n");
+}
+
+/// The `(class, field)` container properties a wait observes, including
+/// the inherited copies in derived classes (derived layouts start with the
+/// base fields).
+fn observed_container_fields(model: &IrModel) -> HashSet<(usize, usize)> {
+    let observed: Vec<(usize, usize)> = model
+        .native_accesses
+        .iter()
+        .filter_map(|access| match access.kind {
+            crate::sim::ir::IrNativeAccessKind::ClassContainer { class, field } => {
+                Some((class, field))
+            }
+            _ => None,
+        })
+        .collect();
+    let mut fields = HashSet::new();
+    if observed.is_empty() {
+        return fields;
+    }
+    for (index, class) in model.classes.iter().enumerate() {
+        for (field, _) in class.fields.iter().enumerate() {
+            let mut current = Some(index);
+            let mut depth = 0;
+            while let Some(ancestor) = current {
+                if observed.contains(&(ancestor, field)) {
+                    fields.insert((index, field));
+                    break;
+                }
+                depth += 1;
+                if depth > model.classes.len() {
+                    break;
+                }
+                current = model.classes.get(ancestor).and_then(|class| class.base);
+            }
+        }
+    }
+    fields
 }
 
 fn container_storage_type(container: &crate::sim::ir::IrContainer) -> &'static str {

@@ -275,6 +275,7 @@ static void mailbox_message_link(llg_mailbox_t* mailbox,
         mailbox->head = message;
     mailbox->tail = message;
     mailbox->length++;
+    if (mailbox->dependency) llg_dependency_changed(mailbox->dependency);
 }
 
 static void mailbox_message_append(llg_mailbox_t* mailbox,
@@ -289,6 +290,7 @@ static llg_mailbox_message_t* mailbox_message_pop(llg_mailbox_t* mailbox) {
     if (!mailbox->head) mailbox->tail = NULL;
     message->link.next = NULL;
     mailbox->length--;
+    if (mailbox->dependency) llg_dependency_changed(mailbox->dependency);
     return message;
 }
 
@@ -529,6 +531,16 @@ llg_mailbox_t* llg_mailbox_new_value(sv4_t bound, uint64_t type_id) {
     mailbox->kind = LLG_MAILBOX_VALUE;
     mailbox->type_id = type_id;
     return mailbox;
+}
+
+sv4_t* llg_mailbox_dependency(llg_mailbox_t* mailbox) {
+    if (!mailbox) return llg_dependency_or_never(NULL);
+    if (!mailbox->dependency) {
+        sv4_t empty = SV4_EMPTY;
+        mailbox->dependency = (sv4_t*)llg_checked_malloc(1, sizeof(sv4_t), "mailbox marker");
+        *mailbox->dependency = empty;
+    }
+    return mailbox->dependency;
 }
 
 uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox) {

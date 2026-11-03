@@ -285,17 +285,45 @@ impl Frame<'_, '_> {
                 }
                 self.discard(keys);
             }
+            // A mailbox handle is a class handle: rebinding it publishes the
+            // change waits on `m` or `m.num()` observe (SV 9.4.2).
+            MailboxAssign(index, value) if self.static_initialization => {
+                let value = self.mailbox_handle(value)?;
+                let name = &self.ctx.model.objects[*index].c_name;
+                self.line(format!("{name} = {value};"));
+            }
             MailboxAssign(index, value) => {
                 let value = self.mailbox_handle(value)?;
+                let name = &self.ctx.model.objects[*index].c_name;
                 self.line(format!(
-                    "{} = {value};",
-                    self.ctx.model.objects[*index].c_name
+                    "{{ void *_llg_handle = {value}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}"
+                ));
+            }
+            MailboxAssignLocal(name, value) if self.class_handle_property(name).is_some() => {
+                let Some(access) = self.class_handle_property(name) else {
+                    unreachable!("guarded above");
+                };
+                let IrNativeAccessKind::ClassField { class, field } = access.kind else {
+                    unreachable!("class handle properties are class fields");
+                };
+                let receiver = self.chandle(&access.receiver)?;
+                let receiver = self.scalar("void*", receiver);
+                let value = self.mailbox_handle(value)?;
+                self.line(format!(
+                    "llg_class_handle_store({receiver}, {class}, {field}, {value});"
                 ));
             }
             MailboxAssignLocal(name, value) => {
                 let target = self.native_lookup(name, NativeKind::Chandle)?;
                 let value = self.mailbox_handle(value)?;
-                self.line(format!("*({}) = {value};", target.address));
+                if let Some(marker) = self.handle_store_marker(name) {
+                    self.line(format!(
+                        "{{ void *_llg_handle = {value}; if (*({}) != _llg_handle) {{ *({}) = _llg_handle; llg_dependency_changed({marker}); }} }}",
+                        target.address, target.address
+                    ));
+                } else {
+                    self.line(format!("*({}) = {value};", target.address));
+                }
             }
             MailboxPut(_, mailbox, value, attempt)
             | MailboxPutLocal(_, mailbox, value, attempt) => {

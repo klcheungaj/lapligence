@@ -1537,6 +1537,10 @@ llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
 // A typed mailbox of an aggregate message type (LLG_MAILBOX_VALUE).
 llg_mailbox_t* llg_mailbox_new_value(sv4_t bound, uint64_t type_id);
 uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox);
+// Change marker of the mailbox's message count for a wait on num(),
+// allocated on first use and freed with the mailbox; NULL selects a
+// marker that never changes.
+sv4_t* llg_mailbox_dependency(llg_mailbox_t* mailbox);
 // Blocking put/get are one-shot arms. READY means the transfer completed
 // synchronously; SUSPEND means the runtime owns the queued value until
 // wake/cancellation; EXIT means a blocking type/null error requested

@@ -1,9 +1,10 @@
-// A mailbox query in a wait condition: mailbox state publishes no change.
+// A semaphore try_get() in a wait condition: only a mailbox num() publishes
+// a change a wait can observe; try_get() also takes keys when evaluated.
 module tb;
-  mailbox m = new;
+  semaphore s = new;
   initial begin
-    wait (m.num() == 1);
+    wait (s.try_get(1) == 1);
     $display("woke");
   end
-  initial #1 m.put(1);
+  initial #1 s.put(1);
 endmodule

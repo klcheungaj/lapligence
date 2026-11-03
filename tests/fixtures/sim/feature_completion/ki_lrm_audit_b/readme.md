@@ -34,6 +34,14 @@ different processes in one time step cannot reorder the output.
 > cause the event expression to be reevaluated when changing the value or size even if the members are not
 > referenced by the method or function.
 
+§15.4.2, L20504-20507 (mailbox `num()`):
+
+> The num() method returns the number of messages currently in the mailbox.
+>
+> The returned value should be used with care because it is valid only until the next get() or put() is exe-
+> cuted on the mailbox. These mailbox operations can be from different processes from the one executing the
+> num() method.
+
 §9.4.3, L12032-12033:
 
 > The wait statement shall evaluate a condition; and, if it is false, the procedural statements following the wait
@@ -63,20 +71,25 @@ different processes in one time step cannot reorder the output.
 | `handle_writers` | L11830-11831 compares a handle write with the previous value, whatever the writer. 1: the blocked `m.get(late)` takes the first message; the second stays queued. 2: `m.get(h)` writes `src` over null: `@(h)` wakes. 3: `m.peek(h)` writes the same handle: no event. 4: task output `make(h)`, 5: function output `fmake(h)`, 6: task-form `$cast(h, d)`: each writes a new object. 7: `make(n.nxt)` rebinds the handle property, so `n.nxt.v` goes from 0 to 7 (L11837-11840: the expression is reevaluated). 8: `try_get` writes `src` (`v = 3`) into `n.nxt`. 9: `$cast(n.nxt, d)` (`v = 4`). 10: `make(late)` changes `late`. 11: `m2.put` completes the get blocked since 0, which writes `h2`. |
 | `callee_reads` | Waits on functions and methods whose bodies read object members (L11837-11840): `fx(h)` reads `c.x` through its handle formal; `fnx` reads `c.n.x`; `fget` calls the method `c.get()`; `fwrap` calls `fx`; the method `nx()` reads `n.x`; `gvx()` reads the module variable `gv` and `x`; `fglobal()` reads `k.x` through a module handle; `fstatic()` reads the static property `C::sx`. Each condition becomes true at the step that writes its operand: 1, 2, 3, 4, 5, 6 (`gv + x = 12 + 4`), 7 and 8. `@(fx(h))` wakes when `h.x` changes (1, 3, 4). At 9 `h` is rebound to a new object whose `x` is also 4: the value is unchanged, so no event. At 10 the old object is written, no longer named. At 11 the new object's `x` changes. |
 
+| `observed_storage` | Waits whose operands are aggregate elements, sizes and members of class objects, and mailbox counts (L11822-11824 "a member of an array, associative array, or object"; L11833-11835 built-in methods of an aggregate type; L11837-11840 "the size of a dynamically sized array ... shall cause the event expression to be reevaluated"; L20504-20507 `num()`; L12032-12033 the wait completes when its condition becomes true). Each waiter records its own wake time, so same-step order does not show. 1: `h.q.push_back(3)` makes `h.q.size() == 1` (`q=1`) and changes `h.q.size()`, so `@(h.q.size())` armed at 0 wakes (`ev=1`). 2: `h.fa[1] = 5` (`fa=2`). 3: `h.da = new[2]` (`da=3`). 4: `h.aa["k"] = 1` (`aa=4`). 5: the second push makes `q.size() == 2` inside the method `wait_own` (implicit `this`, `own=5`). 6: the third push of 7 makes `h.q[2] == 7` (`q2=6`). 7, 8: two puts make `m.num() == 2` at 8 (`m=8`). 9: `h.n.q` gains an element (`nq=9`, selected through the handle property `n`). 10: `h.n.mb.put` (`mb=10`). 11: the inherited queue of the derived object `d` (`d=11`). 12: `k.aa["x"]` (`bind=12`). 13: `k.q` is assigned three elements; `g` still names its own object. 14: `g = k` rebinds the handle, so `g.q.size()` is now 3 (`rebind=14`). 15: `m2.put(8)` wakes the waiter on `mw.num()`, which `mw = m2` bound at 0 (`mbind=15`). 16: `m = m2` rebinds a handle no one still waits on. `k.q.size()` never reaches 9 (`never=-1`). |
+| `callee_dataflow` | L11837-11840 "Changing the value of object data members, aggregate elements, or the size of a dynamically sized array referenced by a method or function shall cause the event expression to be reevaluated", applied to storage a function reads through handles it receives or copies. 1: `alias_x` reads `d.x` after `d = c`, with `c` bound to `h` (`alias=1`). 2: `chain_x` copies `c` into `first` and `first` into `second` (`chain=2`). 3: `vread` reads `vv.s` through its virtual-interface formal bound to `v`, which names `i0` (`vif=3`). 4: `vglob` reads the module handle `v` (`vglob=4`). 5: `qsize` reads `t.q.size()` through a local copy (`size=5`). 6: the method `total()` sums `q`: 4 + 5 = 9 (`total=6`). 7: `mnum` reads `c.mb.num()` (`num=7`). 8: `v = i1` rebinds the handle `vglob` reads; `i1.s` is 6 (`rebind=8`). |
+
 ## Negatives (implementation restrictions)
 
 These forms are legal, but llg cannot observe their changes. They are
 rejected with the source location instead of compiling a wait that could
 never resume:
 
-- `neg_callee_alias`: a function reads `d.x` through a local copy `d` of its
-  handle formal; only class-handle formals, `this`, handle properties and
-  static handles are followed into a callee.
-- `neg_container_property`: a queue class property (`h.q.size()`); per-object
-  containers publish no change marker.
-- `neg_mailbox_query`: `m.num()`; mailbox and semaphore state publishes no
-  change marker.
+- `neg_callee_alias`: a function reads `d.x` through a local that holds one
+  of two handles chosen at run time; a callee local is followed only when
+  every write stores the same handle a wait can evaluate again (a bound
+  handle formal, `this`, a handle property, a static handle or another such
+  local).
+- `neg_container_property`: the same for a queue property (`d.q.size()`).
+- `neg_mailbox_query`: `s.try_get(1)`; only a mailbox `num()` publishes a
+  change marker, and `try_get` takes keys whenever it is evaluated.
 - `neg_virtual_method`: `h.get()` where `get` is virtual; the implementation
   that runs, and so the storage it reads, is chosen at run time. (L11833-11835
   admits only nonvirtual methods in event control expressions; a `wait`
-  condition has no such rule, so this is a restriction.)
+  condition has no such rule. Industry-standard behaviour also rejects a
+  virtual method in a `wait` condition, so llg keeps the rejection.)

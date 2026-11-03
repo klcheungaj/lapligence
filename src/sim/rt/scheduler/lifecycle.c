@@ -347,6 +347,12 @@ static void free_mailboxes(void) {
     while (g.mailboxes) {
         llg_mailbox_t* mailbox = g.mailboxes;
         g.mailboxes = mailbox->next;
+        if (mailbox->dependency) {
+            llg_clocking_forget_signal(mailbox->dependency);
+            sv4_destroy(mailbox->dependency);
+            free(mailbox->dependency);
+            mailbox->dependency = NULL;
+        }
         while (mailbox->head) {
             llg_mailbox_message_t* message = mailbox_message_pop(mailbox);
             mailbox_value_destroy(&message->value);

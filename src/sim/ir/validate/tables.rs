@@ -1059,6 +1059,21 @@ impl Validator<'_> {
                 IrNativeAccessKind::ElementItem { ty } => {
                     self.validate_element_leaf(&access.receiver, &access.item_path, ty, &path)?;
                 }
+                IrNativeAccessKind::ClassContainer { class, field } => {
+                    if !self
+                        .model
+                        .classes
+                        .get(class)
+                        .and_then(|class| class.fields.get(field))
+                        .is_some_and(|field| field.container.is_some())
+                    {
+                        return self.fail(
+                            &path,
+                            "class container reference is not a container property",
+                        );
+                    }
+                }
+                IrNativeAccessKind::MailboxCount => {}
                 IrNativeAccessKind::ValueItem { value, ty } => {
                     self.validate_native_leaf(value, &access.item_path, ty, &path)?;
                     if access.receiver != IrChandleExpr::Null {

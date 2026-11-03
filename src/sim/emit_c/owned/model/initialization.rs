@@ -810,6 +810,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         constants: Some(constants),
     };
     let mut frame = Frame::new(&ctx);
+    frame.static_initialization = true;
     // SV static initialization may call legal zero-time user functions. The
     // runtime is already initialized and the frame is not a coroutine:
     // functions cannot contain timing, and lowering rejects a static

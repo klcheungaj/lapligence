@@ -202,6 +202,9 @@ pub(super) struct Frame<'a, 'm> {
     /// and class-property lookups yield null or scratch storage silently,
     /// because arming a wait on an unbound handle is not an access.
     quiet_receivers: bool,
+    /// Rendering `llg_model_initializers`: no process waits yet, so stores
+    /// need not publish change markers.
+    pub(super) static_initialization: bool,
     /// Nesting depth of statements being rendered. Expression code outside
     /// any statement (read-only callbacks, evaluators) has no exit path.
     statement_depth: usize,
@@ -463,6 +466,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             may_terminate: HashMap::new(),
             access_stack: Vec::new(),
             quiet_receivers: false,
+            static_initialization: false,
             statement_depth: 0,
             pending_touches: Vec::new(),
             construction_stack: Vec::new(),

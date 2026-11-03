@@ -194,6 +194,17 @@ fn ab_n3_disable_branch_status() {
 }
 
 #[test]
+fn ab_n5_virtual_method_wait() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/AB-N5_virtual_method_wait.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "AB-N5_virtual_method_wait",
+        "the storage a virtual method reads (its implementation is chosen at run time)",
+    );
+}
+
+#[test]
 fn s14_d1_real_repeat_count() {
     run_decision(
         "S14-D1_real_repeat_count",

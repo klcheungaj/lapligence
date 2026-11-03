@@ -630,7 +630,7 @@ impl Frame<'_, '_> {
 
 impl Frame<'_, '_> {
     /// The class handle property that native access `name` selects.
-    fn class_handle_property(&self, name: &str) -> Option<IrNativeAccess> {
+    pub(super) fn class_handle_property(&self, name: &str) -> Option<IrNativeAccess> {
         self.ctx
             .model
             .native_accesses

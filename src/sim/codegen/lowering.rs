@@ -1585,6 +1585,10 @@ struct Codegen<'a> {
     /// virtual-interface member reads of an implicit sensitivity
     /// (`with_interface_reads`).
     dynamic_reads: HashMap<NodeId, Vec<IrDependency>>,
+    /// Set while `with_dynamic_reads` runs its read walk: the class container
+    /// properties a called body reads are then named by native accesses the
+    /// walk over that body collected, not by the container's own markers.
+    dynamic_read_walk: bool,
     /// Located errors for virtual-interface reads that an implicit
     /// sensitivity cannot observe, raised only if the read walk reaches them
     /// (`with_interface_reads`).
@@ -2254,6 +2258,7 @@ impl<'a> Codegen<'a> {
             method_virtual_slots: HashMap::new(),
             class_fields: HashMap::new(),
             dynamic_reads: HashMap::new(),
+            dynamic_read_walk: false,
             dynamic_read_errors: HashMap::new(),
             class_static_signals: HashMap::new(),
             class_static_objects: HashMap::new(),

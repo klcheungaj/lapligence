@@ -157,7 +157,14 @@ impl Validator<'_> {
                                         | IrClassFieldType::Chandle
                                 )
                         }),
-                    crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. } => true,
+                    crate::sim::ir::IrNativeAccessKind::ClassContainer { class, field } => self
+                        .model
+                        .classes
+                        .get(class)
+                        .and_then(|class| class.fields.get(field))
+                        .is_some_and(|field| field.container.is_some()),
+                    crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
+                    | crate::sim::ir::IrNativeAccessKind::MailboxCount => true,
                     _ => false,
                 }),
             IrDependency::Object(object) => self

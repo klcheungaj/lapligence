@@ -403,6 +403,8 @@ struct llg_mailbox {
     llg_wait_t* get_tail;
     llg_wait_t* put_head;
     llg_wait_t* put_tail;
+    /* Count change marker, allocated when a wait first observes num(). */
+    sv4_t* dependency;
     struct llg_mailbox* next;
 };
 

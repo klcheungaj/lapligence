@@ -37,6 +37,17 @@ pub enum IrNativeAccessKind {
     ElementItem {
         ty: IrClassFieldType,
     },
+    /// The change marker of the container property `field` of the object
+    /// the receiver names; only a wait dependency, never storage. The
+    /// container publishes to it from the object's construction once some
+    /// wait in the model observes the property (SV 9.4.2).
+    ClassContainer {
+        class: usize,
+        field: usize,
+    },
+    /// The count change marker of the mailbox the receiver names, allocated
+    /// when a wait first observes it; only a wait dependency (SV 15.4.2).
+    MailboxCount,
 }
 
 #[derive(Clone, Debug, PartialEq)]

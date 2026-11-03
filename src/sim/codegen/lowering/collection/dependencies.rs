@@ -1515,7 +1515,7 @@ impl<'a> Codegen<'a> {
                     );
                 }
                 if let Some(container) = self.container_of_select(node, *base) {
-                    self.add_container_dependencies(container.ir, true, true, seen, out);
+                    self.add_container_dependencies(node, container.ir, true, true, seen, out);
                     return self.walk_read_signals_bound(
                         scope_path,
                         *index,
@@ -1544,7 +1544,7 @@ impl<'a> Codegen<'a> {
                     return Ok(());
                 }
                 if let Some(container) = self.container_of_select(node, *base) {
-                    self.add_container_dependencies(container.ir, true, true, seen, out);
+                    self.add_container_dependencies(node, container.ir, true, true, seen, out);
                     for index in indices {
                         self.walk_read_signals_bound(
                             scope_path,
@@ -1588,7 +1588,14 @@ impl<'a> Codegen<'a> {
                             }
                             _ => (true, true),
                         };
-                        self.add_container_dependencies(container.ir, contents, shape, seen, out);
+                        self.add_container_dependencies(
+                            *receiver,
+                            container.ir,
+                            contents,
+                            shape,
+                            seen,
+                            out,
+                        );
                     }
                     for child in &self.node(node).children {
                         if *child != *receiver {
@@ -1904,7 +1911,7 @@ impl<'a> Codegen<'a> {
             _ => {}
         }
         if let Some(container) = self.container_of(node) {
-            self.add_container_dependencies(container.ir, true, true, seen, out);
+            self.add_container_dependencies(node, container.ir, true, true, seen, out);
         }
         if let Some(dependencies) = self.unpacked_storage_dependencies(node) {
             for dependency in dependencies {
@@ -1936,7 +1943,7 @@ impl<'a> Codegen<'a> {
                 return Ok(());
             }
             if let Some(container) = self.container_of(*target) {
-                self.add_container_dependencies(container.ir, true, true, seen, out);
+                self.add_container_dependencies(node, container.ir, true, true, seen, out);
                 return Ok(());
             }
         }
@@ -2200,14 +2207,49 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// The dependencies of a read of the container `node` names. A class
+    /// container property a wait observes is named by the native access
+    /// `with_dynamic_reads` resolved for `node` instead.
     fn add_container_dependencies(
         &self,
+        node: NodeId,
         container: usize,
         contents: bool,
         shape: bool,
         seen: &mut HashSet<IrDependency>,
         out: &mut Vec<IrDependency>,
     ) {
+        // A select names its base declaration; the container expression the
+        // dependencies were resolved for is its child.
+        let resolved = self.dynamic_reads.get(&node).or_else(|| {
+            self.node(node)
+                .children
+                .iter()
+                .find(|child| {
+                    self.container_of(**child).is_some_and(|child| {
+                        self.model
+                            .containers
+                            .get(child.ir)
+                            .is_some_and(|child| child.class_field.is_some())
+                    })
+                })
+                .and_then(|child| self.dynamic_reads.get(child))
+        });
+        if let Some(dependencies) = resolved {
+            for dependency in dependencies {
+                self.add_dependency(dependency.clone(), seen, out);
+            }
+            return;
+        }
+        if self.dynamic_read_walk
+            && self
+                .model
+                .containers
+                .get(container)
+                .is_some_and(|container| container.class_field.is_some())
+        {
+            return;
+        }
         if contents {
             self.add_dependency(IrDependency::ContainerContents(container), seen, out);
         }

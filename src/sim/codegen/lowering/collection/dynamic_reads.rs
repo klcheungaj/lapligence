@@ -125,6 +125,7 @@ impl Codegen<'_> {
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {
             if self.class_storage_field(node).is_some()
+                || self.class_container_property(node).is_some()
                 || self.static_class_property(node).is_some()
                 || self.dynamic_interface_member(node)
                 || self.class_method_call(node).is_some()
@@ -222,25 +223,119 @@ impl Codegen<'_> {
         )
     }
 
-    /// Reject reads in a wait or event expression that publish no change.
+    /// Reject reads in a wait or event expression that publish no change:
+    /// mailbox and semaphore methods other than `num()`, whose count change
+    /// a mailbox publishes once a wait observes it.
     fn reject_unobservable_read(&self, path: &str, node: NodeId) -> Result<(), String> {
-        if self.synchronization_method_call(node) {
+        if self.synchronization_method_call(node) && !self.mailbox_num_call(node) {
             return Err(self.unobservable_read(path, node, "a mailbox or semaphore method call"));
         }
-        // Per-object containers have no change marker a wait can name.
+        // An event array property publishes no change of its handles.
         if self.container_of(node).is_some_and(|container| {
             self.model
                 .containers
                 .get(container.ir)
-                .is_some_and(|container| container.class_field.is_some())
+                .is_some_and(|container| {
+                    container.class_field.is_some()
+                        && matches!(container.element, crate::sim::ir::IrContainerElement::Event)
+                })
         }) {
             return Err(self.unobservable_read(
                 path,
                 node,
-                &format!("container class property `{}`", self.node(node).name),
+                &format!("event array class property `{}`", self.node(node).name),
             ));
         }
         Ok(())
+    }
+
+    /// Whether `node` is a `num()` call on a mailbox.
+    fn mailbox_num_call(&self, node: NodeId) -> bool {
+        matches!(self.kind(node), NodeKind::MethodCall {
+            name,
+            receiver: Some(receiver),
+            ..
+        } if name == "num"
+            && self
+                .query_descriptor(*receiver)
+                .is_some_and(|descriptor| descriptor.name.starts_with("mailbox")))
+    }
+
+    /// The class container property `node` names, as `(class, field)`. An
+    /// event array property is a set of event handles, waited on as events.
+    fn class_container_property(&self, node: NodeId) -> Option<(usize, usize)> {
+        let container = self.container_of(node)?;
+        let container = self.model.containers.get(container.ir)?;
+        if matches!(container.element, crate::sim::ir::IrContainerElement::Event) {
+            return None;
+        }
+        container.class_field
+    }
+
+    /// The container property declaration `node` names.
+    fn container_property_declaration(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => Some(*target),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten(),
+            _ => None,
+        }
+    }
+
+    /// The change marker of the container property `(class, field)` of the
+    /// object `receiver` names, with the handle properties it is selected
+    /// through.
+    fn class_container_dependencies(
+        &mut self,
+        receiver: IrChandleExpr,
+        (class, field): (usize, usize),
+    ) -> Vec<IrDependency> {
+        let access = self.native_access_symbol(
+            receiver,
+            IrNativeAccessKind::ClassContainer { class, field },
+        );
+        let mut dependencies = vec![IrDependency::NativeAccess(access.clone())];
+        self.handle_property_receivers(&access, &mut dependencies);
+        self.root_handle_dependency(&access, &mut dependencies);
+        dependencies
+    }
+
+    /// The handle variable at the root of native access `name`'s receiver
+    /// chain (`h` in `h.n.q`): rebinding it moves the access. A method or
+    /// built-in call on the property does not read the receiver path, so the
+    /// read walk adds no dependency on it.
+    fn root_handle_dependency(&self, name: &str, out: &mut Vec<IrDependency>) {
+        let mut current = name.to_owned();
+        for _ in 0..MAX_HANDLE_PROPERTY_DEPTH {
+            let Some(access) = self
+                .model
+                .native_accesses
+                .iter()
+                .find(|access| access.name == current)
+            else {
+                return;
+            };
+            let mut receiver = &access.receiver;
+            while let IrChandleExpr::Required { handle, .. } = receiver {
+                receiver = handle;
+            }
+            match receiver {
+                IrChandleExpr::LocalRead(inner) => current = inner.clone(),
+                IrChandleExpr::Read(object) => {
+                    if self
+                        .model
+                        .objects
+                        .get(*object)
+                        .is_some_and(|object| object.ty.has_change_marker())
+                    {
+                        out.push(IrDependency::Object(*object));
+                    }
+                    return;
+                }
+                _ => return,
+            }
+        }
     }
 
     /// Whether a handle expression can be evaluated again whenever the wait
@@ -257,10 +352,12 @@ impl Codegen<'_> {
         }
     }
 
-    /// Whether `formal` passes a class handle.
+    /// Whether `formal` passes a class or virtual-interface handle.
     fn is_class_handle_formal(&self, formal: NodeId) -> bool {
         matches!(self.kind(formal), NodeKind::FuncArg { ty, .. }
             if ty.kind == "class" && ty.type_name.as_deref() != Some("process"))
+            || (matches!(self.kind(formal), NodeKind::FuncArg { .. })
+                && self.virtual_interface_spelling(formal).is_some())
     }
 
     /// The formals of `callee` paired with the actuals of `call`.
@@ -357,6 +454,139 @@ impl Codegen<'_> {
             receivers.formals.insert(formal, handle);
         }
         Ok(receivers)
+    }
+
+    /// Bind the automatic class-handle locals of a callee body whose every
+    /// write stores one handle the wait can evaluate again (`d = c;` with
+    /// `c` a bound formal): a read through such a local reads through that
+    /// handle. A local written any other way (an output or `ref` actual, a
+    /// system task, two different handles) stays unbound. Locals bind in
+    /// declaration order, so one may copy an earlier one.
+    fn bind_callee_locals(
+        &mut self,
+        body: NodeId,
+        mut receivers: CalleeReceivers,
+    ) -> CalleeReceivers {
+        let mut locals = Vec::new();
+        let mut parents: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        let mut assigned: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        let mut pending = vec![body];
+        while let Some(node) = pending.pop() {
+            if let NodeKind::Stmt(StmtKind::VariableDecl { declaration }) = self.kind(node) {
+                if matches!(self.kind(*declaration), NodeKind::Var { ty } if ty.kind == "class")
+                    && self.db.variable_lifetime(*declaration)
+                        == crate::core::db::VariableLifetime::Automatic
+                {
+                    locals.push((
+                        self.node(*declaration).line,
+                        self.node(*declaration).col,
+                        *declaration,
+                    ));
+                    if let Some(initializer) = self.db.var_initializer(*declaration) {
+                        assigned.entry(*declaration).or_default().push(initializer);
+                    }
+                }
+            }
+            if let NodeKind::Stmt(StmtKind::Assign { .. }) = self.kind(node) {
+                if let [lhs, rhs, ..] = self.node(node).children.as_slice() {
+                    if let NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) = self.kind(*lhs)
+                    {
+                        assigned.entry(*target).or_default().push(*rhs);
+                    }
+                }
+            }
+            for child in &self.node(node).children {
+                parents.entry(*child).or_default().push(node);
+                pending.push(*child);
+            }
+        }
+        locals.sort_by_key(|(line, col, _)| (*line, *col));
+        for (_, _, local) in locals {
+            if !self.local_written_only_by_assignment(local, body, &parents) {
+                continue;
+            }
+            let mut bound: Option<IrChandleExpr> = None;
+            let mut consistent = true;
+            for value in assigned.get(&local).into_iter().flatten().copied() {
+                match self.callee_handle(value, &receivers) {
+                    Some(handle) if bound.as_ref().is_none_or(|bound| *bound == handle) => {
+                        bound = Some(handle);
+                    }
+                    _ => consistent = false,
+                }
+            }
+            if consistent {
+                if let Some(handle) = bound {
+                    receivers.formals.insert(local, Some(handle));
+                }
+            }
+        }
+        receivers
+    }
+
+    /// Whether every reference to `local` in `body` reads it or is the
+    /// target of a whole assignment: no output, `inout` or `ref` actual and
+    /// no system task argument can write it behind the binding.
+    fn local_written_only_by_assignment(
+        &self,
+        local: NodeId,
+        body: NodeId,
+        parents: &HashMap<NodeId, Vec<NodeId>>,
+    ) -> bool {
+        let mut pending = vec![body];
+        while let Some(node) = pending.pop() {
+            pending.extend(self.node(node).children.iter().copied());
+            if !matches!(self.kind(node), NodeKind::Expr(ExprKind::Ref { target: Some(target) }) if *target == local)
+            {
+                continue;
+            }
+            for parent in parents.get(&node).into_iter().flatten().copied() {
+                match self.kind(parent) {
+                    NodeKind::SysCall { .. } => return false,
+                    NodeKind::MethodCall { receiver, .. } if *receiver == Some(node) => {}
+                    NodeKind::FuncCall {
+                        callee: Some(callee),
+                        ..
+                    }
+                    | NodeKind::MethodCall {
+                        callee: Some(callee),
+                        ..
+                    } => {
+                        let callee = *callee;
+                        let Some(position) = self
+                            .call_argument_nodes(parent)
+                            .iter()
+                            .position(|argument| *argument == node)
+                        else {
+                            return false;
+                        };
+                        let input = self
+                            .node(callee)
+                            .children
+                            .iter()
+                            .filter(|child| matches!(self.kind(**child), NodeKind::FuncArg { .. }))
+                            .nth(position)
+                            .is_some_and(|formal| {
+                                matches!(
+                                    self.kind(*formal),
+                                    NodeKind::FuncArg {
+                                        direction: crate::core::db::Direction::Input,
+                                        ..
+                                    }
+                                )
+                            });
+                        if !input {
+                            return false;
+                        }
+                    }
+                    NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => return false,
+                    _ => {}
+                }
+            }
+        }
+        true
     }
 
     /// A class-handle property access on `receiver`, as a handle value.
@@ -492,7 +722,7 @@ impl Codegen<'_> {
             return Err(self.unobservable_read(
                 path,
                 node,
-                &format!("container or record class property `{name}` read by a called subroutine"),
+                &format!("record class property `{name}` read by a called subroutine"),
             ));
         }
         let Some(receiver) = self.callee_property_receiver(node, field, receivers) else {
@@ -516,6 +746,55 @@ impl Codegen<'_> {
         );
         out.push(IrDependency::NativeAccess(access.clone()));
         self.handle_property_receivers(&access, out);
+        Ok(())
+    }
+
+    /// Dependencies of one virtual-interface member read inside a callee
+    /// body, through a bound virtual-interface formal, a module or static
+    /// handle, or a handle selected through a class property.
+    fn callee_interface_member(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        receivers: &CalleeReceivers,
+        out: &mut Vec<IrDependency>,
+    ) -> Result<(), String> {
+        let unobservable = |cg: &Self| {
+            cg.unobservable_read(
+                path,
+                node,
+                "a virtual-interface member read by a called subroutine through a handle other than a virtual-interface formal, a static handle or a class property",
+            )
+        };
+        let Some(target) = self.virtual_interface_member_path(path, node, false)? else {
+            return Err(unobservable(self));
+        };
+        let Some(slot) = self
+            .virtual_interface_members
+            .get(&(target.descriptor, target.member.clone()))
+            .copied()
+        else {
+            return Err(unobservable(self));
+        };
+        let handle = if target.position > 0 {
+            self.member_prefix_expression(node, target.position + 1)
+                .and_then(|prefix| self.callee_handle(prefix, receivers))
+        } else {
+            self.callee_root_handle(target.handle, receivers)
+        };
+        let Some(handle) = handle.filter(Self::rearmable_handle) else {
+            return Err(unobservable(self));
+        };
+        let access = self.native_access_symbol(
+            handle,
+            IrNativeAccessKind::InterfaceMember {
+                interface: target.descriptor,
+                member: slot,
+            },
+        );
+        out.push(IrDependency::NativeAccess(access.clone()));
+        self.handle_property_receivers(&access, out);
+        self.root_handle_dependency(&access, out);
         Ok(())
     }
 
@@ -544,6 +823,7 @@ impl Codegen<'_> {
             }
             return Ok(());
         }
+        let receivers = self.bind_callee_locals(body, receivers);
         stack.push(callee);
         if self.class_method_owner(callee).is_some() {
             for dependency in self.collect_read_signals(path, body)? {
@@ -559,12 +839,46 @@ impl Codegen<'_> {
                 out.push(self.signal_dependency(info));
                 continue;
             }
+            if self.mailbox_num_call(node) {
+                let handle = match self.kind(node) {
+                    NodeKind::MethodCall {
+                        receiver: Some(receiver),
+                        ..
+                    } => self.callee_handle(*receiver, &receivers),
+                    _ => None,
+                };
+                let Some(handle) = handle else {
+                    return Err(self.unobservable_read(
+                        path,
+                        node,
+                        "a mailbox `num()` a called subroutine makes through a handle other than a handle formal, `this`, a handle property or a static handle",
+                    ));
+                };
+                let access = self.native_access_symbol(handle, IrNativeAccessKind::MailboxCount);
+                out.push(IrDependency::NativeAccess(access));
+                pending.extend(self.node(node).children.iter().copied());
+                continue;
+            }
             if self.dynamic_interface_member(node) {
-                return Err(self.unobservable_read(
-                    path,
-                    node,
-                    "a virtual-interface member read by a called subroutine",
-                ));
+                self.callee_interface_member(path, node, &receivers, out)?;
+                continue;
+            }
+            if let Some(container) = self.class_container_property(node) {
+                let receiver = self
+                    .container_property_declaration(node)
+                    .and_then(|field| self.callee_property_receiver(node, field, &receivers));
+                let Some(receiver) = receiver else {
+                    return Err(self.unobservable_read(
+                        path,
+                        node,
+                        &format!(
+                            "container class property `{}` read by a called subroutine through a handle other than a class-handle input formal, `this`, a handle property or a static handle",
+                            self.node(node).name
+                        ),
+                    ));
+                };
+                out.extend(self.class_container_dependencies(receiver, container));
+                continue;
             }
             if let Some(field) = self.class_storage_field(node) {
                 self.callee_property_dependencies(path, node, field, &receivers, out)?;
@@ -592,6 +906,56 @@ impl Codegen<'_> {
             if let Some(info) = self.static_class_property(node) {
                 let dependency = self.signal_dependency(info);
                 self.dynamic_reads.insert(node, vec![dependency]);
+                continue;
+            }
+            if self.mailbox_num_call(node) {
+                let NodeKind::MethodCall {
+                    receiver: Some(receiver),
+                    ..
+                } = self.kind(node)
+                else {
+                    continue;
+                };
+                let receiver = *receiver;
+                let Some(handle) = self
+                    .lower_chandle(path, receiver)
+                    .ok()
+                    .filter(Self::rearmable_handle)
+                else {
+                    return Err(self.unobservable_read(
+                        path,
+                        node,
+                        "a mailbox `num()` through a handle the wait cannot evaluate again",
+                    ));
+                };
+                let access = self.native_access_symbol(handle, IrNativeAccessKind::MailboxCount);
+                self.dynamic_reads
+                    .insert(node, vec![IrDependency::NativeAccess(access)]);
+                continue;
+            }
+            if let Some(container) = self.class_container_property(node) {
+                let receiver = match self
+                    .container_of(node)
+                    .and_then(|container| self.model.containers[container.ir].receiver.clone())
+                {
+                    Some(receiver) => Some(receiver),
+                    None => self
+                        .container_property_declaration(node)
+                        .and_then(|field| self.class_receiver_for(path, node, field).ok()),
+                }
+                .filter(Self::rearmable_handle);
+                let Some(receiver) = receiver else {
+                    return Err(self.unobservable_read(
+                        path,
+                        node,
+                        &format!(
+                            "container class property `{}` selected through a handle the wait cannot evaluate again",
+                            self.node(node).name
+                        ),
+                    ));
+                };
+                let dependencies = self.class_container_dependencies(receiver, container);
+                self.dynamic_reads.insert(node, dependencies);
                 continue;
             }
             if let Some(callee) = self.called_subroutine(node) {
@@ -707,8 +1071,10 @@ impl Codegen<'_> {
         root: NodeId,
         collect: impl FnOnce(&Self) -> Result<T, String>,
     ) -> Result<T, String> {
+        self.dynamic_read_walk = true;
         let prepared = self.prepare_dynamic_reads(path, root);
         let result = prepared.and_then(|()| collect(self));
+        self.dynamic_read_walk = false;
         self.dynamic_reads.clear();
         result
     }

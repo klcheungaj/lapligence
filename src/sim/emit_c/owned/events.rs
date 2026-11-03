@@ -278,6 +278,14 @@ impl Frame<'_, '_> {
             IrNativeAccessKind::InterfaceMember { interface, member } => format!(
                 "{{ .sig = llg_dependency_or_never(llg_vif_member_dependency({receiver}, {interface}, {member})) }}"
             ),
+            // Construction installs the object's handle marker as the
+            // container's contents marker (`render_class_decls`).
+            IrNativeAccessKind::ClassContainer { class, field } => format!(
+                "{{ .sig = llg_class_container_dependency({receiver}, {class}, {field}) }}"
+            ),
+            IrNativeAccessKind::MailboxCount => format!(
+                "{{ .sig = llg_mailbox_dependency((llg_mailbox_t*){receiver}) }}"
+            ),
             IrNativeAccessKind::ValueItem { .. } | IrNativeAccessKind::ElementItem { .. } => {
                 return Err(pending("native value item wait dependencies"))
             }

@@ -23,9 +23,26 @@ fn class_storage_read_by_callees_wakes_waits_and_events() {
 }
 
 #[test]
+fn container_properties_and_mailbox_counts_wake_waits() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_lrm_audit_b/observed_storage.out");
+    sim_cli::run_case_backend_parity(SUITE, "observed_storage", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "observed_storage", expected);
+}
+
+#[test]
+fn callee_locals_interface_members_and_containers_wake_waits() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_lrm_audit_b/callee_dataflow.out");
+    sim_cli::run_case_backend_parity(SUITE, "callee_dataflow", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "callee_dataflow", expected);
+}
+
+#[test]
 fn neg_callee_alias() {
-    // Implementation restriction: a handle copied into a callee local cannot
-    // be re-evaluated when the wait arms; rejected instead of never waking.
+    // Implementation restriction: a callee local that holds one of two
+    // handles cannot be re-evaluated when the wait arms; rejected instead of
+    // never waking.
     sim_cli::reject_case(
         SUITE,
         "neg_callee_alias",
@@ -35,17 +52,19 @@ fn neg_callee_alias() {
 
 #[test]
 fn neg_container_property() {
-    // Implementation restriction: per-object containers publish no change.
+    // Implementation restriction: the queue a callee reads through a local
+    // holding one of two handles cannot be named when the wait arms.
     sim_cli::reject_case(
         SUITE,
         "neg_container_property",
-        "container class property `q`",
+        "container class property `q` read by a called subroutine through a handle other than",
     );
 }
 
 #[test]
 fn neg_mailbox_query() {
-    // Implementation restriction: mailbox state publishes no change.
+    // Implementation restriction: only a mailbox num() publishes a change;
+    // a semaphore try_get() does not.
     sim_cli::reject_case(
         SUITE,
         "neg_mailbox_query",

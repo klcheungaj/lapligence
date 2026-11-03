@@ -48,6 +48,12 @@ impl Frame<'_, '_> {
             let address = format!("&{item}.value.{}", super::native_values::leaf_member(ty));
             return Ok(Some((self.scalar(c_type, address), ty)));
         }
+        if matches!(
+            access.kind,
+            IrNativeAccessKind::ClassContainer { .. } | IrNativeAccessKind::MailboxCount
+        ) {
+            return Err("a change-marker access is a wait dependency, not storage".to_owned());
+        }
         if self.access_stack.iter().any(|active| active == name) || self.access_stack.len() >= 256 {
             return Err("cyclic or excessively deep native storage access".to_owned());
         }
@@ -104,8 +110,11 @@ impl Frame<'_, '_> {
                     },
                 )
             }
-            IrNativeAccessKind::ValueItem { .. } | IrNativeAccessKind::ElementItem { .. } => {
-                unreachable!("value and element items resolve above")
+            IrNativeAccessKind::ValueItem { .. }
+            | IrNativeAccessKind::ElementItem { .. }
+            | IrNativeAccessKind::ClassContainer { .. }
+            | IrNativeAccessKind::MailboxCount => {
+                unreachable!("value items, element items and change markers resolve above")
             }
         };
         let c_type = match ty {

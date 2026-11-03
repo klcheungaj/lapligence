@@ -5,7 +5,7 @@ use super::*;
 impl Codegen<'_> {
     /// The handle, member name and descriptor of a member path rooted at a
     /// virtual-interface handle, after the view direction check.
-    fn virtual_interface_member_path(
+    pub(in super::super) fn virtual_interface_member_path(
         &self,
         path: &str,
         node: NodeId,
@@ -186,7 +186,11 @@ impl Codegen<'_> {
 
     /// The nested member access of `node` whose path has `length` components.
     /// The frontend nests each member access in the next one.
-    fn member_prefix_expression(&self, node: NodeId, length: usize) -> Option<NodeId> {
+    pub(in super::super) fn member_prefix_expression(
+        &self,
+        node: NodeId,
+        length: usize,
+    ) -> Option<NodeId> {
         let mut current = node;
         loop {
             let [child] = self.node(current).children.as_slice() else {
@@ -276,14 +280,14 @@ impl Codegen<'_> {
 }
 
 /// A member path rooted at a virtual-interface handle (`v.x`, `r.v.x`).
-struct VirtualInterfaceMemberPath {
+pub(in super::super) struct VirtualInterfaceMemberPath {
     /// Position of the handle among the path's components.
-    position: usize,
+    pub(in super::super) position: usize,
     /// The handle declaration.
-    handle: NodeId,
+    pub(in super::super) handle: NodeId,
     /// The member name after the handle (`cb.x` for a clockvar).
-    member: String,
-    descriptor: usize,
+    pub(in super::super) member: String,
+    pub(in super::super) descriptor: usize,
     spelling: String,
     view_port: bool,
 }

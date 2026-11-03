@@ -1010,10 +1010,19 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   formals (§13.4) reject as language rules. Event handles or array-reading
   helpers in named-event lists with process-evaluated sources, virtual
   methods and helper forms outside §9 reject.
-  Reads whose changes no wait can observe reject with their location instead
-  of never waking: per-object container properties, mailbox/semaphore
-  queries, callee reads through other handles (locals, container elements)
-  or virtual-interface handles, and virtual methods
+  Per-object container properties (`h.q.size()`, `h.fa[1]`, `h.aa.exists(k)`,
+  also inside methods and inherited), mailbox `num()` (module, property and
+  callee handles; rebinding a mailbox handle publishes a change), callee
+  reads through automatic handle locals that every write binds to one
+  re-evaluable handle, and virtual-interface members read in called
+  functions through formals, module handles or handle properties wake waits
+  and event controls; a container property publishes its changes on its
+  object's handle marker only in classes whose property some wait observes.
+  Reads whose changes no wait can observe still reject with their location
+  instead of never waking: semaphore and other mailbox methods, callee reads
+  through locals bound to different handles or other expressions (container
+  elements, calls), and virtual methods (industry-standard behaviour rejects
+  these in `wait` too)
   ([ki_lrm_audit_b](../tests/fixtures/sim/feature_completion/ki_lrm_audit_b/readme.md)).
   V §§9.7.2–9.7.4 **[1995]**.
 - 🟨 **Intra-assignment controls** — The RHS is captured before the delay,

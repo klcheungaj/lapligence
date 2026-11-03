@@ -1716,19 +1716,21 @@ and `neg_real_container_inside.sv`.
 
 ## Waits on storage without a change notification
 
-**Status:** open (LRM audit part B).
+**Status:** narrowed (fin-gaps-e). Per-object container properties, mailbox
+`num()`, callee handle locals with one binding and virtual-interface members
+read in called functions now wake waits
+(`ki_lrm_audit_b/observed_storage`, `callee_dataflow`).
 
 A `wait` condition or event expression that reads storage publishing no
-change is rejected at compile time with its source location ("cannot be
-observed by a wait or event expression"), because the wait could never
-resume: per-object container properties (`h.q.size()`, `h.fa[1]`), mailbox
-and semaphore queries (`m.num()`), class properties a called function reads
-through a handle other than a class-handle formal, `this`, a handle property
-or a module/static handle (for example a local copy `d = c; d.x`),
-virtual-interface members read inside a called function, and virtual
-methods. SV 9.4.2 makes these legal. Direction: give per-object containers
-and mailbox/semaphore state change markers, and bind callee locals by
-dataflow. Reproduce: `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`.
+change is still rejected at compile time with its source location ("cannot
+be observed by a wait or event expression"), because the wait could never
+resume: semaphore methods and mailbox methods other than `num()`, class
+properties a called function reads through a local that holds different
+handles on different paths or through any other expression (a container
+element, a call result), and virtual methods (industry-standard behaviour
+rejects these in `wait` conditions as well). Direction: bind callee locals
+to every handle they can hold (a dependency set instead of one receiver).
+Reproduce: `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`.
 
 ## Native stack frames grow with a statement's format-argument count
 
