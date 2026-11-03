@@ -152,7 +152,7 @@ pub(super) fn render_vpi_dynamic(
             .and_then(|key| rows.get(key))
             .map_or(0, |row| row + 1);
         classes.push(format!(
-            "    {{ {}, {}u, {}u, {}u, {}, {scope}u, {}, {}u, {}u }}",
+            "    {{ {}, {}u, {}u, {}u, {}, {scope}u, {}, {}u, {}u, {}u, {} }}",
             c_string_literal(&class.name),
             class.base.map_or(0, |base| base + 1),
             fields.len(),
@@ -165,7 +165,12 @@ pub(super) fn render_vpi_dynamic(
                 (true, true) => "LLG_VPI_CLASS_VIRTUAL | LLG_VPI_CLASS_GENERIC",
             },
             items.len(),
-            class.items.len()
+            class.items.len(),
+            class.line,
+            class
+                .file
+                .as_deref()
+                .map_or_else(|| "NULL".to_owned(), c_string_literal)
         ));
         for field in &class.fields {
             fields.push(match field {

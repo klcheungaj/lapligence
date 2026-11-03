@@ -397,8 +397,18 @@ node gate_array 37.11 type=vpiGateArray
   iterate vpiGate extension walk per-type child iteration (IEEE 1364)
 
 node switch_array 37.11 type=vpiSwitchArray
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  iterate vpiSwitch extension walk per-type child iteration (IEEE 1364)
 
 node udp_array 37.11 type=vpiUdpArray
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
 
 node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,class_defn,class_typespec,class_obj,clocking_block,gen_scope,for,foreach_stmt
   str vpiName implemented walk
@@ -1933,6 +1943,9 @@ node initial 37.58 type=vpiInitial
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node final 37.58 type=vpiFinal
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node always 37.58 type=vpiAlways
   get vpiAlwaysType implemented walk

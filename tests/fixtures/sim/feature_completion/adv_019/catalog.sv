@@ -192,6 +192,10 @@ module tb;
   udp_and ud (u_out, r0[2], r0[3]);
   nand ng [1:0] (na, r0[1:0], r0[3:2]);
   tran tr (sw_a, sw_b);
+  // A switch array and a UDP array (37.11).
+  wire [1:0] swa_a, swa_b, ua_out;
+  tran tra [1:0] (swa_a, swa_b);
+  udp_and uda [1:0] (ua_out, r0[1:0], r0[3:2]);
   assign w = r0;
   assign w1 = r0[0];
   assign a_in = sc;
@@ -270,7 +274,12 @@ module tb;
   endtask
   task automatic work(input int n);
     int k;
-    for (int i = 0; i < n; i++) k += i;
+    // break and continue (37.56) that never run.
+    for (int i = 0; i < n; i++) begin
+      if (i > 5) break;
+      if (i == 3) continue;
+      k += i;
+    end
     case (k)
       0: k = 1;
       default: k = 2;
@@ -310,6 +319,8 @@ module tb;
   always @(posedge clk) r0 <= r0 + 4'd1;
   always #5 clk = ~clk;
   initial forever @(posedge clk) iv = iv + $catalog_value();
+  // A final procedure (37.58).
+  final if (iv < 0) $display("negative");
 
   initial begin : main
     p = new(7);

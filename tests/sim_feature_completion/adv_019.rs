@@ -340,12 +340,21 @@ fn frame_automatics_of_structure_type_are_listed() {
 struct Walk {
     types: BTreeSet<i64>,
     answers: BTreeMap<i64, BTreeSet<(String, String)>>,
+    /// Failed identity, iteration, reversibility and source checks.
+    bad: Vec<String>,
+    /// The object types that answered `vpiLineNo` with an error.
+    no_line: BTreeSet<i64>,
+    /// (type, iteration, reverse relation) triples the walk confirmed.
+    reversed: BTreeSet<(i64, String, String)>,
 }
 
 fn parse_walk(stdout: &str, label: &str) -> Walk {
     let mut walk = Walk {
         types: BTreeSet::new(),
         answers: BTreeMap::new(),
+        bad: Vec::new(),
+        no_line: BTreeSet::new(),
+        reversed: BTreeSet::new(),
     };
     let mut done = false;
     for line in stdout.lines() {
@@ -373,6 +382,14 @@ fn parse_walk(stdout: &str, label: &str) -> Walk {
             }
             // 38.6: a routine that raised an error returned a value anyway.
             Some("!") => panic!("{label}: error with a value: `{line}`"),
+            Some("bad") => walk.bad.push(line.to_owned()),
+            Some("noline") => {
+                walk.no_line.insert(number(1));
+            }
+            Some("~") => {
+                walk.reversed
+                    .insert((number(1), words[2].to_owned(), words[3].to_owned()));
+            }
             Some("done") => done = true,
             _ => {}
         }
@@ -381,13 +398,92 @@ fn parse_walk(stdout: &str, label: &str) -> Walk {
     walk
 }
 
-/// ADV-019 A03 and ADV-020 A01: `catalog.c` walks every object it reaches
+/// Object types that may answer `vpiLineNo` with an error, with the reason.
+/// 37.3.3 makes the location properties apply to every object that
+/// corresponds to source code, except the types it lists; the others here
+/// are made at run time or are the provenance gaps of docs/known_issues.md.
+const NO_LINE: &[(&str, &str)] = &[
+    ("vpiCallback", "37.3.3 exception"),
+    ("vpiIterator", "37.3.3 exception"),
+    ("vpiTimeQueue", "37.3.3 exception"),
+    ("vpiSchedEvent", "made by vpi_put_value, no source object"),
+    (
+        "vpiUserSystf",
+        "registered by the application, no source object",
+    ),
+    ("vpiClassObj", "made by new at run time"),
+    ("vpiThread", "a run-time thread"),
+    (
+        "vpiConstant",
+        "index values and range bounds made per request",
+    ),
+    (
+        "vpiRange",
+        "made per request from the declaration (known issue)",
+    ),
+    ("vpiFsmHandle", "FSM states have no line (known issue)"),
+    ("vpiEnumConst", "no line (known issue)"),
+    ("vpiTypespecMember", "no line (known issue)"),
+    ("vpiExtends", "no line (known issue)"),
+    (
+        "vpiRefObj",
+        "class virtual interface properties (known issue)",
+    ),
+    (
+        "vpiIntVar",
+        "class properties and container elements (known issue)",
+    ),
+    ("vpiBitVar", "class properties (known issue)"),
+    ("vpiNamedEvent", "class event properties (known issue)"),
+    (
+        "vpiNamedEventArray",
+        "class event array properties (known issue)",
+    ),
+    ("vpiLongIntTypespec", "a type without a typedef"),
+    ("vpiShortRealTypespec", "a type without a typedef"),
+    ("vpiByteTypespec", "a type without a typedef"),
+    ("vpiShortIntTypespec", "a type without a typedef"),
+    ("vpiIntTypespec", "a type without a typedef"),
+    ("vpiStringTypespec", "a type without a typedef"),
+    ("vpiChandleTypespec", "a type without a typedef"),
+    ("vpiIntegerTypespec", "a type without a typedef"),
+    ("vpiTimeTypespec", "a type without a typedef"),
+    ("vpiRealTypespec", "a type without a typedef"),
+    ("vpiBitTypespec", "a type without a typedef"),
+    ("vpiLogicTypespec", "a type without a typedef"),
+    ("vpiArrayTypespec", "a type without a typedef"),
+];
+
+/// (object type, iteration, reverse relation) triples the walk must
+/// confirm: the object an iteration returns leads back to the iterated
+/// object (37.10, 37.13, 37.16, 37.17, 37.27).
+const REVERSED: &[(&str, &str, &str)] = &[
+    ("vpiModule", "vpiNet", "vpiModule"),
+    ("vpiModule", "vpiReg", "vpiScope"),
+    ("vpiModule", "vpiPort", "vpiModule"),
+    ("vpiModule", "vpiPrimitive", "vpiModule"),
+    ("vpiModule", "vpiProcess", "vpiModule"),
+    ("vpiModule", "vpiModule", "vpiModule"),
+    ("vpiModule", "vpiInternalScope", "vpiScope"),
+    ("vpiModule", "vpiTask", "vpiScope"),
+    ("vpiInterface", "vpiPort", "vpiModule"),
+    ("vpiGate", "vpiPrimTerm", "vpiPrimitive"),
+    ("vpiReg", "vpiRange", "vpiParent"),
+    ("vpiNet", "vpiBit", "vpiParent"),
+    ("vpiClassDefn", "vpiMethods", "vpiClassDefn"),
+];
+
+/// ADV-019 A01, A03 and ADV-020 A01: `catalog.c` walks every object it reaches
 /// from the top of `catalog.sv` and queries each one with every property
 /// and relation the catalog or the runtime dispatch names. Each answer must
 /// be a row the catalog marks implemented or extension for that object's
 /// type; each such row the catalog gives to this walk must be answered;
 /// every other query is a wrong-object query and must fail with an error
-/// (vpiUndefined or NULL, 38.6; decision A19-D26).
+/// (vpiUndefined or NULL, 38.6; decision A19-D26). Every iteration repeats
+/// with the same objects in the same order, every object an iteration
+/// returns leads back to the iterated object through each reverse relation
+/// of its type (`REVERSED` must be among them), and every object with a
+/// source line names a file holding it; only `NO_LINE` types lack a line.
 #[test]
 fn catalog_walk_matches_the_vpi_catalog() {
     let catalog = vpi_catalog::Catalog::load();
@@ -435,7 +531,19 @@ fn catalog_walk_matches_the_vpi_catalog() {
             "{label}: reached only {:?}",
             walk.types
         );
-        let mut errors = Vec::new();
+        let mut errors = walk.bad.clone();
+        let no_line: BTreeSet<i64> = NO_LINE.iter().map(|(name, _)| values[*name]).collect();
+        for t in walk.no_line.difference(&no_line) {
+            errors.push(format!("object type {t} has no vpiLineNo"));
+        }
+        for (t, iteration, reverse) in REVERSED {
+            let key = (values[*t], (*iteration).to_owned(), (*reverse).to_owned());
+            if !walk.reversed.contains(&key) {
+                errors.push(format!(
+                    "{t}: {iteration} does not lead back through {reverse}"
+                ));
+            }
+        }
         let empty = BTreeSet::new();
         for t in &walk.types {
             let Some(id) = by_type.get(t) else {

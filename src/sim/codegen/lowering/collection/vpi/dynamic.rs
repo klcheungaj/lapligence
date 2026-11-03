@@ -594,6 +594,9 @@ impl Codegen<'_> {
             // A generic class definition is only the source of its
             // specializations, which are the class types objects have.
             entry.is_generic = self.db.semantic_detail(*class) == Some("GenericClassDef");
+            let node = self.node(*class);
+            entry.line = node.line;
+            entry.file = node.file().map(str::to_owned);
         }
         constraints
     }

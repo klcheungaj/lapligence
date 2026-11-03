@@ -884,7 +884,7 @@ not have a value property"). Its members are not served: llg keeps the
 record without member cells the frame names (a known gap). `g=18` is
 `(5 + 1) + 4'hc`.
 
-## catalog (A03; 37.3, 38.6, 38.18, 38.23, 40.5.3)
+## catalog (A01, A03; 37.3, 38.3, 38.6, 38.18, 38.23, 38.40, 40.5.3)
 
 `catalog.sv` holds an object of most kinds the VPI catalog
 (`src/sim/rt/vpi_catalog.txt`) lists: instances and instance arrays,
@@ -902,7 +902,7 @@ A19-D30). The walk runs inside the task `catalog_walk`, so it also
 reaches a frame, the threads and the system task call through the frame. `catalog.c` has no expected output
 file: starting from a NULL reference, it calls `vpi_get` and `vpi_get_str`
 with every property name and `vpi_handle` and `vpi_iterate` with every
-relation name the catalog or the runtime dispatch knows, on up to 40 objects
+relation name the catalog or the runtime dispatch knows, on up to 1000 objects
 of each type it reaches, and `vpi_get_value` with `vpiObjTypeVal`. It prints
 one `+` line per query that raised no error. The probe tables are generated:
 `tests/runtime_vpi_catalog.rs` checks that they hold exactly the catalog and
@@ -923,6 +923,43 @@ modes and checks, per object type reached:
   L63447-L63448). A query outside the diagrams is an error (decision
   A19-D26); a line `!` (an error that still returned a value, handle or
   iterator) fails the test.
+
+The same walk checks the A01 properties of every object it reaches:
+
+- iterator exhaustion and compare identity: each iteration runs to its
+  NULL `vpi_scan` and is then run again; the second run returns as many
+  objects, each comparing equal to the object at the same position of the
+  first. 38.40 (SystemVerilog-1800-2009.txt L65398-65399): "Once vpi_scan()
+  returns NULL, the iterator handle is no longer valid and cannot be used
+  again."; 38.3 (L61867-61868): "The VPI routine vpi_compare_objects()
+  shall return 1 (TRUE) if the two handles refer to the same underlying
+  simulation object at the time the function is called". Range objects and the constants of `vpiIndex` are made per
+  request and compare equal only to their own handle
+  (`docs/known_issues.md`), so the second run checks only their number;
+- relationship reversibility: for each object an iteration returns, each
+  of `vpiParent`, `vpiScope`, `vpiModule`, `vpiPrimitive`, `vpiModPath`,
+  `vpiTchk`, `vpiClassDefn` and `vpiInstance` that answers with an object
+  of the iterated object's own type must answer with the iterated object
+  (a `~` line names each confirmed triple; the test requires a list of
+  them, such as the nets, ports, processes, instances and scopes of a
+  module, the terminals of a gate and the methods of a class);
+- source provenance: an object with a positive `vpiLineNo` names a
+  readable `vpiFile` with at least that many lines. 37.3.3 (L57386-57404):
+  "These properties are applicable to every object that corresponds to
+  some object within the source code. The exceptions are objects of the
+  following types: vpiCallback, vpiDelayTerm, vpiDelayDevice,
+  vpiInterModPath, vpiIterator, vpiTimeQueue, vpiGenScopeArray,
+  vpiGenScope". An object type that answers `vpiLineNo` with an error must
+  be one the test lists with its reason (the exceptions, objects made at
+  run time, and the provenance gaps of `docs/known_issues.md`).
+
+To reach the remaining object kinds the design also has a switch array
+`tra` and a UDP array `uda` (37.11), a `final` procedure (37.58) and a
+`break` and a `continue` in the loop of `work` that never run (37.56), and
+the walker registers a `cbEndOfSimulation` callback (a `vpiCallback`
+object, 37.75) and puts `tb.tv`'s own value one time unit later with
+`vpiReturnEvent` (a `vpiSchedEvent`, 38.34) before it starts. None of them
+changes the printed results.
 
 The check is per object type: an object type that answers a row on one
 object and refuses it on another (for example a statement reached through

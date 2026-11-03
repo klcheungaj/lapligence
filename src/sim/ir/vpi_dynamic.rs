@@ -301,6 +301,10 @@ pub struct IrVpiClass {
     pub(in crate::sim) is_generic: bool,
     /// The items the class itself declares, in declaration order.
     pub(in crate::sim) items: Vec<IrVpiClassItem>,
+    /// `vpiLineNo` and `vpiFile` of the class declaration (37.3.3); line
+    /// 0 when unknown.
+    pub(in crate::sim) line: u32,
+    pub(in crate::sim) file: Option<String>,
 }
 
 /// Shapes and class layouts of the dynamic catalog objects.

@@ -70,6 +70,7 @@ typedef struct {
     uint32_t first_node;      /* top-level member nodes of a value of this type */
     uint32_t node_count;
     uint32_t line;            /* vpiLineNo of the naming typedef, 0: none */
+    const char* file;         /* vpiFile of the naming typedef, or NULL */
     uint32_t index;           /* vpiIndexTypespec of an associative array: index + 1 */
 } llg_vpi_typespec_t;
 
@@ -461,6 +462,8 @@ typedef struct {
     uint32_t flags;           /* LLG_VPI_CLASS_* */
     uint32_t first_item;      /* item_count items the class declares */
     uint32_t item_count;
+    uint32_t line;            /* vpiLineNo of the declaration, 0: none */
+    const char* file;         /* vpiFile of the declaration, or NULL */
 } llg_vpi_class_t;
 
 /* Field kinds the generated object accessor reports, matching the model's

@@ -320,6 +320,7 @@ impl Codegen<'_> {
         };
         typespec.name = Some(self.node(typedef.typedef).name.clone());
         typespec.line = self.node(typedef.typedef).line;
+        typespec.file = self.node(typedef.typedef).file().map(str::to_owned);
         typespec.alias = alias;
         Some(table.intern(typespec))
     }

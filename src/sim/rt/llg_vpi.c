@@ -10961,7 +10961,12 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             if (property == vpiFile && object->file) return (PLI_BYTE8*)object->file;
             break;
         case SLOT_CABIT:
-            if (property == vpiFile && object->file) return (PLI_BYTE8*)object->file;
+        case SLOT_PRIMTERM:
+        case SLOT_PORTBIT:
+        case SLOT_TERM:
+            /* 37.3.3: on its owner's line (decision A19-D47), so in its
+             * owner's file. */
+            if (property == vpiFile && object && object->file) return (PLI_BYTE8*)object->file;
             break;
         case SLOT_REFOBJ: {
             /* 37.15: the low reference is the port's formal, the high one
@@ -10991,6 +10996,9 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
         case SLOT_TYPESPEC:
             /* 37.23 detail 1: a type without a typedef has no name. */
             if (property == vpiName) return (PLI_BYTE8*)typespec_at((uint32_t)slot->aux)->name;
+            /* 37.3.3: the file of the typedef whose line vpiLineNo gives. */
+            if (property == vpiFile && typespec_at((uint32_t)slot->aux)->line)
+                return (PLI_BYTE8*)typespec_at((uint32_t)slot->aux)->file;
             break;
         case SLOT_TSMEMBER:
             if (property == vpiName) return (PLI_BYTE8*)g_vpi.types->members[slot->aux].name;

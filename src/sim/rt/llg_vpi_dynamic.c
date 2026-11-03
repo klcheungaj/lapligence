@@ -2071,6 +2071,10 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
             if (property == vpiAutomatic) return 1;
             if (property == vpiVirtual && slot->kind == SLOT_CLASSDEFN)
                 return (dyn_class((uint32_t)slot->aux)->flags & LLG_VPI_CLASS_VIRTUAL) != 0;
+            /* 37.3.3: a class definition and its typespec are on the
+             * class declaration's line. */
+            if (property == vpiLineNo && dyn_class((uint32_t)slot->aux)->line)
+                return dyn_class((uint32_t)slot->aux)->line;
             break;
         case SLOT_CLASSITEM: {
             int ok;
@@ -2306,6 +2310,8 @@ static const char* dyn_get_str(int property, llg_vpi_slot_t* slot, int* handled)
             if (property == vpiName) return dyn_class((uint32_t)slot->aux)->name;
             /* 37.10 detail 5, 37.12. */
             if (property == vpiFullName) return dyn_class((uint32_t)slot->aux)->full_name;
+            if (property == vpiFile && dyn_class((uint32_t)slot->aux)->line)
+                return dyn_class((uint32_t)slot->aux)->file;
             break;
         case SLOT_CLASSITEM:
             return dyn_item_get_str(property, slot);
@@ -2454,6 +2460,8 @@ static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int mode) {
  * -1 when either is not a dynamic handle. */
 static int dyn_compare(const llg_vpi_slot_t* a, uint32_t a_index, const llg_vpi_slot_t* b,
                        uint32_t b_index) {
+    (void)a_index;
+    (void)b_index;
     int a_dynamic = a->kind == SLOT_CLASSOBJ || a->kind == SLOT_PROPERTY || a->kind == SLOT_DYNELEM;
     int b_dynamic = b->kind == SLOT_CLASSOBJ || b->kind == SLOT_PROPERTY || b->kind == SLOT_DYNELEM;
     if (!a_dynamic && !b_dynamic) return -1;
@@ -2463,8 +2471,10 @@ static int dyn_compare(const llg_vpi_slot_t* a, uint32_t a_index, const llg_vpi_
         case SLOT_BUILTINOBJ:
             return a->pointer == b->pointer;
         case SLOT_PROPERTY:
-            /* A declaration's property is its own object (no storage). */
-            if (!a->pointer || !b->pointer) return a_index == b_index;
+            /* A declaration's property (no storage) is one object per
+             * class and field, distinct from every object's property. */
+            if (!a->pointer && !b->pointer) return a->right == b->right && a->aux == b->aux;
+            if (!a->pointer || !b->pointer) return 0;
             return a->pointer == b->pointer && a->aux == b->aux;
         default:
             if (a->object != b->object || a->pointer != b->pointer || a->aux != b->aux ||
