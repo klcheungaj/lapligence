@@ -67,6 +67,34 @@ impl IrSignal {
     pub fn is_omitted(&self) -> bool {
         self.omit
     }
+
+    /// The one run `(group, slot, group_bit)` of a net alias view whose
+    /// bindings map its whole width, in order, onto consecutive bits of one
+    /// group driver slot; `None` for a signal without bindings, a view of
+    /// several runs and a view that leaves bits uncovered. Such a view's
+    /// value is always its group's bits, so it needs no storage of its own.
+    pub fn net_view_part(&self) -> Option<(usize, usize, u32)> {
+        let width = self.ty.width();
+        let first = self.net_alias.first()?;
+        if width == 0 || self.net_alias.len() != width as usize {
+            return None;
+        }
+        let low = first.group_bit.checked_sub(first.signal_bit)?;
+        let mut seen = vec![false; width as usize];
+        for binding in &self.net_alias {
+            let bit = binding.signal_bit as usize;
+            if binding.group != first.group
+                || binding.slot != first.slot
+                || bit >= seen.len()
+                || seen[bit]
+                || low.checked_add(binding.signal_bit) != Some(binding.group_bit)
+            {
+                return None;
+            }
+            seen[bit] = true;
+        }
+        Some((first.group, first.slot, low))
+    }
 }
 
 /// One bit-level membership in a canonical true-net-alias network.
@@ -168,6 +196,11 @@ pub struct IrNetGroup {
     /// Two-state signal holding the resolved strength view (eight bits per
     /// net bit), present only when a `%v` consumer reads this net.
     pub(in crate::sim) strength_view: Option<usize>,
+    /// The leading member slots of a bit-level alias group, which no write
+    /// targets (its sources have slots of their own): only the other slots
+    /// count as drivers when the runtime decides to defer a resolution
+    /// (`llg_net_t.silent_slots`). 0 for every other group.
+    pub(in crate::sim) silent_slots: usize,
 }
 
 impl IrNetGroup {
@@ -204,6 +237,7 @@ impl IrNetGroup {
             driven_runs: Vec::new(),
             runtime_delay: false,
             strength_view: None,
+            silent_slots: 0,
         })
     }
 

@@ -482,3 +482,48 @@ fn timing_check_sets_check_terminals_events_and_notifiers() {
         assert!(error.detail().contains(detail), "{detail}: {error:?}");
     }
 }
+
+#[test]
+fn net_view_part_accepts_only_one_ordered_run_over_the_whole_width() {
+    use super::{IrNetAliasBinding, IrSignal, IrType};
+    let view = |width: u32, bindings: &[(usize, usize, u32, u32)]| {
+        let mut signal = IrSignal::new(
+            "G_view".to_owned(),
+            None,
+            IrType::Packed {
+                width,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap();
+        for &(group, slot, signal_bit, group_bit) in bindings {
+            signal.net_alias.push(IrNetAliasBinding {
+                group,
+                slot,
+                signal_bit,
+                group_bit,
+            });
+        }
+        signal.net_view_part()
+    };
+    assert_eq!(view(4, &[]), None);
+    // Any binding order; the run starts at the group bit of signal bit 0.
+    assert_eq!(
+        view(3, &[(2, 1, 2, 7), (2, 1, 0, 5), (2, 1, 1, 6)]),
+        Some((2, 1, 5))
+    );
+    assert_eq!(view(1, &[(0, 3, 0, 0)]), Some((0, 3, 0)));
+    // A reversed run, a second slot or group, a gap, a duplicate and an
+    // uncovered bit each keep the general view.
+    assert_eq!(view(2, &[(0, 0, 0, 1), (0, 0, 1, 0)]), None);
+    assert_eq!(view(2, &[(0, 0, 0, 0), (0, 1, 1, 1)]), None);
+    assert_eq!(view(2, &[(0, 0, 0, 0), (1, 0, 1, 1)]), None);
+    assert_eq!(view(2, &[(0, 0, 0, 0), (0, 0, 1, 2)]), None);
+    assert_eq!(view(2, &[(0, 0, 0, 0), (0, 0, 0, 0)]), None);
+    assert_eq!(view(2, &[(0, 0, 0, 0)]), None);
+    assert_eq!(view(1, &[(0, 0, 1, 1)]), None);
+    // Signal bit 1 of a run starting below group bit 0 cannot exist.
+    assert_eq!(view(2, &[(0, 0, 1, 0), (0, 0, 0, 1)]), None);
+}

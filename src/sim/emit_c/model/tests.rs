@@ -260,6 +260,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         driven_runs: Vec::new(),
         runtime_delay: false,
         strength_view: None,
+        silent_slots: 0,
     }];
     model.arrays = vec![IrArray {
         activation: false,
@@ -403,6 +404,7 @@ fn component_strength_view_descriptor_is_validated_and_emitted() {
             driven_runs: Vec::new(),
             runtime_delay: false,
             strength_view: Some(1),
+            silent_slots: 0,
         }];
         model
     };

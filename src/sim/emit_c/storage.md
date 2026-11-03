@@ -38,7 +38,14 @@ releases the scope holding those locals, so the runtime never reads a
 released cell (decision A19-D78); outlined runs hold no such locals.
 
 - Alias visible cells have independent owners, canonical dependency addresses and
-  explicit startup/close. Alias parts are run-length rows
+  explicit startup/close. A view whose bindings map its whole width onto one
+  run of one group slot (`IrSignal::net_view_part`) has no storage, part
+  array, descriptor initializer, storage-table entries or start value: it is a
+  zeroed `llg_net_alias_t` plus one `llg_net_view_t` row of the model-wide
+  `llg_net_views` table, which `llg_net_views_start` configures, binds and
+  starts from its group in one loop (`model/storage.rs::render_net_views`);
+  a start value written to such a view's storage after the bind never reached
+  it, so its `SetScalar` init step is dropped. Other alias parts are run-length rows
   (`model/storage.rs::render_alias_parts` docs); the runtime refreshes and writes each run as one part
   select. A net change rewrites only its own parts of an alias whose parts cover
   its width (`llg_net_alias_ref`), so a vector split into per-bit nets costs one

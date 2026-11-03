@@ -63,6 +63,40 @@ impl<'a> Codegen<'a> {
     /// Groups with anything the runtime cannot resolve (non-net members,
     /// mixed widths, unsupported net types, dynamic/NBA/task-actual writes)
     /// reject code generation rather than disconnecting the net group.
+    /// Member slots of a bit-level alias group count as silent
+    /// (`IrNetGroup::silent_slots`) only while every view that reads the
+    /// group is a one-run view of it alone: the group's publication is then
+    /// the one change of each such view, as the update of the source's own
+    /// net was before a merge. A view that spans several groups (or a
+    /// net-array cell) keeps the deferral of all of them, so the drivers of
+    /// one pass still change it once.
+    fn keep_deferral_for_spanning_views(
+        &mut self,
+        first_group: usize,
+        array_bindings: &HashMap<(usize, u64), Vec<IrNetAliasBinding>>,
+    ) {
+        let mut spanning = HashSet::new();
+        for signal in &self.model.signals {
+            if !signal.net_alias.is_empty() && signal.net_view_part().is_none() {
+                spanning.extend(signal.net_alias.iter().map(|binding| binding.group));
+            }
+        }
+        for bindings in array_bindings.values() {
+            spanning.extend(bindings.iter().map(|binding| binding.group));
+        }
+        for (index, group) in self
+            .model
+            .net_groups
+            .iter_mut()
+            .enumerate()
+            .skip(first_group)
+        {
+            if spanning.contains(&index) {
+                group.silent_slots = 0;
+            }
+        }
+    }
+
     /// The propagation delay of the net group `group` (None for a net that
     /// gets no group because it never transitions). A runtime-valued delay
     /// (SystemVerilog, IEEE 1800-2009 28.16.1) is registered for an updater
@@ -1660,6 +1694,7 @@ impl<'a> Codegen<'a> {
         let mut array_alias_bindings: HashMap<(usize, u64), Vec<IrNetAliasBinding>> =
             HashMap::new();
         let alias_runs = self.partition_electrical_bits(alias_groups, &nodes, &type_plan)?;
+        let first_alias_group = self.model.net_groups.len();
         for run in alias_runs {
             let width = run.len() as u32;
             let bits = run.iter().flatten().copied().collect::<Vec<_>>();
@@ -1751,6 +1786,7 @@ impl<'a> Codegen<'a> {
                 driven_runs: Vec::new(),
                 runtime_delay: false,
                 strength_view: None,
+                silent_slots: members.len(),
             });
             for (group_bit, bit) in run
                 .iter()
@@ -1804,6 +1840,7 @@ impl<'a> Codegen<'a> {
                 self.record_wired_driver_site(source, signal);
             }
         }
+        self.keep_deferral_for_spanning_views(first_alias_group, &array_alias_bindings);
 
         // Bucket every distinct member by its union root (a parent net shared
         // by several ports lands in one group).
@@ -1978,6 +2015,7 @@ impl<'a> Codegen<'a> {
                 driven_runs: Vec::new(),
                 runtime_delay: false,
                 strength_view: None,
+                silent_slots: 0,
             });
             for member in members {
                 let Some(signal) = self.sig_globals.get(member).map(|info| info.ir) else {
@@ -2770,6 +2808,7 @@ impl<'a> Codegen<'a> {
             driven_runs: Vec::new(),
             runtime_delay: false,
             strength_view: None,
+            silent_slots: 0,
         });
 
         let old_global = info.global;

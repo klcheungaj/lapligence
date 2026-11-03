@@ -10,9 +10,14 @@ before the type plan (`nets/port_merges.rs`, A21-D4): it is a port edge of
 `port_batch` (without the codegen dissimilar-type warning, which the frontend
 already gives), the port is no structural driver site, and it emits no link.
 A port whose actual is a constant select, net-array element or concatenation
-of nets joins the bit-level union instead, bit by bit, when a copy would
-differ (A21-D5: a driver census over the selected bits decides) or when it
-selects whole nets and net-array cells (no actual net splits); a whole port
+of nets joins the bit-level union instead, bit by bit (A21-D5), also where a
+copy would be exact: its formal becomes a one-run net alias view, a table row
+without storage (`IrSignal::net_view_part`), which is smaller and faster than
+the copy's net and link. Member slots of a bit-level group are silent
+(`IrNetGroup::silent_slots`: no write targets them) while every view reading
+the group is a one-run view of it alone, so a group with one source resolves
+at once like the source's own net; a view spanning several groups keeps their
+multi-driver deferral (S2-D11). A whole port
 touching a net of the bit-level union merges too, since a storage alias
 cannot name it. `net_cells.rs` connects the cells such a port always merges
 with (`input_merge_cells`), and merged ports are no partition or net-array

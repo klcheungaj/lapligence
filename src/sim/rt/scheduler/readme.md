@@ -159,7 +159,9 @@ pending records keep their times. Reset
 model handles before freeing driver storage; reinitialization discards pending
 events. Zero-delay drivers drain Active. Deferred multi-slot net resolution (S2-D11):
 "Deferred net updates" comment in `nets.c` (`llg_net_defer`,
-`deferred_slot`). Writes outside a process turn (inertial
+`deferred_slot`); the leading `silent_slots` of a bit-level group (members that
+no write targets) do not count as drivers there, and a write to one clears
+them. Writes outside a process turn (inertial
 commits, startup, callbacks) resolve at once. Generated nets provide exact-size
 driver interval nodes and overlap scratch storage. Selected writes replace their
 previous interval, release it to Z when a selector moves, and resolve/publish only

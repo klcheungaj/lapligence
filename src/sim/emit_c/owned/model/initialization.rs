@@ -290,8 +290,15 @@ fn net_storage_lifecycle(
         } else {
             u8::from(group.propagation_delay.is_some())
         };
+        // The trailing silent-slot count is left to zero initialization
+        // when it is 0, so groups without silent slots keep their rows.
+        let silent = if group.silent_slots == 0 {
+            String::new()
+        } else {
+            format!(", {}u", group.silent_slots)
+        };
         let row = format!(
-            "{{ {}u, {}, {}, {propagation_enabled}, {net_delayed}, {fill}, {}, {}, {strength0}, {strength1}, {rise}ULL, {fall}ULL, {turn_off}ULL, {n_segments}u, {segment_lsb}, {driven_runs}, {n_runs}u }}",
+            "{{ {}u, {}, {}, {propagation_enabled}, {net_delayed}, {fill}, {}, {}, {strength0}, {strength1}, {rise}ULL, {fall}ULL, {turn_off}ULL, {n_segments}u, {segment_lsb}, {driven_runs}, {n_runs}u{silent} }}",
             group.width,
             u8::from(group.signed),
             group.kind.c_value(),
@@ -424,6 +431,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         if signal.net_driver.is_some()
             || signal.alias.is_some()
             || (signal.omit && signal.net_alias.is_empty())
+            || signal.net_view_part().is_some()
             || !emitted.insert(signal.c_name.clone())
         {
             continue;
@@ -441,11 +449,23 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     block.flush(&mut tables, &mut initialize, &mut destroy);
     initialize.push_str(&std::mem::take(&mut fixed_defaults));
     net_storage_lifecycle(model, &mut tables, &mut initialize, &mut destroy);
+    if model
+        .signals
+        .iter()
+        .any(|signal| signal.net_view_part().is_some())
+    {
+        // One-run views start before the other aliases bind, after every
+        // net is laid out and started.
+        let table = super::super::super::model::storage::NET_VIEW_TABLE;
+        let count = format!("sizeof({table}) / sizeof({table}[0])");
+        initialize.push_str(&format!("    llg_net_views_start({table}, {count});\n"));
+        destroy.push_str(&format!("    llg_net_views_release({table}, {count});\n"));
+    }
     let aliases = model
         .signals
         .iter()
         .enumerate()
-        .filter(|(_, signal)| !signal.net_alias.is_empty())
+        .filter(|(_, signal)| !signal.net_alias.is_empty() && signal.net_view_part().is_none())
         .map(|(index, _)| format!("llg_net_alias_{index}"))
         .collect::<Vec<_>>();
     if !aliases.is_empty() {
@@ -935,6 +955,12 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         }
         IrInitStep::SetScalar { sig, value } => {
             let signal = model.signal(*sig);
+            if signal.net_view_part().is_some() {
+                // A one-run view has no storage: its value is its group's
+                // bits from `llg_net_views_start` on, as a storage start
+                // value written after the bind never reached it either.
+                return Ok(());
+            }
             let target = Binding {
                 address: format!("&{}", signal.c_name),
                 width: signal.ty.width(),

@@ -1384,7 +1384,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   coercion, a second output driver) or a type other than `wire`/`tri`/`logic`
   merge into the same kind of group, VPI models included (decision A21-D4);
   constant selects, net-array elements and concatenations of nets merge bit
-  by bit with the formal where a copy would differ (A21-D5); net delays and
+  by bit with the formal (A21-D5); net delays and
   `uwire` sides keep a copy (known issue).
   V §12.3.10 / Table 45; SV §§23.3.3.1, 23.3.3.6–23.3.3.7 / Table 23-1 **[1995]**.
 - 🟨 **True aliases** — Same-declared-net-type packed networks, fully indexed

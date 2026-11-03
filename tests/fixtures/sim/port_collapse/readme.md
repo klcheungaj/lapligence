@@ -100,7 +100,8 @@ modes.
 - `concatenation: c=1 e=x u8.n=1x`: `{c, e}` pairs `c` with `n[1]` and `e`
   with `n[0]`, which the child drives.
 - `output bits: a=z11z St1 We1`: the weak child driver of `a[2]` merges and
-  stays weak; `a[1]`, driven strong by its port alone, keeps its exact copy.
+  stays weak; `a[1]`, driven strong by its port alone, merges too and shows
+  the child's strong 1.
 - `second driver: b=zzxz u11.o=x`: the parent's 0 on `b[1]` and the child's 1
   resolve to x under both names.
 - `output concatenation: g=1 h=0 u12.o=10`: the child's `2'b10` splits MSB to
@@ -114,6 +115,31 @@ modes.
   every driver of the merged net (10.6.2), so `f[1]` shows it too; after the
   release `f=1111 u15.m=1`.
 - `x=0: ...`: every merged bit follows the parent's 0 once both sides agree.
+
+## `plain_selects.sv`
+
+Plain selected input and output ports, whose copy would show the same values
+one update later, merge with their formal too (A21-D5): the connected bits are
+one simulated net (23.3.3.7 L41596-41598, "It is permissible to merge the
+dominating and dominated nets into a single net"), so the formal changes in
+the same update as the actual. The output is the same with `--vpi` and in both
+optimizer modes, and matches the reference simulator. Each time step has one
+printing process, and time 0 prints nothing, because the order of processes
+woken in one step is open (4.7 L3465-3466: "active events can be taken off the
+Active or Reactive event region and processed in any order").
+
+- `1 v=0110 u.a=1 u.p=01 u.q=00`: `u.a` is `v[1]`, `u.p` is `v[3:2]` and
+  `u.q` is `{v[0], v[3]}`; the parent's process that wakes on `v` already
+  sees the formals' new values (a copy showed `u.a=0 u.p=00`).
+- `strength: St1 St1 St0 St0`: every name of a strong driver's bit shows
+  strong; the child drives `w[2]` through `o` with 0.
+- `3 w=z1z1 u.o=1`: the child's driver of `o` reaches `w[2]`; `w[0]` keeps the
+  parent's 1 and the undriven bits stay z.
+- `4 v=1001 u.a=0 u.p=10 u.q=11`: a force of the actual `v` overrides its
+  driver (10.6.2 L13397-13399) and every formal shows the forced bits.
+- `5 ...`, `6 ...`: after the release the driver's `0110` returns, then
+  `1000` follows.
+- `wakes=4 ...`: `u.a` changed at 1, 4, 5 and 6.
 
 ## `fallbacks.sv`
 

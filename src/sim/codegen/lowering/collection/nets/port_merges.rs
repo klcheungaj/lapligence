@@ -20,18 +20,15 @@
 //! element (or a constant select of one) or a concatenation of those merges
 //! bit by bit (A21-D5): no storage alias can name part of a net, so its
 //! formal joins the bit-level union that selected inout actuals use, MSB to
-//! MSB, when a copy would show something else (`selected_port_merges`: a
-//! sink driver besides the port, a type that could dominate, a source
-//! driver that is not strong, a force of the sink) or when the actual
-//! selects whole nets and net-array cells only. Any other exact copy stays:
-//! the merged bits share one group with the rest of their vector
-//! (`net_partition.rs`), which simulates faster than the copies, but each
-//! merged formal becomes a net alias view with its own storage, descriptors
-//! and start value, so the model C grows well beyond one shared copy row per
-//! port (A21-D5 trade-off). A merged
-//! net carries bit-level bindings (`IrSignal::net_alias`), which a storage
-//! alias cannot share, so a whole port with such a net on either side
-//! merges into it too instead of keeping its link.
+//! MSB. It merges even where a copy would show the same values one update
+//! later: the merged bits share one group with the rest of their vector
+//! (`net_partition.rs`), which simulates faster than the copies, and each
+//! merged formal is a one-run net alias view, a table row without storage of
+//! its own (`IrSignal::net_view_part`), which is smaller than the copy's net
+//! and link (A21-D5 trade-off). A merged net carries bit-level bindings
+//! (`IrSignal::net_alias`), which a storage alias cannot share, so a whole
+//! port with such a net on either side merges into it too instead of keeping
+//! its link.
 //!
 //! A port also keeps its link when a merge would change more than the nets'
 //! resolution: either side is not a net of a type the merge supports (a
@@ -86,29 +83,6 @@ pub(super) struct PortMerges {
     pub(super) selected: Vec<SelectedPortMerge>,
 }
 
-/// The structural drivers of the selected actual bits of every candidate:
-/// per bit, how many drive it and whether one has a strength other than
-/// (strong0, strong1); owners a driver reaches through a projection without
-/// bit positions; and the nets and arrays a force or release names.
-#[derive(Default)]
-struct DriverCensus {
-    bits: HashMap<AliasBit, (u32, bool)>,
-    opaque: HashSet<NodeId>,
-    forced: HashSet<NodeId>,
-}
-
-impl DriverCensus {
-    /// Whether a bit has more than `drivers` drivers, one of them not
-    /// strong, or an opaque one.
-    fn exceeds(&self, bit: AliasBit, drivers: u32) -> bool {
-        self.opaque.contains(&bit.owner())
-            || self
-                .bits
-                .get(&bit)
-                .is_some_and(|(count, weak)| *count > drivers || *weak)
-    }
-}
-
 /// The facts of `build_net_groups` the merge decision reads.
 pub(super) struct MergeContext<'n> {
     pub(super) nodes: &'n [NodeId],
@@ -139,12 +113,11 @@ impl Codegen<'_> {
         if candidates.is_empty() {
             return PortMerges::default();
         }
-        let census = self.driver_census(context.nodes, &candidates);
         let merged = Self::propagate_merges(&candidates, context, |candidate| {
             match &candidate.connection {
-                MergeConnection::Selected { output, bits, nets } => {
-                    self.selected_port_merges(candidate.port, *output, bits, nets, context, &census)
-                }
+                // A merged selected port is never slower or larger than its
+                // copy (A21-D5 trade-off) and is exactly one simulated net.
+                MergeConnection::Selected { .. } => true,
                 MergeConnection::Whole { sink, .. } => {
                     context.parent.contains_key(sink)
                         || self.sink_differs_from_source(*sink, candidate.port, context)
@@ -572,208 +545,6 @@ impl Codegen<'_> {
                 | NetType::Supply0
                 | NetType::Supply1
         )
-    }
-
-    /// The drivers of every selected actual bit of `candidates`, in one pass
-    /// over the structural sources (an empty census without selected
-    /// candidates).
-    fn driver_census(&self, nodes: &[NodeId], candidates: &[MergeCandidate]) -> DriverCensus {
-        let mut census = DriverCensus::default();
-        let mut owners = HashSet::new();
-        for candidate in candidates {
-            if let MergeConnection::Selected { bits, .. } = &candidate.connection {
-                for (actual, _) in bits {
-                    census.bits.entry(*actual).or_insert((0, false));
-                    owners.insert(actual.owner());
-                }
-            }
-        }
-        if owners.is_empty() {
-            return census;
-        }
-        owners.extend(
-            candidates
-                .iter()
-                .filter_map(|candidate| match &candidate.connection {
-                    MergeConnection::Selected { nets, .. } => nets.first().copied(),
-                    MergeConnection::Whole { .. } => None,
-                }),
-        );
-        for source in nodes {
-            let (targets, strengths) = match self.kind(*source) {
-                NodeKind::ContAssign {
-                    strength0,
-                    strength1,
-                    ..
-                } => (
-                    self.node(*source)
-                        .children
-                        .first()
-                        .copied()
-                        .into_iter()
-                        .collect(),
-                    continuous_assignment_strengths_for_width(*strength0, *strength1, "", 1).ok(),
-                ),
-                NodeKind::Gate {
-                    prim_type,
-                    strength0,
-                    strength1,
-                    ..
-                } => (
-                    self.gate_driven_terms(*source),
-                    gate_driver_strengths(*prim_type, *strength0, *strength1, "").ok(),
-                ),
-                NodeKind::Port {
-                    direction,
-                    high,
-                    low,
-                    high_expr,
-                    strength0,
-                    strength1,
-                    ..
-                } => {
-                    let target = match direction {
-                        DbDirection::Input => self.port_child_target(*source, *low),
-                        DbDirection::Output => high_expr.or(*high),
-                        _ => None,
-                    };
-                    (
-                        target.into_iter().collect::<Vec<_>>(),
-                        self.effective_port_driver_strengths(*source, *strength0, *strength1, *low)
-                            .ok(),
-                    )
-                }
-                NodeKind::Stmt(StmtKind::Force { lhs, .. } | StmtKind::Release { lhs }) => {
-                    match self.partition_target_bits(*source, *lhs) {
-                        Some(bits) => census.forced.extend(bits.iter().map(|bit| bit.owner())),
-                        None => self.partition_opaque_owners(*lhs, &mut census.forced),
-                    }
-                    continue;
-                }
-                _ => {
-                    if self.db.clocking_var(*source).is_some() {
-                        if let Ok(Some(_)) = self.clocking_net_site(*source, &owners) {
-                            census.opaque.extend(owners.iter().copied());
-                        }
-                    }
-                    continue;
-                }
-            };
-            let weak = strengths != Some((6, 6));
-            for target in targets {
-                match self.partition_target_bits(*source, target) {
-                    Some(bits) => {
-                        for bit in bits {
-                            if let Some((count, any_weak)) = census.bits.get_mut(&bit) {
-                                *count += 1;
-                                *any_weak |= weak;
-                            }
-                        }
-                    }
-                    None => {
-                        let mut reached = HashSet::new();
-                        self.partition_opaque_owners(target, &mut reached);
-                        census
-                            .opaque
-                            .extend(reached.into_iter().filter(|owner| owners.contains(owner)));
-                    }
-                }
-            }
-        }
-        census
-    }
-
-    /// Whether a selected port merges (A21-D5). It must when the copy would
-    /// differ from one simulated net: a net of either side is not a
-    /// `wire`/`tri`/`logic` net (its type could dominate, 23.3.3.7), the
-    /// sink has a driver besides the port (the formal of an input; for an
-    /// output, a selected bit), the source has a driver that is not strong
-    /// (a copy drives the sink strong), or a force or release names the sink
-    /// (on one simulated net it forces both sides, 10.6.2). Otherwise the
-    /// copy is exact up to its update step, and the port merges only when
-    /// that is cheaper: when the actual selects whole nets and whole
-    /// net-array cells, so no actual net is split. A split vector stays one
-    /// shared group, but every merged formal adds a net alias view, which
-    /// makes the model larger than the copy (A21-D5 trade-off).
-    fn selected_port_merges(
-        &self,
-        port: NodeId,
-        output: bool,
-        bits: &[(AliasBit, AliasBit)],
-        nets: &[NodeId],
-        context: &MergeContext<'_>,
-        census: &DriverCensus,
-    ) -> bool {
-        let plain_net = |net: &NodeId| {
-            matches!(
-                self.kind(*net),
-                NodeKind::Net {
-                    net_type: NetType::Wire | NetType::Tri | NetType::Logic,
-                    ..
-                }
-            )
-        };
-        let plain_array = |bit: &AliasBit| match bit {
-            AliasBit::Array { owner, .. } => self
-                .db
-                .array_meta(*owner)
-                .and_then(|meta| meta.net_type())
-                .is_some_and(|kind| matches!(kind, NetType::Wire | NetType::Tri | NetType::Logic)),
-            AliasBit::Net { .. } => true,
-        };
-        if !nets.iter().all(plain_net) || !bits.iter().all(|(actual, _)| plain_array(actual)) {
-            return true;
-        }
-        let formal = nets[0];
-        let forced = |owner: NodeId| census.forced.contains(&owner);
-        if if output {
-            bits.iter().any(|(actual, _)| forced(actual.owner()))
-        } else {
-            forced(formal)
-        } {
-            return true;
-        }
-        let Ok(formal_sources) =
-            self.structural_site_sources(context.nodes, context.writers, &[formal])
-        else {
-            return true;
-        };
-        let differs = if output {
-            formal_sources
-                .iter()
-                .any(|(_, strengths)| *strengths != (6, 6))
-                || bits.iter().any(|(actual, _)| census.exceeds(*actual, 1))
-        } else {
-            formal_sources.iter().any(|(source, _)| *source != port)
-                || bits
-                    .iter()
-                    .any(|(actual, _)| census.exceeds(*actual, u32::MAX))
-        };
-        differs || self.selects_whole_owners(bits)
-    }
-
-    /// Whether the actual bits are whole nets and whole net-array cells,
-    /// each bit once.
-    fn selects_whole_owners(&self, bits: &[(AliasBit, AliasBit)]) -> bool {
-        let mut seen = HashSet::new();
-        let mut counts: HashMap<(NodeId, Option<u64>), u32> = HashMap::new();
-        for (actual, _) in bits {
-            if !seen.insert(*actual) {
-                return false;
-            }
-            let key = match actual {
-                AliasBit::Net { net, .. } => (*net, None),
-                AliasBit::Array { owner, element, .. } => (*owner, Some(*element)),
-            };
-            *counts.entry(key).or_default() += 1;
-        }
-        counts.into_iter().all(|((owner, element), count)| {
-            let width = match element {
-                None => self.signal_of(owner).map(|signal| signal.width),
-                Some(_) => self.array_globals.get(&owner).map(|info| info.elem_width),
-            };
-            width == Some(count)
-        })
     }
 
     /// Whether the merged net would differ from the sink's source: the sink

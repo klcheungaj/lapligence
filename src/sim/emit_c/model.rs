@@ -29,7 +29,7 @@ use classes::{
 };
 mod assertions;
 use assertions::{assertion_predicate_name, assertion_sequence_name};
-mod storage;
+pub(super) mod storage;
 pub(in crate::sim::emit_c) use storage::path_source_storage;
 use storage::{render_signal_decls, render_static_local_decls};
 pub(in crate::sim::emit_c) mod vpi;
