@@ -4,8 +4,8 @@ use super::objects::object_query;
 use super::*;
 use crate::core::db::ConcurrentAssertionKind;
 use crate::sim::ir::{
-    IrAssertionControlKind, IrContainerElement, IrMemorySelector, IrObjectQuery, IrObjectStmt,
-    IrStringExpr,
+    IrAssertionControlKind, IrContainerElement, IrElemSel, IrMemorySelector, IrObjectQuery,
+    IrObjectStmt, IrStringExpr,
 };
 
 mod assertions;
@@ -392,6 +392,21 @@ fn normalize_force_lhs(model: &IrModel, lhs: IrLhs) -> IrLhs {
             .is_some_and(|signal| signal.net_driver.is_some() || !signal.net_alias.is_empty())
     };
     match lhs {
+        // A whole net array or a selected row lowers to a stream of constant
+        // element lvalues; each names one net cell, forced through that
+        // cell's electrical signal like `force na[i]` (10.6.2 "a net").
+        IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel: IrElemSel::Whole,
+        } => match net_array_cell(model, arr, &indices) {
+            Some(signal) => IrLhs::Whole(signal),
+            None => IrLhs::ArrayElem {
+                arr,
+                indices,
+                elem_sel: IrElemSel::Whole,
+            },
+        },
         IrLhs::IdxPart(index, base, width_expr, width, negative, two_state) => {
             let span = i64::from(width) - 1;
             let bounds = force_constant_i64(&base)
@@ -463,6 +478,33 @@ fn normalize_force_lhs(model: &IrModel, lhs: IrLhs) -> IrLhs {
         },
         other => other,
     }
+}
+
+/// The electrical signal of the net-array cell at constant `indices`.
+fn net_array_cell(model: &IrModel, array: usize, indices: &[IrExpr]) -> Option<usize> {
+    let array = model.arrays.get(array)?;
+    if !array.is_net() || indices.len() != array.dims.len() {
+        return None;
+    }
+    let mut linear = 0u64;
+    for ((left, right), index) in array.dims.iter().zip(indices) {
+        let index = force_constant_i64(index)?;
+        let (left, right) = (i64::from(*left), i64::from(*right));
+        if index < left.min(right) || index > left.max(right) {
+            return None;
+        }
+        let offset = if left >= right {
+            left - index
+        } else {
+            index - left
+        };
+        let extent = (left - right).unsigned_abs() + 1;
+        linear = linear.checked_mul(extent)?.checked_add(offset as u64)?;
+    }
+    array
+        .net_elements
+        .iter()
+        .find_map(|(element, signal)| (*element == linear).then_some(*signal))
 }
 
 /// Validate the force/release target shape shared by lowering and emission.

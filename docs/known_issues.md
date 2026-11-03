@@ -1873,25 +1873,24 @@ net-contribution batches.
 
 ## Unsupported force and release targets
 
-**Status:** open (SIM-023 deferral).
+**Status:** narrowed (fin-gaps-e). Whole unpacked net arrays are forced and
+released (`sim_023/whole_net_arrays`); string, class-handle and event
+variables are rejected by decision S23-D5 (industry-standard behaviour).
 
-These legal targets stop the run with a located error instead of being forced:
+This legal target stops the run with a located error instead of being
+forced: an element of a static unpacked array variable in SV2009 (for
+example `force mem[1] = 7;` on `int mem[2]`), which reads as a "reference to
+a singular variable" under 10.6.2. The frontend rejects every select of a
+variable as a force or release target (its `BadProceduralForce` check, which
+llg promotes to an error), as IEEE 1364-2001 9.3.2 requires ("It cannot be a
+memory word"). Industry-standard behaviour forces such elements, also with a
+non-constant index evaluated when the force executes. Admitting it needs a
+tracked frontend patch (SV2009 only) and a force target for array cells,
+including lazily allocated sparse cells, in the force runtime (which today
+overlays packed and real signal storage only). Estimate: 1.5-2 days, plus a
+full suite and the language-server tests for the frontend patch.
 
-- string, class-handle and event variables, which are singular (IEEE 1800-2009
-  6.4) and therefore legal under 10.6.2. The force runtime overlays packed and
-  real storage only; a native value would need its own forced copy and
-  release rule. A chandle force is already rejected by the frontend;
-- a whole unpacked net array. Its elements can be forced one at a time;
-- an element of a static unpacked array variable in SV2009 (for example
-  `force mem[1] = 7;` on `int mem[2]`), which reads as a "reference to a
-  singular variable" under 10.6.2. The frontend rejects every select of a
-  variable as a force or release target (its `BadProceduralForce` check, which
-  llg promotes to an error), as IEEE 1364-2001 9.3.2 requires ("It cannot be a
-  memory word"). Admitting it needs a frontend patch and a force target for
-  array cells, including lazily allocated ones.
-
-Pinned by `neg_string`, `neg_class_handle`, `neg_whole_net_array` and
-`static_memory_force_witness` in
+Pinned by `static_memory_force_witness` in
 [sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md).
 
 ## Delayed enable gates drive X instead of L/H

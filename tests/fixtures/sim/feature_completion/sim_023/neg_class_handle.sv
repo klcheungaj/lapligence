@@ -1,4 +1,4 @@
-// Legal (a class handle variable is singular) but not supported by llg.
+// Decision S23-D5: a class-handle variable is not a force target.
 class C;
 endclass
 module tb;

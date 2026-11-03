@@ -356,14 +356,13 @@ impl EmitCtx<'_, '_> {
             _ => None,
         };
         if let Some(what) = unpacked {
+            // A whole net array is a net; its cells are forced together.
             if self
                 .cg
                 .array_net_target_parts(lhs)
                 .is_some_and(|(array, indices)| array.is_net && indices.is_empty())
             {
-                return Err(format!(
-                    "{statement} of the whole net array `{name}` in `{diagnostic_path}` is not supported; force its elements instead"
-                ));
+                return Ok(());
             }
             return Err(format!(
                 "{statement} target `{name}` in `{diagnostic_path}` is {what}, which is not a singular variable (IEEE 1800-2009 10.6.2)"
@@ -377,9 +376,11 @@ impl EmitCtx<'_, '_> {
             TypeShape::Opaque { .. } => Some("handle"),
             _ => None,
         };
+        // Industry-standard behaviour rejects these singular (6.4) but
+        // dynamic or opaque targets, and so does llg (decision S23-D5).
         if let Some(kind) = kind {
             return Err(format!(
-                "{statement} of the {kind} variable `{name}` in `{diagnostic_path}` is not supported; force/release supports packed, real and enumerated variables and nets"
+                "{statement} of the {kind} variable `{name}` in `{diagnostic_path}` is rejected: string, class-handle, chandle and event variables are not force or release targets (decision S23-D5); force/release supports packed, real and enumerated variables and nets"
             ));
         }
         Ok(())

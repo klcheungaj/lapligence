@@ -286,6 +286,17 @@ fn s23_d2_force_non_singular() {
 }
 
 #[test]
+fn s23_d5_force_native_variable() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S23-D5_force_native_variable.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S23-D5_force_native_variable",
+        "force of the string variable `s`",
+    );
+}
+
+#[test]
 fn s23_d3_net_member_select() {
     run_decision(
         "S23-D3_net_member_select",

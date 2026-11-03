@@ -41,6 +41,12 @@ fn nets_resolve_on_release_and_variables_keep_or_reestablish() {
 }
 
 #[test]
+fn whole_net_arrays_force_every_cell() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_023/whole_net_arrays.out");
+    sim_cli::run_case_backend_parity(SUITE, "whole_net_arrays", expected, &[], &[]);
+}
+
+#[test]
 fn overlapping_net_selects_keep_neighbouring_bits() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_023/partial_overlap.out");
     sim_cli::run_case_backend_parity(
@@ -291,31 +297,31 @@ fn neg_unpacked_struct() {
 }
 
 #[test]
-fn unsupported_string_target() {
-    // Legal (6.4: strings are singular) but not supported; docs/known_issues.md.
+fn rejected_string_target() {
+    // Decision S23-D5: string, class-handle and event targets are rejected.
     sim_cli::reject_case(
         SUITE,
         "neg_string",
-        "neg_string.sv:4:11` is not supported; force/release supports packed, real and enumerated variables and nets",
+        "neg_string.sv:4:11` is rejected: string, class-handle, chandle and event variables are not force or release targets (decision S23-D5)",
     );
 }
 
 #[test]
-fn unsupported_class_handle_target() {
-    // Legal (6.4: handles are singular) but not supported; docs/known_issues.md.
+fn rejected_class_handle_target() {
+    // Decision S23-D5.
     sim_cli::reject_case(
         SUITE,
         "neg_class_handle",
-        "neg_class_handle.sv:6:11` is not supported",
+        "neg_class_handle.sv:6:11` is rejected",
     );
 }
 
 #[test]
-fn unsupported_whole_net_array_target() {
-    // Not supported; its elements are (`hier_live`, `partial_overlap`).
+fn rejected_event_target() {
+    // Decision S23-D5.
     sim_cli::reject_case(
         SUITE,
-        "neg_whole_net_array",
-        "neg_whole_net_array.sv:7:11` is not supported; force its elements instead",
+        "neg_event",
+        "neg_event.sv:4:11` is rejected: string, class-handle, chandle and event variables",
     );
 }

@@ -925,7 +925,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   variables, every resolved net kind (`wire`, `wand`, `wor`, `tri`,
   multi-driven), constant bit-, part- and indexed part-selects of nets, constant
   member and element selects of packed-structure and packed-array nets, net-array
-  elements, true-net aliases and concatenations of these, local or through
+  elements, whole unpacked net arrays (every cell, in declared order), true-net aliases and concatenations of these, local or through
   hierarchical, generate, instance-array, interface, `$root` and upward paths,
   from processes, tasks, functions, class methods and fork branches. The RHS is
   live: a change of any operand, including another forced signal, re-evaluates
@@ -947,8 +947,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   release or replacement stops it (§9). Variable selects, memory words (V
   §9.3.2), dynamic net selects, automatic targets or RHS references, class
   properties, dynamic elements (SV §§6.21, 13.3.2) and unpacked aggregates (not
-  singular, SV §6.4) are located errors. Missing: string, class-handle and event
-  variables, whole net arrays and SV2009 static unpacked-array elements
+  singular, SV §6.4) are located errors; string, class-handle, chandle and
+  event variables are rejected as industry-standard behaviour does (decision
+  S23-D5). Missing: SV2009 static unpacked-array elements
   ([known issue](known_issues.md#unsupported-force-and-release-targets)).
   V §9.3.2 **[1995]**.
 
