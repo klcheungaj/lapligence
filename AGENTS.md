@@ -26,7 +26,8 @@ server (the same frontend → owned analysis → tower-lsp stdio features).
   Python comments or docstrings only when asked.
 - Speed and memory come first, but optimize only with evidence and explained
   trade-offs; no unsolicited micro-optimizations.
-- New nontrivial code needs tests ([test guide](tests/AGENTS.md)).
+- New nontrivial code needs tests ([test guide](tests/AGENTS.md)). Prefer focused
+  tests; run the full suite only after broad changes whose impact is unclear.
 - Comments are factual and say why; document public APIs and FFI ownership.
   Update a module readme when its purpose or interactions change.
 - Keep handoffs, plans, findings and run evidence in ignored `persistence/`;

@@ -236,9 +236,11 @@ jobs:
           key: ${{ steps.cargo-deps.outputs.cache-primary-key }}
 
   # Each distribution runs the full release-profile suite from the static musl
-  # test archive on its own runner, in parallel with the other distribution.
-  # Neither needs a Rust toolchain; the release job requires every combination
-  # to pass.
+  # test archive on its own runner, in parallel with the other distributions.
+  # None needs a Rust toolchain; the release job requires every combination
+  # to pass. The ubuntu-24.04-clang row (x86_64 only) builds the generated
+  # models and runtime with Clang (LLG_CC/CC); the other rows use the image's
+  # default `cc` (GCC).
   test:
     name: test (${{ matrix.distro }})
     needs: build
@@ -247,8 +249,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: [ubuntu-24.04, rocky-9]
+        distro: [ubuntu-24.04, rocky-9, ubuntu-24.04-clang]
+        # exclude is applied before include, so the Clang row must be in the
+        # base list to be removable; on x86_64 the value `none` matches no row.
+        exclude:
+          - distro: ${{ inputs.arch == 'x86_64' && 'none' || 'ubuntu-24.04-clang' }}
         include:
+          - distro: ubuntu-24.04-clang
+            image: ubuntu:24.04
+            model_cc: clang
+            install: >-
+              export DEBIAN_FRONTEND=noninteractive &&
+              apt-get update &&
+              apt-get install -y --no-install-recommends
+              build-essential clang cmake git ninja-build procps python3
           - distro: ubuntu-24.04
             image: ubuntu:24.04
             install: >-
@@ -316,8 +330,13 @@ jobs:
             --env NEXTEST_PROFILE \
             --env LLG_BUILD_TIMINGS=/workspace/target/llg-build-timings.tsv \
             --env LLG_INSTALL="${{ matrix.install }}" \
+            --env LLG_MODEL_CC="${{ matrix.model_cc }}" \
             "${{ matrix.image }}" sh -euxc '
               eval "$LLG_INSTALL"
+              if [ -n "$LLG_MODEL_CC" ]; then
+                export LLG_CC="$LLG_MODEL_CC" CC="$LLG_MODEL_CC"
+                "$LLG_CC" --version
+              fi
               touch /tmp/llg-ccache.env
               python3 scripts/ci_ccache.py activate --ccache /ccache-bin/ccache \
                 --ccache-dir /ccache --max-size 500M --env-format shell --env-file /tmp/llg-ccache.env
