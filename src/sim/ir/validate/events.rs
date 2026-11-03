@@ -30,6 +30,17 @@ impl Validator<'_> {
                 "event captures require an owned snapshot or borrowed automatic handle",
             );
         }
+        // A fork-join branch passes a `ref` formal's descriptor as an owned
+        // opaque slot.
+        if let IrExprKind::FormalRead(index) = initial.kind() {
+            if storage.kind() == StorageKind::Opaque {
+                if !formals.get(*index).is_some_and(|formal| formal.is_ref()) {
+                    return self.fail(path, "an opaque formal capture requires a `ref` formal");
+                }
+                // The slot holds the descriptor, not the formal's value.
+                return Ok(());
+            }
+        }
         if storage.kind() == StorageKind::Event && storage.ownership() == StorageOwnership::Borrowed
         {
             let valid = matches!(initial.kind(), IrExprKind::ObjectQuery(query)

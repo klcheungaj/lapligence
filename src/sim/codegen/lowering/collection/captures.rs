@@ -472,7 +472,16 @@ impl<'a> Codegen<'a> {
                     && (cg
                         .capture_source(target)
                         .is_some_and(|source| source.info.static_signal.is_none())
-                        || cg.proc_string_local_name(target).is_some())
+                        || cg.proc_string_local_name(target).is_some()
+                        // A `ref` formal of the enclosing subroutine reaches
+                        // a branch by reference.
+                        || cg.is_ref_formal(target)
+                            && cg.func.as_ref().is_some_and(|function| {
+                                function.arg_ir.contains_key(&target)
+                                    || function.string_read.contains_key(&target)
+                                    || function.event_args.contains_key(&target)
+                                    || function.chandle_read.contains_key(&target)
+                            }))
                 {
                     out.insert(target);
                 }

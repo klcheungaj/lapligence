@@ -1266,17 +1266,22 @@ fn render_process(
     Ok((source, layout, net_batches))
 }
 
+/// A helper of a process or of `function` (`None` for a process): fork
+/// branches of a subroutine may name its `ref` formals.
 pub(in crate::sim::emit_c) fn pre_function<'a, 'm>(
     ctx: &'a RCtx<'m>,
     pre: &IrPreFn,
+    function: Option<&'m IrFunc>,
     names: &'a StorageNames<'m>,
 ) -> Result<String, String> {
-    callbacks::render(ctx, pre, names)
+    callbacks::render(ctx, pre, function, names)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::sim::emit_c) fn coroutine_branch<'a, 'm>(
     ctx: &'a RCtx<'m>,
     pre: &IrPreFn,
+    function: Option<&'m IrFunc>,
     owner: CoroutineId,
     analysis: &ExecutionAnalysis,
     frame_upper_bounds: &BTreeMap<usize, usize>,
@@ -1286,6 +1291,7 @@ pub(in crate::sim::emit_c) fn coroutine_branch<'a, 'm>(
     callbacks::coroutine_branch(
         ctx,
         pre,
+        function,
         owner,
         analysis,
         frame_upper_bounds,

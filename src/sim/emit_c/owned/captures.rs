@@ -119,8 +119,7 @@ impl Frame<'_, '_> {
                                 .ok_or_else(|| "invalid inline formal index".to_owned())?
                         } else {
                             let formal = self
-                                .ctx
-                                .func
+                                .formal_function()
                                 .and_then(|func| func.formals.get(*index))
                                 .ok_or_else(|| {
                                     "borrowed capture has no enclosing formal".to_owned()
@@ -150,6 +149,22 @@ impl Frame<'_, '_> {
             }
             if storage.kind() == StorageKind::Opaque {
                 let handle = match initial.kind() {
+                    // A `ref` formal named by a fork-join branch passes its
+                    // descriptor, which stays valid until the join (the
+                    // subroutine waits for every branch).
+                    IrExprKind::FormalRead(index) => {
+                        if !self.formal_overrides.is_empty()
+                            || !self
+                                .formal_function()
+                                .and_then(|function| function.formals.get(*index))
+                                .is_some_and(|formal| formal.is_ref())
+                        {
+                            return Err(
+                                "fork capture of a `ref` formal requires its descriptor".to_owned()
+                            );
+                        }
+                        self.scalar("void*", format!("(void*)(uintptr_t)r{index}"))
+                    }
                     IrExprKind::ObjectQuery(query) => match query.as_ref() {
                         IrObjectQuery::HandleCapture(handle) => self.chandle(handle)?,
                         _ => return Err("opaque capture requires a typed handle".to_owned()),
@@ -398,6 +413,9 @@ impl Frame<'_, '_> {
             return Ok(());
         }
         if storage.kind() == StorageKind::Opaque {
+            if let IrExprKind::FormalRead(index) = initial.kind() {
+                return self.bind_ref_formal_capture(*index, storage, source);
+            }
             let binding = self.native_local(name, NativeKind::Chandle);
             self.line(format!(
                 "*({}) = llg_frame_read_opaque({source}, {}u);",
@@ -433,6 +451,48 @@ impl Frame<'_, '_> {
                 &binding.address,
                 &format!("llg_frame_read_value({source}, {}u)", storage.slot()),
             );
+        }
+        Ok(())
+    }
+
+    /// Bind the descriptor of `ref` formal `index` that a fork-join branch
+    /// captured under its parameter name (`rN`), so formal reads, stores,
+    /// selects and waits in the branch emit exactly as in the subroutine.
+    fn bind_ref_formal_capture(
+        &mut self,
+        index: usize,
+        storage: StorageRef,
+        source: &str,
+    ) -> Result<(), String> {
+        let function = self
+            .formal_function()
+            .ok_or("captured `ref` formal outside its subroutine")?;
+        let formal = function
+            .formals
+            .get(index)
+            .filter(|formal| formal.is_ref())
+            .ok_or("captured `ref` formal is not a `ref` formal")?;
+        let name = format!("r{index}");
+        let ty = super::super::model::owned_frame_param_fields(function)
+            .into_iter()
+            .find(|(_, field)| *field == name)
+            .map(|(ty, _)| ty)
+            .ok_or("captured `ref` formal has no descriptor parameter")?;
+        let load = format!(
+            "({ty})(uintptr_t)llg_frame_read_opaque({source}, {}u)",
+            storage.slot()
+        );
+        if self.layout.storage() == FrameStorage::CoFrame {
+            self.frame_field(&ty, &name)?;
+            self.line(format!("{name} = {load};"));
+        } else {
+            self.line(format!("{ty} {name} = {load};"));
+        }
+        if formal.event {
+            self.event_bindings
+                .first_mut()
+                .expect("event scope")
+                .insert(super::events::event_formal_binding(index), name);
         }
         Ok(())
     }

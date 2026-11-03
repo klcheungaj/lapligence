@@ -111,8 +111,7 @@ impl Frame<'_, '_> {
             }
             IrChandleExpr::FormalRead(index) => {
                 let formal = self
-                    .ctx
-                    .func
+                    .formal_function()
                     .and_then(|function| function.formals.get(*index))
                     .ok_or_else(|| "handle formal outside a function".to_owned())?;
                 if formal.is_ref() {

@@ -226,7 +226,7 @@ impl Frame<'_, '_> {
                     .and_then(|bindings| bindings.get(*index))
                     .cloned()
                     .or_else(|| {
-                        let formal = self.ctx.func?.formals.get(*index)?;
+                        let formal = self.formal_function()?.formals.get(*index)?;
                         (!formal.is_address())
                             .then(|| self.lookup(&format!("a{index}")))
                             .flatten()

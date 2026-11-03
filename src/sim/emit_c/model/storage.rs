@@ -646,7 +646,7 @@ pub(super) fn condition_evaluator_sources<'a, 'm>(
             item: false,
             real_item: false,
         };
-        let source = super::super::owned::model::pre_function(ctx, &evaluator, names)?;
+        let source = super::super::owned::model::pre_function(ctx, &evaluator, None, names)?;
         sources.insert(c_name, super::retained(source));
     }
     Ok(sources)

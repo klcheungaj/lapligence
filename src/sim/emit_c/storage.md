@@ -219,3 +219,10 @@ parent coroutine frame until all children complete or are cancelled. Detached
 joins copy the event object into the slot and bind a private `llg_event_t` in the
 branch. Nested forks use the same ownership rule; event objects remain valid
 until model teardown.
+A `join` branch reaches a packed, real, string or event `ref` formal of its
+subroutine through an owned opaque capture whose initializer is
+`FormalRead(index)`: the slot holds the formal's descriptor parameter (`rN`),
+which the branch rebinds under the same name and type, and the branch frame
+takes the subroutine's formal table (`Frame::formal_function`), so formal
+reads, stores, selects and waits emit unchanged. The subroutine waits for every
+branch, so the descriptor outlives them.

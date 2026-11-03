@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// How a `join` branch reaches a `ref` formal of its subroutine.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RefFormalBinding {
+    /// Through the formal's descriptor parameter `rN`.
+    Descriptor(usize),
+    /// Through the actual a specialization binds statically.
+    Actual,
+}
+
 impl EmitCtx<'_, '_> {
     /// Lower one `fork … join` site.  Each branch becomes its own coroutine
     /// function attached to the enclosing process's pre-functions; nested
@@ -144,7 +153,35 @@ impl EmitCtx<'_, '_> {
             let frame = self.cg.new_frame_id()?;
             let previous_captures = self.cg.capture_locals.clone();
             let mut captures = Vec::with_capacity(capture_targets[k].len());
-            for (slot, target) in capture_targets[k].iter().enumerate() {
+            for target in &capture_targets[k] {
+                // Slots stay dense: a statically bound `ref` formal takes none.
+                let slot = captures.len();
+                // A `ref` formal reaches a `join` branch as its descriptor:
+                // the branch names the formal exactly as the subroutine
+                // does, so its reads, writes and waits act on the actual
+                // (SV 13.5.2). The subroutine waits for every branch, so the
+                // descriptor outlives them.
+                if join == IrJoinKind::Join {
+                    let binding = self.ref_formal_descriptor(*target);
+                    // A statically bound formal names the actual directly.
+                    if binding == Some(RefFormalBinding::Actual) {
+                        continue;
+                    }
+                    if let Some(RefFormalBinding::Descriptor(index)) = binding {
+                        let storage = StorageRef::new(
+                            frame,
+                            slot as u32,
+                            StorageLifetime::Automatic,
+                            StorageOwnership::Owned,
+                        )
+                        .with_kind(StorageKind::Opaque);
+                        captures.push(IrCapture::new(
+                            storage,
+                            IrExpr::new(IrExprKind::FormalRead(index), 1, false, None),
+                        ));
+                        continue;
+                    }
+                }
                 let source = self.cg.capture_source(*target).ok_or_else(|| {
                     format!(
                         "automatic declaration `{}` was not collected before fork capture in `{}`",
@@ -309,14 +346,47 @@ impl EmitCtx<'_, '_> {
         }
     }
 
+    /// The index of `ref` formal `target` of the enclosing subroutine when a
+    /// `join` branch names it through its descriptor (`rN`): a packed, real,
+    /// string or event formal the subroutine reads through its parameter.
+    /// Containers and records are aliased through shared frames instead;
+    /// handle formals also carry a change marker no branch binds.
+    fn ref_formal_descriptor(&self, target: NodeId) -> Option<RefFormalBinding> {
+        if !self.cg.is_ref_formal(target) {
+            return None;
+        }
+        if self.cg.capture_source(target).is_some_and(|source| {
+            matches!(source.kind, StorageKind::Container | StorageKind::Native)
+        }) {
+            return None;
+        }
+        if matches!(self.cg.kind(target), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind))
+        {
+            return None;
+        }
+        let function = self.func.as_ref().or(self.cg.func.as_ref())?;
+        if let Some(IrEventRef::Formal(index)) = function.event_args.get(&target) {
+            return Some(RefFormalBinding::Descriptor(*index));
+        }
+        if let Some(IrStringExpr::FormalRead(index)) = function.string_read.get(&target) {
+            return Some(RefFormalBinding::Descriptor(*index));
+        }
+        if let Some(IrExprKind::FormalRead(index)) = function.arg_ir.get(&target).map(IrExpr::kind)
+        {
+            return Some(RefFormalBinding::Descriptor(*index));
+        }
+        // A specialization binds the formal to the caller's actual itself.
+        (function.arg_lhs.contains_key(&target) || function.const_ref_lhs.contains_key(&target))
+            .then_some(RefFormalBinding::Actual)
+    }
+
     /// Reject fork branches that name a `ref` formal of the enclosing
     /// subroutine where the branch would not reach the caller's variable.
     /// Inside `join_any`/`join_none` such a reference is illegal except in a
     /// fork block-item initializer, which the forking process evaluates
-    /// (SV 9.3.2). A `join` branch is legal, but a packed, real, string,
-    /// handle or event `ref` formal would be copied into the branch frame, so
-    /// its writes would never reach the actual: that form is rejected until
-    /// branches can carry the reference itself.
+    /// (SV 9.3.2). A `join` branch is legal; a handle `ref` formal would be
+    /// copied into the branch frame, so its writes would never reach the
+    /// actual: that form is rejected until branches bind its change marker.
     fn check_ref_formal_captures(
         &self,
         join: IrJoinKind,
@@ -339,9 +409,9 @@ impl EmitCtx<'_, '_> {
                 let aliased = self.cg.capture_source(*target).is_some_and(|source| {
                     matches!(source.kind, StorageKind::Container | StorageKind::Native)
                 });
-                if !aliased {
+                if !aliased && self.ref_formal_descriptor(*target).is_none() {
                     return Err(format!(
-                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` of the enclosing task; a fork-join branch that reads or writes a packed, real, string, handle or event `ref` formal is not supported",
+                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` of the enclosing task; a fork-join branch that reads or writes a handle `ref` formal is not supported",
                         self.cg.source_path(&self.path)
                     ));
                 }

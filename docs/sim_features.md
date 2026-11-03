@@ -1771,8 +1771,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
   A `ref` formal initializes fork block items (`ref_formal_fork_initializers`);
   any other reference to one inside `join_any`/`join_none` is illegal
-  (SV 9.3.2) and rejects with its location, and a `fork ... join` branch
-  naming a packed, real, string, handle or event `ref` formal rejects
+  (SV 9.3.2) and rejects with its location. `fork ... join` branches read,
+  write and wait on packed, real, string and event `ref` formals through the
+  caller's actual (`ref_formal_fork_join`, SV 13.5.2); a handle `ref` formal
+  there rejects
   ([known issue](known_issues.md#ref-formals-in-fork-join-branches)). Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
