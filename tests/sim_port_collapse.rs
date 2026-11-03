@@ -247,11 +247,12 @@ endmodule
 }
 
 /// A port whose actual is a constant select of nets, a net-array element or
-/// a concatenation of those merges bit by bit where its sink has drivers of
-/// its own, a net on either side has a type of its own, the source drives
-/// with a strength or a force names the sink (A21-D5), or it selects whole
-/// nets and net-array cells only; so does a whole port below a merged
-/// formal. Other selected ports keep the cheaper copy.
+/// a concatenation of those merges bit by bit (A21-D5): where its sink has
+/// drivers of its own, a net on either side has a type of its own, the
+/// source drives with a strength or a force names the sink, where it selects
+/// whole nets and net-array cells only, and where a copy would be exact
+/// (each merged formal is a cheap one-run view); so does a whole port below
+/// a merged formal.
 #[test]
 fn selected_net_ports_merge_bit_by_bit() {
     let child = |formal: &str, body: &str, actual: &str, connection: &str| {
@@ -403,6 +404,7 @@ endmodule
         let model = child(formal, "", actual, connection);
         assert_eq!(links(&model), 0, "whole {label}: {model}");
     }
+    // A plain select whose copy would be exact merges as well.
     for (formal, actual, connection, label) in [
         (
             "input wire a",
@@ -436,7 +438,7 @@ endmodule
         ),
     ] {
         let model = child(formal, "", actual, connection);
-        assert_eq!(links(&model), 1, "plain {label}: {model}");
+        assert_eq!(links(&model), 0, "plain {label}: {model}");
     }
     // A whole port below a merged formal merges too: one whose sink then
     // has the other side's drivers, and one whose formal joins the
@@ -1162,6 +1164,30 @@ x=0: v=0000 o=0000 u0.n=0 u3.n=00 w1=0 u8.n=00\n";
 #[test]
 fn selected_actuals_merge_with_their_formal() {
     sim_cli::run_case("port_collapse", "merged_selects", MERGED_SELECTS, "", &[]);
+}
+
+const PLAIN_SELECTS: &str = "1 v=0110 u.a=1 u.p=01 u.q=00\n\
+strength: St1 St1 St0 St0\n\
+3 w=z1z1 u.o=1\n\
+4 v=1001 u.a=0 u.p=10 u.q=11\n\
+5 v=0110 u.a=1 u.p=01 u.q=00\n\
+6 v=1000 u.a=0 u.p=10 u.q=01\n\
+wakes=4 v=1000 u.a=0 u.p=10 u.q=01 w=z1z1 u.o=1\n";
+
+/// Plain selected ports merge too, so the formal shows each change of its
+/// bits in the same update as the actual (the copy showed it one later).
+#[test]
+fn plain_selected_ports_show_their_bits_without_a_lag() {
+    let finish = "llg: $finish at time 7 at tb:31:5\n";
+    sim_cli::run_case("port_collapse", "plain_selects", PLAIN_SELECTS, finish, &[]);
+    sim_cli::run_case_with_args(
+        "port_collapse",
+        "plain_selects",
+        PLAIN_SELECTS,
+        finish,
+        &[],
+        &["--vpi"],
+    );
 }
 
 #[test]

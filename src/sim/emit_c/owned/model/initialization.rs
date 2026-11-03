@@ -204,6 +204,7 @@ fn net_storage_lifecycle(
     let mut shape_rows = String::new();
     let mut net_rows = String::new();
     let mut views = Vec::new();
+    let mut silent = String::new();
     let (mut drivers, mut path_bits, mut segments) = (0usize, 0usize, 0usize);
     for group in groups {
         // A delayed net with drivers shows X until its first delayed
@@ -309,6 +310,12 @@ fn net_storage_lifecycle(
             path_bits += group.width as usize;
         }
         segments += n_segments;
+        if group.silent_slots != 0 {
+            silent.push_str(&format!(
+                "    {{ &{}, {} }},\n",
+                group.c_name, group.silent_slots
+            ));
+        }
         if let Some(view) = group
             .strength_view
             .and_then(|view| model.signals.get(view))
@@ -347,6 +354,17 @@ fn net_storage_lifecycle(
     ));
     for (net, view) in views {
         initialize.push_str(&format!("    {net}.strength = &{view};\n"));
+    }
+    // Silent member slots (`IrNetGroup::silent_slots`) are a table of their
+    // own, so the shape rows of every other model stay as they were.
+    if !silent.is_empty() {
+        tables.source.push_str(&format!(
+            "static const struct {{ llg_net_t* net; int slots; }} llg_net_silent[] = {{\n{silent}}};\n"
+        ));
+        initialize.push_str(&format!(
+            "    {}\n        llg_net_silent[_llg_n].net->silent_slots = llg_net_silent[_llg_n].slots;\n",
+            table_loop("llg_net_silent")
+        ));
     }
     initialize.push_str(&format!(
         "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_fill_to(net->drivers[slot], 3, net->width, net->is_signed);\n        llg_net_index_reset(net);\n        sv4_fill_to(&net->resolved, llg_net_shapes[llg_net_storage[_llg_n].shape].fill, net->width, net->is_signed);\n        net->n_aliases = 0;\n        llg_net_strength_reset(net);\n    }}\n"
@@ -424,6 +442,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         if signal.net_driver.is_some()
             || signal.alias.is_some()
             || (signal.omit && signal.net_alias.is_empty())
+            || signal.net_view_part().is_some()
             || !emitted.insert(signal.c_name.clone())
         {
             continue;
@@ -441,11 +460,23 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     block.flush(&mut tables, &mut initialize, &mut destroy);
     initialize.push_str(&std::mem::take(&mut fixed_defaults));
     net_storage_lifecycle(model, &mut tables, &mut initialize, &mut destroy);
+    if model
+        .signals
+        .iter()
+        .any(|signal| signal.net_view_part().is_some())
+    {
+        // One-run views start before the other aliases bind, after every
+        // net is laid out and started.
+        let table = super::super::super::model::storage::NET_VIEW_TABLE;
+        let count = format!("sizeof({table}) / sizeof({table}[0])");
+        initialize.push_str(&format!("    llg_net_views_start({table}, {count});\n"));
+        destroy.push_str(&format!("    llg_net_views_release({table}, {count});\n"));
+    }
     let aliases = model
         .signals
         .iter()
         .enumerate()
-        .filter(|(_, signal)| !signal.net_alias.is_empty())
+        .filter(|(_, signal)| !signal.net_alias.is_empty() && signal.net_view_part().is_none())
         .map(|(index, _)| format!("llg_net_alias_{index}"))
         .collect::<Vec<_>>();
     if !aliases.is_empty() {
@@ -935,6 +966,12 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         }
         IrInitStep::SetScalar { sig, value } => {
             let signal = model.signal(*sig);
+            if signal.net_view_part().is_some() {
+                // A one-run view has no storage: its value is its group's
+                // bits from `llg_net_views_start` on, as a storage start
+                // value written after the bind never reached it either.
+                return Ok(());
+            }
             let target = Binding {
                 address: format!("&{}", signal.c_name),
                 width: signal.ty.width(),

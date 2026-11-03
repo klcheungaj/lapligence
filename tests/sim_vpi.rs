@@ -360,6 +360,33 @@ fn vpi_partitioned_net_arrays_keep_declared_shapes_and_values() {
     .expect("VPI electrical range shapes");
 }
 
+/// Plain selected ports merge with their formal (A21-D5); both names of a
+/// merged bit stay catalog nets with the merged value.
+#[test]
+fn vpi_merged_selected_formals_answer_both_names() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimization in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
+        sim_harness::with_frontend_temp_cwd("vpi-merged-formals", |dir| {
+            let executable = build_model_with_opts(
+                dir,
+                "vpi_merged_formals.sv",
+                &fixture("vpi_merged_formals.sv"),
+                &[],
+                &optimization,
+            );
+            let plugin = compile_plugin(dir, "vpi_merged_formals.c");
+            let output = run_plugin(dir, &executable, &plugin);
+            assert!(output.status.success(), "{output:?}");
+            assert_eq!(output.stdout, b"vpi merged formals ok\n");
+            Ok(())
+        })
+        .expect("VPI merged formals");
+    }
+}
+
 #[test]
 fn vpi_checker_instances_are_hierarchy_scopes() {
     if !sim::build::cmake_available() {

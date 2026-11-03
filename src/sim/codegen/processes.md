@@ -102,8 +102,7 @@ merges both nets like an inout connection (`collection/nets/port_merges.rs`,
 A21-D4; selected actuals bit by bit, A21-D5), in VPI models too. The link stays when a force/release
 names a variable sink (or a net sink of a variable), the types differ, the
 sink has an initializer, a net delay, or another driver or type of its own
-that no merge covers (a variable, a `uwire`, a selected actual whose copy
-is exact, A21-D5), either
+that no merge covers (a variable, a `uwire`), either
 instance owns specify paths or timing checks, the design reads
 SDF, the sink is a ref-port target, or a source that does not start at X has
 a time-0 observer of the sink. For a net source that start is known only

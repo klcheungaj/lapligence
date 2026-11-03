@@ -686,3 +686,89 @@ fn timing_check_tables_are_emitted_only_for_designs_with_checks() {
     assert!(layout < configure, "{defaults}");
     assert!(configure < doorbell && doorbell < start, "{defaults}");
 }
+
+#[test]
+fn one_run_net_views_are_table_rows_without_storage() {
+    let mut model = net_model(2, 3);
+    model.net_groups[1].silent_slots = 2;
+    let packed = |width| IrType::Packed {
+        width,
+        signed: width == 3,
+        two_state: false,
+    };
+    // A one-run view (shuffled bindings), a view of two runs and a view with
+    // an uncovered bit; each starts Z like an ungrouped net.
+    // (name, width, bindings as (group, slot, signal bit, group bit))
+    type View = (&'static str, u32, Vec<(usize, usize, u32, u32)>);
+    let views: [View; 3] = [
+        ("G_one", 3, vec![(1, 2, 2, 6), (1, 2, 0, 4), (1, 2, 1, 5)]),
+        ("G_two", 2, vec![(0, 1, 0, 0), (1, 1, 1, 0)]),
+        ("G_gap", 2, vec![(0, 0, 0, 9)]),
+    ];
+    for (name, width, bindings) in views {
+        let mut signal = IrSignal::new(name.to_owned(), None, packed(width), None).unwrap();
+        for (group, slot, signal_bit, group_bit) in bindings {
+            signal.net_alias.push(IrNetAliasBinding {
+                group,
+                slot,
+                signal_bit,
+                group_bit,
+            });
+        }
+        let sig = model.signals.len();
+        model.signals.push(signal);
+        let limbs = vec![0u64];
+        model.init_steps.push(IrInitStep::SetScalar {
+            sig,
+            value: IrConst::packed(
+                limbs.clone(),
+                limbs,
+                vec![(1u64 << width) - 1],
+                width,
+                width == 3,
+                None,
+            )
+            .unwrap(),
+        });
+    }
+    let source = render(model);
+    // The one-run view is a zeroed descriptor and one row; its storage, part
+    // array, descriptor initializer, table entries and start value are gone.
+    assert!(source.contains("static llg_net_alias_t llg_net_alias_0;\n"));
+    assert!(source.contains(
+        "static const llg_net_view_t llg_net_views[1] = {\n    { &llg_net_alias_0, { &g_net_1, 2, 0, 4, 3 }, 1 },\n};\n"
+    ));
+    assert!(!source.contains("G_one"));
+    // Silent member slots come from their own table, after the layout.
+    assert!(source.contains("llg_net_silent[] = {\n    { &g_net_1, 2 },\n};\n"));
+    assert!(lifecycle(&source, "llg_model_storage_defaults")
+        .contains("llg_net_silent[_llg_n].net->silent_slots = llg_net_silent[_llg_n].slots;"));
+    assert!(!source.contains("llg_net_alias_0__parts"));
+    let defaults = lifecycle(&source, "llg_model_storage_defaults");
+    let start = defaults
+        .find(
+            "llg_net_views_start(llg_net_views, sizeof(llg_net_views) / sizeof(llg_net_views[0]));",
+        )
+        .unwrap();
+    // Views start after the nets and before the other aliases bind.
+    assert!(defaults.find("llg_net_layout").unwrap() < start);
+    assert!(start < defaults.find("llg_net_alias_bind").unwrap());
+    assert!(lifecycle(&source, "llg_model_storage_destroy").contains(
+        "llg_net_views_release(llg_net_views, sizeof(llg_net_views) / sizeof(llg_net_views[0]));"
+    ));
+    // The other views keep their storage, descriptors and start values.
+    for (index, name) in [(1, "G_two"), (2, "G_gap")] {
+        assert!(source.contains(&format!("sv4_t {name} = SV4_EMPTY;")));
+        assert!(source.contains(&format!(
+            "static llg_net_alias_t llg_net_alias_{index} = {{ &{name}, "
+        )));
+        assert!(source.contains(&format!("sv4_move(&{name}, ")));
+    }
+}
+
+#[test]
+fn models_without_one_run_views_have_no_view_table() {
+    let source = render(net_model(2, 3));
+    assert!(!source.contains("llg_net_view"));
+    assert!(!source.contains("llg_net_silent"));
+}

@@ -272,6 +272,7 @@ void llg_net_layout(llg_net_t* net, const llg_net_shape_t* shape,
     net->is_signed = shape->is_signed;
     net->resolution = shape->resolution;
     net->n_drivers = n_drivers;
+    net->silent_slots = 0;
     if (n_drivers > 0) {
         for (int slot = 0; slot < n_drivers; slot++)
             pools->driver_slots[slot] = &pools->cells[slot];
@@ -331,11 +332,19 @@ static sv4_t llg_net_compute(llg_net_t* net) {
     return value;
 }
 
+/* The width of an alias's value: its storage's, or the declared width of a
+ * storage-less view whose parts cover it. */
+static uint32_t llg_net_alias_width(const llg_net_alias_t* alias) {
+    return alias->storage ? llg_sv4_width(*alias->storage) : alias->width;
+}
+
 static void llg_net_alias_refresh(llg_net_alias_t* alias) {
-    if (!alias || !alias->storage) return;
+    if (!alias) return;
     llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
-    sv4_copy(&owned[0], alias->storage);
+    // A storage-less view's parts overwrite every bit of this X start.
+    if (alias->storage) sv4_copy(&owned[0], alias->storage);
+    else sv4_fill_to(&owned[0], 2, alias->width, alias->is_signed);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         const llg_net_alias_part_t* part = &alias->parts[i];
         if (!part->net || part->bit_count == 0 ||
@@ -361,8 +370,8 @@ static void llg_net_alias_refresh(llg_net_alias_t* alias) {
 /* Whether a part fits both its alias's visible value and its net. */
 static int llg_net_alias_part_fits(const llg_net_alias_t* alias,
                                    const llg_net_alias_part_t* part) {
-    return alias->storage && part->net && part->bit_count != 0 &&
-           (uint64_t)part->signal_bit + part->bit_count <= llg_sv4_width(*alias->storage) &&
+    return part->net && part->bit_count != 0 &&
+           (uint64_t)part->signal_bit + part->bit_count <= llg_net_alias_width(alias) &&
            (uint64_t)part->group_bit + part->bit_count <= part->net->width;
 }
 
@@ -372,7 +381,7 @@ static int llg_net_alias_part_fits(const llg_net_alias_t* alias,
  * change of a net refreshes that net's parts. */
 static void llg_net_alias_refresh_parts(llg_net_alias_t* alias,
                                         const llg_net_alias_ref_t* refs, int count) {
-    if (!alias->storage || llg_sv4_width(alias->visible) != llg_sv4_width(*alias->storage)) {
+    if (llg_sv4_width(alias->visible) != llg_net_alias_width(alias)) {
         llg_net_alias_refresh(alias);
         return;
     }
@@ -420,8 +429,7 @@ static int llg_net_bits_same(const sv4_t* a, uint32_t a_low, const sv4_t* b,
 static void llg_net_alias_refresh_entry(llg_net_t* net, const llg_net_alias_ref_t* ref,
                                         uint32_t low, uint32_t high) {
     llg_net_alias_t* alias = ref->alias;
-    if (ref->part == UINT32_MAX || !alias->storage ||
-        llg_sv4_width(alias->visible) != llg_sv4_width(*alias->storage) ||
+    if (ref->part == UINT32_MAX || llg_sv4_width(alias->visible) != llg_net_alias_width(alias) ||
         (alias->publication_target &&
          llg_sv4_width(*alias->publication_target) != llg_sv4_width(alias->visible))) {
         llg_net_alias_refresh(alias);
@@ -839,7 +847,7 @@ static int net_defer_active;
 
 // Queue the net's resolution of [low, high] (every bit when `whole`).
 static int llg_net_defer(llg_net_t* net, int whole, uint32_t low, uint32_t high) {
-    if (!net_defer_active || net->n_drivers < 2) return 0;
+    if (!net_defer_active || net->n_drivers - net->silent_slots < 2) return 0;
     if (net->deferred_slot > 0) {
         llg_net_deferred_t* entry = &net_deferred[net->deferred_slot - 1];
         if (whole) entry->whole = 1;
@@ -942,6 +950,7 @@ static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
                                    uint32_t cover_low, uint32_t cover_count) {
     if (!net || !region_can_mutate("net write")) return;
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx]) return;
+    if (idx < net->silent_slots) net->silent_slots = 0;
     sv4_t* slot = net->drivers[idx];
     // The first write of a driver of a net that started X resolves it whole,
     // even when the driver's value equals its all-Z slot (T0-D3).
@@ -1017,6 +1026,7 @@ static void llg_net_range_copy(sv4_t* target, uint32_t offset,
 
 static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
                                 uint32_t new_low) {
+    if (idx < net->silent_slots) net->silent_slots = 0;
     sv4_t* slot = net->drivers[idx];
     uint32_t old_low = 0;
     uint32_t old_high = net->width - 1u;
@@ -1149,7 +1159,7 @@ void llg_net_alias_bind(llg_net_alias_t* alias) {
         if (!llg_net_alias_part_fits(alias, &alias->parts[i])) exact = 0;
         else covered += alias->parts[i].bit_count;
     }
-    if (!alias->storage || covered != llg_sv4_width(*alias->storage)) exact = 0;
+    if (covered != llg_net_alias_width(alias)) exact = 0;
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         llg_net_t* net = alias->parts[i].net;
         if (!net) continue;
@@ -1166,6 +1176,35 @@ void llg_net_alias_bind(llg_net_alias_t* alias) {
         net->n_aliases++;
     }
     llg_net_alias_refresh(alias);
+}
+
+void llg_net_views_start(const llg_net_view_t* rows, size_t count) {
+    for (size_t n = 0; n < count; n++) {
+        const llg_net_view_t* row = &rows[n];
+        llg_net_alias_t* alias = row->view;
+        llg_net_t* net = row->part.net;
+        alias->storage = NULL;
+        alias->width = row->part.bit_count;
+        alias->is_signed = row->is_signed;
+        alias->parts = &row->part;
+        alias->n_parts = 1;
+        alias->publication_target = NULL;
+        /* Like a view with storage, which starts from its X storage. */
+        sv4_fill_to(&alias->visible, 2, alias->width, alias->is_signed);
+        if (!net) continue;
+        llg_net_alias_reserve(net);
+        net->alias_spans_valid = 0;
+        net->aliases[net->n_aliases].alias = alias;
+        net->aliases[net->n_aliases].part =
+            row->part.signal_bit == 0 && llg_net_alias_part_fits(alias, &row->part) ? 0u
+                                                                                    : UINT32_MAX;
+        net->n_aliases++;
+        llg_net_alias_refresh(alias);
+    }
+}
+
+void llg_net_views_release(const llg_net_view_t* rows, size_t count) {
+    for (size_t n = 0; n < count; n++) sv4_destroy(&rows[n].view->visible);
 }
 
 void llg_net_alias_clear(llg_net_t* net) {

@@ -641,6 +641,13 @@ struct llg_net {
     /* 1 + this net's entry in the runtime's deferred-update table while a
      * driver write waits for the end of the region queue drain; 0 otherwise. */
     int32_t deferred_slot;
+    /* The leading slots that belong to members of a bit-level alias group
+     * (the formal of a merged selected port, a vector split by them): no
+     * write targets them, so a group with one source resolves at once, as
+     * the source's own net did, instead of deferring like a multi-driver
+     * net. A write to one of them sets it to 0. llg_net_layout clears it;
+     * the model then sets it from its `llg_net_silent` table. */
+    int silent_slots;
     /* For a net with several drivers, one bit per net bit that still holds
      * its start X because no driver covering it has written yet. NULL once
      * every such bit is written, and for every other net. */
@@ -662,6 +669,10 @@ struct llg_net_alias_part {
     uint32_t bit_count;
 };
 
+/* A declared view of resolved net bits. `storage` is the view's own
+ * signal storage: it supplies the bits no part covers. A view whose parts
+ * cover its whole width has no storage (NULL); `width` and `is_signed` then
+ * shape its value. */
 struct llg_net_alias {
     sv4_t* storage;
     sv4_t visible;
@@ -778,6 +789,23 @@ void llg_net_strength_snapshot(llg_net_t* net, sv4_t* out);
 int llg_net_strength_attach(llg_net_t* net, sv4_t* view);
 void llg_net_strength_detach(llg_net_t* net, sv4_t* view);
 void llg_net_alias_bind(llg_net_alias_t* alias);
+/* One storage-less view that reads `part.bit_count` consecutive bits of one
+ * net from `part.group_bit` (`part.signal_bit` is 0): generated models list
+ * every such view as one row of a model-wide constant table instead of
+ * emitting its own storage, part array, descriptor and start value. The view
+ * is zero (SV4_EMPTY) until llg_net_views_start. */
+typedef struct llg_net_view {
+    llg_net_alias_t* view;
+    llg_net_alias_part_t part;
+    int8_t is_signed;
+} llg_net_view_t;
+/* Configure and bind the `count` views of `rows`, after every net is laid
+ * out and started: each view takes its one part from its row (borrowed; the
+ * table outlives the model run) and its start value from its net. Rows name
+ * distinct views, each bound once, so no duplicate check is made. */
+void llg_net_views_start(const llg_net_view_t* rows, size_t count);
+/* Teardown: release the visible values of the `count` views of `rows`. */
+void llg_net_views_release(const llg_net_view_t* rows, size_t count);
 void llg_net_alias_clear(llg_net_t* net); /* release a model net's alias list */
 sv4_t llg_net_alias_read(llg_net_alias_t* alias);
 void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value);

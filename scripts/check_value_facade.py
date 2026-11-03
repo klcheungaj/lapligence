@@ -44,8 +44,9 @@ METADATA = {
     'rt/scheduler/force.c': ('part',),
     'rt/scheduler/formatting.c': ('spec',),
     'rt/scheduler/mailboxes.c': ('mailbox', 'ref', 'result', 'target', 'value'),
-    # llg_net_shape_t rows describe a net's width and sign.
-    'rt/scheduler/nets.c': ('driver->net', 'net', 'part->net', 'shape'),
+    # llg_net_shape_t rows describe a net's width and sign; llg_net_view_t
+    # rows and storage-less alias views carry a view's declared shape.
+    'rt/scheduler/nets.c': ('alias', 'driver->net', 'net', 'part->net', 'row', 'shape'),
     'rt/scheduler/process_waits.c': ('deps[i]',),
     # Switch-network startup checks node bits against the net width.
     'rt/scheduler/switches.c': ('net',),

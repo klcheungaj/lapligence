@@ -56,10 +56,12 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         if sig.net_driver.is_some()
             || sig.alias.is_some()
             || (sig.omit && sig.net_alias.is_empty())
+            || sig.net_view_part().is_some()
             || !emitted.insert(sig.c_name.as_str())
         {
             // Net-group members: storage is emitted with its group; omitted
-            // signals are pruned by `unused_storage`.
+            // signals are pruned by `unused_storage`; one-run views read
+            // their group and have no storage.
             continue;
         }
         match sig.ty {
@@ -87,7 +89,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
     // these runtime descriptors.  Descriptors are emitted after all net
     // groups so every part can refer to its resolved group object.
     for (index, sig) in model.signals.iter().enumerate() {
-        if sig.net_alias.is_empty() {
+        if sig.net_alias.is_empty() || sig.net_view_part().is_some() {
             continue;
         }
         let (parts, part_count) = render_alias_parts(model, &sig.net_alias);
@@ -101,6 +103,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
             part_count,
         ));
     }
+    render_net_views(model, out);
     render_module_paths(model, out);
     render_switch_network(model, out);
     render_timing_checks(model, out);
@@ -172,6 +175,42 @@ pub(super) fn render_static_local_decls(model: &IrModel, out: &mut String) {
             out.push_str(&format!("sv4_t {} = {init};\n", local.c_name()));
         }
     }
+}
+
+/// The model-wide row table of one-run net alias views
+/// (`IrSignal::net_view_part`).
+pub(in crate::sim::emit_c) const NET_VIEW_TABLE: &str = "llg_net_views";
+
+/// One-run net alias views: zeroed descriptors, declared several per line,
+/// and one `llg_net_view_t` row each in [`NET_VIEW_TABLE`], which
+/// `llg_net_views_start` turns into bound views at start. Such a view costs
+/// one name and one row instead of its own storage, part array, descriptor,
+/// storage-table entries and start value. Nothing for a model without them.
+fn render_net_views(model: &IrModel, out: &mut String) {
+    let mut names = Vec::new();
+    let mut rows = String::new();
+    for (index, sig) in model.signals.iter().enumerate() {
+        let Some((group, slot, group_bit)) = sig.net_view_part() else {
+            continue;
+        };
+        rows.push_str(&format!(
+            "    {{ &llg_net_alias_{index}, {{ &{}, {slot}, 0, {group_bit}, {} }}, {} }},\n",
+            model.net_group(group).c_name,
+            sig.ty.width(),
+            u8::from(sig.ty.signed()),
+        ));
+        names.push(format!("llg_net_alias_{index}"));
+    }
+    if names.is_empty() {
+        return;
+    }
+    for chunk in names.chunks(NET_DECLARATIONS_PER_LINE) {
+        out.push_str(&format!("static llg_net_alias_t {};\n", chunk.join(", ")));
+    }
+    out.push_str(&format!(
+        "static const llg_net_view_t {NET_VIEW_TABLE}[{}] = {{\n{rows}}};\n",
+        names.len()
+    ));
 }
 
 /// Storage address of a signal after alias resolution, as the runtime reads

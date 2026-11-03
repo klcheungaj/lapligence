@@ -140,6 +140,7 @@ fn selected_terminal_remapping_keeps_each_output_contribution_distinct() {
         driven_runs: Vec::new(),
         runtime_delay: false,
         strength_view: None,
+        silent_slots: 0,
     });
     let first = cg
         .add_structural_driver_for_terminal(0, source, (6, 6), 0)

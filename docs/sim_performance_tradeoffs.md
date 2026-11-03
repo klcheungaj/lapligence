@@ -132,13 +132,9 @@ those scripts. Differences within the observed spread are reported as noise.
   child that also drives it 11.1 s → 8.5 s (−23%), and into a `tri0` formal
   7.7 s → 5.2 s (−32%); 1,000 links and 1,000 of 2,001 net groups gone,
   `model.c` 822 → 668 KB and 739 → 585 KB. The `perf/` corpus and designs
-  generate identical C. Selected net actuals (A21-D5) merge bit by bit only where the copy
-  would differ or the actual is whole nets and net-array cells. A vector
-  split bit by bit stays one shared net group (see "Shared groups for split
-  vectors" below), so merging every selected port now runs faster than the
-  copies, but each merged formal becomes a net alias view with its own
-  storage, descriptors and start value, so `model.c` stays about twice as
-  large; plain selected ports therefore keep their copies. A net alias view refreshes only the
+  generate identical C. Selected net actuals (A21-D5) merge bit by bit, plain ones too since
+  merged formals became one-run net alias views (see "One-run net alias
+  views" below). A net alias view refreshes only the
   changed net's parts (`llg_net_alias_ref`); rebuilding it from every part
   per bit change was quadratic (a 1,000-bit bus with coerced one-bit inputs,
   1,000 cycles: 24 s → 1.6 s). Pinned medians of 5 interleaved runs, 1,000
@@ -176,6 +172,40 @@ those scripts. Differences within the observed spread are reported as noise.
   4.49 s (copies) → 2.69 s, `model.c` 0.42 → 0.77 MB; a 256×8 nand netlist
   14.3 s → 9.2 s, `model.c` 0.93 → 2.89 MB. The `perf/` corpus and designs,
   gate netlists and plain selected ports generate identical C.
+
+### One-run net alias views
+
+- **Trade-off:** a merged formal is a declared view of resolved group bits.
+  A view with its own storage, part array, descriptor, storage-table entries
+  and start step cost about 440 B of C per formal against about 110 B for a
+  copy's net and link, so merging every plain selected port, although faster,
+  made `model.c` 1.8–3× larger. A view without storage costs a little
+  runtime work at start (one loop) and is limited to views whose whole width
+  is one run of one group slot.
+- **Decision:** such a view (`IrSignal::net_view_part`) is a zeroed
+  `llg_net_alias_t` plus one `llg_net_view_t` row of the model-wide
+  `llg_net_views` table; `llg_net_views_start` binds it and starts it from its
+  group, so it has no storage and no start step. Other views keep the old
+  form. Plain selected ports now merge (A21-D5). Member slots of a bit-level
+  group whose views are all one-run views of it are silent
+  (`silent_slots`): a group with one source then resolves at once, as the
+  source's own net did, instead of deferring like a multi-driver net (S2-D11),
+  so a time-0 reader of a constant-driven vector still sees its value.
+- **Evidence:** pinned medians of 5 interleaved runs, 20,000 cycles (load
+  average 6.6 → 8.4; before = the old exact copies; `model.c` sizes and
+  Release `-j1` compile times): a 1,000-bit bus of one-bit inputs 4.51 s →
+  2.57 s, `model.c` 421 → 404 KB, compile 48.6 → 47.0 s, peak RSS 6.1 → 5.1 MB;
+  a 256×8 nand netlist 21.0 s → 9.65 s, `model.c` 926 → 759 KB (merged with
+  the old views: 2.89 MB), compile 43.8 → 43.9 s, peak RSS 15.6 → 9.0 MB.
+  Designs that already merged get smaller with the same run time: coerced
+  one-bit inputs on a bus driven per bit 12.6 → 12.5 s, `model.c` 1.12 →
+  0.75 MB, compile 61.7 → 50.3 s; with one wide driver 8.05 → 8.03 s (7 runs),
+  1.01 → 0.65 MB, compile 54.9 → 45.7 s. `perf/designs/gen16_proto.sv` and
+  `gen64_proto.sv` now merge their selected ports (96.5 → 86.0 KB and 154 →
+  144 KB); the rest of the `perf/` corpus and designs, the gate fixtures and
+  `instance_sharing/netlist_cells.sv` generate identical C, and the
+  bit-level net fixtures all shrink (for example `net_partition/ranges.sv`
+  700 → 582 KB).
 
 ### Loops and tables instead of unrolled statements
 
