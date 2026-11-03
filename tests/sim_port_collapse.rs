@@ -760,8 +760,22 @@ endmodule
     assert_eq!(links(&model), 0, "a forced actual still collapses: {model}");
 }
 
+/// A model that keeps the VPI catalog keeps the link of every port whose
+/// sink would share a variable (a put on the sink must not reach the
+/// variable) and merges net ports as without VPI (decision A21-D6), also
+/// with delays reserved for VPI applications; `--vpi-port-delays` keeps
+/// every port a link.
 #[test]
-fn vpi_models_keep_every_link() {
+fn vpi_models_merge_net_ports_and_keep_variable_links() {
+    let vpi = CodegenOptions {
+        vpi: true,
+        ..Default::default()
+    };
+    let port_delays = CodegenOptions {
+        vpi: true,
+        vpi_port_delays: true,
+        ..Default::default()
+    };
     let source = with_child(
         "module tb;
   logic x;
@@ -771,17 +785,11 @@ fn vpi_models_keep_every_link() {
 endmodule
 ",
     );
-    let model = render_with(
-        &source,
-        &CodegenOptions {
-            vpi: true,
-            ..Default::default()
-        },
-        &[],
-    );
-    assert_eq!(links(&model), 2, "--vpi: {model}");
-    let model = render_with(
-        "module child(input wire a, output wire b);
+    let model = render_with(&source, &vpi, &[]);
+    assert_eq!(links(&model), 2, "--vpi variable ports: {model}");
+    // The input from a variable keeps its link; the output between two nets
+    // merges.
+    let nets = "module child(input wire a, output wire b);
   assign b = a;
 endmodule
 module tb;
@@ -790,18 +798,50 @@ module tb;
   child u(.a(x), .b(y));
   initial begin x = 0; #1 x = 1; $finish; end
 endmodule
-",
-        &CodegenOptions {
-            vpi: true,
-            ..Default::default()
-        },
-        &[],
+";
+    let model = render_with(nets, &vpi, &[]);
+    assert_eq!(links(&model), 1, "--vpi net ports: {model}");
+    let model = render_with(nets, &port_delays, &[]);
+    assert_eq!(links(&model), 2, "--vpi-port-delays net ports: {model}");
+    // Two whole nets: one net, no link, unless every port stays separate.
+    let plain = "module child(input wire a, output wire b);
+  assign b = a;
+endmodule
+module tb;
+  logic x;
+  wire w, y;
+  assign w = x;
+  child u(.a(w), .b(y));
+  initial begin x = 0; #1 x = 1; $finish; end
+endmodule
+";
+    let model = render_with(plain, &vpi, &[]);
+    assert_eq!(links(&model), 0, "--vpi plain net ports: {model}");
+    let model = render_with(plain, &port_delays, &[]);
+    assert_eq!(
+        links(&model),
+        2,
+        "--vpi-port-delays plain net ports: {model}"
     );
-    assert_eq!(links(&model), 2, "--vpi net ports: {model}");
+    // A delayed gate gets a delay slot a VPI application may write; the
+    // ports merge all the same.
+    let gated = "module child(input wire a, output wire b);
+  assign b = a;
+endmodule
+module tb;
+  logic x;
+  wire w, y, z;
+  assign w = x;
+  buf #2 g(z, x);
+  child u(.a(w), .b(y));
+  initial begin x = 0; #1 x = 1; #3 $finish; end
+endmodule
+";
+    let model = render_with(gated, &vpi, &[]);
+    assert_eq!(links(&model), 0, "--vpi ports with a delayed gate: {model}");
     // A net port whose sink has a driver of its own merges under VPI too:
     // both names are nets of one group, which VPI reads and writes as one.
-    let model = render_with(
-        "module child(input wire a);
+    let coerced = "module child(input wire a);
   assign a = 1'b0;
 endmodule
 module tb;
@@ -811,17 +851,18 @@ module tb;
   child u(.a(y));
   initial begin x = 0; #1 x = 1; $finish; end
 endmodule
-",
-        &CodegenOptions {
-            vpi: true,
-            ..Default::default()
-        },
-        &[],
-    );
+";
+    let model = render_with(coerced, &vpi, &[]);
     assert_eq!(links(&model), 0, "--vpi merged net port: {model}");
     assert_eq!(net_groups(&model), 1, "--vpi merged net port: {model}");
-    let model = render_with(
-        "module child(input wire a);
+    let model = render_with(coerced, &port_delays, &[]);
+    assert_eq!(links(&model), 1, "--vpi-port-delays coerced port: {model}");
+    assert_eq!(
+        net_groups(&model),
+        2,
+        "--vpi-port-delays coerced port: {model}"
+    );
+    let selected = "module child(input wire a);
   assign a = 1'b0;
 endmodule
 module tb;
@@ -831,14 +872,11 @@ module tb;
   child u(.a(y[1]));
   initial begin x = 0; #1 x = 1; $finish; end
 endmodule
-",
-        &CodegenOptions {
-            vpi: true,
-            ..Default::default()
-        },
-        &[],
-    );
+";
+    let model = render_with(selected, &vpi, &[]);
     assert_eq!(links(&model), 0, "--vpi selected net port: {model}");
+    let model = render_with(selected, &port_delays, &[]);
+    assert_eq!(links(&model), 1, "--vpi-port-delays selected port: {model}");
     // A user system task makes the model keep the VPI catalog; it is only
     // known once the bodies are lowered, which then happens again.
     let model = render_with(
@@ -856,6 +894,12 @@ endmodule
     );
     assert!(model.contains("$llg_user_probe"), "{model}");
     assert_eq!(links(&model), 2, "user system task: {model}");
+    let model = render_with(
+        &plain.replace("#1 x = 1;", "$llg_user_probe(x); #1 x = 1;"),
+        &CodegenOptions::default(),
+        &["task $llg_user_probe(input logic v)"],
+    );
+    assert_eq!(links(&model), 0, "user system task, net ports: {model}");
 }
 
 /// An initialized actual collapses only when no process already waiting on
@@ -1092,7 +1136,7 @@ fn merged_sinks_read_their_source_in_the_same_step() {
 }
 
 #[test]
-fn vpi_models_keep_port_updates_one_step_later() {
+fn vpi_models_keep_variable_sourced_ports_one_step_later() {
     sim_cli::run_case_with_args(
         "port_collapse",
         "merged",

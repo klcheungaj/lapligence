@@ -24,7 +24,11 @@
 // follows decision A19-D26 for properties the diagram does not draw.
 //
 // Build A20-D18_intermodule_paths.c as a VPI application (llg: static
-// archive given to --dpi-lib; `task $d18()` declared as a system task).
+// archive given to --dpi-lib; `task $d18()` declared as a system task;
+// --vpi-port-delays keeps every port a net of its own, which its delays
+// need: by default the nets of s.o, n and k.i are one simulated net, A21-D6;
+// other simulators need module input port delay access enabled for src and
+// snk).
 `timescale 1ns/1ns
 module src (input a, output o, output [1:0] ov);
   assign o = a;

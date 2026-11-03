@@ -144,6 +144,9 @@ pub(in super::super) struct SdfState {
     load_order: Vec<SdfLoadState>,
     /// Log files and their contents, in the order first written.
     logs: Vec<(String, String)>,
+    /// The design reads SDF (`$sdf_annotate` or `--sdf`); false when only
+    /// [`Codegen::reserve_vpi_delays`] made the state.
+    reads_files: bool,
 }
 
 /// The load port bits of one net group: the port net's signal, each load
@@ -190,6 +193,7 @@ impl Codegen<'_> {
             .collect::<HashMap<_, _>>();
         let mut state = SdfState {
             nodes,
+            reads_files: true,
             ..SdfState::default()
         };
         for command in commands {
@@ -790,6 +794,14 @@ impl Codegen<'_> {
         }
         state.checks.extend(checks);
         state.pairs.extend(pairs);
+    }
+
+    /// Whether the design reads SDF. Delays reserved for VPI applications
+    /// alone keep no port link: a reserved gate delay or timing check limit
+    /// is written where it is simulated, and ports of instances with timing
+    /// checks keep their links anyway ([`Codegen::specify_instances`]).
+    pub(in super::super) fn reads_sdf(&self) -> bool {
+        self.sdf.as_ref().is_some_and(|state| state.reads_files)
     }
 
     /// Drop the VPI-only delay slot of `gate`, whose delay is computed at

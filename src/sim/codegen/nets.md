@@ -21,7 +21,12 @@ multi-driver deferral (S2-D11). A whole port
 touching a net of the bit-level union merges too, since a storage alias
 cannot name it. `net_cells.rs` connects the cells such a port always merges
 with (`input_merge_cells`), and merged ports are no partition or net-array
-cell sources.
+cell sources. Models that keep the VPI catalog merge the same nets and alias
+a sink only onto a source net (A21-D6: a put on a sink must not reach a
+variable); `--vpi-port-delays` (`CodegenOptions::vpi_port_delays`) turns
+every alias and merge off so each port keeps a net of its own for VPI port
+delays. Delays reserved for VPI applications alone (`reserve_vpi_delays`)
+keep no link; a design that reads SDF does (`Codegen::reads_sdf`).
 Other input/output links feeding a group retain their own structural driver
 sites.
 Resolve net-type/delay selection through `net_collapse`/`port_net_types` before

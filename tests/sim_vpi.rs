@@ -75,6 +75,26 @@ fn build_model_with_opts(
     system_subroutines: &[&str],
     optimization: &sim::opt::OptConfig,
 ) -> PathBuf {
+    build_model_with_port_delays(
+        dir,
+        source_name,
+        source,
+        system_subroutines,
+        optimization,
+        false,
+    )
+}
+
+/// [`build_model_with_opts`], keeping every port separate for VPI port
+/// delays when `vpi_port_delays` (`--vpi-port-delays`).
+fn build_model_with_port_delays(
+    dir: &Path,
+    source_name: &str,
+    source: &str,
+    system_subroutines: &[&str],
+    optimization: &sim::opt::OptConfig,
+    vpi_port_delays: bool,
+) -> PathBuf {
     let source_path = dir.join(source_name);
     fs::write(&source_path, source).expect("write VPI HDL fixture");
     let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -97,6 +117,7 @@ fn build_model_with_opts(
             value_config,
             // The plugins reach design objects through the catalog.
             vpi: true,
+            vpi_port_delays,
             ..Default::default()
         },
     )
@@ -365,6 +386,57 @@ fn vpi_merged_selected_formals_answer_both_names() {
             Ok(())
         })
         .expect("VPI merged formals");
+    }
+}
+
+/// Net ports merge in a VPI model (decision A21-D6): a put, force or
+/// release through the sink reaches the source, a callback on the sink sees
+/// the source's driver change, and a merged port refuses port delays. A
+/// port from a variable keeps its link; `--vpi-port-delays` keeps every
+/// port separate, so the port takes delays.
+#[test]
+fn vpi_net_ports_merge_unless_port_delays_keep_them_separate() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let merged = "put on: on=1 u.o=1\n\
+                  put u.c: clk=0 u.c=1\n\
+                  changes of u.w: 1\n\
+                  put u.w: wn=0 u.w=0\n\
+                  force u.w: wn=0 u.w=0\n\
+                  release u.w: wn=1 u.w=1\n\
+                  port w delays: put error 3, get error 3, rise 0\n";
+    let separate = "put on: on=1 u.o=0\n\
+                    put u.c: clk=0 u.c=1\n\
+                    changes of u.w: 1\n\
+                    put u.w: wn=1 u.w=0\n\
+                    force u.w: wn=1 u.w=0\n\
+                    release u.w: wn=1 u.w=1\n\
+                    port w delays: put error 0, get error 0, rise 3\n";
+    for optimization in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
+        for (port_delays, expected) in [(false, merged), (true, separate)] {
+            sim_harness::with_frontend_temp_cwd("vpi-merged-ports", |dir| {
+                let executable = build_model_with_port_delays(
+                    dir,
+                    "vpi_merged_ports.sv",
+                    &fixture("vpi_merged_ports.sv"),
+                    &["task $ports_check"],
+                    &optimization,
+                    port_delays,
+                );
+                let plugin = compile_plugin(dir, "vpi_merged_ports.c");
+                let output = run_plugin(dir, &executable, &plugin);
+                assert!(output.status.success(), "{output:?}");
+                assert_eq!(
+                    String::from_utf8_lossy(&output.stdout),
+                    expected,
+                    "--vpi-port-delays {port_delays}"
+                );
+                Ok(())
+            })
+            .expect("VPI merged ports");
+        }
     }
 }
 

@@ -2421,6 +2421,21 @@ static uint64_t* runtime_gate(const llg_vpi_model_object_t* object) {
     return tm->ops[0].gate;
 }
 
+/* Whether port `port` joins its module-side net and the net it connects into
+ * one simulated net (a merged port, decisions A21-D2, A21-D4): that net has
+ * no side for module input port delays to delay. Models generated with
+ * --vpi-port-delays keep input and output ports separate. */
+static int port_merged(const llg_vpi_model_object_t* port) {
+    const llg_vpi_model_object_t* low = port->target;
+    if (!low || !low->net) return 0;
+    uint32_t row = row_of(port);
+    uint32_t side = port_conn(row, 1);
+    const llg_vpi_conn_t* conn = side == LLG_VPI_NONE ? NULL : row_conn(row, side);
+    if (!conn || conn->ref.object < 0) return 0;
+    const llg_vpi_model_object_t* high = row_object((uint32_t)conn->ref.object);
+    return high && high->net == low->net;
+}
+
 /* Interconnect path transition indices (llg_module_path_t.delays). */
 enum { DELAY_T01 = 0, DELAY_T10 = 1, DELAY_T0Z = 2 };
 
@@ -2608,6 +2623,14 @@ static int delay_record(vpiHandle handle, p_vpi_delay delay_p, const char* routi
             out->n_bits == 0u || out->bit + out->n_bits > port->width) {
             vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_DELAYS",
                            "%s: an interface port has no delays (37.14 detail 2)", routine);
+            return DELAYS_NONE;
+        }
+        if (port_merged(port)) {
+            vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_DELAYS",
+                           "%s: port %s and its connection are one simulated net, which has no "
+                           "module input port delays; generate the model with --vpi-port-delays "
+                           "to keep ports separate",
+                           routine, port->full_name ? port->full_name : "");
             return DELAYS_NONE;
         }
     }

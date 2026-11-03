@@ -13,7 +13,7 @@ use llg::sim;
 /// Usage printed when `llg` is run without arguments. `llg` never discovers
 /// `llg.toml`, so there is nothing else to run from.
 pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi
+generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --vpi-port-delays
 lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error  # lint always runs
 wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
@@ -88,6 +88,9 @@ pub(crate) struct Cli {
     pub optimize: Option<bool>,
     /// `--vpi`: emit the VPI object catalog for run-time applications.
     pub vpi: bool,
+    /// `--vpi-port-delays`: keep every port separate so a VPI application
+    /// can give it delays (implies `--vpi`).
+    pub vpi_port_delays: bool,
     pub stop_policy: Option<StopPolicy>,
     /// `--pulse-reject`/`--pulse-error`: module path pulse limits in percent
     /// of each path delay.
@@ -149,6 +152,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut gen_only: Option<bool> = None;
     let mut optimize: Option<bool> = None;
     let mut vpi = false;
+    let mut vpi_port_delays = false;
     let mut stop_policy: Option<StopPolicy> = None;
     let mut pulse_reject: Option<u8> = None;
     let mut pulse_error: Option<u8> = None;
@@ -231,6 +235,10 @@ Options:
       --vpi                  Keep the VPI object catalog for an application loaded
                               with LLG_VPI_PLUGIN (implied by --dpi-lib and by
                               --define-system-task call sites)
+      --vpi-port-delays      Keep every input and output port a separate net so a
+                              VPI application can give ports module input port
+                              and intermodule path delays (implies --vpi; by
+                              default ports between nets merge into one net)
       --stop-policy <resume|exit>
                               Handle `$stop` by resuming (default) or exiting
       --pulse-reject <0-100> Module path reject limit in percent of each path
@@ -561,6 +569,7 @@ Options:
             "--no-opt" => optimize = Some(false),
             "--opt" => optimize = Some(true),
             "--vpi" => vpi = true,
+            "--vpi-port-delays" => vpi_port_delays = true,
             "--stop-policy" => match it.next() {
                 Some(value) => match StopPolicy::parse(&value) {
                     Ok(policy) => stop_policy = Some(policy),
@@ -685,6 +694,7 @@ Options:
         gen_only,
         optimize,
         vpi,
+        vpi_port_delays,
         stop_policy,
         pulse_reject,
         pulse_error,

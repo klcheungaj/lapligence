@@ -2,7 +2,8 @@
 // A21-D1..A21-D3): a process that changes a source reads the new value
 // through every sink in the same time step, down a chain of instances and
 // up through output ports. A model that keeps the VPI catalog keeps every
-// port a continuous assignment, so its sinks follow one update later.
+// port whose source is a variable a continuous assignment, so those sinks
+// follow one update later; its net ports merge.
 module leaf(input wire c, input wire d, output wire q, output logic r);
   assign q = d;
   always @(posedge c) begin

@@ -37,11 +37,12 @@
 //! net delay or a net takes part in a net alias, the port has a drive
 //! strength, a member write the resolved group rejects reaches either side,
 //! a select is not constant, a selected net-array cell has no other
-//! connection, the design reads SDF, or either instance has module paths or
-//! timing checks. A model that keeps the VPI catalog merges too: both names
-//! stay nets of the one group, so `vpi_handle_by_name` of either shows the
-//! merged value and drivers, and a put or force through either name reaches
-//! both, as for an inout port.
+//! connection, the design reads SDF, either instance has module paths or
+//! timing checks, or the model is generated with `--vpi-port-delays` (every
+//! port keeps a net of its own for VPI port delays). A model that keeps the
+//! VPI catalog merges too (A21-D6): both names stay nets of the one group,
+//! so `vpi_handle_by_name` of either shows the merged value and drivers, and
+//! a put or force through either name reaches both, as for an inout port.
 
 use super::super::net_cells::NetCellPlan;
 use super::*;
@@ -100,7 +101,7 @@ impl Codegen<'_> {
     /// The input and output ports whose nets merge into one inout-style
     /// group (module docs).
     pub(super) fn merged_net_ports(&self, context: &MergeContext<'_>) -> PortMerges {
-        if !self.merge_ports || self.sdf.is_some() {
+        if !self.merge_ports || self.reads_sdf() {
             return PortMerges::default();
         }
         let specify = self.specify_instances();
@@ -456,7 +457,7 @@ impl Codegen<'_> {
             return Vec::new();
         };
         if !self.merge_ports
-            || self.sdf.is_some()
+            || self.reads_sdf()
             || self.whole_port_connection(port).is_some()
             || !self.plain_net_selection(actual)
         {

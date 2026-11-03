@@ -22,7 +22,9 @@
 //
 // Build A20-D17_port_delays.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d17(input integer stage)` declared as a system
-// task).
+// task; --vpi-port-delays keeps every port a net of its own, which its
+// delays need: by default n and k.i are one simulated net, A21-D6; other
+// simulators need module input port delay access enabled for snk).
 `timescale 1ns/1ns
 module snk (input i, input [1:0] v, output o);
   assign o = i;

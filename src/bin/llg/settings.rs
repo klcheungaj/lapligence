@@ -75,8 +75,11 @@ pub(crate) struct DriverOptions {
     pub runtime_cache: Option<PathBuf>,
     pub gen_only: bool,
     pub no_opt: bool,
-    /// Emit the VPI object catalog (`--vpi`, or any `--dpi-lib`).
+    /// Emit the VPI object catalog (`--vpi`, `--vpi-port-delays`, or any
+    /// `--dpi-lib`).
     pub vpi: bool,
+    /// Keep every port separate for VPI port delays (`--vpi-port-delays`).
+    pub vpi_port_delays: bool,
     pub stop_policy: StopPolicy,
     /// Module path pulse limits, style and showcancelled setting.
     pub path_pulse: sim::ir::IrPathPulseOptions,
@@ -425,7 +428,7 @@ pub(crate) fn resolve(
         ));
     }
     // A linked application (`--dpi-lib`) may be a VPI application.
-    let vpi = cli.vpi || !dpi_libraries.is_empty();
+    let vpi = cli.vpi || cli.vpi_port_delays || !dpi_libraries.is_empty();
 
     Ok(DriverOptions {
         top: cli.top.or_else(|| config.compile.top.clone()),
@@ -491,6 +494,7 @@ pub(crate) fn resolve(
         dpi_import_lib: cli.dpi_import_lib,
         no_opt: !cli.optimize.or(config.simulator.optimize).unwrap_or(true),
         vpi,
+        vpi_port_delays: cli.vpi_port_delays,
         stop_policy: cli
             .stop_policy
             .or(config.simulator.stop_policy)
@@ -630,6 +634,12 @@ files = ["a.sv"]
         assert!(flag.vpi);
         let linked = resolve_no_env(cli(&["--dpi-lib", "app.a", "x.sv"]), None).unwrap();
         assert!(linked.vpi, "a linked library may be a VPI application");
+        assert!(!flag.vpi_port_delays && !linked.vpi_port_delays);
+        let delays = resolve_no_env(cli(&["--vpi-port-delays", "x.sv"]), None).unwrap();
+        assert!(
+            delays.vpi && delays.vpi_port_delays,
+            "port delays need the catalog"
+        );
     }
 
     #[test]

@@ -43,8 +43,11 @@ A21-D3 output variable).
   assignment has run by the `#0`.
 - `output variable: r=1 tb.r=1`: `tb.r` shares `leaf.r` through `mid.r`
   (A21-D3), so the child's own write is visible through `tb.r` at once.
-- With `--vpi` every port stays a continuous assignment: `u.d=0 u.l.d=0` and
-  `tb.r=x` (the old values, one update later); the `#0` line is unchanged.
+- With `--vpi` a port whose source is a variable stays a continuous
+  assignment, since a `vpi_put_value` on the sink must not reach the variable
+  (A21-D6): `u.d=0 u.l.d=0` (`u.d` follows `d` one update later and `u.l.d`
+  shares the net `u.d`) and `tb.r=x`; the net ports of the `#0` line merge
+  as without VPI, so it is unchanged.
 
 ## `merged_nets.sv`
 

@@ -1,0 +1,18 @@
+drivers 1: wn=1 u.w=1 clk=1 u.c=1 u.o=1 on=1 u.q=1 qn=1
+put sinks: wn=0 u.w=0 clk=1 u.c=0 u.o=0 on=0 u.q=1 qn=0
+drivers 0: wn=0 u.w=0 clk=0 u.c=0 u.o=0 on=0 u.q=0 qn=0
+put srcs: wn=1 u.w=1 clk=0 u.c=0 u.o=1 on=1 u.q=0 qn=0
+forced: wn=0 u.w=0 clk=0 u.c=0 u.o=0 on=0 u.q=0 qn=0
+drv forced: wn=0 u.w=0 clk=1 u.c=0 u.o=0 on=0 u.q=0 qn=0
+released: wn=1 u.w=1 clk=1 u.c=1 u.o=1 on=1 u.q=1 qn=1
+get_delays of port w: refused, rise 0
+u.w=0 at 11
+u.w=0 at 14
+changes of tb.wn: 6
+changes of tb.u.w: 6
+changes of tb.clk: 3
+changes of tb.u.c: 3
+changes of tb.u.o: 5
+changes of tb.on: 5
+changes of tb.u.q: 3
+changes of tb.qn: 3

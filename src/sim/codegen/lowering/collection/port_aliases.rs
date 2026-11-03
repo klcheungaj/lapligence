@@ -76,7 +76,7 @@ impl Codegen<'_> {
     /// so every later lookup of a collapsed formal resolves to the actual's
     /// storage, as for `ref` ports.
     pub(in super::super) fn collapse_variable_ports(&mut self) -> Result<(), String> {
-        if !self.collapse_ports || self.sdf.is_some() {
+        if !self.collapse_ports || self.reads_sdf() {
             return Ok(());
         }
         let nodes = self.design_nodes();
@@ -229,6 +229,7 @@ impl Codegen<'_> {
             signal.alias = Some(target);
             signal.c_name = c_name;
         }
+        self.shared_variable_ports = true;
         self.port_aliases
             .extend(candidates.iter().map(|candidate| candidate.port));
         self.port_alias_sinks

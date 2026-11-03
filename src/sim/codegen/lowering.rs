@@ -417,6 +417,14 @@ pub struct CodegenOptions {
     /// force sources that call one are evaluated by the waiting process,
     /// because a calltf may write any object through VPI.
     pub user_system_functions: Vec<String>,
+    /// Keep every input and output port of a model with the VPI catalog a
+    /// continuous assignment between nets of their own (`--vpi-port-delays`),
+    /// so a VPI application can give any port module input port delays or
+    /// intermodule path delays (IEEE 1800-2009 37.14, 38.32). Without it
+    /// such a model merges net ports as one without VPI does (decisions
+    /// A21-D2, A21-D4, A21-D5), and a port whose two sides are one
+    /// simulated net takes no delays.
+    pub vpi_port_delays: bool,
 }
 
 /// The name of the system function a `--define-system-task` prototype
@@ -522,8 +530,9 @@ struct LoweredModel {
     sdf_logs: Vec<(String, String)>,
     /// The design calls a `$coverage_*` function (40.3.2).
     coverage_api_used: bool,
-    /// Some port shares its actual's storage.
-    collapsed_ports: bool,
+    /// Some port sink shares variable storage (decisions A21-D1..D3), which
+    /// a model that keeps the VPI catalog does not allow.
+    shared_variable_ports: bool,
     /// Collapsed net ports whose sink a time-zero observer reads but whose
     /// root net does not start at X on every bit: lowered again with these
     /// ports kept as links (`collection/port_aliases.rs`).
@@ -621,28 +630,72 @@ pub fn sdf_targets(
 
 fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String> {
     // A VPI application may write either side of a port, so a model that
-    // keeps the VPI catalog keeps every port link that shares storage; a
-    // merged net port stays merged (both names are nets of one group, as in
-    // a model without VPI). User system calls are
-    // known only once the bodies are lowered: a design that has them is
-    // lowered again without collapsed ports. A collapsed net port whose
-    // time-zero start the lowered model shows to differ from the link's is
-    // kept as a link in a further lowering; keeping a link only makes its
-    // sink a driven net that starts at X, so a second retry does not occur
-    // in practice, and collapse is switched off after it as a bound.
+    // keeps the VPI catalog keeps every port whose sink would share a
+    // variable's storage as a link (a put on the sink must not reach the
+    // variable); net ports merge as without VPI (both names are one
+    // simulated net, as a put or force through either name shows), unless
+    // the application needs port delays (`--vpi-port-delays`). User system
+    // calls are known only once the bodies are lowered: a design that has
+    // them is lowered again as a VPI model.
+    let vpi_sharing = if options.vpi_port_delays {
+        PortSharing::Separate
+    } else {
+        PortSharing::Nets
+    };
+    let first = if options.vpi {
+        vpi_sharing
+    } else {
+        PortSharing::All
+    };
+    let lowered = lower_model_retrying(db, options, first)?;
+    if first == PortSharing::All
+        && !lowered.model.vpi_compile_calls.is_empty()
+        && (lowered.shared_variable_ports || vpi_sharing == PortSharing::Separate)
+    {
+        drop(lowered);
+        return lower_model_retrying(db, options, vpi_sharing);
+    }
+    Ok(lowered)
+}
+
+/// Lower with port sharing `sharing`. A collapsed net port whose time-zero
+/// start the lowered model shows to differ from the link's is kept as a
+/// link in a further lowering; keeping a link only makes its sink a driven
+/// net that starts at X, so a second retry does not occur in practice, and
+/// storage sharing is switched off after it as a bound.
+fn lower_model_retrying(
+    db: &Db,
+    options: &CodegenOptions,
+    sharing: PortSharing,
+) -> Result<LoweredModel, String> {
     let mut excluded = HashSet::new();
     for _ in 0..MAX_PORT_COLLAPSE_RETRIES {
-        let lowered = lower_model_with(db, options, !options.vpi, &excluded)?;
-        if lowered.collapsed_ports && !lowered.model.vpi_compile_calls.is_empty() {
-            drop(lowered);
-            return lower_model_with(db, options, false, &HashSet::new());
-        }
+        let lowered = lower_model_with(db, options, sharing, &excluded)?;
         if lowered.retry_ports.is_empty() {
             return Ok(lowered);
         }
         excluded.extend(lowered.retry_ports.iter().copied());
     }
-    lower_model_with(db, options, false, &HashSet::new())
+    let bound = if sharing == PortSharing::Separate {
+        PortSharing::Separate
+    } else {
+        PortSharing::Merges
+    };
+    lower_model_with(db, options, bound, &HashSet::new())
+}
+
+/// Which ports a lowering lets share storage or merge their nets.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PortSharing {
+    /// Every storage alias (A21-D1..D3) and net merge (A21-D4, A21-D5).
+    All,
+    /// Net sinks of net sources alias (A21-D2) and nets merge; variables
+    /// keep their links (models with the VPI catalog).
+    Nets,
+    /// Nets merge; every storage alias is off.
+    Merges,
+    /// Every input and output port keeps its link (`--vpi-port-delays`).
+    Separate,
 }
 
 /// Lowerings that may keep further net ports as links before every port
@@ -652,7 +705,7 @@ const MAX_PORT_COLLAPSE_RETRIES: usize = 3;
 fn lower_model_with(
     db: &Db,
     options: &CodegenOptions,
-    collapse_ports: bool,
+    sharing: PortSharing,
     excluded_ports: &HashSet<NodeId>,
 ) -> Result<LoweredModel, String> {
     let waveform = options.waveform.as_ref();
@@ -661,8 +714,9 @@ fn lower_model_with(
     let mut cg = Codegen::new(&semantic);
     cg.vpi_return_signals = options.vpi;
     cg.user_system_functions = options.user_system_functions.iter().cloned().collect();
-    cg.collapse_ports = collapse_ports;
-    cg.merge_ports = true;
+    cg.collapse_ports = sharing == PortSharing::All;
+    cg.alias_net_ports = matches!(sharing, PortSharing::All | PortSharing::Nets);
+    cg.merge_ports = sharing != PortSharing::Separate;
     cg.port_collapse_exclusions = excluded_ports.clone();
     cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
@@ -847,10 +901,7 @@ fn lower_model_with(
     let warnings = std::mem::take(&mut cg.warnings);
     let sdf_logs = std::mem::take(&mut cg.sdf_logs);
     let coverage_api_used = cg.coverage_api_used;
-    // Merged ports keep both names as nets of one group, which a VPI
-    // application reads and writes like any net, so only storage aliases
-    // count.
-    let collapsed_ports = !cg.port_alias_sinks.is_empty();
+    let shared_variable_ports = cg.shared_variable_ports;
     drop(cg);
     drop(semantic);
     drop(lowering_stage);
@@ -860,7 +911,7 @@ fn lower_model_with(
         warnings,
         sdf_logs,
         coverage_api_used,
-        collapsed_ports,
+        shared_variable_ports,
         retry_ports,
     })
 }
@@ -1498,11 +1549,17 @@ struct Codegen<'a> {
     /// group (`collection/nets/port_merges.rs`); they have no link process
     /// and drive nothing.
     port_aliases: HashSet<NodeId>,
-    /// Ports may share storage: false for a model that keeps the VPI
-    /// catalog and for the SDF target scan.
+    /// Port sinks may share variable storage (A21-D1..D3): false for a
+    /// model that keeps the VPI catalog and for the SDF target scan.
     collapse_ports: bool,
+    /// Net port sinks may share the storage of a source net (A21-D2):
+    /// false for `--vpi-port-delays` and the SDF target scan.
+    alias_net_ports: bool,
+    /// Some port sink shares variable storage.
+    shared_variable_ports: bool,
     /// Input and output net ports may merge into one group
-    /// (`collection/nets/port_merges.rs`): false for the SDF target scan.
+    /// (`collection/nets/port_merges.rs`): false for `--vpi-port-delays` and
+    /// the SDF target scan.
     merge_ports: bool,
     /// Slot-bit bound of a shared electrical run
     /// (`collection/net_partition.rs`); tests lower it.
@@ -2171,6 +2228,8 @@ impl<'a> Codegen<'a> {
             reference_signals: HashMap::new(),
             port_aliases: HashSet::new(),
             collapse_ports: false,
+            alias_net_ports: false,
+            shared_variable_ports: false,
             merge_ports: false,
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),

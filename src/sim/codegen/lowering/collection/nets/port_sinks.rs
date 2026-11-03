@@ -16,7 +16,9 @@
 //! delay, a type other than `wire`/`tri`/`logic` (its type could dominate),
 //! a drive strength, or a type that differs from the source; the source is
 //! a selected or aliased net or a variable that a force on the sink would
-//! reach; the model keeps the VPI catalog, reads SDF, or either instance has
+//! reach, or a variable in a model that keeps the VPI catalog (a put on the
+//! sink must not reach it; a source net merges there too, A21-D6); the model
+//! is generated with `--vpi-port-delays`, reads SDF, or either instance has
 //! module paths or timing checks. Time zero is the last case: the sink of a
 //! link is a driven net that starts at X (T0-D3), the merged net starts at
 //! the source's start. A source that does not start at X on every bit is
@@ -44,7 +46,7 @@ impl Codegen<'_> {
     /// exactly one such port: an input formal or an output actual of type
     /// `wire`, `tri` or `logic`.
     pub(super) fn port_sink_candidates(&self, nodes: &[NodeId]) -> HashMap<NodeId, PortSink> {
-        if !self.collapse_ports || self.sdf.is_some() {
+        if !self.alias_net_ports || self.reads_sdf() {
             return HashMap::new();
         }
         let specify = self.specify_instances();
@@ -236,6 +238,9 @@ impl Codegen<'_> {
                     self.display_name(*net)
                 ));
             }
+            if self.model.signals[*root].net_driver.is_none() {
+                self.shared_variable_ports = true;
+            }
             let c_name = self.model.signals[*root].c_name.clone();
             let signal = &mut self.model.signals[*sink];
             signal.alias = Some(*root);
@@ -315,7 +320,10 @@ impl Codegen<'_> {
         if root_signal.net_driver.is_some() || pending_ir.contains_key(&root) {
             return true;
         }
-        !forced
+        // A model that keeps the VPI catalog keeps the link: a put on the
+        // sink must not reach the variable.
+        self.collapse_ports
+            && !forced
             && self
                 .sig_global_for_ir(root)
                 .is_some_and(|node| self.is_variable_declaration(node))

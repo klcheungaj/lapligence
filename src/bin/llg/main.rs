@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [lint options] [wave options] [build options] [<file.sv>...] [-- <plusargs>...]
-//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --stop-policy <resume|exit>  --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled  --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --neg-timing-checks  --no-neg-timing-checks  --sdf [min:|typ:|max:][<scope>=]<file.sdf>
+//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --vpi-port-delays  --stop-policy <resume|exit>  --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled  --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --neg-timing-checks  --no-neg-timing-checks  --sdf [min:|typ:|max:][<scope>=]<file.sdf>
 //! lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error
 //! wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
@@ -175,6 +175,7 @@ fn run(options: DriverOptions) -> i32 {
         gen_only,
         no_opt,
         vpi,
+        vpi_port_delays,
         stop_policy,
         path_pulse,
         timing_checks,
@@ -324,6 +325,7 @@ fn run(options: DriverOptions) -> i32 {
             value_config,
             waveform: wave,
             vpi,
+            vpi_port_delays,
             path_pulse,
             timing_checks,
             sdf,
