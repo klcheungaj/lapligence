@@ -184,6 +184,9 @@ fn run_time_member_indices_select_native_record_elements() {
     let nested =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_nested.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_nested", nested, &[], &[]);
+    let records =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_records.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_member_select_records", records, &[], &[]);
     sim_cli::reject_case_with_args(
         SUITE,
         "bad_member_select_limit",

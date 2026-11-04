@@ -513,6 +513,25 @@ impl Codegen<'_> {
                     node,
                 )));
             }
+            // A handle member below a selected record element (`r.e[k].h.v`):
+            // the frontend nests the access to the handle.
+            let mut current = node;
+            while let [child] = self.node(current).children.as_slice() {
+                let child = *child;
+                if !matches!(self.kind(child), NodeKind::Expr(ExprKind::HierPath { .. })) {
+                    break;
+                }
+                if self.selected_member_path(child) {
+                    let handle = self.lower_chandle(path, child)?;
+                    return Ok(Some(self.required_handle(
+                        handle,
+                        "property access",
+                        path,
+                        node,
+                    )));
+                }
+                current = child;
+            }
             if let Some(receiver) = self.record_handle_receiver(refs, node, field)? {
                 return Ok(Some(self.required_handle(
                     receiver,

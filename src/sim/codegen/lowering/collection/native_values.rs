@@ -747,6 +747,26 @@ impl Codegen<'_> {
                             .collect(),
                     )));
                 }
+                // A member of a constant element of a nested record array
+                // (`r.e[1].h`).
+                if let Some(Some(first)) = refs.first() {
+                    if matches!(
+                        self.kind(*first),
+                        NodeKind::Expr(ExprKind::ArraySelect { .. })
+                    ) {
+                        if let Ok(Some((value, mut path))) = self.native_path_of(*first) {
+                            path.extend(
+                                parts
+                                    .iter()
+                                    .skip(1)
+                                    .filter(|part| !part.is_empty())
+                                    .cloned()
+                                    .map(AggregatePathPart::Member),
+                            );
+                            return Ok(Some((value, path)));
+                        }
+                    }
+                }
                 let Some((index, value)) = refs.iter().enumerate().find_map(|(index, target)| {
                     target.and_then(|target| self.native_roots.get(&target).map(|v| (index, *v)))
                 }) else {
@@ -776,16 +796,27 @@ impl Codegen<'_> {
                         .map(|child| self.native_path_of(child))
                         .transpose()?
                         .flatten(),
-                    Some((owner, members)) => self.native_roots.get(&owner).map(|value| {
-                        (
-                            *value,
-                            members
-                                .iter()
-                                .cloned()
-                                .map(AggregatePathPart::Member)
-                                .collect::<Vec<_>>(),
-                        )
-                    }),
+                    Some((owner, members)) => {
+                        let members = members.iter().cloned().map(AggregatePathPart::Member);
+                        match self.native_roots.get(&owner) {
+                            Some(value) => Some((*value, members.collect::<Vec<_>>())),
+                            // The owner is an element select when records
+                            // nest (`r.e[1].a[1]`).
+                            None if matches!(
+                                self.kind(owner),
+                                NodeKind::Expr(ExprKind::ArraySelect { .. })
+                            ) =>
+                            {
+                                self.native_path_of(owner).ok().flatten().map(
+                                    |(value, mut path)| {
+                                        path.extend(members);
+                                        (value, path)
+                                    },
+                                )
+                            }
+                            None => None,
+                        }
+                    }
                     None => self.native_path_of(*base)?,
                 };
                 let Some((value, mut path)) = rooted else {
@@ -1814,6 +1845,9 @@ impl Codegen<'_> {
         if let Some(statement) = self.container_record_into(path, target, source, nba)? {
             return Ok(statement);
         }
+        if let Some(select) = self.native_record_select(path, source)? {
+            return self.native_record_select_into(path, &select, target, source, nba);
+        }
         if let Some((source, _)) = self.native_endpoint(source)? {
             return self.native_transfer(path, target, &source, nba);
         }
@@ -2006,6 +2040,24 @@ impl Codegen<'_> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if op == Operation::Assignment {
+            if let Some(select) = self.native_record_select(path, lhs)? {
+                return self
+                    .native_record_select_write(path, &select, lhs, rhs, nba)
+                    .map(Some);
+            }
+            let source = self.p30_unwrap_cast(rhs);
+            if let Some(select) = self.native_record_select(path, source)? {
+                let Some((target, _)) = self.native_endpoint(lhs)? else {
+                    return Err(format!(
+                        "a run-time selected record in `{path}` needs a native record target"
+                    ));
+                };
+                return self
+                    .native_record_select_into(path, &select, &target, source, nba)
+                    .map(Some);
+            }
+        }
         let lhs_native = self.native_path_of(lhs)?.is_some();
         let rhs_native = self
             .native_path_of(self.p30_unwrap_cast(rhs))

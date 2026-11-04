@@ -15,6 +15,18 @@ use super::*;
 /// comparison, so larger arrays are rejected rather than expanded.
 pub(in crate::sim::codegen) const NATIVE_MEMBER_SELECT_LIMIT: usize = 64;
 
+/// Largest member array selected whole by a run-time index: every branch
+/// copies one whole record.
+const NATIVE_RECORD_SELECT_LIMIT: usize = 256;
+
+/// The elements of a member array of records selected whole by a run-time
+/// index, each as a transfer endpoint.
+pub(in crate::sim::codegen) struct NativeRecordSelect {
+    elements: Vec<(i32, NativeEndpoint)>,
+    index: NodeId,
+    hoist: bool,
+}
+
 /// The elements of a member array selected by a run-time index.
 pub(in crate::sim::codegen) struct NativeMemberSelect {
     /// Declared index and leaf of every element, in declaration order.
@@ -25,13 +37,13 @@ pub(in crate::sim::codegen) struct NativeMemberSelect {
 }
 
 impl Codegen<'_> {
-    /// `r.a[k]` with a non-constant `k`, where `r.a` is a one-dimensional
-    /// array member of scalar elements in a native record.
-    pub(in crate::sim::codegen) fn native_member_select(
+    /// The run-time select of `node` (`r.a[k]`, `r.e[k].s`): the select
+    /// node, its array, its index and the member path below it.
+    #[allow(clippy::type_complexity)]
+    fn member_select_parts(
         &self,
-        path: &str,
         node: NodeId,
-    ) -> Result<Option<NativeMemberSelect>, String> {
+    ) -> Result<Option<(NodeId, NodeId, NodeId, Vec<AggregatePathPart>)>, String> {
         // `r.e[k].s`: a member path below a run-time selected record element
         // of a member array selects that member of every element.
         let (select, trailing) = match self.kind(node) {
@@ -53,6 +65,36 @@ impl Codegen<'_> {
                 }
                 _ => return Ok(None),
             },
+            // `r.e[k].a[1]`: a constant element of a member array below the
+            // selected record element.
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. })
+                if self.db.array_select_path(node).is_some_and(|(owner, _)| {
+                    matches!(
+                        self.kind(owner),
+                        NodeKind::Expr(ExprKind::ArraySelect { .. })
+                    )
+                }) =>
+            {
+                let Some((owner, members)) = self.db.array_select_path(node) else {
+                    return Ok(None);
+                };
+                let mut trailing = members
+                    .iter()
+                    .cloned()
+                    .map(AggregatePathPart::Member)
+                    .collect::<Vec<_>>();
+                for index in indices {
+                    let Some(index) = self
+                        .eval_bound_i128(*index)
+                        .ok()
+                        .and_then(|index| i32::try_from(index).ok())
+                    else {
+                        return Ok(None);
+                    };
+                    trailing.push(AggregatePathPart::Index(index));
+                }
+                (owner, trailing)
+            }
             _ => (node, Vec::new()),
         };
         let (base, index) = match self.kind(select) {
@@ -65,6 +107,19 @@ impl Codegen<'_> {
         if self.eval_bound_i128(index).is_ok() {
             return Ok(None);
         }
+        Ok(Some((select, base, index, trailing)))
+    }
+
+    /// `r.a[k]` with a non-constant `k`, where `r.a` is a one-dimensional
+    /// array member of scalar elements in a native record.
+    pub(in crate::sim::codegen) fn native_member_select(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<NativeMemberSelect>, String> {
+        let Some((select, base, index, trailing)) = self.member_select_parts(node)? else {
+            return Ok(None);
+        };
         let node = select;
         let select_path = self.db.array_select_path(node);
         let value_owned = match &select_path {
@@ -137,19 +192,227 @@ impl Codegen<'_> {
         }))
     }
 
-    /// One known test per element: the index equals its declared index.
-    /// A side-effecting index is first stored in a local, declared by the
-    /// statement pushed to `prelude`.
-    fn member_select_tests(
+    /// `r.e[k]` or `r.e[k].inner` with a non-constant `k`, where the
+    /// selection is a whole record or array rather than one leaf.
+    pub(in crate::sim::codegen) fn native_record_select(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<NativeRecordSelect>, String> {
+        let Some((select, base, index, trailing)) = self.member_select_parts(node)? else {
+            return Ok(None);
+        };
+        let select_path = self.db.array_select_path(select);
+        let value_root = match &select_path {
+            Some((owner, members)) => self.native_roots.get(owner).map(|value| {
+                let prefix = members
+                    .iter()
+                    .cloned()
+                    .map(AggregatePathPart::Member)
+                    .collect::<Vec<_>>();
+                (*value, prefix)
+            }),
+            None => self.native_path_of(base)?,
+        };
+        let module_root = match (&value_root, select_path) {
+            (Some(_), _) => None,
+            (None, Some((owner, members))) if self.unpacked_aggregates.contains_key(&owner) => {
+                Some((
+                    owner,
+                    members
+                        .iter()
+                        .cloned()
+                        .map(AggregatePathPart::Member)
+                        .collect::<Vec<_>>(),
+                ))
+            }
+            (None, _) => self.unpacked_path_for_expr(base),
+        };
+        let (descriptor, prefix) = if let Some((value, prefix)) = &value_root {
+            let layout = self.native_layout_of_value(*value)?;
+            (layout.descriptor.clone(), prefix.clone())
+        } else if let Some((root, prefix)) = &module_root {
+            let Some(descriptor) = self.query_descriptor(*root) else {
+                return Ok(None);
+            };
+            (descriptor.clone(), prefix.clone())
+        } else {
+            return Ok(None);
+        };
+        let Some(TypeShape::FixedArray { dimensions, .. }) =
+            Self::descriptor_at_path(&descriptor, &prefix).map(|array| array.shape)
+        else {
+            return Ok(None);
+        };
+        let [(left, right)] = dimensions[..] else {
+            return Ok(None);
+        };
+        let member = |declared: i32| {
+            let mut member = prefix.clone();
+            member.push(AggregatePathPart::Index(declared));
+            member.extend(trailing.iter().cloned());
+            member
+        };
+        let selected = Self::descriptor_at_path(&descriptor, &member(left));
+        if !selected.is_some_and(|selected| {
+            matches!(
+                selected.shape,
+                TypeShape::Aggregate(_) | TypeShape::FixedArray { .. }
+            )
+        }) {
+            return Ok(None);
+        }
+        let count = left.abs_diff(right) as usize + 1;
+        if count > NATIVE_RECORD_SELECT_LIMIT {
+            return Err(format!(
+                "run-time selection of a whole record among {count} elements in `{path}` is not supported; at most {NATIVE_RECORD_SELECT_LIMIT} are"
+            ));
+        }
+        let mut elements = Vec::with_capacity(count);
+        for declared in left.min(right)..=left.max(right) {
+            let endpoint = if let Some((value, _)) = &value_root {
+                NativeEndpoint::Value {
+                    value: *value,
+                    prefix: member(declared),
+                }
+            } else {
+                let Some((root, _)) = &module_root else {
+                    return Ok(None);
+                };
+                let Some(storage) = self.unpacked_aggregates.get(root) else {
+                    return Ok(None);
+                };
+                let prefix = member(declared);
+                let Some(descriptor) = Self::descriptor_at_path(&descriptor, &prefix) else {
+                    return Ok(None);
+                };
+                NativeEndpoint::Module(Box::new(AggregateSelection {
+                    root: *root,
+                    prefix,
+                    descriptor,
+                    storage: storage.clone(),
+                }))
+            };
+            elements.push((declared, endpoint));
+        }
+        let hoist = !self.side_effect_free(index);
+        Ok(Some(NativeRecordSelect {
+            elements,
+            index,
+            hoist,
+        }))
+    }
+
+    /// The tests of a whole-record select, with its hoisted index.
+    fn record_select_tests(
         &mut self,
         path: &str,
-        select: &NativeMemberSelect,
+        select: &NativeRecordSelect,
         prelude: &mut Vec<IrStmt>,
-    ) -> Result<Vec<(IrExpr, NativeEndpointLeaf)>, String> {
-        let index = self.lower_container_index(path, select.index)?;
+    ) -> Result<Vec<(i32, IrExpr)>, String> {
+        let (index, width) = self.member_select_index(path, select.index, select.hoist, prelude)?;
+        Ok(select
+            .elements
+            .iter()
+            .map(|(declared, _)| {
+                let value = crate::sim::codegen::lowering::containers::pattern_key_expr(
+                    i128::from(*declared),
+                    width,
+                    true,
+                    false,
+                );
+                (
+                    *declared,
+                    cmp_expr_ir(IrBinOp::CaseEq, index.clone(), value),
+                )
+            })
+            .collect())
+    }
+
+    /// Copy the selected element into `target`; an unmatched index copies
+    /// the default of the element type (SV 7.4.6). `node` names the source
+    /// for its type.
+    pub(in crate::sim::codegen) fn native_record_select_into(
+        &mut self,
+        path: &str,
+        select: &NativeRecordSelect,
+        target: &NativeEndpoint,
+        node: NodeId,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let mut statements = Vec::new();
+        let tests = self.record_select_tests(path, select, &mut statements)?;
+        // Every element and the default fill one temporary, which then moves
+        // to the target, so a queued write has one source.
+        let temporary = self.native_temporary(node)?;
+        statements.push(IrStmt::NativeValueDeclare(temporary));
+        let value = NativeEndpoint::Value {
+            value: temporary,
+            prefix: Vec::new(),
+        };
+        let mut chain: Option<IrStmt> = None;
+        for ((_, test), (_, element)) in tests.into_iter().zip(&select.elements).rev() {
+            let copy = self.native_transfer(path, &value, element, false)?;
+            chain = Some(IrStmt::If {
+                cond: test,
+                then_: vec![copy],
+                els: chain.map(|statement| vec![statement]),
+                check: IrUniquePriorityCheck::None,
+            });
+        }
+        statements.extend(chain);
+        statements.push(self.native_transfer(path, target, &value, nba)?);
+        Ok(IrStmt::Block(statements))
+    }
+
+    /// Store `rhs` into the selected element; an unmatched index writes
+    /// nothing. The value is evaluated once, before the index is tested.
+    pub(in crate::sim::codegen) fn native_record_select_write(
+        &mut self,
+        path: &str,
+        select: &NativeRecordSelect,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let temporary = self.native_temporary(lhs)?;
+        let descriptor = self.native_layout_of_value(temporary)?.descriptor.clone();
+        let value = NativeEndpoint::Value {
+            value: temporary,
+            prefix: Vec::new(),
+        };
+        let mut statements = vec![
+            IrStmt::NativeValueDeclare(temporary),
+            self.native_assign_into(path, &value, &descriptor, rhs, false)?,
+        ];
+        let tests = self.record_select_tests(path, select, &mut statements)?;
+        let mut chain: Option<IrStmt> = None;
+        for ((_, test), (_, element)) in tests.into_iter().zip(&select.elements).rev() {
+            let copy = self.native_transfer(path, element, &value, nba)?;
+            chain = Some(IrStmt::If {
+                cond: test,
+                then_: vec![copy],
+                els: chain.map(|statement| vec![statement]),
+                check: IrUniquePriorityCheck::None,
+            });
+        }
+        statements.extend(chain);
+        Ok(IrStmt::Block(statements))
+    }
+
+    /// The index of a select as a signed value that holds every declared
+    /// index, stored once in a local when `hoist`.
+    fn member_select_index(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        hoist: bool,
+        prelude: &mut Vec<IrStmt>,
+    ) -> Result<(IrExpr, u32), String> {
+        let index = self.lower_container_index(path, node)?;
         let width = index.width.max(32) + 1;
         let mut index = IrExpr::convert_to(index, width, true);
-        if select.hoist {
+        if hoist {
             let name = format!("_llg_member_index_{}", self.native_copy_sequence);
             self.native_copy_sequence += 1;
             prelude.push(IrStmt::DeclLocal {
@@ -161,6 +424,19 @@ impl Codegen<'_> {
             });
             index = IrExpr::new(IrExprKind::LocalRead(name), width, true, None);
         }
+        Ok((index, width))
+    }
+
+    /// One known test per element: the index equals its declared index.
+    /// A side-effecting index is first stored in a local, declared by the
+    /// statement pushed to `prelude`.
+    fn member_select_tests(
+        &mut self,
+        path: &str,
+        select: &NativeMemberSelect,
+        prelude: &mut Vec<IrStmt>,
+    ) -> Result<Vec<(IrExpr, NativeEndpointLeaf)>, String> {
+        let (index, width) = self.member_select_index(path, select.index, select.hoist, prelude)?;
         Ok(select
             .elements
             .iter()

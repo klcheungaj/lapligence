@@ -542,15 +542,20 @@ impl<'a> Codegen<'a> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let (target, mut path) =
-                    if let Some((target, members)) = self.db.array_select_path(node) {
-                        (
-                            target,
-                            members
-                                .iter()
-                                .cloned()
-                                .map(AggregatePathPart::Member)
-                                .collect(),
-                        )
+                    if let Some((owner, members)) = self.db.array_select_path(node) {
+                        let members = members.iter().cloned().map(AggregatePathPart::Member);
+                        // The owner of a member array is an element select
+                        // when records nest (`m.e[1].a[1]`).
+                        if matches!(
+                            self.kind(owner),
+                            NodeKind::Expr(ExprKind::ArraySelect { .. })
+                        ) {
+                            let (target, mut path) = self.unpacked_path_for_expr(owner)?;
+                            path.extend(members);
+                            (target, path)
+                        } else {
+                            (owner, members.collect())
+                        }
                     } else {
                         match self.kind(*base) {
                             NodeKind::Array { .. } => self.unpacked_array_base_path(*base)?,
