@@ -101,7 +101,10 @@ reference's stable address and, for a handle, its marker (a packed leaf gets an
 on what it is bound to. A run-time index into a module-like record picks among
 the leaves' stable addresses instead (`IrElementRoot::Leaves`). A `ref` event
 formal bound to a class event property takes the address of its object's slot
-(`IrCallArg::EventSlot`), which holds the one pointer an `llg_event_t` holds.
+(`IrCallArg::EventSlot`), which holds the one `void*` an `llg_event_t` holds; the
+same type on both sides keeps this within ISO C aliasing. The callee's frame is
+an interior collector root for the object, and a changed slot publishes the
+object's handle marker when the call returns.
 Generated code holds only the formal's address, so a store through a writable
 record `ref` formal tells the element's container itself. `access_address` and
 `native_value_address` note a pending `llg_native_ref_value_stored` for every use

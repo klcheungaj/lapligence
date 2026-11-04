@@ -1588,6 +1588,30 @@ day each.
 
 `tests/fixtures/sim/feature_completion/sim_014/neg_class_event_output_value_call.sv`.
 
+## Rebinding a class event property through a formal publishes at the return
+
+### Symptom
+
+A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
+on a rebinding through a `ref` event formal when the call returns, not at the
+rebinding, so a callee that suspends afterwards wakes the wait late. Waits on
+the event itself are not affected: they follow the object named when armed.
+
+### Cause
+
+The formal is a plain `llg_event_t*` to the property's slot, and only the
+caller knows the slot belongs to an object with a change marker.
+
+### Intended direction
+
+Pass the marker with `ref` event formals, as handle formals do, if a design
+needs it. Estimate: half a day.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_014/class_event_ref_held.sv`, with
+a delay added after the rebinding in `late`.
+
 ## Wired-logic nets in bidirectional switch networks
 
 **Status:** open (FIN-001 G3, F08-11; ADV-005). Wired nets in a network of

@@ -131,18 +131,20 @@ void llg_event_watch_remove(llg_event_object_t* ev) {
 }
 
 int llg_event_triggered(const llg_event_t* ev) {
-    if (!ev || !ev->object || !ev->object->triggered ||
-        ev->object->triggered_generation != llg_event_generation)
+    llg_event_object_t* object = ev ? ev->object : NULL;
+    if (!object || !object->triggered ||
+        object->triggered_generation != llg_event_generation)
         return 0;
-    if (ev->object->triggered_time != g.now) {
-        ev->object->triggered = 0;
+    if (object->triggered_time != g.now) {
+        object->triggered = 0;
         return 0;
     }
     return 1;
 }
 
 uint64_t llg_event_trigger_count(const llg_event_t* ev) {
-    return ev && ev->object ? ev->object->trigger_count : 0;
+    llg_event_object_t* object = ev ? ev->object : NULL;
+    return object ? object->trigger_count : 0;
 }
 
 void llg_event_assign(llg_event_t* target, const llg_event_t* source) {

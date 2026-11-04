@@ -84,8 +84,9 @@ pub enum IrCallArg {
     /// back when the callee returns.
     EventAddr(IrEventRef),
     /// `ref` named-event formal bound to a class event property. The slot
-    /// holds the object identity, the one pointer an `llg_event_t` holds, so
-    /// a rebinding by the callee reaches the property at once (SV 13.5.2).
+    /// holds the object identity, the one `void*` an `llg_event_t` holds, so
+    /// a rebinding by the callee reaches the property at once (SV 13.5.2);
+    /// the object's handle marker changes when the call returns.
     EventSlot(String),
     /// Output/inout chandle formal bound to a caller-owned `void **`.
     ChandleAddr(String),

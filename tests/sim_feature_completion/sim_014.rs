@@ -123,6 +123,15 @@ fn ref_event_formals_bind_class_event_properties() {
         &[],
         &[],
     );
+    // A collection at every safe point must keep a dropped object alive
+    // while a callee holds its property.
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_event_ref_held",
+        include_str!("../fixtures/sim/feature_completion/sim_014/class_event_ref_held.out"),
+        &[],
+        &[("LLG_GC_STRESS", "1")],
+    );
 }
 
 #[test]

@@ -689,6 +689,12 @@ impl Frame<'_, '_> {
                 IrCallArg::EventAddr(event) => parameters.push(self.event_address(event)?),
                 IrCallArg::EventSlot(address) => {
                     let slot = self.native_address(address, NativeKind::Chandle)?.address;
+                    // The callee rebinds through `llg_event_assign`, which
+                    // cannot reach the object's marker: a changed slot
+                    // publishes when the call returns.
+                    if let Some(publish) = self.handle_store_publish(address, &slot)? {
+                        property_publishes.push(publish);
+                    }
                     parameters.push(format!("(llg_event_t*){slot}"));
                 }
                 IrCallArg::StringRefAddr {

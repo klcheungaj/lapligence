@@ -3079,8 +3079,12 @@ void llg_event_object_reset(llg_event_object_t* ev);
 // until model close, so handles copied out of the activation stay valid.
 llg_event_object_t* llg_event_object_new(void);
 
+// `object` is an llg_event_object_t*, typed void* so that a `ref` event formal
+// bound to a class event property can address the property's void* handle slot
+// directly (IrCallArg::EventSlot): the same type on both sides keeps those
+// accesses within ISO C's aliasing rules without -fno-strict-aliasing.
 typedef struct {
-    llg_event_object_t* object;
+    void* object;
 } llg_event_t;
 
 // The live procedural threads suspended on the object named event `event`
