@@ -1515,16 +1515,13 @@ gone; every remaining form rejects at the call with its location).
 
 ### Symptom
 
-Three legal forms reject explicitly instead of running:
+Two legal forms reject explicitly instead of running:
 
 - A task waiting on a member of a native record `ref` formal (an unpacked
   structure with a string, container or class member) called with a record
   that is a class property or a task-automatic variable ("waits on a native
   record `ref` formal, so each of its record actuals must be a module, static
   or procedural-block record").
-- A waited string or handle `ref` formal whose actual is an element of an
-  unpacked array of strings or handles ("is neither a variable nor a class
-  property; its changes publish no marker").
 - `@(s)` on a subroutine string or handle that is neither a `ref` formal nor
   shared with a fork branch (only the waiting process could change it).
 
@@ -1532,26 +1529,24 @@ Everything else takes the typed call path: packed and real `ref` formals
 bound to variables, fixed-array, queue, dynamic and associative array
 elements, unpacked-structure members and class properties, unpacked
 aggregate and virtual-interface `ref` formals, and string and handle `ref`
-formals bound to module, static, process or fork-shared variables and class
-properties. Handle stores through a `ref` formal publish at the store.
+formals bound to module, static, process or fork-shared variables, class
+properties and array elements. Handle stores through a `ref` formal publish at
+the store.
 
 ### Cause
 
 A native record `ref` formal's body reads leaves that only a record
 specialization binds; class-property and automatic records have no static
-leaves. Elements of unpacked string and handle arrays carry no change marker a
-`ref` formal can name.
+leaves.
 
 ### Intended direction
 
-Pass a native record's leaf markers with the record value, and give string
-and handle array elements markers when a wait can observe them (as fork-shared
-strings get one).
+Pass a native record's leaf markers with the record value.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_009/neg_record_ref_wait_actual.sv`,
-`neg_native_element_ref_wait.sv`, `neg_string_event_control.sv`.
+`neg_string_event_control.sv`.
 
 ## Event formals without a typed handle binding
 
@@ -1584,42 +1579,6 @@ arguments to value calls. Estimate: 1-2 days each.
 `tests/fixtures/sim/feature_completion/sim_014/neg_class_event_ref_formal.sv`;
 for function expressions, `function automatic int f(output event o); o = g;
 return 1; endfunction` called as `x = f(h);`.
-
-## `ref` handle formals bound to array elements
-
-**Status:** open (FIN-001 G3, F12-06; SIM-016).
-
-### Symptom
-
-A `ref` formal of a class or built-in handle type (`ref semaphore s`) whose
-actual is an element of a fixed, queue, dynamic or associative array
-(`take(sq[1], 2)`, `take(sa[0], 3)`) is legal (SV 13.5.2) but rejects with
-"element references of handles are not supported (SIM-016)". Output and
-inout handle formals copy out into such elements.
-
-### Cause
-
-Handle `ref` formals are `void**` addresses of a handle variable or
-property. Array elements of handles live in container storage that has no
-stable per-element address (queues and dynamic arrays reallocate), and no
-retained element cell exists for handle elements as `llg_ref_queue` does for
-packed elements.
-
-### Intended direction
-
-Retained handle element cells (the packed `llg_ref_*` element references
-extended to opaque elements, with outdated-reference semantics), or a stable
-element address for fixed arrays. Estimate: 2 days.
-
-### Reproduce
-
-```systemverilog
-module tb;
-  semaphore sa[2];
-  task automatic take(ref semaphore s, input int n); s.get(n); endtask
-  initial begin sa[0] = new(3); take(sa[0], 3); end
-endmodule
-```
 
 ## Wired-logic nets in bidirectional switch networks
 

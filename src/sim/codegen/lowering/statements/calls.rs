@@ -440,6 +440,14 @@ impl EmitCtx<'_, '_> {
                             ..
                         }
                     );
+                    if is_ref {
+                        if let Some(argument) =
+                            self.cg.handle_element_ref(&self.path, bound[idx].expr)?
+                        {
+                            out_args.push(argument);
+                            continue;
+                        }
+                    }
                     if let Some((prelude, argument, store)) = self.cg.process_formal_binding(
                         &self.path,
                         *io,
@@ -474,21 +482,16 @@ impl EmitCtx<'_, '_> {
                         continue;
                     }
                 }
+                if is_ref {
+                    if let Some(argument) =
+                        self.cg.handle_element_ref(&self.path, bound[idx].expr)?
+                    {
+                        out_args.push(argument);
+                        continue;
+                    }
+                }
                 if is_ref || *is_out {
-                    let (target, _) = self
-                        .cg
-                        .lower_chandle_lvalue(&self.path, bound[idx].expr)
-                        .map_err(|error| {
-                            if is_ref && self.cg.is_container_element(bound[idx].expr) {
-                                format!(
-                                    "ref actual of handle formal `{}` in `{}` is a container element; element references of handles are not supported (SIM-016)",
-                                    self.cg.node(*io).name,
-                                    self.cg.source_path(&self.path)
-                                )
-                            } else {
-                                error
-                            }
-                        })?;
+                    let (target, _) = self.cg.lower_chandle_lvalue(&self.path, bound[idx].expr)?;
                     let address = self.cg.chandle_target_address(&target);
                     if is_ref {
                         out_args.push(IrCallArg::ChandleRefAddr(address));
@@ -525,6 +528,13 @@ impl EmitCtx<'_, '_> {
                     _ => unreachable!("ref formal"),
                 };
                 if bound[idx].string {
+                    if let Some(argument) =
+                        self.cg
+                            .string_element_ref(&self.path, bound[idx].expr, const_ref)?
+                    {
+                        out_args.push(argument);
+                        continue;
+                    }
                     // A class string property is passed by the address of
                     // its object's field (SV 13.5.2).
                     let property = if self.cg.class_storage_field(bound[idx].expr).is_some() {
@@ -573,6 +583,24 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
             if bound[idx].string {
+                let copy_in = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Inout,
+                        ..
+                    }
+                );
+                if let Some((prelude, address, store)) = self.cg.string_element_copy_out(
+                    &self.path,
+                    bound[idx].expr,
+                    copy_in,
+                    &format!("_stout_{}_{idx}", h.0),
+                )? {
+                    before.extend(prelude);
+                    after.push(store);
+                    out_args.push(IrCallArg::StringOutAddr(address));
+                    continue;
+                }
                 self.cg
                     .ensure_string_actual_writable(&self.path, bound[idx].expr)?;
                 let writeback = self

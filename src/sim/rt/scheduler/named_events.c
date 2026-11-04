@@ -86,6 +86,7 @@ static void install_value_handle_hooks(void) {
         dynamic_event_new,
         value_process_retain,
         value_process_release,
+        llg_dependency_changed,
     };
     llg_value_set_handle_hooks(&hooks);
 }

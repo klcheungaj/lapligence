@@ -1647,6 +1647,11 @@ fn collect_argument_effects(
         | IrCallArg::StringRefAddr { addr: address, .. } => {
             collect_native_access_effects(ir, address, effects, visited_calls)
         }
+        IrCallArg::ElementRef(reference) => {
+            reference.expressions(&mut |child| {
+                collect_expression_effects(ir, child, effects, visited_calls)
+            });
+        }
         IrCallArg::RefAddr { lhs, read, .. } => {
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
             collect_expression_effects(ir, read, effects, visited_calls);

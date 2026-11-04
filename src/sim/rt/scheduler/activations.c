@@ -143,7 +143,10 @@ llg_ref_t* llg_ref_dyn(llg_dyn_array_t* array, sv4_t index) {
                           llg_element_ref_release);
 }
 
+/* Binding a reference creates a missing entry, even for a `const ref`. */
 llg_ref_t* llg_ref_assoc_integral(llg_assoc_t* array, sv4_t key) {
+    if (!llg_assoc_exists_integral(array, key))
+        llg_assoc_set_integral(array, key, array->default_value);
     return reference_cell(array->element_width, array->element_signed,
                           array->element_two_state,
                           llg_assoc_ref_acquire_integral(array, key),
@@ -152,6 +155,8 @@ llg_ref_t* llg_ref_assoc_integral(llg_assoc_t* array, sv4_t key) {
 }
 
 llg_ref_t* llg_ref_assoc_string(llg_assoc_t* array, const void* key, size_t key_length) {
+    if (!llg_assoc_exists_string(array, key, key_length))
+        llg_assoc_set_string(array, key, key_length, array->default_value);
     return reference_cell(array->element_width, array->element_signed,
                           array->element_two_state,
                           llg_assoc_ref_acquire_string(array, key, key_length),

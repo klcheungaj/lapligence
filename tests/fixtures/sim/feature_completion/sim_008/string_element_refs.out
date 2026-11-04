@@ -1,0 +1,52 @@
+a! b! d! e! z! ! r!
+out out out out out out
+a!? b!? d!? e!? z!? ? r!?
+cr 'a!?' 3
+cr 'b!?' 3
+cr 'd!?' 3
+cr 'e!?' 3
+cr 'z!?' 3
+cr '' 0
+ai num 5
+5 a!?fg b!?f d!?f e!?f
+B!?F. B!?F
+late 12
+forward 12
+pair shared
+pair both
+pair end both
+s1 abc
+s2 aZc
+s3 7-t
+s4 7-
+s5 from q
+s6 from qfrom q
+stores from qfrom q
+B1 x=a q0=zz q1=a sz=3
+B2 x=b q0=zz q1=b
+B3 x=c q1=yy q2=c
+B4 x=d sz=4 q0=q q1=d q2=yy
+B5 x=e q0=e q1=q q2=yy
+B6 x=f sz=3 q0=q
+B7 x=f sz=2
+B8 x=g sz=2 q0=yy
+B9 x=h sz=1 q0=w
+C1 x=y q=m n
+C2 x=k q=m n
+D1 x=other f=other
+D2 x=2 f=2
+E1 before num=2
+E2 x=v num=2 e=v
+E3 x=u num=1
+E4 x=t e=back
+F1 x=1 n=1
+F2 x=2 v=other
+G1 x=5 d0=''
+G2 x=6 d0=''
+mid '12'
+late 12
+late 12
+autos 12 12
+late 12
+12 amn mn
+o p after

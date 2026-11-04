@@ -56,6 +56,17 @@ through copy-out/cancellation; snapshot/disconnect removed identities before
 structural mutation. Destruction cannot free pinned cells, and ref lists are
 borrowed. Alias reads never publish or mutate resolved storage.
 
+String, handle and record elements of descriptor-backed containers (fixed
+arrays included) bind `ref` formals through `llg_native_ref_t`
+(`container/native_references.c`, contract in its header comment): the formal
+addresses the reference's stable value, stores reach the element through the
+reference's marker, and the first reference on a container interposes its
+`notify` function, so element reads and mutation paths stay unchanged. Only
+operations that move or remove elements call the `llg_native_refs_*` hooks;
+add one to any new such operation. A marker of width
+`LLG_NATIVE_REF_MARKER_WIDTH` identifies a reference in
+`llg_dependency_changed`, so no other marker may have that width.
+
 Identity-handle elements (SIM-006) copy the handle: events, opaque objects and
 borrowed chandles are never duplicated; `LLG_VALUE_PROCESS` handles are counted
 through `llg_value_handle_hooks_t` (retain on copy, release on drop, a pop moves

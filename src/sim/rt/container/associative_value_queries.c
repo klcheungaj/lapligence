@@ -21,6 +21,7 @@ int llg_assoc_value_delete_integral(llg_assoc_value_t* array, sv4_t key) {
     if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
     size_t position = llg_assoc_value_integral_position(array, normalized, &found);
     if (!found) do { result_value = 0; goto cleanup_key; } while (0);
+    llg_native_refs_assoc_removed(&array->references, &array->entries[position]);
     sv4_destroy(&array->entries[position].integral_key);
     llg_value_drop(&array->entries[position].value);
     if (position + 1 < array->size)
@@ -293,6 +294,7 @@ int llg_assoc_value_delete_string(llg_assoc_value_t* array, const void* key,
     size_t position = llg_assoc_value_string_position(array, key, key_length,
                                                       &found);
     if (!found) return 0;
+    llg_native_refs_assoc_removed(&array->references, &array->entries[position]);
     free(array->entries[position].string_key);
     sv4_destroy(&array->entries[position].integral_key);
     llg_value_drop(&array->entries[position].value);

@@ -292,6 +292,14 @@ impl<'a> Codegen<'a> {
                     }
                 );
                 if is_ref || *is_out {
+                    if is_ref {
+                        if let Some(argument) =
+                            self.handle_element_ref(scope_path, bound[idx].expr)?
+                        {
+                            out_args.push(argument);
+                            continue;
+                        }
+                    }
                     if self.is_process_formal(*io) {
                         if let Some(argument) = self.process_formal_expression_binding(
                             scope_path,
@@ -331,6 +339,12 @@ impl<'a> Codegen<'a> {
                     _ => unreachable!("ref formal"),
                 };
                 if bound[idx].string {
+                    if let Some(argument) =
+                        self.string_element_ref(scope_path, bound[idx].expr, const_ref)?
+                    {
+                        out_args.push(argument);
+                        continue;
+                    }
                     if !const_ref {
                         self.ensure_string_actual_writable(scope_path, bound[idx].expr)?;
                     }

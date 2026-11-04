@@ -44,6 +44,8 @@ static void llg_dyn_value_commit(llg_dyn_value_array_t* array,
     llg_container_notify_fn notify = array->notify;
     sv4_t* contents_dependency = array->contents_dependency;
     sv4_t* shape_dependency = array->shape_dependency;
+    if (array->references)
+        llg_native_refs_rekey(&array->references, array->data, data, size);
     for (size_t i = 0; i < array->size; ++i)
         llg_value_drop(&array->data[i]);
     free(array->data);
@@ -62,6 +64,7 @@ void llg_dyn_value_init(llg_dyn_value_array_t* array,
 }
 
 void llg_dyn_value_destroy(llg_dyn_value_array_t* array) {
+    llg_native_refs_outdate_all(&array->references);
     for (size_t i = 0; i < array->size; ++i)
         llg_value_drop(&array->data[i]);
     free(array->data);
@@ -70,6 +73,7 @@ void llg_dyn_value_destroy(llg_dyn_value_array_t* array) {
 
 void llg_dyn_value_delete(llg_dyn_value_array_t* array) {
     int changed = array->size != 0;
+    llg_native_refs_outdate_all(&array->references);
     for (size_t i = 0; i < array->size; ++i)
         llg_value_drop(&array->data[i]);
     free(array->data);
@@ -142,8 +146,12 @@ void llg_dyn_value_copy_range(llg_dyn_value_array_t* dst, sv4_t dst_start,
             continue;
         llg_value_t* target = &dst->data[(size_t)to + i];
         if (llg_value_equal(target, &items[i])) continue;
-        llg_value_drop(target);
-        *target = items[i]; // exclusive ownership transfer
+        if (llg_native_refs_live) {
+            llg_value_replace_in_place(target, &items[i]);
+        } else {
+            llg_value_drop(target);
+            *target = items[i]; // exclusive ownership transfer
+        }
         memset(&items[i], 0, sizeof(items[i]));
         changed = 1;
     }

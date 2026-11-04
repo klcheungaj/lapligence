@@ -1211,6 +1211,9 @@ fn collect_call_args_rw(function: usize, args: &[IrCallArg], model: &IrModel, rw
             IrCallArg::EventVal(event) | IrCallArg::EventAddr(event) => {
                 collect_event_reads(event, model, rw)
             }
+            IrCallArg::ElementRef(reference) => {
+                reference.expressions(&mut |child| collect_expr_reads(child, model, rw))
+            }
             // A handle argument such as `q[i]` evaluates its selectors at the
             // call site.
             IrCallArg::ChandleVal(value) => {

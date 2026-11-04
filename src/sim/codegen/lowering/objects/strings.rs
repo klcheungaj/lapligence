@@ -201,6 +201,12 @@ impl Codegen<'_> {
                         )?));
                         continue;
                     }
+                    if is_ref {
+                        if let Some(argument) = self.handle_element_ref(path, bound[idx].expr)? {
+                            out_args.push(argument);
+                            continue;
+                        }
+                    }
                     if self.is_process_formal(*io) {
                         if let Some(argument) = self.process_formal_expression_binding(
                             path,
@@ -235,6 +241,12 @@ impl Codegen<'_> {
                             ..
                         }
                     );
+                    if let Some(argument) =
+                        self.string_element_ref(path, bound[idx].expr, const_ref)?
+                    {
+                        out_args.push(argument);
+                        continue;
+                    }
                     if !const_ref {
                         self.ensure_string_actual_writable(path, bound[idx].expr)?;
                     }
@@ -298,6 +310,7 @@ impl Codegen<'_> {
                         | IrCallArg::ChandleRefAddr(_)
                         | IrCallArg::StringOutAddr(_)
                         | IrCallArg::StringRefAddr { .. }
+                        | IrCallArg::ElementRef(_)
                         | IrCallArg::StringOutTemp { .. }
                         | IrCallArg::NativeValue(_)
                         | IrCallArg::NativeRefBound

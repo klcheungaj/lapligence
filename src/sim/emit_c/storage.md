@@ -93,6 +93,10 @@ that its body never reads. An input event formal is a by-value `llg_event_t` (fr
 coroutine callee) holding the object the actual named at the call: the caller
 snapshots `{ p ? p->object : NULL }` and the callee binds a private handle copy
 (`IrEventRef::Formal`), so rebinding the actual or the formal cannot move waits.
+A string or handle element actual (`IrCallArg::ElementRef`) acquires an
+`llg_native_ref_t` at the call, in a value scope that ends with the call or its
+cancellation; the formal gets the reference's stable address and, for a handle,
+its marker, so the callee's code does not depend on what it is bound to.
 Only open-array DPI imports and tasks waiting on a native record `ref` formal
 are templates that are never emitted (`IrFunc::inline_expanded`); a task whose
 event control reads a `ref` formal also emits per-signal specializations

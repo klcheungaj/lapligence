@@ -1147,7 +1147,10 @@ impl<'a> Codegen<'a> {
                 .copied()
                 .flatten()
                 .is_some_and(|target| matches!(self.kind(target), NodeKind::Var { .. })),
-            _ => self.class_storage_field(actual).is_some(),
+            // An element's retained reference has its own marker.
+            _ => {
+                self.class_storage_field(actual).is_some() || self.element_select(actual).is_some()
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 //! Handles.
 
 use super::*;
+use crate::sim::ir::{IrElementRef, IrElementRefKind};
 
 impl Codegen<'_> {
     /// Resolve a chandle lvalue to its native pointer identity and its
@@ -165,6 +166,124 @@ impl Codegen<'_> {
             format!("&{temporary}"),
             IrStmt::Container(Box::new(store)),
         )))
+    }
+
+    /// An element of string storage bound through a caller temporary whose
+    /// value is stored after the callee returns, like
+    /// [`Self::handle_element_copy_out`].
+    pub(in super::super) fn string_element_copy_out(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        copy_in: bool,
+        temporary: &str,
+    ) -> Result<Option<(Vec<IrStmt>, String, IrStmt)>, String> {
+        let selected = self
+            .element_select(self.string_actual_operand(node))
+            .map(|(container, index)| (container.ir, index));
+        let Some((container, index)) = selected else {
+            return Ok(None);
+        };
+        if !self.model.containers[container].element.is_string() {
+            return Ok(None);
+        }
+        let value = IrStringExpr::LocalRead(temporary.to_owned());
+        let store = match self.model.containers[container].kind {
+            IrContainerKind::Associative {
+                key: IrAssocKey::String,
+            } => IrContainerStmt::SetStringString {
+                container,
+                key: self.lower_string(path, index)?,
+                value,
+            },
+            _ => IrContainerStmt::SetStringValue {
+                container,
+                index: self.lower_container_top_index(path, container, index)?,
+                value,
+            },
+        };
+        let init = copy_in.then(|| self.lower_string(path, node)).transpose()?;
+        Ok(Some((
+            vec![IrStmt::DeclString {
+                name: temporary.to_owned(),
+                init,
+            }],
+            format!("&{temporary}"),
+            IrStmt::Container(Box::new(store)),
+        )))
+    }
+
+    /// A string actual without its assignment-compatible cast.
+    fn string_actual_operand(&self, node: NodeId) -> NodeId {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if ty.kind == "string" => *operand,
+            _ => node,
+        }
+    }
+
+    /// The call operand binding `node`, when it selects one string element of
+    /// native container storage, to a string `ref` formal.
+    pub(in super::super) fn string_element_ref(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        const_ref: bool,
+    ) -> Result<Option<IrCallArg>, String> {
+        let node = self.string_actual_operand(node);
+        self.element_ref(path, node, IrElementRefKind::String, const_ref)
+    }
+
+    /// The same for one handle element and a handle `ref` formal.
+    pub(in super::super) fn handle_element_ref(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrCallArg>, String> {
+        self.element_ref(path, node, IrElementRefKind::Handle, false)
+    }
+
+    fn element_ref(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        kind: IrElementRefKind,
+        const_ref: bool,
+    ) -> Result<Option<IrCallArg>, String> {
+        let selected = self
+            .element_select(node)
+            .map(|(container, index)| (container.ir, index));
+        let Some((container, index)) = selected else {
+            return Ok(None);
+        };
+        let storage = &self.model.containers[container];
+        let selects_kind = match kind {
+            IrElementRefKind::String => storage.element.is_string(),
+            IrElementRefKind::Handle => storage.element.is_handle(),
+        };
+        if !selects_kind {
+            return Ok(None);
+        }
+        let string_key = matches!(
+            storage.kind,
+            IrContainerKind::Associative {
+                key: IrAssocKey::String
+            }
+        );
+        let (index, key) = if string_key {
+            (None, Some(self.lower_string(path, index)?))
+        } else {
+            (
+                Some(self.lower_container_top_index(path, container, index)?),
+                None,
+            )
+        };
+        Ok(Some(IrCallArg::ElementRef(Box::new(IrElementRef {
+            container,
+            index,
+            key,
+            kind,
+            const_ref,
+        }))))
     }
 
     pub(in super::super) fn chandle_target_address(&self, target: &ChandleTarget) -> String {
@@ -510,6 +629,12 @@ impl Codegen<'_> {
                             "chandle function `{}` does not support packed output/ref formals",
                             self.node(ft).name
                         ));
+                    }
+                    if is_ref {
+                        if let Some(argument) = self.handle_element_ref(path, bound[idx].expr)? {
+                            out_args.push(argument);
+                            continue;
+                        }
                     }
                     if self.is_process_formal(*formal) {
                         if let Some(argument) = self.process_formal_expression_binding(

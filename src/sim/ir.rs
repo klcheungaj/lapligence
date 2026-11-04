@@ -105,7 +105,9 @@ pub use lvalues::{
 };
 mod calls;
 pub(in crate::sim) use calls::call_argument_name;
-pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
+pub use calls::{
+    IrCall, IrCallArg, IrCallExpr, IrDepth, IrElementRef, IrElementRefKind, IrVirtualCall,
+};
 mod coverage;
 pub(in crate::sim) use coverage::FSM_MAX_STATE_BITS;
 pub use coverage::{

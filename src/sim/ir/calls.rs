@@ -98,6 +98,9 @@ pub enum IrCallArg {
         const_ref: bool,
         observed: bool,
     },
+    /// String or handle `ref` formal bound to one element of native container
+    /// storage through a retained reference that lives until the call ends.
+    ElementRef(Box<IrElementRef>),
     /// Output/inout formal bound to a direct C address (statement calls):
     /// `&G_sig`, a whole-reference address (`o0`, `&_l0`) or a caller-side
     /// temp declared separately (`&_t5`); passed to the callee verbatim.
@@ -144,6 +147,44 @@ pub enum IrCallArg {
         storage_addr: Option<String>,
         storage_read: Option<Box<IrStringExpr>>,
     },
+}
+
+/// What a [`IrCallArg::ElementRef`] formal addresses in its element.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrElementRefKind {
+    String,
+    Handle,
+}
+
+/// One element of descriptor-backed container storage, selected at the call:
+/// `index` for positions and integral keys, `key` for a string key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrElementRef {
+    pub(in crate::sim) container: usize,
+    pub(in crate::sim) index: Option<IrExpr>,
+    pub(in crate::sim) key: Option<IrStringExpr>,
+    pub(in crate::sim) kind: IrElementRefKind,
+    pub(in crate::sim) const_ref: bool,
+}
+
+impl IrElementRef {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let Some(index) = &self.index {
+            visit(index);
+        }
+        if let Some(key) = &self.key {
+            key.expressions(visit);
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let Some(index) = &mut self.index {
+            visit(index);
+        }
+        if let Some(key) = &mut self.key {
+            key.expressions_mut(visit);
+        }
+    }
 }
 
 /// A function/task call used in expression position. The ownership emitter
@@ -422,6 +463,7 @@ impl IrCallArg {
             // An event-array index or handle expression is evaluated at the
             // call site.
             Self::EventVal(event) | Self::EventAddr(event) => event.expressions(visit),
+            Self::ElementRef(reference) => reference.expressions(visit),
             Self::FixedArray(_)
             | Self::NativeValue(_)
             | Self::NativeRefBound
@@ -438,6 +480,7 @@ impl IrCallArg {
         match self {
             Self::FixedValue(value) => value.expressions_mut(visit),
             Self::Val(value) => visit(value),
+            Self::ElementRef(reference) => reference.expressions_mut(visit),
             Self::StringVal(value) => value.expressions_mut(visit),
             Self::ChandleVal(value) => value.expressions_mut(visit),
             Self::RefAddr { lhs, read, .. } => {

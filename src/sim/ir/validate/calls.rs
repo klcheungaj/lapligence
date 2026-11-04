@@ -484,6 +484,35 @@ impl Validator<'_> {
                         return self.fail(arg_path, "invalid string reference descriptor");
                     }
                 }
+                IrCallArg::ElementRef(reference) => {
+                    let matches_formal = match reference.kind {
+                        crate::sim::ir::IrElementRefKind::String => formal.string,
+                        crate::sim::ir::IrElementRefKind::Handle => formal.chandle,
+                    };
+                    if !matches_formal
+                        || !formal.is_ref()
+                        || (reference.const_ref && !formal.const_ref)
+                    {
+                        return self
+                            .fail(arg_path, "element reference requires a matching ref formal");
+                    }
+                    let Some(container) = self.model.containers.get(reference.container) else {
+                        return self.fail(arg_path, "element reference container is out of bounds");
+                    };
+                    if !matches!(
+                        (&reference.index, &reference.key),
+                        (Some(_), None) | (None, Some(_))
+                    ) || (reference.key.is_some()
+                        != matches!(
+                            container.kind,
+                            crate::sim::ir::IrContainerKind::Associative {
+                                key: crate::sim::ir::IrAssocKey::String
+                            }
+                        ))
+                    {
+                        return self.fail(arg_path, "element reference has no matching selector");
+                    }
+                }
                 IrCallArg::ChandleVal(value) => {
                     if formal.chandle && !formal.is_address() {
                         value.validate(self.model, formals, None).map_err(|error| {

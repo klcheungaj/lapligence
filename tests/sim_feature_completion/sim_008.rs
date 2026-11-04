@@ -29,6 +29,16 @@ fn element_refs_follow_elements_until_outdated() {
 }
 
 #[test]
+fn string_element_refs_follow_elements_until_outdated() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/string_element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "string_element_refs", expected, &[], &[]);
+    let invalid =
+        include_str!("../fixtures/sim/feature_completion/sim_008/string_element_refs_invalid.out");
+    sim_cli::run_case_backend_parity(SUITE, "string_element_refs_invalid", invalid, &[], &[]);
+}
+
+#[test]
 fn native_record_ref_formals_alias_subroutine_records() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_008/record_refs.out");
     sim_cli::run_case_backend_parity(SUITE, "record_refs", expected, &[], &[]);

@@ -157,6 +157,9 @@ impl CellEligibility {
                     self.lhs(ctx, lhs, true);
                     self.expression(ctx, read);
                 }
+                IrCallArg::ElementRef(reference) => {
+                    reference.expressions(&mut |child| self.expression(ctx, child));
+                }
                 IrCallArg::OutTemp {
                     name,
                     init,

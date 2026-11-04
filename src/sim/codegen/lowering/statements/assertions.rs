@@ -378,6 +378,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                             *value = Self::capture_deferred_handle(frame, captures, value.clone());
                         }
                         IrCallArg::RefAddr { .. }
+                        | IrCallArg::ElementRef(_)
                         | IrCallArg::StringRefAddr { .. }
                         | IrCallArg::ChandleRefAddr(_) => {}
                         IrCallArg::FixedValue(_)

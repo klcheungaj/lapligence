@@ -1821,12 +1821,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   typed handles. There is no call-site expansion (SIM-009-A03), so such tasks
   recurse, run as class methods and take native formals. Waits and `@` on
   string and class-handle `ref` formals follow the change marker of the
-  module, package, static, process or fork-shared variable or class property
-  the actual names, and a handle store through a `ref` formal wakes waiters at
-  the store (decisions S09-D1..D7); branches waiting on a parent's automatic
-  string or handle wake on its writes. Native record `ref` formals waited on
-  with class-property or task-automatic records, and string or handle array
-  elements as waited `ref` actuals, reject explicitly
+  module, package, static, process or fork-shared variable, class property or
+  array element the actual names, and a handle store through a `ref` formal
+  wakes waiters at the store (decisions S09-D1..D7); branches waiting on a
+  parent's automatic string or handle wake on its writes. Native record `ref`
+  formals waited on with class-property or task-automatic records reject
+  explicitly
   ([known issue](known_issues.md#waited-ref-formals-with-unobservable-actuals)).
   Event expressions over by-value formals copy them when the control arms;
   event formals of class methods, virtual ones included, take the typed path
@@ -1859,8 +1859,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Unique/priority diagnostics remain active; side-effect-free source alone does
   not establish eligibility.
 - ❌ **Unsupported or illegal call forms** — Recursive task calls requiring
-  an inline event/ref environment (an unpacked aggregate `ref` formal or a
-  container-element or unpacked-member actual of a waited `ref` formal)
+  an inline event/ref environment (an unpacked aggregate `ref` formal or an
+  unpacked-member actual of a waited `ref` formal)
   remain rejected. Typed recursive delay-bearing tasks use independent
   SCC/arena activations; direct and mutual recursion have witnesses in
   [the function/task suite](../tests/sim_function.rs) and
@@ -2475,10 +2475,10 @@ These are bounded implementations, not full verification-infrastructure support.
   semaphore formals copy out into container elements selected at call start
   ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)).
   Semaphore members of module, block and automatic records, record arrays and
-  record formals hold handles to shared semaphores. `ref` semaphore formals
-  bound to array elements
-  ([known issue](known_issues.md#ref-handle-formals-bound-to-array-elements))
-  and record ports with semaphore members
+  record formals hold handles to shared semaphores; `ref` semaphore and mailbox
+  formals bind array elements
+  ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)).
+  Record ports with semaphore members
   ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage))
   reject (SIM-016). SV §15.3 **[SV-2005]**.
 - 🟨 **Mailboxes** — Typed/untyped bounded/unbounded FIFO

@@ -353,6 +353,14 @@ fn s20_5_reverse_unpack_consumed() {
 }
 
 #[test]
+fn s13_d2_ref_binds_missing_entry() {
+    run_decision(
+        "S13-D2_ref_binds_missing_entry",
+        include_str!("fixtures/sim/lrm_decisions/S13-D2_ref_binds_missing_entry.out"),
+    );
+}
+
+#[test]
 fn s13_d1_copy_out_target_at_return() {
     run_decision(
         "S13-D1_copy_out_target_at_return",

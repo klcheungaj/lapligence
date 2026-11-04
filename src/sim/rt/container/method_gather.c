@@ -529,8 +529,12 @@ void llg_dyn_value_sort_by_keys(llg_dyn_value_array_t* array,
                                 int descending) {
     if (!array || (!packed_keys == !value_keys))
         llg_container_fatal("malformed dynamic-array ordering");
-    if (llg_method_sort_values_by_keys(array->data, array->size, packed_keys,
-                                       value_keys, descending))
+    llg_native_refs_mark(array->references, array->data);
+    int changed = llg_method_sort_values_by_keys(
+        array->data, array->size, packed_keys, value_keys, descending);
+    llg_native_refs_unmark(array->references, array->data, array->size,
+                           array->element);
+    if (changed)
         llg_notify(array->notify, array->contents_dependency,
                    array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
 }
@@ -541,8 +545,12 @@ void llg_queue_value_sort_by_keys(llg_queue_value_array_t* queue,
                                   int descending) {
     if (!queue || (!packed_keys == !value_keys))
         llg_container_fatal("malformed queue ordering");
-    if (llg_method_sort_values_by_keys(queue->data, queue->size, packed_keys,
-                                       value_keys, descending)) {
+    llg_native_refs_mark(queue->references, queue->data);
+    int changed = llg_method_sort_values_by_keys(
+        queue->data, queue->size, packed_keys, value_keys, descending);
+    llg_native_refs_unmark(queue->references, queue->data, queue->size,
+                           queue->element);
+    if (changed) {
         llg_queue_value_invalidate_refs(queue);
         llg_notify(queue->notify, queue->contents_dependency,
                    queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);

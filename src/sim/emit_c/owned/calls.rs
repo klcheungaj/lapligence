@@ -4,6 +4,7 @@
 use super::native::{NativeKind, NativeValue};
 use super::streaming::CapturedAssignment;
 use super::*;
+use crate::sim::ir::IrElementRefKind;
 
 /// An output/inout copy-out target, bound at the call or resolved at copy-out.
 enum CopyOutTarget<'l> {
@@ -697,6 +698,10 @@ impl Frame<'_, '_> {
                 | IrCallArg::StringRefAddr { addr: address, .. } => {
                     parameters.push(self.native_address(address, NativeKind::String)?.address);
                 }
+                IrCallArg::ElementRef(reference) => {
+                    let reference = self.element_reference_binding(reference)?;
+                    parameters.extend(reference);
+                }
                 IrCallArg::ChandleRefAddr(address) if self.is_process_slot(address) => {
                     // A `ref` process formal aliases counted process storage;
                     // a module object's readers learn of a rebinding after the
@@ -959,6 +964,66 @@ impl Frame<'_, '_> {
         self.bindings.pop();
         self.line(format!("llg_value_scopes_end_since({marker});"));
         Ok(result)
+    }
+
+    /// Acquire the retained reference of one element in a value scope, which
+    /// ends with the call even when the callee is cancelled, and return the
+    /// formal's parameters: its address and, for a handle, its marker.
+    fn element_reference_binding(
+        &mut self,
+        reference: &crate::sim::ir::IrElementRef,
+    ) -> Result<Vec<String>, String> {
+        let storage = &self.ctx.model.containers[reference.container];
+        let kind = storage.kind.clone();
+        let fixed = storage.initial_size.is_some();
+        let name = self.container_name(reference.container)?;
+        let acquire = if let Some(key) = &reference.key {
+            let key = self.string(key)?;
+            let code = key.code();
+            let acquire = self.scalar(
+                "void*",
+                format!("llg_assoc_value_ref_acquire_string(&{name}, ({code}).data, ({code}).len)"),
+            );
+            self.native_discard(key);
+            acquire
+        } else {
+            let index = reference
+                .index
+                .as_ref()
+                .ok_or("element reference has no selector")?;
+            let index = self.expression(index)?;
+            let acquire = match kind {
+                IrContainerKind::Dynamic => format!(
+                    "llg_dyn_value_ref_acquire(&{name}, {}, {})",
+                    index.code,
+                    u8::from(fixed)
+                ),
+                IrContainerKind::Queue { .. } => {
+                    format!("llg_queue_value_ref_acquire(&{name}, {})", index.code)
+                }
+                IrContainerKind::Associative { .. } => format!(
+                    "llg_assoc_value_ref_acquire_integral(&{name}, {})",
+                    index.code
+                ),
+            };
+            let acquire = self.scalar("void*", acquire);
+            self.discard(index);
+            acquire
+        };
+        let scope = self.scalar(
+            "llg_value_scope_t*",
+            "llg_value_scope_begin_object(sizeof(void*), llg_native_ref_scope_release)".to_owned(),
+        );
+        self.line(format!(
+            "*(void**)llg_value_scope_object({scope}) = {acquire};"
+        ));
+        Ok(match reference.kind {
+            IrElementRefKind::String => vec![format!("llg_native_ref_string({acquire})")],
+            IrElementRefKind::Handle => vec![
+                format!("llg_native_ref_handle({acquire})"),
+                format!("llg_native_ref_marker({acquire})"),
+            ],
+        })
     }
 
     #[cfg_attr(not(test), allow(dead_code))] // test-only entry point for owned-call boundary tests
