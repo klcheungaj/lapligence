@@ -8,7 +8,7 @@ use crate::sim_harness;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Barrier, Mutex};
 use std::time::Duration;
 
 use llg::core::compile;
@@ -851,6 +851,149 @@ fn validate_generated_fst(_dir: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The header of the file `tests/fixtures/sim/waveform/fst.sv` writes, at the
+/// fixed offsets of GTKWave's format: tag, section length and endian-test
+/// double, then the scope and variable counts the writer fills in at close.
+fn assert_closed_fst_header(path: &Path) {
+    let label = path.display();
+    let fst = std::fs::read(path).unwrap_or_else(|error| panic!("read {label}: {error}"));
+    assert!(fst.len() > 330, "{label}: only {} bytes", fst.len());
+    assert_eq!(fst[0], 0, "{label}: FST_BL_HDR tag");
+    assert_eq!(
+        fst[1..9],
+        329u64.to_be_bytes(),
+        "{label}: header section length"
+    );
+    assert_eq!(
+        fst[25..33],
+        std::f64::consts::E.to_ne_bytes(),
+        "{label}: endian test"
+    );
+    assert_eq!(fst[41..49], 1u64.to_be_bytes(), "{label}: scope tb");
+    assert_eq!(
+        fst[49..57],
+        1u64.to_be_bytes(),
+        "{label}: variable tb.value"
+    );
+}
+
+/// The model `run_checked_in_fixture` built in `dir`.
+fn built_fixture_model(dir: &sim_harness::TempDir) -> std::path::PathBuf {
+    dir.path()
+        .join("build/sim/tb/build/bin")
+        .join(if cfg!(windows) { "sim.exe" } else { "sim" })
+}
+
+/// FST writers in private output directories share only the system temporary
+/// directory, where libfst keeps its working files. Passes trivially where
+/// libfst uses `tmpfile()`; its purpose is Windows, where every writer draws
+/// time-seeded `GetTempFileName` names from one directory.
+#[test]
+fn fst_writers_sharing_the_temporary_directory_run_concurrently() {
+    const WRITERS: usize = 8;
+    const ROUNDS: usize = 6;
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let (dir, output) =
+        run_checked_in_fixture("fst", true).unwrap_or_else(|error| panic!("build fst: {error}"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let exe = built_fixture_model(&dir);
+
+    for round in 0..ROUNDS {
+        let start = Barrier::new(WRITERS);
+        std::thread::scope(|scope| {
+            let runs: Vec<_> = (0..WRITERS)
+                .map(|writer| {
+                    let (dir, exe, start) = (&dir, &exe, &start);
+                    scope.spawn(move || {
+                        let out_dir = format!("runs/{round}-{writer}");
+                        let mut command = Command::new(exe);
+                        command
+                            .current_dir(dir.path())
+                            .env("LLG_SIM_OUT_DIR", &out_dir);
+                        start.wait();
+                        let output =
+                            sim_harness::run_command(&mut command, Duration::from_secs(60))
+                                .unwrap_or_else(|error| panic!("{out_dir}: {error}"));
+                        assert!(
+                            output.status.success() && output.stderr.is_empty(),
+                            "{out_dir}: {:?}: {}",
+                            output.status,
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        assert_closed_fst_header(&dir.path().join(out_dir).join("trace.fst"));
+                    })
+                })
+                .collect();
+            for run in runs {
+                run.join().expect("FST writer run");
+            }
+        });
+    }
+}
+
+/// A failed `fstWriterCreate` names the step and its path on stderr, each
+/// open's own OS error, above the runtime's generic line.
+#[test]
+fn fst_writer_creation_failures_name_the_failed_step() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let (dir, output) =
+        run_checked_in_fixture("fst", true).unwrap_or_else(|error| panic!("build fst: {error}"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let exe = built_fixture_model(&dir);
+    let run = |out_dir: &str| {
+        let mut command = Command::new(&exe);
+        command
+            .current_dir(dir.path())
+            .env("LLG_SIM_OUT_DIR", out_dir)
+            .env("LLG_SIM_WAVE_FILE", "sub/wave.fst");
+        let output = sim_harness::run_command(&mut command, Duration::from_secs(60))
+            .unwrap_or_else(|error| panic!("{out_dir}: {error}"));
+        assert!(!output.status.success(), "{out_dir}: creation must fail");
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    // LLG_SIM_OUT_DIR is created, its `sub` is not: ENOENT on every platform.
+    let stderr = run("missing");
+    assert!(
+        stderr.contains("fstWriterCreate: cannot open output file `missing/sub/wave.fst`")
+            && stderr.contains("(errno 2"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("cannot create FST file `missing/sub/wave.fst`"),
+        "{stderr}"
+    );
+
+    // A directory in the place of `.hier` fails only the second open; which
+    // errno that is depends on the platform.
+    std::fs::create_dir_all(dir.path().join("blocked/sub/wave.fst.hier"))
+        .expect("create the blocking directory");
+    let stderr = run("blocked");
+    assert!(
+        stderr.contains("fstWriterCreate: cannot open hierarchy file `blocked/sub/wave.fst.hier`"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("cannot open output file"), "{stderr}");
+    assert!(
+        stderr.contains("cannot create FST file `blocked/sub/wave.fst`"),
+        "{stderr}"
+    );
+}
+
 /// One built model reruns with different run-time output settings: writes
 /// follow `LLG_SIM_OUT_DIR`, `LLG_SIM_WAVE_FILE` replaces `$dumpfile`,
 /// `LLG_SIM_LOG_FILE` copies the console, and reads stay CWD-relative.
@@ -875,10 +1018,7 @@ fn run_time_output_settings_redirect_one_built_model() {
             assert!(dir.path().join(name).is_file(), "{label}: default {name}");
         }
 
-        let exe = dir
-            .path()
-            .join("build/sim/tb/build/bin")
-            .join(if cfg!(windows) { "sim.exe" } else { "sim" });
+        let exe = built_fixture_model(&dir);
         let run = |envs: &[(&str, &str)]| {
             let mut command = Command::new(&exe);
             command.current_dir(dir.path()).envs(envs.iter().copied());
