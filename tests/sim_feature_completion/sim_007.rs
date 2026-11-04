@@ -158,14 +158,12 @@ fn record_element_members_take_nonblocking_writes() {
 
 #[test]
 fn records_with_container_members_take_nonblocking_writes() {
-    for name in ["record_container_nba", "record_container_nba_sources"] {
-        let expected = std::fs::read_to_string(format!(
-            "{}/tests/fixtures/sim/feature_completion/sim_007/{name}.out",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture output");
-        sim_cli::run_case_backend_parity(SUITE, name, &expected, &[], &[]);
-    }
+    let copies =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_container_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_container_nba", copies, &[], &[]);
+    let sources =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_container_nba_sources.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_container_nba_sources", sources, &[], &[]);
 }
 
 #[test]

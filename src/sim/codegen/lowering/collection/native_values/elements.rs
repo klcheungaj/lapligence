@@ -795,6 +795,7 @@ impl Codegen<'_> {
 
     /// The selection, member path and scalar and container leaves of a whole
     /// sub-record, member array or container member of a record element.
+    #[allow(clippy::type_complexity)]
     pub(in crate::sim::codegen) fn element_member_leaves(
         &self,
         path: &str,
@@ -905,6 +906,7 @@ impl Codegen<'_> {
     /// `recs[i].a[1][k]`: the frontend flattens a bit of a packed element
     /// of a member array into one select. Returns the array node, the
     /// packed leaf and the indices that select inside it.
+    #[allow(clippy::type_complexity)]
     fn element_leaf_select(
         &self,
         node: NodeId,

@@ -2079,12 +2079,13 @@ impl Codegen<'_> {
             return Ok(None);
         };
         // Static roots queue located writes; automatic roots are illegal.
-        if nba && lhs_native {
-            if self.subroutine_auto_target(lhs) || !self.persistent_native_target(lhs) {
-                return Err(format!(
-                    "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
-                ));
-            }
+        if nba
+            && lhs_native
+            && (self.subroutine_auto_target(lhs) || !self.persistent_native_target(lhs))
+        {
+            return Err(format!(
+                "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
+            ));
         }
         if op != Operation::Assignment {
             return Err(format!(
