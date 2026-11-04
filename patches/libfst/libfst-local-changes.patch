@@ -83,7 +83,19 @@ diff --git a/fstapi.c b/fstapi.c
  
  static FILE* tmpfile_open(char **nam)
  {
-@@ -323,7 +333,7 @@
+@@ -246,8 +256,10 @@
+ 
+         if(fname)
+                 {
++                /* lapligence: GetTempFileName created this file for us. Open it */
++                /* in place: deleting it first would release the reserved name.  */
+                 *nam = fname;
+-                fh = unlink_fopen(fname, "w+b");
++                fh = fopen(fname, "w+b");
+                 }
+         }
+ 
+@@ -323,7 +335,7 @@
  return(realpath(path, resolved_path));
  
  #else
@@ -92,7 +104,7 @@ diff --git a/fstapi.c b/fstapi.c
  if(!resolved_path)
          {
          resolved_path = (char *)malloc(PATH_MAX+1);
-@@ -341,7 +351,7 @@
+@@ -341,7 +353,7 @@
  /*
   * mmap compatibility
   */
@@ -101,7 +113,7 @@ diff --git a/fstapi.c b/fstapi.c
  #include <limits.h>
  #define fstMmap(__addr,__len,__prot,__flags,__fd,__off) fstMmap2((__len), (__fd), (__off))
  #define fstMunmap(__addr,__len)                         UnmapViewOfFile((LPCVOID)__addr)
-@@ -550,7 +560,7 @@
+@@ -550,7 +562,7 @@
  
  static uint32_t fstReaderVarint32(FILE *f)
  {
@@ -110,7 +122,7 @@ diff --git a/fstapi.c b/fstapi.c
  int chk_len = chk_len_max;
  unsigned char buf[chk_len_max];
  unsigned char *mem = buf;
-@@ -583,7 +593,7 @@
+@@ -583,7 +595,7 @@
  
  static uint32_t fstReaderVarint32WithSkip(FILE *f, uint32_t *skiplen)
  {
@@ -119,7 +131,7 @@ diff --git a/fstapi.c b/fstapi.c
  int chk_len = chk_len_max;
  unsigned char buf[chk_len_max];
  unsigned char *mem = buf;
-@@ -617,7 +627,7 @@
+@@ -617,7 +629,7 @@
  
  static uint64_t fstReaderVarint64(FILE *f)
  {
@@ -128,7 +140,7 @@ diff --git a/fstapi.c b/fstapi.c
  int chk_len = chk_len_max;
  unsigned char buf[chk_len_max];
  unsigned char *mem = buf;
-@@ -993,7 +1003,7 @@
+@@ -993,7 +1005,7 @@
    )
  	{
  	fprintf(stderr, "fstMmap() assigned to %s failed: errno: %d, file %s, line %d.\n", usage, errno, file, line);
@@ -137,7 +149,68 @@ diff --git a/fstapi.c b/fstapi.c
  	perror("Why");
  #else
  	LPSTR mbuf = NULL;
-@@ -2068,7 +2078,7 @@
+@@ -1150,6 +1162,26 @@
+ 
+ 
+ /*
++ * lapligence: name a failed fstWriterCreate step on stderr. Call it directly
++ * after the failed open, while errno and _doserrno still describe that open.
++ * The non-Windows temporary files have no name.
++ */
++static void fstWriterCreateOpenFailed(const char *step, const char *path)
++{
++int err = errno;
++#ifdef FST_WIN32_API
++unsigned long oserr = _doserrno;
++
++fprintf(stderr, FST_APIMESS "fstWriterCreate: cannot open %s `%s`: %s (errno %d, _doserrno %lu)\n",
++        step, path ? path : "(unnamed)", strerror(err), err, oserr);
++#else
++fprintf(stderr, FST_APIMESS "fstWriterCreate: cannot open %s `%s`: %s (errno %d)\n",
++        step, path ? path : "(unnamed)", strerror(err), err);
++#endif
++}
++
++
++/*
+  * file creation and close
+  */
+ void *fstWriterCreate(const char *nam, int use_compressed_hier)
+@@ -1162,6 +1194,7 @@
+ if((!nam)||
+         (!(xc->handle=unlink_fopen(nam, "w+b"))))
+         {
++        if(nam) { fstWriterCreateOpenFailed("output file", nam); }
+         free(xc);
+         xc=NULL;
+         }
+@@ -1173,13 +1206,25 @@
+         memcpy(hf, nam, flen);
+         strcpy(hf + flen, ".hier");
+         xc->hier_handle = unlink_fopen(hf, "w+b");
++        if(!xc->hier_handle) { fstWriterCreateOpenFailed("hierarchy file", hf); }
+ 
+         xc->geom_handle = tmpfile_open(&xc->geom_handle_nam);           /* .geom */
++        if(!xc->geom_handle) { fstWriterCreateOpenFailed(".geom temporary file", xc->geom_handle_nam); }
+         xc->valpos_handle = tmpfile_open(&xc->valpos_handle_nam);       /* .offs */
++        if(!xc->valpos_handle) { fstWriterCreateOpenFailed(".offs temporary file", xc->valpos_handle_nam); }
+         xc->curval_handle = tmpfile_open(&xc->curval_handle_nam);       /* .bits */
++        if(!xc->curval_handle) { fstWriterCreateOpenFailed(".bits temporary file", xc->curval_handle_nam); }
+         xc->tchn_handle = tmpfile_open(&xc->tchn_handle_nam);           /* .tchn */
++        if(!xc->tchn_handle) { fstWriterCreateOpenFailed(".tchn temporary file", xc->tchn_handle_nam); }
+         xc->vchg_alloc_siz = xc->fst_break_size + xc->fst_break_add_size;
+         xc->vchg_mem = (unsigned char *)malloc(xc->vchg_alloc_siz);
++        if(!xc->vchg_mem)
++                {
++                int err = errno;
++
++                fprintf(stderr, FST_APIMESS "fstWriterCreate: cannot allocate %lu bytes for vchg_mem: %s (errno %d)\n",
++                        (unsigned long)xc->vchg_alloc_siz, strerror(err), err);
++                }
+ 
+         if(xc->hier_handle && xc->geom_handle && xc->valpos_handle && xc->curval_handle && xc->vchg_mem && xc->tchn_handle)
+                 {
+@@ -2068,7 +2113,7 @@
                  gzFile zhandle;
                  int zfd;
                  int fourpack_duo = 0;
@@ -146,7 +219,7 @@ diff --git a/fstapi.c b/fstapi.c
  		int fnam_len = strlen(xc->filename) + 5 + 1;
                  char *fnam = (char *)malloc(fnam_len);
  #endif
-@@ -2159,7 +2169,7 @@
+@@ -2159,7 +2204,7 @@
                  fstWriterFseeko(xc, xc->handle, 0, SEEK_END);   /* move file pointer to end for any section adds */
                  fflush(xc->handle);
  
@@ -155,7 +228,7 @@ diff --git a/fstapi.c b/fstapi.c
                  snprintf(fnam, fnam_len, "%s.hier", xc->filename);
                  unlink(fnam);
                  free(fnam);
-@@ -2251,7 +2261,7 @@
+@@ -2251,7 +2296,7 @@
                          }
                  }
  
@@ -164,7 +237,7 @@ diff --git a/fstapi.c b/fstapi.c
          {
          int flen = strlen(xc->filename);
          char *hf = (char *)calloc(1, flen + 6);
-@@ -3952,14 +3962,14 @@
+@@ -3952,14 +3997,14 @@
          snprintf(fnam, fnam_len, "%s.hier_%d_%p", xc->filename, getpid(), (void *)xc);
          fstReaderFseeko(xc, xc->f, xc->hier_pos, SEEK_SET);
          uclen = fstReaderUint64(xc->f);
@@ -181,7 +254,7 @@ diff --git a/fstapi.c b/fstapi.c
                  fflush(xc->f);
  #endif
                  zfd = dup(fileno(xc->f));
-@@ -3978,12 +3988,12 @@
+@@ -3978,12 +4023,12 @@
                  fstReaderFseeko(xc, xc->f, xc->hier_pos - 8, SEEK_SET); /* get section len */
                  clen =  fstReaderUint64(xc->f) - 16;
                  uclen = fstReaderUint64(xc->f);
@@ -196,7 +269,7 @@ diff --git a/fstapi.c b/fstapi.c
          xc->fh = fopen(fnam, "w+b");
          if(!xc->fh)
  #endif
-@@ -3998,7 +4008,7 @@
+@@ -3998,7 +4043,7 @@
                          }
                  }
  
@@ -205,7 +278,7 @@ diff --git a/fstapi.c b/fstapi.c
          if(fnam) unlink(fnam);
  #endif
  
-@@ -4629,7 +4639,7 @@
+@@ -4629,7 +4674,7 @@
          setvbuf(fcomp, (char *)NULL, _IONBF, 0);   /* keeps gzip from acting weird in tandem with fopen */
  #endif
  
@@ -214,7 +287,7 @@ diff --git a/fstapi.c b/fstapi.c
          xc->filename_unpacked = hf;
  #else
          if(hf)
-@@ -4640,7 +4650,7 @@
+@@ -4640,7 +4685,7 @@
  #endif
  
          fstReaderFseeko(xc, xc->f, FST_ZWRAPPER_HDR_SIZE, SEEK_SET);
