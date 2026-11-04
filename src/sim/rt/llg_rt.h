@@ -1423,6 +1423,10 @@ void llg_value_scope_end(llg_value_scope_t* scope);
 // Zeroed native storage shares lexical/nonlocal cleanup with packed scopes.
 // The destructor borrows the storage; it must not free it, yield or notify HDL.
 llg_value_scope_t* llg_value_scope_begin_object(size_t size, void (*destroy)(void*));
+/* Private default cells, in a value scope, for a `ref` actual whose index
+   selects no leaf (SV 7.4.6): reads see the default, writes stay private. */
+llg_string_t* llg_native_ref_detached_string(void);
+void** llg_native_ref_detached_handle(void);
 void* llg_value_scope_object(llg_value_scope_t* scope);
 // A mark borrows the current active-scope head. It is valid until its enclosing
 // scope ends. End-since performs lexical return/goto cleanup, excluding mark.

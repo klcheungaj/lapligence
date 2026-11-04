@@ -105,11 +105,17 @@ sv4_t* llg_dependency_or_never(sv4_t* dependency) {
 void llg_dependency_changed(sv4_t* dependency) {
     if (!dependency) return;
     uint64_t bit = llg_sv4_word(*dependency, 0, LLG_SV4_BITS) & 1u;
+    /* A reference marker keeps its width: the value already stored through
+     * the reference reaches its element before readers wake. */
+    int reference = llg_sv4_width(*dependency) == LLG_NATIVE_REF_MARKER_WIDTH;
+    if (LLG_CO_UNLIKELY(reference)) llg_native_ref_stored(dependency);
     /* Native strings and containers publish through this marker. A subscriber
      * may terminate the writer without returning through this function. */
     llg_value_scope_t* scope = llg_value_scope_begin(1);
     sv4_t* value = llg_value_scope_values(scope);
-    value[0] = sv4_from_u64(bit ^ 1u, 1, 0);
+    value[0] = reference ? sv4_from_u64(2u | (bit ^ 1u),
+                                        LLG_NATIVE_REF_MARKER_WIDTH, 0)
+                         : sv4_from_u64(bit ^ 1u, 1, 0);
     sig_write(dependency, value[0]);
     llg_value_scope_end(scope);
 }

@@ -1,0 +1,19 @@
+A1 ms 7 ms 7
+A2 rw 70 rw 70
+A3 zs 71
+zs 71
+B1 new b 2
+B2 c 2 tt 9
+B3 whole 2
+B4 whole 2 tt 9 1
+B5 gone 3 gt 4 new
+6 0 'at call' ''
+6 0
+6 at call 1
+5 member string
+7 member int
+C1 5 5
+sub 6 at call 0
+sub 6 at call
+fwd 6 at call
++

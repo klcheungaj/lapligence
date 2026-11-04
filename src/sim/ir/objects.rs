@@ -811,14 +811,15 @@ impl IrStringExpr {
                         "string container read requires a string element and integral index",
                     ));
                 }
-                if !matches!(
+                if matches!(
                     container.kind,
-                    super::containers::IrContainerKind::Dynamic
-                        | super::containers::IrContainerKind::Queue { .. }
+                    super::containers::IrContainerKind::Associative {
+                        key: super::containers::IrAssocKey::String
+                    }
                 ) {
                     return Err(super::IrValidationError::new(
                         "string",
-                        "string container read requires a dynamic array or queue",
+                        "string container read of a string-keyed array requires its key",
                     ));
                 }
                 Ok(())
@@ -2388,6 +2389,13 @@ impl IrChandleExpr {
                                 ));
                             }
                         }
+                        (IrCallArg::ElementRef(reference), formal)
+                            if formal.is_ref()
+                                && (formal.chandle
+                                    == matches!(
+                                        reference.kind,
+                                        super::IrElementRefKind::Handle
+                                    )) => {}
                         (IrCallArg::ChandleRefAddr(addr), formal)
                             if formal.chandle && formal.is_ref() =>
                         {

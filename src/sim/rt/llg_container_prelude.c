@@ -13,6 +13,21 @@
  * every associative entry. */
 static void llg_dyn_outdate_references(llg_dyn_array_t* array);
 static void llg_assoc_outdate_references(llg_assoc_t* array, size_t position);
+/* Native element references (container/native_references.c). `live` counts
+ * every reference: only then can a record slot be aliased, so copies keep
+ * their fast replacing form otherwise. */
+static size_t llg_native_refs_live;
+static void llg_native_refs_opened(struct llg_native_ref* list, size_t at);
+static void llg_native_refs_removed(struct llg_native_ref** list, size_t at);
+static void llg_native_refs_outdate_all(struct llg_native_ref** list);
+static void llg_native_refs_mark(struct llg_native_ref* list, llg_value_t* data);
+static void llg_native_refs_unmark(struct llg_native_ref* list, llg_value_t* data,
+                                   size_t size, const llg_value_desc_t* element);
+static void llg_native_refs_rekey(struct llg_native_ref** list,
+                                  llg_value_t* old_data, llg_value_t* new_data,
+                                  size_t new_size);
+static void llg_native_refs_assoc_removed(struct llg_native_ref** list,
+                                          const llg_assoc_value_entry_t* entry);
 /* Before a container is destroyed: its retained cells stop naming its
  * contents marker, which dies with it. */
 static void llg_element_cells_forget_dependency(struct llg_element_cell* cell);

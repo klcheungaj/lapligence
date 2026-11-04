@@ -616,16 +616,24 @@ static int llg_value_reorder(llg_value_t* data, size_t count,
 
 void llg_dyn_value_method(llg_dyn_value_array_t* array, int method) {
     if (!array) llg_container_fatal("null dynamic-array method target");
-    if (llg_value_reorder(array->data, array->size, array->element,
-                               method))
+    llg_native_refs_mark(array->references, array->data);
+    int changed = llg_value_reorder(array->data, array->size, array->element,
+                                    method);
+    llg_native_refs_unmark(array->references, array->data, array->size,
+                           array->element);
+    if (changed)
         llg_notify(array->notify, array->contents_dependency,
                    array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
 }
 
 void llg_queue_value_method(llg_queue_value_array_t* queue, int method) {
     if (!queue) llg_container_fatal("null queue method target");
-    if (llg_value_reorder(queue->data, queue->size, queue->element,
-                               method)) {
+    llg_native_refs_mark(queue->references, queue->data);
+    int changed = llg_value_reorder(queue->data, queue->size, queue->element,
+                                    method);
+    llg_native_refs_unmark(queue->references, queue->data, queue->size,
+                           queue->element);
+    if (changed) {
         llg_queue_value_invalidate_refs(queue);
         llg_notify(queue->notify, queue->contents_dependency,
                    queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);

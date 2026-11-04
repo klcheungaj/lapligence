@@ -1,6 +1,6 @@
 //! Calls.
 
-use super::super::collection::{CallWriteback, TargetSelectors};
+use super::super::collection::{CallWriteback, RecordRefDispatch, TargetSelectors};
 use super::*;
 
 impl EmitCtx<'_, '_> {
@@ -100,11 +100,13 @@ impl EmitCtx<'_, '_> {
         // Module, static and block records bound to native record `ref`
         // formals select a specialization (`record_refs`).
         let records = self.cg.record_ref_bindings(&formals, &bound);
-        let method = call_receiver.class.is_some() || virtual_call_info.is_some();
+        let dispatch = self.cg.record_ref_dispatch(h, virtual_call_info.is_some());
         self.cg
-            .reject_method_record_refs(&self.path, ft, &records, method)?;
+            .reject_interface_record_refs(&self.path, ft, &records, dispatch)?;
         let mut specialized = None;
-        if !shape.static_refs.is_empty() {
+        if !shape.static_refs.is_empty()
+            && (records.is_empty() || dispatch == RecordRefDispatch::Direct)
+        {
             if let Some(statics) =
                 self.static_ref_actuals(&formals, &bound, &shape.static_refs, &records)?
             {
@@ -129,10 +131,14 @@ impl EmitCtx<'_, '_> {
                 &formals,
                 &bound,
                 template,
-                method,
+                dispatch,
             )?);
         }
-        if specialized.is_none() && self.cg.waits_on_record_ref(ft, callee_inst) {
+        let waits = match dispatch {
+            RecordRefDispatch::Virtual => self.cg.any_override_waits_on_record_ref(ft, callee_inst),
+            _ => self.cg.waits_on_record_ref(ft, callee_inst),
+        };
+        if specialized.is_none() && waits {
             // The body reads the record's leaves, which only a module,
             // static or procedural-block actual binds (SIM-008).
             let node = self.cg.node(h);
@@ -403,22 +409,7 @@ impl EmitCtx<'_, '_> {
                     out_args.push(IrCallArg::EventAddr(IrEventRef::Captured(temporary)));
                     continue;
                 }
-                let event = self.cg.event_ref_of(&target, &self.path)?;
-                if target.access.is_some() {
-                    return Err(format!(
-                        "class event property actual of `ref` event formal `{}` in `{}` is not supported; a `ref` event formal binds an event variable",
-                        self.cg.node(*io).name,
-                        self.path
-                    ));
-                }
-                if matches!(event, IrEventRef::Null | IrEventRef::Handle(_)) {
-                    return Err(format!(
-                        "event actual for output, inout or ref formal `{}` in `{}` must be an event variable",
-                        self.cg.node(*io).name,
-                        self.path
-                    ));
-                }
-                out_args.push(IrCallArg::EventAddr(event));
+                out_args.push(self.cg.event_handle_argument(&self.path, *io, &target)?);
                 continue;
             }
             if matches!(
@@ -440,6 +431,14 @@ impl EmitCtx<'_, '_> {
                             ..
                         }
                     );
+                    if is_ref {
+                        if let Some(argument) =
+                            self.cg.handle_element_ref(&self.path, bound[idx].expr)?
+                        {
+                            out_args.push(argument);
+                            continue;
+                        }
+                    }
                     if let Some((prelude, argument, store)) = self.cg.process_formal_binding(
                         &self.path,
                         *io,
@@ -474,21 +473,16 @@ impl EmitCtx<'_, '_> {
                         continue;
                     }
                 }
+                if is_ref {
+                    if let Some(argument) =
+                        self.cg.handle_element_ref(&self.path, bound[idx].expr)?
+                    {
+                        out_args.push(argument);
+                        continue;
+                    }
+                }
                 if is_ref || *is_out {
-                    let (target, _) = self
-                        .cg
-                        .lower_chandle_lvalue(&self.path, bound[idx].expr)
-                        .map_err(|error| {
-                            if is_ref && self.cg.is_container_element(bound[idx].expr) {
-                                format!(
-                                    "ref actual of handle formal `{}` in `{}` is a container element; element references of handles are not supported (SIM-016)",
-                                    self.cg.node(*io).name,
-                                    self.cg.source_path(&self.path)
-                                )
-                            } else {
-                                error
-                            }
-                        })?;
+                    let (target, _) = self.cg.lower_chandle_lvalue(&self.path, bound[idx].expr)?;
                     let address = self.cg.chandle_target_address(&target);
                     if is_ref {
                         out_args.push(IrCallArg::ChandleRefAddr(address));
@@ -525,6 +519,13 @@ impl EmitCtx<'_, '_> {
                     _ => unreachable!("ref formal"),
                 };
                 if bound[idx].string {
+                    if let Some(argument) =
+                        self.cg
+                            .string_element_ref(&self.path, bound[idx].expr, const_ref)?
+                    {
+                        out_args.push(argument);
+                        continue;
+                    }
                     // A class string property is passed by the address of
                     // its object's field (SV 13.5.2).
                     let property = if self.cg.class_storage_field(bound[idx].expr).is_some() {
@@ -563,7 +564,8 @@ impl EmitCtx<'_, '_> {
                         ref_static,
                     )?);
                 }
-                if !bound[idx].string {
+                if !bound[idx].string && !matches!(out_args.last(), Some(IrCallArg::ElementRef(_)))
+                {
                     let read_ir = self.cg.lower_expr(&self.path, bound[idx].expr)?;
                     arg_irs[idx] = Some(read_ir);
                 }
@@ -573,6 +575,24 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
             if bound[idx].string {
+                let copy_in = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Inout,
+                        ..
+                    }
+                );
+                if let Some((prelude, address, store)) = self.cg.string_element_copy_out(
+                    &self.path,
+                    bound[idx].expr,
+                    copy_in,
+                    &format!("_stout_{}_{idx}", h.0),
+                )? {
+                    before.extend(prelude);
+                    after.push(store);
+                    out_args.push(IrCallArg::StringOutAddr(address));
+                    continue;
+                }
                 self.cg
                     .ensure_string_actual_writable(&self.path, bound[idx].expr)?;
                 let writeback = self

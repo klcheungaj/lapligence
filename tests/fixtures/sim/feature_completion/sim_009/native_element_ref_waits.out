@@ -1,0 +1,14 @@
+1 watcher self
+2 w_str x
+3 w_str go
+5 w_str x
+7 w_str go
+8 w_str x
+9 w_str go
+11 w_h 1
+12 w_h3
+13 w_h 1
+14 w_h3
+15 watcher parent
+16 own again
+done 1

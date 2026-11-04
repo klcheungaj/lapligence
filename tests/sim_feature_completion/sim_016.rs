@@ -17,12 +17,10 @@ fn handle_outputs_copy_out_into_container_elements() {
 }
 
 #[test]
-fn ref_handle_element_actuals_are_explicit() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_ref_element_handle",
-        "ref actual of handle formal `s` in `tb` is a container element; element references of handles are not supported (SIM-016)",
-    );
+fn handle_element_refs_follow_elements_until_outdated() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_016/handle_element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "handle_element_refs", expected, &[], &[]);
 }
 
 #[test]

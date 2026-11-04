@@ -49,6 +49,9 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
             }
             IrCallArg::OutAddr(_) => {}
             IrCallArg::StringOutAddr(_) | IrCallArg::StringRefAddr { .. } => {}
+            IrCallArg::ElementRef(reference) => {
+                reference.expressions_mut(&mut |child| walk_expr_mut(child, f))
+            }
             IrCallArg::RefAddr { read, lhs, .. } => {
                 walk_expr_mut(read, f);
                 walk_lhs_mut(lhs, f);
@@ -81,6 +84,7 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
             | IrCallArg::NativeRefBound
             | IrCallArg::Container(_)
             | IrCallArg::EventVal(_)
+            | IrCallArg::EventSlot(_)
             | IrCallArg::EventAddr(_) => {}
         }
     }
@@ -828,6 +832,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::FixedArrayCopy { .. }
         | IrStmt::FixedArrayDeclare(_)
         | IrStmt::NativeValueDeclare(_)
+        | IrStmt::NativeRefStored(_)
         | IrStmt::NativeValueSharedDeclare(_)
         | IrStmt::NativeValueCopy { .. }
         | IrStmt::EventDeclare { .. }

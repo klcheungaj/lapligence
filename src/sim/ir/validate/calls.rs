@@ -179,13 +179,17 @@ impl Validator<'_> {
                 return self.fail(&arg_path, "descriptor formal requires descriptor operand");
             }
             if formal.native_value.is_some()
-                != matches!(
+                != (matches!(
                     arg,
                     IrCallArg::NativeValue(_)
                         | IrCallArg::NativeRefBound
                         | IrCallArg::NativeLeaves { .. }
                         | IrCallArg::NativeCall { .. }
-                )
+                ) || matches!(
+                    arg,
+                    IrCallArg::ElementRef(reference)
+                        if reference.kind == crate::sim::ir::IrElementRefKind::Record
+                ))
             {
                 return self.fail(&arg_path, "native-value formal and operand must match");
             }
@@ -484,6 +488,82 @@ impl Validator<'_> {
                         return self.fail(arg_path, "invalid string reference descriptor");
                     }
                 }
+                IrCallArg::ElementRef(reference) => {
+                    use crate::sim::ir::{
+                        IrAssocKey, IrContainerKind, IrElementRefKind, IrElementRoot, IrLeafTarget,
+                    };
+                    let matches_formal = match reference.kind {
+                        IrElementRefKind::String => formal.string,
+                        IrElementRefKind::Handle => formal.chandle,
+                        IrElementRefKind::Record => {
+                            formal.native_value.is_some() && formal.native_companions.is_empty()
+                        }
+                        IrElementRefKind::Packed {
+                            width,
+                            signed,
+                            two_state,
+                        } => {
+                            !formal.string
+                                && !formal.chandle
+                                && !formal.real
+                                && formal.native_value.is_none()
+                                && (formal.width, formal.signed, formal.two_state)
+                                    == (width, signed, two_state)
+                        }
+                    };
+                    if !matches_formal
+                        || !formal.is_ref()
+                        || (reference.const_ref && !formal.const_ref)
+                    {
+                        return self
+                            .fail(arg_path, "element reference requires a matching ref formal");
+                    }
+                    match &reference.root {
+                        IrElementRoot::Element {
+                            container,
+                            index,
+                            key,
+                        } => {
+                            let Some(container) = self.model.containers.get(*container) else {
+                                return self.fail(
+                                    arg_path,
+                                    "element reference container is out of bounds",
+                                );
+                            };
+                            let string_key = matches!(
+                                container.kind,
+                                IrContainerKind::Associative {
+                                    key: IrAssocKey::String
+                                }
+                            );
+                            if string_key != key.is_some() || string_key == index.is_some() {
+                                return self
+                                    .fail(arg_path, "element reference has no matching selector");
+                            }
+                        }
+                        IrElementRoot::Value(value) => {
+                            if *value >= self.model.native_values.len() {
+                                return self
+                                    .fail(arg_path, "element reference value is out of bounds");
+                            }
+                        }
+                        IrElementRoot::Leaves { leaves, .. } => {
+                            let packed = matches!(reference.kind, IrElementRefKind::Packed { .. });
+                            let matches_kind = !matches!(reference.kind, IrElementRefKind::Record)
+                                && !leaves.is_empty()
+                                && reference.steps.is_empty()
+                                && leaves.iter().all(|(_, leaf)| {
+                                    matches!(leaf, IrLeafTarget::Packed { .. }) == packed
+                                });
+                            if !matches_kind {
+                                return self.fail(
+                                    arg_path,
+                                    "selected leaf reference does not match its leaves",
+                                );
+                            }
+                        }
+                    }
+                }
                 IrCallArg::ChandleVal(value) => {
                     if formal.chandle && !formal.is_address() {
                         value.validate(self.model, formals, None).map_err(|error| {
@@ -510,6 +590,11 @@ impl Validator<'_> {
                         return self.fail(arg_path, "event address requires handle storage");
                     }
                     self.validate_event_ref(event, formals, &arg_path)?;
+                }
+                IrCallArg::EventSlot(address) => {
+                    if !formal.event || !formal.is_ref() || address.is_empty() {
+                        return self.fail(arg_path, "event slot requires a ref event formal");
+                    }
                 }
                 IrCallArg::ChandleAddr(addr) => {
                     if !formal.chandle || !formal.is_out || formal.is_ref() {

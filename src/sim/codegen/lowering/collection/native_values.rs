@@ -10,6 +10,7 @@
 use super::super::expressions::AggregateSelection;
 use super::aggregates::NATIVE_TAG_MEMBER;
 use super::*;
+use crate::sim::ir::IrElementRefKind;
 use crate::sim::ir::{
     is_class_handle_kind, native_item_count, validate_native_type, IrNativeAccessKind,
     IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue, IrObjectQuery,
@@ -21,6 +22,7 @@ mod member_select;
 mod messages;
 mod nba;
 mod record_refs;
+pub(in crate::sim::codegen::lowering) use record_refs::RecordRefDispatch;
 mod tagged;
 pub(in crate::sim::codegen) use tagged::{
     is_native_tag_path, native_tagged_equality, NativeTaggedRoot,
@@ -2106,6 +2108,37 @@ impl Codegen<'_> {
         )
     }
 
+    /// Operand of a native `ref` formal whose actual is no whole native value
+    /// of its type: a bound record, or storage reached through a reference.
+    /// A record with container members needs its companions, which an element
+    /// or member does not have.
+    fn native_ref_operand(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        layout: &NativeLayout,
+        actual: NodeId,
+    ) -> Result<IrCallArg, String> {
+        if self.record_ref_binding(formal, actual).is_some() {
+            return Ok(IrCallArg::NativeRefBound);
+        }
+        if layout.containers.is_empty() {
+            let const_ref = matches!(
+                self.kind(formal),
+                NodeKind::FuncArg {
+                    const_ref: true,
+                    ..
+                }
+            );
+            if let Some(argument) =
+                self.member_ref(path, actual, IrElementRefKind::Record, const_ref)?
+            {
+                return Ok(argument);
+            }
+        }
+        Err(self.native_ref_actual_error(path, formal))
+    }
+
     /// Caller operand of a native formal. A whole native value of the formal
     /// type passes directly (the callee receives its own copy); any other
     /// actual uses a lexical temporary filled before the call and, for
@@ -2137,16 +2170,18 @@ impl Codegen<'_> {
             _ => return Err("native formal is not a subroutine argument".to_owned()),
         };
         let source = self.p30_unwrap_cast(actual);
-        if let Some((value, prefix)) = self.native_path_of(source)? {
+        // A `ref` to a run-time selection has no constant path but a place.
+        let rooted = self.native_path_of(source);
+        if rooted.is_err() && direction != DbDirection::Ref {
+            rooted.clone()?;
+        }
+        if let Ok(Some((value, prefix))) = rooted {
             if prefix.is_empty() && self.model.native_values[value].ty == layout.ty {
                 return Ok(IrCallArg::NativeValue(value));
             }
         }
         if direction == DbDirection::Ref {
-            if self.record_ref_binding(formal, actual).is_some() {
-                return Ok(IrCallArg::NativeRefBound);
-            }
-            return Err(self.native_ref_actual_error(path, formal));
+            return self.native_ref_operand(path, formal, &layout, actual);
         }
         if direction == DbDirection::Input {
             if let Some(argument) = self.native_call_operand(path, &layout, actual)? {
@@ -2768,22 +2803,21 @@ impl Codegen<'_> {
             let layout = self
                 .native_layout(formal)?
                 .ok_or("native formal has no layout")?;
-            if let Some((value, prefix)) = self.native_path_of(self.p30_unwrap_cast(actual))? {
+            let direction = match self.kind(formal) {
+                NodeKind::FuncArg { direction, .. } => *direction,
+                _ => return Err("native formal is not a subroutine argument".to_owned()),
+            };
+            let rooted = self.native_path_of(self.p30_unwrap_cast(actual));
+            if rooted.is_err() && direction != DbDirection::Ref {
+                rooted.clone()?;
+            }
+            if let Ok(Some((value, prefix))) = rooted {
                 if prefix.is_empty() && self.model.native_values[value].ty == layout.ty {
                     return Ok(IrCallArg::NativeValue(value));
                 }
             }
-            if matches!(
-                self.kind(formal),
-                NodeKind::FuncArg {
-                    direction: DbDirection::Ref,
-                    ..
-                }
-            ) {
-                if self.record_ref_binding(formal, actual).is_some() {
-                    return Ok(IrCallArg::NativeRefBound);
-                }
-                return Err(self.native_ref_actual_error(path, formal));
+            if direction == DbDirection::Ref {
+                return self.native_ref_operand(path, formal, &layout, actual);
             }
             if matches!(
                 self.kind(formal),

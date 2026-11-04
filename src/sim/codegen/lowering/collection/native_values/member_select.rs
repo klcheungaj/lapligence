@@ -13,6 +13,7 @@
 //! once into a local before the comparisons.
 
 use super::*;
+use crate::sim::ir::{IrElementRef, IrElementRefKind, IrElementRoot, IrLeafTarget};
 
 /// Largest member array selected by a run-time index: each access site
 /// holds one branch per element, so larger arrays are rejected rather than
@@ -199,6 +200,57 @@ impl Codegen<'_> {
             index,
             hoist,
         }))
+    }
+
+    /// `ref` actual `r.a[k]` of a module-like record: its leaves are stable
+    /// storage, so the formal takes the one the index selects at the call.
+    pub(in crate::sim::codegen::lowering) fn module_leaf_ref(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        kind: IrElementRefKind,
+        const_ref: bool,
+    ) -> Result<Option<IrCallArg>, String> {
+        let Some(select) = self.native_member_select(path, node)? else {
+            return Ok(None);
+        };
+        let mut leaves = Vec::with_capacity(select.elements.len());
+        for (declared, leaf) in &select.elements {
+            let NativeEndpointLeaf::Module(leaf) = leaf else {
+                return Ok(None);
+            };
+            let target = match (kind, leaf.object) {
+                (IrElementRefKind::String | IrElementRefKind::Handle, Some(object)) => {
+                    let object = &self.model.objects[self.reference_object(object)];
+                    let selects_kind = match object.ty {
+                        IrObjectType::String => kind == IrElementRefKind::String,
+                        IrObjectType::Process => false,
+                        _ => kind == IrElementRefKind::Handle,
+                    };
+                    if !selects_kind {
+                        return Ok(None);
+                    }
+                    IrLeafTarget::Address(format!("&{}", object.c_name))
+                }
+                (IrElementRefKind::Packed { .. }, None) => IrLeafTarget::Packed {
+                    lhs: self.aggregate_leaf_lhs(leaf)?,
+                    read: self.aggregate_leaf_read(leaf)?,
+                },
+                _ => return Ok(None),
+            };
+            leaves.push((*declared, target));
+        }
+        let index = self.lower_container_index(path, select.index)?;
+        let width = index.width.max(32) + 1;
+        Ok(Some(IrCallArg::ElementRef(Box::new(IrElementRef {
+            root: IrElementRoot::Leaves {
+                index: IrExpr::convert_to(index, width, true),
+                leaves,
+            },
+            steps: Vec::new(),
+            kind,
+            const_ref,
+        }))))
     }
 
     /// `r.e[k]` or `r.e[k].inner` with a non-constant `k`, where the

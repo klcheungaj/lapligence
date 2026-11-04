@@ -1504,6 +1504,11 @@ struct Codegen<'a> {
     /// actual signal per static `ref` formal, record bound per native record
     /// `ref` formal); the value is the model function index.
     task_specializations: HashMap<SpecializationKey, usize>,
+    /// Virtual families specialized for record bindings: per slot and
+    /// binding (formal position, root, member path), each override's
+    /// specialization. Slots above the design's are allocated on demand.
+    record_ref_families: HashMap<RecordRefFamilyKey, HashMap<NodeId, usize>>,
+    next_virtual_slot: usize,
     /// Specializations whose bodies are lowered after all call sites exist.
     pending_specializations: Vec<PendingSpecialization>,
     /// Pass switches in lowering order; their networks are numbered after
@@ -2239,6 +2244,8 @@ impl<'a> Codegen<'a> {
             static_chandle_formals: HashMap::new(),
             static_task_locals: HashMap::new(),
             task_specializations: HashMap::new(),
+            record_ref_families: HashMap::new(),
+            next_virtual_slot: 0,
             pending_specializations: Vec::new(),
             pending_switches: Vec::new(),
             static_string_task_locals: HashMap::new(),
@@ -3085,6 +3092,10 @@ struct RecordRefBinding {
 /// Identity of one subroutine specialization; see
 /// [`Codegen::task_specializations`].
 type SpecializationKey = (NodeId, NodeId, Vec<usize>, Vec<RecordRefBinding>);
+
+/// Identity of one virtual family bound to records; see
+/// [`Codegen::record_ref_families`].
+type RecordRefFamilyKey = (usize, Vec<(usize, NodeId, Vec<AggregatePathPart>)>);
 
 /// A task specialization awaiting body lowering. `ir` indexes the model
 /// entry cloned from the task's template definition.

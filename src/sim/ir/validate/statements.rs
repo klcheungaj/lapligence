@@ -341,6 +341,11 @@ impl Validator<'_> {
                     return self.fail(path, "incompatible descriptor assignment shape or lifetime");
                 }
             }
+            IrStmt::NativeRefStored(index) => {
+                if self.model.native_values.get(*index).is_none() {
+                    return self.fail(path, "stored native value is out of bounds");
+                }
+            }
             IrStmt::NativeValueDeclare(index) | IrStmt::NativeValueSharedDeclare(index) => {
                 if self
                     .model

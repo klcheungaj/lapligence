@@ -1,0 +1,18 @@
+mr d2 3
+peek 9 10
+tag tagd2 tag
+vset[0] K 10 vget 10
+vset[1] KD 12 vget 12
+vset[2] KD 13 vget 13
+forward K 10
+forward KD 12
+st KD 12 bk K 10
+static static static
+twice t2 14
+1 poke
+2 hold n=200 id=1
+n 200
+3 K vhold n=13
+5 K vhold n=7
+5 D vhold s=Kh
+Kh 7 Kh 8

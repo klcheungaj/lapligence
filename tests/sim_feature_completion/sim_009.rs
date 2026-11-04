@@ -184,12 +184,10 @@ fn waited_record_refs_to_subroutine_records_are_explicit() {
 }
 
 #[test]
-fn waited_string_refs_to_array_elements_are_explicit() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_native_element_ref_wait",
-        "`ref` actual of string or handle formal `s` of task `ws`, which waits on it, is neither a variable nor a class property; its changes publish no marker the task can wait on (SIM-009) at ",
-    );
+fn waited_native_refs_to_array_elements_wake_on_their_element() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/native_element_ref_waits.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_element_ref_waits", expected, &[], &[]);
 }
 
 #[test]

@@ -278,6 +278,29 @@ static int llg_value_try_construct_copy(llg_value_t* target,
     }
 }
 
+/* Move `replacement` into `target`, keeping every record's items where they
+ * are: a live reference may hold their addresses (native_references.c). */
+static void llg_value_replace_in_place(llg_value_t* target,
+                                       llg_value_t* replacement) {
+    const llg_value_desc_t* desc = target->desc;
+    if ((desc->kind == LLG_VALUE_AGGREGATE ||
+         desc->kind == LLG_VALUE_FIXED_ARRAY) &&
+        desc == replacement->desc && target->value.items &&
+        replacement->value.items) {
+        for (size_t i = 0; i < desc->item_count; ++i)
+            llg_value_replace_in_place(&target->value.items[i],
+                                       &replacement->value.items[i]);
+        free(replacement->value.items);
+        return;
+    }
+    if (desc->kind == LLG_VALUE_STRING && desc == replacement->desc) {
+        llg_string_move(&target->value.string, replacement->value.string);
+        return;
+    }
+    llg_value_drop(target);
+    *target = *replacement;
+}
+
 /* Replace `target` with a converted deep copy of `source`. The replacement is
  * complete before the old value is dropped, so `source` may alias `target` or
  * one of its descendants and a failed construction leaves `target` intact. */
@@ -287,6 +310,10 @@ static int llg_value_try_copy(llg_value_t* target,
     llg_value_t replacement = {0};
     if (!llg_value_try_construct_copy(&replacement, target_desc, source))
         return 0;
+    if (llg_native_refs_live && target->desc) {
+        llg_value_replace_in_place(target, &replacement);
+        return 1;
+    }
     llg_value_drop(target);
     *target = replacement; // exclusive ownership transfer, not a copy
     return 1;

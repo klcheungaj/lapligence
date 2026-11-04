@@ -116,6 +116,8 @@ typedef struct llg_value_handle_hooks_t {
      * a non-null process handle owns one reference. */
     void (*retain)(void* handle);
     void (*release)(void* handle);
+    /* Publish one change marker (llg_dependency_changed). */
+    void (*publish)(sv4_t* marker);
 } llg_value_handle_hooks_t;
 void llg_value_set_handle_hooks(const llg_value_handle_hooks_t* hooks);
 
@@ -196,6 +198,8 @@ size_t llg_native_roots_count(void);
 /* Trace the identity handles of every live root (see llg_value_trace). */
 void llg_native_roots_trace(llg_value_visit_fn visit, void* context);
 
+struct llg_native_ref;
+
 struct llg_dyn_value_array_t {
     llg_value_t* data;
     size_t size;
@@ -203,6 +207,8 @@ struct llg_dyn_value_array_t {
     sv4_t* contents_dependency;
     sv4_t* shape_dependency;
     llg_container_notify_fn notify;
+    /* Live element references (llg_native_ref), NULL for almost every array. */
+    struct llg_native_ref* references;
 };
 
 void llg_dyn_value_init(llg_dyn_value_array_t* array,
@@ -406,6 +412,7 @@ struct llg_queue_value_array_t {
     sv4_t* shape_dependency;
     llg_container_notify_fn notify;
     uint64_t mutation_epoch;
+    struct llg_native_ref* references;
 };
 
 void llg_queue_value_init(llg_queue_value_array_t* queue,
@@ -539,6 +546,59 @@ llg_value_t* llg_assoc_value_element_string(llg_assoc_value_t* array,
 void llg_dyn_value_touch(llg_dyn_value_array_t* array);
 void llg_queue_value_touch(llg_queue_value_array_t* queue);
 void llg_assoc_value_touch(llg_assoc_value_t* array);
+
+/* Element references of descriptor-backed containers (SV 13.5.2, 7.10.3).
+ * A `ref` formal is a plain address, so it cannot follow storage that moves;
+ * it addresses the reference's stable copy of the element instead. Every
+ * store through that address reaches the element at once (see
+ * container/native_references.c). An acquire binds the element selected now;
+ * an associative acquire creates a missing entry, and an invalid selector
+ * binds a reference that reads the default and ignores writes. The caller
+ * owns one count, released by llg_native_ref_release or, from a value scope
+ * object holding the reference, llg_native_ref_scope_release. `fixed` says
+ * the array is fixed-size: assigning it never outdates a reference. */
+void* llg_dyn_value_ref_acquire(llg_dyn_value_array_t* array, sv4_t index,
+                                int fixed);
+void* llg_queue_value_ref_acquire(llg_queue_value_array_t* queue, sv4_t index);
+void* llg_assoc_value_ref_acquire_integral(llg_assoc_value_t* array, sv4_t key);
+void* llg_assoc_value_ref_acquire_string(llg_assoc_value_t* array,
+                                         const void* key, size_t length);
+void llg_native_ref_release(void* reference);
+void llg_native_ref_scope_release(void* object);
+llg_string_t* llg_native_ref_string(void* reference);
+void** llg_native_ref_handle(void* reference);
+/* The record a reference names, for a native record `ref` formal. */
+llg_value_t* llg_native_ref_value(void* reference);
+/* A reference to a value that is no container element, for its members. */
+void* llg_native_ref_root(llg_value_t* value);
+/* Select one item of the record or fixed array `reference` names, taking
+ * over the caller's count; a negative position selects nothing. After the
+ * last item, llg_native_ref_bind makes the result a reference to that member:
+ * stores through it publish its marker and the root container's change, the
+ * member's items stay where they are, and an invalid selection reads the
+ * default and ignores writes. */
+void* llg_native_ref_item(void* reference, int64_t position);
+void* llg_native_ref_bind(void* reference);
+/* A position from an index value; -1 for an unknown one. */
+/* Whether a run-time index selects a declared one; X and Z select none. */
+int llg_native_ref_selects(sv4_t index, int64_t declared);
+/* A store through a record `ref` formal finished; `value` is the formal.
+   Tells a container element's readers, and does nothing for other actuals. */
+void llg_native_ref_value_stored(llg_value_t* value);
+int64_t llg_native_ref_position(sv4_t index);
+/* Retained-cell accessors of an `llg_ref_t` naming a packed member. */
+sv4_t llg_native_ref_packed_read(const void* reference);
+int llg_native_ref_packed_write(void* reference, sv4_t value);
+sv4_t* llg_native_ref_dependency(const void* reference);
+/* The change marker of one reference: it toggles when this element changes,
+ * through the reference or the container, and never for other elements. */
+sv4_t* llg_native_ref_marker(void* reference);
+/* A reference marker has this width, which no other change marker has: a
+ * store through a handle `ref` formal publishes only a marker, and
+ * llg_dependency_changed uses the width to run llg_native_ref_stored. */
+#define LLG_NATIVE_REF_MARKER_WIDTH 2u
+/* Copy the reference's value to its element after a store through it. */
+void llg_native_ref_stored(sv4_t* marker);
 /* Replace initialized `dst` with a converted copy of `element`, or with the
  * Table 7-1 default when `element` is NULL. */
 /* Size of a nested container element returned by a locator; 0 for a missing
@@ -801,6 +861,7 @@ struct llg_assoc_value_t {
     sv4_t* shape_dependency;
     llg_container_notify_fn notify;
     uint64_t mutation_epoch;
+    struct llg_native_ref* references;
 };
 
 void llg_assoc_value_init_integral(llg_assoc_value_t* array,

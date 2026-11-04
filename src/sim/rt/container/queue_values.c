@@ -40,6 +40,7 @@ static void llg_queue_value_commit(llg_queue_value_array_t* queue,
     llg_container_notify_fn notify = queue->notify;
     sv4_t* contents_dependency = queue->contents_dependency;
     sv4_t* shape_dependency = queue->shape_dependency;
+    llg_native_refs_outdate_all(&queue->references);
     for (size_t i = 0; i < queue->size; ++i)
         llg_value_drop(&queue->data[i]);
     free(queue->data);
@@ -159,6 +160,7 @@ void llg_queue_value_init(llg_queue_value_array_t* queue,
 }
 
 void llg_queue_value_destroy(llg_queue_value_array_t* queue) {
+    llg_native_refs_outdate_all(&queue->references);
     for (size_t i = 0; i < queue->size; ++i)
         llg_value_drop(&queue->data[i]);
     free(queue->data);
@@ -167,6 +169,7 @@ void llg_queue_value_destroy(llg_queue_value_array_t* queue) {
 
 void llg_queue_value_delete(llg_queue_value_array_t* queue) {
     int changed = queue->size != 0;
+    llg_native_refs_outdate_all(&queue->references);
     for (size_t i = 0; i < queue->size; ++i)
         llg_value_drop(&queue->data[i]);
     free(queue->data);

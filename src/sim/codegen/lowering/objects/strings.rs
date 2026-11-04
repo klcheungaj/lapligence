@@ -154,10 +154,9 @@ impl Codegen<'_> {
             let formals = meta.formals.clone();
             let actuals = self.call_argument_nodes(node);
             let bound = self.bind_call_args(self.inst, &formals, &actuals)?;
-            let method = matches!(self.kind(node), NodeKind::MethodCall { .. })
-                || self.model.funcs[meta.ir].receiver_class.is_some();
+            let dispatch = self.record_ref_dispatch(node, false);
             let function =
-                self.record_ref_callee(path, ft, callee_inst, &formals, &bound, meta.ir, method)?;
+                self.record_ref_callee(path, ft, callee_inst, &formals, &bound, meta.ir, dispatch)?;
             let mut arg_irs = vec![None; formals.len()];
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
@@ -201,6 +200,12 @@ impl Codegen<'_> {
                         )?));
                         continue;
                     }
+                    if is_ref {
+                        if let Some(argument) = self.handle_element_ref(path, bound[idx].expr)? {
+                            out_args.push(argument);
+                            continue;
+                        }
+                    }
                     if self.is_process_formal(*io) {
                         if let Some(argument) = self.process_formal_expression_binding(
                             path,
@@ -235,6 +240,12 @@ impl Codegen<'_> {
                             ..
                         }
                     );
+                    if let Some(argument) =
+                        self.string_element_ref(path, bound[idx].expr, const_ref)?
+                    {
+                        out_args.push(argument);
+                        continue;
+                    }
                     if !const_ref {
                         self.ensure_string_actual_writable(path, bound[idx].expr)?;
                     }
@@ -298,6 +309,7 @@ impl Codegen<'_> {
                         | IrCallArg::ChandleRefAddr(_)
                         | IrCallArg::StringOutAddr(_)
                         | IrCallArg::StringRefAddr { .. }
+                        | IrCallArg::ElementRef(_)
                         | IrCallArg::StringOutTemp { .. }
                         | IrCallArg::NativeValue(_)
                         | IrCallArg::NativeRefBound

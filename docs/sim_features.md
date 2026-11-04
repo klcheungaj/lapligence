@@ -559,8 +559,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Context | Storage / default | Copy | `==`/`!=`, `===` | Member select | Reference | Destruction |
 | --- | --- | --- | --- | --- | --- | --- |
 | Module/static variable | yes, member defaults applied; initializer from a pattern, copy, call result or conditional | yes | yes, including nested records and member arrays | constant, run-time index (at most 4,096 elements) and packed-member bit/part select: yes | `ref`/`const ref` actual, whole or a constant member/index selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); run-time-indexed member: rejected | model close |
-| Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 4,096 elements): yes | `ref`/`const ref` actual, whole record: yes; member: rejected (SIM-008) | scope exit, cancel, close |
-| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal: a whole subroutine record passes by address, a module, static or block record (or a constant selection of one) binds a specialization of the callee: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); container or fixed-array element actual, class-method formal: rejected | scope exit, cancel, close |
+| Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 4,096 elements): yes | `ref`/`const ref` actual, whole record and members: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | scope exit, cancel, close |
+| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal: a whole subroutine record passes by address, a module, static or block record (or a constant selection of one) binds a specialization of the callee: yes; fixed-array or container element actual, and members of one: a retained reference shares the element ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); class methods take them too, a virtual call through one family per binding; a virtual-interface method: rejected | scope exit, cancel, close |
 | NBA target or source | module record and static subroutine root: yes (untimed and `#delay`), members of fixed-array elements and container members too; automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
 | Unpacked array element, slice | fixed arrays of any dimension: yes, elements and rows ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); row equality and rows as `ref` actuals: rejected | yes, elements, rows, constant/indexed slices, patterns, conditional merges, untimed and `#delay` NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
@@ -1081,10 +1081,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([class-defects](../tests/fixtures/sim/feature_completion/ki_class_defects/readme.md)).
   Output and inout event formals bound to class event properties copy the
   property's handle in at the call and back at return
-  (`class_event_formals`). Event handles other than declared named events in
-  process-evaluated lists reject; a class event property as a `ref` event
-  actual and output, inout or `ref` event formals of function-expression
-  calls reject explicitly
+  (`class_event_formals`), and a `ref` event formal rebinds the property's
+  slot at once (`class_event_ref_formal`). Function calls in integral
+  expressions take output, inout and `ref` event formals (decision S13-D3).
+  Event handles other than declared named events in process-evaluated lists
+  reject; a class event property as an output of a value call and event
+  formals of string or handle value calls reject explicitly
   ([known issue](known_issues.md#event-formals-without-a-typed-handle-binding)).
   V §9.7.3; SV §15.5 **[1995/SV-2005]**.
 - 🟨 **Cycle delays** — Procedural `##N` repeats the resolved default clocking
@@ -1824,12 +1826,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   typed handles. There is no call-site expansion (SIM-009-A03), so such tasks
   recurse, run as class methods and take native formals. Waits and `@` on
   string and class-handle `ref` formals follow the change marker of the
-  module, package, static, process or fork-shared variable or class property
-  the actual names, and a handle store through a `ref` formal wakes waiters at
-  the store (decisions S09-D1..D7); branches waiting on a parent's automatic
-  string or handle wake on its writes. Native record `ref` formals waited on
-  with class-property or task-automatic records, and string or handle array
-  elements as waited `ref` actuals, reject explicitly
+  module, package, static, process or fork-shared variable, class property or
+  array element the actual names, and a handle store through a `ref` formal
+  wakes waiters at the store (decisions S09-D1..D7); branches waiting on a
+  parent's automatic string or handle wake on its writes. Native record `ref`
+  formals waited on with class-property or task-automatic records reject
+  explicitly
   ([known issue](known_issues.md#waited-ref-formals-with-unobservable-actuals)).
   Event expressions over by-value formals copy them when the control arms;
   event formals of class methods, virtual ones included, take the typed path
@@ -1862,8 +1864,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Unique/priority diagnostics remain active; side-effect-free source alone does
   not establish eligibility.
 - ❌ **Unsupported or illegal call forms** — Recursive task calls requiring
-  an inline event/ref environment (an unpacked aggregate `ref` formal or a
-  container-element or unpacked-member actual of a waited `ref` formal)
+  an inline event/ref environment (an unpacked aggregate `ref` formal or an
+  unpacked-member actual of a waited `ref` formal)
   remain rejected. Typed recursive delay-bearing tasks use independent
   SCC/arena activations; direct and mutual recursion have witnesses in
   [the function/task suite](../tests/sim_function.rs) and
@@ -2478,10 +2480,10 @@ These are bounded implementations, not full verification-infrastructure support.
   semaphore formals copy out into container elements selected at call start
   ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)).
   Semaphore members of module, block and automatic records, record arrays and
-  record formals hold handles to shared semaphores. `ref` semaphore formals
-  bound to array elements
-  ([known issue](known_issues.md#ref-handle-formals-bound-to-array-elements))
-  and record ports with semaphore members
+  record formals hold handles to shared semaphores; `ref` semaphore and mailbox
+  formals bind array elements
+  ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)).
+  Record ports with semaphore members
   ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage))
   reject (SIM-016). SV §15.3 **[SV-2005]**.
 - 🟨 **Mailboxes** — Typed/untyped bounded/unbounded FIFO

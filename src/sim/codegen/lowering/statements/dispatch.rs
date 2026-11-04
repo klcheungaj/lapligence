@@ -337,7 +337,11 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Assign {
                 blocking, delay, ..
             }) => match delay {
-                None => Ok(vec![self.lower_assignment(h, false)?]),
+                None => {
+                    let mut statements = vec![self.lower_assignment(h, false)?];
+                    statements.extend(self.record_ref_store(h));
+                    Ok(statements)
+                }
                 Some(IntraControl::Delay(delay)) => {
                     if self.in_final {
                         return Err(format!(
@@ -640,7 +644,11 @@ impl EmitCtx<'_, '_> {
                         | Operation::PreDecrement
                 ) =>
             {
-                Ok(vec![self.lower_inc_dec(*op, operands)?])
+                let mut statements = vec![self.lower_inc_dec(*op, operands)?];
+                if let Some(target) = operands.first() {
+                    statements.extend(self.cg.record_ref_written(*target));
+                }
+                Ok(statements)
             }
             NodeKind::Expr(ExprKind::NewClass {
                 is_super_class: true,

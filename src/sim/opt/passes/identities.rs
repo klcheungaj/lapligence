@@ -191,6 +191,7 @@ fn ident_children(e: &mut IrExpr) {
                     | IrCallArg::NativeRefBound
                     | IrCallArg::Container(_)
                     | IrCallArg::EventVal(_)
+                    | IrCallArg::EventSlot(_)
                     | IrCallArg::EventAddr(_)
                     | IrCallArg::ChandleAddr(_)
                     | IrCallArg::ChandleRefAddr(_) => {}
@@ -198,6 +199,7 @@ fn ident_children(e: &mut IrExpr) {
                         ident_expr(read);
                         ident_lhs(lhs);
                     }
+                    IrCallArg::ElementRef(reference) => reference.expressions_mut(&mut ident_expr),
                     IrCallArg::StringOutTemp {
                         init, storage_read, ..
                     } => {

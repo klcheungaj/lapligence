@@ -29,6 +29,44 @@ fn element_refs_follow_elements_until_outdated() {
 }
 
 #[test]
+fn string_element_refs_follow_elements_until_outdated() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/string_element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "string_element_refs", expected, &[], &[]);
+    let invalid =
+        include_str!("../fixtures/sim/feature_completion/sim_008/string_element_refs_invalid.out");
+    sim_cli::run_case_backend_parity(SUITE, "string_element_refs_invalid", invalid, &[], &[]);
+}
+
+#[test]
+fn record_element_refs_share_the_element_until_outdated() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_refs", expected, &[], &[]);
+    let members = include_str!("../fixtures/sim/feature_completion/sim_008/record_member_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_member_refs", members, &[], &[]);
+}
+
+#[test]
+fn module_record_leaves_bind_ref_formals_by_run_time_index() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/record_leaf_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_leaf_refs", expected, &[], &[]);
+    let members =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_leaf_ref_members.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_leaf_ref_members", members, &[], &[]);
+}
+
+#[test]
+fn module_records_bind_class_method_ref_formals() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_method_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_method_refs", expected, &[], &[]);
+    let waits =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_method_ref_waits.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_method_ref_waits", waits, &[], &[]);
+}
+
+#[test]
 fn native_record_ref_formals_alias_subroutine_records() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_008/record_refs.out");
     sim_cli::run_case_backend_parity(SUITE, "record_refs", expected, &[], &[]);
@@ -52,12 +90,11 @@ fn timed_record_refs_share_the_record_with_other_processes() {
 #[test]
 fn unbindable_record_ref_actuals_are_rejected_explicitly() {
     const UNBOUND: &str = "ref actual of native record formal `r` in `tb` must be a whole subroutine record, or a module, static or procedural-block record or a constant member/index selection of one, of the same type (SIM-008)";
-    sim_cli::reject_case(SUITE, "neg_record_ref_element", UNBOUND);
-    sim_cli::reject_case(SUITE, "neg_record_ref_member", UNBOUND);
+    sim_cli::reject_case(SUITE, "neg_record_ref_container_member", UNBOUND);
     sim_cli::reject_case(
         SUITE,
-        "neg_record_ref_method",
-        "a module, static or procedural-block record as the actual of native record `ref` formal `r` of method `f` in `tb` is not supported (SIM-008)",
+        "neg_record_ref_interface_method",
+        "a module, static or procedural-block record as the actual of native record `ref` formal `r` of virtual-interface method `f` in `tb` is not supported (SIM-008)",
     );
     sim_cli::reject_case(
         SUITE,

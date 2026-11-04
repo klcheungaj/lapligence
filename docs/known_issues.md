@@ -518,6 +518,9 @@ and handles declared in procedural blocks, member defaults and any record
 source as a module-record initializer, and member-wise equality of nested
 records and member arrays; SIM-008 binds native record `ref` formals to whole
 subroutine records and to module, static and procedural-block records;
+retained element references bind them to fixed-array, queue, dynamic and
+associative array elements, and `ref` formals of any kind to members of those
+elements and of subroutine records, constant or run-time indexed;
 FIN-001 adds nonblocking writes to members of fixed-array record elements, of
 records with container members and of static subroutine records.
 
@@ -561,15 +564,17 @@ with an ambiguous predicate on such records);
 compound writes through a run-time index (`r.a[k] += 1`);
 a run-time index into a native member array of more than 4,096 elements
 (`NATIVE_MEMBER_SELECT_LIMIT`), 256 when it selects whole records
-(`NATIVE_RECORD_SELECT_LIMIT`); as the actual of a native record
-`ref` formal, an element of a queue, dynamic, associative or fixed array of
-records, a run-time-indexed member, a member of a subroutine record, or any
-module, static or block record passed to a class method (whole subroutine
-records and module, static and block records or constant selections of
-them bind); an event control on a member of such a formal when the actual is
-a subroutine record (a generic lowering diagnostic); a `queue` of native
-records as a member of a module record element (the element has no type
-descriptor); sub-record, member-array or handle selects of a native call
+(`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a
+container element whose record has container members, a real member of a
+container element or subroutine record, and a run-time-indexed record element
+of a module, static or block record (`tr(o.e[i])`; its scalar members and
+members bind), and as the actual of a native record `ref` formal of a
+virtual-interface method, any module, static or block record (whole subroutine records, array elements and module, static
+and block records or constant selections of them bind, class methods
+included); an event control on a member
+of such a formal when the actual is a subroutine record (a generic lowering
+diagnostic); a `queue` of native records as a member of a module record element
+(the element has no type descriptor); sub-record, member-array or handle selects of a native call
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
@@ -614,16 +619,17 @@ constant has no captured value. A native `ref` formal is the caller's
 `llg_value_t` and companion containers when the actual is a whole subroutine
 record; a module-like record has no such value, so a call binding one runs a
 specialization of the subroutine that names the record's leaves directly,
-which needs the record statically: an element selected at run time or held
-in a container has neither, and a method's receiver dispatch does not reach
-specializations.
+which needs the record statically: a run-time record element has neither form
+(a scalar leaf is chosen among stable addresses at the call), and a
+virtual-interface slot does not reach specializations
+(a class method's virtual family gets one slot per binding). An element reference shares the element's item array, but
+the companion containers of a record with container members belong to the
+element's own frame.
 
 ### Intended direction
 
 An addressed-container operand for container members of elements (in place
-of statement staging); retained element cells (SIM-008 container element
-references) passed as one reference per leaf for element actuals of native
-`ref` formals, which specialization cannot bind; a direct run-time item index
+of statement staging); a direct run-time item index
 for member selects of subroutine records, whose elements share one value; a
 commit-time tag guard on queued
 native writes for tagged-union member NBAs; and per-activation native
@@ -632,7 +638,7 @@ roots for forked automatic block records, strings and handles.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
-`sim_008/neg_record_ref_{element,member,method}.sv`,
+`sim_008/neg_record_ref_{container_member,interface_method}.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
@@ -1520,16 +1526,14 @@ gone; every remaining form rejects at the call with its location).
 
 ### Symptom
 
-Three legal forms reject explicitly instead of running:
+Two legal forms reject explicitly instead of running:
 
 - A task waiting on a member of a native record `ref` formal (an unpacked
   structure with a string, container or class member) called with a record
-  that is a class property or a task-automatic variable ("waits on a native
+  that is a class property, a task-automatic variable or an array element
+  ("waits on a native
   record `ref` formal, so each of its record actuals must be a module, static
   or procedural-block record").
-- A waited string or handle `ref` formal whose actual is an element of an
-  unpacked array of strings or handles ("is neither a variable nor a class
-  property; its changes publish no marker").
 - `@(s)` on a subroutine string or handle that is neither a `ref` formal nor
   shared with a fork branch (only the waiting process could change it).
 
@@ -1537,94 +1541,56 @@ Everything else takes the typed call path: packed and real `ref` formals
 bound to variables, fixed-array, queue, dynamic and associative array
 elements, unpacked-structure members and class properties, unpacked
 aggregate and virtual-interface `ref` formals, and string and handle `ref`
-formals bound to module, static, process or fork-shared variables and class
-properties. Handle stores through a `ref` formal publish at the store.
+formals bound to module, static, process or fork-shared variables, class
+properties and array elements. Handle stores through a `ref` formal publish at
+the store.
 
 ### Cause
 
 A native record `ref` formal's body reads leaves that only a record
 specialization binds; class-property and automatic records have no static
-leaves. Elements of unpacked string and handle arrays carry no change marker a
-`ref` formal can name.
+leaves.
 
 ### Intended direction
 
-Pass a native record's leaf markers with the record value, and give string
-and handle array elements markers when a wait can observe them (as fork-shared
-strings get one).
+Pass a native record's leaf markers with the record value.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_009/neg_record_ref_wait_actual.sv`,
-`neg_native_element_ref_wait.sv`, `neg_string_event_control.sv`.
+`neg_string_event_control.sv`.
 
 ## Event formals without a typed handle binding
 
-**Status:** open (FIN-001 G3, F06-06). Output and inout event formals bound
-to class event properties execute (copied in at the call and back at
-return, `sim_014/class_event_formals`).
+**Status:** narrowed (FIN-001 G3, F06-06). Output and inout event formals bound
+to class event properties execute in statement calls (copied in at the call and
+back at return, `sim_014/class_event_formals`); a `ref` event formal binds a
+class event property through its object's slot
+(`sim_014/class_event_ref_formal`); output, inout and `ref` event formals of
+functions called in integral expressions bind event variables (decision S13-D3).
 
 ### Symptom
 
-These legal forms reject with explicit diagnostics: a class event property
-(`c.ev`) as the actual of a `ref` event formal (SV 13.5.2 lists class
-properties), and an output, inout or `ref` event formal of a function called
-in an expression (`x = f(h)`, "has no typed value call path").
+These legal forms reject with explicit diagnostics: a class event property as
+the actual of an output or inout event formal of a function called in an
+expression (`x = f(c.ev)`), and any non-input event formal of a function
+returning a string or a handle in an expression.
 
 ### Cause
 
-A class event property stores only the event object's identity in an opaque
-object slot, not an `llg_event_t` handle cell, so there is no address a
-`ref` formal could rebind at once. Function-expression calls lower through
-the value call path, which passes no event handle addresses.
+The copy-back of a class event property is a statement after the call, which
+a value call has no place for; the string and handle value call paths pass no
+event operands.
 
 ### Intended direction
 
-Store class event properties as `llg_event_t` cells (or pass a slot
-descriptor that rebinds through the object), and add event-address
-arguments to value calls. Estimate: 1-2 days each.
+Hoist such calls into a prelude as other copy-out targets do, and share the
+event operand with the string and handle value call paths. Estimate: half a
+day each.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_014/neg_class_event_ref_formal.sv`;
-for function expressions, `function automatic int f(output event o); o = g;
-return 1; endfunction` called as `x = f(h);`.
-
-## `ref` handle formals bound to array elements
-
-**Status:** open (FIN-001 G3, F12-06; SIM-016).
-
-### Symptom
-
-A `ref` formal of a class or built-in handle type (`ref semaphore s`) whose
-actual is an element of a fixed, queue, dynamic or associative array
-(`take(sq[1], 2)`, `take(sa[0], 3)`) is legal (SV 13.5.2) but rejects with
-"element references of handles are not supported (SIM-016)". Output and
-inout handle formals copy out into such elements.
-
-### Cause
-
-Handle `ref` formals are `void**` addresses of a handle variable or
-property. Array elements of handles live in container storage that has no
-stable per-element address (queues and dynamic arrays reallocate), and no
-retained element cell exists for handle elements as `llg_ref_queue` does for
-packed elements.
-
-### Intended direction
-
-Retained handle element cells (the packed `llg_ref_*` element references
-extended to opaque elements, with outdated-reference semantics), or a stable
-element address for fixed arrays. Estimate: 2 days.
-
-### Reproduce
-
-```systemverilog
-module tb;
-  semaphore sa[2];
-  task automatic take(ref semaphore s, input int n); s.get(n); endtask
-  initial begin sa[0] = new(3); take(sa[0], 3); end
-endmodule
-```
+`tests/fixtures/sim/feature_completion/sim_014/neg_class_event_output_value_call.sv`.
 
 ## Wired-logic nets in bidirectional switch networks
 

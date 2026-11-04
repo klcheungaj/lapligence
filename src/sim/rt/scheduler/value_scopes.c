@@ -229,6 +229,20 @@ void* llg_value_scope_object(llg_value_scope_t* scope) {
     return scope ? scope->object : NULL;
 }
 
+static void llg_native_ref_detached_release(void* object) {
+    llg_string_destroy(object);
+}
+
+llg_string_t* llg_native_ref_detached_string(void) {
+    return llg_value_scope_object(llg_value_scope_begin_object(
+        sizeof(llg_string_t), llg_native_ref_detached_release));
+}
+
+void** llg_native_ref_detached_handle(void) {
+    return llg_value_scope_object(
+        llg_value_scope_begin_object(sizeof(void*), NULL));
+}
+
 sv4_t* llg_value_scope_values(llg_value_scope_t* scope) {
     return scope ? scope->values : NULL;
 }

@@ -77,6 +77,31 @@ impl Frame<'_, '_> {
         Ok(pointer)
     }
 
+    /// A descriptor in its own value scope, which the call's marker ends.
+    pub(super) fn scoped_reference(
+        &mut self,
+        kind: &str,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+        selection: &str,
+    ) -> String {
+        let storage = self.scalar(
+            "llg_value_scope_t*",
+            "llg_value_scope_begin_object(sizeof(llg_ref_t), NULL)".to_owned(),
+        );
+        let pointer = self.scalar(
+            "llg_ref_t*",
+            format!("(llg_ref_t*)llg_value_scope_object({storage})"),
+        );
+        self.line(format!(
+            "*{pointer} = (llg_ref_t){{ .kind = {kind}, .width = {width}, .is_signed = {}, .two_state = {}, {selection} }};",
+            u8::from(signed),
+            u8::from(two_state)
+        ));
+        pointer
+    }
+
     pub(super) fn reference_argument(
         &mut self,
         lhs: &IrLhs,

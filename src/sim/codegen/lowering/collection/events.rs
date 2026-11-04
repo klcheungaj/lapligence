@@ -239,6 +239,29 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    /// The call operand binding an output, inout or `ref` event formal to
+    /// the caller's handle storage. A class property's handle lives in its
+    /// object's slot; callers copy one in and back for an output formal.
+    pub(in super::super) fn event_handle_argument(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        target: &EventTarget,
+    ) -> Result<IrCallArg, String> {
+        if let Some(access) = target.access {
+            let slot = self.class_event_slot(path, access, target.declaration)?;
+            return Ok(IrCallArg::EventSlot(format!("&{slot}")));
+        }
+        let event = self.event_ref_of(target, path)?;
+        if matches!(event, IrEventRef::Null | IrEventRef::Handle(_)) {
+            return Err(format!(
+                "event actual for output, inout or ref formal `{}` in `{path}` must be an event variable",
+                self.node(formal).name
+            ));
+        }
+        Ok(IrCallArg::EventAddr(event))
+    }
+
     /// Whether `node` declares resizable container storage of events (at any
     /// nesting depth), such as an event-queue formal or local.
     fn is_event_container(&self, node: NodeId) -> bool {

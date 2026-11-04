@@ -25,11 +25,14 @@ static void llg_queue_value_prepend(llg_queue_value_array_t* queue,
     llg_value_t incoming = {0};
     llg_value_copy(&incoming, queue->element, source);
     llg_queue_value_reserve(queue, new_size);
-    if (old_size == queue->limit && old_size)
+    if (old_size == queue->limit && old_size) {
+        llg_native_refs_removed(&queue->references, old_size - 1);
         llg_value_drop(&queue->data[old_size - 1]);
+    }
     if (new_size > 1)
         memmove(queue->data + 1, queue->data,
                 (new_size - 1) * sizeof(*queue->data));
+    llg_native_refs_opened(queue->references, 0);
     queue->data[0] = incoming;
     queue->size = new_size;
     llg_queue_value_invalidate_refs(queue);
@@ -185,11 +188,14 @@ static int llg_queue_value_insert_source(llg_queue_value_array_t* queue,
     llg_value_t incoming = {0};
     llg_value_copy(&incoming, queue->element, source);
     llg_queue_value_reserve(queue, new_size);
-    if (old_size == queue->limit && old_size)
+    if (old_size == queue->limit && old_size) {
+        llg_native_refs_removed(&queue->references, old_size - 1);
         llg_value_drop(&queue->data[old_size - 1]);
+    }
     if (native < new_size - 1)
         memmove(queue->data + native + 1, queue->data + native,
                 (new_size - native - 1) * sizeof(*queue->data));
+    llg_native_refs_opened(queue->references, native);
     queue->data[native] = incoming;
     queue->size = new_size;
     llg_queue_value_invalidate_refs(queue);
@@ -276,6 +282,7 @@ int llg_queue_value_insert_container_from_packed(
 int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index) {
     size_t native;
     if (!llg_index(index, queue->size, 0, &native)) return 0;
+    llg_native_refs_removed(&queue->references, native);
     llg_value_drop(&queue->data[native]);
     if (native + 1 < queue->size)
         memmove(queue->data + native, queue->data + native + 1,
@@ -298,6 +305,7 @@ static int llg_queue_value_take(llg_queue_value_array_t* queue, int back,
     if (!queue) llg_container_fatal("null queue pop target");
     if (!queue->size) return 0;
     size_t position = back ? queue->size - 1 : 0;
+    llg_native_refs_removed(&queue->references, position);
     *removed = queue->data[position]; // exclusive ownership transfer
     if (!back && queue->size > 1)
         memmove(queue->data, queue->data + 1,

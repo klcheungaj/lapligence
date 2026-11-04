@@ -301,7 +301,7 @@ impl Codegen<'_> {
         Ok(index)
     }
 
-    fn lower_element_slot(
+    pub(super) fn lower_element_slot(
         &mut self,
         path: &str,
         selection: &ElementSelection,

@@ -83,6 +83,10 @@ pub enum IrCallArg {
     /// directly; outputs and inouts work on their own handle and assign it
     /// back when the callee returns.
     EventAddr(IrEventRef),
+    /// `ref` named-event formal bound to a class event property. The slot
+    /// holds the object identity, the one pointer an `llg_event_t` holds, so
+    /// a rebinding by the callee reaches the property at once (SV 13.5.2).
+    EventSlot(String),
     /// Output/inout chandle formal bound to a caller-owned `void **`.
     ChandleAddr(String),
     /// Chandle `ref` formal bound to a caller-owned pointer slot.
@@ -98,6 +102,10 @@ pub enum IrCallArg {
         const_ref: bool,
         observed: bool,
     },
+    /// `ref` formal bound to an element of native container storage or to a
+    /// member of a native record, through a retained reference that lives
+    /// until the call ends.
+    ElementRef(Box<IrElementRef>),
     /// Output/inout formal bound to a direct C address (statement calls):
     /// `&G_sig`, a whole-reference address (`o0`, `&_l0`) or a caller-side
     /// temp declared separately (`&_t5`); passed to the callee verbatim.
@@ -144,6 +152,128 @@ pub enum IrCallArg {
         storage_addr: Option<String>,
         storage_read: Option<Box<IrStringExpr>>,
     },
+}
+
+/// What a [`IrCallArg::ElementRef`] formal addresses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrElementRefKind {
+    String,
+    Handle,
+    /// A native record: the formal takes the value's address.
+    Record,
+    /// A packed leaf: the formal takes an `llg_ref_t` naming it.
+    Packed {
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+}
+
+/// The value a [`IrElementRef`] starts from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrElementRoot {
+    /// One element of descriptor-backed container storage, selected at the
+    /// call: `index` for positions and integral keys, `key` for a string key.
+    Element {
+        container: usize,
+        index: Option<IrExpr>,
+        key: Option<IrStringExpr>,
+    },
+    /// A native value root of the caller.
+    Value(usize),
+    /// One leaf of a module, static or block record, whose leaves have their
+    /// own stable storage, selected by a run-time index among their declared
+    /// indices. An index selecting none binds a private default (SV 7.4.6).
+    Leaves {
+        index: IrExpr,
+        leaves: Vec<(i32, IrLeafTarget)>,
+    },
+}
+
+/// The storage of one leaf of [`IrElementRoot::Leaves`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrLeafTarget {
+    /// The address of a string or handle object.
+    Address(String),
+    /// A packed leaf as a typed lvalue with its read, as in
+    /// [`IrCallArg::RefAddr`].
+    Packed { lhs: IrLhs, read: IrExpr },
+}
+
+/// One selection below an [`IrElementRoot`], evaluated at the call.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrElementStep {
+    /// A record member, or a constant position in a member array.
+    Item(u32),
+    /// A run-time position in a member array.
+    Position(IrExpr),
+}
+
+/// The storage a `ref` formal binds through a retained reference.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrElementRef {
+    pub(in crate::sim) root: IrElementRoot,
+    pub(in crate::sim) steps: Vec<IrElementStep>,
+    pub(in crate::sim) kind: IrElementRefKind,
+    pub(in crate::sim) const_ref: bool,
+}
+
+impl IrElementRef {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match &self.root {
+            IrElementRoot::Element { index, key, .. } => {
+                if let Some(index) = index {
+                    visit(index);
+                }
+                if let Some(key) = key {
+                    key.expressions(visit);
+                }
+            }
+            IrElementRoot::Value(_) => {}
+            IrElementRoot::Leaves { index, leaves } => {
+                visit(index);
+                for (_, leaf) in leaves {
+                    if let IrLeafTarget::Packed { lhs, read } = leaf {
+                        lhs.expressions(visit);
+                        visit(read);
+                    }
+                }
+            }
+        }
+        for step in &self.steps {
+            if let IrElementStep::Position(position) = step {
+                visit(position);
+            }
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match &mut self.root {
+            IrElementRoot::Element { index, key, .. } => {
+                if let Some(index) = index {
+                    visit(index);
+                }
+                if let Some(key) = key {
+                    key.expressions_mut(visit);
+                }
+            }
+            IrElementRoot::Value(_) => {}
+            IrElementRoot::Leaves { index, leaves } => {
+                visit(index);
+                for (_, leaf) in leaves {
+                    if let IrLeafTarget::Packed { lhs, read } = leaf {
+                        lhs.expressions_mut(visit);
+                        visit(read);
+                    }
+                }
+            }
+        }
+        for step in &mut self.steps {
+            if let IrElementStep::Position(position) = step {
+                visit(position);
+            }
+        }
+    }
 }
 
 /// A function/task call used in expression position. The ownership emitter
@@ -422,6 +552,7 @@ impl IrCallArg {
             // An event-array index or handle expression is evaluated at the
             // call site.
             Self::EventVal(event) | Self::EventAddr(event) => event.expressions(visit),
+            Self::ElementRef(reference) => reference.expressions(visit),
             Self::FixedArray(_)
             | Self::NativeValue(_)
             | Self::NativeRefBound
@@ -429,6 +560,7 @@ impl IrCallArg {
             | Self::RealArray(_)
             | Self::ChandleAddr(_)
             | Self::ChandleRefAddr(_)
+            | Self::EventSlot(_)
             | Self::StringOutAddr(_)
             | Self::StringRefAddr { .. }
             | Self::OutAddr(_) => {}
@@ -438,6 +570,7 @@ impl IrCallArg {
         match self {
             Self::FixedValue(value) => value.expressions_mut(visit),
             Self::Val(value) => visit(value),
+            Self::ElementRef(reference) => reference.expressions_mut(visit),
             Self::StringVal(value) => value.expressions_mut(visit),
             Self::ChandleVal(value) => value.expressions_mut(visit),
             Self::RefAddr { lhs, read, .. } => {
@@ -502,6 +635,7 @@ impl IrCallArg {
             | Self::RealArray(_)
             | Self::ChandleAddr(_)
             | Self::ChandleRefAddr(_)
+            | Self::EventSlot(_)
             | Self::StringOutAddr(_)
             | Self::StringRefAddr { .. }
             | Self::OutAddr(_) => {}

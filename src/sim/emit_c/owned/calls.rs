@@ -4,6 +4,7 @@
 use super::native::{NativeKind, NativeValue};
 use super::streaming::CapturedAssignment;
 use super::*;
+use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrElementStep};
 
 /// An output/inout copy-out target, bound at the call or resolved at copy-out.
 enum CopyOutTarget<'l> {
@@ -681,6 +682,10 @@ impl Frame<'_, '_> {
                     ));
                 }
                 IrCallArg::EventAddr(event) => parameters.push(self.event_address(event)?),
+                IrCallArg::EventSlot(address) => {
+                    let slot = self.native_address(address, NativeKind::Chandle)?.address;
+                    parameters.push(format!("(llg_event_t*){slot}"));
+                }
                 IrCallArg::StringRefAddr {
                     addr: address,
                     observed: true,
@@ -696,6 +701,10 @@ impl Frame<'_, '_> {
                 IrCallArg::StringOutAddr(address)
                 | IrCallArg::StringRefAddr { addr: address, .. } => {
                     parameters.push(self.native_address(address, NativeKind::String)?.address);
+                }
+                IrCallArg::ElementRef(reference) => {
+                    let reference = self.element_reference_binding(reference)?;
+                    parameters.extend(reference);
                 }
                 IrCallArg::ChandleRefAddr(address) if self.is_process_slot(address) => {
                     // A `ref` process formal aliases counted process storage;
@@ -959,6 +968,209 @@ impl Frame<'_, '_> {
         self.bindings.pop();
         self.line(format!("llg_value_scopes_end_since({marker});"));
         Ok(result)
+    }
+
+    /// Acquire the retained reference of one element in a value scope, which
+    /// ends with the call even when the callee is cancelled, and return the
+    /// formal's parameters: its address and, for a handle, its marker.
+    fn element_reference_binding(
+        &mut self,
+        reference: &crate::sim::ir::IrElementRef,
+    ) -> Result<Vec<String>, String> {
+        let mut acquire = match &reference.root {
+            IrElementRoot::Leaves { index, leaves } => {
+                return self.leaf_choice_binding(index, leaves, reference.kind);
+            }
+            IrElementRoot::Value(value) => {
+                let address = self.native_value_address(*value)?;
+                self.scalar("void*", format!("llg_native_ref_root({address})"))
+            }
+            IrElementRoot::Element {
+                container,
+                index,
+                key,
+            } => self.element_reference_root(*container, index.as_ref(), key.as_ref())?,
+        };
+        for step in &reference.steps {
+            let position = match step {
+                IrElementStep::Item(position) => position.to_string(),
+                IrElementStep::Position(position) => {
+                    let position = self.expression(position)?;
+                    let code = self.scalar(
+                        "int64_t",
+                        format!("llg_native_ref_position({})", position.code),
+                    );
+                    self.discard(position);
+                    code
+                }
+            };
+            acquire = self.scalar(
+                "void*",
+                format!("llg_native_ref_item({acquire}, {position})"),
+            );
+        }
+        if !reference.steps.is_empty() {
+            acquire = self.scalar("void*", format!("llg_native_ref_bind({acquire})"));
+        }
+        let scope = self.scalar(
+            "llg_value_scope_t*",
+            "llg_value_scope_begin_object(sizeof(void*), llg_native_ref_scope_release)".to_owned(),
+        );
+        self.line(format!(
+            "*(void**)llg_value_scope_object({scope}) = {acquire};"
+        ));
+        Ok(match reference.kind {
+            IrElementRefKind::String => vec![format!("llg_native_ref_string({acquire})")],
+            IrElementRefKind::Handle => vec![
+                format!("llg_native_ref_handle({acquire})"),
+                format!("llg_native_ref_marker({acquire})"),
+            ],
+            IrElementRefKind::Record => vec![format!("llg_native_ref_value({acquire})")],
+            IrElementRefKind::Packed {
+                width,
+                signed,
+                two_state,
+            } => {
+                let pointer = self.scoped_reference(
+                    "LLG_REF_QUEUE",
+                    width,
+                    signed,
+                    two_state,
+                    &format!(".retained = {acquire}, .retained_read = llg_native_ref_packed_read, .retained_write = llg_native_ref_packed_write"),
+                );
+                vec![pointer]
+            }
+        })
+    }
+
+    /// The formal's parameters for one of the stable leaves a run-time index
+    /// selects. Every leaf is rendered first, since a packed one builds a
+    /// descriptor; the chain then only picks parameters.
+    fn leaf_choice_binding(
+        &mut self,
+        index: &IrExpr,
+        leaves: &[(i32, crate::sim::ir::IrLeafTarget)],
+        kind: IrElementRefKind,
+    ) -> Result<Vec<String>, String> {
+        use crate::sim::ir::IrLeafTarget;
+        let index = self.expression(index)?;
+        let tests = leaves.iter().enumerate().rev().fold(
+            "-1".to_owned(),
+            |rest, (position, (declared, _))| {
+                format!(
+                    "llg_native_ref_selects({}, {declared}) ? {position} : {rest}",
+                    index.code
+                )
+            },
+        );
+        let chosen = self.scalar("int", tests);
+        self.discard(index);
+        let mut addresses = Vec::with_capacity(leaves.len());
+        let mut markers = Vec::new();
+        for (_, leaf) in leaves {
+            addresses.push(match (leaf, kind) {
+                (IrLeafTarget::Address(address), IrElementRefKind::String) => {
+                    self.native_address(address, NativeKind::String)?.address
+                }
+                (IrLeafTarget::Address(address), IrElementRefKind::Handle) => {
+                    let slot = self.native_address(address, NativeKind::Chandle)?.address;
+                    markers.push(self.handle_ref_marker(address, &slot)?);
+                    format!("(void**){slot}")
+                }
+                (
+                    IrLeafTarget::Packed { lhs, read },
+                    IrElementRefKind::Packed {
+                        width,
+                        signed,
+                        two_state,
+                    },
+                ) => self.reference_argument(lhs, read, width, signed, two_state)?,
+                _ => return Err("selected leaf does not match its reference".to_owned()),
+            });
+        }
+        let pick = |choices: &[String], fallback: String| {
+            choices
+                .iter()
+                .enumerate()
+                .rev()
+                .fold(fallback, |rest, (position, choice)| {
+                    format!("{chosen} == {position} ? {choice} : {rest}")
+                })
+        };
+        Ok(match kind {
+            IrElementRefKind::String => vec![self.scalar(
+                "llg_string_t*",
+                pick(&addresses, "llg_native_ref_detached_string()".to_owned()),
+            )],
+            IrElementRefKind::Handle => {
+                let address = pick(&addresses, "llg_native_ref_detached_handle()".to_owned());
+                let marker = pick(&markers, "NULL".to_owned());
+                vec![
+                    self.scalar("void**", address),
+                    self.scalar("sv4_t*", marker),
+                ]
+            }
+            IrElementRefKind::Packed {
+                width,
+                signed,
+                two_state,
+            } => {
+                // No storage: reads see the default and writes are dropped.
+                let detached = self.scoped_reference(
+                    "LLG_REF_ARRAY",
+                    width,
+                    signed,
+                    two_state,
+                    ".index = UINT64_MAX",
+                );
+                vec![self.scalar("llg_ref_t*", pick(&addresses, detached))]
+            }
+            IrElementRefKind::Record => {
+                return Err("a record has no selected leaf".to_owned());
+            }
+        })
+    }
+
+    /// Acquire the reference of one container element, selected now.
+    fn element_reference_root(
+        &mut self,
+        container: usize,
+        index: Option<&IrExpr>,
+        key: Option<&crate::sim::ir::IrStringExpr>,
+    ) -> Result<String, String> {
+        let storage = &self.ctx.model.containers[container];
+        let kind = storage.kind.clone();
+        let fixed = storage.initial_size.is_some();
+        let name = self.container_name(container)?;
+        if let Some(key) = key {
+            let key = self.string(key)?;
+            let code = key.code();
+            let acquire = self.scalar(
+                "void*",
+                format!("llg_assoc_value_ref_acquire_string(&{name}, ({code}).data, ({code}).len)"),
+            );
+            self.native_discard(key);
+            return Ok(acquire);
+        }
+        let index = index.ok_or("element reference has no selector")?;
+        let index = self.expression(index)?;
+        let acquire = match kind {
+            IrContainerKind::Dynamic => format!(
+                "llg_dyn_value_ref_acquire(&{name}, {}, {})",
+                index.code,
+                u8::from(fixed)
+            ),
+            IrContainerKind::Queue { .. } => {
+                format!("llg_queue_value_ref_acquire(&{name}, {})", index.code)
+            }
+            IrContainerKind::Associative { .. } => format!(
+                "llg_assoc_value_ref_acquire_integral(&{name}, {})",
+                index.code
+            ),
+        };
+        let acquire = self.scalar("void*", acquire);
+        self.discard(index);
+        Ok(acquire)
     }
 
     #[cfg_attr(not(test), allow(dead_code))] // test-only entry point for owned-call boundary tests

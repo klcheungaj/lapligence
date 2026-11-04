@@ -1,0 +1,23 @@
+took 3
+took 2
+took 1
+took 4
+took 1
+got 5
+got 6
+kept 1
+took 9
+c 3
+cd 7
+cm 1 8
+4 4
+D1 x=1 q0=9 q1=1 sz=3
+D2 x=2 q0=9 q1=2
+D3 x=5
+D4 x=5 sz=2
+D5 x=3 sz=2 q0=9
+ca 11
+late 11
+self 1
+pa 1
+chandle 1

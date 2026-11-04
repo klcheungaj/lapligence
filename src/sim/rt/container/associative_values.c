@@ -40,6 +40,7 @@ void llg_assoc_value_init_string(llg_assoc_value_t* array,
 
 void llg_assoc_value_delete(llg_assoc_value_t* array) {
     int changed = array->size != 0;
+    llg_native_refs_outdate_all(&array->references);
     for (size_t i = 0; i < array->size; ++i) {
         sv4_destroy(&array->entries[i].integral_key);
         free(array->entries[i].string_key);

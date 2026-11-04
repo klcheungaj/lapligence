@@ -152,10 +152,15 @@ impl CellEligibility {
                 IrCallArg::StringVal(value) => self.string(ctx, value),
                 IrCallArg::StringOutAddr(address)
                 | IrCallArg::StringRefAddr { addr: address, .. } => self.address(address),
-                IrCallArg::OutAddr(address) => self.address(address),
+                IrCallArg::OutAddr(address) | IrCallArg::EventSlot(address) => {
+                    self.address(address)
+                }
                 IrCallArg::RefAddr { lhs, read, .. } => {
                     self.lhs(ctx, lhs, true);
                     self.expression(ctx, read);
+                }
+                IrCallArg::ElementRef(reference) => {
+                    reference.expressions(&mut |child| self.expression(ctx, child));
                 }
                 IrCallArg::OutTemp {
                     name,

@@ -353,6 +353,30 @@ fn s20_5_reverse_unpack_consumed() {
 }
 
 #[test]
+fn s13_d4_ref_record_store_wakes_readers() {
+    run_decision(
+        "S13-D4_ref_record_store_wakes_readers",
+        include_str!("fixtures/sim/lrm_decisions/S13-D4_ref_record_store_wakes_readers.out"),
+    );
+}
+
+#[test]
+fn s13_d3_output_event_merges_actual() {
+    run_decision(
+        "S13-D3_output_event_merges_actual",
+        include_str!("fixtures/sim/lrm_decisions/S13-D3_output_event_merges_actual.out"),
+    );
+}
+
+#[test]
+fn s13_d2_ref_binds_missing_entry() {
+    run_decision(
+        "S13-D2_ref_binds_missing_entry",
+        include_str!("fixtures/sim/lrm_decisions/S13-D2_ref_binds_missing_entry.out"),
+    );
+}
+
+#[test]
 fn s13_d1_copy_out_target_at_return() {
     run_decision(
         "S13-D1_copy_out_target_at_return",

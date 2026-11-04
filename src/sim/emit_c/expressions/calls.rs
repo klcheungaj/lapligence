@@ -98,6 +98,8 @@ pub(super) fn render_call_expr(
             | IrCallArg::NativeCall { .. }
             | IrCallArg::RealArrayCall { .. }
             | IrCallArg::EventVal(_)
+            | IrCallArg::EventSlot(_)
+            | IrCallArg::ElementRef(_)
             | IrCallArg::EventAddr(_) => {
                 return Err("event argument requires the ownership emitter".to_owned());
             }
