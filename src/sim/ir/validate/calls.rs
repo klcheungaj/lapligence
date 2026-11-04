@@ -490,7 +490,7 @@ impl Validator<'_> {
                 }
                 IrCallArg::ElementRef(reference) => {
                     use crate::sim::ir::{
-                        IrAssocKey, IrContainerKind, IrElementRefKind, IrElementRoot,
+                        IrAssocKey, IrContainerKind, IrElementRefKind, IrElementRoot, IrLeafTarget,
                     };
                     let matches_formal = match reference.kind {
                         IrElementRefKind::String => formal.string,
@@ -545,6 +545,21 @@ impl Validator<'_> {
                             if *value >= self.model.native_values.len() {
                                 return self
                                     .fail(arg_path, "element reference value is out of bounds");
+                            }
+                        }
+                        IrElementRoot::Leaves { leaves, .. } => {
+                            let packed = matches!(reference.kind, IrElementRefKind::Packed { .. });
+                            let matches_kind = !matches!(reference.kind, IrElementRefKind::Record)
+                                && !leaves.is_empty()
+                                && reference.steps.is_empty()
+                                && leaves.iter().all(|(_, leaf)| {
+                                    matches!(leaf, IrLeafTarget::Packed { .. }) == packed
+                                });
+                            if !matches_kind {
+                                return self.fail(
+                                    arg_path,
+                                    "selected leaf reference does not match its leaves",
+                                );
                             }
                         }
                     }

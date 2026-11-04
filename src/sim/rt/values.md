@@ -68,7 +68,9 @@ add one to any new such operation. A marker of width
 `llg_dependency_changed`, so no other marker may have that width. A member
 actual (`llg_native_ref_root`, `_item`, `_bind`) keeps the element or
 subroutine record alive through its root reference and addresses the selected
-leaf.
+leaf. A run-time index into a module-like record chooses among its stable leaf
+addresses at the call and needs no reference; an index selecting none binds a
+private default cell (`llg_native_ref_detached_string` and its siblings).
 
 Identity-handle elements (SIM-006) copy the handle: events, opaque objects and
 borrowed chandles are never duplicated; `LLG_VALUE_PROCESS` handles are counted

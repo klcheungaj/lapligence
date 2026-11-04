@@ -561,10 +561,11 @@ a run-time index into a native member array of more than 64 elements, and
 one into an array of records nested in a native record that selects a
 handle member or anything but one string, real or integral member
 (`r.e[k].h.v`, `r.e[k].inner`; `r.e[k].s` works); as a `ref` actual, a
-container element whose record has container members and a run-time-indexed
-member of a module, static or block record, and as the actual of a native
-record `ref` formal of a virtual-interface method, any module, static or
-block record (whole subroutine records, array elements and module, static
+container element whose record has container members, a real member of a
+container element or subroutine record, and a run-time-indexed record element
+of a module, static or block record (`tr(o.e[i])`; its scalar members and
+members bind), and as the actual of a native record `ref` formal of a
+virtual-interface method, any module, static or block record (whole subroutine records, array elements and module, static
 and block records or constant selections of them bind, class methods
 included); an event control on a member
 of such a formal when the actual is a subroutine record (a generic lowering
@@ -613,8 +614,9 @@ constant has no captured value. A native `ref` formal is the caller's
 `llg_value_t` and companion containers when the actual is a whole subroutine
 record; a module-like record has no such value, so a call binding one runs a
 specialization of the subroutine that names the record's leaves directly,
-which needs the record statically: a run-time selection among its leaves has
-neither form, and a virtual-interface slot does not reach specializations
+which needs the record statically: a run-time record element has neither form
+(a scalar leaf is chosen among stable addresses at the call), and a
+virtual-interface slot does not reach specializations
 (a class method's virtual family gets one slot per binding). An element reference shares the element's item array, but
 the companion containers of a record with container members belong to the
 element's own frame.

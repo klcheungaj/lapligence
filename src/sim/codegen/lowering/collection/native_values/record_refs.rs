@@ -272,7 +272,7 @@ impl Codegen<'_> {
         const_ref: bool,
     ) -> Result<Option<IrCallArg>, String> {
         let Some(place) = self.native_place(path, node)? else {
-            return Ok(None);
+            return self.module_leaf_ref(path, node, kind, const_ref);
         };
         if matches!(place.root, IrElementRoot::Value(_)) && place.steps.is_empty() {
             return Ok(None);

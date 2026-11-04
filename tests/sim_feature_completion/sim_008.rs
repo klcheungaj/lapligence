@@ -48,6 +48,15 @@ fn record_element_refs_share_the_element_until_outdated() {
 }
 
 #[test]
+fn module_record_leaves_bind_ref_formals_by_run_time_index() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/record_leaf_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_leaf_refs", expected, &[], &[]);
+    let members =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_leaf_ref_members.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_leaf_ref_members", members, &[], &[]);
+}
+
+#[test]
 fn module_records_bind_class_method_ref_formals() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_008/record_method_refs.out");

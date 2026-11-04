@@ -1212,7 +1212,21 @@ fn collect_call_args_rw(function: usize, args: &[IrCallArg], model: &IrModel, rw
                 collect_event_reads(event, model, rw)
             }
             IrCallArg::ElementRef(reference) => {
-                reference.expressions(&mut |child| collect_expr_reads(child, model, rw))
+                reference.expressions(&mut |child| collect_expr_reads(child, model, rw));
+                if let crate::sim::ir::IrElementRoot::Leaves { leaves, .. } = &reference.root {
+                    let write = !reference.const_ref;
+                    for (_, leaf) in leaves {
+                        match leaf {
+                            crate::sim::ir::IrLeafTarget::Address(address) => {
+                                rw.address(address, write)
+                            }
+                            crate::sim::ir::IrLeafTarget::Packed { lhs, .. } if write => {
+                                collect_lhs_rw(lhs, model, rw)
+                            }
+                            crate::sim::ir::IrLeafTarget::Packed { .. } => {}
+                        }
+                    }
+                }
             }
             // A handle argument such as `q[i]` evaluates its selectors at the
             // call site.

@@ -1651,6 +1651,18 @@ fn collect_argument_effects(
             reference.expressions(&mut |child| {
                 collect_expression_effects(ir, child, effects, visited_calls)
             });
+            if let crate::sim::ir::IrElementRoot::Leaves { leaves, .. } = &reference.root {
+                for (_, leaf) in leaves {
+                    match leaf {
+                        crate::sim::ir::IrLeafTarget::Address(address) => {
+                            collect_native_access_effects(ir, address, effects, visited_calls)
+                        }
+                        crate::sim::ir::IrLeafTarget::Packed { lhs, .. } => {
+                            collect_lhs_expression_effects(ir, lhs, effects, visited_calls)
+                        }
+                    }
+                }
+            }
         }
         IrCallArg::RefAddr { lhs, read, .. } => {
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);

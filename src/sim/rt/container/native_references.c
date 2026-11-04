@@ -536,6 +536,11 @@ void* llg_native_ref_bind(void* reference) {
     return ref;
 }
 
+int llg_native_ref_selects(sv4_t index, int64_t declared) {
+    int64_t position = 0;
+    return sv4_to_index_i64(index, &position) && position == declared;
+}
+
 int64_t llg_native_ref_position(sv4_t index) {
     int64_t position = -1;
     return sv4_to_index_i64(index, &position) ? position : -1;

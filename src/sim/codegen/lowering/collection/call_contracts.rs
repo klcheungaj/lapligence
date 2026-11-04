@@ -1162,14 +1162,22 @@ impl<'a> Codegen<'a> {
         match self.kind(actual) {
             NodeKind::Expr(ExprKind::Ref { target: Some(_) }) => true,
             // A hierarchical name of module or package storage.
-            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
-                .last()
-                .copied()
-                .flatten()
-                .is_some_and(|target| matches!(self.kind(target), NodeKind::Var { .. })),
-            // An element's retained reference has its own marker.
+            NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                if refs
+                    .last()
+                    .copied()
+                    .flatten()
+                    .is_some_and(|target| matches!(self.kind(target), NodeKind::Var { .. })) =>
+            {
+                true
+            }
+            // A record leaf has its own marker, and so has the retained
+            // reference of an element or of a member of either.
             _ => {
-                self.class_storage_field(actual).is_some() || self.element_select(actual).is_some()
+                self.class_storage_field(actual).is_some()
+                    || self.element_select(actual).is_some()
+                    || self.unpacked_path_for_expr(actual).is_some()
+                    || self.db.array_select_path(actual).is_some()
             }
         }
     }

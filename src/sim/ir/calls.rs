@@ -177,6 +177,23 @@ pub enum IrElementRoot {
     },
     /// A native value root of the caller.
     Value(usize),
+    /// One leaf of a module, static or block record, whose leaves have their
+    /// own stable storage, selected by a run-time index among their declared
+    /// indices. An index selecting none binds a private default (SV 7.4.6).
+    Leaves {
+        index: IrExpr,
+        leaves: Vec<(i32, IrLeafTarget)>,
+    },
+}
+
+/// The storage of one leaf of [`IrElementRoot::Leaves`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrLeafTarget {
+    /// The address of a string or handle object.
+    Address(String),
+    /// A packed leaf as a typed lvalue with its read, as in
+    /// [`IrCallArg::RefAddr`].
+    Packed { lhs: IrLhs, read: IrExpr },
 }
 
 /// One selection below an [`IrElementRoot`], evaluated at the call.
@@ -199,12 +216,24 @@ pub struct IrElementRef {
 
 impl IrElementRef {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
-        if let IrElementRoot::Element { index, key, .. } = &self.root {
-            if let Some(index) = index {
-                visit(index);
+        match &self.root {
+            IrElementRoot::Element { index, key, .. } => {
+                if let Some(index) = index {
+                    visit(index);
+                }
+                if let Some(key) = key {
+                    key.expressions(visit);
+                }
             }
-            if let Some(key) = key {
-                key.expressions(visit);
+            IrElementRoot::Value(_) => {}
+            IrElementRoot::Leaves { index, leaves } => {
+                visit(index);
+                for (_, leaf) in leaves {
+                    if let IrLeafTarget::Packed { lhs, read } = leaf {
+                        lhs.expressions(visit);
+                        visit(read);
+                    }
+                }
             }
         }
         for step in &self.steps {
@@ -215,12 +244,24 @@ impl IrElementRef {
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
-        if let IrElementRoot::Element { index, key, .. } = &mut self.root {
-            if let Some(index) = index {
-                visit(index);
+        match &mut self.root {
+            IrElementRoot::Element { index, key, .. } => {
+                if let Some(index) = index {
+                    visit(index);
+                }
+                if let Some(key) = key {
+                    key.expressions_mut(visit);
+                }
             }
-            if let Some(key) = key {
-                key.expressions_mut(visit);
+            IrElementRoot::Value(_) => {}
+            IrElementRoot::Leaves { index, leaves } => {
+                visit(index);
+                for (_, leaf) in leaves {
+                    if let IrLeafTarget::Packed { lhs, read } = leaf {
+                        lhs.expressions_mut(visit);
+                        visit(read);
+                    }
+                }
             }
         }
         for step in &mut self.steps {
