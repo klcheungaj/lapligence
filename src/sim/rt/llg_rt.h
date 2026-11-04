@@ -3496,6 +3496,27 @@ void llg_chandle_nba_after(void** target, void* value, uint64_t ticks,
 // from `dst_start`, and notifies changed contents. The target must outlive
 // the pending write. Packed positions and `src` are borrowed.
 struct llg_dyn_value_array_t;
+// Whole-container nonblocking write: `src` is copied now and replaces `target`
+// at commit (`target` NULL: the item of an active nonblocking locator).
+enum {
+    LLG_NBA_CONTAINER_DYN = 0,
+    LLG_NBA_CONTAINER_QUEUE = 1,
+    LLG_NBA_CONTAINER_ASSOC = 2,
+    LLG_NBA_CONTAINER_DYN_VALUE = 3,
+    LLG_NBA_CONTAINER_QUEUE_VALUE = 4,
+    LLG_NBA_CONTAINER_ASSOC_VALUE = 5,
+};
+void llg_container_nba_after(int kind, void* target, const void* src, uint64_t ticks);
+// The next NBA queued writes the item at `items` of a value, found when it
+// commits rather than at the address the NBA call names: an element of `array`
+// at `indices` (fixed here), or `root`. Copies its arguments.
+// `llg_nba_locate_end` ends the request if no NBA was queued.
+void llg_nba_locate_element(struct llg_dyn_value_array_t* array,
+                            const sv4_t* indices, size_t index_count,
+                            const uint32_t* items, size_t item_count);
+void llg_nba_locate_value(struct llg_value_t* root, const uint32_t* items,
+                          size_t item_count);
+void llg_nba_locate_end(void);
 void llg_dyn_value_nba(struct llg_dyn_value_array_t* target, sv4_t dst_start,
                        const struct llg_dyn_value_array_t* src, sv4_t src_start,
                        uint64_t count, int whole);

@@ -157,6 +157,12 @@ process plus a declaration-phase initializer, so Preponed at time 0 already
 sees it. Every clockvar has one static sample cell of its own type; reads of
 `cb.x`, its members and selects resolve to that cell, writes (outputs/inouts)
 to the source. Sample types are limited to packed, real and shortreal.
+Nonblocking writes below a native value use `collection/native_values/nba.rs`:
+indices become issue-time locals (`element_nba_slot`) and the write runs under
+an `NbaLocate` marker. `collection/native_values/member_select.rs` lowers a
+run-time index into a member array to a balanced decision tree over the
+declared indices; its code is linear in the array per access site.
+
 Resizable containers in subroutine, procedural-block and class storage
 (SIM-006) use `collection/subroutine_containers.rs`: storage per (instance,
 declaration), bound into `container_globals` for the body being lowered, with

@@ -141,13 +141,15 @@ impl EmitCtx<'_, '_> {
             }
         }
         if let Some(select) = self.cg.native_member_select(&self.path, lhs)? {
-            if !blocking || op != Operation::Assignment {
+            if op != Operation::Assignment {
                 return Err(format!(
-                    "nonblocking or compound assignment to a run-time selected native record member element in `{}` is not supported",
+                    "compound assignment to a run-time selected native record member element in `{}` is not supported",
                     self.path
                 ));
             }
-            return self.cg.native_member_select_write(&self.path, &select, rhs);
+            return self
+                .cg
+                .native_member_select_write(&self.path, &select, rhs, !blocking);
         }
         if self.cg.native_tagged_access(lhs).is_some() {
             // SV 11.9 checks a member write against the tag current when it
@@ -374,9 +376,9 @@ impl EmitCtx<'_, '_> {
                     self.path
                 ));
             }
-            if self.cg.native_target(lhs) {
+            if self.cg.native_target(lhs) && !self.cg.persistent_native_target(lhs) {
                 return Err(format!(
-                    "nonblocking assignment to native record subroutine storage in `{}` is not supported",
+                    "nonblocking assignment to an automatic native record in `{}` is illegal (SV 6.21, 10.4.2)",
                     self.path
                 ));
             }
@@ -799,7 +801,11 @@ impl EmitCtx<'_, '_> {
         {
             return Ok(vec![statement]);
         }
-        if self.cg.native_record_target(lhs) {
+        // A run-time member select queues one branch's write, as a record
+        // queues one write per leaf.
+        if self.cg.native_record_target(lhs)
+            || matches!(self.cg.native_member_select(&self.path, lhs), Ok(Some(_)))
+        {
             return self.lower_delayed_native_record(h, lhs, rhs, false, scaled_ticks);
         }
         let string_target = self.cg.is_string_expr(&self.path, lhs);
@@ -1261,6 +1267,14 @@ impl EmitCtx<'_, '_> {
         };
         if !blocking {
             self.reject_class_property_nba(lhs)?;
+            // The queued write locates its item from the indices captured at
+            // issue, which a detached event assignment does not carry.
+            if self.cg.names_element_member(self.cg.p30_unwrap_cast(lhs)) {
+                return Err(format!(
+                    "an event-controlled nonblocking assignment to a member of a record element in `{}` is not supported; use a delay or assign the whole element",
+                    self.path
+                ));
+            }
         }
         if op != Operation::Assignment {
             return Err(format!(

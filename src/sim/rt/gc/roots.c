@@ -70,6 +70,15 @@ static void gc_trace_nba(llg_gc_tracer_t* tracer, const llg_nba_t* nba) {
             for (size_t i = 0; i < payload->size; ++i)
                 llg_gc_visit_value(tracer, &payload->data[i]);
     }
+    if (nba->is_container) {
+        const void* payload = nba->native.container.payload;
+        switch (nba->native.container.kind) {
+        case LLG_NBA_CONTAINER_DYN_VALUE: llg_gc_trace_dyn_values(payload, tracer); break;
+        case LLG_NBA_CONTAINER_QUEUE_VALUE: llg_gc_trace_queue_values(payload, tracer); break;
+        case LLG_NBA_CONTAINER_ASSOC_VALUE: llg_gc_trace_assoc_values(payload, tracer); break;
+        default: break;
+        }
+    }
 }
 
 static void gc_trace_nba_queue(llg_gc_tracer_t* tracer, const llg_nba_queue_t* queue) {

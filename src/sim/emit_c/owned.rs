@@ -279,6 +279,19 @@ enum VpiAutoKey {
     Array(usize),
 }
 
+/// Whether a conditional's predicate cannot be X or Z, so its ambiguous arm
+/// (SV 11.4.11) is unreachable. Emitting that arm would evaluate the other
+/// arm twice, doubling the code at every nested conditional.
+fn known_predicate(predicate: &IrExpr) -> bool {
+    matches!(
+        predicate.kind(),
+        IrExprKind::Bin {
+            op: IrBinOp::CaseEq | IrBinOp::CaseNeq,
+            ..
+        }
+    )
+}
+
 fn pending(feature: &str) -> String {
     format!("P05 ownership emission is not yet implemented for {feature}; no C model was emitted")
 }

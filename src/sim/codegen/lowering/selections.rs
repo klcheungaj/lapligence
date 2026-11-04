@@ -542,15 +542,20 @@ impl<'a> Codegen<'a> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let (target, mut path) =
-                    if let Some((target, members)) = self.db.array_select_path(node) {
-                        (
-                            target,
-                            members
-                                .iter()
-                                .cloned()
-                                .map(AggregatePathPart::Member)
-                                .collect(),
-                        )
+                    if let Some((owner, members)) = self.db.array_select_path(node) {
+                        let members = members.iter().cloned().map(AggregatePathPart::Member);
+                        // The owner of a member array is an element select
+                        // when records nest (`m.e[1].a[1]`).
+                        if matches!(
+                            self.kind(owner),
+                            NodeKind::Expr(ExprKind::ArraySelect { .. })
+                        ) {
+                            let (target, mut path) = self.unpacked_path_for_expr(owner)?;
+                            path.extend(members);
+                            (target, path)
+                        } else {
+                            (owner, members.collect())
+                        }
                     } else {
                         match self.kind(*base) {
                             NodeKind::Array { .. } => self.unpacked_array_base_path(*base)?,
@@ -874,6 +879,11 @@ impl<'a> Codegen<'a> {
         base: NodeId,
         indices: &[NodeId],
     ) -> Result<Option<(SignalInfo, u32, u32)>, String> {
+        // A member of a container record element is no signal; its selects
+        // lower relative to the element item.
+        if self.names_element_member(base) {
+            return Ok(None);
+        }
         let target = match self.kind(base) {
             NodeKind::Net { .. } | NodeKind::Var { .. } => Some(base),
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
@@ -946,6 +956,14 @@ impl<'a> Codegen<'a> {
                     self.hier_path_signal(base)
                         .and_then(|info| self.sig_global_for_ir(info.ir))
                         .and_then(|target| self.packed_ranges_for_base(target))
+                })
+                // A member of a container record element has no signal; its
+                // dimensions are captured on the selected expression.
+                .or_else(|| {
+                    self.names_element_member(base)
+                        .then(|| self.db.packed_dimensions(base))
+                        .flatten()
+                        .map(<[_]>::to_vec)
                 }),
             NodeKind::Expr(ExprKind::Ref { target }) => {
                 // A reference expression carries the formal's resolved type

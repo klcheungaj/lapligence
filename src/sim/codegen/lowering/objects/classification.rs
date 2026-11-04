@@ -273,6 +273,14 @@ impl Codegen<'_> {
         if self.is_native_conditional(node, &TypeShape::String) {
             return true;
         }
+        // `r.s[k]`: a run-time element of a string member array.
+        if self
+            .query_descriptor(node)
+            .is_some_and(|descriptor| descriptor.shape == TypeShape::String)
+            && matches!(self.native_member_select(path, node), Ok(Some(_)))
+        {
+            return true;
+        }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),

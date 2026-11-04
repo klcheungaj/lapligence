@@ -1,0 +1,19 @@
+1 nb1.n 5
+1 nb[k].n 5 0.0
+4 nb1.n 6
+4 nb[k].n 6 0.0
+5 posedge v0
+6 nb2.s abc
+7 nb1.n 9
+7 nb[k].n 9 0.0
+8 posedge v0
+9 pb1.n 3
+10 nb[k].n 0 0.0
+11 waited 4
+11 nb[k].n 4 0.0
+12 nb[k].n 4 2.5
+13 names1 b
+15 nb0.a1 3
+16 q0.n 11
+17 aa.s w
+3 1 2 1 6

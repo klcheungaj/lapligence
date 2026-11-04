@@ -1134,6 +1134,62 @@ pub(super) fn render(
                 format!("    llg_value_item_from_{kind}({item}, &{target});\n")
             }
         }
+        IrContainerStmt::NbaLocateEnd => "    llg_nba_locate_end();\n".to_owned(),
+        IrContainerStmt::ContainerNonblocking { target, src, delay } => {
+            let storage = &ctx.model.containers[*src];
+            let kind = match (&storage.kind, storage.element.is_packed()) {
+                (IrContainerKind::Dynamic, true) => "LLG_NBA_CONTAINER_DYN",
+                (IrContainerKind::Queue { .. }, true) => "LLG_NBA_CONTAINER_QUEUE",
+                (IrContainerKind::Associative { .. }, true) => "LLG_NBA_CONTAINER_ASSOC",
+                (IrContainerKind::Dynamic, false) => "LLG_NBA_CONTAINER_DYN_VALUE",
+                (IrContainerKind::Queue { .. }, false) => "LLG_NBA_CONTAINER_QUEUE_VALUE",
+                (IrContainerKind::Associative { .. }, false) => "LLG_NBA_CONTAINER_ASSOC_VALUE",
+            };
+            let target = match target {
+                Some(target) => format!("&{}", name(frame, *target)?),
+                None => "NULL".to_owned(),
+            };
+            let source = name(frame, *src)?;
+            let ticks = match delay {
+                Some(delay) => frame.delay(delay)?,
+                None => "0ULL".to_owned(),
+            };
+            format!("    llg_container_nba_after({kind}, {target}, &{source}, {ticks});\n")
+        }
+        IrContainerStmt::NbaLocate { root, items } => {
+            let list = items
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let items = format!("(const uint32_t[]){{ {list} }}, {}", items.len());
+            match root {
+                IrValueItemRoot::Value(value) => format!(
+                    "    llg_nba_locate_value({}, {items});\n",
+                    frame.native_value_address(*value)?
+                ),
+                IrValueItemRoot::Element(crate::sim::ir::IrChandleExpr::ContainerElement {
+                    container,
+                    indices,
+                    key: None,
+                    ..
+                }) if matches!(
+                    ctx.model.containers[*container].kind,
+                    IrContainerKind::Dynamic
+                ) =>
+                {
+                    let list = super::indices(frame, owners, indices)?;
+                    format!(
+                        "    llg_nba_locate_element(&{}, {list}, {}, {items});\n",
+                        name(frame, *container)?,
+                        indices.len()
+                    )
+                }
+                IrValueItemRoot::Element(_) => {
+                    return Err("nonblocking item root must be a fixed-array element".into())
+                }
+            }
+        }
         IrContainerStmt::DeleteIndex { container, index } => {
             let method = match ctx.model.containers[*container].kind {
                 IrContainerKind::Queue { .. }

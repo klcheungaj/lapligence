@@ -327,15 +327,9 @@ impl Codegen<'_> {
             ));
         }
         if self.native_target(lhs) {
-            return Err(if self.subroutine_auto_target(lhs) {
-                format!(
-                    "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
-                )
-            } else {
-                format!(
-                    "nonblocking assignment to static native record subroutine storage in `{path}` is not supported"
-                )
-            });
+            return Err(format!(
+                "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
+            ));
         }
         if let Some(index) = self.object_of(path, lhs) {
             let object = &self.model.objects[index];

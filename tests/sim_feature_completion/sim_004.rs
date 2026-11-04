@@ -13,6 +13,13 @@ fn persistent_string_and_record_nbas_commit_issue_time_values() {
 }
 
 #[test]
+fn static_subroutine_native_records_take_nonblocking_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_004/static_native_record_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "static_native_record_nba", expected, &[], &[]);
+}
+
+#[test]
 fn chandle_nbas_keep_borrowed_foreign_pointers() {
     if !cfg!(unix) {
         eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
@@ -162,11 +169,6 @@ fn illegal_native_targets_stay_rejected() {
 
 #[test]
 fn unsupported_native_boundaries_are_explicit() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_static_native_record_nba",
-        "nonblocking assignment to native record subroutine storage in `tb` is not supported",
-    );
     sim_cli::reject_case(
         SUITE,
         "neg_delayed_string_continuous",

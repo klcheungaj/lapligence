@@ -5069,6 +5069,22 @@ fn s07_d2_multidim_native_pattern_format() {
 }
 
 #[test]
+fn s07_d5_whole_container_nba() {
+    run_decision(
+        "S07-D5_whole_container_nba",
+        include_str!("fixtures/sim/lrm_decisions/S07-D5_whole_container_nba.out"),
+    );
+}
+
+#[test]
+fn s07_d4_record_element_member_nba() {
+    run_decision(
+        "S07-D4_record_element_member_nba",
+        include_str!("fixtures/sim/lrm_decisions/S07-D4_record_element_member_nba.out"),
+    );
+}
+
+#[test]
 fn s07_d3_comb_reads_element_member() {
     run_decision(
         "S07-D3_comb_reads_element_member",

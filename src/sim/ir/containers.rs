@@ -671,6 +671,24 @@ pub enum IrContainerStmt {
         count: u64,
         delay: Option<IrDelay>,
     },
+    /// Nonblocking replacement of a whole container with a copy of `src`
+    /// taken at issue: of persistent `target`, or of the item an enclosing
+    /// [`Self::NbaLocate`] names when `target` is absent (SV 10.4.2).
+    ContainerNonblocking {
+        target: Option<usize>,
+        src: usize,
+        delay: Option<IrDelay>,
+    },
+    /// The next nonblocking write, up to [`Self::NbaLocateEnd`], targets item
+    /// `items` of `root`: the element position is fixed here and the item is
+    /// found again at commit, so a whole-value write in between cannot leave
+    /// the write behind. The write itself names a read access to that item,
+    /// which only gives it a type.
+    NbaLocate {
+        root: IrValueItemRoot,
+        items: Vec<u32>,
+    },
+    NbaLocateEnd,
     /// Ambiguous-predicate conditional merge of two containers of `dst`'s
     /// kind and element type into `dst` (SV 11.4.11): elements merge leaf by
     /// leaf; known-equal leaves survive, others take their
@@ -1776,6 +1794,44 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
+            Self::NbaLocateEnd => Ok(()),
+            Self::ContainerNonblocking { target, src, .. } => {
+                let src = container_kind(model, *src, None)?;
+                if let Some(target) = target {
+                    let target = container_kind(model, *target, None)?;
+                    if !target.is_global_storage()
+                        || !target.element.compatible_with(&src.element)
+                        || std::mem::discriminant(&target.kind) != std::mem::discriminant(&src.kind)
+                    {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "nonblocking container write requires persistent storage and a source of its type",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            Self::NbaLocate { root, items } => {
+                let mut item = Some(root.element(model)?);
+                for step in items {
+                    item = match item {
+                        Some(IrContainerElement::Aggregate { members, .. }) => members
+                            .get(*step as usize)
+                            .map(|member| member.element.as_ref()),
+                        Some(IrContainerElement::FixedArray { element, .. }) => {
+                            Some(element.as_ref())
+                        }
+                        _ => None,
+                    };
+                }
+                if item.is_none() || items.is_empty() {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "nonblocking item path does not name an item",
+                    ));
+                }
+                Ok(())
+            }
             Self::ValueItemToContainer {
                 root,
                 items,
@@ -2732,6 +2788,11 @@ impl IrContainerStmt {
                 visit(dst_start);
                 visit(src_start);
             }
+            Self::ContainerNonblocking {
+                delay: Some(IrDelay::Runtime { value, .. }),
+                ..
+            } => visit(value),
+            Self::ContainerNonblocking { .. } => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,
@@ -2757,9 +2818,10 @@ impl IrContainerStmt {
             | Self::ResetDefault(_)
             | Self::Declare(_)
             | Self::SharedDeclare(_) => {}
-            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
-                root.expressions(visit)
-            }
+            Self::NbaLocateEnd => {}
+            Self::ValueItemToContainer { root, .. }
+            | Self::ContainerToValueItem { root, .. }
+            | Self::NbaLocate { root, .. } => root.expressions(visit),
         }
     }
 
@@ -2853,6 +2915,11 @@ impl IrContainerStmt {
                 visit(dst_start);
                 visit(src_start);
             }
+            Self::ContainerNonblocking {
+                delay: Some(IrDelay::Runtime { value, .. }),
+                ..
+            } => visit(value),
+            Self::ContainerNonblocking { .. } => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,
@@ -2878,9 +2945,10 @@ impl IrContainerStmt {
             | Self::ResetDefault(_)
             | Self::Declare(_)
             | Self::SharedDeclare(_) => {}
-            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
-                root.expressions_mut(visit)
-            }
+            Self::NbaLocateEnd => {}
+            Self::ValueItemToContainer { root, .. }
+            | Self::ContainerToValueItem { root, .. }
+            | Self::NbaLocate { root, .. } => root.expressions_mut(visit),
         }
     }
 }

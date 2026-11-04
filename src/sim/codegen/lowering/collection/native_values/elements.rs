@@ -20,8 +20,8 @@ enum ElementSelector {
 
 /// One record or fixed-array element of container storage.
 #[derive(Clone)]
-pub(super) struct ElementSelection {
-    pub(super) container: usize,
+pub(in crate::sim::codegen) struct ElementSelection {
+    pub(in crate::sim::codegen) container: usize,
     selector: ElementSelector,
 }
 
@@ -306,6 +306,9 @@ impl Codegen<'_> {
         path: &str,
         selection: &ElementSelection,
     ) -> Result<IrValueSlot, String> {
+        if let Some(slot) = &self.element_nba_target {
+            return Ok(slot.clone());
+        }
         Ok(match &selection.selector {
             ElementSelector::Key(key) => IrValueSlot::Element {
                 indices: Vec::new(),
@@ -611,6 +614,20 @@ impl Codegen<'_> {
         }
     }
 
+    /// Whether `node` is a member path rooted at a selected array element
+    /// (`recs[i].n`), which names no signal of its own.
+    pub(in crate::sim::codegen) fn selected_member_path(&self, node: NodeId) -> bool {
+        let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(node) else {
+            return false;
+        };
+        refs.first().copied().flatten().is_some_and(|first| {
+            matches!(
+                self.kind(first),
+                NodeKind::Expr(ExprKind::ArraySelect { .. } | ExprKind::BitSelect { .. })
+            )
+        })
+    }
+
     /// `element_member_path` with the node naming the whole element.
     pub(super) fn element_member_parts(
         &self,
@@ -731,6 +748,228 @@ impl Codegen<'_> {
             .ok()
             .flatten()
             .map(|(_, leaf)| leaf.ty)
+    }
+
+    /// The element and leaf a nonblocking write of `node` stores to: the
+    /// leaf itself or the packed leaf a select chain is inside; `None` for a
+    /// whole sub-record or member array.
+    pub(in crate::sim::codegen) fn element_nba_leaf(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<(ElementSelection, NativeLeaf)>, String> {
+        if let Some((_, selection, leaf, _)) = self.element_leaf_select(node)? {
+            return Ok(Some((selection, leaf)));
+        }
+        // A whole container member takes the sub-record path.
+        if self.element_container_member(node) {
+            return Ok(None);
+        }
+        if let Some(found) = self.element_leaf(node)? {
+            return Ok(Some(found));
+        }
+        match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => self.element_nba_leaf(*base),
+            NodeKind::Expr(ExprKind::ArraySelect { base, .. })
+                if self.db.array_select_path(node).is_none() =>
+            {
+                self.element_nba_leaf(*base)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Whether `node` names a whole container member of a record element.
+    fn element_container_member(&self, node: NodeId) -> bool {
+        self.element_member_path(node)
+            .is_some_and(|(selection, member)| {
+                self.element_leaves(selection.container, selection.depth())
+                    .is_ok_and(|(_, _, leaves)| {
+                        leaves.containers.iter().any(|leaf| leaf.path == member)
+                    })
+            })
+    }
+
+    /// The selection, member path and scalar and container leaves of a whole
+    /// sub-record, member array or container member of a record element.
+    #[allow(clippy::type_complexity)]
+    pub(in crate::sim::codegen) fn element_member_leaves(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<
+        (
+            ElementSelection,
+            Vec<AggregatePathPart>,
+            Vec<NativeLeaf>,
+            Vec<NativeContainerLeaf>,
+        ),
+        String,
+    > {
+        let not_supported = || {
+            format!(
+                "a nonblocking assignment to this selection of a record element in `{path}` is not supported; assign its members or the whole element"
+            )
+        };
+        let (selection, prefix) = self.element_member_path(node).ok_or_else(not_supported)?;
+        let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        let scalars = leaves
+            .scalars
+            .into_iter()
+            .filter(|leaf| leaf.path.starts_with(&prefix))
+            .collect::<Vec<_>>();
+        let containers = leaves
+            .containers
+            .into_iter()
+            .filter(|leaf| leaf.path.starts_with(&prefix))
+            .collect::<Vec<_>>();
+        if scalars.is_empty() && containers.is_empty() {
+            return Err(not_supported());
+        }
+        Ok((selection, prefix, scalars, containers))
+    }
+
+    /// A native temporary of the element type and the descriptor of the
+    /// member at `prefix`.
+    pub(in crate::sim::codegen) fn element_nba_temporary(
+        &mut self,
+        selection: ElementSelection,
+        source: NodeId,
+        prefix: &[AggregatePathPart],
+    ) -> Result<(usize, TypeDescriptor), String> {
+        let temporary = self.element_temporary(selection.container, selection.depth(), source)?;
+        let layout = self.native_layout_of_value(temporary)?;
+        let descriptor = Self::descriptor_at_path(&layout.descriptor, prefix)
+            .ok_or("record element member has no type")?;
+        Ok((temporary, descriptor))
+    }
+
+    /// A read access to `leaf` that shares a member NBA's captured `slot`.
+    pub(in crate::sim::codegen) fn element_nba_access(
+        &mut self,
+        path: &str,
+        selection: &ElementSelection,
+        slot: &IrValueSlot,
+        leaf: &NativeLeaf,
+    ) -> Result<String, String> {
+        self.element_nba_target = Some(slot.clone());
+        let name = self.element_access(path, selection, leaf, false);
+        self.element_nba_target = None;
+        name
+    }
+
+    /// The element slot of a member NBA with its run-time indices captured
+    /// once, in locals declared by `statements`: the locator and the typed
+    /// access share them.
+    pub(in crate::sim::codegen) fn element_nba_slot(
+        &mut self,
+        path: &str,
+        selection: &ElementSelection,
+        statements: &mut Vec<IrStmt>,
+    ) -> Result<IrValueSlot, String> {
+        let mut slot = self.lower_element_slot(path, selection)?;
+        let IrValueSlot::Element { indices, .. } = &mut slot else {
+            unreachable!("element selections lower to element slots");
+        };
+        for index in indices.iter_mut() {
+            if matches!(index.kind(), IrExprKind::Const(_)) {
+                continue;
+            }
+            let name = format!("_llg_nba_index_{}", self.native_copy_sequence);
+            self.native_copy_sequence += 1;
+            let (width, signed) = (index.width, index.signed);
+            statements.push(IrStmt::DeclLocal {
+                name: name.clone(),
+                width,
+                signed,
+                two_state: false,
+                init: Some(Box::new(index.clone())),
+            });
+            *index = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+        }
+        Ok(slot)
+    }
+
+    /// Whether `node` names a whole packed leaf of a container record
+    /// element.
+    pub(in crate::sim::codegen) fn element_packed_leaf(&self, node: NodeId) -> bool {
+        self.names_element_member(node)
+            && matches!(
+                self.element_leaf_kind(node),
+                Some(IrClassFieldType::Packed { .. })
+            )
+    }
+
+    /// `recs[i].a[1][k]`: the frontend flattens a bit of a packed element
+    /// of a member array into one select. Returns the array node, the
+    /// packed leaf and the indices that select inside it.
+    #[allow(clippy::type_complexity)]
+    fn element_leaf_select(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<(NodeId, ElementSelection, NativeLeaf, Vec<NodeId>)>, String> {
+        let NodeKind::Expr(ExprKind::ArraySelect { base, indices }) = self.kind(node) else {
+            return Ok(None);
+        };
+        let Some((owner, members)) = self.db.array_select_path(node) else {
+            return Ok(None);
+        };
+        let Some(selection) = self.record_element_of(owner) else {
+            return Ok(None);
+        };
+        let mut path: Vec<_> = members
+            .iter()
+            .cloned()
+            .map(AggregatePathPart::Member)
+            .collect();
+        let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        for position in 0..=indices.len() {
+            if let Some(leaf) = leaves.scalars.iter().find(|leaf| leaf.path == path) {
+                let trailing = indices[position..].to_vec();
+                return Ok((!trailing.is_empty()
+                    && matches!(leaf.ty, IrClassFieldType::Packed { .. }))
+                .then(|| (*base, selection, leaf.clone(), trailing)));
+            }
+            let Some(index) = indices
+                .get(position)
+                .and_then(|index| self.eval_bound_i128(*index).ok())
+                .and_then(|index| i32::try_from(index).ok())
+            else {
+                return Ok(None);
+            };
+            path.push(AggregatePathPart::Index(index));
+        }
+        Ok(None)
+    }
+
+    /// Packed steps of the selects inside a leaf named by
+    /// [`Self::element_leaf_select`], with the leaf's access and width.
+    pub(in crate::sim::codegen) fn element_leaf_select_steps(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        write: bool,
+    ) -> Result<
+        Option<(
+            String,
+            IrClassFieldType,
+            Vec<crate::sim::ir::IrPackedSelect>,
+        )>,
+        String,
+    > {
+        let Some((array, selection, leaf, trailing)) = self.element_leaf_select(node)? else {
+            return Ok(None);
+        };
+        let IrClassFieldType::Packed { width, .. } = leaf.ty else {
+            return Ok(None);
+        };
+        let name = self.element_access(path, &selection, &leaf, write)?;
+        let mut width = width;
+        let steps = self.packed_steps_of_elements(path, array, trailing, &mut width)?;
+        Ok(Some((name, leaf.ty, steps)))
     }
 
     /// A fresh access to the element leaf named by `node`. A `write` access
@@ -1063,6 +1302,11 @@ impl Codegen<'_> {
                     overwritten = children.first().copied();
                 }
                 for (position, child) in children.into_iter().enumerate() {
+                    // A nonblocking write of a whole member is queued from
+                    // the source, without a staged copy of the target.
+                    if position == 0 && !blocking && self.element_container_member(child) {
+                        continue;
+                    }
                     // A nested element assigned whole (`row = qq[i]`) is read
                     // from a staged copy.
                     if position == 1 && self.stage_whole_read(child, &mut members, &mut nested) {
@@ -1435,6 +1679,8 @@ impl Codegen<'_> {
         else {
             unreachable!("element selections lower to element slots");
         };
+        // The access of a queued write only types it: nothing changes yet.
+        let write = write && self.element_nba_target.is_none();
         let name = format!("_llg_access_{}", self.model.native_accesses.len());
         self.model
             .native_accesses

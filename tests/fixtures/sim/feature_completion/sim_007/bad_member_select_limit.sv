@@ -1,8 +1,7 @@
-// SIM-007 boundary: a run-time index selects one of at most 64 member-array
-// elements of a native record; a 65-element member array is rejected at
-// code generation, while 64 elements are accepted (see native_member_select).
+// SIM-007 boundary: a native record member array above the 4,096-element dense
+// threshold is rejected at code generation, so no run-time select expands it.
 module tb;
-    typedef struct { string s[65]; } wide_t;
+    typedef struct { string s[4097]; } wide_t;
     wide_t w;
     int k;
     initial begin

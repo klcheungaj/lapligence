@@ -114,11 +114,36 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
             origin,
             statement: Box::new(retime_nonblocking(*statement, ticks, path)?),
         },
+        // The branch of a run-time member select is chosen at issue.
+        IrStmt::If {
+            cond,
+            then_,
+            els,
+            check,
+        } => {
+            let retime = |statements: Vec<IrStmt>| {
+                statements
+                    .into_iter()
+                    .map(|statement| retime_nonblocking(statement, ticks, path))
+                    .collect::<Result<Vec<_>, _>>()
+            };
+            IrStmt::If {
+                cond,
+                then_: retime(then_)?,
+                els: els.map(retime).transpose()?,
+                check,
+            }
+        }
         IrStmt::Assign {
             lhs,
             rhs,
             nba: true,
         } => IrStmt::DelayedAssign {
+            lhs,
+            rhs,
+            ticks: ticks.clone(),
+        },
+        IrStmt::DelayedAssign { lhs, rhs, .. } => IrStmt::DelayedAssign {
             lhs,
             rhs,
             ticks: ticks.clone(),
@@ -133,6 +158,20 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
             rhs,
             ticks: ticks.clone(),
         },
+        IrStmt::Container(operation)
+            if matches!(*operation, IrContainerStmt::ContainerNonblocking { .. }) =>
+        {
+            let IrContainerStmt::ContainerNonblocking { target, src, .. } = *operation else {
+                unreachable!("guard checked the statement");
+            };
+            IrStmt::Container(Box::new(IrContainerStmt::ContainerNonblocking {
+                target,
+                src,
+                delay: Some(ticks.clone()),
+            }))
+        }
+        // Every other container statement fills a capture at issue.
+        statement @ IrStmt::Container(_) => statement,
         // Captures and the calls that produce native sources run at issue.
         statement @ (IrStmt::DeclLocal { .. }
         | IrStmt::DeclString { .. }
@@ -140,10 +179,18 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
         | IrStmt::Call(_)
         | IrStmt::Nop) => statement,
         IrStmt::Object(operation)
-            if matches!(*operation, IrObjectStmt::ChandleDeclareLocal(..)) =>
+            if matches!(
+                *operation,
+                IrObjectStmt::ChandleDeclareLocal(..)
+                    | IrObjectStmt::StringAssignLocal(..)
+                    | IrObjectStmt::ChandleAssignLocal(..)
+            ) =>
         {
             IrStmt::Object(operation)
         }
+        // A blocking write in a queued statement fills a capture: pattern
+        // members into a lexical temporary.
+        statement @ IrStmt::Assign { nba: false, .. } => statement,
         _ => {
             return Err(format!(
                 "delayed nonblocking assignment of this native record shape in `{path}` is not supported"

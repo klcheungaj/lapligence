@@ -20,6 +20,7 @@ mod conditionals;
 mod elements;
 mod member_select;
 mod messages;
+mod nba;
 mod record_refs;
 pub(in crate::sim::codegen::lowering) use record_refs::RecordRefDispatch;
 mod tagged;
@@ -748,6 +749,26 @@ impl Codegen<'_> {
                             .collect(),
                     )));
                 }
+                // A member of a constant element of a nested record array
+                // (`r.e[1].h`).
+                if let Some(Some(first)) = refs.first() {
+                    if matches!(
+                        self.kind(*first),
+                        NodeKind::Expr(ExprKind::ArraySelect { .. })
+                    ) {
+                        if let Ok(Some((value, mut path))) = self.native_path_of(*first) {
+                            path.extend(
+                                parts
+                                    .iter()
+                                    .skip(1)
+                                    .filter(|part| !part.is_empty())
+                                    .cloned()
+                                    .map(AggregatePathPart::Member),
+                            );
+                            return Ok(Some((value, path)));
+                        }
+                    }
+                }
                 let Some((index, value)) = refs.iter().enumerate().find_map(|(index, target)| {
                     target.and_then(|target| self.native_roots.get(&target).map(|v| (index, *v)))
                 }) else {
@@ -777,16 +798,27 @@ impl Codegen<'_> {
                         .map(|child| self.native_path_of(child))
                         .transpose()?
                         .flatten(),
-                    Some((owner, members)) => self.native_roots.get(&owner).map(|value| {
-                        (
-                            *value,
-                            members
-                                .iter()
-                                .cloned()
-                                .map(AggregatePathPart::Member)
-                                .collect::<Vec<_>>(),
-                        )
-                    }),
+                    Some((owner, members)) => {
+                        let members = members.iter().cloned().map(AggregatePathPart::Member);
+                        match self.native_roots.get(&owner) {
+                            Some(value) => Some((*value, members.collect::<Vec<_>>())),
+                            // The owner is an element select when records
+                            // nest (`r.e[1].a[1]`).
+                            None if matches!(
+                                self.kind(owner),
+                                NodeKind::Expr(ExprKind::ArraySelect { .. })
+                            ) =>
+                            {
+                                self.native_path_of(owner).ok().flatten().map(
+                                    |(value, mut path)| {
+                                        path.extend(members);
+                                        (value, path)
+                                    },
+                                )
+                            }
+                            None => None,
+                        }
+                    }
                     None => self.native_path_of(*base)?,
                 };
                 let Some((value, mut path)) = rooted else {
@@ -1189,9 +1221,18 @@ impl Codegen<'_> {
                 ));
             };
             if nba {
-                return Err(format!(
-                    "nonblocking assignment of a record with a queue, dynamic or associative member is not supported in `{path}`"
-                ));
+                if !self.model.containers[*target].is_global_storage() {
+                    return Err(format!(
+                        "nonblocking assignment to a container member of an automatic record in `{path}` is illegal (SV 6.21, 10.4.2)"
+                    ));
+                }
+                return Ok(IrStmt::Container(Box::new(
+                    IrContainerStmt::ContainerNonblocking {
+                        target: Some(*target),
+                        src: source,
+                        delay: None,
+                    },
+                )));
             }
             return Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {
                 dst: *target,
@@ -1204,10 +1245,14 @@ impl Codegen<'_> {
             ));
         }
         if nba {
-            let NativeEndpointLeaf::Module(leaf) = leaf else {
-                return Err(format!(
-                    "nonblocking assignment to native record subroutine storage in `{path}` is not supported"
-                ));
+            let leaf = match leaf {
+                NativeEndpointLeaf::Module(leaf) => leaf,
+                NativeEndpointLeaf::Value(native, leaf) => {
+                    return self.native_leaf_nba(path, *native, leaf, value)
+                }
+                NativeEndpointLeaf::Container(_) => {
+                    return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
+                }
             };
             return match value {
                 LeafValue::Container(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
@@ -1769,6 +1814,30 @@ impl Codegen<'_> {
                 return Ok(statement);
             }
         }
+        // A queued pattern is built at issue in a temporary of the target's
+        // type, whose leaves then queue one by one.
+        if let (true, NativeEndpoint::Value { value, prefix }) = (nba, target) {
+            let pattern = self.unwrap_assignment_pattern_cast(rhs);
+            if self.assignment_pattern_operands(path, pattern)?.is_some() {
+                let temporary = self.native_temporary_like(*value)?;
+                let Some(fill) =
+                    self.native_pattern_into(path, temporary, prefix, descriptor, rhs)?
+                else {
+                    return Err(format!(
+                        "native record assignment in `{path}` has no record source"
+                    ));
+                };
+                let source = NativeEndpoint::Value {
+                    value: temporary,
+                    prefix: prefix.clone(),
+                };
+                return Ok(IrStmt::Block(vec![
+                    IrStmt::NativeValueDeclare(temporary),
+                    fill,
+                    self.native_transfer(path, target, &source, true)?,
+                ]));
+            }
+        }
         let source = self.p30_unwrap_cast(rhs);
         if self.native_record_conditional(source) {
             return self.native_conditional_into(path, target, descriptor, source, nba);
@@ -1777,6 +1846,9 @@ impl Codegen<'_> {
         // queues every leaf (SV 10.4.2).
         if let Some(statement) = self.container_record_into(path, target, source, nba)? {
             return Ok(statement);
+        }
+        if let Some(select) = self.native_record_select(path, source)? {
+            return self.native_record_select_into(path, &select, target, source, nba);
         }
         if let Some((source, _)) = self.native_endpoint(source)? {
             return self.native_transfer(path, target, &source, nba);
@@ -1970,6 +2042,24 @@ impl Codegen<'_> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if op == Operation::Assignment {
+            if let Some(select) = self.native_record_select(path, lhs)? {
+                return self
+                    .native_record_select_write(path, &select, lhs, rhs, nba)
+                    .map(Some);
+            }
+            let source = self.p30_unwrap_cast(rhs);
+            if let Some(select) = self.native_record_select(path, source)? {
+                let Some((target, _)) = self.native_endpoint(lhs)? else {
+                    return Err(format!(
+                        "a run-time selected record in `{path}` needs a native record target"
+                    ));
+                };
+                return self
+                    .native_record_select_into(path, &select, &target, source, nba)
+                    .map(Some);
+            }
+        }
         let lhs_native = self.native_path_of(lhs)?.is_some();
         let rhs_native = self
             .native_path_of(self.p30_unwrap_cast(rhs))
@@ -1990,18 +2080,14 @@ impl Codegen<'_> {
             }
             return Ok(None);
         };
-        // Only module record targets are persistent leaf objects; native
-        // roots are subroutine storage whose leaves move on replacement.
-        if nba && lhs_native {
-            return Err(if self.subroutine_auto_target(lhs) {
-                format!(
-                    "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
-                )
-            } else {
-                format!(
-                    "nonblocking assignment to static native record subroutine storage in `{path}` is not supported"
-                )
-            });
+        // Static roots queue located writes; automatic roots are illegal.
+        if nba
+            && lhs_native
+            && (self.subroutine_auto_target(lhs) || !self.persistent_native_target(lhs))
+        {
+            return Err(format!(
+                "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
+            ));
         }
         if op != Operation::Assignment {
             return Err(format!(

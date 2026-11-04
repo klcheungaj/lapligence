@@ -822,7 +822,11 @@ fn collect_effects(
                 ScheduleRegion::NonblockingAssign,
             )),
             IrStmt::Container(operation)
-                if matches!(**operation, IrContainerStmt::Nonblocking { .. }) =>
+                if matches!(
+                    **operation,
+                    IrContainerStmt::Nonblocking { .. }
+                        | IrContainerStmt::ContainerNonblocking { .. }
+                ) =>
             {
                 effects.push(ExecutionEffect::EnqueueUpdate(
                     ScheduleRegion::NonblockingAssign,

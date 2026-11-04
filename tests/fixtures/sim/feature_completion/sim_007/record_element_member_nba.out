@@ -1,0 +1,24 @@
+0 [] 0.0 1
+1 change n 9
+9 [new] 2.5 7 a5 4
+2 change n 2
+2 change n 11
+11 [w] 0
+11000100 00000f00
+0 [] xxxxxxxx
+0 []
+0
+5
+8 change n 21
+3 [gg] 21 1
+5 21 0
+10 change n 5
+5 [a]
+11 change n 2
+2 [b]
+12 change n 4
+4 [t]
+[] 0
+[srcv] 3
+4 5 p q
+[d] 9 [z]

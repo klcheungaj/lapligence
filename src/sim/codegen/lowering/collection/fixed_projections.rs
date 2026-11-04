@@ -1058,6 +1058,48 @@ impl Codegen<'_> {
                 };
                 let mut width =
                     fixed_width(&projection.descriptor).ok_or("fixed value has no width")?;
+                // An unpacked slice counts elements: the array image keeps
+                // its leftmost element most significant, so the dimension
+                // selects like a packed one.
+                if let TypeShape::FixedArray {
+                    dimensions,
+                    element,
+                } = &projection.descriptor.shape
+                {
+                    let (left, right) =
+                        *dimensions.first().ok_or("fixed slice has no dimension")?;
+                    let count = i32::try_from(self.eval_bound_i128(width_expr)?)
+                        .map_err(|_| "fixed slice width overflow")?;
+                    let mut dimensions = dimensions.clone();
+                    dimensions[0] = if left <= right {
+                        (0, count - 1)
+                    } else {
+                        (count - 1, 0)
+                    };
+                    let shape = TypeShape::FixedArray {
+                        dimensions,
+                        element: element.clone(),
+                    };
+                    let range = crate::core::db::PackedRange {
+                        left: i128::from(left),
+                        right: i128::from(right),
+                    };
+                    let steps = self.packed_selection_steps_over(
+                        path,
+                        &[range],
+                        vec![super::packed_elements::Select::Indexed(
+                            base_expr, width_expr, neg,
+                        )],
+                        width,
+                    )?;
+                    projection.descriptor.shape = shape;
+                    projection
+                        .steps
+                        .extend(steps.into_iter().map(|step| (step, false, None)));
+                    projection.signed = false;
+                    projection.ref_legal = false;
+                    return Ok(Some(projection));
+                }
                 let mut steps = Vec::new();
                 self.packed_selection_steps(
                     path,

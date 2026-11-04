@@ -699,6 +699,8 @@ typedef struct {
     llg_module_path_set_t* module_path_sets; // bound sets, owned path state
     llg_timing_check_set_t* timing_check_sets; // started sets, owned state
     uint64_t nba_sequence;
+    // Destination of the next NBA, set by llg_nba_locate_*.
+    struct llg_nba_locator* nba_locator;
     llg_wait_t* timed_head;   // sorted ascending by time
     llg_wait_queue_t zero_waits[LLG_REGION_COUNT];
     llg_wait_t* waiters;      // all active waits

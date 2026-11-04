@@ -140,18 +140,57 @@ fn adopted_native_value_witnesses() {
 }
 
 #[test]
+fn record_element_members_take_event_controls_and_selects() {
+    let events =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_element_events.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_events", events, &[], &[]);
+    let selects =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_element_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_selects", selects, &[], &[]);
+}
+
+#[test]
+fn record_element_members_take_nonblocking_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_element_member_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_member_nba", expected, &[], &[]);
+}
+
+#[test]
+fn records_with_container_members_take_nonblocking_writes() {
+    let copies =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_container_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_container_nba", copies, &[], &[]);
+    let sources =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_container_nba_sources.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_container_nba_sources", sources, &[], &[]);
+}
+
+#[test]
+fn indexed_slices_of_fixed_arrays_pass_by_value() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/fixed_variable_slice_actuals.out");
+    sim_cli::run_case_backend_parity(SUITE, "fixed_variable_slice_actuals", expected, &[], &[]);
+}
+
+#[test]
 fn run_time_member_indices_select_native_record_elements() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select", expected, &[], &[]);
-    sim_cli::run_case_backend_parity(SUITE, "member_select_limit", "xy []\n", &[], &[]);
+    let wide =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_wide.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_member_select_wide", wide, &[], &[]);
     let nested =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_nested.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_nested", nested, &[], &[]);
+    let records =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_records.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_member_select_records", records, &[], &[]);
     sim_cli::reject_case_with_args(
         SUITE,
         "bad_member_select_limit",
-        "run-time index into a native record member array of 65 elements in `tb` is not supported; at most 64 are",
+        "record member array `w.s` in `tb` needs integral elements within the packed limit",
         &[],
     );
 }
@@ -230,11 +269,6 @@ fn record_container_member_boundaries_are_rejected_explicitly() {
         SUITE,
         "bad_record_container_element",
         "record elements of a queue, dynamic, associative or fixed array with associative array member `a` are not supported: the element value has no nested associative form",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "bad_record_container_nba",
-        "nonblocking assignment of a record with a queue, dynamic or associative member `q` is not supported",
     );
     sim_cli::reject_case(
         SUITE,
@@ -447,13 +481,8 @@ fn container_elements_hold_records_with_container_members() {
     );
     sim_cli::reject_case(
         SUITE,
-        "bad_record_element_member_nba",
-        "nonblocking assignment to a queue or dynamic-array member of a container record element in `tb` is not supported",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "bad_record_element_leaf_nba",
-        "a nonblocking assignment to a member of a record element in `tb` is not supported; assign the whole element",
+        "bad_record_element_event_nba",
+        "an event-controlled nonblocking assignment to a member of a record element in `tb` is not supported; use a delay or assign the whole element",
     );
     sim_cli::reject_case(
         SUITE,

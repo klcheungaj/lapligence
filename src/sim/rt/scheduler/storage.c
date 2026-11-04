@@ -39,6 +39,18 @@ typedef enum {
 static void value_scope_release(llg_value_scope_t* scope);
 static llg_value_scope_t* value_scope_retain_target(const void* target);
 
+// A nonblocking destination inside a native value: its item may move when
+// the whole value is replaced before the NBA region, so it is located again
+// at commit, from a descriptor array element fixed at issue or a value root.
+typedef struct llg_nba_locator {
+    llg_dyn_value_array_t* array;
+    llg_value_t* root;
+    sv4_t* indices;
+    size_t index_count;
+    uint32_t* items;
+    size_t item_count;
+} llg_nba_locator_t;
+
 typedef struct llg_nba {
     struct llg_nba* queue_next;
     struct llg_nba* queue_prev;
@@ -67,8 +79,9 @@ typedef struct llg_nba {
     int is_string;
     int is_chandle;
     int is_values;
+    int is_container;
     // Persistent native destination and its owned issue-time value;
-    // is_string, is_chandle or is_values selects the member.
+    // is_string, is_chandle, is_values or is_container selects the member.
     union {
         struct {
             llg_string_t* target;
@@ -87,9 +100,19 @@ typedef struct llg_nba {
             llg_dyn_value_array_t* payload;
             int whole;
         } values;
+        // Whole-container write: a deep copy of the source, replacing
+        // `target`, or the located item when `target` is NULL.
+        struct {
+            void* target;
+            void* payload;
+            int kind;
+        } container;
     } native;
     // Owned copy of a tagged-member write's commit-time checks, or NULL.
     llg_ref_view_t* tag_view;
+    // Destination inside a native value, resolved at commit; the target
+    // fields above are unused until then.
+    struct llg_nba_locator* locator;
 } llg_nba_t;
 
 typedef struct {
@@ -103,8 +126,30 @@ typedef struct llg_nba_bucket {
     llg_nba_queue_t queues[LLG_REGION_COUNT];
 } llg_nba_bucket_t;
 
+static void nba_locator_destroy(llg_nba_locator_t* locator) {
+    if (!locator) return;
+    for (size_t index = 0; index < locator->index_count; ++index)
+        sv4_destroy(&locator->indices[index]);
+    free(locator->indices);
+    free(locator->items);
+    free(locator);
+}
+
+static void nba_container_destroy(int kind, void* payload) {
+    switch (kind) {
+    case LLG_NBA_CONTAINER_DYN: llg_dyn_destroy(payload); break;
+    case LLG_NBA_CONTAINER_QUEUE: llg_queue_destroy(payload); break;
+    case LLG_NBA_CONTAINER_ASSOC: llg_assoc_destroy(payload); break;
+    case LLG_NBA_CONTAINER_DYN_VALUE: llg_dyn_value_destroy(payload); break;
+    case LLG_NBA_CONTAINER_QUEUE_VALUE: llg_queue_value_destroy(payload); break;
+    default: llg_assoc_value_destroy(payload); break;
+    }
+    free(payload);
+}
+
 static void nba_destroy(llg_nba_t* nba) {
     if (!nba) return;
+    nba_locator_destroy(nba->locator);
     if (nba->fixed_value) {
         llg_fixed_array_destroy(nba->fixed_value);
         free(nba->fixed_value);
@@ -116,6 +161,8 @@ static void nba_destroy(llg_nba_t* nba) {
         llg_dyn_value_destroy(nba->native.values.payload);
         free(nba->native.values.payload);
     }
+    if (nba->is_container)
+        nba_container_destroy(nba->native.container.kind, nba->native.container.payload);
     free(nba->tag_view);
     value_scope_release(nba->target_scope);
     free(nba);

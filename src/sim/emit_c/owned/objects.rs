@@ -16,7 +16,7 @@ impl Frame<'_, '_> {
                 self.line(format!("if ({}) {{", selector.truth()));
                 let left = self.chandle(then)?;
                 self.line(format!("{result} = {left};"));
-                if selector.width == 0 {
+                if selector.width == 0 || super::known_predicate(predicate) {
                     self.line("} else {");
                     let right = self.chandle(otherwise)?;
                     self.line(format!("{result} = {right};"));

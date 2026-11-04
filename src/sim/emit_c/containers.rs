@@ -345,6 +345,9 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::CopyRange { .. }
         | IrContainerStmt::Merge { .. }
         | IrContainerStmt::Nonblocking { .. }
+        | IrContainerStmt::NbaLocate { .. }
+        | IrContainerStmt::ContainerNonblocking { .. }
+        | IrContainerStmt::NbaLocateEnd
         | IrContainerStmt::Declare(_)
         | IrContainerStmt::SharedDeclare(_)
         | IrContainerStmt::Gather { .. }

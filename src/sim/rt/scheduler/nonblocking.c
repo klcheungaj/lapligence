@@ -24,7 +24,10 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     n->is_string = 0;
     n->is_chandle = 0;
     n->is_values = 0;
+    n->is_container = 0;
     n->tag_view = NULL;
+    n->locator = g.nba_locator;
+    g.nba_locator = NULL;
     n->time = g.now + ticks;
     n->sequence = g.nba_sequence++;
     n->region = region;
@@ -506,6 +509,116 @@ void llg_chandle_nba_after(void** target, void* value, uint64_t ticks,
     n->native.chandle.target = target;
     n->native.chandle.value = value;
     n->native.chandle.dependency = dependency;
+    enqueue_nba(n);
+}
+
+static void nba_locator_set(llg_dyn_value_array_t* array, llg_value_t* root,
+                            const sv4_t* indices, size_t index_count,
+                            const uint32_t* items, size_t item_count) {
+    llg_nba_locator_t* locator = (llg_nba_locator_t*)llg_checked_calloc(
+        1, sizeof(*locator), "nonblocking item destination");
+    locator->array = array;
+    locator->root = root;
+    if (index_count) {
+        locator->indices = (sv4_t*)llg_checked_calloc(
+            index_count, sizeof(sv4_t), "nonblocking item destination");
+        for (size_t index = 0; index < index_count; ++index)
+            locator->indices[index] = sv4_clone(&indices[index]);
+        locator->index_count = index_count;
+    }
+    if (item_count) {
+        locator->items = (uint32_t*)llg_checked_calloc(
+            item_count, sizeof(uint32_t), "nonblocking item destination");
+        memcpy(locator->items, items, item_count * sizeof(uint32_t));
+        locator->item_count = item_count;
+    }
+    nba_locator_destroy(g.nba_locator);
+    g.nba_locator = locator;
+}
+
+void llg_nba_locate_element(llg_dyn_value_array_t* array, const sv4_t* indices,
+                            size_t index_count, const uint32_t* items,
+                            size_t item_count) {
+    nba_locator_set(array, NULL, indices, index_count, items, item_count);
+}
+
+void llg_nba_locate_value(llg_value_t* root, const uint32_t* items,
+                          size_t item_count) {
+    nba_locator_set(NULL, root, NULL, 0, items, item_count);
+}
+
+void llg_nba_locate_end(void) {
+    nba_locator_destroy(g.nba_locator);
+    g.nba_locator = NULL;
+}
+
+// An independent container of `src`'s type holding a copy of its elements.
+// A queue bound is applied by the commit, which assigns to the target.
+static void* nba_container_clone(int kind, const void* src) {
+    switch (kind) {
+    case LLG_NBA_CONTAINER_DYN: {
+        const llg_dyn_array_t* from = src;
+        llg_dyn_array_t* copy = llg_checked_calloc(1, sizeof(*copy), "nonblocking container");
+        llg_dyn_init(copy, from->element_width, from->element_signed, from->element_two_state);
+        llg_dyn_copy(copy, from);
+        return copy;
+    }
+    case LLG_NBA_CONTAINER_QUEUE: {
+        const llg_queue_t* from = src;
+        llg_queue_t* copy = llg_checked_calloc(1, sizeof(*copy), "nonblocking container");
+        llg_queue_init(copy, from->element_width, from->element_signed,
+                       from->element_two_state, UINT64_MAX);
+        llg_queue_copy(copy, from);
+        return copy;
+    }
+    case LLG_NBA_CONTAINER_ASSOC: {
+        const llg_assoc_t* from = src;
+        llg_assoc_t* copy = llg_checked_calloc(1, sizeof(*copy), "nonblocking container");
+        if (from->key_kind == LLG_ASSOC_INTEGRAL)
+            llg_assoc_init_integral(copy, from->element_width, from->element_signed,
+                                    from->element_two_state, from->key_width,
+                                    from->key_signed, from->key_two_state);
+        else
+            llg_assoc_init_string(copy, from->element_width, from->element_signed,
+                                  from->element_two_state);
+        llg_assoc_copy(copy, from);
+        return copy;
+    }
+    case LLG_NBA_CONTAINER_DYN_VALUE: {
+        const llg_dyn_value_array_t* from = src;
+        llg_dyn_value_array_t* copy = llg_checked_calloc(1, sizeof(*copy), "nonblocking container");
+        llg_dyn_value_init(copy, from->element);
+        llg_dyn_value_copy(copy, from);
+        return copy;
+    }
+    case LLG_NBA_CONTAINER_QUEUE_VALUE: {
+        const llg_queue_value_array_t* from = src;
+        llg_queue_value_array_t* copy = llg_checked_calloc(1, sizeof(*copy), "nonblocking container");
+        llg_queue_value_init(copy, from->element, UINT64_MAX);
+        llg_queue_value_copy(copy, from);
+        return copy;
+    }
+    default: {
+        const llg_assoc_value_t* from = src;
+        llg_assoc_value_t* copy = llg_checked_calloc(1, sizeof(*copy), "nonblocking container");
+        if (from->key_kind == LLG_ASSOC_INTEGRAL)
+            llg_assoc_value_init_integral(copy, from->element, from->key_width,
+                                          from->key_signed, from->key_two_state);
+        else
+            llg_assoc_value_init_string(copy, from->element);
+        llg_assoc_value_copy(copy, from);
+        return copy;
+    }
+    }
+}
+
+void llg_container_nba_after(int kind, void* target, const void* src, uint64_t ticks) {
+    llg_nba_t* n = new_nba(ticks);
+    if (!n) return;
+    n->is_container = 1;
+    n->native.container.kind = kind;
+    n->native.container.target = target;
+    n->native.container.payload = nba_container_clone(kind, src);
     enqueue_nba(n);
 }
 
