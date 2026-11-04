@@ -409,22 +409,7 @@ impl EmitCtx<'_, '_> {
                     out_args.push(IrCallArg::EventAddr(IrEventRef::Captured(temporary)));
                     continue;
                 }
-                let event = self.cg.event_ref_of(&target, &self.path)?;
-                if target.access.is_some() {
-                    return Err(format!(
-                        "class event property actual of `ref` event formal `{}` in `{}` is not supported; a `ref` event formal binds an event variable",
-                        self.cg.node(*io).name,
-                        self.path
-                    ));
-                }
-                if matches!(event, IrEventRef::Null | IrEventRef::Handle(_)) {
-                    return Err(format!(
-                        "event actual for output, inout or ref formal `{}` in `{}` must be an event variable",
-                        self.cg.node(*io).name,
-                        self.path
-                    ));
-                }
-                out_args.push(IrCallArg::EventAddr(event));
+                out_args.push(self.cg.event_handle_argument(&self.path, *io, &target)?);
                 continue;
             }
             if matches!(

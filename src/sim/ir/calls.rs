@@ -83,6 +83,10 @@ pub enum IrCallArg {
     /// directly; outputs and inouts work on their own handle and assign it
     /// back when the callee returns.
     EventAddr(IrEventRef),
+    /// `ref` named-event formal bound to a class event property. The slot
+    /// holds the object identity, the one pointer an `llg_event_t` holds, so
+    /// a rebinding by the callee reaches the property at once (SV 13.5.2).
+    EventSlot(String),
     /// Output/inout chandle formal bound to a caller-owned `void **`.
     ChandleAddr(String),
     /// Chandle `ref` formal bound to a caller-owned pointer slot.
@@ -556,6 +560,7 @@ impl IrCallArg {
             | Self::RealArray(_)
             | Self::ChandleAddr(_)
             | Self::ChandleRefAddr(_)
+            | Self::EventSlot(_)
             | Self::StringOutAddr(_)
             | Self::StringRefAddr { .. }
             | Self::OutAddr(_) => {}
@@ -630,6 +635,7 @@ impl IrCallArg {
             | Self::RealArray(_)
             | Self::ChandleAddr(_)
             | Self::ChandleRefAddr(_)
+            | Self::EventSlot(_)
             | Self::StringOutAddr(_)
             | Self::StringRefAddr { .. }
             | Self::OutAddr(_) => {}

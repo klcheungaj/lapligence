@@ -1644,6 +1644,7 @@ fn collect_argument_effects(
         | IrCallArg::StringOutAddr(address)
         | IrCallArg::ChandleAddr(address)
         | IrCallArg::ChandleRefAddr(address)
+        | IrCallArg::EventSlot(address)
         | IrCallArg::StringRefAddr { addr: address, .. } => {
             collect_native_access_effects(ir, address, effects, visited_calls)
         }

@@ -682,6 +682,10 @@ impl Frame<'_, '_> {
                     ));
                 }
                 IrCallArg::EventAddr(event) => parameters.push(self.event_address(event)?),
+                IrCallArg::EventSlot(address) => {
+                    let slot = self.native_address(address, NativeKind::Chandle)?.address;
+                    parameters.push(format!("(llg_event_t*){slot}"));
+                }
                 IrCallArg::StringRefAddr {
                     addr: address,
                     observed: true,

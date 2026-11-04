@@ -1211,6 +1211,7 @@ fn collect_call_args_rw(function: usize, args: &[IrCallArg], model: &IrModel, rw
             IrCallArg::EventVal(event) | IrCallArg::EventAddr(event) => {
                 collect_event_reads(event, model, rw)
             }
+            IrCallArg::EventSlot(address) => rw.address(address, true),
             IrCallArg::ElementRef(reference) => {
                 reference.expressions(&mut |child| collect_expr_reads(child, model, rw));
                 if let crate::sim::ir::IrElementRoot::Leaves { leaves, .. } = &reference.root {

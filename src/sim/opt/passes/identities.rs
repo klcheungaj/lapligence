@@ -191,6 +191,7 @@ fn ident_children(e: &mut IrExpr) {
                     | IrCallArg::NativeRefBound
                     | IrCallArg::Container(_)
                     | IrCallArg::EventVal(_)
+                    | IrCallArg::EventSlot(_)
                     | IrCallArg::EventAddr(_)
                     | IrCallArg::ChandleAddr(_)
                     | IrCallArg::ChandleRefAddr(_) => {}

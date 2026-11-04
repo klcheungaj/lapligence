@@ -1557,35 +1557,35 @@ Pass a native record's leaf markers with the record value.
 
 ## Event formals without a typed handle binding
 
-**Status:** open (FIN-001 G3, F06-06). Output and inout event formals bound
-to class event properties execute (copied in at the call and back at
-return, `sim_014/class_event_formals`).
+**Status:** narrowed (FIN-001 G3, F06-06). Output and inout event formals bound
+to class event properties execute in statement calls (copied in at the call and
+back at return, `sim_014/class_event_formals`); a `ref` event formal binds a
+class event property through its object's slot
+(`sim_014/class_event_ref_formal`); output, inout and `ref` event formals of
+functions called in integral expressions bind event variables (decision S13-D3).
 
 ### Symptom
 
-These legal forms reject with explicit diagnostics: a class event property
-(`c.ev`) as the actual of a `ref` event formal (SV 13.5.2 lists class
-properties), and an output, inout or `ref` event formal of a function called
-in an expression (`x = f(h)`, "has no typed value call path").
+These legal forms reject with explicit diagnostics: a class event property as
+the actual of an output or inout event formal of a function called in an
+expression (`x = f(c.ev)`), and any non-input event formal of a function
+returning a string or a handle in an expression.
 
 ### Cause
 
-A class event property stores only the event object's identity in an opaque
-object slot, not an `llg_event_t` handle cell, so there is no address a
-`ref` formal could rebind at once. Function-expression calls lower through
-the value call path, which passes no event handle addresses.
+The copy-back of a class event property is a statement after the call, which
+a value call has no place for; the string and handle value call paths pass no
+event operands.
 
 ### Intended direction
 
-Store class event properties as `llg_event_t` cells (or pass a slot
-descriptor that rebinds through the object), and add event-address
-arguments to value calls. Estimate: 1-2 days each.
+Hoist such calls into a prelude as other copy-out targets do, and share the
+event operand with the string and handle value call paths. Estimate: half a
+day each.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_014/neg_class_event_ref_formal.sv`;
-for function expressions, `function automatic int f(output event o); o = g;
-return 1; endfunction` called as `x = f(h);`.
+`tests/fixtures/sim/feature_completion/sim_014/neg_class_event_output_value_call.sv`.
 
 ## Wired-logic nets in bidirectional switch networks
 

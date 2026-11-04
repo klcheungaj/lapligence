@@ -84,6 +84,7 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
             | IrCallArg::NativeRefBound
             | IrCallArg::Container(_)
             | IrCallArg::EventVal(_)
+            | IrCallArg::EventSlot(_)
             | IrCallArg::EventAddr(_) => {}
         }
     }

@@ -115,11 +115,22 @@ fn output_and_inout_event_formals_bind_class_event_properties() {
 }
 
 #[test]
-fn neg_class_event_property_ref_actual() {
+fn ref_event_formals_bind_class_event_properties() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_event_ref_formal",
+        include_str!("../fixtures/sim/feature_completion/sim_014/class_event_ref_formal.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn neg_class_event_property_output_of_value_call() {
     sim_cli::reject_case(
         SUITE,
-        "neg_class_event_ref_formal",
-        "class event property actual of `ref` event formal `r` in `tb` is not supported",
+        "neg_class_event_output_value_call",
+        "class event property actual of output or inout event formal `o` of function `f` called in an expression in `tb` has no copy-back path",
     );
 }
 

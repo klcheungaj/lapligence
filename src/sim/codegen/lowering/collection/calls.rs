@@ -151,14 +151,6 @@ impl<'a> Codegen<'a> {
             meta.ir,
             dispatch,
         )?;
-        for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if bound[idx].is_event && (*is_out || self.is_ref_formal(*io)) {
-                return Err(format!(
-                    "output, inout or ref event formal `{}` in function expression `{name}` has no typed value call path",
-                    self.node(*io).name
-                ));
-            }
-        }
         // `ret` is `None` for void functions; when the frontend accepts one as
         // a value (for example `out <= vf(4'd2);`), emit the call for its
         // side effects and yields all-X.
@@ -175,6 +167,22 @@ impl<'a> Codegen<'a> {
         let mut record_out_args = Vec::new();
         let mut record_in_args = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if bound[idx].is_event && (*is_out || self.is_ref_formal(*io)) {
+                let target = self.event_target_of(bound[idx].expr).ok_or_else(|| {
+                    format!(
+                        "event actual for formal `{}` in `{scope_path}` is not a named event handle",
+                        self.node(*io).name
+                    )
+                })?;
+                if target.access.is_some() && *is_out {
+                    return Err(format!(
+                        "class event property actual of output or inout event formal `{}` of function `{name}` called in an expression in `{scope_path}` has no copy-back path; call the function as a statement",
+                        self.node(*io).name
+                    ));
+                }
+                out_args.push(self.event_handle_argument(scope_path, *io, &target)?);
+                continue;
+            }
             if bound[idx].is_event {
                 // An input event formal receives the actual's handle, which
                 // shares its synchronization object (SV 15.5.5).

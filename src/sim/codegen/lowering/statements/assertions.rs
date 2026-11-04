@@ -393,6 +393,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         | IrCallArg::NativeCall { .. }
                         | IrCallArg::RealArrayCall { .. }
                         | IrCallArg::EventVal(_)
+                        | IrCallArg::EventSlot(_)
                         | IrCallArg::EventAddr(_) => {
                             return Err(
                                 format!("unpacked aggregate, container and event arguments of {}s are not supported", self.call_owner),
