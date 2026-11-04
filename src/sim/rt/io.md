@@ -420,7 +420,10 @@ The producer/writer threading and fence rules are in the `llg_wave.c` comments.
 A second producer needs a separate ring or changed concurrency design.
 Only the simulation thread prints waveform reports, each in one stdio call: the
 writer stores its single error report and `llg_wave_slot_end`/close print it
-(S47-D11). Every other runtime diagnostic is also one stdio call: multi-part
+(S47-D11). The exception is libfst, which prints a failed `fstWriterCreate` step
+with its path and OS error from the writer thread, before the runtime's own
+`cannot create FST file` report; it knows them only there and each failed step
+is one `fprintf`. Every other runtime diagnostic is also one stdio call: multi-part
 messages (severity tasks, assertion failures, `$finish`/`$stop`, memory-file
 diagnostics, the coroutine backtrace, whose frame without a descriptor name, the
 shared root of a body class, is named after the running process) are
