@@ -120,6 +120,11 @@ impl<'a> Codegen<'a> {
         let mut current = node;
         let mut selectors = Vec::new();
         loop {
+            // A packed element of a member array of a container record
+            // element (`recs[i].a[1]`) is one leaf, whatever selects follow.
+            if self.element_packed_leaf(current) {
+                break;
+            }
             let (base, select) = match self.kind(current) {
                 NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                     (*base, Select::Elements(vec![*index]))
@@ -152,12 +157,12 @@ impl<'a> Codegen<'a> {
         }
         let root = current;
         let admitted = !selectors.is_empty()
-            && matches!(
+            && (matches!(
                 self.kind(root),
                 NodeKind::Net { .. }
                     | NodeKind::Var { .. }
                     | NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
-            )
+            ) || self.element_packed_leaf(root))
             && self.packed_member_info(root).is_none()
             && self.packed_parameter_member_info(root).is_none()
             && self.unpacked_member_info(root).is_none()
@@ -173,19 +178,49 @@ impl<'a> Codegen<'a> {
     /// a virtual-interface handle (`v.data[3]`, `v.data[7:4]`,
     /// `v.data[i +: 2]`): packed steps relative to the member storage of the
     /// instance the handle names when the write executes, so the store
-    /// notifies that instance's waiters like a direct write.
+    /// notifies that instance's waiters like a direct write. A select of a
+    /// packed member of a container record element (`recs[i].v[2]`) lowers
+    /// the same way over its element item.
     pub(in super::super) fn virtual_interface_select_lhs(
         &mut self,
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrLhs>, String> {
+        if let Some((name, ty, steps)) = self.element_leaf_select_steps(path, node, true)? {
+            let IrClassFieldType::Packed {
+                width,
+                signed,
+                two_state,
+            } = ty
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(IrLhs::PackedSelect {
+                target: Box::new(IrLhs::WholeRef {
+                    addr: format!("&{name}"),
+                    width,
+                    signed,
+                    two_state,
+                    shortreal: false,
+                }),
+                steps,
+                signed: false,
+                two_state,
+            }));
+        }
         let Some((root, selectors)) = self.packed_value_selectors(node) else {
             return Ok(None);
         };
-        if !matches!(self.kind(root), NodeKind::Expr(ExprKind::HierPath { .. })) {
-            return Ok(None);
-        }
-        let Some(target) = self.virtual_interface_member_lhs(path, root)? else {
+        // A packed member of a container record element: the address is the
+        // element item the locator names at this write.
+        let target = if self.element_packed_leaf(root) {
+            self.element_leaf_target(path, root)?
+        } else if matches!(self.kind(root), NodeKind::Expr(ExprKind::HierPath { .. })) {
+            self.virtual_interface_member_lhs(path, root)?
+        } else {
+            None
+        };
+        let Some(target) = target else {
             return Ok(None);
         };
         let IrLhs::WholeRef {
@@ -196,7 +231,7 @@ impl<'a> Codegen<'a> {
         };
         if *width == 0 {
             return Err(format!(
-                "select on a real virtual interface member in `{path}` is not supported"
+                "select on a real member in `{path}` is not supported"
             ));
         }
         let two_state = *two_state;
@@ -253,6 +288,15 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
+        if let Some((name, ty, steps)) = self.element_leaf_select_steps(path, node, false)? {
+            let IrClassFieldType::Packed { width, signed, .. } = ty else {
+                return Ok(None);
+            };
+            let value = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+            return Ok(Some(steps.into_iter().fold(value, |value, step| {
+                super::packed_formals::packed_step_read(value, step)
+            })));
+        }
         let Some((root, selectors)) = self.packed_value_selectors(node) else {
             return Ok(None);
         };
@@ -493,6 +537,26 @@ impl<'a> Codegen<'a> {
             _ => self.packed_ranges_for_base(base).unwrap_or_default(),
         };
         self.packed_selection_steps_in(path, &dimensions, select, parent_width, steps, fold)
+    }
+
+    /// Steps of `indices` selecting inside a value of type `base`.
+    pub(in super::super) fn packed_steps_of_elements(
+        &mut self,
+        path: &str,
+        base: NodeId,
+        indices: Vec<NodeId>,
+        width: &mut u32,
+    ) -> Result<Vec<IrPackedSelect>, String> {
+        let mut steps = Vec::new();
+        self.packed_selection_steps_folding(
+            path,
+            base,
+            Select::Elements(indices),
+            width,
+            &mut steps,
+            true,
+        )?;
+        Ok(steps)
     }
 
     /// A select chain (element selects, then at most one part-select, in

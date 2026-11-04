@@ -382,9 +382,23 @@ impl EmitCtx<'_, '_> {
                 false
             }
             EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => {
-                self.cg.reads_dynamic_storage(*sig) || self.expression_needs_process(*sig)
+                self.cg.reads_dynamic_storage(*sig)
+                    || self.expression_needs_process(*sig)
+                    || self.native_element_event(*sig)
             }
         })
+    }
+
+    /// Whether an event expression is a string or handle selected from
+    /// descriptor-backed container storage (`names[i]`, `recs[i].s`). Such a
+    /// value has no change marker of its own and no packed evaluator: the
+    /// waiting process keeps the last value and compares it on each change
+    /// of the container (SV 9.4.2).
+    fn native_element_event(&self, expression: NodeId) -> bool {
+        (self.cg.names_element_member(expression)
+            || self.cg.container_element_path(expression).is_some())
+            && (self.cg.is_string_expr(&self.path, expression)
+                || self.cg.is_chandle_expr(&self.path, expression))
     }
 
     /// Whether a blocking event control evaluates a `ref` formal of the
@@ -1441,7 +1455,8 @@ impl EmitCtx<'_, '_> {
             NodeKind::Expr(ExprKind::HierPath { .. })
         ) && persistent_subroutine_signal.is_none()
             && self.cg.resolve_signal_id(&self.path, expression).is_err()
-            && self.cg.unpacked_path_for_expr(expression).is_some();
+            && (self.cg.unpacked_path_for_expr(expression).is_some()
+                || self.cg.selected_member_path(expression));
         // A whole string, class or process handle waits on its change marker
         // (SIM-007, SIM-015), which toggles on every changed store; none has
         // edges.

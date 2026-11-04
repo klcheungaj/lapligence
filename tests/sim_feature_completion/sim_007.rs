@@ -140,6 +140,23 @@ fn adopted_native_value_witnesses() {
 }
 
 #[test]
+fn record_element_members_take_event_controls_and_selects() {
+    let events =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_element_events.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_events", events, &[], &[]);
+    let selects =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_element_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_selects", selects, &[], &[]);
+}
+
+#[test]
+fn indexed_slices_of_fixed_arrays_pass_by_value() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/fixed_variable_slice_actuals.out");
+    sim_cli::run_case_backend_parity(SUITE, "fixed_variable_slice_actuals", expected, &[], &[]);
+}
+
+#[test]
 fn run_time_member_indices_select_native_record_elements() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select.out");
