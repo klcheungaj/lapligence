@@ -413,6 +413,7 @@ impl Codegen<'_> {
         storage.c_name = format!("{}_via_{alias}", storage.c_name);
         storage.receiver = Some(receiver);
         self.model.containers.push(storage);
+        self.container_types_like.insert(alias, container);
         if let Some(range) = self.fixed_view_ranges.get(&container).copied() {
             self.fixed_view_ranges.insert(alias, range);
         }

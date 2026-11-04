@@ -98,8 +98,9 @@ pub enum IrCallArg {
         const_ref: bool,
         observed: bool,
     },
-    /// String or handle `ref` formal bound to one element of native container
-    /// storage through a retained reference that lives until the call ends.
+    /// `ref` formal bound to an element of native container storage or to a
+    /// member of a native record, through a retained reference that lives
+    /// until the call ends.
     ElementRef(Box<IrElementRef>),
     /// Output/inout formal bound to a direct C address (statement calls):
     /// `&G_sig`, a whole-reference address (`o0`, `&_l0`) or a caller-side
@@ -149,40 +150,83 @@ pub enum IrCallArg {
     },
 }
 
-/// What a [`IrCallArg::ElementRef`] formal addresses in its element.
+/// What a [`IrCallArg::ElementRef`] formal addresses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrElementRefKind {
     String,
     Handle,
+    /// A native record: the formal takes the value's address.
+    Record,
+    /// A packed leaf: the formal takes an `llg_ref_t` naming it.
+    Packed {
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
 }
 
-/// One element of descriptor-backed container storage, selected at the call:
-/// `index` for positions and integral keys, `key` for a string key.
+/// The value a [`IrElementRef`] starts from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrElementRoot {
+    /// One element of descriptor-backed container storage, selected at the
+    /// call: `index` for positions and integral keys, `key` for a string key.
+    Element {
+        container: usize,
+        index: Option<IrExpr>,
+        key: Option<IrStringExpr>,
+    },
+    /// A native value root of the caller.
+    Value(usize),
+}
+
+/// One selection below an [`IrElementRoot`], evaluated at the call.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrElementStep {
+    /// A record member, or a constant position in a member array.
+    Item(u32),
+    /// A run-time position in a member array.
+    Position(IrExpr),
+}
+
+/// The storage a `ref` formal binds through a retained reference.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrElementRef {
-    pub(in crate::sim) container: usize,
-    pub(in crate::sim) index: Option<IrExpr>,
-    pub(in crate::sim) key: Option<IrStringExpr>,
+    pub(in crate::sim) root: IrElementRoot,
+    pub(in crate::sim) steps: Vec<IrElementStep>,
     pub(in crate::sim) kind: IrElementRefKind,
     pub(in crate::sim) const_ref: bool,
 }
 
 impl IrElementRef {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
-        if let Some(index) = &self.index {
-            visit(index);
+        if let IrElementRoot::Element { index, key, .. } = &self.root {
+            if let Some(index) = index {
+                visit(index);
+            }
+            if let Some(key) = key {
+                key.expressions(visit);
+            }
         }
-        if let Some(key) = &self.key {
-            key.expressions(visit);
+        for step in &self.steps {
+            if let IrElementStep::Position(position) = step {
+                visit(position);
+            }
         }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
-        if let Some(index) = &mut self.index {
-            visit(index);
+        if let IrElementRoot::Element { index, key, .. } = &mut self.root {
+            if let Some(index) = index {
+                visit(index);
+            }
+            if let Some(key) = key {
+                key.expressions_mut(visit);
+            }
         }
-        if let Some(key) = &mut self.key {
-            key.expressions_mut(visit);
+        for step in &mut self.steps {
+            if let IrElementStep::Position(position) = step {
+                visit(position);
+            }
         }
     }
 }

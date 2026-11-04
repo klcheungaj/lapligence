@@ -317,7 +317,7 @@ impl<'a> Codegen<'a> {
     /// An index outside its dimension makes the position -1 and an unknown
     /// index keeps X bits, so the runtime treats either as invalid
     /// (SV 7.4.6). Constant indices fold to a constant position.
-    fn lower_view_position(
+    pub(in super::super) fn lower_view_position(
         &mut self,
         path: &str,
         dimensions: &[(i32, i32)],

@@ -39,6 +39,15 @@ fn string_element_refs_follow_elements_until_outdated() {
 }
 
 #[test]
+fn record_element_refs_share_the_element_until_outdated() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_refs", expected, &[], &[]);
+    let members = include_str!("../fixtures/sim/feature_completion/sim_008/record_member_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_member_refs", members, &[], &[]);
+}
+
+#[test]
 fn native_record_ref_formals_alias_subroutine_records() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_008/record_refs.out");
     sim_cli::run_case_backend_parity(SUITE, "record_refs", expected, &[], &[]);
@@ -62,8 +71,7 @@ fn timed_record_refs_share_the_record_with_other_processes() {
 #[test]
 fn unbindable_record_ref_actuals_are_rejected_explicitly() {
     const UNBOUND: &str = "ref actual of native record formal `r` in `tb` must be a whole subroutine record, or a module, static or procedural-block record or a constant member/index selection of one, of the same type (SIM-008)";
-    sim_cli::reject_case(SUITE, "neg_record_ref_element", UNBOUND);
-    sim_cli::reject_case(SUITE, "neg_record_ref_member", UNBOUND);
+    sim_cli::reject_case(SUITE, "neg_record_ref_container_member", UNBOUND);
     sim_cli::reject_case(
         SUITE,
         "neg_record_ref_method",

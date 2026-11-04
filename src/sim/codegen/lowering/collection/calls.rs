@@ -362,7 +362,8 @@ impl<'a> Codegen<'a> {
                         ref_static,
                     )?);
                 }
-                if !bound[idx].string {
+                if !bound[idx].string && !matches!(out_args.last(), Some(IrCallArg::ElementRef(_)))
+                {
                     let read_ir = self.lower_expr(scope_path, bound[idx].expr)?;
                     arg_irs[idx] = Some(read_ir);
                 }

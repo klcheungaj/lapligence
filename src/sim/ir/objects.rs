@@ -2392,7 +2392,10 @@ impl IrChandleExpr {
                         (IrCallArg::ElementRef(reference), formal)
                             if formal.is_ref()
                                 && (formal.chandle
-                                    == (reference.kind == super::IrElementRefKind::Handle)) => {}
+                                    == matches!(
+                                        reference.kind,
+                                        super::IrElementRefKind::Handle
+                                    )) => {}
                         (IrCallArg::ChandleRefAddr(addr), formal)
                             if formal.chandle && formal.is_ref() =>
                         {

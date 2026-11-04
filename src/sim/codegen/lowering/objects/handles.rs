@@ -1,7 +1,7 @@
 //! Handles.
 
 use super::*;
-use crate::sim::ir::{IrElementRef, IrElementRefKind};
+use crate::sim::ir::{IrElementRef, IrElementRefKind, IrElementRoot};
 
 impl Codegen<'_> {
     /// Resolve a chandle lvalue to its native pointer identity and its
@@ -253,12 +253,13 @@ impl Codegen<'_> {
             .element_select(node)
             .map(|(container, index)| (container.ir, index));
         let Some((container, index)) = selected else {
-            return Ok(None);
+            return self.member_ref(path, node, kind, const_ref);
         };
         let storage = &self.model.containers[container];
         let selects_kind = match kind {
             IrElementRefKind::String => storage.element.is_string(),
             IrElementRefKind::Handle => storage.element.is_handle(),
+            IrElementRefKind::Record | IrElementRefKind::Packed { .. } => false,
         };
         if !selects_kind {
             return Ok(None);
@@ -278,9 +279,12 @@ impl Codegen<'_> {
             )
         };
         Ok(Some(IrCallArg::ElementRef(Box::new(IrElementRef {
-            container,
-            index,
-            key,
+            root: IrElementRoot::Element {
+                container,
+                index,
+                key,
+            },
+            steps: Vec::new(),
             kind,
             const_ref,
         }))))

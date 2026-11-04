@@ -567,6 +567,24 @@ void llg_native_ref_release(void* reference);
 void llg_native_ref_scope_release(void* object);
 llg_string_t* llg_native_ref_string(void* reference);
 void** llg_native_ref_handle(void* reference);
+/* The record a reference names, for a native record `ref` formal. */
+llg_value_t* llg_native_ref_value(void* reference);
+/* A reference to a value that is no container element, for its members. */
+void* llg_native_ref_root(llg_value_t* value);
+/* Select one item of the record or fixed array `reference` names, taking
+ * over the caller's count; a negative position selects nothing. After the
+ * last item, llg_native_ref_bind makes the result a reference to that member:
+ * stores through it publish its marker and the root container's change, the
+ * member's items stay where they are, and an invalid selection reads the
+ * default and ignores writes. */
+void* llg_native_ref_item(void* reference, int64_t position);
+void* llg_native_ref_bind(void* reference);
+/* A position from an index value; -1 for an unknown one. */
+int64_t llg_native_ref_position(sv4_t index);
+/* Retained-cell accessors of an `llg_ref_t` naming a packed member. */
+sv4_t llg_native_ref_packed_read(const void* reference);
+int llg_native_ref_packed_write(void* reference, sv4_t value);
+sv4_t* llg_native_ref_dependency(const void* reference);
 /* The change marker of one reference: it toggles when this element changes,
  * through the reference or the container, and never for other elements. */
 sv4_t* llg_native_ref_marker(void* reference);

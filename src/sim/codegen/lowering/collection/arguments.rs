@@ -1,6 +1,7 @@
 //! Arguments.
 
 use super::*;
+use crate::sim::ir::IrElementRefKind;
 
 impl<'a> Codegen<'a> {
     /// A call argument a frontend can synthesize for a *missing named* argument: a
@@ -599,6 +600,17 @@ impl<'a> Codegen<'a> {
 
         if bound.real {
             return self.lower_real_ref_arg(scope_path, bound, const_ref);
+        }
+
+        // A packed member of a native record: a store must reach the record's
+        // container, and the selection is the one made at the call.
+        let packed = IrElementRefKind::Packed {
+            width: bound.width,
+            signed: bound.signed,
+            two_state: bound.two_state,
+        };
+        if let Some(argument) = self.member_ref(scope_path, bound.expr, packed, const_ref)? {
+            return Ok(argument);
         }
 
         // Queue elements cannot be represented by a stable `sv4_t *`: any

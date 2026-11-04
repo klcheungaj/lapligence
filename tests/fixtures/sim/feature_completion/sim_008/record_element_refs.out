@@ -1,0 +1,35 @@
+a? a? a? a? a? a?
+cr 'a?' 1
+cr '' 0
+ri num 2
+11 11
+late 2 2
+forward 2 2
+pair shared
+pair 8
+pair end shared 8
+C1 x=r1/1 q0=zz q1=r1 sz=3
+C2 x=r2 q0=zz q1=r2
+C3 x=w
+C4 x=v/5
+C5 x=u/6 q=u/6
+C6 x=r3 q0=q q1=r3
+C7 x=r3 sz=2
+C8 x=r4/44 sz=2 q0=r4
+P1 kept kept
+P2 private kept
+F1 x=5 d0=''
+F2 x=6 d0=''
+E1 x=other f=other
+E2 x=2 f=2
+E3 x=3 f=3
+G1 x=4 num=3
+G2 x=5 num=2
+mid '2'
+late 2 2
+late 2 2
+late 2 2
+autos 2 2 w2 w2 4 w2
+m 12 m 11 m? 12
+derived
+w2 4 ?

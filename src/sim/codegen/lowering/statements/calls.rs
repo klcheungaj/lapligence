@@ -573,7 +573,8 @@ impl EmitCtx<'_, '_> {
                         ref_static,
                     )?);
                 }
-                if !bound[idx].string {
+                if !bound[idx].string && !matches!(out_args.last(), Some(IrCallArg::ElementRef(_)))
+                {
                     let read_ir = self.cg.lower_expr(&self.path, bound[idx].expr)?;
                     arg_irs[idx] = Some(read_ir);
                 }

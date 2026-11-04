@@ -65,7 +65,10 @@ reference's marker, and the first reference on a container interposes its
 operations that move or remove elements call the `llg_native_refs_*` hooks;
 add one to any new such operation. A marker of width
 `LLG_NATIVE_REF_MARKER_WIDTH` identifies a reference in
-`llg_dependency_changed`, so no other marker may have that width.
+`llg_dependency_changed`, so no other marker may have that width. A member
+actual (`llg_native_ref_root`, `_item`, `_bind`) keeps the element or
+subroutine record alive through its root reference and addresses the selected
+leaf.
 
 Identity-handle elements (SIM-006) copy the handle: events, opaque objects and
 borrowed chandles are never duplicated; `LLG_VALUE_PROCESS` handles are counted

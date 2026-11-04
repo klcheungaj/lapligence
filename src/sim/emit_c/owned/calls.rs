@@ -4,7 +4,7 @@
 use super::native::{NativeKind, NativeValue};
 use super::streaming::CapturedAssignment;
 use super::*;
-use crate::sim::ir::IrElementRefKind;
+use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrElementStep};
 
 /// An output/inout copy-out target, bound at the call or resolved at copy-out.
 enum CopyOutTarget<'l> {
@@ -973,43 +973,38 @@ impl Frame<'_, '_> {
         &mut self,
         reference: &crate::sim::ir::IrElementRef,
     ) -> Result<Vec<String>, String> {
-        let storage = &self.ctx.model.containers[reference.container];
-        let kind = storage.kind.clone();
-        let fixed = storage.initial_size.is_some();
-        let name = self.container_name(reference.container)?;
-        let acquire = if let Some(key) = &reference.key {
-            let key = self.string(key)?;
-            let code = key.code();
-            let acquire = self.scalar(
-                "void*",
-                format!("llg_assoc_value_ref_acquire_string(&{name}, ({code}).data, ({code}).len)"),
-            );
-            self.native_discard(key);
-            acquire
-        } else {
-            let index = reference
-                .index
-                .as_ref()
-                .ok_or("element reference has no selector")?;
-            let index = self.expression(index)?;
-            let acquire = match kind {
-                IrContainerKind::Dynamic => format!(
-                    "llg_dyn_value_ref_acquire(&{name}, {}, {})",
-                    index.code,
-                    u8::from(fixed)
-                ),
-                IrContainerKind::Queue { .. } => {
-                    format!("llg_queue_value_ref_acquire(&{name}, {})", index.code)
-                }
-                IrContainerKind::Associative { .. } => format!(
-                    "llg_assoc_value_ref_acquire_integral(&{name}, {})",
-                    index.code
-                ),
-            };
-            let acquire = self.scalar("void*", acquire);
-            self.discard(index);
-            acquire
+        let mut acquire = match &reference.root {
+            IrElementRoot::Value(value) => {
+                let address = self.native_value_address(*value)?;
+                self.scalar("void*", format!("llg_native_ref_root({address})"))
+            }
+            IrElementRoot::Element {
+                container,
+                index,
+                key,
+            } => self.element_reference_root(*container, index.as_ref(), key.as_ref())?,
         };
+        for step in &reference.steps {
+            let position = match step {
+                IrElementStep::Item(position) => position.to_string(),
+                IrElementStep::Position(position) => {
+                    let position = self.expression(position)?;
+                    let code = self.scalar(
+                        "int64_t",
+                        format!("llg_native_ref_position({})", position.code),
+                    );
+                    self.discard(position);
+                    code
+                }
+            };
+            acquire = self.scalar(
+                "void*",
+                format!("llg_native_ref_item({acquire}, {position})"),
+            );
+        }
+        if !reference.steps.is_empty() {
+            acquire = self.scalar("void*", format!("llg_native_ref_bind({acquire})"));
+        }
         let scope = self.scalar(
             "llg_value_scope_t*",
             "llg_value_scope_begin_object(sizeof(void*), llg_native_ref_scope_release)".to_owned(),
@@ -1023,7 +1018,70 @@ impl Frame<'_, '_> {
                 format!("llg_native_ref_handle({acquire})"),
                 format!("llg_native_ref_marker({acquire})"),
             ],
+            IrElementRefKind::Record => vec![format!("llg_native_ref_value({acquire})")],
+            IrElementRefKind::Packed {
+                width,
+                signed,
+                two_state,
+            } => {
+                let storage = self.scalar(
+                    "llg_value_scope_t*",
+                    "llg_value_scope_begin_object(sizeof(llg_ref_t), NULL)".to_owned(),
+                );
+                let pointer = self.scalar(
+                    "llg_ref_t*",
+                    format!("(llg_ref_t*)llg_value_scope_object({storage})"),
+                );
+                self.line(format!(
+                    "*{pointer} = (llg_ref_t){{ .kind = LLG_REF_QUEUE, .width = {width}, .is_signed = {}, .two_state = {}, .retained = {acquire}, .retained_read = llg_native_ref_packed_read, .retained_write = llg_native_ref_packed_write }};",
+                    u8::from(signed),
+                    u8::from(two_state)
+                ));
+                vec![pointer]
+            }
         })
+    }
+
+    /// Acquire the reference of one container element, selected now.
+    fn element_reference_root(
+        &mut self,
+        container: usize,
+        index: Option<&IrExpr>,
+        key: Option<&crate::sim::ir::IrStringExpr>,
+    ) -> Result<String, String> {
+        let storage = &self.ctx.model.containers[container];
+        let kind = storage.kind.clone();
+        let fixed = storage.initial_size.is_some();
+        let name = self.container_name(container)?;
+        if let Some(key) = key {
+            let key = self.string(key)?;
+            let code = key.code();
+            let acquire = self.scalar(
+                "void*",
+                format!("llg_assoc_value_ref_acquire_string(&{name}, ({code}).data, ({code}).len)"),
+            );
+            self.native_discard(key);
+            return Ok(acquire);
+        }
+        let index = index.ok_or("element reference has no selector")?;
+        let index = self.expression(index)?;
+        let acquire = match kind {
+            IrContainerKind::Dynamic => format!(
+                "llg_dyn_value_ref_acquire(&{name}, {}, {})",
+                index.code,
+                u8::from(fixed)
+            ),
+            IrContainerKind::Queue { .. } => {
+                format!("llg_queue_value_ref_acquire(&{name}, {})", index.code)
+            }
+            IrContainerKind::Associative { .. } => format!(
+                "llg_assoc_value_ref_acquire_integral(&{name}, {})",
+                index.code
+            ),
+        };
+        let acquire = self.scalar("void*", acquire);
+        self.discard(index);
+        Ok(acquire)
     }
 
     #[cfg_attr(not(test), allow(dead_code))] // test-only entry point for owned-call boundary tests

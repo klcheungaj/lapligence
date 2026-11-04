@@ -18,7 +18,12 @@
  * A reference tracks its element by position or key; each operation that moves
  * elements adjusts it. An element leaving its container outdates the
  * reference: `value` then owns the element's last value and stores stay
- * private to the reference. */
+ * private to the reference.
+ *
+ * A member of a record binds a second reference whose `member` addresses the
+ * leaf in place and whose `parent` keeps the record's reference, and so its
+ * items, alive. A string member's notify runs its marker, and other stores go
+ * through the formal's marker or llg_ref_t cell functions. */
 typedef struct llg_native_ref llg_native_ref_t;
 
 /* `marker` comes first: llg_native_ref_stored gets its address. */
@@ -26,6 +31,8 @@ struct llg_native_ref {
     sv4_t marker;
     llg_value_t value;
     void* owner;
+    llg_native_ref_t* parent;
+    llg_value_t* member;
     struct llg_native_ref* next;
     struct llg_native_ref* all_prev;
     struct llg_native_ref* all_next;
@@ -39,6 +46,8 @@ struct llg_native_ref {
     uint8_t valid;
     uint8_t fixed;
     uint8_t syncing;
+    /* `value` shares a root's items and owns none of them. */
+    uint8_t borrowed;
 };
 
 enum {
@@ -51,6 +60,13 @@ enum {
 static struct llg_native_ref* llg_native_refs_all;
 /* The one notify function containers use; references forward to it. */
 static llg_container_notify_fn llg_native_refs_forward;
+
+static void llg_native_ref_link_all(llg_native_ref_t* ref) {
+    ref->all_next = llg_native_refs_all;
+    if (ref->all_next) ref->all_next->all_prev = ref;
+    llg_native_refs_all = ref;
+    ++llg_native_refs_live;
+}
 
 static int llg_native_ref_has_items(const llg_native_ref_t* ref) {
     uint8_t kind = ref->value.desc->kind;
@@ -141,10 +157,7 @@ static llg_native_ref_t* llg_native_ref_new(const llg_value_desc_t* desc,
         ref->next = *list;
         *list = ref;
     }
-    ref->all_next = llg_native_refs_all;
-    if (ref->all_next) ref->all_next->all_prev = ref;
-    llg_native_refs_all = ref;
-    ++llg_native_refs_live;
+    llg_native_ref_link_all(ref);
     return ref;
 }
 
@@ -281,8 +294,39 @@ static void llg_native_refs_notify(sv4_t* contents, sv4_t* shape, int change) {
     if (llg_native_refs_forward) llg_native_refs_forward(contents, shape, change);
 }
 
+/* Tell the container of a live element its contents changed. */
+static void llg_native_ref_touch(llg_native_ref_t* ref) {
+    switch (ref->owner ? ref->kind : 0xffu) {
+    case LLG_NATIVE_REF_DYNAMIC: {
+        llg_dyn_value_array_t* array = ref->owner;
+        llg_notify(array->notify, array->contents_dependency,
+                   array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+        break;
+    }
+    case LLG_NATIVE_REF_QUEUE: {
+        llg_queue_value_array_t* queue = ref->owner;
+        llg_notify(queue->notify, queue->contents_dependency,
+                   queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+        break;
+    }
+    case LLG_NATIVE_REF_ASSOC_INTEGRAL:
+    case LLG_NATIVE_REF_ASSOC_STRING: {
+        llg_assoc_value_t* array = ref->owner;
+        llg_notify(array->notify, array->contents_dependency,
+                   array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 void llg_native_ref_stored(sv4_t* marker) {
     llg_native_ref_t* ref = (llg_native_ref_t*)marker;
+    if (ref->member) {
+        llg_native_ref_touch(ref->parent);
+        return;
+    }
     if (ref->syncing) return;
     if (!ref->valid) {
         ref->syncing = 1;
@@ -297,32 +341,10 @@ void llg_native_ref_stored(sv4_t* marker) {
         return;
     }
     if (!ref->owner) return;
-    llg_native_ref_t** list;
-    llg_container_notify_fn* notify;
-    llg_native_ref_owner_fields(ref, &list, &notify);
     ref->syncing = 1;
     llg_value_t* element = llg_native_ref_element(ref);
     llg_value_copy(element, element->desc, &ref->value);
-    switch (ref->kind) {
-    case LLG_NATIVE_REF_DYNAMIC: {
-        llg_dyn_value_array_t* array = ref->owner;
-        llg_notify(array->notify, array->contents_dependency,
-                   array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
-        break;
-    }
-    case LLG_NATIVE_REF_QUEUE: {
-        llg_queue_value_array_t* queue = ref->owner;
-        llg_notify(queue->notify, queue->contents_dependency,
-                   queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
-        break;
-    }
-    default: {
-        llg_assoc_value_t* array = ref->owner;
-        llg_notify(array->notify, array->contents_dependency,
-                   array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
-        break;
-    }
-    }
+    llg_native_ref_touch(ref);
     ref->syncing = 0;
 }
 
@@ -404,9 +426,18 @@ void llg_native_ref_release(void* reference) {
     if (!ref) return;
     if (!ref->refs) llg_container_fatal("element reference count underflow");
     if (--ref->refs) return;
+    llg_native_ref_t* parent = ref->parent;
     if (ref->owner) {
         if (llg_native_ref_has_items(ref)) ref->value.value.items = NULL;
         llg_native_ref_disconnect(ref);
+    }
+    if (ref->borrowed) ref->value.value.items = NULL;
+    if (ref->member) {
+        if (ref->member->desc->kind == LLG_VALUE_STRING) {
+            ref->member->value.string.notify = NULL;
+            ref->member->value.string.dependency = NULL;
+        }
+        ref->value.desc = NULL;
     }
     if (ref->all_prev) ref->all_prev->all_next = ref->all_next;
     else llg_native_refs_all = ref->all_next;
@@ -417,18 +448,143 @@ void llg_native_ref_release(void* reference) {
     sv4_destroy(&ref->key);
     free(ref->string_key);
     free(ref);
+    llg_native_ref_release(parent);
 }
 
 void llg_native_ref_scope_release(void* object) {
     llg_native_ref_release(*(void**)object);
 }
 
+llg_value_t* llg_native_ref_value(void* reference) {
+    llg_native_ref_t* ref = reference;
+    return ref->member ? ref->member : &ref->value;
+}
+
 llg_string_t* llg_native_ref_string(void* reference) {
-    return &((llg_native_ref_t*)reference)->value.value.string;
+    return &llg_native_ref_value(reference)->value.string;
 }
 
 void** llg_native_ref_handle(void* reference) {
-    return &((llg_native_ref_t*)reference)->value.value.handle;
+    return &llg_native_ref_value(reference)->value.handle;
+}
+
+void* llg_native_ref_root(llg_value_t* value) {
+    llg_native_ref_t* ref = llg_alloc_items(1, sizeof(*ref));
+    memset(ref, 0, sizeof(*ref));
+    ref->marker = sv4_from_u64(2u, LLG_NATIVE_REF_MARKER_WIDTH, 0);
+    ref->refs = 1;
+    ref->valid = 1;
+    ref->borrowed = 1;
+    ref->value = *value;
+    llg_native_ref_link_all(ref);
+    return ref;
+}
+
+void* llg_native_ref_item(void* reference, int64_t position) {
+    llg_native_ref_t* ref = reference;
+    if (!ref->parent) {
+        /* First step: a new reference that keeps the record's alive. */
+        llg_native_ref_t* cursor = llg_alloc_items(1, sizeof(*cursor));
+        memset(cursor, 0, sizeof(*cursor));
+        cursor->marker = sv4_from_u64(2u, LLG_NATIVE_REF_MARKER_WIDTH, 0);
+        cursor->refs = 1;
+        cursor->valid = ref->valid;
+        cursor->parent = ref;
+        cursor->member = ref->valid ? llg_native_ref_value(ref) : NULL;
+        cursor->value.desc = ref->value.desc;
+        llg_native_ref_link_all(cursor);
+        ref = cursor;
+    }
+    const llg_value_desc_t* desc = ref->value.desc;
+    if (position < 0 || (size_t)position >= desc->item_count) {
+        ref->valid = 0;
+        ref->member = NULL;
+        if (desc->kind == LLG_VALUE_AGGREGATE)
+            llg_container_fatal("invalid record member reference");
+        ref->value.desc = desc->element;
+        return ref;
+    }
+    ref->value.desc = llg_value_item_desc(desc, (size_t)position);
+    if (ref->member) ref->member = &ref->member->value.items[position];
+    return ref;
+}
+
+void* llg_native_ref_bind(void* reference) {
+    llg_native_ref_t* ref = reference;
+    if (!ref->member) {
+        /* An invalid selection owns the default the formal reads. */
+        const llg_value_desc_t* desc = ref->value.desc;
+        ref->value.desc = NULL;
+        llg_value_copy(&ref->value, desc, NULL);
+        if (desc->kind == LLG_VALUE_STRING && llg_value_hooks.publish) {
+            ref->value.value.string.notify = llg_value_hooks.publish;
+            ref->value.value.string.dependency = &ref->marker;
+        }
+        return ref;
+    }
+    /* Two formals bound to one member share its reference and marker. */
+    for (llg_native_ref_t* other = llg_native_refs_all; other;
+         other = other->all_next) {
+        if (other == ref || other->member != ref->member) continue;
+        llg_native_ref_release(ref);
+        return llg_native_ref_share(other);
+    }
+    if (ref->value.desc->kind == LLG_VALUE_STRING && llg_value_hooks.publish) {
+        ref->member->value.string.notify = llg_value_hooks.publish;
+        ref->member->value.string.dependency = &ref->marker;
+    }
+    return ref;
+}
+
+int64_t llg_native_ref_position(sv4_t index) {
+    int64_t position = -1;
+    return sv4_to_index_i64(index, &position) ? position : -1;
+}
+
+sv4_t llg_native_ref_packed_read(const void* reference) {
+    const llg_native_ref_t* ref = reference;
+    const llg_value_t* value = ref->member ? ref->member : &ref->value;
+    return sv4_clone(&value->value.packed);
+}
+
+int llg_native_ref_packed_write(void* reference, sv4_t value) {
+    llg_native_ref_t* ref = reference;
+    if (!ref->valid) return 0;
+    llg_value_t* target = llg_native_ref_value(ref);
+    const llg_value_desc_t* desc = target->desc;
+    sv4_t assigned = llg_element_assign(value, desc->packed_width,
+                                        desc->packed_signed,
+                                        desc->packed_two_state);
+    if (sv4_same(target->value.packed, assigned)) {
+        sv4_destroy(&assigned);
+        return 1;
+    }
+    sv4_move(&target->value.packed, &assigned);
+    llg_native_ref_publish(ref);
+    llg_native_ref_touch(ref->parent);
+    return 1;
+}
+
+/* A container's readers follow its contents marker; other roots have only
+ * the stores through this reference. */
+sv4_t* llg_native_ref_dependency(const void* reference) {
+    const llg_native_ref_t* ref = reference;
+    const llg_native_ref_t* root = ref->parent;
+    sv4_t* contents = NULL;
+    if (root && root->owner) {
+        switch (root->kind) {
+        case LLG_NATIVE_REF_DYNAMIC:
+            contents = ((llg_dyn_value_array_t*)root->owner)->contents_dependency;
+            break;
+        case LLG_NATIVE_REF_QUEUE:
+            contents = ((llg_queue_value_array_t*)root->owner)->contents_dependency;
+            break;
+        default:
+            contents = ((llg_assoc_value_t*)root->owner)->contents_dependency;
+            break;
+        }
+    }
+    return contents ? contents : (sv4_t*)&ref->marker;
 }
 
 sv4_t* llg_native_ref_marker(void* reference) {

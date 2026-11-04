@@ -285,6 +285,8 @@ static sv4_t* ref_leaf_dependency(const llg_ref_t* ref) {
             return llg_dependency_or_never(llg_queue_cell_dependency(ref->retained));
         if (ref->retained_read == llg_element_cell_read)
             return llg_dependency_or_never(llg_element_cell_dependency(ref->retained));
+        if (ref->retained_read == llg_native_ref_packed_read)
+            return llg_dependency_or_never(llg_native_ref_dependency(ref->retained));
         return llg_dependency_or_never(ref->queue ? ref->queue->contents_dependency : NULL);
     default:
         return llg_dependency_or_never(NULL);
