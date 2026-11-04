@@ -133,6 +133,20 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
             rhs,
             ticks: ticks.clone(),
         },
+        IrStmt::Container(operation)
+            if matches!(*operation, IrContainerStmt::ContainerNonblocking { .. }) =>
+        {
+            let IrContainerStmt::ContainerNonblocking { target, src, .. } = *operation else {
+                unreachable!("guard checked the statement");
+            };
+            IrStmt::Container(Box::new(IrContainerStmt::ContainerNonblocking {
+                target,
+                src,
+                delay: Some(ticks.clone()),
+            }))
+        }
+        // Every other container statement fills a capture at issue.
+        statement @ IrStmt::Container(_) => statement,
         // Captures and the calls that produce native sources run at issue.
         statement @ (IrStmt::DeclLocal { .. }
         | IrStmt::DeclString { .. }

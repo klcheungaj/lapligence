@@ -63,6 +63,25 @@ impl Codegen<'_> {
             })));
             return Ok(Some(IrStmt::Block(statements)));
         }
+        // A whole queue, dynamic or associative array: the value is copied
+        // at issue. SV 6.21 bars only its members and elements.
+        if let Some(container) = self
+            .container_of(self.p30_unwrap_cast(lhs))
+            .map(|container| container.ir)
+            .filter(|container| self.model.containers[*container].is_global_storage())
+        {
+            let temporary = self.container_temporary_like(container);
+            self.model.containers[temporary].initial_size = None;
+            return Ok(Some(IrStmt::Block(vec![
+                IrStmt::Container(Box::new(IrContainerStmt::Declare(temporary))),
+                self.lower_container_into(path, lhs, temporary, rhs)?,
+                IrStmt::Container(Box::new(IrContainerStmt::ContainerNonblocking {
+                    target: Some(container),
+                    src: temporary,
+                    delay,
+                })),
+            ])));
+        }
         let member = self.p30_unwrap_cast(lhs);
         if self.names_element_member(member) {
             return self

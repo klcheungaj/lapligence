@@ -1188,9 +1188,18 @@ impl Codegen<'_> {
                 ));
             };
             if nba {
-                return Err(format!(
-                    "nonblocking assignment of a record with a queue, dynamic or associative member is not supported in `{path}`"
-                ));
+                if !self.model.containers[*target].is_global_storage() {
+                    return Err(format!(
+                        "nonblocking assignment to a container member of an automatic record in `{path}` is illegal (SV 6.21, 10.4.2)"
+                    ));
+                }
+                return Ok(IrStmt::Container(Box::new(
+                    IrContainerStmt::ContainerNonblocking {
+                        target: Some(*target),
+                        src: source,
+                        delay: None,
+                    },
+                )));
             }
             return Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {
                 dst: *target,

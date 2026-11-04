@@ -671,6 +671,14 @@ pub enum IrContainerStmt {
         count: u64,
         delay: Option<IrDelay>,
     },
+    /// Nonblocking replacement of a whole container with a copy of `src`
+    /// taken at issue: of persistent `target`, or of the item an enclosing
+    /// [`Self::NbaLocate`] names when `target` is absent (SV 10.4.2).
+    ContainerNonblocking {
+        target: Option<usize>,
+        src: usize,
+        delay: Option<IrDelay>,
+    },
     /// The next nonblocking write, up to [`Self::NbaLocateEnd`], targets item
     /// `items` of `root`: the element position is fixed here and the item is
     /// found again at commit, so a whole-value write in between cannot leave
@@ -1787,6 +1795,22 @@ impl IrContainerStmt {
                 Ok(())
             }
             Self::NbaLocateEnd => Ok(()),
+            Self::ContainerNonblocking { target, src, .. } => {
+                let src = container_kind(model, *src, None)?;
+                if let Some(target) = target {
+                    let target = container_kind(model, *target, None)?;
+                    if !target.is_global_storage()
+                        || !target.element.compatible_with(&src.element)
+                        || std::mem::discriminant(&target.kind) != std::mem::discriminant(&src.kind)
+                    {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "nonblocking container write requires persistent storage and a source of its type",
+                        ));
+                    }
+                }
+                Ok(())
+            }
             Self::NbaLocate { root, items } => {
                 let mut item = Some(root.element(model)?);
                 for step in items {
@@ -2764,6 +2788,11 @@ impl IrContainerStmt {
                 visit(dst_start);
                 visit(src_start);
             }
+            Self::ContainerNonblocking {
+                delay: Some(IrDelay::Runtime { value, .. }),
+                ..
+            } => visit(value),
+            Self::ContainerNonblocking { .. } => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,
@@ -2886,6 +2915,11 @@ impl IrContainerStmt {
                 visit(dst_start);
                 visit(src_start);
             }
+            Self::ContainerNonblocking {
+                delay: Some(IrDelay::Runtime { value, .. }),
+                ..
+            } => visit(value),
+            Self::ContainerNonblocking { .. } => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,

@@ -81,7 +81,10 @@ issue to commit or cancellation. A write to an item inside a native value
 `llg_nba_locate_end`) attaches a locator to the next ordinary NBA: the element
 position is fixed at issue and the item is found again at commit, so a
 whole-value write in between cannot leave a dangling target; every packed,
-masked, real, string and handle commit path then runs unchanged.
+masked, real, string and handle commit path then runs unchanged. A whole
+queue, dynamic or associative array write (`llg_container_nba_after`,
+`is_container`) owns a deep copy of the source from issue to commit; under a
+locator it replaces the nested member slot.
 `llg_value_item_{to,from}_{dyn,queue,dyn_value,queue_value}` move a record's
 queue or dynamic-array member between its nested slot in a value (null when
 empty) and a standalone container; they never notify the slot's owner.

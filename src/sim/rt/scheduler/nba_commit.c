@@ -45,6 +45,17 @@ static void apply_nba_target(llg_nba_t* next) {
                                      payload, zero, payload->size);
             sv4_destroy(&zero);
         }
+    } else if (next->is_container) {
+        void* target = next->native.container.target;
+        void* payload = next->native.container.payload;
+        switch (next->native.container.kind) {
+        case LLG_NBA_CONTAINER_DYN: llg_dyn_copy(target, payload); break;
+        case LLG_NBA_CONTAINER_QUEUE: llg_queue_copy(target, payload); break;
+        case LLG_NBA_CONTAINER_ASSOC: llg_assoc_copy(target, payload); break;
+        case LLG_NBA_CONTAINER_DYN_VALUE: llg_dyn_value_copy(target, payload); break;
+        case LLG_NBA_CONTAINER_QUEUE_VALUE: llg_queue_value_copy(target, payload); break;
+        default: llg_assoc_value_copy(target, payload); break;
+        }
     } else if (next->is_chandle) {
         // Handle storage publishes its change marker on a changed value,
         // matching a blocking handle write.
@@ -97,6 +108,18 @@ static void apply_located_nba(llg_nba_t* next) {
     if (!item) return;
     for (size_t step = 0; step < locator->item_count; ++step)
         item = &item->value.items[locator->items[step]];
+    if (next->is_container) {
+        const void* payload = next->native.container.payload;
+        switch (next->native.container.kind) {
+        case LLG_NBA_CONTAINER_DYN: llg_value_item_from_dyn(item, payload); break;
+        case LLG_NBA_CONTAINER_QUEUE: llg_value_item_from_queue(item, payload); break;
+        case LLG_NBA_CONTAINER_DYN_VALUE: llg_value_item_from_dyn_value(item, payload); break;
+        case LLG_NBA_CONTAINER_QUEUE_VALUE: llg_value_item_from_queue_value(item, payload); break;
+        default: break;
+        }
+        if (locator->array) llg_dyn_value_touch(locator->array);
+        return;
+    }
     if (next->is_string) next->native.string.target = &item->value.string;
     else if (next->is_chandle) next->native.chandle.target = &item->value.handle;
     else if (next->is_real) next->real_target = &item->value.real;

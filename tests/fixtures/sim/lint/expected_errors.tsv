@@ -80,13 +80,14 @@ feature_completion/sim_004/neg_string_element_nba.sv	mixed-assignments	5:3
 feature_completion/sim_004/witness_chandle_nba.sv	mixed-assignments	5:1
 feature_completion/sim_004/witness_string_nba.sv	mixed-assignments	5:1
 feature_completion/sim_004/witness_string_record_nba.sv	mixed-assignments	5:1
-feature_completion/sim_007/bad_record_element_member_nba.sv	mixed-assignments	8:5
 feature_completion/sim_007/bad_tagged_member_nba.sv	mixed-assignments	10:5
 feature_completion/sim_007/block_natives.sv	mixed-assignments	66:5
 feature_completion/sim_007/block_records.sv	mixed-assignments	105:5
 feature_completion/sim_007/handle_sensitivity.sv	mixed-assignments	34:5
 feature_completion/sim_007/native_arrays.sv	mixed-assignments	34:5
 feature_completion/sim_007/native_tagged_nba.sv	mixed-assignments	32:5
+feature_completion/sim_007/record_container_nba.sv	mixed-assignments	10:3
+feature_completion/sim_007/record_container_nba_sources.sv	mixed-assignments	18:3
 feature_completion/sim_007/record_element_member_nba.sv	mixed-assignments	19:3
 force/Force_Advanced_Contexts.sv	mixed-assignments	32:3
 group1_repairs/packed_selection_capture.sv	mixed-assignments	5:3

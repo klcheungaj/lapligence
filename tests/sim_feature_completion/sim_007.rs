@@ -157,6 +157,18 @@ fn record_element_members_take_nonblocking_writes() {
 }
 
 #[test]
+fn records_with_container_members_take_nonblocking_writes() {
+    for name in ["record_container_nba", "record_container_nba_sources"] {
+        let expected = std::fs::read_to_string(format!(
+            "{}/tests/fixtures/sim/feature_completion/sim_007/{name}.out",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("fixture output");
+        sim_cli::run_case_backend_parity(SUITE, name, &expected, &[], &[]);
+    }
+}
+
+#[test]
 fn indexed_slices_of_fixed_arrays_pass_by_value() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/fixed_variable_slice_actuals.out");
@@ -254,11 +266,6 @@ fn record_container_member_boundaries_are_rejected_explicitly() {
         SUITE,
         "bad_record_container_element",
         "record elements of a queue, dynamic, associative or fixed array with associative array member `a` are not supported: the element value has no nested associative form",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "bad_record_container_nba",
-        "nonblocking assignment of a record with a queue, dynamic or associative member `q` is not supported",
     );
     sim_cli::reject_case(
         SUITE,
@@ -468,11 +475,6 @@ fn container_elements_hold_records_with_container_members() {
         SUITE,
         "bad_record_element_member_context",
         "an expression that changes a queue or dynamic-array member of a container record element in `tb` is only supported as an assignment, call or system-task statement",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "bad_record_element_member_nba",
-        "nonblocking assignment to a queue or dynamic-array member of a container record element in `tb` is not supported",
     );
     sim_cli::reject_case(
         SUITE,

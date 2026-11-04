@@ -541,10 +541,14 @@ impl<'a> Codegen<'a> {
                 // SV 7.6: a queue, dynamic or associative member is copied
                 // by value into the destination's own container.
                 if nba {
-                    return Err(format!(
-                        "nonblocking assignment of a record with a queue, dynamic or associative member `{}` is not supported in `{path}`",
-                        aggregate_path_suffix(&left.path)
-                    ));
+                    assignments.push(IrStmt::Container(Box::new(
+                        IrContainerStmt::ContainerNonblocking {
+                            target: Some(lhs.ir),
+                            src: rhs.ir,
+                            delay: None,
+                        },
+                    )));
+                    continue;
                 }
                 assignments.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
                     dst: lhs.ir,
@@ -817,10 +821,23 @@ impl<'a> Codegen<'a> {
             };
             if let Some(container) = &left.container {
                 if nba {
-                    return Err(format!(
-                        "nonblocking pattern assignment to a record with a queue, dynamic or associative member `{}` is not supported in `{path}`",
-                        aggregate_path_suffix(&member_path)
-                    ));
+                    // The member's value is copied now and replaces it at
+                    // commit (SV 10.4.2).
+                    let temporary = self.container_temporary_like(container.ir);
+                    self.model.containers[temporary].initial_size = None;
+                    captures.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                        temporary,
+                    ))));
+                    captures
+                        .push(self.lower_container_into(path, value_node, temporary, value_node)?);
+                    assignments.push(IrStmt::Container(Box::new(
+                        IrContainerStmt::ContainerNonblocking {
+                            target: Some(container.ir),
+                            src: temporary,
+                            delay: None,
+                        },
+                    )));
+                    continue;
                 }
                 if let Some(source) = self.container_of(value_node) {
                     if source.ir != container.ir && written_containers.contains(&source.ir) {

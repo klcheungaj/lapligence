@@ -144,7 +144,7 @@ impl Codegen<'_> {
         rhs: NodeId,
         delay: Option<IrDelay>,
     ) -> Result<IrStmt, String> {
-        let (selection, prefix, leaves) = self.element_member_leaves(path, lhs)?;
+        let (selection, prefix, leaves, containers) = self.element_member_leaves(path, lhs)?;
         self.require_persistent_view(path, selection.container)?;
         let mut statements = Vec::new();
         let (temporary, descriptor) =
@@ -154,7 +154,19 @@ impl Codegen<'_> {
             value: temporary,
             prefix: prefix.clone(),
         };
-        statements.push(self.native_assign_into(path, &endpoint, &descriptor, rhs, false)?);
+        if containers.len() == 1 && containers[0].path == prefix {
+            // A whole container member: any container source fills its copy.
+            let layout = self.native_layout_of_value(temporary)?;
+            let position = layout
+                .containers
+                .iter()
+                .position(|candidate| candidate.path == prefix)
+                .ok_or("element temporary has no such container")?;
+            let companion = self.model.native_values[temporary].companions[position];
+            statements.push(self.lower_container_into(path, lhs, companion, rhs)?);
+        } else {
+            statements.push(self.native_assign_into(path, &endpoint, &descriptor, rhs, false)?);
+        }
         let slot = self.element_nba_slot(path, &selection, &mut statements)?;
         let IrValueSlot::Element { indices, .. } = &slot else {
             unreachable!("element selections lower to element slots");
@@ -184,6 +196,33 @@ impl Codegen<'_> {
                 value,
                 ticks.clone(),
             )?);
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::NbaLocateEnd)));
+        }
+        // Container members travel in the temporary's companions.
+        let layout = self.native_layout_of_value(temporary)?.containers.clone();
+        let companions = self.model.native_values[temporary].companions.clone();
+        for leaf in containers {
+            let source = layout
+                .iter()
+                .position(|candidate| candidate.path == leaf.path)
+                .and_then(|position| companions.get(position).copied())
+                .ok_or("element temporary has no such container")?;
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::NbaLocate {
+                root: IrValueItemRoot::Element(IrChandleExpr::ContainerElement {
+                    container: selection.container,
+                    indices: indices.clone(),
+                    key: None,
+                    write: false,
+                }),
+                items: leaf.items.clone(),
+            })));
+            statements.push(IrStmt::Container(Box::new(
+                IrContainerStmt::ContainerNonblocking {
+                    target: None,
+                    src: source,
+                    delay: Some(ticks.clone()),
+                },
+            )));
             statements.push(IrStmt::Container(Box::new(IrContainerStmt::NbaLocateEnd)));
         }
         Ok(IrStmt::Block(statements))

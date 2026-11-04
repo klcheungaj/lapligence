@@ -79,8 +79,9 @@ typedef struct llg_nba {
     int is_string;
     int is_chandle;
     int is_values;
+    int is_container;
     // Persistent native destination and its owned issue-time value;
-    // is_string, is_chandle or is_values selects the member.
+    // is_string, is_chandle, is_values or is_container selects the member.
     union {
         struct {
             llg_string_t* target;
@@ -99,6 +100,13 @@ typedef struct llg_nba {
             llg_dyn_value_array_t* payload;
             int whole;
         } values;
+        // Whole-container write: a deep copy of the source, replacing
+        // `target`, or the located item when `target` is NULL.
+        struct {
+            void* target;
+            void* payload;
+            int kind;
+        } container;
     } native;
     // Owned copy of a tagged-member write's commit-time checks, or NULL.
     llg_ref_view_t* tag_view;
@@ -127,6 +135,18 @@ static void nba_locator_destroy(llg_nba_locator_t* locator) {
     free(locator);
 }
 
+static void nba_container_destroy(int kind, void* payload) {
+    switch (kind) {
+    case LLG_NBA_CONTAINER_DYN: llg_dyn_destroy(payload); break;
+    case LLG_NBA_CONTAINER_QUEUE: llg_queue_destroy(payload); break;
+    case LLG_NBA_CONTAINER_ASSOC: llg_assoc_destroy(payload); break;
+    case LLG_NBA_CONTAINER_DYN_VALUE: llg_dyn_value_destroy(payload); break;
+    case LLG_NBA_CONTAINER_QUEUE_VALUE: llg_queue_value_destroy(payload); break;
+    default: llg_assoc_value_destroy(payload); break;
+    }
+    free(payload);
+}
+
 static void nba_destroy(llg_nba_t* nba) {
     if (!nba) return;
     nba_locator_destroy(nba->locator);
@@ -141,6 +161,8 @@ static void nba_destroy(llg_nba_t* nba) {
         llg_dyn_value_destroy(nba->native.values.payload);
         free(nba->native.values.payload);
     }
+    if (nba->is_container)
+        nba_container_destroy(nba->native.container.kind, nba->native.container.payload);
     free(nba->tag_view);
     value_scope_release(nba->target_scope);
     free(nba);

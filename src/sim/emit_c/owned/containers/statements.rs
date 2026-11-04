@@ -1130,6 +1130,27 @@ pub(super) fn render(
             }
         }
         IrContainerStmt::NbaLocateEnd => "    llg_nba_locate_end();\n".to_owned(),
+        IrContainerStmt::ContainerNonblocking { target, src, delay } => {
+            let storage = &ctx.model.containers[*src];
+            let kind = match (&storage.kind, storage.element.is_packed()) {
+                (IrContainerKind::Dynamic, true) => "LLG_NBA_CONTAINER_DYN",
+                (IrContainerKind::Queue { .. }, true) => "LLG_NBA_CONTAINER_QUEUE",
+                (IrContainerKind::Associative { .. }, true) => "LLG_NBA_CONTAINER_ASSOC",
+                (IrContainerKind::Dynamic, false) => "LLG_NBA_CONTAINER_DYN_VALUE",
+                (IrContainerKind::Queue { .. }, false) => "LLG_NBA_CONTAINER_QUEUE_VALUE",
+                (IrContainerKind::Associative { .. }, false) => "LLG_NBA_CONTAINER_ASSOC_VALUE",
+            };
+            let target = match target {
+                Some(target) => format!("&{}", name(frame, *target)?),
+                None => "NULL".to_owned(),
+            };
+            let source = name(frame, *src)?;
+            let ticks = match delay {
+                Some(delay) => frame.delay(delay)?,
+                None => "0ULL".to_owned(),
+            };
+            format!("    llg_container_nba_after({kind}, {target}, &{source}, {ticks});\n")
+        }
         IrContainerStmt::NbaLocate { root, items } => {
             let list = items
                 .iter()

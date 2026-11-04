@@ -760,6 +760,10 @@ impl Codegen<'_> {
         if let Some((_, selection, leaf, _)) = self.element_leaf_select(node)? {
             return Ok(Some((selection, leaf)));
         }
+        // A whole container member takes the sub-record path.
+        if self.element_container_member(node) {
+            return Ok(None);
+        }
         if let Some(found) = self.element_leaf(node)? {
             return Ok(Some(found));
         }
@@ -778,14 +782,32 @@ impl Codegen<'_> {
         }
     }
 
-    /// The selection, member path and scalar leaves of a whole sub-record or
-    /// member array of a record element. Container members below it stay
-    /// rejected: their slots hold no value a scalar write can queue.
+    /// Whether `node` names a whole container member of a record element.
+    fn element_container_member(&self, node: NodeId) -> bool {
+        self.element_member_path(node)
+            .is_some_and(|(selection, member)| {
+                self.element_leaves(selection.container, selection.depth())
+                    .is_ok_and(|(_, _, leaves)| {
+                        leaves.containers.iter().any(|leaf| leaf.path == member)
+                    })
+            })
+    }
+
+    /// The selection, member path and scalar and container leaves of a whole
+    /// sub-record, member array or container member of a record element.
     pub(in crate::sim::codegen) fn element_member_leaves(
         &self,
         path: &str,
         node: NodeId,
-    ) -> Result<(ElementSelection, Vec<AggregatePathPart>, Vec<NativeLeaf>), String> {
+    ) -> Result<
+        (
+            ElementSelection,
+            Vec<AggregatePathPart>,
+            Vec<NativeLeaf>,
+            Vec<NativeContainerLeaf>,
+        ),
+        String,
+    > {
         let not_supported = || {
             format!(
                 "a nonblocking assignment to this selection of a record element in `{path}` is not supported; assign its members or the whole element"
@@ -793,22 +815,20 @@ impl Codegen<'_> {
         };
         let (selection, prefix) = self.element_member_path(node).ok_or_else(not_supported)?;
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
-        if leaves
-            .containers
-            .iter()
-            .any(|leaf| leaf.path.starts_with(&prefix))
-        {
-            return Err(not_supported());
-        }
         let scalars = leaves
             .scalars
             .into_iter()
             .filter(|leaf| leaf.path.starts_with(&prefix))
             .collect::<Vec<_>>();
-        if scalars.is_empty() {
+        let containers = leaves
+            .containers
+            .into_iter()
+            .filter(|leaf| leaf.path.starts_with(&prefix))
+            .collect::<Vec<_>>();
+        if scalars.is_empty() && containers.is_empty() {
             return Err(not_supported());
         }
-        Ok((selection, prefix, scalars))
+        Ok((selection, prefix, scalars, containers))
     }
 
     /// A native temporary of the element type and the descriptor of the
@@ -1280,6 +1300,11 @@ impl Codegen<'_> {
                     overwritten = children.first().copied();
                 }
                 for (position, child) in children.into_iter().enumerate() {
+                    // A nonblocking write of a whole member is queued from
+                    // the source, without a staged copy of the target.
+                    if position == 0 && !blocking && self.element_container_member(child) {
+                        continue;
+                    }
                     // A nested element assigned whole (`row = qq[i]`) is read
                     // from a staged copy.
                     if position == 1 && self.stage_whole_read(child, &mut members, &mut nested) {
