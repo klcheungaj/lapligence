@@ -1065,6 +1065,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   wait counts from zero
   ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
   V §9.7.7 **[1995]**.
+- ✅ **Event controls on string expressions** — `@(fs[2])` on an element of a
+  string array, of any container kind, wakes when the element's value changes,
+  by a 64-bit digest of the text
+  ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
 - 🟨 **Named-event operations** — `->`, `->>` with delay, event and
   repeated-event controls, `.triggered`, `wait_order`, event assignment,
   null and comparison execute. Nonblocking triggers name their event at issue
@@ -1760,15 +1764,20 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   cell follows its element until §13.5.2 outdates it (removal, `new[]`,
   `delete`, whole assignment); the outdated element keeps its last value,
   shared by every reference to it. String/chandle references use native
-  storage; real/shortreal references bind the actual's numeric cell (SIM-005).
+  storage; real/shortreal references bind the actual's numeric cell (SIM-005),
+  or for an element or record member a stable `double` of a retained reference
+  ([sim_005](../tests/fixtures/sim/feature_completion/sim_005/readme.md)).
   Native record `ref` formals take a whole subroutine record by address, and a
   module, static or procedural-block record (or a constant member/index
   selection of one) through a specialization of the callee per bound record
   set that names the record's members directly, so writes publish and wake
-  `always_comb`, `@` and `wait` readers at once. Record actuals that are
-  container or fixed-array elements, run-time-indexed or subroutine-record
-  members, record actuals of class-method formals, non-packed container
-  elements and reference-formal NBAs remain restricted. Fixed packed scanner destinations retain checked selected
+  `always_comb`, `@` and `wait` readers at once. Container and fixed-array
+  elements and their members bind through a retained reference, and every store
+  through the formal reaches the element's readers at that store, whatever its
+  form ([record_ref_write_paths](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  Records with container members as elements, run-time record elements of
+  module records, virtual-interface method formals and reference-formal NBAs
+  remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;
   packed bit/part actuals rejected by the frontend are not legalized by internal
