@@ -25,7 +25,7 @@ static void* fresh_event(void) {
     CHECK(created_events < 8);
     return &event_objects[created_events++];
 }
-static const llg_value_handle_hooks_t hooks = {fresh_event, count_retain, count_release, NULL};
+static const llg_value_handle_hooks_t hooks = {fresh_event, count_retain, count_release, NULL, NULL};
 
 static void fill_record(llg_value_t* record, const char* text, uint64_t number, double real) {
     llg_native_value_init(record, &record_desc);
