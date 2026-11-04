@@ -268,7 +268,7 @@ pub(super) fn render(
                 "llg_owned_assoc_value_traverse_string"
             },
             name(frame, *container)?,
-            frame.native_lookup(key_name, NativeKind::String)?.address,
+            frame.native_read(key_name, NativeKind::String)?.address,
             match direction {
                 IrAssocTraversal::First => 0,
                 IrAssocTraversal::Last => 1,

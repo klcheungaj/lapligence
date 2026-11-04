@@ -125,7 +125,7 @@ impl Frame<'_, '_> {
                 }
             }
             IrExprKind::LocalRead(name) => {
-                let binding = self.resolve_lookup(name)?;
+                let binding = self.read_lookup(name)?;
                 self.read_binding(&binding)
             }
             IrExprKind::FormalRead(index) => {

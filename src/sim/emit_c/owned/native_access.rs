@@ -3,7 +3,48 @@ use super::native::{NativeBinding, NativeKind};
 use super::*;
 
 impl Frame<'_, '_> {
+    /// Note that the statement being rendered stores through native value
+    /// `value`. When that is a writable `ref` record formal, its bound
+    /// element's readers must learn of it as the store finishes
+    /// (`publish_touches`): the formal's address is all the store has, and
+    /// what it is bound to is known only at run time.
+    pub(super) fn note_ref_store(&mut self, value: usize) -> Result<(), String> {
+        let Some(function) = self.formal_function() else {
+            return Ok(());
+        };
+        let writable_ref = function.formals.iter().any(|formal| {
+            formal.native_value == Some(value) && formal.is_ref() && !formal.is_const_ref()
+        });
+        if writable_ref {
+            let address = self.native_value_read(value)?;
+            self.pending_touches
+                .push(format!("llg_native_ref_value_stored({address});"));
+        }
+        Ok(())
+    }
+
+    /// [`Self::resolve_lookup`] for a read, which publishes nothing.
+    pub(super) fn read_lookup(&mut self, name: &str) -> Result<Binding, String> {
+        self.access_read = true;
+        let binding = self.resolve_lookup(name);
+        self.access_read = false;
+        binding
+    }
+
+    /// [`Self::native_lookup`] for a read, which publishes nothing.
+    pub(super) fn native_read(
+        &mut self,
+        name: &str,
+        kind: NativeKind,
+    ) -> Result<NativeBinding, String> {
+        self.access_read = true;
+        let binding = self.native_lookup(name, kind);
+        self.access_read = false;
+        binding
+    }
+
     fn access_address(&mut self, name: &str) -> Result<Option<(String, IrClassFieldType)>, String> {
+        let reading = std::mem::take(&mut self.access_read);
         let Some(access) = self
             .ctx
             .model
@@ -15,6 +56,11 @@ impl Frame<'_, '_> {
             return Ok(None);
         };
         if let IrNativeAccessKind::ValueItem { value, ty } = access.kind {
+            // Every use of a leaf but those read lookups name is a store or
+            // hands out the address for one, so no write form can miss this.
+            if !reading {
+                self.note_ref_store(value)?;
+            }
             let address = self.native_value_leaf(value, &access.item_path, ty)?;
             let c_type = match ty {
                 IrClassFieldType::Packed { .. } => "sv4_t*",

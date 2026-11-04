@@ -656,7 +656,7 @@ fn render_function(
             if ctx.model.native_values[value].activation {
                 frame.native_values.insert(value, parameter);
             } else if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
-                let address = frame.native_value_address(value)?;
+                let address = frame.native_value_read(value)?;
                 frame.line(format!("llg_native_value_copy({address}, {parameter});"));
             }
             continue;
@@ -912,7 +912,7 @@ fn render_function(
             .native_value
             .filter(|value| !ctx.model.native_values[*value].activation && formal.is_out)
         {
-            let address = frame.native_value_address(value)?;
+            let address = frame.native_value_read(value)?;
             frame.line(format!("llg_native_value_copy(o{index}, {address});"));
             for (position, container) in formal.native_companions.iter().enumerate() {
                 let storage = &ctx.model.containers[*container];

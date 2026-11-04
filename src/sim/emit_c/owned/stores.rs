@@ -1039,6 +1039,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         mutation: &IrMutationExpr,
         expr: &IrExpr,
     ) -> Result<Value, String> {
+        let touches = self.pending_touches.len();
         let target = self.target(&mutation.lhs)?;
         self.bindings.push(HashMap::new());
         let current = if mutation.reads_current || mutation.post {
@@ -1090,6 +1091,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             )
         };
         self.store(&target, value, false, "0")?;
+        self.publish_touches(touches);
         if let Some(current) = current {
             self.discard(current);
         }

@@ -111,7 +111,7 @@ impl Frame<'_, '_> {
             Ok(format!("llg_frame_opaque_marker({frame}, {slot}u, 1)"))
         } else {
             let string = self
-                .native_lookup(local, super::native::NativeKind::String)?
+                .native_read(local, super::native::NativeKind::String)?
                 .address;
             Ok(format!("llg_dependency_or_never(({string})->dependency)"))
         }
@@ -144,7 +144,7 @@ impl Frame<'_, '_> {
             IrDependency::Scalar(name)
             | IrDependency::Real(name)
             | IrDependency::SharedCell { local: name, .. } => {
-                let binding = self.resolve_lookup(name)?;
+                let binding = self.read_lookup(name)?;
                 format!(
                     "{{ .{} = {} }}",
                     if binding.width == 0 { "real" } else { "sig" },
@@ -172,7 +172,7 @@ impl Frame<'_, '_> {
             } => {
                 let (trigger, value) = match storage.as_ref() {
                     IrDependency::Scalar(name) => {
-                        let binding = self.resolve_lookup(name)?;
+                        let binding = self.read_lookup(name)?;
                         (binding.address.clone(), binding.address)
                     }
                     IrDependency::ArrayElement { array, index } => {

@@ -71,9 +71,9 @@ subroutine record alive through its root reference and addresses the selected
 leaf. A run-time index into a module-like record chooses among its stable leaf
 addresses at the call and needs no reference; an index selecting none binds a
 private default cell (`llg_native_ref_detached_string` and its siblings).
-A blocking store through a record `ref` formal is followed by
+Every store through a record `ref` formal is followed by
 `llg_native_ref_value_stored`, which tells the element's container; it costs one
-load when no reference is live.
+load when no reference is live and a walk of the live references otherwise.
 
 Identity-handle elements (SIM-006) copy the handle: events, opaque objects and
 borrowed chandles are never duplicated; `LLG_VALUE_PROCESS` handles are counted

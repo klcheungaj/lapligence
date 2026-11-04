@@ -106,16 +106,23 @@ impl Frame<'_, '_> {
         let rendered = self.statement_body(statement);
         self.statement_depth -= 1;
         rendered?;
-        // Element members written in place are published after the store.
-        let pending = self.pending_touches.split_off(touches);
+        self.publish_touches(touches);
+        Ok(())
+    }
+
+    /// Publish stores noted since `mark`, once each: element members written
+    /// in place and leaves of `ref` record formals. A statement does this as
+    /// it ends; a store inside an expression does so at once, because the
+    /// statement holding it may suspend or loop before it ends.
+    pub(super) fn publish_touches(&mut self, mark: usize) {
+        let pending = self.pending_touches.split_off(mark);
         let mut seen = Vec::new();
-        for (container, function) in pending {
-            if !seen.contains(&container) {
-                self.line(format!("{function}(&{container});"));
-                seen.push(container);
+        for touch in pending {
+            if !seen.contains(&touch) {
+                self.line(touch.clone());
+                seen.push(touch);
             }
         }
-        Ok(())
     }
 
     fn statement_body(&mut self, statement: &IrStmt) -> Result<(), String> {
@@ -138,13 +145,9 @@ impl Frame<'_, '_> {
                 self.declare_native_companions(*index)?;
             }
             IrStmt::NativeValueSharedDeclare(index) => self.shared_native_value(*index)?,
-            IrStmt::NativeRefStored(index) => {
-                let value = self.native_value_address(*index)?;
-                self.line(format!("llg_native_ref_value_stored({value});"));
-            }
             IrStmt::NativeValueCopy { dst, src } => {
                 let target = self.native_value_address(*dst)?;
-                let source = self.native_value_address(*src)?;
+                let source = self.native_value_read(*src)?;
                 self.line(format!("llg_native_value_copy({target}, {source});"));
                 self.copy_native_companions(*dst, *src)?;
             }

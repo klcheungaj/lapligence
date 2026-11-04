@@ -251,6 +251,7 @@ impl Frame<'_, '_> {
         if !self.allow_calls {
             return Err(pending("subprogram calls in declaration initialization"));
         }
+        let touches = self.pending_touches.len();
         let function = self.ctx.model.func(f).clone();
         if model::inline_template(&function) {
             return Err("template calls must select a specialization before C emission".to_owned());
@@ -422,9 +423,13 @@ impl Frame<'_, '_> {
                     parameters.extend(formal.native_companions.iter().map(|_| "NULL".to_owned()));
                 }
                 IrCallArg::NativeValue(value) => {
-                    let actual = self.native_value_address(*value)?;
+                    let actual = self.native_value_read(*value)?;
+                    if formal.is_out {
+                        self.note_ref_store(*value)?;
+                    }
                     // A `ref` formal aliases the caller's value and its
-                    // companion containers (SIM-008).
+                    // companion containers (SIM-008). Its callee publishes
+                    // its own stores through that alias.
                     if formal.is_ref() {
                         parameters.push(actual);
                         for container in self.ctx.model.native_values[*value].companions.clone() {
@@ -961,6 +966,7 @@ impl Frame<'_, '_> {
                 target.address, storage.address
             ));
         }
+        self.publish_touches(touches);
         for value in native_owners {
             self.native_discard(value);
         }
@@ -982,7 +988,7 @@ impl Frame<'_, '_> {
                 return self.leaf_choice_binding(index, leaves, reference.kind);
             }
             IrElementRoot::Value(value) => {
-                let address = self.native_value_address(*value)?;
+                let address = self.native_value_read(*value)?;
                 self.scalar("void*", format!("llg_native_ref_root({address})"))
             }
             IrElementRoot::Element {

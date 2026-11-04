@@ -77,7 +77,7 @@ impl Frame<'_, '_> {
                 ),
             ),
             LocalRead(name) => {
-                let binding = self.native_lookup(name, NativeKind::String)?;
+                let binding = self.native_read(name, NativeKind::String)?;
                 self.native_value(
                     NativeKind::String,
                     format!("llg_string_clone({})", binding.address),

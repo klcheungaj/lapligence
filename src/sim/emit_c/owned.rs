@@ -208,9 +208,11 @@ pub(super) struct Frame<'a, 'm> {
     /// Nesting depth of statements being rendered. Expression code outside
     /// any statement (read-only callbacks, evaluators) has no exit path.
     statement_depth: usize,
-    /// Containers written in place through element-item accesses during the
-    /// current statement; their readers are notified once it completes.
-    pending_touches: Vec<(String, &'static str)>,
+    /// Statements publishing stores made in place during the current
+    /// statement (see `publish_touches`).
+    pending_touches: Vec<String>,
+    /// The next access resolved is a read (see `read_lookup`).
+    access_read: bool,
     construction_stack: Vec<usize>,
     layout: FrameLayout,
     declarations: Vec<DeferredDeclaration>,
@@ -469,6 +471,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             static_initialization: false,
             statement_depth: 0,
             pending_touches: Vec::new(),
+            access_read: false,
             construction_stack: Vec::new(),
             layout: FrameLayout::with_backend(storage, ctx.value_backend),
             declarations: Vec::new(),

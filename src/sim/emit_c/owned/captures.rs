@@ -100,7 +100,7 @@ impl Frame<'_, '_> {
                 let IrExprKind::LocalRead(name) = initial.kind() else {
                     return Err("string fork capture requires a local source".to_owned());
                 };
-                let binding = self.native_lookup(name, NativeKind::String)?;
+                let binding = self.native_read(name, NativeKind::String)?;
                 values.push((storage, CapturedValue::String(binding.address)));
                 continue;
             }
@@ -117,7 +117,7 @@ impl Frame<'_, '_> {
             }
             if storage.ownership() == StorageOwnership::Borrowed {
                 let binding = match initial.kind() {
-                    IrExprKind::LocalRead(name) => self.resolve_lookup(name)?,
+                    IrExprKind::LocalRead(name) => self.read_lookup(name)?,
                     IrExprKind::FormalRead(index) => {
                         if let Some(formals) = self.formal_overrides.last() {
                             formals
@@ -185,7 +185,7 @@ impl Frame<'_, '_> {
                         _ => return Err("opaque capture requires a typed handle".to_owned()),
                     },
                     IrExprKind::LocalRead(name) => {
-                        let binding = self.native_lookup(name, NativeKind::Chandle)?;
+                        let binding = self.native_read(name, NativeKind::Chandle)?;
                         self.scalar("void*", format!("*({})", binding.address))
                     }
                     _ => return Err("opaque capture requires a typed handle".to_owned()),

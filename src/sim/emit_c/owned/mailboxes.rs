@@ -103,7 +103,7 @@ impl Frame<'_, '_> {
             }
             IrMailboxValue::Native { value, type_id } => format!(
                 "llg_mailbox_value_native({}, UINT64_C({type_id}))",
-                self.native_value_address(*value)?
+                self.native_value_read(*value)?
             ),
         };
         Ok(message)

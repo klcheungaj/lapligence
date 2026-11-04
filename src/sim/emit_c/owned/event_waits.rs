@@ -68,7 +68,7 @@ impl Frame<'_, '_> {
         if specs.len() == 1 {
             match &specs[0] {
                 (IrWaitSrc::Sig(name), edge) => {
-                    let signal = self.resolve_lookup(name)?.address;
+                    let signal = self.read_lookup(name)?.address;
                     let arm = match edge {
                         IrEdge::Any => format!("llg_arm_any(self, (sv4_t*[]){{ {signal} }}, 1)"),
                         IrEdge::Posedge => format!("llg_arm_edge(self, {signal}, 1)"),
@@ -96,7 +96,7 @@ impl Frame<'_, '_> {
                     let IrWaitSrc::Sig(name) = source else {
                         unreachable!("all sources were checked as signals")
                     };
-                    let signal = self.resolve_lookup(name)?.address;
+                    let signal = self.read_lookup(name)?.address;
                     let edge = match edge {
                         IrEdge::Any => "LLG_EV_ANY",
                         IrEdge::Posedge => "LLG_EV_POSEDGE",
@@ -154,7 +154,7 @@ impl Frame<'_, '_> {
                 entries.push(match source {
                     IrWaitSrc::Sig(name) => format!(
                         "{{ .sig = {}, .kind = {edge}, .ev = NULL }}",
-                        self.resolve_lookup(name)?.address
+                        self.read_lookup(name)?.address
                     ),
                     IrWaitSrc::Event(event) => format!(
                         "{{ .sig = NULL, .kind = {edge}, .ev = {} }}",
@@ -266,7 +266,7 @@ impl Frame<'_, '_> {
             let mut fields = vec![format!(".kind = {edge}")];
             match source {
                 IrWaitSrc::Sig(name) | IrWaitSrc::Real(name) => {
-                    let binding = self.resolve_lookup(name)?;
+                    let binding = self.read_lookup(name)?;
                     if binding.width == 0 {
                         fields.push(format!(".real_sig = {}, .real = 1", binding.address));
                     } else {

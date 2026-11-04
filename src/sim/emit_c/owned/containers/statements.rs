@@ -999,7 +999,7 @@ pub(super) fn render(
             slot,
             value,
         } => {
-            let root = frame.native_value_address(*value)?;
+            let root = frame.native_value_read(*value)?;
             let target = name(frame, *container)?;
             let kind = ctx.model.containers[*container].kind.clone();
             let call = match (slot, kind) {
@@ -1107,10 +1107,15 @@ pub(super) fn render(
                     return Err("an associative record member has no nested value form".into())
                 }
             };
+            if let (IrContainerStmt::ContainerToValueItem { .. }, IrValueItemRoot::Value(value)) =
+                (operation, root)
+            {
+                frame.note_ref_store(*value)?;
+            }
             let item = match root {
                 // The whole value is the container (a mailbox message).
                 IrValueItemRoot::Value(value) if items.is_empty() => {
-                    frame.native_value_address(*value)?
+                    frame.native_value_read(*value)?
                 }
                 IrValueItemRoot::Value(value) => frame.native_value_item(*value, items)?,
                 // An empty path names a whole nested container element.

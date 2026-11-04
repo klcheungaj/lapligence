@@ -1804,7 +1804,6 @@ fn sequence_statement(statement: &IrStmt) -> bool {
     match statement.unlocated() {
         IrStmt::FixedArrayDeclare(_)
         | IrStmt::NativeValueDeclare(_)
-        | IrStmt::NativeRefStored(_)
         | IrStmt::NativeValueCopy { .. }
         | IrStmt::FixedValueAssign { nba: false, .. }
         | IrStmt::FixedArrayFill { nba: false, .. }

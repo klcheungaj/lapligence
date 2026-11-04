@@ -102,6 +102,15 @@ on what it is bound to. A run-time index into a module-like record picks among
 the leaves' stable addresses instead (`IrElementRoot::Leaves`). A `ref` event
 formal bound to a class event property takes the address of its object's slot
 (`IrCallArg::EventSlot`), which holds the one pointer an `llg_event_t` holds.
+Generated code holds only the formal's address, so a store through a writable
+record `ref` formal tells the element's container itself. `access_address` and
+`native_value_address` note a pending `llg_native_ref_value_stored` for every use
+of a leaf or the root; reads opt out through `read_lookup`, `native_read` and
+`native_value_read`, so a new store form publishes without any change here. The
+pending publications go out where the statement ends, and at once after a
+`Mutation` or a call, whose enclosing statement may loop or suspend first. A
+binding of a member through `ElementRef` publishes through the retained
+reference instead, at each store of the callee.
 Only open-array DPI imports and tasks waiting on a native record `ref` formal
 are templates that are never emitted (`IrFunc::inline_expanded`); a task whose
 event control reads a `ref` formal also emits per-signal specializations

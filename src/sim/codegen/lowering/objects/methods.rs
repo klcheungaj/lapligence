@@ -234,6 +234,12 @@ impl Codegen<'_> {
         } else {
             None
         };
+        // A string member of a record value or container element.
+        let local = match local {
+            Some(local) => Some(local),
+            None if index.is_none() => self.native_object_leaf(path, receiver, true)?,
+            None => None,
+        };
         if index.is_none() && local.is_none() {
             let const_ref = self.func.as_ref().is_some_and(|function| {
                 let target = match self.kind(receiver) {

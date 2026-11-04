@@ -866,7 +866,7 @@ impl<'a> Codegen<'a> {
 
     /// Resolve a whole native string actual to its caller-owned C slot.
     pub(in super::super) fn lower_string_actual_address(
-        &self,
+        &mut self,
         path: &str,
         actual: NodeId,
     ) -> Result<String, String> {
@@ -894,6 +894,9 @@ impl<'a> Codegen<'a> {
             return Ok(format!("&{}", object.c_name));
         }
         if let Some((_, name)) = self.lexical_proc_string_local(actual) {
+            return Ok(format!("&{name}"));
+        }
+        if let Some(name) = self.native_object_leaf(path, actual, true)? {
             return Ok(format!("&{name}"));
         }
         let target = match self.kind(actual) {
@@ -978,7 +981,11 @@ impl<'a> Codegen<'a> {
                     .keys()
                     .any(|target| self.node(*target).name == self.node(actual).name))
         });
-        if writable || self.lexical_proc_string_local(actual).is_some() {
+        if writable
+            || self.lexical_proc_string_local(actual).is_some()
+            || self.native_leaf_kind(actual) == Some(IrClassFieldType::String)
+            || self.element_leaf_kind(actual) == Some(IrClassFieldType::String)
+        {
             Ok(())
         } else if self.container_of_ref_actual(actual) {
             Err(format!(

@@ -100,7 +100,7 @@ impl Frame<'_, '_> {
             IrChandleExpr::Read(index) => self.ctx.model.objects[*index].c_name.clone(),
             IrChandleExpr::LocalRead(name) => format!(
                 "*({})",
-                self.native_lookup(name, NativeKind::Chandle)?.address
+                self.native_read(name, NativeKind::Chandle)?.address
             ),
             IrChandleExpr::FormalRead(index) => {
                 let function = self
@@ -242,7 +242,7 @@ impl Frame<'_, '_> {
             IrProcessExpr::Read(index) => self.ctx.model.objects[*index].c_name.clone(),
             IrProcessExpr::LocalRead(name) => format!(
                 "*({})",
-                self.native_lookup(name, NativeKind::Process)?.address
+                self.native_read(name, NativeKind::Process)?.address
             ),
             IrProcessExpr::FormalRead(index) => format!(
                 "(llg_process_handle_t*){}",
@@ -723,7 +723,7 @@ impl Frame<'_, '_> {
             "if (!{call}) {{ {call} = (llg_value_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_value_t), llg_native_value_destroy)); llg_native_value_init({call}, llg_value_element_desc({name}.element, {depth})); }}"
         ));
         if write {
-            self.pending_touches.push((name, touch));
+            self.pending_touches.push(format!("{touch}(&{name});"));
         }
         Ok(call)
     }

@@ -195,7 +195,15 @@ impl Frame<'_, '_> {
         Ok(())
     }
 
-    pub(super) fn native_value_address(&self, index: usize) -> Result<String, String> {
+    /// Address of native value `index` for an operation that stores into it,
+    /// or that may: the store publishes through a `ref` record formal.
+    pub(super) fn native_value_address(&mut self, index: usize) -> Result<String, String> {
+        self.note_ref_store(index)?;
+        self.native_value_read(index)
+    }
+
+    /// Address of native value `index` for an operation that only reads it.
+    pub(super) fn native_value_read(&self, index: usize) -> Result<String, String> {
         let value = self
             .ctx
             .model
@@ -295,7 +303,7 @@ impl Frame<'_, '_> {
     /// `llg_value_t*` of the item selected by a nonempty `path` below a
     /// native value.
     pub(super) fn native_value_item(&self, index: usize, path: &[u32]) -> Result<String, String> {
-        self.value_item(&format!("({})", self.native_value_address(index)?), path)
+        self.value_item(&format!("({})", self.native_value_read(index)?), path)
     }
 
     /// `llg_value_t*` of the item selected by a nonempty `path` below the
@@ -322,7 +330,7 @@ impl Frame<'_, '_> {
         path: &[u32],
         ty: IrClassFieldType,
     ) -> Result<String, String> {
-        let mut item = format!("({})", self.native_value_address(index)?);
+        let mut item = format!("({})", self.native_value_read(index)?);
         for (depth, step) in path.iter().enumerate() {
             item = if depth == 0 {
                 format!("{item}->value.items[{step}]")

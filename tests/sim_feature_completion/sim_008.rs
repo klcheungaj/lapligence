@@ -57,6 +57,13 @@ fn module_record_leaves_bind_ref_formals_by_run_time_index() {
 }
 
 #[test]
+fn every_store_through_a_record_ref_formal_reaches_the_element() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_ref_write_paths.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_ref_write_paths", expected, &[], &[]);
+}
+
+#[test]
 fn module_records_bind_class_method_ref_formals() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_008/record_method_refs.out");

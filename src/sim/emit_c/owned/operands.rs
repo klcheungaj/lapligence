@@ -216,7 +216,7 @@ impl Frame<'_, '_> {
                 ))
             }
             IrExprKind::LocalRead(name) if !self.item_callback && expr.width != 0 => {
-                let binding = self.resolve_lookup(name)?;
+                let binding = self.read_lookup(name)?;
                 Ok(Self::borrow_binding(&binding))
             }
             IrExprKind::FormalRead(index) if expr.width != 0 => {

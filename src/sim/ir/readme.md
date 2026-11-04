@@ -237,8 +237,7 @@ record instead lists it in `IrFunc::bound_native_refs`, its callers pass
 `NativeRefBound` (null parameters) and its body never uses that formal's root
 (SIM-008). An `ElementRef` operand binds a `ref` formal to a container element or
 a member of one through a retained reference, or among a module-like record's
-stable leaves by a run-time index, and `NativeRefStored` follows a blocking
-store through a record `ref` formal. Declarations, copies and every native operand carry the
+stable leaves by a run-time index. Declarations, copies and every native operand carry the
 companions too: a native formal lists them in `IrFormal::native_companions`,
 each an extra `void*` C parameter after the value's own, passed with the
 container-formal copy-in/copy-out protocol. Leaves are read and
