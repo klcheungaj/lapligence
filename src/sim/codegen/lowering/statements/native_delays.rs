@@ -123,6 +123,11 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
             rhs,
             ticks: ticks.clone(),
         },
+        IrStmt::DelayedAssign { lhs, rhs, .. } => IrStmt::DelayedAssign {
+            lhs,
+            rhs,
+            ticks: ticks.clone(),
+        },
         IrStmt::DelayedStringAssign { target, rhs, .. } => IrStmt::DelayedStringAssign {
             target,
             rhs,
@@ -154,10 +159,18 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
         | IrStmt::Call(_)
         | IrStmt::Nop) => statement,
         IrStmt::Object(operation)
-            if matches!(*operation, IrObjectStmt::ChandleDeclareLocal(..)) =>
+            if matches!(
+                *operation,
+                IrObjectStmt::ChandleDeclareLocal(..)
+                    | IrObjectStmt::StringAssignLocal(..)
+                    | IrObjectStmt::ChandleAssignLocal(..)
+            ) =>
         {
             IrStmt::Object(operation)
         }
+        // A blocking write in a queued statement fills a capture: pattern
+        // members into a lexical temporary.
+        statement @ IrStmt::Assign { nba: false, .. } => statement,
         _ => {
             return Err(format!(
                 "delayed nonblocking assignment of this native record shape in `{path}` is not supported"

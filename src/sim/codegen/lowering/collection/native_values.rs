@@ -1212,10 +1212,14 @@ impl Codegen<'_> {
             ));
         }
         if nba {
-            let NativeEndpointLeaf::Module(leaf) = leaf else {
-                return Err(format!(
-                    "nonblocking assignment to native record subroutine storage in `{path}` is not supported"
-                ));
+            let leaf = match leaf {
+                NativeEndpointLeaf::Module(leaf) => leaf,
+                NativeEndpointLeaf::Value(native, leaf) => {
+                    return self.native_leaf_nba(path, *native, leaf, value)
+                }
+                NativeEndpointLeaf::Container(_) => {
+                    return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
+                }
             };
             return match value {
                 LeafValue::Container(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
@@ -1777,6 +1781,30 @@ impl Codegen<'_> {
                 return Ok(statement);
             }
         }
+        // A queued pattern is built at issue in a temporary of the target's
+        // type, whose leaves then queue one by one.
+        if let (true, NativeEndpoint::Value { value, prefix }) = (nba, target) {
+            let pattern = self.unwrap_assignment_pattern_cast(rhs);
+            if self.assignment_pattern_operands(path, pattern)?.is_some() {
+                let temporary = self.native_temporary_like(*value)?;
+                let Some(fill) =
+                    self.native_pattern_into(path, temporary, prefix, descriptor, rhs)?
+                else {
+                    return Err(format!(
+                        "native record assignment in `{path}` has no record source"
+                    ));
+                };
+                let source = NativeEndpoint::Value {
+                    value: temporary,
+                    prefix: prefix.clone(),
+                };
+                return Ok(IrStmt::Block(vec![
+                    IrStmt::NativeValueDeclare(temporary),
+                    fill,
+                    self.native_transfer(path, target, &source, true)?,
+                ]));
+            }
+        }
         let source = self.p30_unwrap_cast(rhs);
         if self.native_record_conditional(source) {
             return self.native_conditional_into(path, target, descriptor, source, nba);
@@ -1998,18 +2026,13 @@ impl Codegen<'_> {
             }
             return Ok(None);
         };
-        // Only module record targets are persistent leaf objects; native
-        // roots are subroutine storage whose leaves move on replacement.
+        // Static roots queue located writes; automatic roots are illegal.
         if nba && lhs_native {
-            return Err(if self.subroutine_auto_target(lhs) {
-                format!(
+            if self.subroutine_auto_target(lhs) || !self.persistent_native_target(lhs) {
+                return Err(format!(
                     "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
-                )
-            } else {
-                format!(
-                    "nonblocking assignment to static native record subroutine storage in `{path}` is not supported"
-                )
-            });
+                ));
+            }
         }
         if op != Operation::Assignment {
             return Err(format!(

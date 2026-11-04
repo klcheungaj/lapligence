@@ -374,9 +374,9 @@ impl EmitCtx<'_, '_> {
                     self.path
                 ));
             }
-            if self.cg.native_target(lhs) {
+            if self.cg.native_target(lhs) && !self.cg.persistent_native_target(lhs) {
                 return Err(format!(
-                    "nonblocking assignment to native record subroutine storage in `{}` is not supported",
+                    "nonblocking assignment to an automatic native record in `{}` is illegal (SV 6.21, 10.4.2)",
                     self.path
                 ));
             }

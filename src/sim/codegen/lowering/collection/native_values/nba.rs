@@ -134,6 +134,98 @@ impl Codegen<'_> {
         Ok(IrStmt::Block(statements))
     }
 
+    /// Whether the native root `lhs` selects lives as long as the model: a
+    /// static subroutine or package record, not an activation or an object.
+    pub(in crate::sim::codegen) fn persistent_native_target(&self, lhs: NodeId) -> bool {
+        matches!(self.native_path_of(lhs), Ok(Some((value, _)))
+            if self.persistent_native_value(value))
+    }
+
+    fn persistent_native_value(&self, value: usize) -> bool {
+        let value = &self.model.native_values[value];
+        !value.activation && value.class_field.is_none()
+    }
+
+    /// One leaf of a persistent native root: `value` is queued and the leaf
+    /// is found again at commit, because a whole write of the root replaces
+    /// its value tree.
+    pub(super) fn native_leaf_nba(
+        &mut self,
+        path: &str,
+        native: usize,
+        leaf: &NativeLeaf,
+        value: LeafValue,
+    ) -> Result<IrStmt, String> {
+        if !self.persistent_native_value(native) {
+            return Err(format!(
+                "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
+            ));
+        }
+        let name = self.native_leaf_symbol(native, leaf);
+        Ok(IrStmt::Block(vec![
+            IrStmt::Container(Box::new(IrContainerStmt::NbaLocate {
+                root: IrValueItemRoot::Value(native),
+                items: leaf.items.clone(),
+            })),
+            element_leaf_nba(&self.model, name, leaf.ty, value, IrDelay::Constant(0))?,
+            IrStmt::Container(Box::new(IrContainerStmt::NbaLocateEnd)),
+        ]))
+    }
+
+    /// `r.m <= v`, also a select inside a packed member, where `r` is a
+    /// persistent native root; `None` for other targets.
+    pub(in crate::sim::codegen) fn lower_native_member_nba(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        delay: Option<IrDelay>,
+    ) -> Result<Option<IrStmt>, String> {
+        let mut leaf_node = lhs;
+        let (native, leaf) = loop {
+            if let Ok(Some(found)) = self.native_leaf_of(leaf_node) {
+                break found;
+            }
+            match self.kind(leaf_node) {
+                NodeKind::Expr(
+                    ExprKind::BitSelect { base, .. }
+                    | ExprKind::PartSelect { base, .. }
+                    | ExprKind::IndexedPartSelect { base, .. },
+                ) => leaf_node = *base,
+                _ => return Ok(None),
+            }
+        };
+        if !self.persistent_native_value(native) {
+            return Ok(None);
+        }
+        let ticks = delay.unwrap_or(IrDelay::Constant(0));
+        let write = if matches!(
+            leaf.ty,
+            IrClassFieldType::String | IrClassFieldType::Chandle
+        ) {
+            let value = self.native_leaf_source(path, leaf.ty, rhs)?;
+            let name = self.native_leaf_symbol(native, &leaf);
+            element_leaf_nba(&self.model, name, leaf.ty, value, ticks)?
+        } else {
+            let target = self.lower_lhs(path, lhs)?;
+            let value = self.lower_expr(path, rhs)?;
+            let rhs = apply_lhs_assignment_context(&self.model, &target, value);
+            IrStmt::DelayedAssign {
+                lhs: target,
+                rhs,
+                ticks,
+            }
+        };
+        Ok(Some(IrStmt::Block(vec![
+            IrStmt::Container(Box::new(IrContainerStmt::NbaLocate {
+                root: IrValueItemRoot::Value(native),
+                items: leaf.items.clone(),
+            })),
+            write,
+            IrStmt::Container(Box::new(IrContainerStmt::NbaLocateEnd)),
+        ])))
+    }
+
     /// `a[i].inner <= v`, `a[i].arr <= v`: the source is captured into a
     /// temporary of the element type at issue, then every scalar leaf below
     /// the selection queues its own located write.

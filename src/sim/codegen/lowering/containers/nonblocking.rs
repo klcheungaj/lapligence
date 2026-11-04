@@ -83,6 +83,9 @@ impl Codegen<'_> {
             ])));
         }
         let member = self.p30_unwrap_cast(lhs);
+        if let Some(statement) = self.lower_native_member_nba(path, member, rhs, delay.clone())? {
+            return Ok(Some(statement));
+        }
         if self.names_element_member(member) {
             return self
                 .lower_element_member_nba(path, member, rhs, delay)
