@@ -16,9 +16,25 @@
 //! An element of an array, a member of a subroutine record and members of
 //! such elements have a value but no stable address: those actuals lower to an
 //! [`IrElementRef`] walking from the root through member and index steps.
+//!
+//! A class method keeps its receiver in a specialization. A virtual call
+//! specializes the whole override family under a fresh virtual slot, so the
+//! ordinary dispatchers serve it and nothing changes for unbound calls.
 
 use super::*;
 use crate::sim::ir::{IrElementRef, IrElementRefKind, IrElementRoot, IrElementStep, IrValueSlot};
+
+/// How a call selects its implementation, which decides how record `ref`
+/// actuals can reach it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::sim::codegen::lowering) enum RecordRefDispatch {
+    /// The callee itself: a subroutine, or a method called non-virtually.
+    Direct,
+    /// A class method's virtual slot.
+    Virtual,
+    /// A virtual-interface method.
+    Interface,
+}
 
 /// Whether two record types are the same nominal type, as the frontend
 /// already requires of a `ref` actual (SV 6.22.1); a mismatch here means the
@@ -338,9 +354,9 @@ impl Codegen<'_> {
     }
 
     /// The model function a call of `function` reaches: `template`, or the
-    /// specialization binding its record `ref` actuals. Methods dispatch
-    /// through receivers and virtual slots that a specialization does not
-    /// join, so they keep the subroutine-record restriction.
+    /// specialization binding its record `ref` actuals. A specialization
+    /// keeps its method's receiver; a virtual call (`dispatch`) reaches the
+    /// family of `record_ref_family`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::sim::codegen::lowering) fn record_ref_callee(
         &mut self,
@@ -350,7 +366,7 @@ impl Codegen<'_> {
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
         template: usize,
-        method: bool,
+        dispatch: RecordRefDispatch,
     ) -> Result<usize, String> {
         let records = self.record_ref_bindings(formals, bound);
         if records.is_empty() {
@@ -358,27 +374,123 @@ impl Codegen<'_> {
             // actuals; every other callee is the template itself.
             return self.dpi_open_callee(template, formals, bound);
         }
-        self.reject_method_record_refs(path, function, &records, method)?;
+        self.reject_interface_record_refs(path, function, &records, dispatch)?;
+        if dispatch == RecordRefDispatch::Virtual {
+            return self.record_ref_family(function, records);
+        }
         self.task_specialization(function, inst, Vec::new(), records)
     }
 
-    /// A method call cannot bind records: its receiver and virtual-slot
-    /// dispatch do not reach specializations.
-    pub(in crate::sim::codegen::lowering) fn reject_method_record_refs(
+    /// How the call node `call` reaches its method.
+    pub(in crate::sim::codegen::lowering) fn record_ref_dispatch(
+        &self,
+        call: NodeId,
+        virtual_interface: bool,
+    ) -> RecordRefDispatch {
+        if virtual_interface {
+            RecordRefDispatch::Interface
+        } else if self.class_method_virtual_dispatch(call) {
+            RecordRefDispatch::Virtual
+        } else {
+            RecordRefDispatch::Direct
+        }
+    }
+
+    /// A virtual-interface call selects its implementation through the
+    /// interface slot, which no record binding can extend.
+    pub(in crate::sim::codegen::lowering) fn reject_interface_record_refs(
         &self,
         path: &str,
         function: NodeId,
         records: &[RecordRefBinding],
-        method: bool,
+        dispatch: RecordRefDispatch,
     ) -> Result<(), String> {
         match records.first() {
-            Some(first) if method => Err(format!(
-                "a module, static or procedural-block record as the actual of native record `ref` formal `{}` of method `{}` in `{path}` is not supported (SIM-008)",
+            Some(first) if dispatch == RecordRefDispatch::Interface => Err(format!(
+                "a module, static or procedural-block record as the actual of native record `ref` formal `{}` of virtual-interface method `{}` in `{path}` is not supported (SIM-008)",
                 self.node(first.formal).name,
                 self.node(function).name
             )),
             _ => Ok(()),
         }
+    }
+
+    /// A specialization of every override of a virtual method for one set
+    /// of record bindings, joined by a fresh virtual slot, so that a call
+    /// dispatches on the receiver exactly as the unbound family does and
+    /// code grows with distinct actuals. Overrides name their own formals,
+    /// so a binding carries over by formal position.
+    fn record_ref_family(
+        &mut self,
+        function: NodeId,
+        records: Vec<RecordRefBinding>,
+    ) -> Result<usize, String> {
+        let slot = *self
+            .method_virtual_slots
+            .get(&function)
+            .ok_or_else(|| format!("method `{}` has no virtual slot", self.node(function).name))?;
+        let formals = self.func_formals(function);
+        let positions = records
+            .iter()
+            .map(|binding| {
+                let position = formals
+                    .iter()
+                    .position(|(formal, _)| *formal == binding.formal)
+                    .ok_or_else(|| {
+                        format!(
+                            "record `ref` formal `{}` is not a formal of `{}`",
+                            self.node(binding.formal).name,
+                            self.node(function).name
+                        )
+                    })?;
+                Ok((position, binding.root, binding.prefix.clone()))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if let Some(family) = self.record_ref_families.get(&(slot, positions.clone())) {
+            if let Some(index) = family.get(&function) {
+                return Ok(*index);
+            }
+        }
+        let family_slot = self.next_virtual_slot;
+        self.next_virtual_slot += 1;
+        let mut family = HashMap::new();
+        for class in self.db.classes().to_vec() {
+            for method in self.class_method_nodes(class) {
+                if self.method_virtual_slots.get(&method) != Some(&slot)
+                    || !self.func_meta.contains_key(&method)
+                {
+                    continue;
+                }
+                let overrides = self.func_formals(method);
+                let bindings = positions
+                    .iter()
+                    .map(|(position, root, prefix)| {
+                        let (formal, _) = overrides.get(*position).ok_or_else(|| {
+                            format!(
+                                "override `{}` has no formal {position}",
+                                self.node(method).name
+                            )
+                        })?;
+                        Ok(RecordRefBinding {
+                            formal: *formal,
+                            root: *root,
+                            prefix: prefix.clone(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                let index = self.task_specialization(method, class, Vec::new(), bindings)?;
+                self.model.funcs[index].virtual_slot = Some(family_slot);
+                family.insert(method, index);
+            }
+        }
+        let index = family.get(&function).copied().ok_or_else(|| {
+            format!(
+                "virtual method `{}` is outside its slot's classes",
+                self.node(function).name
+            )
+        })?;
+        self.record_ref_families.insert((slot, positions), family);
+        Ok(index)
     }
 
     /// Resolve the bound formals of the specialization being lowered to

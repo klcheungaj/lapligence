@@ -21,6 +21,7 @@ mod elements;
 mod member_select;
 mod messages;
 mod record_refs;
+pub(in crate::sim::codegen::lowering) use record_refs::RecordRefDispatch;
 mod tagged;
 pub(in crate::sim::codegen) use tagged::{
     is_native_tag_path, native_tagged_equality, NativeTaggedRoot,

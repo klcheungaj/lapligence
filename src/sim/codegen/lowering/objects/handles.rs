@@ -580,8 +580,7 @@ impl Codegen<'_> {
             }
             let args = self.call_argument_nodes(node);
             let bound = self.bind_call_args(self.inst, &meta.formals, &args)?;
-            let method = matches!(self.kind(node), NodeKind::MethodCall { .. })
-                || self.model.funcs[meta.ir].receiver_class.is_some();
+            let dispatch = self.record_ref_dispatch(node, false);
             let function = self.record_ref_callee(
                 path,
                 ft,
@@ -589,7 +588,7 @@ impl Codegen<'_> {
                 &meta.formals,
                 &bound,
                 meta.ir,
-                method,
+                dispatch,
             )?;
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();

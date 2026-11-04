@@ -48,6 +48,16 @@ fn record_element_refs_share_the_element_until_outdated() {
 }
 
 #[test]
+fn module_records_bind_class_method_ref_formals() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_method_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_method_refs", expected, &[], &[]);
+    let waits =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_method_ref_waits.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_method_ref_waits", waits, &[], &[]);
+}
+
+#[test]
 fn native_record_ref_formals_alias_subroutine_records() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_008/record_refs.out");
     sim_cli::run_case_backend_parity(SUITE, "record_refs", expected, &[], &[]);
@@ -74,8 +84,8 @@ fn unbindable_record_ref_actuals_are_rejected_explicitly() {
     sim_cli::reject_case(SUITE, "neg_record_ref_container_member", UNBOUND);
     sim_cli::reject_case(
         SUITE,
-        "neg_record_ref_method",
-        "a module, static or procedural-block record as the actual of native record `ref` formal `r` of method `f` in `tb` is not supported (SIM-008)",
+        "neg_record_ref_interface_method",
+        "a module, static or procedural-block record as the actual of native record `ref` formal `r` of virtual-interface method `f` in `tb` is not supported (SIM-008)",
     );
     sim_cli::reject_case(
         SUITE,

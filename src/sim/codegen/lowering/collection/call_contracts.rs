@@ -838,6 +838,26 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// `waits_on_record_ref` for a call that may reach any override of `ft`.
+    pub(in super::super) fn any_override_waits_on_record_ref(
+        &self,
+        ft: NodeId,
+        inst: NodeId,
+    ) -> bool {
+        if self.waits_on_record_ref(ft, inst) {
+            return true;
+        }
+        let Some(slot) = self.method_virtual_slots.get(&ft) else {
+            return false;
+        };
+        self.db.classes().iter().any(|class| {
+            self.class_method_nodes(*class).into_iter().any(|method| {
+                self.method_virtual_slots.get(&method) == Some(slot)
+                    && self.waits_on_record_ref(method, *class)
+            })
+        })
+    }
+
     /// Whether a wait can observe fork-shared native storage `declaration`
     /// through a change marker: an event control or level wait in its scope
     /// reads it, or a call there binds it to a string or handle `ref` formal

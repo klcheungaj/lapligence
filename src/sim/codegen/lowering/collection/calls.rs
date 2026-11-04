@@ -141,8 +141,7 @@ impl<'a> Codegen<'a> {
         }
         let formals = meta.formals.clone();
         let bound = self.bind_call_args(self.inst, &formals, args)?;
-        let method =
-            virtual_call_info.is_some() || self.model.funcs[meta.ir].receiver_class.is_some();
+        let dispatch = self.record_ref_dispatch(h, virtual_call_info.is_some());
         let function = self.record_ref_callee(
             scope_path,
             ft,
@@ -150,7 +149,7 @@ impl<'a> Codegen<'a> {
             &formals,
             &bound,
             meta.ir,
-            method,
+            dispatch,
         )?;
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if bound[idx].is_event && (*is_out || self.is_ref_formal(*io)) {

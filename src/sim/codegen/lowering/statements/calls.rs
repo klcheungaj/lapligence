@@ -1,6 +1,6 @@
 //! Calls.
 
-use super::super::collection::{CallWriteback, TargetSelectors};
+use super::super::collection::{CallWriteback, RecordRefDispatch, TargetSelectors};
 use super::*;
 
 impl EmitCtx<'_, '_> {
@@ -100,11 +100,13 @@ impl EmitCtx<'_, '_> {
         // Module, static and block records bound to native record `ref`
         // formals select a specialization (`record_refs`).
         let records = self.cg.record_ref_bindings(&formals, &bound);
-        let method = call_receiver.class.is_some() || virtual_call_info.is_some();
+        let dispatch = self.cg.record_ref_dispatch(h, virtual_call_info.is_some());
         self.cg
-            .reject_method_record_refs(&self.path, ft, &records, method)?;
+            .reject_interface_record_refs(&self.path, ft, &records, dispatch)?;
         let mut specialized = None;
-        if !shape.static_refs.is_empty() {
+        if !shape.static_refs.is_empty()
+            && (records.is_empty() || dispatch == RecordRefDispatch::Direct)
+        {
             if let Some(statics) =
                 self.static_ref_actuals(&formals, &bound, &shape.static_refs, &records)?
             {
@@ -129,10 +131,14 @@ impl EmitCtx<'_, '_> {
                 &formals,
                 &bound,
                 template,
-                method,
+                dispatch,
             )?);
         }
-        if specialized.is_none() && self.cg.waits_on_record_ref(ft, callee_inst) {
+        let waits = match dispatch {
+            RecordRefDispatch::Virtual => self.cg.any_override_waits_on_record_ref(ft, callee_inst),
+            _ => self.cg.waits_on_record_ref(ft, callee_inst),
+        };
+        if specialized.is_none() && waits {
             // The body reads the record's leaves, which only a module,
             // static or procedural-block actual binds (SIM-008).
             let node = self.cg.node(h);

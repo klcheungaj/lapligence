@@ -563,9 +563,10 @@ handle member or anything but one string, real or integral member
 (`r.e[k].h.v`, `r.e[k].inner`; `r.e[k].s` works); as a `ref` actual, a
 container element whose record has container members and a run-time-indexed
 member of a module, static or block record, and as the actual of a native
-record `ref` formal of a class method, any module, static or block record
-(whole subroutine records, array elements and module, static and block
-records or constant selections of them bind); an event control on a member
+record `ref` formal of a virtual-interface method, any module, static or
+block record (whole subroutine records, array elements and module, static
+and block records or constant selections of them bind, class methods
+included); an event control on a member
 of such a formal when the actual is a subroutine record (a generic lowering
 diagnostic); nonblocking writes
 to a static subroutine native record; sub-record, member-array or handle selects of a native call
@@ -613,8 +614,8 @@ constant has no captured value. A native `ref` formal is the caller's
 record; a module-like record has no such value, so a call binding one runs a
 specialization of the subroutine that names the record's leaves directly,
 which needs the record statically: a run-time selection among its leaves has
-neither form, and a method's receiver dispatch does not reach
-specializations. An element reference shares the element's item array, but
+neither form, and a virtual-interface slot does not reach specializations
+(a class method's virtual family gets one slot per binding). An element reference shares the element's item array, but
 the companion containers of a record with container members belong to the
 element's own frame.
 
@@ -631,7 +632,7 @@ roots for forked automatic block records, strings and handles.
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_004/neg_static_native_record_nba.sv`,
-`sim_008/neg_record_ref_{container_member,method}.sv`,
+`sim_008/neg_record_ref_{container_member,interface_method}.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
