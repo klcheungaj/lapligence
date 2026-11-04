@@ -5,15 +5,24 @@
 //! item path. A run-time index (`r.s[k]`) therefore selects one leaf by
 //! comparing the index with every declared index; an index that matches
 //! none (out of range, X or Z) reads the element default and writes nothing
-//! (SV 7.4.6). The comparison chain is bounded by
-//! [`NATIVE_MEMBER_SELECT_LIMIT`] elements. An index with side effects is
-//! evaluated once into a local before the chain.
+//! (SV 7.4.6). Small arrays compare in a chain; above
+//! [`NATIVE_MEMBER_SELECT_LINEAR`] elements a balanced decision tree over the
+//! declared indices keeps each access logarithmic. The generated code stays
+//! linear in the array per access site, so arrays are bounded by
+//! [`NATIVE_MEMBER_SELECT_LIMIT`]. An index with side effects is evaluated
+//! once into a local before the comparisons.
 
 use super::*;
 
-/// Largest member array selected by a run-time index. Each element is one
-/// comparison, so larger arrays are rejected rather than expanded.
-pub(in crate::sim::codegen) const NATIVE_MEMBER_SELECT_LIMIT: usize = 64;
+/// Largest member array selected by a run-time index: each access site
+/// holds one branch per element, so larger arrays are rejected rather than
+/// expanded. Equal to the dense record member threshold, above which module
+/// records already reject such a member.
+pub(in crate::sim::codegen) const NATIVE_MEMBER_SELECT_LIMIT: usize = 4096;
+
+/// Element count up to which a select compares in a chain; a chain is the
+/// smaller code and needs at most this many comparisons.
+const NATIVE_MEMBER_SELECT_LINEAR: usize = 8;
 
 /// Largest member array selected whole by a run-time index: every branch
 /// copies one whole record.
@@ -303,32 +312,6 @@ impl Codegen<'_> {
         }))
     }
 
-    /// The tests of a whole-record select, with its hoisted index.
-    fn record_select_tests(
-        &mut self,
-        path: &str,
-        select: &NativeRecordSelect,
-        prelude: &mut Vec<IrStmt>,
-    ) -> Result<Vec<(i32, IrExpr)>, String> {
-        let (index, width) = self.member_select_index(path, select.index, select.hoist, prelude)?;
-        Ok(select
-            .elements
-            .iter()
-            .map(|(declared, _)| {
-                let value = crate::sim::codegen::lowering::containers::pattern_key_expr(
-                    i128::from(*declared),
-                    width,
-                    true,
-                    false,
-                );
-                (
-                    *declared,
-                    cmp_expr_ir(IrBinOp::CaseEq, index.clone(), value),
-                )
-            })
-            .collect())
-    }
-
     /// Copy the selected element into `target`; an unmatched index copies
     /// the default of the element type (SV 7.4.6). `node` names the source
     /// for its type.
@@ -341,7 +324,8 @@ impl Codegen<'_> {
         nba: bool,
     ) -> Result<IrStmt, String> {
         let mut statements = Vec::new();
-        let tests = self.record_select_tests(path, select, &mut statements)?;
+        let (index, width) =
+            self.member_select_index(path, select.index, select.hoist, &mut statements)?;
         // Every element and the default fill one temporary, which then moves
         // to the target, so a queued write has one source.
         let temporary = self.native_temporary(node)?;
@@ -350,17 +334,12 @@ impl Codegen<'_> {
             value: temporary,
             prefix: Vec::new(),
         };
-        let mut chain: Option<IrStmt> = None;
-        for ((_, test), (_, element)) in tests.into_iter().zip(&select.elements).rev() {
+        let mut branches = Vec::with_capacity(select.elements.len());
+        for (declared, element) in &select.elements {
             let copy = self.native_transfer(path, &value, element, false)?;
-            chain = Some(IrStmt::If {
-                cond: test,
-                then_: vec![copy],
-                els: chain.map(|statement| vec![statement]),
-                check: IrUniquePriorityCheck::None,
-            });
+            branches.push((*declared, Some(copy)));
         }
-        statements.extend(chain);
+        statements.extend(member_select_statement(branches, &index, width));
         statements.push(self.native_transfer(path, target, &value, nba)?);
         Ok(IrStmt::Block(statements))
     }
@@ -385,18 +364,14 @@ impl Codegen<'_> {
             IrStmt::NativeValueDeclare(temporary),
             self.native_assign_into(path, &value, &descriptor, rhs, false)?,
         ];
-        let tests = self.record_select_tests(path, select, &mut statements)?;
-        let mut chain: Option<IrStmt> = None;
-        for ((_, test), (_, element)) in tests.into_iter().zip(&select.elements).rev() {
+        let (index, width) =
+            self.member_select_index(path, select.index, select.hoist, &mut statements)?;
+        let mut branches = Vec::with_capacity(select.elements.len());
+        for (declared, element) in &select.elements {
             let copy = self.native_transfer(path, element, &value, nba)?;
-            chain = Some(IrStmt::If {
-                cond: test,
-                then_: vec![copy],
-                els: chain.map(|statement| vec![statement]),
-                check: IrUniquePriorityCheck::None,
-            });
+            branches.push((*declared, Some(copy)));
         }
-        statements.extend(chain);
+        statements.extend(member_select_statement(branches, &index, width));
         Ok(IrStmt::Block(statements))
     }
 
@@ -427,34 +402,6 @@ impl Codegen<'_> {
         Ok((index, width))
     }
 
-    /// One known test per element: the index equals its declared index.
-    /// A side-effecting index is first stored in a local, declared by the
-    /// statement pushed to `prelude`.
-    fn member_select_tests(
-        &mut self,
-        path: &str,
-        select: &NativeMemberSelect,
-        prelude: &mut Vec<IrStmt>,
-    ) -> Result<Vec<(IrExpr, NativeEndpointLeaf)>, String> {
-        let (index, width) = self.member_select_index(path, select.index, select.hoist, prelude)?;
-        Ok(select
-            .elements
-            .iter()
-            .map(|(declared, leaf)| {
-                let declared = crate::sim::codegen::lowering::containers::pattern_key_expr(
-                    i128::from(*declared),
-                    width,
-                    true,
-                    false,
-                );
-                (
-                    cmp_expr_ir(IrBinOp::CaseEq, index.clone(), declared),
-                    leaf.clone(),
-                )
-            })
-            .collect())
-    }
-
     /// The selected element as a string, packed, real or handle value; an
     /// unmatched index reads the element type's default.
     pub(in crate::sim::codegen) fn native_member_select_read(
@@ -463,8 +410,9 @@ impl Codegen<'_> {
         select: &NativeMemberSelect,
     ) -> Result<IrNativeLeafExpr, String> {
         let mut prelude = Vec::new();
-        let tests = self.member_select_tests(path, select, &mut prelude)?;
-        let two_state = match tests.first().map(|(_, leaf)| leaf) {
+        let (index, width) =
+            self.member_select_index(path, select.index, select.hoist, &mut prelude)?;
+        let two_state = match select.elements.first().map(|(_, leaf)| leaf) {
             Some(NativeEndpointLeaf::Value(_, leaf)) => {
                 matches!(
                     leaf.ty,
@@ -480,11 +428,11 @@ impl Codegen<'_> {
             }
             None => false,
         };
-        let mut values = Vec::with_capacity(tests.len());
-        for (test, leaf) in tests {
-            values.push((test, self.endpoint_leaf_read(&leaf)?));
+        let mut values = Vec::with_capacity(select.elements.len());
+        for (declared, leaf) in &select.elements {
+            values.push((*declared, self.endpoint_leaf_read(leaf)?));
         }
-        let mut result = match values.first().map(|(_, value)| value) {
+        let default = match values.first().map(|(_, value)| value) {
             Some(LeafValue::Container(_)) => return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
             Some(LeafValue::String(_)) => LeafValue::String(IrStringExpr::Literal(Vec::new())),
             Some(LeafValue::Chandle(_)) => LeafValue::Chandle(IrChandleExpr::Null),
@@ -497,52 +445,11 @@ impl Codegen<'_> {
             }
             None => return Err("member array selection has no elements".to_owned()),
         };
-        for (test, value) in values.into_iter().rev() {
-            result = match (value, result) {
-                (LeafValue::String(then), LeafValue::String(otherwise)) => {
-                    LeafValue::String(IrStringExpr::Conditional {
-                        predicate: Box::new(test),
-                        then: Box::new(then),
-                        otherwise: Box::new(otherwise),
-                    })
-                }
-                (LeafValue::Chandle(then), LeafValue::Chandle(otherwise)) => {
-                    LeafValue::Chandle(IrChandleExpr::Conditional {
-                        predicate: Box::new(test),
-                        then: Box::new(then),
-                        otherwise: Box::new(otherwise),
-                    })
-                }
-                (LeafValue::Real(a), LeafValue::Real(b)) => LeafValue::Real(IrExpr::new(
-                    IrExprKind::Mux {
-                        sel: Box::new(test),
-                        a: Box::new(a),
-                        b: Box::new(b),
-                    },
-                    0,
-                    false,
-                    None,
-                )),
-                (LeafValue::Packed(a), LeafValue::Packed(b)) => {
-                    let (width, signed) = (a.width, a.signed);
-                    LeafValue::Packed(IrExpr::new(
-                        IrExprKind::Mux {
-                            sel: Box::new(test),
-                            a: Box::new(a),
-                            b: Box::new(b),
-                        },
-                        width,
-                        signed,
-                        None,
-                    ))
-                }
-                _ => {
-                    return Err(format!(
-                        "member array elements in `{path}` have mixed types"
-                    ))
-                }
-            };
-        }
+        values.sort_by_key(|(declared, _)| *declared);
+        let result =
+            member_select_tree(&values, &index, width, &default, &mut |test, then, els| {
+                leaf_conditional(path, test, then, els)
+            })?;
         let value = result.into_leaf_expr()?;
         if prelude.is_empty() {
             return Ok(value);
@@ -593,10 +500,13 @@ impl Codegen<'_> {
         path: &str,
         select: &NativeMemberSelect,
         rhs: NodeId,
+        nba: bool,
     ) -> Result<IrStmt, String> {
         let mut prelude = Vec::new();
-        let tests = self.member_select_tests(path, select, &mut prelude)?;
-        let (_, first) = tests
+        let (index, width) =
+            self.member_select_index(path, select.index, select.hoist, &mut prelude)?;
+        let (_, first) = select
+            .elements
             .first()
             .ok_or("member array selection has no elements")?;
         let ty = match first {
@@ -621,19 +531,124 @@ impl Codegen<'_> {
         );
         // The value is evaluated before a hoisted index.
         statements.append(&mut prelude);
-        let mut chain: Option<IrStmt> = None;
-        for (test, leaf) in tests.into_iter().rev() {
-            let write = self.endpoint_leaf_write(path, &leaf, value.clone(), false)?;
-            chain = Some(IrStmt::If {
-                cond: test,
-                then_: vec![write],
-                els: chain.map(|statement| vec![statement]),
-                check: IrUniquePriorityCheck::None,
-            });
+        let mut branches = Vec::with_capacity(select.elements.len());
+        for (declared, leaf) in &select.elements {
+            let write = self.endpoint_leaf_write(path, leaf, value.clone(), nba)?;
+            branches.push((*declared, Some(write)));
         }
-        statements.extend(chain);
+        statements.extend(member_select_statement(branches, &index, width));
         Ok(IrStmt::Block(statements))
     }
+}
+
+/// Select one of `entries`, sorted by declared index, or `otherwise`: a chain
+/// of equality tests for few entries, else a balanced tree. An X or Z index
+/// fails every known test and reaches `otherwise`.
+fn member_select_tree<V: Clone>(
+    entries: &[(i32, V)],
+    index: &IrExpr,
+    width: u32,
+    otherwise: &V,
+    join: &mut impl FnMut(IrExpr, V, V) -> Result<V, String>,
+) -> Result<V, String> {
+    let declared = |value: i32| {
+        crate::sim::codegen::lowering::containers::pattern_key_expr(
+            i128::from(value),
+            width,
+            true,
+            false,
+        )
+    };
+    if entries.len() <= NATIVE_MEMBER_SELECT_LINEAR {
+        let mut result = otherwise.clone();
+        for (value, entry) in entries.iter().rev() {
+            let test = cmp_expr_ir(IrBinOp::CaseEq, index.clone(), declared(*value));
+            result = join(test, entry.clone(), result)?;
+        }
+        return Ok(result);
+    }
+    let (low, high) = entries.split_at(entries.len() / 2);
+    let below = cmp_expr_ir(IrBinOp::Lt, index.clone(), declared(high[0].0));
+    let known = cmp_expr_ir(
+        IrBinOp::CaseEq,
+        below,
+        crate::sim::codegen::lowering::containers::pattern_key_expr(1, 1, false, false),
+    );
+    let then = member_select_tree(low, index, width, otherwise, join)?;
+    let els = member_select_tree(high, index, width, otherwise, join)?;
+    join(known, then, els)
+}
+
+/// The statement that runs the branch selected by `index`, if any.
+fn member_select_statement(
+    mut branches: Vec<(i32, Option<IrStmt>)>,
+    index: &IrExpr,
+    width: u32,
+) -> Option<IrStmt> {
+    branches.sort_by_key(|(declared, _)| *declared);
+    member_select_tree(&branches, index, width, &None, &mut |test, then, els| {
+        Ok(Some(IrStmt::If {
+            cond: test,
+            then_: then.into_iter().collect(),
+            els: els.map(|statement| vec![statement]),
+            check: IrUniquePriorityCheck::None,
+        }))
+    })
+    .ok()
+    .flatten()
+}
+
+/// `test ? then : els` over one leaf kind.
+fn leaf_conditional(
+    path: &str,
+    test: IrExpr,
+    then: LeafValue,
+    els: LeafValue,
+) -> Result<LeafValue, String> {
+    Ok(match (then, els) {
+        (LeafValue::String(then), LeafValue::String(otherwise)) => {
+            LeafValue::String(IrStringExpr::Conditional {
+                predicate: Box::new(test),
+                then: Box::new(then),
+                otherwise: Box::new(otherwise),
+            })
+        }
+        (LeafValue::Chandle(then), LeafValue::Chandle(otherwise)) => {
+            LeafValue::Chandle(IrChandleExpr::Conditional {
+                predicate: Box::new(test),
+                then: Box::new(then),
+                otherwise: Box::new(otherwise),
+            })
+        }
+        (LeafValue::Real(a), LeafValue::Real(b)) => LeafValue::Real(IrExpr::new(
+            IrExprKind::Mux {
+                sel: Box::new(test),
+                a: Box::new(a),
+                b: Box::new(b),
+            },
+            0,
+            false,
+            None,
+        )),
+        (LeafValue::Packed(a), LeafValue::Packed(b)) => {
+            let (width, signed) = (a.width, a.signed);
+            LeafValue::Packed(IrExpr::new(
+                IrExprKind::Mux {
+                    sel: Box::new(test),
+                    a: Box::new(a),
+                    b: Box::new(b),
+                },
+                width,
+                signed,
+                None,
+            ))
+        }
+        _ => {
+            return Err(format!(
+                "member array elements in `{path}` have mixed types"
+            ))
+        }
+    })
 }
 
 /// Leaves one index below `prefix` and then `trailing` members below that

@@ -114,6 +114,26 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
             origin,
             statement: Box::new(retime_nonblocking(*statement, ticks, path)?),
         },
+        // The branch of a run-time member select is chosen at issue.
+        IrStmt::If {
+            cond,
+            then_,
+            els,
+            check,
+        } => {
+            let retime = |statements: Vec<IrStmt>| {
+                statements
+                    .into_iter()
+                    .map(|statement| retime_nonblocking(statement, ticks, path))
+                    .collect::<Result<Vec<_>, _>>()
+            };
+            IrStmt::If {
+                cond,
+                then_: retime(then_)?,
+                els: els.map(retime).transpose()?,
+                check,
+            }
+        }
         IrStmt::Assign {
             lhs,
             rhs,

@@ -15,7 +15,7 @@ impl Frame<'_, '_> {
                 let result = self.native_value(NativeKind::String, "(llg_string_t){0}".to_owned());
                 self.line(format!("if ({}) {{", selector.truth()));
                 self.string_arm(&result, then)?;
-                if selector.width == 0 {
+                if selector.width == 0 || super::known_predicate(predicate) {
                     self.line("} else {");
                     self.string_arm(&result, otherwise)?;
                 } else {

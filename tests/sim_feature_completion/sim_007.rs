@@ -180,7 +180,9 @@ fn run_time_member_indices_select_native_record_elements() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select", expected, &[], &[]);
-    sim_cli::run_case_backend_parity(SUITE, "member_select_limit", "xy []\n", &[], &[]);
+    let wide =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_wide.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_member_select_wide", wide, &[], &[]);
     let nested =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_nested.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_nested", nested, &[], &[]);
@@ -190,7 +192,7 @@ fn run_time_member_indices_select_native_record_elements() {
     sim_cli::reject_case_with_args(
         SUITE,
         "bad_member_select_limit",
-        "run-time index into a native record member array of 65 elements in `tb` is not supported; at most 64 are",
+        "record member array `w.s` in `tb` needs integral elements within the packed limit",
         &[],
     );
 }

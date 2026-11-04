@@ -209,6 +209,43 @@ fn conditional_fill_arms_are_owned_and_context_sized() {
 }
 
 #[test]
+fn case_equality_conditional_has_no_ambiguous_arm() {
+    let model = IrModel::new("test".to_owned(), 1).unwrap();
+    let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    let expression = IrExpr::new(
+        IrExprKind::Mux {
+            sel: Box::new(IrExpr::new(
+                IrExprKind::Bin {
+                    op: IrBinOp::CaseEq,
+                    a: Box::new(number(1, 65)),
+                    b: Box::new(number(2, 65)),
+                },
+                1,
+                false,
+                None,
+            )),
+            a: Box::new(number(3, 65)),
+            b: Box::new(number(4, 65)),
+        },
+        65,
+        false,
+        None,
+    );
+    let result = frame.expression(&expression).unwrap();
+    frame.discard(result);
+    assert!(!frame.body().contains("sv4_mux"));
+    assert_eq!(frame.body().matches("} else").count(), 1);
+}
+
+#[test]
 fn model_has_dynamic_start_close_and_no_width_abi() {
     let execution = ExecutionModel::lower(numeric_model()).unwrap();
     let source = super::super::model::render(&execution).unwrap();

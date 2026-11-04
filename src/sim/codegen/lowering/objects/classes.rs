@@ -518,10 +518,15 @@ impl Codegen<'_> {
             let mut current = node;
             while let [child] = self.node(current).children.as_slice() {
                 let child = *child;
-                if !matches!(self.kind(child), NodeKind::Expr(ExprKind::HierPath { .. })) {
-                    break;
-                }
-                if self.selected_member_path(child) {
+                let selected = match self.kind(child) {
+                    NodeKind::Expr(ExprKind::HierPath { .. }) => self.selected_member_path(child),
+                    // `r.h[k].v`: a run-time element of a handle member array.
+                    NodeKind::Expr(ExprKind::ArraySelect { .. }) => {
+                        self.native_member_select(path, child)?.is_some()
+                    }
+                    _ => break,
+                };
+                if selected {
                     let handle = self.lower_chandle(path, child)?;
                     return Ok(Some(self.required_handle(
                         handle,

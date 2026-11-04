@@ -253,7 +253,12 @@ per leaf. `IrStringExpr::Conditional` and `IrChandleExpr::Conditional` carry an
 integral predicate and two lazily evaluated arms; an ambiguous predicate keeps
 equal values and otherwise yields `""` or null. Native record conditionals
 lower to ordinary `If` statements over captured leaves, never to
-`IrFixedValue`.
+`IrFixedValue`. `IrContainerStmt::NbaLocate` and `NbaLocateEnd` bracket one
+ordinary NBA to name an item inside a native value (a member of a fixed-array
+record element, a static subroutine record leaf): the element position is
+fixed at issue and the runtime finds the item again at commit
+(`src/sim/rt/values.md`). `ContainerNonblocking` is a whole queue, dynamic or
+associative array NBA and owns a copy of its source from issue to commit.
 
 ## Recursive containers and handle storage (SIM-006)
 

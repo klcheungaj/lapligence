@@ -517,7 +517,9 @@ of module records and of subroutine record values, native records, strings
 and handles declared in procedural blocks, member defaults and any record
 source as a module-record initializer, and member-wise equality of nested
 records and member arrays; SIM-008 binds native record `ref` formals to whole
-subroutine records and to module, static and procedural-block records.
+subroutine records and to module, static and procedural-block records;
+FIN-001 adds nonblocking writes to members of fixed-array record elements, of
+records with container members and of static subroutine records.
 
 ### Symptom
 
@@ -541,30 +543,33 @@ strings, handles or native records, and such rows as `ref` actuals;
 associative members of container or fixed-array record
 elements; an element's container member changed by an expression outside an
 assignment, call or system-task statement (a condition or loop header that
-pops it), or named as the target of a timing-controlled assignment, a
-nonblocking target or a `ref` actual (reads in conditions, loop headers,
+pops it), or named as the target of a timing-controlled assignment or a
+`ref` actual (reads in conditions, loop headers,
 `foreach`, initializers and timed assignment values copy the member at each
-evaluation); records with container members in nonblocking
-assignments; instance class properties of a record type with container
+evaluation); an event-controlled nonblocking write of a member of a
+fixed-array record element (the detached event assignment does not carry the
+position captured at issue; untimed and `#delay` writes work); a run-time index
+into a member array of a fixed-array element (`nb[1].a[k]`), two run-time
+indices into nested member arrays (`m.e[k].a[j]`) and bit selects below a
+run-time index (`m.e[k].b[2]`); an event-controlled nonblocking write of a whole
+module native record (`n <= @(e) m`) or through a run-time index
+(`m.e[k].s <= @(e) t`); instance class properties of a record type with container
 members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
 properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
-a nonblocking write of a member of a fixed-array record element (whole
-elements take nonblocking writes; compound writes to members of any element
-work, and the frontend rejects nonblocking writes to elements of resizable
-containers);
-a run-time index into a native member array of more than 64 elements, and
-one into an array of records nested in a native record that selects a
-handle member or anything but one string, real or integral member
-(`r.e[k].h.v`, `r.e[k].inner`; `r.e[k].s` works); as the actual of a native record
+compound writes through a run-time index (`r.a[k] += 1`);
+a run-time index into a native member array of more than 4,096 elements
+(`NATIVE_MEMBER_SELECT_LIMIT`), 256 when it selects whole records
+(`NATIVE_RECORD_SELECT_LIMIT`); as the actual of a native record
 `ref` formal, an element of a queue, dynamic, associative or fixed array of
 records, a run-time-indexed member, a member of a subroutine record, or any
 module, static or block record passed to a class method (whole subroutine
 records and module, static and block records or constant selections of
 them bind); an event control on a member of such a formal when the actual is
-a subroutine record (a generic lowering diagnostic); nonblocking writes
-to a static subroutine native record; sub-record, member-array or handle selects of a native call
+a subroutine record (a generic lowering diagnostic); a `queue` of native
+records as a member of a module record element (the element has no type
+descriptor); sub-record, member-array or handle selects of a native call
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
@@ -594,7 +599,8 @@ A native value is one rooted `llg_value_t` tree; leaves are addressed by
 constant item paths resolved at lowering time. Module-level native records keep
 their per-member lowering, so whole-value transfers between the two
 representations go leaf by leaf, and a run-time member index is a bounded
-comparison chain over the declared leaves. Fixed arrays of native elements
+decision tree over the declared leaves (a module record's leaves are separate
+objects with their own change markers, so no single table addresses them). Fixed arrays of native elements
 are fixed-size views of the container runtime; a row of a multidimensional
 one is a run of cells, not a view of its own. A record member that is itself a
 resizable container is a companion container of a native value, but a nested
@@ -617,16 +623,15 @@ specializations.
 An addressed-container operand for container members of elements (in place
 of statement staging); retained element cells (SIM-008 container element
 references) passed as one reference per leaf for element actuals of native
-`ref` formals, which specialization cannot bind; a root-plus-item-path pending record for static native roots
-(a queued leaf pointer would dangle because a root replaces its leaves on
-assignment); a commit-time tag guard on queued
+`ref` formals, which specialization cannot bind; a direct run-time item index
+for member selects of subroutine records, whose elements share one value; a
+commit-time tag guard on queued
 native writes for tagged-union member NBAs; and per-activation native
 roots for forked automatic block records, strings and handles.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
-`sim_004/neg_static_native_record_nba.sv`,
 `sim_008/neg_record_ref_{element,member,method}.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,

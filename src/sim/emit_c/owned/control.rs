@@ -227,6 +227,7 @@ impl Frame<'_, '_> {
         element_default: Option<&IrConst>,
         record_leaves: Option<&IrLeafMerge>,
     ) -> Result<Value, String> {
+        let known = super::known_predicate(selector);
         let selector = if operands::stable_expression(left) && operands::stable_expression(right) {
             self.operand(selector)?
         } else {
@@ -240,14 +241,15 @@ impl Frame<'_, '_> {
         self.line(format!("if ({}) {{", selector.truth()));
         let a = self.expression(left)?;
         self.assign_arm(&result, a);
-        if selector.width == 0 {
+        let known = known || selector.width == 0;
+        if known {
             self.line("} else {");
         } else {
             self.line(format!("}} else if (!{}) {{", selector.unknown_truth()));
         }
         let b = self.expression(right)?;
         self.assign_arm(&result, b);
-        if selector.width != 0 {
+        if !known {
             self.line("} else {");
             // Only an indeterminate condition evaluates both arms.
             let a = self.expression(left)?;
