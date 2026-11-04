@@ -128,7 +128,7 @@ LLG_PROBE_PROCESS(scale_parent, parent_frame_t, 4) {
     } else if (cancel_children) {
         llg_disable_fork(self);
         CHECK(!self->fork_groups && !self->fork_groups_tail);
-        CHECK(!self->pending_fork_groups && !park.object->n_waiters);
+        CHECK(!self->pending_fork_groups && !((llg_event_object_t*)park.object)->n_waiters);
         CHECK(llg_arm_wait_fork(self) == LLG_CO_ARM_READY);
     } else {
         llg_event_trigger(&park);
