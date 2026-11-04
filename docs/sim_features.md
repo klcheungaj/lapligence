@@ -392,9 +392,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `ref` actuals reject).
   Associative members of element records, class-property storage of
   container record members, record ports with built-in
-  semaphore/mailbox/process members, element, run-time-indexed, subroutine-member
-  and class-method actuals of native `ref` formals (whole records bind, §9)
-  and automatic block records kept live by a
+  semaphore/mailbox/process members, the `ref` actuals the
+  [known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)
+  lists and automatic block records kept live by a
   re-entered fork remain restricted
   ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)).
   SV §§6.7, 7.2–7.4 **[SV-2005]**.
