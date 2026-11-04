@@ -832,6 +832,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::FixedArrayCopy { .. }
         | IrStmt::FixedArrayDeclare(_)
         | IrStmt::NativeValueDeclare(_)
+        | IrStmt::NativeRefStored(_)
         | IrStmt::NativeValueSharedDeclare(_)
         | IrStmt::NativeValueCopy { .. }
         | IrStmt::EventDeclare { .. }

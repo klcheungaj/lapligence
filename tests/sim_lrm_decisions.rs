@@ -353,6 +353,14 @@ fn s20_5_reverse_unpack_consumed() {
 }
 
 #[test]
+fn s13_d4_ref_record_store_wakes_readers() {
+    run_decision(
+        "S13-D4_ref_record_store_wakes_readers",
+        include_str!("fixtures/sim/lrm_decisions/S13-D4_ref_record_store_wakes_readers.out"),
+    );
+}
+
+#[test]
 fn s13_d3_output_event_merges_actual() {
     run_decision(
         "S13-D3_output_event_merges_actual",

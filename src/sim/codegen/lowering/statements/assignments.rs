@@ -44,6 +44,18 @@ impl EmitCtx<'_, '_> {
         self.lower_assignment_operands(lhs, rhs, force_blocking || blocking, op, force_blocking)
     }
 
+    /// The publication a blocking assignment owes through a native record
+    /// `ref` formal.
+    pub(super) fn record_ref_store(&self, h: NodeId) -> Option<IrStmt> {
+        let target = self.cg.node(h).children.first().copied()?;
+        match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign { blocking: true, .. }) => {
+                self.cg.record_ref_written(target)
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn lower_assignment_operands(
         &mut self,
         lhs: NodeId,

@@ -466,6 +466,10 @@ pub enum IrStmt {
     /// containers, in a shared frame that fork branches alias (SIM-010);
     /// the frame is released with the declaring scope and every branch.
     NativeValueSharedDeclare(usize),
+    /// A write through a native record `ref` formal finished: when a retained
+    /// reference binds the formal to a container element, the container's
+    /// readers learn of it; any other actual has no container to tell.
+    NativeRefStored(usize),
     /// Replace one native value with a deep copy of another of the same type.
     /// Strings and nested values copy independently; handles keep identity.
     NativeValueCopy {

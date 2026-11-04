@@ -582,6 +582,9 @@ void* llg_native_ref_bind(void* reference);
 /* A position from an index value; -1 for an unknown one. */
 /* Whether a run-time index selects a declared one; X and Z select none. */
 int llg_native_ref_selects(sv4_t index, int64_t declared);
+/* A store through a record `ref` formal finished; `value` is the formal.
+   Tells a container element's readers, and does nothing for other actuals. */
+void llg_native_ref_value_stored(llg_value_t* value);
 int64_t llg_native_ref_position(sv4_t index);
 /* Retained-cell accessors of an `llg_ref_t` naming a packed member. */
 sv4_t llg_native_ref_packed_read(const void* reference);

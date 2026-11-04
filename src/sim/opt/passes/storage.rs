@@ -974,6 +974,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::FixedArrayCopy { .. }
         | IrStmt::FixedArrayDeclare(_)
         | IrStmt::NativeValueDeclare(_)
+        | IrStmt::NativeRefStored(_)
         | IrStmt::NativeValueSharedDeclare(_)
         | IrStmt::NativeValueCopy { .. }
         | IrStmt::DeclLocal { init: None, .. }

@@ -138,6 +138,10 @@ impl Frame<'_, '_> {
                 self.declare_native_companions(*index)?;
             }
             IrStmt::NativeValueSharedDeclare(index) => self.shared_native_value(*index)?,
+            IrStmt::NativeRefStored(index) => {
+                let value = self.native_value_address(*index)?;
+                self.line(format!("llg_native_ref_value_stored({value});"));
+            }
             IrStmt::NativeValueCopy { dst, src } => {
                 let target = self.native_value_address(*dst)?;
                 let source = self.native_value_address(*src)?;

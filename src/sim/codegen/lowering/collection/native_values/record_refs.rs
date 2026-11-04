@@ -158,7 +158,7 @@ impl Codegen<'_> {
                             return Ok(None);
                         };
                         for member in members {
-                            let Some(next) = place.member(&member) else {
+                            let Some(next) = place.member(member) else {
                                 return Ok(None);
                             };
                             place = next;
@@ -296,6 +296,45 @@ impl Codegen<'_> {
             kind,
             const_ref,
         }))))
+    }
+
+    /// [`IrStmt::NativeRefStored`] when `target` writes through a native
+    /// record `ref` formal, whatever member and index it selects. A formal
+    /// bound to module-like leaves has no native root: those writes publish
+    /// as leaf writes.
+    pub(in crate::sim::codegen::lowering) fn record_ref_written(
+        &self,
+        target: NodeId,
+    ) -> Option<IrStmt> {
+        let mut node = self.p30_unwrap_cast(target);
+        loop {
+            if let Some((owner, _)) = self.db.array_select_path(node) {
+                return self.record_ref_root(owner);
+            }
+            node = match self.kind(node) {
+                NodeKind::Expr(
+                    ExprKind::ArraySelect { base, .. }
+                    | ExprKind::BitSelect { base, .. }
+                    | ExprKind::PartSelect { base, .. }
+                    | ExprKind::IndexedPartSelect { base, .. },
+                ) => *base,
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => (*refs.first()?)?,
+                NodeKind::Expr(ExprKind::Ref { target: Some(root) }) => {
+                    return self.record_ref_root(*root);
+                }
+                NodeKind::FuncArg { .. } => return self.record_ref_root(node),
+                _ => return None,
+            };
+        }
+    }
+
+    fn record_ref_root(&self, root: NodeId) -> Option<IrStmt> {
+        if !self.is_ref_formal(root) {
+            return None;
+        }
+        self.native_roots
+            .get(&root)
+            .map(|value| IrStmt::NativeRefStored(*value))
     }
 
     /// The record a native record `ref` formal binds to when `actual` names

@@ -48,6 +48,8 @@ struct llg_native_ref {
     uint8_t syncing;
     /* `value` shares a root's items and owns none of them. */
     uint8_t borrowed;
+    /* The record a borrowed root stands for. */
+    llg_value_t* origin;
 };
 
 enum {
@@ -296,6 +298,10 @@ static void llg_native_refs_notify(sv4_t* contents, sv4_t* shape, int change) {
 
 /* Tell the container of a live element its contents changed. */
 static void llg_native_ref_touch(llg_native_ref_t* ref) {
+    if (ref->origin) {
+        llg_native_ref_value_stored(ref->origin);
+        return;
+    }
     switch (ref->owner ? ref->kind : 0xffu) {
     case LLG_NATIVE_REF_DYNAMIC: {
         llg_dyn_value_array_t* array = ref->owner;
@@ -318,6 +324,16 @@ static void llg_native_ref_touch(llg_native_ref_t* ref) {
     }
     default:
         break;
+    }
+}
+
+void llg_native_ref_value_stored(llg_value_t* value) {
+    if (!llg_native_refs_live) return;
+    for (llg_native_ref_t* ref = llg_native_refs_all; ref;
+         ref = ref->all_next) {
+        if (&ref->value != value) continue;
+        llg_native_ref_touch(ref);
+        return;
     }
 }
 
@@ -475,6 +491,7 @@ void* llg_native_ref_root(llg_value_t* value) {
     ref->refs = 1;
     ref->valid = 1;
     ref->borrowed = 1;
+    ref->origin = value;
     ref->value = *value;
     llg_native_ref_link_all(ref);
     return ref;

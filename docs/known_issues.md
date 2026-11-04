@@ -1526,7 +1526,8 @@ Two legal forms reject explicitly instead of running:
 
 - A task waiting on a member of a native record `ref` formal (an unpacked
   structure with a string, container or class member) called with a record
-  that is a class property or a task-automatic variable ("waits on a native
+  that is a class property, a task-automatic variable or an array element
+  ("waits on a native
   record `ref` formal, so each of its record actuals must be a module, static
   or procedural-block record").
 - `@(s)` on a subroutine string or handle that is neither a `ref` formal nor
