@@ -150,6 +150,13 @@ fn record_element_members_take_event_controls_and_selects() {
 }
 
 #[test]
+fn record_element_members_take_nonblocking_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_element_member_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_member_nba", expected, &[], &[]);
+}
+
+#[test]
 fn indexed_slices_of_fixed_arrays_pass_by_value() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/fixed_variable_slice_actuals.out");
@@ -469,8 +476,8 @@ fn container_elements_hold_records_with_container_members() {
     );
     sim_cli::reject_case(
         SUITE,
-        "bad_record_element_leaf_nba",
-        "a nonblocking assignment to a member of a record element in `tb` is not supported; assign the whole element",
+        "bad_record_element_event_nba",
+        "an event-controlled nonblocking assignment to a member of a record element in `tb` is not supported; use a delay or assign the whole element",
     );
     sim_cli::reject_case(
         SUITE,

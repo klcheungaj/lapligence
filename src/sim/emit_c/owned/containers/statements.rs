@@ -1129,6 +1129,41 @@ pub(super) fn render(
                 format!("    llg_value_item_from_{kind}({item}, &{target});\n")
             }
         }
+        IrContainerStmt::NbaLocateEnd => "    llg_nba_locate_end();\n".to_owned(),
+        IrContainerStmt::NbaLocate { root, items } => {
+            let list = items
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let items = format!("(const uint32_t[]){{ {list} }}, {}", items.len());
+            match root {
+                IrValueItemRoot::Value(value) => format!(
+                    "    llg_nba_locate_value({}, {items});\n",
+                    frame.native_value_address(*value)?
+                ),
+                IrValueItemRoot::Element(crate::sim::ir::IrChandleExpr::ContainerElement {
+                    container,
+                    indices,
+                    key: None,
+                    ..
+                }) if matches!(
+                    ctx.model.containers[*container].kind,
+                    IrContainerKind::Dynamic
+                ) =>
+                {
+                    let list = super::indices(frame, owners, indices)?;
+                    format!(
+                        "    llg_nba_locate_element(&{}, {list}, {}, {items});\n",
+                        name(frame, *container)?,
+                        indices.len()
+                    )
+                }
+                IrValueItemRoot::Element(_) => {
+                    return Err("nonblocking item root must be a fixed-array element".into())
+                }
+            }
+        }
         IrContainerStmt::DeleteIndex { container, index } => {
             let method = match ctx.model.containers[*container].kind {
                 IrContainerKind::Queue { .. }

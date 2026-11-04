@@ -671,6 +671,16 @@ pub enum IrContainerStmt {
         count: u64,
         delay: Option<IrDelay>,
     },
+    /// The next nonblocking write, up to [`Self::NbaLocateEnd`], targets item
+    /// `items` of `root`: the element position is fixed here and the item is
+    /// found again at commit, so a whole-value write in between cannot leave
+    /// the write behind. The write itself names a read access to that item,
+    /// which only gives it a type.
+    NbaLocate {
+        root: IrValueItemRoot,
+        items: Vec<u32>,
+    },
+    NbaLocateEnd,
     /// Ambiguous-predicate conditional merge of two containers of `dst`'s
     /// kind and element type into `dst` (SV 11.4.11): elements merge leaf by
     /// leaf; known-equal leaves survive, others take their
@@ -1776,6 +1786,28 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
+            Self::NbaLocateEnd => Ok(()),
+            Self::NbaLocate { root, items } => {
+                let mut item = Some(root.element(model)?);
+                for step in items {
+                    item = match item {
+                        Some(IrContainerElement::Aggregate { members, .. }) => members
+                            .get(*step as usize)
+                            .map(|member| member.element.as_ref()),
+                        Some(IrContainerElement::FixedArray { element, .. }) => {
+                            Some(element.as_ref())
+                        }
+                        _ => None,
+                    };
+                }
+                if item.is_none() || items.is_empty() {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "nonblocking item path does not name an item",
+                    ));
+                }
+                Ok(())
+            }
             Self::ValueItemToContainer {
                 root,
                 items,
@@ -2757,9 +2789,10 @@ impl IrContainerStmt {
             | Self::ResetDefault(_)
             | Self::Declare(_)
             | Self::SharedDeclare(_) => {}
-            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
-                root.expressions(visit)
-            }
+            Self::NbaLocateEnd => {}
+            Self::ValueItemToContainer { root, .. }
+            | Self::ContainerToValueItem { root, .. }
+            | Self::NbaLocate { root, .. } => root.expressions(visit),
         }
     }
 
@@ -2878,9 +2911,10 @@ impl IrContainerStmt {
             | Self::ResetDefault(_)
             | Self::Declare(_)
             | Self::SharedDeclare(_) => {}
-            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
-                root.expressions_mut(visit)
-            }
+            Self::NbaLocateEnd => {}
+            Self::ValueItemToContainer { root, .. }
+            | Self::ContainerToValueItem { root, .. }
+            | Self::NbaLocate { root, .. } => root.expressions_mut(visit),
         }
     }
 }

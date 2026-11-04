@@ -23,13 +23,13 @@ feature_completion/ki_packed_range/procedural_selects.sv	mixed-assignments	17:3
 feature_completion/ki_pattern_rows/dense_rows.sv	mixed-assignments	33:3
 feature_completion/ki_pattern_rows/descriptor_rows.sv	mixed-assignments	22:3
 feature_completion/ki_select_bugs/element_members.sv	mixed-assignments	38:3
+feature_completion/rtl_002/capacity_copy.sv	mixed-assignments	8:5
+feature_completion/rtl_002/default_pattern.sv	mixed-assignments	5:5
+feature_completion/rtl_002/integration_views.sv	mixed-assignments	3:5
 feature_completion/rtl_002b/calls.sv	mixed-assignments	27:5
 feature_completion/rtl_002b/patterns.sv	mixed-assignments	21:5
 feature_completion/rtl_002b/streams.sv	mixed-assignments	36:5
 feature_completion/rtl_002b/views.sv	mixed-assignments	16:5
-feature_completion/rtl_002/capacity_copy.sv	mixed-assignments	8:5
-feature_completion/rtl_002/default_pattern.sv	mixed-assignments	5:5
-feature_completion/rtl_002/integration_views.sv	mixed-assignments	3:5
 feature_completion/rtl_003/selector_capture.sv	mixed-assignments	12:2
 feature_completion/rtl_004/descriptor_patterns.sv	mixed-assignments	8:3
 feature_completion/rtl_004/nested_rows.sv	mixed-assignments	20:5
@@ -87,6 +87,7 @@ feature_completion/sim_007/block_records.sv	mixed-assignments	105:5
 feature_completion/sim_007/handle_sensitivity.sv	mixed-assignments	34:5
 feature_completion/sim_007/native_arrays.sv	mixed-assignments	34:5
 feature_completion/sim_007/native_tagged_nba.sv	mixed-assignments	32:5
+feature_completion/sim_007/record_element_member_nba.sv	mixed-assignments	19:3
 force/Force_Advanced_Contexts.sv	mixed-assignments	32:3
 group1_repairs/packed_selection_capture.sv	mixed-assignments	5:3
 group1_repairs/subaggregate_types.sv	mixed-assignments	8:5
@@ -105,8 +106,8 @@ partial_features/array_select_ranges.sv	mixed-assignments	5:5
 partial_features/clocking_history_slot.sv	mixed-assignments	22:3
 partial_features/clocking_history_slot.sv	mixed-assignments	51:3
 partial_features/declared_select_ranges.sv	mixed-assignments	6:5
-partial_features/delayed_nba_select.sv	mixed-assignments	5:5
 partial_features/delayed_nba.sv	mixed-assignments	3:5
+partial_features/delayed_nba_select.sv	mixed-assignments	5:5
 partial_features/dynamic_delay_nba.sv	mixed-assignments	7:5
 partial_features/nba_conversions.sv	mixed-assignments	6:5
 partial_features/nba_disjoint.sv	mixed-assignments	3:5
@@ -128,8 +129,8 @@ syn014_process_contexts/repaired_expression_contexts.sv	combinational-loop	27:13
 syn014_process_contexts/repaired_expression_contexts.sv	combinational-loop	28:13
 syn021_tagged_union/nba_wrong_at_issue.sv	mixed-assignments	5:5
 syn021_tagged_union/struct_contexts.sv	mixed-assignments	68:5
-syn038_pairwise/constref_written_source_actuals.sv	mixed-assignments	67:5
 syn038_pairwise/co_same_root_assignment_rhs.sv	mixed-assignments	17:5
+syn038_pairwise/constref_written_source_actuals.sv	mixed-assignments	67:5
 syn038_pairwise/legacy_op_replacements.sv	combinational-loop	30:16
 syn038_pairwise/scope_storage_process_matrix.sv	mixed-assignments	33:3
 syn038_pairwise/scope_storage_process_matrix.sv	mixed-assignments	57:3

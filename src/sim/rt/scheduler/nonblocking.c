@@ -25,6 +25,8 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     n->is_chandle = 0;
     n->is_values = 0;
     n->tag_view = NULL;
+    n->locator = g.nba_locator;
+    g.nba_locator = NULL;
     n->time = g.now + ticks;
     n->sequence = g.nba_sequence++;
     n->region = region;
@@ -507,6 +509,46 @@ void llg_chandle_nba_after(void** target, void* value, uint64_t ticks,
     n->native.chandle.value = value;
     n->native.chandle.dependency = dependency;
     enqueue_nba(n);
+}
+
+static void nba_locator_set(llg_dyn_value_array_t* array, llg_value_t* root,
+                            const sv4_t* indices, size_t index_count,
+                            const uint32_t* items, size_t item_count) {
+    llg_nba_locator_t* locator = (llg_nba_locator_t*)llg_checked_calloc(
+        1, sizeof(*locator), "nonblocking item destination");
+    locator->array = array;
+    locator->root = root;
+    if (index_count) {
+        locator->indices = (sv4_t*)llg_checked_calloc(
+            index_count, sizeof(sv4_t), "nonblocking item destination");
+        for (size_t index = 0; index < index_count; ++index)
+            locator->indices[index] = sv4_clone(&indices[index]);
+        locator->index_count = index_count;
+    }
+    if (item_count) {
+        locator->items = (uint32_t*)llg_checked_calloc(
+            item_count, sizeof(uint32_t), "nonblocking item destination");
+        memcpy(locator->items, items, item_count * sizeof(uint32_t));
+        locator->item_count = item_count;
+    }
+    nba_locator_destroy(g.nba_locator);
+    g.nba_locator = locator;
+}
+
+void llg_nba_locate_element(llg_dyn_value_array_t* array, const sv4_t* indices,
+                            size_t index_count, const uint32_t* items,
+                            size_t item_count) {
+    nba_locator_set(array, NULL, indices, index_count, items, item_count);
+}
+
+void llg_nba_locate_value(llg_value_t* root, const uint32_t* items,
+                          size_t item_count) {
+    nba_locator_set(NULL, root, NULL, 0, items, item_count);
+}
+
+void llg_nba_locate_end(void) {
+    nba_locator_destroy(g.nba_locator);
+    g.nba_locator = NULL;
 }
 
 void llg_dyn_value_nba(llg_dyn_value_array_t* target, sv4_t dst_start,

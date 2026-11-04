@@ -13,6 +13,7 @@ impl Validator<'_> {
             chandle_return: Cell::new(None),
             string_return: Cell::new(None),
             function: Cell::new(None),
+            located_nba: Cell::new(false),
             signal_names: std::cell::OnceCell::new(),
             future_slots: Cell::new(None),
         }

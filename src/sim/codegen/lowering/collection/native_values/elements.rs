@@ -20,8 +20,8 @@ enum ElementSelector {
 
 /// One record or fixed-array element of container storage.
 #[derive(Clone)]
-pub(super) struct ElementSelection {
-    pub(super) container: usize,
+pub(in crate::sim::codegen) struct ElementSelection {
+    pub(in crate::sim::codegen) container: usize,
     selector: ElementSelector,
 }
 
@@ -306,6 +306,9 @@ impl Codegen<'_> {
         path: &str,
         selection: &ElementSelection,
     ) -> Result<IrValueSlot, String> {
+        if let Some(slot) = &self.element_nba_target {
+            return Ok(slot.clone());
+        }
         Ok(match &selection.selector {
             ElementSelector::Key(key) => IrValueSlot::Element {
                 indices: Vec::new(),
@@ -747,6 +750,128 @@ impl Codegen<'_> {
             .map(|(_, leaf)| leaf.ty)
     }
 
+    /// The element and leaf a nonblocking write of `node` stores to: the
+    /// leaf itself or the packed leaf a select chain is inside; `None` for a
+    /// whole sub-record or member array.
+    pub(in crate::sim::codegen) fn element_nba_leaf(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<(ElementSelection, NativeLeaf)>, String> {
+        if let Some((_, selection, leaf, _)) = self.element_leaf_select(node)? {
+            return Ok(Some((selection, leaf)));
+        }
+        if let Some(found) = self.element_leaf(node)? {
+            return Ok(Some(found));
+        }
+        match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => self.element_nba_leaf(*base),
+            NodeKind::Expr(ExprKind::ArraySelect { base, .. })
+                if self.db.array_select_path(node).is_none() =>
+            {
+                self.element_nba_leaf(*base)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The selection, member path and scalar leaves of a whole sub-record or
+    /// member array of a record element. Container members below it stay
+    /// rejected: their slots hold no value a scalar write can queue.
+    pub(in crate::sim::codegen) fn element_member_leaves(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<(ElementSelection, Vec<AggregatePathPart>, Vec<NativeLeaf>), String> {
+        let not_supported = || {
+            format!(
+                "a nonblocking assignment to this selection of a record element in `{path}` is not supported; assign its members or the whole element"
+            )
+        };
+        let (selection, prefix) = self.element_member_path(node).ok_or_else(not_supported)?;
+        let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        if leaves
+            .containers
+            .iter()
+            .any(|leaf| leaf.path.starts_with(&prefix))
+        {
+            return Err(not_supported());
+        }
+        let scalars = leaves
+            .scalars
+            .into_iter()
+            .filter(|leaf| leaf.path.starts_with(&prefix))
+            .collect::<Vec<_>>();
+        if scalars.is_empty() {
+            return Err(not_supported());
+        }
+        Ok((selection, prefix, scalars))
+    }
+
+    /// A native temporary of the element type and the descriptor of the
+    /// member at `prefix`.
+    pub(in crate::sim::codegen) fn element_nba_temporary(
+        &mut self,
+        selection: ElementSelection,
+        source: NodeId,
+        prefix: &[AggregatePathPart],
+    ) -> Result<(usize, TypeDescriptor), String> {
+        let temporary = self.element_temporary(selection.container, selection.depth(), source)?;
+        let layout = self.native_layout_of_value(temporary)?;
+        let descriptor = Self::descriptor_at_path(&layout.descriptor, prefix)
+            .ok_or("record element member has no type")?;
+        Ok((temporary, descriptor))
+    }
+
+    /// A read access to `leaf` that shares a member NBA's captured `slot`.
+    pub(in crate::sim::codegen) fn element_nba_access(
+        &mut self,
+        path: &str,
+        selection: &ElementSelection,
+        slot: &IrValueSlot,
+        leaf: &NativeLeaf,
+    ) -> Result<String, String> {
+        self.element_nba_target = Some(slot.clone());
+        let name = self.element_access(path, selection, leaf, false);
+        self.element_nba_target = None;
+        name
+    }
+
+    /// The element slot of a member NBA with its run-time indices captured
+    /// once, in locals declared by `statements`: the locator and the typed
+    /// access share them.
+    pub(in crate::sim::codegen) fn element_nba_slot(
+        &mut self,
+        path: &str,
+        selection: &ElementSelection,
+        statements: &mut Vec<IrStmt>,
+    ) -> Result<IrValueSlot, String> {
+        let mut slot = self.lower_element_slot(path, selection)?;
+        let IrValueSlot::Element { indices, .. } = &mut slot else {
+            unreachable!("element selections lower to element slots");
+        };
+        for index in indices.iter_mut() {
+            if matches!(index.kind(), IrExprKind::Const(_)) {
+                continue;
+            }
+            let name = format!("_llg_nba_index_{}", self.native_copy_sequence);
+            self.native_copy_sequence += 1;
+            let (width, signed) = (index.width, index.signed);
+            statements.push(IrStmt::DeclLocal {
+                name: name.clone(),
+                width,
+                signed,
+                two_state: false,
+                init: Some(Box::new(index.clone())),
+            });
+            *index = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+        }
+        Ok(slot)
+    }
+
     /// Whether `node` names a whole packed leaf of a container record
     /// element.
     pub(in crate::sim::codegen) fn element_packed_leaf(&self, node: NodeId) -> bool {
@@ -779,21 +904,21 @@ impl Codegen<'_> {
             .map(AggregatePathPart::Member)
             .collect();
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
-        for (position, index) in indices.iter().enumerate() {
-            let Some(index) = self
-                .eval_bound_i128(*index)
-                .ok()
+        for position in 0..=indices.len() {
+            if let Some(leaf) = leaves.scalars.iter().find(|leaf| leaf.path == path) {
+                let trailing = indices[position..].to_vec();
+                return Ok((!trailing.is_empty()
+                    && matches!(leaf.ty, IrClassFieldType::Packed { .. }))
+                .then(|| (*base, selection, leaf.clone(), trailing)));
+            }
+            let Some(index) = indices
+                .get(position)
+                .and_then(|index| self.eval_bound_i128(*index).ok())
                 .and_then(|index| i32::try_from(index).ok())
             else {
                 return Ok(None);
             };
             path.push(AggregatePathPart::Index(index));
-            if let Some(leaf) = leaves.scalars.iter().find(|leaf| leaf.path == path) {
-                let trailing = indices[position + 1..].to_vec();
-                return Ok((!trailing.is_empty()
-                    && matches!(leaf.ty, IrClassFieldType::Packed { .. }))
-                .then(|| (*base, selection, leaf.clone(), trailing)));
-            }
         }
         Ok(None)
     }
@@ -1527,6 +1652,8 @@ impl Codegen<'_> {
         else {
             unreachable!("element selections lower to element slots");
         };
+        // The access of a queued write only types it: nothing changes yet.
+        let write = write && self.element_nba_target.is_none();
         let name = format!("_llg_access_{}", self.model.native_accesses.len());
         self.model
             .native_accesses

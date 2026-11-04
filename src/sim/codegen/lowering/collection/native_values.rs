@@ -19,6 +19,7 @@ mod conditionals;
 mod elements;
 mod member_select;
 mod messages;
+mod nba;
 mod record_refs;
 mod tagged;
 pub(in crate::sim::codegen) use tagged::{

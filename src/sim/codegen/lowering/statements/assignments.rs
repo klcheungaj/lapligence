@@ -1261,6 +1261,14 @@ impl EmitCtx<'_, '_> {
         };
         if !blocking {
             self.reject_class_property_nba(lhs)?;
+            // The queued write locates its item from the indices captured at
+            // issue, which a detached event assignment does not carry.
+            if self.cg.names_element_member(self.cg.p30_unwrap_cast(lhs)) {
+                return Err(format!(
+                    "an event-controlled nonblocking assignment to a member of a record element in `{}` is not supported; use a delay or assign the whole element",
+                    self.path
+                ));
+            }
         }
         if op != Operation::Assignment {
             return Err(format!(

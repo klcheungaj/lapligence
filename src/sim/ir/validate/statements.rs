@@ -19,6 +19,9 @@ impl Validator<'_> {
     }
 
     pub(super) fn has_transient_target(&self, lhs: &IrLhs) -> bool {
+        if self.located_nba.get() {
+            return false;
+        }
         match lhs {
             IrLhs::WholeRef {
                 addr,
@@ -447,6 +450,11 @@ impl Validator<'_> {
             }
             IrStmt::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
+                match operation.as_ref() {
+                    IrContainerStmt::NbaLocate { .. } => self.located_nba.set(true),
+                    IrContainerStmt::NbaLocateEnd => self.located_nba.set(false),
+                    _ => {}
+                }
                 if let IrContainerStmt::SetValue { value, .. }
                 | IrContainerStmt::GetValue { value, .. }
                 | IrContainerStmt::ValueItemToContainer {
@@ -454,6 +462,10 @@ impl Validator<'_> {
                     ..
                 }
                 | IrContainerStmt::ContainerToValueItem {
+                    root: IrValueItemRoot::Value(value),
+                    ..
+                }
+                | IrContainerStmt::NbaLocate {
                     root: IrValueItemRoot::Value(value),
                     ..
                 } = operation.as_ref()

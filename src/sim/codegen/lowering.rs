@@ -1740,6 +1740,8 @@ struct Codegen<'a> {
     native_leaf_symbols: HashMap<(usize, Vec<u32>), String>,
     /// Distinguishes the capture locals of successive native transfers.
     native_copy_sequence: usize,
+    /// Element slot a member NBA's target lowers to, with captured indices.
+    element_nba_target: Option<crate::sim::ir::IrValueSlot>,
     /// Statements before/after a statement-level call that needs native
     /// argument temporaries; `None` in plain expression contexts.
     native_call_prelude: Option<(Vec<IrStmt>, Vec<IrStmt>)>,
@@ -2320,6 +2322,7 @@ impl<'a> Codegen<'a> {
             record_ref_aliases: HashMap::new(),
             native_leaf_symbols: HashMap::new(),
             native_copy_sequence: 0,
+            element_nba_target: None,
             native_call_prelude: None,
             proc_locals: HashMap::new(),
             proc_string_locals: HashMap::new(),

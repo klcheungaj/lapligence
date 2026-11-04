@@ -63,13 +63,11 @@ impl Codegen<'_> {
             })));
             return Ok(Some(IrStmt::Block(statements)));
         }
-        // A member write goes through an access into the element's value
-        // tree, which a later whole-element write may replace before the NBA
-        // region; only whole elements are deferred.
-        if self.names_element_member(self.p30_unwrap_cast(lhs)) {
-            return Err(format!(
-                "a nonblocking assignment to a member of a record element in `{path}` is not supported; assign the whole element"
-            ));
+        let member = self.p30_unwrap_cast(lhs);
+        if self.names_element_member(member) {
+            return self
+                .lower_element_member_nba(path, member, rhs, delay)
+                .map(Some);
         }
         // One element.
         let Some((target, indices)) = self.container_element_path(lhs) else {
@@ -100,7 +98,11 @@ impl Codegen<'_> {
         ])))
     }
 
-    fn require_persistent_view(&self, path: &str, target: usize) -> Result<(), String> {
+    pub(in super::super) fn require_persistent_view(
+        &self,
+        path: &str,
+        target: usize,
+    ) -> Result<(), String> {
         if self.model.containers[target].is_global_storage() {
             return Ok(());
         }
