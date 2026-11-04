@@ -118,6 +118,8 @@ typedef struct llg_value_handle_hooks_t {
     void (*release)(void* handle);
     /* Publish one change marker (llg_dependency_changed). */
     void (*publish)(sv4_t* marker);
+    /* Store and publish a real variable (llg_ba_d). */
+    void (*store_real)(double* target, double value);
 } llg_value_handle_hooks_t;
 void llg_value_set_handle_hooks(const llg_value_handle_hooks_t* hooks);
 
@@ -567,6 +569,12 @@ void llg_native_ref_release(void* reference);
 void llg_native_ref_scope_release(void* object);
 llg_string_t* llg_native_ref_string(void* reference);
 void** llg_native_ref_handle(void* reference);
+/* The stable `double` of a real element or member, for a real `ref` formal.
+ * Real stores publish through the runtime, which calls
+ * llg_native_ref_real_stored while any such reference lives. */
+double* llg_native_ref_real(void* reference);
+extern size_t llg_native_real_refs_live;
+void llg_native_ref_real_stored(double* cell);
 /* The record a reference names, for a native record `ref` formal. */
 llg_value_t* llg_native_ref_value(void* reference);
 /* A reference to a value that is no container element, for its members. */

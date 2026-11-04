@@ -168,10 +168,12 @@ impl Codegen<'_> {
                     }
                     IrLeafTarget::Address(format!("&{}", object.c_name))
                 }
-                (IrElementRefKind::Packed { .. }, None) => IrLeafTarget::Packed {
-                    lhs: self.aggregate_leaf_lhs(leaf)?,
-                    read: self.aggregate_leaf_read(leaf)?,
-                },
+                (IrElementRefKind::Packed { .. } | IrElementRefKind::Real { .. }, None) => {
+                    IrLeafTarget::Packed {
+                        lhs: self.aggregate_leaf_lhs(leaf)?,
+                        read: self.aggregate_leaf_read(leaf)?,
+                    }
+                }
                 _ => return Ok(None),
             };
             leaves.push((*declared, target));

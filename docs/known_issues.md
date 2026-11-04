@@ -1228,9 +1228,7 @@ storage and real fixed arrays across subroutine boundaries.
 
 ### Symptom
 
-These legal forms reject with explicit diagnostics: a `ref` actual that is an
-element of a real queue, dynamic array or associative array
-(`ref actual ... names a real resizable-container element`); a real-array call
+These legal forms reject with explicit diagnostics: a real-array call
 operand, equality or conditional arm that is a function call inside an
 expression other than a whole-array assignment or another real-array input
 (assign it to a variable first); a conditional real-array arm or row selector
@@ -1240,17 +1238,14 @@ operands of any size pass by block copy.
 
 ### Cause
 
-A real reference is the actual's `double*`, which a container reallocation
-would invalidate; retained element cells need the pinning contract of
-SIM-008. Real-array values that are not storage are lowered to one numeric
+Real-array values that are not storage are lowered to one numeric
 expression per element, evaluated where they are used, so operands that would
 need a snapshot statement inside an expression are rejected rather than
 evaluated twice.
 
 ### Intended direction
 
-SIM-008 adds retained real container cells behind the same reference formal
-ABI; a real-array value descriptor would let expression operands and larger
+A real-array value descriptor would let expression operands and larger
 element-wise expressions run as cell loops.
 
 ### Reproduce

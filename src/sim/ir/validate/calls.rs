@@ -495,6 +495,9 @@ impl Validator<'_> {
                     let matches_formal = match reference.kind {
                         IrElementRefKind::String => formal.string,
                         IrElementRefKind::Handle => formal.chandle,
+                        IrElementRefKind::Real { shortreal } => {
+                            formal.real && formal.shortreal == shortreal
+                        }
                         IrElementRefKind::Record => {
                             formal.native_value.is_some() && formal.native_companions.is_empty()
                         }
@@ -548,7 +551,10 @@ impl Validator<'_> {
                             }
                         }
                         IrElementRoot::Leaves { leaves, .. } => {
-                            let packed = matches!(reference.kind, IrElementRefKind::Packed { .. });
+                            let packed = matches!(
+                                reference.kind,
+                                IrElementRefKind::Packed { .. } | IrElementRefKind::Real { .. }
+                            );
                             let matches_kind = !matches!(reference.kind, IrElementRefKind::Record)
                                 && !leaves.is_empty()
                                 && reference.steps.is_empty()

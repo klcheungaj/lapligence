@@ -238,6 +238,11 @@ llg_string_t* llg_native_ref_detached_string(void) {
         sizeof(llg_string_t), llg_native_ref_detached_release));
 }
 
+double* llg_native_ref_detached_real(void) {
+    return (double*)llg_value_scope_object(llg_value_scope_begin_object(
+        sizeof(double), NULL));
+}
+
 void** llg_native_ref_detached_handle(void) {
     return llg_value_scope_object(
         llg_value_scope_begin_object(sizeof(void*), NULL));

@@ -48,6 +48,8 @@ struct llg_native_ref {
     uint8_t syncing;
     /* `value` shares a root's items and owns none of them. */
     uint8_t borrowed;
+    /* Counted in llg_native_real_refs_live. */
+    uint8_t real_counted;
     /* The record a borrowed root stands for. */
     llg_value_t* origin;
 };
@@ -60,6 +62,7 @@ enum {
 };
 
 static struct llg_native_ref* llg_native_refs_all;
+size_t llg_native_real_refs_live;
 /* The one notify function containers use; references forward to it. */
 static llg_container_notify_fn llg_native_refs_forward;
 
@@ -282,6 +285,9 @@ static int llg_native_ref_refresh(llg_native_ref_t* ref) {
     ref->syncing = 1;
     if (ref->value.desc->kind == LLG_VALUE_STRING) {
         llg_string_assign(&ref->value.value.string, &element->value.string);
+    } else if (ref->value.desc->kind == LLG_VALUE_REAL && llg_value_hooks.store_real) {
+        /* A real waiter follows the cell itself, not a marker. */
+        llg_value_hooks.store_real(&ref->value.value.real, element->value.real);
     } else {
         llg_value_copy(&ref->value, ref->value.desc, element);
         llg_native_ref_publish(ref);
@@ -337,6 +343,16 @@ void llg_native_ref_value_stored(llg_value_t* value) {
     }
 }
 
+void llg_native_ref_real_stored(double* cell) {
+    for (llg_native_ref_t* ref = llg_native_refs_all; ref;
+         ref = ref->all_next) {
+        if (!ref->real_counted || &llg_native_ref_value(ref)->value.real != cell)
+            continue;
+        llg_native_ref_publish(ref);
+        return;
+    }
+}
+
 void llg_native_ref_stored(sv4_t* marker) {
     llg_native_ref_t* ref = (llg_native_ref_t*)marker;
     if (ref->member) {
@@ -350,6 +366,8 @@ void llg_native_ref_stored(sv4_t* marker) {
             llg_string_destroy(&ref->value.value.string);
             ref->value.value.string.data = NULL;
             ref->value.value.string.len = 0;
+        } else if (ref->value.desc->kind == LLG_VALUE_REAL) {
+            ref->value.value.real = 0.0;
         } else {
             ref->value.value.handle = NULL;
         }
@@ -459,6 +477,7 @@ void llg_native_ref_release(void* reference) {
     else llg_native_refs_all = ref->all_next;
     if (ref->all_next) ref->all_next->all_prev = ref->all_prev;
     --llg_native_refs_live;
+    if (ref->real_counted) --llg_native_real_refs_live;
     llg_value_drop(&ref->value);
     sv4_destroy(&ref->marker);
     sv4_destroy(&ref->key);
@@ -478,6 +497,15 @@ llg_value_t* llg_native_ref_value(void* reference) {
 
 llg_string_t* llg_native_ref_string(void* reference) {
     return &llg_native_ref_value(reference)->value.string;
+}
+
+double* llg_native_ref_real(void* reference) {
+    llg_native_ref_t* ref = reference;
+    if (!ref->real_counted) {
+        ref->real_counted = 1;
+        ++llg_native_real_refs_live;
+    }
+    return &llg_native_ref_value(ref)->value.real;
 }
 
 void** llg_native_ref_handle(void* reference) {

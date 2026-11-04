@@ -1,7 +1,7 @@
 //! Handles.
 
 use super::*;
-use crate::sim::ir::{IrElementRef, IrElementRefKind, IrElementRoot};
+use crate::sim::ir::{IrContainerElement, IrElementRef, IrElementRefKind, IrElementRoot};
 
 impl Codegen<'_> {
     /// Resolve a chandle lvalue to its native pointer identity and its
@@ -233,6 +233,17 @@ impl Codegen<'_> {
         self.element_ref(path, node, IrElementRefKind::String, const_ref)
     }
 
+    /// The same for one real element or member and a real `ref` formal.
+    pub(in super::super) fn real_element_ref(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        shortreal: bool,
+        const_ref: bool,
+    ) -> Result<Option<IrCallArg>, String> {
+        self.element_ref(path, node, IrElementRefKind::Real { shortreal }, const_ref)
+    }
+
     /// The same for one handle element and a handle `ref` formal.
     pub(in super::super) fn handle_element_ref(
         &mut self,
@@ -259,6 +270,9 @@ impl Codegen<'_> {
         let selects_kind = match kind {
             IrElementRefKind::String => storage.element.is_string(),
             IrElementRefKind::Handle => storage.element.is_handle(),
+            IrElementRefKind::Real { shortreal } => {
+                storage.element == IrContainerElement::Real { shortreal }
+            }
             IrElementRefKind::Record | IrElementRefKind::Packed { .. } => false,
         };
         if !selects_kind {

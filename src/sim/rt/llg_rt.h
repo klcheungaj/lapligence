@@ -1427,6 +1427,7 @@ llg_value_scope_t* llg_value_scope_begin_object(size_t size, void (*destroy)(voi
    selects no leaf (SV 7.4.6): reads see the default, writes stay private. */
 llg_string_t* llg_native_ref_detached_string(void);
 void** llg_native_ref_detached_handle(void);
+double* llg_native_ref_detached_real(void);
 void* llg_value_scope_object(llg_value_scope_t* scope);
 // A mark borrows the current active-scope head. It is valid until its enclosing
 // scope ends. End-since performs lexical return/goto cleanup, excluding mark.

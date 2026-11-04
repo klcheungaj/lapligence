@@ -974,6 +974,7 @@ static void real_write(double* target, double value) {
             binding->kind == LLG_DEPENDENCY_BINDING_REAL)
             llg_dependency_changed(binding->dependency);
     }
+    if (LLG_CO_UNLIKELY(llg_native_real_refs_live)) llg_native_ref_real_stored(target);
     force_dependency_changed(NULL, target, 1);
     if (LLG_CO_UNLIKELY(watched)) value_watch_notify(target);
     if (target_pin) llg_value_scope_end(target_pin);

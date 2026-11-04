@@ -390,6 +390,11 @@ impl<'a> Codegen<'a> {
         bound: &BoundArg,
         const_ref: bool,
     ) -> Result<IrCallArg, String> {
+        if let Some(argument) =
+            self.real_element_ref(scope_path, bound.expr, bound.shortreal, const_ref)?
+        {
+            return Ok(argument);
+        }
         if self.container_of_ref_actual(bound.expr) {
             return Err(format!(
                 "ref actual in `{scope_path}` names a real resizable-container element, \

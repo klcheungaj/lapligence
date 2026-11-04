@@ -139,10 +139,12 @@ fn illegal_real_forms_stay_rejected() {
 }
 
 #[test]
-fn real_container_element_refs_are_an_explicit_boundary() {
-    sim_cli::reject_case(
+fn real_elements_and_members_bind_ref_formals() {
+    sim_cli::run_case_backend_parity(
         SUITE,
-        "neg_real_queue_ref",
-        "ref actual in `tb` names a real resizable-container element",
+        "real_element_refs",
+        include_str!("../fixtures/sim/feature_completion/sim_005/real_element_refs.out"),
+        &[],
+        &[],
     );
 }

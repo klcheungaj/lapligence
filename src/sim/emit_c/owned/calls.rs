@@ -1037,6 +1037,7 @@ impl Frame<'_, '_> {
                 format!("llg_native_ref_handle({acquire})"),
                 format!("llg_native_ref_marker({acquire})"),
             ],
+            IrElementRefKind::Real { .. } => vec![format!("llg_native_ref_real({acquire})")],
             IrElementRefKind::Record => vec![format!("llg_native_ref_value({acquire})")],
             IrElementRefKind::Packed {
                 width,
@@ -1097,6 +1098,9 @@ impl Frame<'_, '_> {
                         two_state,
                     },
                 ) => self.reference_argument(lhs, read, width, signed, two_state)?,
+                (IrLeafTarget::Packed { lhs, .. }, IrElementRefKind::Real { .. }) => {
+                    self.real_reference_argument(lhs)?
+                }
                 _ => return Err("selected leaf does not match its reference".to_owned()),
             });
         }
@@ -1113,6 +1117,10 @@ impl Frame<'_, '_> {
             IrElementRefKind::String => vec![self.scalar(
                 "llg_string_t*",
                 pick(&addresses, "llg_native_ref_detached_string()".to_owned()),
+            )],
+            IrElementRefKind::Real { .. } => vec![self.scalar(
+                "double*",
+                pick(&addresses, "llg_native_ref_detached_real()".to_owned()),
             )],
             IrElementRefKind::Handle => {
                 let address = pick(&addresses, "llg_native_ref_detached_handle()".to_owned());

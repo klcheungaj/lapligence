@@ -160,6 +160,10 @@ pub enum IrCallArg {
 pub enum IrElementRefKind {
     String,
     Handle,
+    /// A real leaf: the formal takes the address of a stable `double`.
+    Real {
+        shortreal: bool,
+    },
     /// A native record: the formal takes the value's address.
     Record,
     /// A packed leaf: the formal takes an `llg_ref_t` naming it.
@@ -196,7 +200,7 @@ pub enum IrElementRoot {
 pub enum IrLeafTarget {
     /// The address of a string or handle object.
     Address(String),
-    /// A packed leaf as a typed lvalue with its read, as in
+    /// A packed or real leaf as a typed lvalue with its read, as in
     /// [`IrCallArg::RefAddr`].
     Packed { lhs: IrLhs, read: IrExpr },
 }

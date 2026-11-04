@@ -56,7 +56,7 @@ through copy-out/cancellation; snapshot/disconnect removed identities before
 structural mutation. Destruction cannot free pinned cells, and ref lists are
 borrowed. Alias reads never publish or mutate resolved storage.
 
-String, handle and record elements of descriptor-backed containers (fixed
+String, handle, real and record elements of descriptor-backed containers (fixed
 arrays included) bind `ref` formals through `llg_native_ref_t`
 (`container/native_references.c`, contract in its header comment): the formal
 addresses the reference's stable value, stores reach the element through the
@@ -71,6 +71,9 @@ subroutine record alive through its root reference and addresses the selected
 leaf. A run-time index into a module-like record chooses among its stable leaf
 addresses at the call and needs no reference; an index selecting none binds a
 private default cell (`llg_native_ref_detached_string` and its siblings).
+A real element or member binds the same way (`llg_native_ref_real`); `real_write`
+reports each changed cell while such a reference lives, for one counter load
+otherwise, and the formal's waiters follow its `double`.
 Every store through a record `ref` formal is followed by
 `llg_native_ref_value_stored`, which tells the element's container; it costs one
 load when no reference is live and a walk of the live references otherwise.

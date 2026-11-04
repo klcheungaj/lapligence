@@ -286,6 +286,10 @@ impl Codegen<'_> {
                     TypeShape::PackedAtom { .. },
                     IrElementRefKind::Packed { .. }
                 )
+        ) || matches!(
+            (&place.descriptor.shape, kind),
+            (TypeShape::Real { shortreal: leaf }, IrElementRefKind::Real { shortreal })
+                if *leaf == shortreal
         );
         if !selects_kind {
             return Ok(None);
