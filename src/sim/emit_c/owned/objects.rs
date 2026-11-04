@@ -282,10 +282,15 @@ impl Frame<'_, '_> {
         use IrObjectQuery::*;
         Ok(match query {
             StringInside { value, items } => self.string_inside(value, items)?,
-            StringLen(text) | StringAtoi(text, _) | StringAtoreal(text) | StringPacked(text) => {
+            StringLen(text)
+            | StringAtoi(text, _)
+            | StringAtoreal(text)
+            | StringPacked(text)
+            | StringDigest(text) => {
                 let text = self.string(text)?;
                 let code = match query {
                     StringLen(_) => format!("llg_string_len({})", text.take_string()),
+                    StringDigest(_) => format!("llg_string_digest({})", text.take_string()),
                     StringAtoi(_, base) => {
                         format!("llg_string_atoi({}, {base})", text.take_string())
                     }

@@ -2369,7 +2369,8 @@ fn collect_object_query_effects(
         | IrObjectQuery::StringGetc(value, _)
         | IrObjectQuery::StringAtoi(value, _)
         | IrObjectQuery::StringAtoreal(value)
-        | IrObjectQuery::StringPacked(value) => {
+        | IrObjectQuery::StringPacked(value)
+        | IrObjectQuery::StringDigest(value) => {
             collect_string_effects(ir, value, effects, visited_calls)
         }
         IrObjectQuery::StringCompare(a, b, _) => {

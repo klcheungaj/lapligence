@@ -1170,7 +1170,19 @@ impl EmitCtx<'_, '_> {
     fn event_evaluator(&mut self, expression: NodeId) -> Result<(String, bool), String> {
         self.cg
             .check_event_expression_effects(expression, &self.path)?;
-        let mut value = self.cg.lower_expr(&self.path, expression)?;
+        // A string expression such as an array element has no marker of its
+        // own (SV 9.4.2): its digest stands for its value.
+        let mut value = if self.cg.is_string_expr(&self.path, expression) {
+            let text = self.cg.lower_string(&self.path, expression)?;
+            IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringDigest(text))),
+                64,
+                false,
+                None,
+            )
+        } else {
+            self.cg.lower_expr(&self.path, expression)?
+        };
         let (context, aliases) = self.cg.event_context_with_aliases(expression)?;
         // A fork-visible automatic array element names its declaration
         // local; the evaluator binds the captured cell under the context

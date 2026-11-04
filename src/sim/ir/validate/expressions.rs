@@ -105,6 +105,7 @@ impl Validator<'_> {
                     IrObjectQuery::Coverage(query) => Some(query.result_type()),
                     IrObjectQuery::StringInside { .. } => Some((1, false)),
                     IrObjectQuery::StringPacked(..) => None,
+                    IrObjectQuery::StringDigest(..) => Some((64, false)),
                     IrObjectQuery::ProcessStatus(..) => Some((32, true)),
                     IrObjectQuery::VirtualInterfaceInstance { .. } => Some((32, false)),
                     IrObjectQuery::MailboxNum(..)
@@ -133,7 +134,8 @@ impl Validator<'_> {
                             IrObjectQuery::StringLen(value)
                             | IrObjectQuery::StringAtoi(value, _)
                             | IrObjectQuery::StringAtoreal(value)
-                            | IrObjectQuery::StringPacked(value) => format_value(value),
+                            | IrObjectQuery::StringPacked(value)
+                            | IrObjectQuery::StringDigest(value) => format_value(value),
                             IrObjectQuery::StringGetc(value, index) => {
                                 format_value(value) && !std::ptr::eq(child, index.as_ref())
                             }

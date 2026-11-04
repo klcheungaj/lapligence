@@ -267,6 +267,7 @@ const OPERATIONS: &[(&str, &str, &[Param])] = &[
         &[T, S, S],
     ),
     ("llg_string_len", "llg_string_len_to", &[T]),
+    ("llg_string_digest", "llg_string_digest_to", &[T]),
     ("llg_string_getc", "llg_string_getc_to", &[T, P]),
     ("llg_string_compare", "llg_string_compare_to", &[T, T, S]),
     ("llg_string_atoi", "llg_string_atoi_to", &[T, S]),

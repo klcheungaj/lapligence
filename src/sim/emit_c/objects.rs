@@ -590,6 +590,9 @@ pub(super) fn query(
             string(ctx, value)?,
             u8::from(signed)
         ),
+        IrObjectQuery::StringDigest(value) => {
+            format!("llg_string_digest({})", string(ctx, value)?)
+        }
         IrObjectQuery::ChandleEq(a, b) => format!(
             "sv4_from_u64({} == {}, 1, 0)",
             chandle(ctx, a)?,

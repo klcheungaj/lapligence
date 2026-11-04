@@ -123,6 +123,13 @@ fn ref_event_formals_bind_class_event_properties() {
         &[],
         &[],
     );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "string_element_events",
+        include_str!("../fixtures/sim/feature_completion/sim_014/string_element_events.out"),
+        &[],
+        &[],
+    );
     // A collection at every safe point must keep a dropped object alive
     // while a callee holds its property.
     sim_cli::run_case_backend_parity(

@@ -576,6 +576,9 @@ pub enum IrObjectQuery {
     StringAtoi(IrStringExpr, u32),
     StringAtoreal(IrStringExpr),
     StringPacked(IrStringExpr),
+    /// 64-bit digest of the text: an event control on a string expression
+    /// compares it where other expressions compare their value.
+    StringDigest(IrStringExpr),
     ChandleEq(IrChandleExpr, IrChandleExpr),
     SemaphoreTryGet(IrChandleExpr, IrExpr),
     MailboxNum(IrChandleExpr),
@@ -1473,7 +1476,8 @@ impl IrObjectQuery {
             | Self::StringGetc(value, _)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)
-            | Self::StringPacked(value) => value.validate(model, string_return),
+            | Self::StringPacked(value)
+            | Self::StringDigest(value) => value.validate(model, string_return),
             Self::StringCompare(a, b, _) => {
                 a.validate(model, string_return)?;
                 b.validate(model, string_return)
@@ -1573,7 +1577,8 @@ impl IrObjectQuery {
             | Self::StringCapture(value)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)
-            | Self::StringPacked(value) => value.expressions(visit),
+            | Self::StringPacked(value)
+            | Self::StringDigest(value) => value.expressions(visit),
             Self::StringGetc(value, index) => {
                 value.expressions(visit);
                 visit(index);
@@ -1639,7 +1644,8 @@ impl IrObjectQuery {
             | Self::StringCapture(value)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)
-            | Self::StringPacked(value) => value.expressions_mut(visit),
+            | Self::StringPacked(value)
+            | Self::StringDigest(value) => value.expressions_mut(visit),
             Self::StringGetc(value, index) => {
                 value.expressions_mut(visit);
                 visit(index);

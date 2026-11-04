@@ -32,6 +32,9 @@ llg_string_t llg_string_substr(llg_string_t value, sv4_t first, sv4_t last);
 llg_string_t llg_string_from_packed(sv4_t value);
 sv4_t llg_string_to_packed(llg_string_t value, uint32_t width, int is_signed);
 sv4_t llg_string_len(llg_string_t value);
+/* 64-bit FNV-1a digest of the text, for event controls on string expressions:
+ * a change wakes unless both texts digest alike (about 2^-64 per change). */
+sv4_t llg_string_digest(llg_string_t value);
 sv4_t llg_string_getc(llg_string_t value, sv4_t index);
 void llg_string_putc(llg_string_t *value, sv4_t index, sv4_t character);
 sv4_t llg_string_compare(llg_string_t a, llg_string_t b, int ignore_case);
@@ -50,6 +53,7 @@ void llg_string_print(llg_string_t value);
  * their address and left empty, like the returning forms' by-value strings. */
 void llg_string_to_packed_to(sv4_t* dst, llg_string_t* value, uint32_t width, int is_signed);
 void llg_string_len_to(sv4_t* dst, llg_string_t* value);
+void llg_string_digest_to(sv4_t* dst, llg_string_t* value);
 void llg_string_getc_to(sv4_t* dst, llg_string_t* value, const sv4_t* index);
 void llg_string_compare_to(sv4_t* dst, llg_string_t* a, llg_string_t* b, int ignore_case);
 void llg_string_atoi_to(sv4_t* dst, llg_string_t* value, unsigned base);

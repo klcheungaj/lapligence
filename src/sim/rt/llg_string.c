@@ -141,6 +141,14 @@ llg_string_t llg_string_from_packed(sv4_t value) {
     return result;
 }
 
+sv4_t llg_string_digest(llg_string_t value) {
+    uint64_t digest = UINT64_C(0xcbf29ce484222325);
+    for (size_t i = 0; i < value.len; ++i)
+        digest = (digest ^ (unsigned char)value.data[i]) * UINT64_C(0x100000001b3);
+    llg_string_destroy(&value);
+    return sv4_from_u64(digest, 64, 0);
+}
+
 sv4_t llg_string_to_packed(llg_string_t value, uint32_t width, int is_signed) {
     sv4_t result = sv4_from_u64(0, width, (int8_t)is_signed);
     size_t bytes = ((size_t)width + 7) / 8;
@@ -288,6 +296,9 @@ void llg_string_realtoa(llg_string_t *target, double value) {
 /* Destination-passing `_to` forms, see value/destinations.h. */
 void llg_string_to_packed_to(sv4_t* dst, llg_string_t* value, uint32_t width, int is_signed) {
     sv4_replace(dst, llg_string_to_packed(llg_string_take(value), width, is_signed));
+}
+void llg_string_digest_to(sv4_t* dst, llg_string_t* value) {
+    sv4_replace(dst, llg_string_digest(llg_string_take(value)));
 }
 void llg_string_len_to(sv4_t* dst, llg_string_t* value) {
     sv4_replace(dst, llg_string_len(llg_string_take(value)));
