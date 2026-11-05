@@ -1778,6 +1778,9 @@ struct Codegen<'a> {
     native_copy_sequence: usize,
     /// Element slot a member NBA's target lowers to, with captured indices.
     element_nba_target: Option<crate::sim::ir::IrValueSlot>,
+    /// Run-time selectors go to locals even without side effects: a detached
+    /// event assignment reads them after the source may have changed.
+    native_select_at_issue: bool,
     /// Statements before/after a statement-level call that needs native
     /// argument temporaries; `None` in plain expression contexts.
     native_call_prelude: Option<(Vec<IrStmt>, Vec<IrStmt>)>,
@@ -2373,6 +2376,7 @@ impl<'a> Codegen<'a> {
             native_leaf_symbols: HashMap::new(),
             native_copy_sequence: 0,
             element_nba_target: None,
+            native_select_at_issue: false,
             native_call_prelude: None,
             proc_locals: HashMap::new(),
             proc_string_locals: HashMap::new(),

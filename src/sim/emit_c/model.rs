@@ -1303,7 +1303,7 @@ fn render_model(
     out.push_str("#include \"llg_random.h\"\n");
     out.push_str("#include \"llg_vpi.h\"\n");
     out.push_str("_Static_assert(LLG_MODEL_VALUE_ABI == LLG_VALUE_ABI_VERSION, \"regenerate model: incompatible value ownership ABI\");\n");
-    out.push_str(&format!("#if UINTPTR_MAX == UINT64_MAX\n_Static_assert(sizeof(sv4_t) == {} && _Alignof(sv4_t) == 8, \"selected packed descriptor layout mismatch\");\n#endif\n", if config.backend == crate::sim::value_backend::ValueBackend::Compact { 24 } else { 32 }));
+    out.push_str(&format!("#if UINTPTR_MAX == UINT64_MAX\n_Static_assert(sizeof(sv4_t) == {} && _Alignof(sv4_t) == 8, \"selected packed descriptor layout mismatch\");\n#endif\n", config.backend.descriptor_bytes()));
     // Fixed-array sorting shares the container sort workspace, so every model
     // declares the always-linked container runtime.
     out.push_str("#include \"llg_container.h\"\n");

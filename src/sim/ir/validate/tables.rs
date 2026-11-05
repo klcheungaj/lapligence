@@ -1027,8 +1027,10 @@ impl Validator<'_> {
             {
                 return self.fail(&path, "only native value items carry an item path");
             }
-            if matches!(access.receiver, IrChandleExpr::ContainerElement { .. })
-                != matches!(access.kind, IrNativeAccessKind::ElementItem { .. })
+            if matches!(
+                access.receiver,
+                IrChandleExpr::ContainerElement { .. } | IrChandleExpr::ItemElement { .. }
+            ) != matches!(access.kind, IrNativeAccessKind::ElementItem { .. })
             {
                 return self.fail(
                     &path,

@@ -960,7 +960,7 @@ impl<'a> Codegen<'a> {
                 // A member of a container record element has no signal; its
                 // dimensions are captured on the selected expression.
                 .or_else(|| {
-                    self.names_element_member(base)
+                    (self.names_element_member(base) || self.selected_member_path(base))
                         .then(|| self.db.packed_dimensions(base))
                         .flatten()
                         .map(<[_]>::to_vec)

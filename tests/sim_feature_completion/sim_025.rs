@@ -13,6 +13,13 @@ fn monitor_reports_final_values_once_per_slot() {
 }
 
 #[test]
+fn strobe_reads_container_actuals_at_the_end_of_the_slot() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/strobe_container_actuals.out");
+    sim_cli::run_case_backend_parity(SUITE, "strobe_container_actuals", expected, &[], &[]);
+}
+
+#[test]
 fn strobe_reports_settled_values_last_issued_first() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_025/strobe_final.out");
     sim_cli::run_case(SUITE, "strobe_final", expected, "", &[]);
@@ -91,6 +98,15 @@ fn neg_automatic_storage_stays_illegal() {
         SUITE,
         "neg_auto_local_strobe",
         "automatic variable 'i' cannot be traced",
+    );
+}
+
+#[test]
+fn neg_strobe_container_conversion_names_the_formal() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_strobe_container_conversion",
+        "a `$strobe` or `$monitor` argument for container formal `x` in `tb` must be a container variable of the formal's type",
     );
 }
 

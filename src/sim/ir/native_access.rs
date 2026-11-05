@@ -30,10 +30,11 @@ pub enum IrNativeAccessKind {
         value: usize,
         ty: IrClassFieldType,
     },
-    /// One leaf, at `item_path`, of a record element of container storage.
-    /// The receiver is an `IrChandleExpr::ContainerElement` locator,
-    /// re-evaluated at every use; a write publishes the container contents
-    /// change after the store (SV 7.5-7.10).
+    /// One leaf, at `item_path`, of a located value. The receiver is an
+    /// `IrChandleExpr::ContainerElement` or `IrChandleExpr::ItemElement`
+    /// locator, re-evaluated at every use; a write to a container element
+    /// publishes the container contents change after the store (SV 7.5-7.10).
+    /// The path is empty when the locator selects the leaf itself.
     ElementItem {
         ty: IrClassFieldType,
     },

@@ -281,7 +281,9 @@ Element types may be records, fixed arrays and identity handles (events,
 processes, class-like objects, chandles). Whole record elements move through
 `IrContainerStmt::SetValue`/`GetValue` with `IrValueSlot` (element, push,
 insert, pop) and native temporaries; members are read and written in place
-through `IrNativeAccessKind::ElementItem` with a `ContainerElement` receiver,
+through `IrNativeAccessKind::ElementItem` with a `ContainerElement` receiver
+(an `ItemElement` receiver selects an element of a fixed-array item with
+run-time indices, below a `ContainerElement` or a `NativeRoot`),
 and writes notify readers once the statement completes. Event elements are
 reached through `IrEventRef::Handle`; process elements through
 `IrProcessExpr::Handle`. A process value written into plain handle storage

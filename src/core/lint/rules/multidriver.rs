@@ -11,7 +11,8 @@
 //! process drives the whole signal it writes, element or not, except a
 //! checker procedure: each of its assignments drives only the constant bits
 //! of its target, which the Single Assignment Rule keeps disjoint (IEEE
-//! 1800-2009 17.7.1).
+//! 1800-2009 17.7.1). A member array counts per variable, because its node
+//! belongs to the record type: `a.m[i]` and `b.m[i]` drive different objects.
 
 use std::collections::HashMap;
 
@@ -36,9 +37,9 @@ impl LintRule for MultiDriverRule {
 
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
-        let mut drivers: HashMap<NodeId, Vec<DrivenBits>> = HashMap::new();
+        let mut drivers: HashMap<(NodeId, Vec<String>), Vec<DrivenBits>> = HashMap::new();
         for (signal, bits) in port_link_drivers(db) {
-            drivers.entry(signal).or_default().push(bits);
+            drivers.entry((signal, Vec::new())).or_default().push(bits);
         }
         for id in all_nodes(db) {
             match db.node_kind(id) {
@@ -46,8 +47,9 @@ impl LintRule for MultiDriverRule {
                     for assignment in assignments(db, id) {
                         let target = db.node(assignment).children.first().copied();
                         for w in collect_element_writes(db, assignment) {
-                            let bits = target.and_then(|target| driven_bit_interval(db, target, w));
-                            drivers.entry(w).or_default().push(bits);
+                            let bits =
+                                target.and_then(|target| driven_bit_interval(db, target, w.signal));
+                            drivers.entry((w.root, w.members)).or_default().push(bits);
                         }
                     }
                 }
@@ -56,14 +58,15 @@ impl LintRule for MultiDriverRule {
                     // counts as one driver even when it assigns the signal
                     // several times.
                     for w in collect_element_writes(db, id) {
-                        drivers.entry(w).or_default().push(None);
+                        drivers.entry((w.root, w.members)).or_default().push(None);
                     }
                 }
                 NodeKind::ContAssign { .. } => {
                     let target = db.node(id).children.first().copied();
                     for w in collect_element_writes(db, id) {
-                        let bits = target.and_then(|target| driven_bit_interval(db, target, w));
-                        drivers.entry(w).or_default().push(bits);
+                        let bits =
+                            target.and_then(|target| driven_bit_interval(db, target, w.signal));
+                        drivers.entry((w.root, w.members)).or_default().push(bits);
                     }
                 }
                 _ => {}
@@ -72,12 +75,17 @@ impl LintRule for MultiDriverRule {
         // Drivers of disjoint constant bit ranges (`assign n[0] = ...` and
         // `.y(n[1])`) do not drive the same bits.
         drivers.retain(|_, bits| bits.len() > 1 && drivers_overlap(bits));
-        let mut signals: Vec<NodeId> = drivers.keys().copied().collect();
-        signals.sort_by_key(|s| s.0);
+        let mut signals: Vec<(NodeId, Vec<String>)> = drivers.keys().cloned().collect();
+        signals.sort_by(|a, b| (a.0 .0, &a.1).cmp(&(b.0 .0, &b.1)));
         signals
             .into_iter()
-            .map(|sig| {
-                let node = db.node(sig);
+            .map(|key| {
+                let node = db.node(key.0);
+                let mut name = node.name.clone();
+                for member in &key.1 {
+                    name.push('.');
+                    name.push_str(member);
+                }
                 LintDiag {
                     rule: "multi-driver".to_string(),
                     logical: None,
@@ -86,10 +94,9 @@ impl LintRule for MultiDriverRule {
                     line: node.line,
                     col: node.col,
                     message: format!(
-                        "signal `{}` in `{}` has {} drivers",
-                        node.name,
-                        signal_scope_path(db, sig),
-                        drivers[&sig].len()
+                        "signal `{name}` in `{}` has {} drivers",
+                        signal_scope_path(db, key.0),
+                        drivers[&key].len()
                     ),
                 }
             })
@@ -144,6 +151,48 @@ fn drivers_overlap(bits: &[DrivenBits]) -> bool {
 mod tests {
     use super::*;
     use crate::core::lint::rules::tests::{lint_design, rule_diags};
+
+    #[test]
+    fn member_arrays_of_two_records_of_one_type_are_separate() {
+        let diags = lint_design(
+            "module md;\n\
+             \x20 typedef struct { string s; int a[2]; int b[2]; } r_t;\n\
+             \x20 r_t p, q;\n\
+             \x20 int k = 0;\n\
+             \x20 initial p.a[k] = 1;\n\
+             \x20 initial q.a[k] <= 2;\n\
+             \x20 initial p.b[k] = 3;\n\
+             endmodule\n",
+            "md",
+        );
+        assert!(rule_diags(&diags, "multi-driver").is_empty(), "{diags:?}");
+        assert!(
+            rule_diags(&diags, "mixed-assignments").is_empty(),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn one_member_array_driven_from_two_processes_is_reported() {
+        let diags = lint_design(
+            "module md;\n\
+             \x20 typedef struct { string s; int a[2]; } r_t;\n\
+             \x20 typedef struct { string n; r_t e[2]; } o_t;\n\
+             \x20 r_t p;\n\
+             \x20 o_t o;\n\
+             \x20 int k = 0;\n\
+             \x20 initial p.a[k] = 1;\n\
+             \x20 initial p.a[k + 1] = 2;\n\
+             \x20 initial o.e[k].a[0] = 1;\n\
+             \x20 initial o.e[0].a[k] = 2;\n\
+             endmodule\n",
+            "md",
+        );
+        let got = rule_diags(&diags, "multi-driver");
+        assert_eq!(got.len(), 2, "{diags:?}");
+        assert!(got[0].message.contains("`p.a`"), "{}", got[0].message);
+        assert!(got[1].message.contains("`o.e.a`"), "{}", got[1].message);
+    }
 
     #[test]
     fn process_plus_cont_assign_is_two_drivers() {

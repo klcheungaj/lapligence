@@ -106,8 +106,10 @@ static void apply_located_nba(llg_nba_t* next) {
         item = llg_dyn_value_element(locator->array, locator->indices,
                                      locator->index_count);
     if (!item) return;
-    for (size_t step = 0; step < locator->item_count; ++step)
+    for (size_t step = 0; step < locator->item_count; ++step) {
+        if (locator->items[step] == LLG_NATIVE_ITEM_INVALID) return;
         item = &item->value.items[locator->items[step]];
+    }
     if (next->is_container) {
         const void* payload = next->native.container.payload;
         switch (next->native.container.kind) {

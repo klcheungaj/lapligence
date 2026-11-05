@@ -699,6 +699,14 @@ fn s25_d6_report_order_in_slot() {
 }
 
 #[test]
+fn s25_d8_deferred_slice_actuals() {
+    run_decision(
+        "S25-D8_deferred_slice_actuals",
+        include_str!("fixtures/sim/lrm_decisions/S25-D8_deferred_slice_actuals.out"),
+    );
+}
+
+#[test]
 fn s25_d7_output_to_closed_descriptors() {
     run_decision(
         "S25-D7_output_to_closed_descriptors",
@@ -5110,6 +5118,22 @@ fn s07_d5_whole_container_nba() {
     run_decision(
         "S07-D5_whole_container_nba",
         include_str!("fixtures/sim/lrm_decisions/S07-D5_whole_container_nba.out"),
+    );
+}
+
+#[test]
+fn s07_d6_record_event_nba() {
+    run_decision(
+        "S07-D6_record_event_nba",
+        include_str!("fixtures/sim/lrm_decisions/S07-D6_record_event_nba.out"),
+    );
+}
+
+#[test]
+fn s14_d7_event_nba_order() {
+    run_decision(
+        "S14-D7_event_nba_order",
+        include_str!("fixtures/sim/lrm_decisions/S14-D7_event_nba_order.out"),
     );
 }
 

@@ -961,8 +961,18 @@ requirements above apply without repeating them for each suite.
 `scripts/check_value_facade.py`. Its explicit whitelist contains only nonpacked
 metadata receivers; value backends and vendored GTKWave are excluded. Run the
 script directly for a quick audit, or with `--self-test` to check rejection cases.
-Native layout expressions (`sizeof`/`_Alignof`) remain legal; V07 owns numeric
-emitter frame estimates and backend ABI selection.
+Native layout expressions (`sizeof`/`_Alignof`) remain legal; the numeric descriptor
+size the emitter needs for frame estimates and the model's `_Static_assert` comes
+from `ValueBackend::descriptor_bytes()`.
+
+The same suite runs `scripts/check_value_comparisons.py`, which lists every
+operation the facade headers declare and fails when one lacks a row in
+[`facade_comparisons.tsv`](runtime_value_storage/facade_comparisons.tsv). A row names
+the test that runs the operation on the legacy and on the compact backend with the
+same input and compares the results. `--list` prints the generated operation list,
+`--self-test` checks the rejection cases. Add the operation to
+`facade_compare_bridge.c` (its output line starts with the operation name; the
+CTest runner fails when a row's operation prints nothing), then add the row.
 
 ### Selected-profile qualifications
 
@@ -1706,6 +1716,13 @@ Render tests in `sim::emit_c::owned::tests::value_traffic` cover borrow eligibil
 matching/mismatched conversions, constant lifetimes and retained frame values.
 `runtime_value_storage/value_ownership_probe.c` checks destination aliases and
 allocation-free same-width arithmetic, including X/Z and 64/65-bit boundaries.
+
+`runtime_value_storage::facade_operations_agree_between_legacy_and_compact_backends`
+builds the facade client `facade_compare_bridge.c` once against each backend and
+requires identical output for every operation; `compact_value_backend_differential_probes`
+(not on Windows) runs the remaining standalone compact probes, which link both
+backends, as one CTest set. See
+[the facade comparison client](runtime_value_storage/readme.md#facade-comparison-client).
 
 Standalone compact-backend checks and microbenchmarks, including net/strength,
 real/time, formatting/index and facade adapter probes, are opt-in CMake targets;

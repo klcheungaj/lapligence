@@ -280,6 +280,8 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::Process(_)
         | IrChandleExpr::PinnedProcess(_)
         | IrChandleExpr::ContainerElement { .. }
+        | IrChandleExpr::NativeRoot(_)
+        | IrChandleExpr::ItemElement { .. }
         | IrChandleExpr::RandInstance { .. }
         | IrChandleExpr::Required { .. }
         | IrChandleExpr::InterfaceInstance { .. } => {

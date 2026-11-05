@@ -213,26 +213,30 @@ impl Validator<'_> {
         ty: IrClassFieldType,
         path: &str,
     ) -> ValidationResult {
-        let IrChandleExpr::ContainerElement {
-            container,
-            indices,
-            key,
-            ..
-        } = receiver
-        else {
-            return self.fail(path, "element item requires a container element locator");
+        let element = match receiver {
+            IrChandleExpr::ContainerElement {
+                container,
+                indices,
+                key,
+                ..
+            } => {
+                let Some(storage) = self.model.containers.get(*container) else {
+                    return self.fail(path, "element item references a missing container");
+                };
+                let slot = IrValueSlot::Element {
+                    indices: indices.clone(),
+                    key: key.as_deref().cloned(),
+                };
+                slot.element(storage, true, self.string_return.get(), self.model)
+                    .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?
+            }
+            IrChandleExpr::ItemElement { .. } => receiver
+                .located_value(self.model)
+                .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?,
+            _ => return self.fail(path, "element item requires a container element locator"),
         };
-        let Some(storage) = self.model.containers.get(*container) else {
-            return self.fail(path, "element item references a missing container");
-        };
-        let slot = IrValueSlot::Element {
-            indices: indices.clone(),
-            key: key.as_deref().cloned(),
-        };
-        let element = slot
-            .element(storage, true, self.string_return.get(), self.model)
-            .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?;
-        if item_path.is_empty()
+        let selected = matches!(receiver, IrChandleExpr::ItemElement { .. });
+        if (item_path.is_empty() && !selected)
             || !native_leaf_type(element, item_path).is_some_and(|leaf| leaf_matches(leaf, ty))
         {
             return self.fail(

@@ -142,10 +142,15 @@ impl EmitCtx<'_, '_> {
         }
         if let Some(select) = self.cg.native_member_select(&self.path, lhs)? {
             if op != Operation::Assignment {
-                return Err(format!(
-                    "compound assignment to a run-time selected native record member element in `{}` is not supported",
-                    self.path
-                ));
+                let path = self.path.clone();
+                return self.cg.native_member_select_update(
+                    &self.path,
+                    &select,
+                    &mut |cg, current| {
+                        let rhs = cg.lower_expr(&path, rhs)?;
+                        super::super::lower_compound_expr_ir(&path, op, current, rhs)
+                    },
+                );
             }
             return self
                 .cg
@@ -680,6 +685,14 @@ impl EmitCtx<'_, '_> {
     }
 
     fn lower_inc_dec_captured(&mut self, op: Operation, operand: NodeId) -> Result<IrStmt, String> {
+        if let Some(select) = self.cg.native_member_select(&self.path, operand)? {
+            let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
+            return self
+                .cg
+                .native_member_select_update(&self.path, &select, &mut |_, current| {
+                    Ok(inc_dec_value(current, increment))
+                });
+        }
         if self.cg.is_container_element(operand) {
             let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
             return self.cg.lower_container_element_update(
@@ -1267,20 +1280,19 @@ impl EmitCtx<'_, '_> {
         };
         if !blocking {
             self.reject_class_property_nba(lhs)?;
-            // The queued write locates its item from the indices captured at
-            // issue, which a detached event assignment does not carry.
-            if self.cg.names_element_member(self.cg.p30_unwrap_cast(lhs)) {
-                return Err(format!(
-                    "an event-controlled nonblocking assignment to a member of a record element in `{}` is not supported; use a delay or assign the whole element",
-                    self.path
-                ));
-            }
         }
         if op != Operation::Assignment {
             return Err(format!(
                 "compound event/repeat intra-assignment timing in `{}` is not supported",
                 self.path
             ));
+        }
+        if !blocking && self.located_event_nba(lhs) {
+            let (specs, count) = self.intra_event_specs(timing)?;
+            let count = count
+                .map(|count| self.lower_repeat_count(count))
+                .transpose()?;
+            return self.lower_located_event_nba(h, lhs, rhs, &specs, count);
         }
         if let Some((specs, count)) = self.process_evaluated_intra_event(timing) {
             return self.lower_process_event_assignment(h, blocking, lhs, rhs, op, &specs, count);
@@ -1325,8 +1337,8 @@ impl EmitCtx<'_, '_> {
         }
         let frame = self.cg.new_frame_id()?;
         let mut captures = Vec::new();
-        let rhs_capture = self.capture_event_assignment_expr(frame, &mut captures, rhs_ir);
         let lhs_capture = self.capture_event_assignment_lhs(frame, &mut captures, lh)?;
+        let rhs_capture = self.capture_event_assignment_expr(frame, &mut captures, rhs_ir);
         let action = self.cg.new_fn_name(&self.path, "event_assign");
         self.pre_fns.push(crate::sim::ir::IrPreFn::EventAssign {
             c_name: action.clone(),
@@ -1420,8 +1432,8 @@ impl EmitCtx<'_, '_> {
         }
         let frame = self.cg.new_frame_id()?;
         let mut captures = Vec::new();
-        let rhs_capture = self.capture_event_assignment_expr(frame, &mut captures, rhs_ir);
         let lhs_capture = self.capture_event_assignment_lhs(frame, &mut captures, lh)?;
+        let rhs_capture = self.capture_event_assignment_expr(frame, &mut captures, rhs_ir);
         let action = vec![IrStmt::Assign {
             lhs: lhs_capture,
             rhs: rhs_capture,
@@ -1519,7 +1531,7 @@ impl EmitCtx<'_, '_> {
 
     /// Whether a nonblocking destination is a string or handle object,
     /// which queues an owned native value rather than a packed one.
-    fn native_nba_target(&self, lhs: NodeId) -> bool {
+    pub(super) fn native_nba_target(&self, lhs: NodeId) -> bool {
         self.cg.is_string_expr(&self.path, lhs) || self.cg.is_chandle_expr(&self.path, lhs)
     }
 
@@ -1713,7 +1725,7 @@ impl EmitCtx<'_, '_> {
         )
     }
 
-    fn capture_event_assignment_lhs(
+    pub(super) fn capture_event_assignment_lhs(
         &self,
         frame: FrameId,
         captures: &mut Vec<IrCapture>,

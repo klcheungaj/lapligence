@@ -606,6 +606,22 @@ void* llg_native_ref_item(void* reference, int64_t position);
 void* llg_native_ref_bind(void* reference);
 /* A position from an index value; -1 for an unknown one. */
 /* Whether a run-time index selects a declared one; X and Z select none. */
+/* The zero-based position of declared `index` in a fixed-array dimension of
+ * bounds `left`:`right`, or -1 for an unknown or out-of-range index. */
+static inline int64_t llg_native_item_position(sv4_t index, int64_t left, int64_t right) {
+    int64_t declared = 0;
+    if (!sv4_to_index_i64(index, &declared)) return -1;
+    if (left <= right) return declared >= left && declared <= right ? declared - left : -1;
+    return declared <= left && declared >= right ? left - declared : -1;
+}
+
+/* An item position of a queued nonblocking write; an invalid one writes
+ * nothing at commit. */
+#define LLG_NATIVE_ITEM_INVALID UINT32_MAX
+static inline uint32_t llg_native_item_step(int64_t position) {
+    return position < 0 ? LLG_NATIVE_ITEM_INVALID : (uint32_t)position;
+}
+
 int llg_native_ref_selects(sv4_t index, int64_t declared);
 /* A store through a record `ref` formal finished; `value` is the formal.
    Tells a container element's readers, and does nothing for other actuals. */

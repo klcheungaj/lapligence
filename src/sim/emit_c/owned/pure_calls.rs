@@ -246,6 +246,17 @@ fn rewrite_returns(body: &[IrStmt], result: &IrLhs, label: &str) -> Vec<IrStmt> 
 }
 
 impl Frame<'_, '_> {
+    /// An input container formal with activation storage: its reads can name
+    /// the actual. Static functions keep formal storage in the model, and a
+    /// reader of that storage would not see the alias.
+    fn reads_input_container(&self, formal: &IrFormal) -> bool {
+        formal.mode == IrFormalMode::Input
+            && formal
+                .container
+                .and_then(|container| self.ctx.model.containers.get(container))
+                .is_some_and(|container| container.activation)
+    }
+
     pub(super) fn pure_callback_call(&mut self, call: &IrCallExpr) -> Result<Value, String> {
         if self.formal_overrides.len() >= PURE_CALL_LIMIT {
             return Err(pending("recursive or excessively deep evaluator callbacks"));
@@ -275,6 +286,9 @@ impl Frame<'_, '_> {
             && !call.virtual_dispatch
             && function.formals.iter().all(|formal| {
                 (!formal.is_address() || (formal.is_ref() && formal.const_ref))
+                    && (formal.container.is_none()
+                        || formal.is_ref()
+                        || self.reads_input_container(formal))
                     && !formal.string
                     && !formal.chandle
                     && !formal.event
@@ -318,13 +332,62 @@ impl Frame<'_, '_> {
                     .enumerate()
                     .filter(|(_, p)| !p.is_address()),
             );
+        let mut container_aliases = Vec::new();
         for ((index, formal), argument) in order.zip(&call.args) {
             let expression = match argument {
                 IrCallArg::Val(expression) => expression,
+                // Reads of an input container formal see the actual itself: the
+                // callback runs to completion and `callback_safe_statements`
+                // refuses every container write, so no copy is observable.
+                IrCallArg::Container(actual) if !formal.is_ref() => {
+                    let callee = formal
+                        .container
+                        .ok_or("container operand requires a container formal")?;
+                    container_aliases.push((callee, self.container_name(*actual)?));
+                    bindings[index] = Some(Binding {
+                        address: "NULL".to_owned(),
+                        width: 0,
+                        signed: false,
+                        two_state: false,
+                        shortreal: false,
+                        automatic: false,
+                    });
+                    continue;
+                }
                 IrCallArg::RefAddr { read, .. } if formal.const_ref => read.as_ref(),
                 // The body reads the bound record's leaves itself and never
                 // this formal's (null) binding (SIM-008).
                 IrCallArg::NativeRefBound if formal.const_ref => {
+                    bindings[index] = Some(Binding {
+                        address: "NULL".to_owned(),
+                        width: 0,
+                        signed: false,
+                        two_state: false,
+                        shortreal: false,
+                        automatic: false,
+                    });
+                    continue;
+                }
+                // A pattern actual is built into storage only this frame sees.
+                IrCallArg::ContainerValues { container, values } if !formal.is_ref() => {
+                    let callee = formal
+                        .container
+                        .ok_or("container operand requires a container formal")?;
+                    let storage = self.new_container(*container)?;
+                    self.containers.insert(*container, storage.clone());
+                    let build = if self.ctx.model.containers[*container].element.is_real() {
+                        IrContainerStmt::AssignRealValues {
+                            container: *container,
+                            values: values.clone(),
+                        }
+                    } else {
+                        IrContainerStmt::AssignValues {
+                            container: *container,
+                            values: values.clone(),
+                        }
+                    };
+                    self.container_statement(&build)?;
+                    container_aliases.push((callee, storage));
                     bindings[index] = Some(Binding {
                         address: "NULL".to_owned(),
                         width: 0,
@@ -416,7 +479,7 @@ impl Frame<'_, '_> {
         // as private locals so a helper may assign its own input, while
         // const-ref principals stay bound to the caller's read-only value.
         for (index, formal) in function.formals.iter().enumerate() {
-            if formal.is_address() {
+            if formal.is_address() || formal.container.is_some() {
                 continue;
             }
             let name = format!("a{index}");
@@ -470,12 +533,24 @@ impl Frame<'_, '_> {
                 .copied()
                 .collect(),
         );
+        // A nested or repeated inline of this function rebinds the same formal,
+        // so the caller's name returns when this frame ends.
+        let shadowed: Vec<_> = container_aliases
+            .into_iter()
+            .map(|(formal, actual)| (formal, self.containers.insert(formal, actual)))
+            .collect();
         let mut outcome = Ok(());
         for statement in &body {
             if let Err(error) = self.statement(statement) {
                 outcome = Err(error);
                 break;
             }
+        }
+        for (formal, previous) in shadowed {
+            match previous {
+                Some(previous) => self.containers.insert(formal, previous),
+                None => self.containers.remove(&formal),
+            };
         }
         self.callback_signal_overrides.pop();
         self.formal_overrides.pop();

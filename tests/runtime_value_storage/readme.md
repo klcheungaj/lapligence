@@ -269,6 +269,32 @@ destination reuse, including X/Z operands and 65-bit multiplication. Copy reuse
 uses `sv4_copy`; arithmetic reuse uses the emitter's replace-of-fresh-result
 pattern. These are indicative microbenchmarks, with no whole-model claim.
 
+### Facade comparison client
+
+`facade_compare_bridge.c` is a client of `llg_value.h` only, the interface a
+generated model compiles against. CMake builds the same file three times: against
+the legacy library (`facade_compare_legacy`), and with `LLG_SV4_USE_GMP=1` against the
+portable and the GMP compact library, plus `facade_compare_selected.c`, which compiles
+`value/destinations.c` the way the model's `llg_value.c` does. Each executable runs
+fixed deterministic inputs (widths 1, 63, 64, 65 and 128 including mixed pairs, both
+signs, zero, all ones, all X, all Z, sign bit only, random known, random X/Z and
+alternating patterns) through every operation and prints the results, including the
+destination forms into empty, live and aliased destinations. `facade_compare.py`
+requires every line of the compact output to equal legacy's; only the value ABI
+number (4 and 5) differs by design. A line starts with the operation it exercises,
+and the runner requires an output line for every operation that
+[`facade_comparisons.tsv`](facade_comparisons.tsv) assigns to `facade_compare_${mode}`.
+`sv4_bytes` (payload accounting differs by design, formula-checked in
+`compact_probe.c`) and `llg_value_require_abi` (a link guard, covered by the wrong-backend
+archive test in `sim_value_backends`) are the two operations not compared line by line.
+
+```sh
+cmake -S tests/runtime_value_storage -B /build/llg-compact-gcc -DLLG_STORAGE_TEST_COMPACT=ON \
+  -DLLG_STORAGE_TEST_WAVEFORMS=OFF -DLLG_STORAGE_TEST_SCHEDULER=OFF
+cmake --build /build/llg-compact-gcc --parallel 6 --target facade_compare_all
+ctest --test-dir /build/llg-compact-gcc -R '^facade_compare_' --output-on-failure
+```
+
 ### Compact selections and assembly (V05 S4/S5)
 
 `compact_selection.cmake` adds isolated targets for captured selection plans,

@@ -8,6 +8,10 @@ use std::time::Duration;
 
 const STAGE_TIMEOUT: Duration = Duration::from_secs(180);
 const BUILD_TIMEOUT: Duration = Duration::from_secs(600);
+/// The compact probe set runs about 150 CPU-bound CTest cases in parallel
+/// (the exhaustive family probes take about a minute each).
+const COMPACT_TEST_STAGE_TIMEOUT: Duration = Duration::from_secs(900);
+
 /// The ctest stage runs about 120 probe processes in sequence, each bounded by
 /// its own ctest TIMEOUT, so this cap only has to stop a run whose probes are
 /// all slow. Linux runs the legacy stage in about 17 s. Windows CI exceeded
@@ -50,6 +54,61 @@ fn dynamic_storage_and_waveform_snapshots_compact_gmp() {
     );
 }
 
+/// The production facade client, built unchanged against the legacy backend and
+/// the compact backend with portable and GMP kernels, must print identical
+/// results for every facade operation (`facade_compare.py`). Runs on every host
+/// because the client is plain C11 with no linker wrapping.
+#[test]
+fn facade_operations_agree_between_legacy_and_compact_backends() {
+    run_storage_stages_with_flags(
+        "runtime-value-facade-compare",
+        &compact_options(),
+        "Debug",
+        &["facade_compare_all"],
+        &[],
+        &["-R", "^facade_compare_"],
+    );
+}
+
+/// Every standalone compact probe: in-process and bridge differentials against
+/// the legacy backend, independent oracles, allocation counters and rejection
+/// cases. They build only on hosts with ELF linker wrapping and a POSIX shell
+/// for the CTest scripts, so this test skips Windows, where the project is run
+/// by hand (tests/runtime_value_storage/readme.md, standalone compact backend).
+#[cfg(not(windows))]
+#[test]
+fn compact_value_backend_differential_probes() {
+    run_storage_stages_with_flags(
+        "runtime-value-compact-probes",
+        &compact_options(),
+        "Debug",
+        &[
+            "compact_checks",
+            "selected_legacy_facade",
+            "selected_portable_facade",
+            "selected_gmp_facade",
+            "facade_compare_all",
+        ],
+        &[],
+        &[
+            "-R",
+            "^(compact_|selected_|facade_compare_)",
+            "-E",
+            "benchmark_smoke",
+        ],
+    );
+}
+
+/// CMake options that turn on the standalone compact probe project.
+fn compact_options() -> Vec<String> {
+    vec![
+        "-DLLG_STORAGE_TEST_COMPACT=ON".to_owned(),
+        "-DLLG_STORAGE_TEST_WAVEFORMS=OFF".to_owned(),
+        "-DLLG_STORAGE_TEST_SCHEDULER=OFF".to_owned(),
+        format!("-DLLG_GMP_ROOT={}", sim_harness::test_gmp_root()),
+    ]
+}
+
 /// The two targets that compile the whole scheduler runtime (`llg_rt.c` with
 /// the debug coroutine checks) and the VPI layer (`llg_vpi.c`) under the strict
 /// warning set, at Release optimization: GCC's `-O3` flow analysis reports
@@ -72,27 +131,25 @@ fn release_runtime_units_build_under_strict_warnings() {
         } else {
             &[]
         },
+        &[],
     );
 }
 
 fn run_storage_tests(label: &str, options: &[String]) {
-    run_storage_stages(label, options, "Debug", &[]);
+    run_storage_stages_with_flags(label, options, "Debug", &[], &[], &[]);
 }
 
-/// Configures, builds and (when `targets` is empty, so every probe is built)
-/// runs the probes in build configuration `config`.
-fn run_storage_stages(label: &str, options: &[String], config: &str, targets: &[&str]) {
-    run_storage_stages_with_flags(label, options, config, targets, &[]);
-}
-
-/// [`run_storage_stages`] with `extra_c_flags` appended to `$LLG_CFLAGS` in
-/// `CMAKE_C_FLAGS`.
+/// Configures, builds and runs the probes in build configuration `config`:
+/// every probe when `targets` is empty, otherwise only `targets`, and then the
+/// CTest cases selected by `test_args` (none when `test_args` is empty).
+/// `extra_c_flags` are appended to `$LLG_CFLAGS` in `CMAKE_C_FLAGS`.
 fn run_storage_stages_with_flags(
     label: &str,
     options: &[String],
     config: &str,
     targets: &[&str],
     extra_c_flags: &[&str],
+    test_args: &[&str],
 ) {
     let cmake = std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_owned());
     if Command::new(&cmake).arg("--version").output().is_err() {
@@ -152,12 +209,22 @@ fn run_storage_stages_with_flags(
     test.arg("--test-dir")
         .arg(dir.path())
         .args(["--build-config", config, "--output-on-failure"]);
+    if !targets.is_empty() {
+        test.arg("--parallel")
+            .arg(sim_harness::cmake_build_jobs())
+            .args(test_args);
+    }
     let mut stages = vec![
         ("configure", &mut configure, STAGE_TIMEOUT),
         ("build", &mut build, BUILD_TIMEOUT),
     ];
-    if targets.is_empty() {
-        stages.push(("test", &mut test, TEST_STAGE_TIMEOUT));
+    if targets.is_empty() || !test_args.is_empty() {
+        let timeout = if targets.is_empty() {
+            TEST_STAGE_TIMEOUT
+        } else {
+            COMPACT_TEST_STAGE_TIMEOUT
+        };
+        stages.push(("test", &mut test, timeout));
     }
     for (stage, command, timeout) in stages {
         let output = sim_harness::run_command(command, timeout)

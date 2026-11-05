@@ -683,10 +683,12 @@ pub enum IrContainerStmt {
     /// `items` of `root`: the element position is fixed here and the item is
     /// found again at commit, so a whole-value write in between cannot leave
     /// the write behind. The write itself names a read access to that item,
-    /// which only gives it a type.
+    /// which only gives it a type. `selects` compute the items a run-time
+    /// index fixes at issue; one out of range or unknown writes nothing.
     NbaLocate {
         root: IrValueItemRoot,
         items: Vec<u32>,
+        selects: Vec<IrItemSelect>,
     },
     NbaLocateEnd,
     /// Ambiguous-predicate conditional merge of two containers of `dst`'s
@@ -953,6 +955,16 @@ pub enum IrContainerStmt {
         root: IrValueItemRoot,
         items: Vec<u32>,
     },
+}
+
+/// A position of an item path that run-time indices select in a fixed array.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrItemSelect {
+    /// Position in the item path.
+    pub(in crate::sim) slot: usize,
+    /// One index per dimension of the array.
+    pub(in crate::sim) indices: Vec<IrExpr>,
+    pub(in crate::sim) dimensions: Vec<(i32, i32)>,
 }
 
 /// The value whose item a record container member transfer addresses.
@@ -1811,9 +1823,27 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
-            Self::NbaLocate { root, items } => {
+            Self::NbaLocate {
+                root,
+                items,
+                selects,
+            } => {
                 let mut item = Some(root.element(model)?);
-                for step in items {
+                for (slot, step) in items.iter().enumerate() {
+                    let selected = selects.iter().find(|select| select.slot == slot);
+                    if let (Some(select), Some(array)) = (selected, item) {
+                        if !matches!(
+                            array,
+                            IrContainerElement::FixedArray { dimensions, .. }
+                                if *dimensions == select.dimensions
+                                    && select.indices.len() == dimensions.len()
+                        ) {
+                            return Err(IrValidationError::new(
+                                "container value",
+                                "a run-time index must select a fixed array",
+                            ));
+                        }
+                    }
                     item = match item {
                         Some(IrContainerElement::Aggregate { members, .. }) => members
                             .get(*step as usize)
@@ -2819,9 +2849,15 @@ impl IrContainerStmt {
             | Self::Declare(_)
             | Self::SharedDeclare(_) => {}
             Self::NbaLocateEnd => {}
-            Self::ValueItemToContainer { root, .. }
-            | Self::ContainerToValueItem { root, .. }
-            | Self::NbaLocate { root, .. } => root.expressions(visit),
+            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
+                root.expressions(visit)
+            }
+            Self::NbaLocate { root, selects, .. } => {
+                root.expressions(visit);
+                for select in selects {
+                    select.indices.iter().for_each(&mut *visit);
+                }
+            }
         }
     }
 
@@ -2946,9 +2982,15 @@ impl IrContainerStmt {
             | Self::Declare(_)
             | Self::SharedDeclare(_) => {}
             Self::NbaLocateEnd => {}
-            Self::ValueItemToContainer { root, .. }
-            | Self::ContainerToValueItem { root, .. }
-            | Self::NbaLocate { root, .. } => root.expressions_mut(visit),
+            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
+                root.expressions_mut(visit)
+            }
+            Self::NbaLocate { root, selects, .. } => {
+                root.expressions_mut(visit);
+                for select in selects {
+                    select.indices.iter_mut().for_each(&mut *visit);
+                }
+            }
         }
     }
 }

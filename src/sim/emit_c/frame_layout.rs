@@ -755,14 +755,7 @@ fn lp64_layout(
         "uint16_t" | "int16_t" => (2, 2),
         "uint8_t" | "int8_t" | "char" => (1, 1),
         "double" => (8, 8),
-        "sv4_t" => (
-            if backend == crate::sim::value_backend::ValueBackend::Compact {
-                24
-            } else {
-                32
-            },
-            8,
-        ),
+        "sv4_t" => (backend.descriptor_bytes(), 8),
         "llg_value_scope_t" => (80, 8),
         "llg_string_t" => (32, 8),
         "llg_bitstream_t" => (24, 8),
@@ -774,14 +767,8 @@ fn lp64_layout(
         "llg_expr_event_spec_t" => (104, 8),
         "llg_ref_t" => (112, 8),
         "llg_ref_view_t" => (56, 8),
-        "llg_vpi_arg_t" => (
-            if backend == crate::sim::value_backend::ValueBackend::Compact {
-                56
-            } else {
-                64
-            },
-            8,
-        ),
+        // One packed descriptor plus the 32 bytes of call metadata and slack.
+        "llg_vpi_arg_t" => (backend.descriptor_bytes() + 32, 8),
         "llg_force_read_t"
         | "llg_force_part_t"
         | "llg_file_input_target_t"

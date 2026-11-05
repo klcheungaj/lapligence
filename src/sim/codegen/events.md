@@ -53,7 +53,12 @@ Blocking delay and event intra-assignment timing share
 element's value) is captured before the wait and the destination store runs
 after it. Event-controlled string/handle NBAs copy the value at issue into a
 detached process frame (`lower_native_event_nba`) that waits through
-`ProcessEventPlan` and then queues the native NBA.
+`ProcessEventPlan` and then queues the native NBA. Targets that need a location
+at run time (`lower_located_event_nba`: record element members, whole records,
+members selected by index) go the same way: selectors, then the right side, then
+the repeat count are evaluated at issue into captured locals, and the waiter
+lowers the ordinary nonblocking write against those locals. Queue, dynamic and
+associative members of records are rejected there with an explicit diagnostic.
 
 Sequential predicates evaluate clauses once, left-to-right, continuing only on
 definite true. Preserve explicit branches/pattern bindings and short-circuit
@@ -162,8 +167,11 @@ to the source. Sample types are limited to packed, real and shortreal.
 Nonblocking writes below a native value use `collection/native_values/nba.rs`:
 indices become issue-time locals (`element_nba_slot`) and the write runs under
 an `NbaLocate` marker. `collection/native_values/member_select.rs` lowers a
-run-time index into a member array to a balanced decision tree over the
-declared indices; its code is linear in the array per access site.
+run-time index below a native value or a record element to an item locator
+(`IrChandleExpr::ItemElement`), constant in code per site and in access cost.
+A module record keeps each element as its own object, so a run-time index
+there is a balanced decision tree over the declared indices, one nested tree
+per run-time index, whose code is linear in the leaves per access site.
 
 Resizable containers in subroutine, procedural-block and class storage
 (SIM-006) use `collection/subroutine_containers.rs`: storage per (instance,

@@ -386,11 +386,64 @@ pub fn collect_writes_with_members(db: &Db, root: NodeId) -> Vec<NodeId> {
 /// (`assign w[1] = ...`, `v[i][3] = ...`) to its array, for rules that count
 /// drivers per array (`multi-driver`). Kept apart so that per-variable data
 /// flow (`combinational-loop`) keeps its established behavior.
-pub fn collect_element_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
-    let mut out = Vec::new();
+pub fn collect_element_writes(db: &Db, root: NodeId) -> Vec<ElementWrite> {
+    let mut targets = Vec::new();
     let mut seen = HashSet::new();
-    walk_writes(db, root, LhsTargets::Elements, &mut seen, &mut out);
+    walk_writes(db, root, LhsTargets::Nodes, &mut seen, &mut targets);
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for lhs in targets {
+        let Some(signal) = element_signal_of_lhs(db, lhs) else {
+            continue;
+        };
+        let driven = if db.array_select_path(lhs).is_some() {
+            // The member array node belongs to the record type, shared by
+            // every variable of that type: a write that names no variable
+            // drives nothing the rule can compare.
+            match member_array_of_lhs(db, lhs) {
+                Some(driven) => driven,
+                None => continue,
+            }
+        } else {
+            (signal, Vec::new())
+        };
+        if seen.insert(driven.clone()) {
+            out.push(ElementWrite {
+                signal,
+                root: driven.0,
+                members: driven.1,
+            });
+        }
+    }
     out
+}
+
+/// One object an assignment target drives: a signal or array, or a member
+/// array of one record variable.
+pub struct ElementWrite {
+    /// The array the target selects, which gives its dimensions.
+    pub signal: NodeId,
+    /// The driven variable.
+    pub root: NodeId,
+    /// The member path below `root`; empty for a whole variable.
+    pub members: Vec<String>,
+}
+
+/// The variable and member path of a member-array target (`r.a[i]`,
+/// `r.e[i].a[j]`, `recs[i].a[j]`).
+fn member_array_of_lhs(db: &Db, lhs: NodeId) -> Option<(NodeId, Vec<String>)> {
+    let (owner, members) = db.array_select_path(lhs)?;
+    let mut members = members.to_vec();
+    if matches!(
+        db.node_kind(owner),
+        NodeKind::Expr(ExprKind::ArraySelect { .. })
+    ) {
+        if let Some((root, mut path)) = member_array_of_lhs(db, owner) {
+            path.append(&mut members);
+            return Some((root, path));
+        }
+    }
+    element_signal_of_lhs(db, owner).map(|root| (root, members))
 }
 
 /// How [`walk_writes`] resolves an assignment target to signals.
@@ -400,8 +453,8 @@ enum LhsTargets {
     Whole,
     /// Each member of a concatenation, streaming or pattern target.
     Members,
-    /// As `Whole`, also through unpacked-array element selects.
-    Elements,
+    /// The target expression itself, for [`collect_element_writes`].
+    Nodes,
 }
 
 /// [`signal_of_ref`] through unpacked-array element selects as well.
@@ -868,7 +921,7 @@ fn add_lhs_write(
             return;
         }
         LhsTargets::Whole => signal_of_ref(db, lhs),
-        LhsTargets::Elements => element_signal_of_lhs(db, lhs),
+        LhsTargets::Nodes => Some(lhs),
     };
     if let Some(sig) = sig {
         if seen.insert(sig) {

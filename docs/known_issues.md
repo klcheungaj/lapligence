@@ -549,22 +549,17 @@ assignment, call or system-task statement (a condition or loop header that
 pops it), or named as the target of a timing-controlled assignment or a
 `ref` actual (reads in conditions, loop headers,
 `foreach`, initializers and timed assignment values copy the member at each
-evaluation); an event-controlled nonblocking write of a member of a
-fixed-array record element (the detached event assignment does not carry the
-position captured at issue; untimed and `#delay` writes work); a run-time index
-into a member array of a fixed-array element (`nb[1].a[k]`), two run-time
-indices into nested member arrays (`m.e[k].a[j]`) and bit selects below a
-run-time index (`m.e[k].b[2]`); an event-controlled nonblocking write of a whole
-module native record (`n <= @(e) m`) or through a run-time index
-(`m.e[k].s <= @(e) t`); instance class properties of a record type with container
+evaluation); an event-controlled nonblocking write of a queue, dynamic or
+associative member, or of a record that has one (the detached process has no
+frame storage for the container copied at issue; untimed and `#delay` writes
+work); instance class properties of a record type with container
 members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
 properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
-compound writes through a run-time index (`r.a[k] += 1`);
-a run-time index into a native member array of more than 4,096 elements
-(`NATIVE_MEMBER_SELECT_LIMIT`), 256 when it selects whole records
-(`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a member of a subroutine
+a run-time selection among more than 4,096 leaves of a module record
+(`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
+record (`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a member of a subroutine
 record whose type has container members, and a run-time-indexed record element
 of a module, static or block record bound by a call in an expression, below a
 constant index (`o.m[1].a[k]`), or among more than 256 elements or combinations
@@ -572,8 +567,11 @@ constant index (`o.m[1].a[k]`), or among more than 256 elements or combinations
 the formal stops the run if the index selects no element); an event control on
 a member of a native record `ref` formal when the actual is a subroutine record
 (a generic lowering
-diagnostic); a `queue` of native records as a member of a module record element
-(the element has no type descriptor); sub-record, member-array or handle selects of a native call
+diagnostic); a queue, dynamic or associative member of a module record element selected at
+run time (`m.e[k].q`, a generic lowering diagnostic; a constant `m.e[1].q` works,
+as does a run-time element of a fixed array of records, `a[k].q`, because each
+element of a module record owns its own container and the select would need a
+run-time choice among them, about three days); sub-record, member-array or handle selects of a native call
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
@@ -1449,6 +1447,28 @@ reject:
   ([`neg_class_method_strobe.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_class_method_strobe.sv)):
   the evaluator has no receiver, so even arguments naming only module
   variables reject. Move the report to module code.
+
+An input queue, dynamic or associative formal of a `$strobe` helper reads the
+actual at the end of the slot, as a slice does ([S25-D8](lrm_decisions.md)).
+Four neighbouring forms still reject with a diagnostic at the call:
+
+- **A `$strobe` actual that needs a container conversion** (a queue for a
+  dynamic-array formal,
+  [`neg_strobe_container_conversion.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_strobe_container_conversion.sv))
+  **or an unpacked concatenation** (`f({1, 2, k})`; `f('{1, 2, k})` works). The
+  evaluator would have to build the temporary itself; about a day.
+- **`$monitor` of a helper with a container formal.** Change detection does not
+  see through the formal yet; about a day. Assign the result to a variable.
+- **A `$strobe` helper with a string formal** (about half a day).
+- **A `$strobe` helper that prints** (`$display` inside the function): it has
+  output effects, which the private evaluator refuses; about a day.
+
+A `$monitor` compares every printed argument, `$time` included, once one of its
+reads changes. When a read is a whole array and the change leaves the printed
+value alone (`$monitor("%0t %0d", $time, f(arr[1:2]))`, then `arr[0] = 5`), the
+report repeats with the new time, where 21.2.3 excludes `$time` from the trigger.
+Without a time argument the value comparison holds it back. The fix is a per-
+argument mask in the comparison; about half a day.
 
 `$finish` also drops the reports still pending in its own slot
 ([S25-D5](lrm_decisions.md)); a `$strobe` in a `final` block rejects because no

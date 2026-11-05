@@ -26,6 +26,16 @@ pub(in crate::sim::codegen) struct ElementSelection {
 }
 
 impl ElementSelection {
+    /// Whether evaluating the selection changes nothing.
+    pub(super) fn side_effect_free(&self, codegen: &Codegen<'_>) -> bool {
+        match &self.selector {
+            ElementSelector::Indices(indices) => {
+                indices.iter().all(|index| codegen.side_effect_free(*index))
+            }
+            ElementSelector::Key(key) => codegen.side_effect_free(*key),
+        }
+    }
+
     pub(super) fn depth(&self) -> usize {
         match &self.selector {
             ElementSelector::Indices(indices) => indices.len(),
@@ -77,7 +87,7 @@ fn unstaged_member_error(path: &[AggregatePathPart]) -> String {
 }
 
 /// The value of a fresh element-leaf access named `name`.
-fn element_leaf_value(name: String, ty: IrClassFieldType) -> LeafValue {
+pub(super) fn element_leaf_value(name: String, ty: IrClassFieldType) -> LeafValue {
     match ty {
         IrClassFieldType::String => LeafValue::String(IrStringExpr::LocalRead(name)),
         IrClassFieldType::Chandle => LeafValue::Chandle(IrChandleExpr::LocalRead(name)),
@@ -1197,6 +1207,12 @@ impl Codegen<'_> {
                     self.collect_staged_members(child, child == base, out, nested);
                 }
             }
+            // A member of an element of the staged container (`a[1].q[0].s`).
+            NodeKind::Expr(ExprKind::HierPath { .. }) if mutated => {
+                for child in children {
+                    self.collect_staged_members(child, true, out, nested);
+                }
+            }
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
@@ -1380,12 +1396,14 @@ impl Codegen<'_> {
             let selection = self
                 .record_element_of(member.element)
                 .ok_or("staged element member has no element")?;
-            let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+            let (_, record, leaves) =
+                self.element_leaves(selection.container, selection.depth())?;
             let leaf = leaves
                 .containers
                 .into_iter()
                 .find(|leaf| leaf.path == member.path)
                 .ok_or("staged element member has no container")?;
+            let typed = Self::descriptor_at_path(&record, &member.path);
             // The element is located again to copy the member back.
             if !self.side_effect_free(member.element) {
                 return Err(format!(
@@ -1402,6 +1420,9 @@ impl Codegen<'_> {
                 class_field: None,
                 receiver: None,
             });
+            if let Some(typed) = typed {
+                self.staged_container_types.insert(ir, typed);
+            }
             self.staged_element_members
                 .insert((member.element, aggregate_path_suffix(&member.path)), ir);
             let locator = |this: &mut Self, write: bool| -> Result<IrValueItemRoot, String> {
