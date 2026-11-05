@@ -33,6 +33,17 @@ impl ValueBackend {
             Self::Compact => 1,
         }
     }
+
+    /// `sizeof(sv4_t)` on a 64-bit host. The emitter needs the number for
+    /// coroutine frame bounds before any C compiler runs; every model asserts
+    /// it against the selected header (`_Static_assert` in the model prelude).
+    /// This is the only place outside the value headers that knows it.
+    pub const fn descriptor_bytes(self) -> usize {
+        match self {
+            Self::Legacy => 32,
+            Self::Compact => 24,
+        }
+    }
 }
 
 /// Wide arithmetic kernels within the compact descriptor backend.
