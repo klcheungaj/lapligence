@@ -2145,7 +2145,7 @@ impl Codegen<'_> {
                     return Err(self.native_ref_actual_error(path, formal));
                 }
                 reference.companions = self
-                    .native_companions(&layout, true)
+                    .native_companions(layout, true)
                     .into_iter()
                     .zip(&layout.containers)
                     .map(|(container, leaf)| IrRefCompanion {

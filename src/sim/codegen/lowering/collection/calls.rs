@@ -170,7 +170,7 @@ impl<'a> Codegen<'a> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if bound[idx].is_event {
                 let (address, argument) =
-                    self.event_call_argument(scope_path, &name, *io, *is_out, bound[idx].expr)?;
+                    self.event_call_argument(scope_path, name, *io, *is_out, bound[idx].expr)?;
                 if address {
                     out_args.push(argument);
                 } else {
