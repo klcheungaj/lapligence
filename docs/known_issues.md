@@ -1793,34 +1793,54 @@ state but not per-cell generated code; see the remaining steps in
 
 ## Unpacked records with dense member arrays emit per-cell code
 
-**Status:** open; found by codegen-size.
+**Status:** narrowed; found by codegen-size. A structure whose member array of
+at least `LLG_RECORD_COLUMN_MIN_CELLS` (16) cells the design selects is stored
+as columns ([record storage by selection](sim_performance_tradeoffs.md#record-storage-by-selection)),
+so its selections no longer grow with the array. The cases below keep the
+per-cell form.
 
 An unpacked structure or union whose member is a dense unpacked array (for
-example `typedef struct { logic [3:0] a; int m[4096]; } rec_t;`) is stored as
-one leaf signal per member cell. Every operation on such a variable is then
-linear in the cell count in generated C, including its declaration, a whole
-copy, `==`/`===`, an ambiguous `?:` merge, a continuous assignment, `%p` and
-even a dynamic element access, which builds one reference per cell. Measured
-with `--gen-only` on a quick build, a 4,096-cell member array gives 5.7 MB
-(`%p`) to 9.8 MB (continuous assignment) of `model.c`. A member array above
-`LLG_DENSE_FIXED_ARRAY_CELLS` (4,096) cells is one sparse fixed-array leaf
-instead and stays at about 15-20 KB, so the cost peaks just below that
+example `typedef struct { logic [3:0] a; int m[4096]; } rec_t;`) is otherwise
+stored as one leaf signal per member cell. Every operation on such a variable
+is then linear in the cell count in generated C, including its declaration, a
+whole copy, `==`/`===`, an ambiguous `?:` merge, a continuous assignment, `%p`
+and even a dynamic element access, which builds one reference per cell.
+Measured with `--gen-only` on a quick build, a 4,096-cell member array gives
+5.7 MB (`%p`) to 9.8 MB (continuous assignment) of `model.c`. A member array
+above `LLG_DENSE_FIXED_ARRAY_CELLS` (4,096) cells is one sparse fixed-array
+leaf instead and stays at about 15-20 KB, so the cost peaks just below that
 threshold.
+
+The per-cell form stays for:
+
+- a model with the VPI catalog or toggle coverage: column records have no
+  structure object or member rows, and a toggle entity is a packed variable;
+- a record with only constant selections, unless it fits the packed limit: a
+  leaf access is direct, and whole copies are faster;
+- members that are not packed: `real`, `string` and handle arrays, and arrays
+  of such records, have no column form. A run-time index into one still costs
+  one branch per cell (a `string a[4095]` selection is 201,877 lines);
+- a design that uses a chosen type in a way column layout does not cover: the
+  column lowering fails and the whole design is lowered per cell, with the
+  cost above. Known causes are `%p` of a whole record, a copy between a member
+  and a directly addressed array (`r.a = q`), a `ref` formal of a record with a
+  string member, `$rose` and concurrent assertions on a member cell, a member
+  initializer with different cell values, a function returning a fixed record
+  (`invalid simulator IR`), DPI arguments, and class properties and containers
+  of a record with a string member. Each is a limit of column records above
+  the threshold as well.
 
 codegen-size made whole-value reads and writes of unpacked arrays O(1)
 in generated C (`emit_c/owned/dense_cells.rs`), and removed the lowering
 stack overflow that whole equality of such records hit from about 256 leaves
-(the leaf comparisons are now combined as a balanced tree). It did not change
-the record storage: switching it needs a dense-array leaf kind that the
-leaf/signal model, the column layout (RTL-101) and every record consumer
-understand.
+(the leaf comparisons are now combined as a balanced tree).
 
 Reproduce with the record above, `rec_t a, b; initial b = a;` and
 `--gen-only`, then measure `model.c`.
 
-The intended direction is to store a dense member array as one dense array
-leaf (one `sv4_t[N]` per member) so the dense-cell range helpers apply to
-record members as well.
+The intended direction is to close the column gaps above so that the fallback
+stops being needed, and to speed up whole copies of columns, which are slower
+than per-cell runs.
 
 ## Gate and UDP array elements emit one process function each
 

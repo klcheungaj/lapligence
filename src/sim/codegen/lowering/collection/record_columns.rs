@@ -2,9 +2,10 @@
 //!
 //! A record whose member arrays exceed the dense-cell threshold, or whose
 //! flattened payload exceeds packed capacity, keeps each member array as one
-//! fixed-array column. Scalar members stay ordinary leaf signals. Columns use
-//! the RTL-002 descriptor storage and transport, so generated code scales
-//! with the declaration rather than with its cell count.
+//! fixed-array column, and so does a smaller record the design's selections
+//! choose ([`choice`]). Columns use the RTL-002 descriptor storage and
+//! transport, so generated code scales with the declaration rather than with
+//! its cell count.
 use super::fixed_values::{
     fixed_array_cell_count, fixed_constant_slice, fixed_path_descriptor, fixed_width,
     fixed_width_bits,
@@ -364,15 +365,22 @@ impl Codegen<'_> {
             .map_err(|error| {
                 format!("record member array `{object_name}.{suffix}` in `{path}`: {error}")
             })?;
+        // A column only the design's selections chose dumps like the leaves
+        // it replaces.
+        let chosen = !column_layout_of(&root, &HashSet::new());
+        let cell_names = if chosen {
+            IrCellNames::RecordLeaf
+        } else {
+            IrCellNames::Indexed
+        };
         let c_name = self.c_name("G", path, &[object_name, &suffix]);
         let mut hdl_name = self.waveform_name(object);
         hdl_name.push('\u{1f}');
-        hdl_name.push_str(&record_member_label(member_path));
-        let cell_names = if column_layout_of(&root, &HashSet::new()) {
-            IrCellNames::Indexed
+        hdl_name.push_str(&if chosen {
+            suffix.clone()
         } else {
-            IrCellNames::RecordLeaf
-        };
+            record_member_label(member_path)
+        });
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
             cell_names,
@@ -439,15 +447,22 @@ impl Codegen<'_> {
         let chain = path_members(&root, member_path)
             .ok_or_else(|| format!("record member path `{suffix}` in `{path}` is unresolved"))?;
         let two_state = descriptor.two_state || chain.iter().any(|member| member.two_state);
+        // A column only the design's selections chose dumps like the leaves
+        // it replaces.
+        let chosen = !column_layout_of(&root, &HashSet::new());
+        let cell_names = if chosen {
+            IrCellNames::RecordScalar
+        } else {
+            IrCellNames::Indexed
+        };
         let c_name = self.c_name("G", path, &[object_name, &suffix]);
         let mut hdl_name = self.waveform_name(object);
         hdl_name.push('\u{1f}');
-        hdl_name.push_str(&record_member_label(member_path));
-        let cell_names = if column_layout_of(&root, &HashSet::new()) {
-            IrCellNames::Indexed
+        hdl_name.push_str(&if chosen {
+            suffix.clone()
         } else {
-            IrCellNames::RecordScalar
-        };
+            record_member_label(member_path)
+        });
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
             cell_names,

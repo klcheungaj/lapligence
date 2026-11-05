@@ -8,7 +8,8 @@
 //! dropped (SV 7.4.6).
 //!
 //! A module native record keeps each element of a member array as its own
-//! object or signal, with its own change marker, so a run-time index selects
+//! object or signal, with its own change marker, unless the record is stored
+//! as columns (`record_columns/choice.rs`). A run-time index then selects
 //! one leaf by comparing the index with every declared index; an index that
 //! matches none (out of range, X or Z) reads the element default and writes
 //! nothing. Small arrays compare in a chain; above

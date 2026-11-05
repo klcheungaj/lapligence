@@ -207,12 +207,15 @@ fn chosen_columns_dump_under_their_leaf_names() {
         let directory = sim_harness::TempDir::new("record_wave").expect("scratch directory");
         let source = format!(
             "module tb;
-  typedef struct {{ logic [3:0] x; int a[{size}]; }} r_t;
+  typedef struct {{ logic [1:0] z; int c[2]; }} in_t;
+  typedef struct {{ logic [3:0] x; int a[{size}]; in_t i; }} r_t;
   r_t r;
   int k = 1;
   initial begin
     #1 r.a[k] = 7;
     r.x = 2;
+    r.i.z = 1;
+    r.i.c[1] = 1;
     #1 $finish(0);
   end
 endmodule
@@ -236,6 +239,8 @@ endmodule
     let names = names(16);
     assert!(names.iter().any(|name| name == "x"), "{names:?}");
     assert!(names.iter().any(|name| name == "a__i15"), "{names:?}");
+    assert!(names.iter().any(|name| name == "i__z"), "{names:?}");
+    assert!(names.iter().any(|name| name == "i__c__i1"), "{names:?}");
     assert!(!names.iter().any(|name| name.contains("$5B")), "{names:?}");
 }
 
