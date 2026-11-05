@@ -65,6 +65,37 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// The dependency of `path` on the column `array` at member depth
+    /// `depth`: its one cell when `path` goes on to a constant in-range
+    /// element, so that other cells do not wake the reader.
+    fn column_dependency(
+        &self,
+        array: &ArrayInfo,
+        path: &[AggregatePathPart],
+        depth: usize,
+    ) -> IrDependency {
+        let array_index = self.reference_array(array.ir);
+        let contents = IrDependency::ArrayContents(array_index);
+        let Some(indices) = path.get(depth..depth + array.dims.len()) else {
+            return contents;
+        };
+        let mut linear = 0u64;
+        for ((left, right), part) in array.dims.iter().zip(indices) {
+            let AggregatePathPart::Index(value) = part else {
+                return contents;
+            };
+            let (left, right, value) = (i64::from(*left), i64::from(*right), i64::from(*value));
+            if value < left.min(right) || value > left.max(right) {
+                return contents;
+            }
+            linear = linear * (left.abs_diff(right) + 1) + left.abs_diff(value);
+        }
+        IrDependency::ArrayElement {
+            array: array_index,
+            index: linear,
+        }
+    }
+
     fn unpacked_storage_dependencies(&self, node: NodeId) -> Option<Vec<IrDependency>> {
         let (root, prefix) = self.unpacked_path_for_expr(node).or_else(|| {
             self.unpacked_aggregate_info(node)
@@ -79,7 +110,7 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             if let Some(array) = &leaf.array {
-                dependencies.push(IrDependency::ArrayContents(self.reference_array(array.ir)));
+                dependencies.push(self.column_dependency(array, &prefix[..], leaf.path.len()));
                 continue;
             }
             // A queue, dynamic or associative member (SIM-007) is read whole.

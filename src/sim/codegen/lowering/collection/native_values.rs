@@ -23,7 +23,7 @@ mod messages;
 mod nba;
 mod record_refs;
 pub(in crate::sim::codegen::lowering) use member_select::{
-    member_select_statement, RecordRefPin, RecordRefSelect,
+    member_select_statement, RecordRefPin, RecordRefSelect, SelectRoot, SelectStep,
 };
 pub(in crate::sim::codegen::lowering) use record_refs::RecordRefDispatch;
 mod tagged;
@@ -414,7 +414,7 @@ impl Codegen<'_> {
         // native value of their own (RTL-101b).
         if layout.kind != AggregateKind::UnpackedStruct
             || Self::fixed_descriptor_width_bits(descriptor).is_some()
-            || super::record_columns::record_column_layout_type(descriptor)
+            || self.record_column_layout(descriptor)
         {
             return None;
         }

@@ -110,7 +110,7 @@ impl Codegen<'_> {
         }
         if self
             .query_descriptor(declaration)
-            .is_some_and(Self::block_record_type)
+            .is_some_and(|descriptor| self.block_record_type(descriptor))
         {
             found.records.push(declaration);
         } else if self.block_native_type(declaration).is_some() {
@@ -122,11 +122,11 @@ impl Codegen<'_> {
     /// unpacked struct or tagged union with a leaf that has no packed
     /// representation. Fixed records stay one packed local and records
     /// beyond packed capacity use column layout (RTL-101).
-    fn block_record_type(descriptor: &TypeDescriptor) -> bool {
+    fn block_record_type(&self, descriptor: &TypeDescriptor) -> bool {
         matches!(&descriptor.shape, TypeShape::Aggregate(layout)
             if matches!(layout.kind, AggregateKind::UnpackedStruct | AggregateKind::TaggedUnion))
             && Self::fixed_descriptor_width_bits(descriptor).is_none()
-            && !super::record_columns::record_column_layout(descriptor)
+            && !self.record_column_layout(descriptor)
     }
 
     fn collect_block_record(

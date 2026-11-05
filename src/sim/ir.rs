@@ -161,6 +161,7 @@ pub use functions::{
 mod initialization;
 pub use initialization::{IrInitPhase, IrInitStep, IrInitTarget, IrInitialization};
 mod storage;
+pub(in crate::sim) use storage::IrCellNames;
 pub use storage::{
     IrArray, IrNetAliasBinding, IrNetArray, IrNetCellRun, IrNetGroup, IrNetKind, IrSignal,
 };
@@ -194,6 +195,12 @@ pub const LLG_MAX_FIXED_ARRAY_CELLS: u64 = 1 << 24;
 
 /// Integral variable arrays above this count use lazy, stable cell storage.
 pub const LLG_DENSE_FIXED_ARRAY_CELLS: u64 = 4096;
+
+/// Fewest cells of a record member array that the design's selections may turn
+/// into one descriptor column below [`LLG_DENSE_FIXED_ARRAY_CELLS`]
+/// (`codegen/lowering/collection/record_columns/choice.rs`). See
+/// `docs/sim_performance_tradeoffs.md` for the measurement behind it.
+pub const LLG_RECORD_COLUMN_MIN_CELLS: u64 = 16;
 
 /// Fewest consecutive fixed-array cells that a whole-value read or write accesses
 /// with one runtime range call instead of one access per element (emitter

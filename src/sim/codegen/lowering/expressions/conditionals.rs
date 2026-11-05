@@ -1293,7 +1293,7 @@ impl Codegen<'_> {
                 member.name
             ));
         }
-        if super::super::collection::record_column_layout_type(&member.descriptor) {
+        if self.record_column_layout(&member.descriptor) {
             let nested = RecordValue {
                 descriptor: member.descriptor.clone(),
                 columns,

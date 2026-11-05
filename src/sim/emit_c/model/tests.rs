@@ -281,6 +281,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         silent_slots: 0,
     }];
     model.arrays = vec![IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation: false,
         descriptor: false,
         net: None,

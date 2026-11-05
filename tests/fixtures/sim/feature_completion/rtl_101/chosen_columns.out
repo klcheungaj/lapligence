@@ -1,0 +1,23 @@
+0 comb sum=0
+1 comb sum=5
+1 f.a[3]=5
+3 comb sum=11
+4 n.a[k]=8 k=3
+5 n.a[k]=0 k=4
+7 n.a[k]=10 k=4
+8 posedge f.b[2][0]
+9 comb sum=13
+9 f.a[3]=7
+10 comb sum=92
+sum=92 watched=20 wires=0/10
+h==f 1 port=1/85
+11 n.a[k]=77 k=4
+nba 1 77
+13 wait hit
+13 n.a[k]=99 k=4
+out of range 0
+unknown 0
+copies 86 85 98 99
+eq 0 1 0 1
+bits 1292 1f 4 0001
+14 n.a[k]=99 k=4

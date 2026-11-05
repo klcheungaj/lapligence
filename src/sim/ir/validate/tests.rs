@@ -230,6 +230,7 @@ fn reference_bit_targets_validate_shape_and_visit_the_index() {
 fn rejects_array_total_that_disagrees_with_dimensions() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation: false,
         descriptor: false,
         net: None,
@@ -256,6 +257,7 @@ fn rejects_array_total_that_disagrees_with_dimensions() {
 fn rejects_array_storage_above_selected_cell_limit() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation: false,
         descriptor: false,
         net: None,
@@ -1456,6 +1458,7 @@ fn nonflattened_fixed_operations_validate_shapes_and_activation_scopes() {
 fn descriptor_value_assignment_requires_matching_descriptor_shape() {
     let mut model = valid_model();
     let rows = |c_name: &str, dims: Vec<(i32, i32)>, total: u64| IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation: false,
         descriptor: false,
         net: None,
@@ -1533,6 +1536,7 @@ fn descriptor_cast_requires_equal_size_lexical_shape() {
             .map(|(left, right)| u64::from(left.abs_diff(*right)) + 1)
             .product();
         IrArray {
+            cell_names: crate::sim::ir::IrCellNames::Indexed,
             activation,
             descriptor: false,
             net: None,
@@ -1605,6 +1609,7 @@ fn descriptor_cast_requires_equal_size_lexical_shape() {
 fn rejects_invalid_index_default_with_wrong_width() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation: false,
         descriptor: false,
         net: None,
@@ -1635,6 +1640,7 @@ fn record_columns_use_descriptor_storage_regardless_of_extent() {
     // storage only through its explicit flag; the same dense shape without
     // it keeps packed cells and cannot be a descriptor operand.
     let cell = |c_name: &str, descriptor: bool| IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation: false,
         descriptor,
         net: None,
@@ -1683,6 +1689,7 @@ fn record_columns_use_descriptor_storage_regardless_of_extent() {
 #[test]
 fn force_dependencies_must_name_persistent_fixed_arrays() {
     let array = |activation| IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation,
         descriptor: false,
         net: None,
@@ -1808,6 +1815,7 @@ fn statement_sequences_admit_only_non_suspending_setup() {
     // queues an update is never part of an expression.
     let mut model = valid_model();
     model.arrays.push(IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation: true,
         descriptor: false,
         net: None,
@@ -2176,6 +2184,7 @@ fn memory_slice_position_selector_must_match_its_view() {
     use crate::sim::ir::{IrMemoryAddressingPolicy, IrMemoryRadix, IrMemorySelectorKind};
     let mut model = valid_model();
     model.arrays.push(IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation: false,
         descriptor: false,
         net: None,
@@ -2404,6 +2413,7 @@ fn memory_dump_cannot_carry_source_text() {
     use crate::sim::ir::{IrMemoryAddressingPolicy, IrMemoryRadix};
     let mut model = valid_model();
     model.arrays.push(IrArray {
+        cell_names: crate::sim::ir::IrCellNames::Indexed,
         activation: false,
         descriptor: false,
         net: None,

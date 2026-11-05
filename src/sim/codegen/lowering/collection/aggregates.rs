@@ -380,7 +380,7 @@ impl<'a> Codegen<'a> {
         };
         let columns = self
             .query_descriptor(node)
-            .is_some_and(super::record_columns::record_column_layout);
+            .is_some_and(|descriptor| self.record_column_layout(descriptor));
         let mut leaves = Vec::new();
         for member in &layout.members {
             if let Some(signal) = &union_signal {
@@ -1055,6 +1055,7 @@ impl<'a> Codegen<'a> {
         };
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
+            cell_names: crate::sim::ir::IrCellNames::Indexed,
             activation: false,
             descriptor: false,
             net: None,

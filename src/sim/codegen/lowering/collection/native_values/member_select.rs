@@ -101,14 +101,14 @@ impl NativeRecordShape {
 
 /// One step of a selection below a record root.
 #[derive(Clone)]
-enum SelectStep {
+pub(in crate::sim::codegen::lowering) enum SelectStep {
     Member(String),
     Constant(i32),
     Run(NodeId),
 }
 
 /// The storage a selection starts from.
-enum SelectRoot {
+pub(in crate::sim::codegen::lowering) enum SelectRoot {
     Value(usize),
     Element(ElementSelection),
     Module(NodeId),
@@ -288,7 +288,10 @@ impl Codegen<'_> {
 
     /// The root and steps of the selection `node`, however its frontend
     /// shape nests detached arrays, member paths and bit selects.
-    fn selected_steps(&self, node: NodeId) -> Option<(SelectRoot, Vec<SelectStep>)> {
+    pub(in crate::sim::codegen::lowering::collection) fn selected_steps(
+        &self,
+        node: NodeId,
+    ) -> Option<(SelectRoot, Vec<SelectStep>)> {
         let node = self.p30_unwrap_cast(node);
         if let Some(selection) = self.record_element_of(node) {
             return Some((SelectRoot::Element(selection), Vec::new()));

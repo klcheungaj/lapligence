@@ -51,3 +51,16 @@ column. Expected values are derived by hand below; none were captured from
   equal `t` and X cells in every `w`, so the equality is `x`.
 - Negative cases: a procedural write to a record driven by a continuous
   assignment or an output port violates the single-writer rule (SV 6.5).
+
+- `chosen_columns`: records below the dense threshold whose member arrays the
+  design selects (`record_columns/choice.rs`): a run-time index into `n.a` of
+  the record with a `string` member, and every select of the fixed record `f`.
+  The expected output is the per-cell form's; a commercial simulator gives the
+  same lines, in another same-time order for the two `always` blocks at times
+  1 and 9 (SV 4.7, a nondeterministic order), with `name` declared packed because it
+  rejects `n.a` with a `string` member in the NBA and the continuous assignments.
+  `always_comb` runs at 0 and for each change of `f.a[3]` or `f.a[4]`, not for
+  `f.a[5]` at time 2 (SV 9.2.2.2.1). `k = 40` and an X index write nothing and
+  read 0 (SV 7.4.6).
+- `chosen_fallback`: `%p` of the whole record and a copy from a directly
+  addressed array are outside column layout, so the record keeps its leaves.

@@ -63,18 +63,18 @@ fn dense_member_arrays_keep_leaf_layout_and_large_ones_use_columns() {
         ("a", array(atom(8, false), vec![(0, 4095)])),
         ("t", atom(4, false)),
     ]);
-    assert!(!record_column_layout(&dense));
+    assert!(!column_layout_of(&dense, &HashSet::new()));
     let large = record(vec![
         ("a", array(atom(8, false), vec![(0, 4096)])),
         ("t", atom(4, false)),
     ]);
-    assert!(record_column_layout(&large));
+    assert!(column_layout_of(&large, &HashSet::new()));
     // Two dimensions count their product, and nesting is transparent.
     let nested = record(vec![(
         "inner",
         record(vec![("m", array(atom(1, true), vec![(63, 0), (0, 64)]))]),
     )]);
-    assert!(record_column_layout(&nested));
+    assert!(column_layout_of(&nested, &HashSet::new()));
 }
 
 #[test]
@@ -83,11 +83,11 @@ fn records_beyond_packed_capacity_use_columns_without_large_arrays() {
         ("w", array(atom(1024, false), vec![(0, 2047)])),
         ("t", atom(8, true)),
     ]);
-    assert!(record_column_layout(&wide));
+    assert!(column_layout_of(&wide, &HashSet::new()));
     let leaves_only = record(vec![
         ("x", atom(600_000, false)),
         ("y", atom(600_000, false)),
     ]);
-    assert!(record_column_layout(&leaves_only));
-    assert!(!record_column_layout(&atom(8, false)));
+    assert!(column_layout_of(&leaves_only, &HashSet::new()));
+    assert!(!column_layout_of(&atom(8, false), &HashSet::new()));
 }

@@ -10,10 +10,14 @@ use super::fixed_values::{
     fixed_width_bits,
 };
 use super::*;
-use crate::sim::ir::LLG_DENSE_FIXED_ARRAY_CELLS;
+use crate::core::db::TypeId;
+use crate::sim::ir::{IrCellNames, LLG_DENSE_FIXED_ARRAY_CELLS};
 
+mod choice;
 #[cfg(test)]
 mod tests;
+
+pub(in super::super) use choice::has_record_member_array;
 
 /// One stored column of a record value, in declaration order.
 #[derive(Clone)]
@@ -39,7 +43,7 @@ pub(in crate::sim::codegen) struct RecordValue {
 /// Whether a record descriptor uses column layout: an unpacked structure
 /// wider than packed capacity, or one with a member array (directly or in a
 /// nested unpacked structure) above the dense-cell threshold.
-pub(super) fn record_column_layout(descriptor: &TypeDescriptor) -> bool {
+fn column_layout_of(descriptor: &TypeDescriptor, chosen: &HashSet<TypeId>) -> bool {
     let TypeShape::Aggregate(layout) = &descriptor.shape else {
         return false;
     };
@@ -47,16 +51,12 @@ pub(super) fn record_column_layout(descriptor: &TypeDescriptor) -> bool {
         return true;
     }
     layout.kind == AggregateKind::UnpackedStruct
-        && (fixed_width_bits(descriptor).is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
+        && (chosen.contains(&descriptor.id)
+            || fixed_width_bits(descriptor).is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
             || layout
                 .members
                 .iter()
-                .any(|member| large_member_array(&member.descriptor)))
-}
-
-/// Whether values of this type use column layout (records or tagged unions).
-pub(in super::super) fn record_column_layout_type(descriptor: &TypeDescriptor) -> bool {
-    record_column_layout(descriptor)
+                .any(|member| large_member_array(&member.descriptor, chosen)))
 }
 
 /// A finite tagged union whose tag and payload exceed packed capacity: its
@@ -66,16 +66,19 @@ pub(in super::super) fn column_tagged_union(descriptor: &TypeDescriptor) -> bool
         && fixed_width_bits(descriptor).is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
 }
 
-fn large_member_array(descriptor: &TypeDescriptor) -> bool {
+fn large_member_array(descriptor: &TypeDescriptor, chosen: &HashSet<TypeId>) -> bool {
     match &descriptor.shape {
         // An extent beyond the cell limit is large as well; column
         // collection then reports the limit instead of expanding cells.
         TypeShape::FixedArray { dimensions, .. } => fixed_array_cell_count(dimensions)
             .map_or(true, |cells| cells > LLG_DENSE_FIXED_ARRAY_CELLS),
-        TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct => layout
-            .members
-            .iter()
-            .any(|member| large_member_array(&member.descriptor)),
+        TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct => {
+            chosen.contains(&descriptor.id)
+                || layout
+                    .members
+                    .iter()
+                    .any(|member| large_member_array(&member.descriptor, chosen))
+        }
         _ => false,
     }
 }
@@ -365,8 +368,14 @@ impl Codegen<'_> {
         let mut hdl_name = self.waveform_name(object);
         hdl_name.push('\u{1f}');
         hdl_name.push_str(&record_member_label(member_path));
+        let cell_names = if column_layout_of(&root, &HashSet::new()) {
+            IrCellNames::Indexed
+        } else {
+            IrCellNames::RecordLeaf
+        };
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
+            cell_names,
             activation: false,
             descriptor: true,
             net: None,
@@ -434,8 +443,14 @@ impl Codegen<'_> {
         let mut hdl_name = self.waveform_name(object);
         hdl_name.push('\u{1f}');
         hdl_name.push_str(&record_member_label(member_path));
+        let cell_names = if column_layout_of(&root, &HashSet::new()) {
+            IrCellNames::Indexed
+        } else {
+            IrCellNames::RecordScalar
+        };
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
+            cell_names,
             activation: false,
             descriptor: true,
             net: None,
@@ -513,6 +528,7 @@ impl Codegen<'_> {
         hdl_name.push_str("\u{1f}tag");
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
+            cell_names: IrCellNames::Indexed,
             activation: false,
             descriptor: true,
             net: None,
@@ -642,6 +658,7 @@ impl Codegen<'_> {
             format!("S_llg_record_{ir}")
         };
         self.model.arrays.push(crate::sim::ir::IrArray {
+            cell_names: IrCellNames::Indexed,
             activation,
             descriptor: !activation,
             net: None,
@@ -711,6 +728,7 @@ impl Codegen<'_> {
             format!("S_llg_record_{ir}")
         };
         self.model.arrays.push(crate::sim::ir::IrArray {
+            cell_names: IrCellNames::Indexed,
             activation,
             descriptor: !activation,
             net: None,
@@ -923,9 +941,11 @@ impl Codegen<'_> {
             .and_then(|value| self.record_native_group(value))
     }
 
-    /// Whether values of this type use column layout.
-    pub(in super::super) fn column_layout_descriptor(descriptor: &TypeDescriptor) -> bool {
-        record_column_layout(descriptor)
+    /// Whether values of this type use column layout (records or tagged
+    /// unions): by its shape, or by the design's selections
+    /// (`record_columns/choice.rs`).
+    pub(in super::super) fn record_column_layout(&self, descriptor: &TypeDescriptor) -> bool {
+        column_layout_of(descriptor, &self.record_column_types)
     }
 
     /// Column storage of `root` at member `path`: a module record column or
@@ -1037,7 +1057,7 @@ impl Codegen<'_> {
         matches!(self.kind(function), NodeKind::FuncTask { ret: Some(_), .. })
             && self
                 .query_descriptor(function)
-                .is_some_and(record_column_layout)
+                .is_some_and(|descriptor| self.record_column_layout(descriptor))
     }
 
     /// Whether a formal, result or local is a column-layout record value.
@@ -1073,7 +1093,7 @@ impl Codegen<'_> {
             let Some(descriptor) = self.query_descriptor(node).cloned() else {
                 continue;
             };
-            if !record_column_layout(&descriptor) {
+            if !self.record_column_layout(&descriptor) {
                 continue;
             }
             let value = self
@@ -1094,7 +1114,7 @@ impl Codegen<'_> {
     /// storage where its pattern is tested instead of a packed local.
     pub(in super::super) fn column_binding_target(&self, target: NodeId) -> bool {
         self.query_descriptor(target).is_some_and(|descriptor| {
-            record_column_layout(descriptor)
+            self.record_column_layout(descriptor)
                 || fixed_width_bits(descriptor)
                     .is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
                 || matches!(&descriptor.shape, TypeShape::FixedArray { dimensions, .. }
@@ -1115,7 +1135,7 @@ impl Codegen<'_> {
         }
         let Some(descriptor) = self
             .query_descriptor(declaration)
-            .filter(|descriptor| record_column_layout(descriptor))
+            .filter(|descriptor| self.record_column_layout(descriptor))
             .cloned()
         else {
             return Ok(false);
@@ -1161,7 +1181,7 @@ impl Codegen<'_> {
                 if self.is_body_local(node)
                     && self
                         .query_descriptor(node)
-                        .is_some_and(record_column_layout)
+                        .is_some_and(|descriptor| self.record_column_layout(descriptor))
                 {
                     let automatic = self.db.variable_lifetime(node) == VariableLifetime::Automatic;
                     out.push((node, automatic));

@@ -297,9 +297,25 @@ pub struct IrNetArray {
     pub(in crate::sim) constant_cells: Vec<IrNetCellRun>,
 }
 
+/// How a waveform dump names the cells of an array.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::sim) enum IrCellNames {
+    /// `a[3]`, with each declared index.
+    Indexed,
+    /// `a__i3`: a member array of a record stored as a column only because
+    /// the design selects it ([`crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS`]),
+    /// named like the leaf the cell would otherwise be, so a dump does not
+    /// depend on that choice.
+    RecordLeaf,
+    /// `x`: the one-cell column of a scalar member of such a record.
+    RecordScalar,
+}
+
 /// A lowered unpacked array: flat `sv4_t` storage plus linearization data.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrArray {
+    /// Spelling of the cells in a waveform dump.
+    pub(in crate::sim) cell_names: IrCellNames,
     /// Lexical activation storage, declared by `FixedArrayDeclare`.
     pub(in crate::sim) activation: bool,
     /// Descriptor storage regardless of extent: a column of a column-layout
@@ -373,6 +389,7 @@ impl IrArray {
             ));
         }
         Ok(Self {
+            cell_names: IrCellNames::Indexed,
             c_name,
             hdl_name,
             activation: false,
@@ -452,6 +469,9 @@ impl IrArray {
         if index >= self.total {
             return None;
         }
+        if self.cell_names == IrCellNames::RecordScalar {
+            return Some(self.hdl_name.clone());
+        }
         let mut remainder = index;
         let mut indices = vec![0i64; self.dims.len()];
         for dimension in (0..self.dims.len()).rev() {
@@ -470,9 +490,14 @@ impl IrArray {
         }
         let mut name = self.hdl_name.clone();
         for index in indices {
-            name.push('[');
-            name.push_str(&index.to_string());
-            name.push(']');
+            if self.cell_names == IrCellNames::RecordLeaf {
+                name.push_str("__i");
+                name.push_str(&index.to_string());
+            } else {
+                name.push('[');
+                name.push_str(&index.to_string());
+                name.push(']');
+            }
         }
         Some(name)
     }

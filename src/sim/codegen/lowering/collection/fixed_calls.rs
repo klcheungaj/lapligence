@@ -100,6 +100,7 @@ impl Codegen<'_> {
             ir,
         };
         self.model.arrays.push(crate::sim::ir::IrArray {
+            cell_names: crate::sim::ir::IrCellNames::Indexed,
             activation: true,
             descriptor: false,
             net: None,

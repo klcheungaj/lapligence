@@ -248,8 +248,8 @@ use crate::core::db::{
     ConstantSource, ConstantType, Db, Direction as DbDirection, DriverDelay, EventSpec,
     EventTriggerTiming, ExprKind, ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind,
     NetType, NodeId, NodeKind, Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind,
-    StmtKind, StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape,
-    UnconnectedDrive, VariableLifetime,
+    StmtKind, StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeId,
+    TypeShape, UnconnectedDrive, VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
 use crate::core::model::TypeInfo;
@@ -637,6 +637,9 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     // the application needs port delays (`--vpi-port-delays`). User system
     // calls are known only once the bodies are lowered: a design that has
     // them is lowered again as a VPI model.
+    if let Some(lowered) = lower_record_columns(db, options) {
+        return Ok(lowered);
+    }
     let vpi_sharing = if options.vpi_port_delays {
         PortSharing::Separate
     } else {
@@ -647,15 +650,45 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     } else {
         PortSharing::All
     };
-    let lowered = lower_model_retrying(db, options, first)?;
+    let no_columns = HashSet::new();
+    let lowered = lower_model_retrying(db, options, first, &no_columns)?;
     if first == PortSharing::All
         && !lowered.model.vpi_compile_calls.is_empty()
         && (lowered.shared_variable_ports || vpi_sharing == PortSharing::Separate)
     {
         drop(lowered);
-        return lower_model_retrying(db, options, vpi_sharing);
+        return lower_model_retrying(db, options, vpi_sharing, &no_columns);
     }
     Ok(lowered)
+}
+
+/// The model with the record columns the design's selections choose
+/// (`collection/record_columns/choice.rs`), or `None` to lower it with leaf
+/// storage: nothing is chosen, a catalog or toggle coverage observes each
+/// member leaf, or lowering fails because column layout does not cover some
+/// use of a chosen type. A real design error then surfaces from the leaf
+/// lowering with its usual diagnostic.
+fn lower_record_columns(db: &Db, options: &CodegenOptions) -> Option<LoweredModel> {
+    if options.vpi || !collection::has_record_member_array(db) {
+        return None;
+    }
+    let chosen = {
+        let semantic = checked_semantic(db).ok()?;
+        let mut cg = Codegen::new(&semantic);
+        collect_tops(&mut cg).ok()?;
+        cg.plan_code_coverage(false);
+        if cg.code_coverage.toggle {
+            return None;
+        }
+        cg.record_column_choice()
+    };
+    if chosen.is_empty() {
+        return None;
+    }
+    lower_model_retrying(db, options, PortSharing::All, &chosen)
+        .ok()
+        // User system calls make it a VPI model after all.
+        .filter(|lowered| lowered.model.vpi_compile_calls.is_empty())
 }
 
 /// Lower with port sharing `sharing`. A collapsed net port whose time-zero
@@ -667,10 +700,11 @@ fn lower_model_retrying(
     db: &Db,
     options: &CodegenOptions,
     sharing: PortSharing,
+    record_columns: &HashSet<TypeId>,
 ) -> Result<LoweredModel, String> {
     let mut excluded = HashSet::new();
     for _ in 0..MAX_PORT_COLLAPSE_RETRIES {
-        let lowered = lower_model_with(db, options, sharing, &excluded)?;
+        let lowered = lower_model_with(db, options, sharing, &excluded, record_columns)?;
         if lowered.retry_ports.is_empty() {
             return Ok(lowered);
         }
@@ -681,7 +715,7 @@ fn lower_model_retrying(
     } else {
         PortSharing::Merges
     };
-    lower_model_with(db, options, bound, &HashSet::new())
+    lower_model_with(db, options, bound, &HashSet::new(), record_columns)
 }
 
 /// Which ports a lowering lets share storage or merge their nets.
@@ -707,6 +741,7 @@ fn lower_model_with(
     options: &CodegenOptions,
     sharing: PortSharing,
     excluded_ports: &HashSet<NodeId>,
+    record_columns: &HashSet<TypeId>,
 ) -> Result<LoweredModel, String> {
     let waveform = options.waveform.as_ref();
     let semantic = checked_semantic(db)?;
@@ -718,6 +753,7 @@ fn lower_model_with(
     cg.alias_net_ports = matches!(sharing, PortSharing::All | PortSharing::Nets);
     cg.merge_ports = sharing != PortSharing::Separate;
     cg.port_collapse_exclusions = excluded_ports.clone();
+    cg.record_column_types = record_columns.clone();
     cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
     cg.plan_code_coverage(options.vpi);
@@ -1583,6 +1619,9 @@ struct Codegen<'a> {
     shared_run_slot_bits: u64,
     /// Ports a previous lowering showed must keep their link.
     port_collapse_exclusions: HashSet<NodeId>,
+    /// Record types stored as columns by the design's selections, beyond
+    /// those their shape puts in column layout.
+    record_column_types: HashSet<TypeId>,
     /// Collapsed net ports with a time-zero observer of the sink, and the
     /// root storage whose start the lowered model must show to be all X.
     port_start_checks: Vec<(NodeId, usize)>,
@@ -2288,6 +2327,7 @@ impl<'a> Codegen<'a> {
             merge_ports: false,
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),
+            record_column_types: HashSet::new(),
             port_start_checks: Vec::new(),
             port_alias_sinks: HashSet::new(),
             reference_arrays: HashMap::new(),

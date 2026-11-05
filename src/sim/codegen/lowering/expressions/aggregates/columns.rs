@@ -76,7 +76,7 @@ impl Codegen<'_> {
         self.record_columns
             && self
                 .query_descriptor(node)
-                .is_some_and(Self::column_layout_descriptor)
+                .is_some_and(|descriptor| self.record_column_layout(descriptor))
     }
 
     /// Allocate a lexical temporary with the column layout of `descriptor`.

@@ -62,7 +62,7 @@ mod timing_checks;
 mod vpi;
 pub(super) use packed_elements::Select;
 pub(super) use record_columns::{
-    column_tagged_union, record_cell_leaf, record_column_layout_type, RecordColumn, RecordValue,
+    column_tagged_union, has_record_member_array, record_cell_leaf, RecordColumn, RecordValue,
 };
 pub(super) use vpi::VpiScopeIndex;
 mod port_aliases;
