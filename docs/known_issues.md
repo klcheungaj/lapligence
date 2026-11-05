@@ -564,14 +564,14 @@ with an ambiguous predicate on such records);
 compound writes through a run-time index (`r.a[k] += 1`);
 a run-time index into a native member array of more than 4,096 elements
 (`NATIVE_MEMBER_SELECT_LIMIT`), 256 when it selects whole records
-(`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a
-container element whose record has container members, a real member of a
-container element or subroutine record, and a run-time-indexed record element
+(`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a member of a subroutine
+record whose type has container members, and a run-time-indexed record element
 of a module, static or block record bound by a call in an expression, below a
 constant index (`o.m[1].a[k]`), or among more than 256 elements or combinations
 (a statement call lowers once per element, `tr(o.e[i])`; a task that waits on
-the formal stops the run if the index selects no element); an event control on a member
-of such a formal when the actual is a subroutine record (a generic lowering
+the formal stops the run if the index selects no element); an event control on
+a member of a native record `ref` formal when the actual is a subroutine record
+(a generic lowering
 diagnostic); a `queue` of native records as a member of a module record element
 (the element has no type descriptor); sub-record, member-array or handle selects of a native call
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
@@ -618,12 +618,12 @@ constant has no captured value. A native `ref` formal is the caller's
 `llg_value_t` and companion containers when the actual is a whole subroutine
 record; a module-like record has no such value, so a call binding one runs a
 specialization of the subroutine that names the record's leaves directly,
-which needs the record statically: a run-time record element has neither form
-(a scalar leaf is chosen among stable addresses at the call), and a
-virtual-interface slot does not reach specializations
-(a class method's virtual family gets one slot per binding). An element reference shares the element's item array, but
-the companion containers of a record with container members belong to the
-element's own frame.
+which needs the record statically: a run-time record element lowers the call
+once per element under a decision tree, and only a statement can branch that
+way (a scalar leaf is chosen among stable addresses at the call). An element
+reference shares the element's item array; a queue or dynamic-array member is
+a nested slot of another representation, so the call mirrors it in a companion
+container, at the member's size per change in either direction.
 
 ### Intended direction
 
@@ -637,7 +637,7 @@ roots for forked automatic block records, strings and handles.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
-`sim_008/neg_record_ref_{container_member,interface_method}.sv`,
+`sim_008/neg_record_ref_element_select_value.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,

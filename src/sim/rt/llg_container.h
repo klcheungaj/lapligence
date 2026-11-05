@@ -567,6 +567,23 @@ void* llg_assoc_value_ref_acquire_string(llg_assoc_value_t* array,
                                          const void* key, size_t length);
 void llg_native_ref_release(void* reference);
 void llg_native_ref_scope_release(void* object);
+/* A record element's queue or dynamic-array member lives in a nested slot of
+ * another representation than the standalone container its `ref` formal
+ * addresses. A mirror keeps the two equal while the formal lives: changes of
+ * `container` (a call-owned companion) replace the slot `item`, whole, and
+ * tell the element's container; changes of the element's container recopy the
+ * slot. Each direction costs the member's size. The holder's value scope
+ * object ends it through llg_native_ref_mirror_scope_release, before the
+ * container is destroyed. */
+enum {
+    LLG_NATIVE_MIRROR_DYN = 0,
+    LLG_NATIVE_MIRROR_QUEUE = 1,
+    LLG_NATIVE_MIRROR_DYN_VALUE = 2,
+    LLG_NATIVE_MIRROR_QUEUE_VALUE = 3,
+};
+void* llg_native_ref_mirror(void* reference, llg_value_t* item, void* container,
+                            int kind);
+void llg_native_ref_mirror_scope_release(void* object);
 llg_string_t* llg_native_ref_string(void* reference);
 void** llg_native_ref_handle(void* reference);
 /* The stable `double` of a real element or member, for a real `ref` formal.

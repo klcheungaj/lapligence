@@ -224,6 +224,19 @@ pub struct IrElementRef {
     pub(in crate::sim) steps: Vec<IrElementStep>,
     pub(in crate::sim) kind: IrElementRefKind,
     pub(in crate::sim) const_ref: bool,
+    /// For a record with queue or dynamic-array members: the formal's
+    /// companion containers, which the call creates and keeps equal to the
+    /// element's nested slots for as long as the reference lives.
+    pub(in crate::sim) companions: Vec<IrRefCompanion>,
+}
+
+/// One companion container of a record element bound to a `ref` formal.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrRefCompanion {
+    /// Activation container of the member's type, created by the call.
+    pub(in crate::sim) container: usize,
+    /// Item path of the member's nested slot in the record.
+    pub(in crate::sim) items: Vec<u32>,
 }
 
 impl IrElementRef {

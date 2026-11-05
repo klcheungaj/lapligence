@@ -74,7 +74,11 @@ private default cell (`llg_native_ref_detached_string` and its siblings).
 A real element or member binds the same way (`llg_native_ref_real`); `real_write`
 reports each changed cell while such a reference lives, for one counter load
 otherwise, and the formal's waiters follow its `double`.
-Every store through a record `ref` formal is followed by
+A record element's queue or dynamic-array member is a nested slot of another
+representation than the formal's companion container, so `llg_native_ref_mirror`
+keeps the two equal: the companion's `notify` replaces the slot and touches the
+element's container, whose interposed notify recopies every other mirror. Each
+change costs the member's size. Every store through a record `ref` formal is followed by
 `llg_native_ref_value_stored`, which tells the element's container; it costs one
 load when no reference is live and a walk of the live references otherwise.
 

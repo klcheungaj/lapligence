@@ -308,6 +308,7 @@ impl Codegen<'_> {
             steps: place.steps,
             kind,
             const_ref,
+            companions: Vec::new(),
         }))))
     }
 

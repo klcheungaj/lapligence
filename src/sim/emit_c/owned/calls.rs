@@ -4,7 +4,7 @@
 use super::native::{NativeKind, NativeValue};
 use super::streaming::CapturedAssignment;
 use super::*;
-use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrElementStep};
+use crate::sim::ir::{IrContainerKind, IrElementRefKind, IrElementRoot, IrElementStep};
 
 /// An output/inout copy-out target, bound at the call or resolved at copy-out.
 enum CopyOutTarget<'l> {
@@ -1067,7 +1067,14 @@ impl Frame<'_, '_> {
                 format!("llg_native_ref_marker({acquire})"),
             ],
             IrElementRefKind::Real { .. } => vec![format!("llg_native_ref_real({acquire})")],
-            IrElementRefKind::Record => vec![format!("llg_native_ref_value({acquire})")],
+            IrElementRefKind::Record => {
+                let value = format!("llg_native_ref_value({acquire})");
+                let mut parameters = vec![value.clone()];
+                for companion in &reference.companions {
+                    parameters.push(self.companion_mirror(&acquire, &value, companion)?);
+                }
+                parameters
+            }
             IrElementRefKind::Packed {
                 width,
                 signed,
@@ -1083,6 +1090,40 @@ impl Frame<'_, '_> {
                 vec![pointer]
             }
         })
+    }
+
+    /// The companion parameter of a record element's container member: a
+    /// call-owned container the runtime keeps equal to the member's nested
+    /// slot. Its scope opens after the reference's and the mirror's after
+    /// both, so unwinding detaches the mirror before the container goes.
+    fn companion_mirror(
+        &mut self,
+        reference: &str,
+        value: &str,
+        companion: &crate::sim::ir::IrRefCompanion,
+    ) -> Result<String, String> {
+        let storage = self.new_container(companion.container)?;
+        self.containers.insert(companion.container, storage.clone());
+        let container = &self.ctx.model.containers[companion.container];
+        let kind = match (&container.kind, container.element.is_packed()) {
+            (IrContainerKind::Dynamic, true) => "LLG_NATIVE_MIRROR_DYN",
+            (IrContainerKind::Queue { .. }, true) => "LLG_NATIVE_MIRROR_QUEUE",
+            (IrContainerKind::Dynamic, false) => "LLG_NATIVE_MIRROR_DYN_VALUE",
+            (IrContainerKind::Queue { .. }, false) => "LLG_NATIVE_MIRROR_QUEUE_VALUE",
+            (IrContainerKind::Associative { .. }, _) => {
+                return Err("an associative record member has no nested value form".into())
+            }
+        };
+        let item = self.value_item(value, &companion.items)?;
+        let scope = self.scalar(
+            "llg_value_scope_t*",
+            "llg_value_scope_begin_object(sizeof(void*), llg_native_ref_mirror_scope_release)"
+                .to_owned(),
+        );
+        self.line(format!(
+            "*(void**)llg_value_scope_object({scope}) = llg_native_ref_mirror({reference}, {item}, &{storage}, {kind});"
+        ));
+        Ok(format!("(void*)&{storage}"))
     }
 
     /// The formal's parameters for one of the stable leaves a run-time index

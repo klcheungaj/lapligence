@@ -10,11 +10,11 @@
 use super::super::expressions::AggregateSelection;
 use super::aggregates::NATIVE_TAG_MEMBER;
 use super::*;
-use crate::sim::ir::IrElementRefKind;
 use crate::sim::ir::{
     is_class_handle_kind, native_item_count, validate_native_type, IrNativeAccessKind,
     IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue, IrObjectQuery,
 };
+use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrRefCompanion};
 
 mod conditionals;
 mod elements;
@@ -2113,8 +2113,8 @@ impl Codegen<'_> {
 
     /// Operand of a native `ref` formal whose actual is no whole native value
     /// of its type: a bound record, or storage reached through a reference.
-    /// A record with container members needs its companions, which an element
-    /// or member does not have.
+    /// An element's container members live in nested slots, so the call
+    /// builds the companions its formal addresses (`IrRefCompanion`).
     fn native_ref_operand(
         &mut self,
         path: &str,
@@ -2130,21 +2130,34 @@ impl Codegen<'_> {
         {
             return Ok(IrCallArg::NativeValue(*value));
         }
-        if layout.containers.is_empty() {
-            let const_ref = matches!(
-                self.kind(formal),
-                NodeKind::FuncArg {
-                    const_ref: true,
-                    ..
-                }
-            );
-            if let Some(argument) =
-                self.member_ref(path, actual, IrElementRefKind::Record, const_ref)?
-            {
-                return Ok(argument);
+        let const_ref = matches!(
+            self.kind(formal),
+            NodeKind::FuncArg {
+                const_ref: true,
+                ..
             }
+        );
+        match self.member_ref(path, actual, IrElementRefKind::Record, const_ref)? {
+            Some(IrCallArg::ElementRef(mut reference)) if !layout.containers.is_empty() => {
+                // A subroutine record's members live in its companions, not
+                // in nested slots of an element.
+                if !matches!(reference.root, IrElementRoot::Element { .. }) {
+                    return Err(self.native_ref_actual_error(path, formal));
+                }
+                reference.companions = self
+                    .native_companions(&layout, true)
+                    .into_iter()
+                    .zip(&layout.containers)
+                    .map(|(container, leaf)| IrRefCompanion {
+                        container,
+                        items: leaf.items.clone(),
+                    })
+                    .collect();
+                Ok(IrCallArg::ElementRef(reference))
+            }
+            Some(argument) => Ok(argument),
+            None => Err(self.native_ref_actual_error(path, formal)),
         }
-        Err(self.native_ref_actual_error(path, formal))
     }
 
     /// Caller operand of a native formal. A whole native value of the formal

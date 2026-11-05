@@ -499,7 +499,22 @@ impl Validator<'_> {
                             formal.real && formal.shortreal == shortreal
                         }
                         IrElementRefKind::Record => {
-                            formal.native_value.is_some() && formal.native_companions.is_empty()
+                            formal.native_value.is_some()
+                                && formal.native_companions.len() == reference.companions.len()
+                                && reference.companions.iter().all(|companion| {
+                                    !companion.items.is_empty()
+                                        && self
+                                            .model
+                                            .containers
+                                            .get(companion.container)
+                                            .is_some_and(|container| {
+                                                container.activation
+                                                    && !matches!(
+                                                        container.kind,
+                                                        IrContainerKind::Associative { .. }
+                                                    )
+                                            })
+                                })
                         }
                         IrElementRefKind::Packed {
                             width,

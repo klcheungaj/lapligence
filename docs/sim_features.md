@@ -1779,8 +1779,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   Virtual-interface methods take these actuals through a bound dispatch entry
   ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
-  Records with container members as elements, such elements in calls inside
-  expressions and reference-formal NBAs remain restricted. Fixed packed scanner destinations retain checked selected
+  Record elements with queue or dynamic-array members bind through companion
+  containers the runtime mirrors, at the member's size per change
+  ([record_ref_container_member](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  Run-time elements of module records in calls inside expressions, members of
+  subroutine records with container members and reference-formal NBAs remain
+  restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;
   packed bit/part actuals rejected by the frontend are not legalized by internal

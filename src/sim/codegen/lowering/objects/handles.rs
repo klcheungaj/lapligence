@@ -301,6 +301,7 @@ impl Codegen<'_> {
             steps: Vec::new(),
             kind,
             const_ref,
+            companions: Vec::new(),
         }))))
     }
 
