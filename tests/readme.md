@@ -915,7 +915,9 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   `include_path/` (ST-23: the `` `include `` path operand is a `string`,
   with `t.sv`'s whole expected stream in `expected-tokens.txt`, checked by
   `lsp_stdio/include_path_tokens.rs`, and the macro operand in
-  `macro_operand.sv`), `size_casts.sv` (ST-52), `port_connections.sv` with
+  `macro_operand.sv`), `scopes_and_directives.sv` (ST-06: the Annex E
+  directives are `controlFlow` and `` `pragma `` operands stay `keyword`;
+  ST-40: `$unit` and `$root` are `namespace`), `size_casts.sv` (ST-52), `port_connections.sv` with
   its definition in `port_connections_probe.sv` (ST-76, ST-77) and the no-config package example
   `pkg_example_top.sv` / `pkg_example_pkg.sv` (ST-50, ST-51, started through
   `LspProcess::initialize_with_token_refresh`, which advertises

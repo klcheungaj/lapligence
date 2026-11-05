@@ -50,7 +50,19 @@ positional words and bindings come from the capture in
   `` `define `undef `undefineall `include `timescale `default_nettype
   `resetall `celldefine `endcelldefine `unconnected_drive
   `nounconnected_drive `pragma `line `begin_keywords `end_keywords `` and the
-  conditional `` `ifdef `ifndef `elsif `else `endif `` (22.6).
+  conditional `` `ifdef `ifndef `elsif `else `endif `` (22.6), and the
+  informative directives of Annex E (1364-2001 Annex D) that Slang lexes as
+  directives: `` `default_decay_time `default_trireg_strength
+  `delay_mode_distributed `delay_mode_path `delay_mode_unit
+  `delay_mode_zero ``. The operands of a directive keep their own types
+  (`infinite` is a plain `keyword`), and so do the words after `` `pragma ``
+  (`` `pragma protect foo `` is `keyword` + `controlFlow`, then `keyword`,
+  `keyword`; deliberate: a pragma name and its operands are free text, not
+  directives). Verilog-XL words that Slang does not lex as directives
+  (`` `accelerate ``, `` `autoexpand_vectornets ``, `` `suppress_faults ``)
+  are macro usages (ST-21), and so are the encryption envelope words
+  `` `protect `endprotect `protected `endprotected `` (not in the 1364 or
+  1800 directive lists).
 - **ST-07** `typedef struct union enum` are `keyword` + `typeDefinition`.
 - **ST-08** `input output inout ref` are `keyword` + `direction`.
 - **ST-09** Built-in data and net types and declaration kind and qualifier
@@ -174,9 +186,12 @@ language provides, as rust-analyzer marks the standard library.
   `[$clog2(D)-1:0]`, `typedef logic [$bits(x)-1:0] t;`, generate
   conditions), package and class scope, `` `define `` bodies and macro
   actual arguments, recovered syntax, and an unknown `$foo` (whose
-  diagnostic is still published). `$root` and `$unit` are scope names, not
-  system names. An expansion copy that is not written at the use site gets
-  no token (ST-21).
+  diagnostic is still published). An expansion copy that is not written at
+  the use site gets no token (ST-21). The exception is `$unit` and `$root`
+  (3.12.1, 23.3.1): they are scope names, not system names, so each is
+  `namespace` with no modifier wherever it is written as a scope
+  (`$unit::x`, `$unit::t v;`, `$root.top.x`, also in a `` `define `` body);
+  the names after the scope keep their own types.
 - **ST-41** Built-in methods are `function` + `defaultLibrary`, with or
   without parentheses, chained (`q.size() - 1`, `e.next().name()`) and with a
   `with` clause: array, queue and associative-array methods (7.5, 7.9, 7.10,
@@ -236,8 +251,8 @@ assign w = `A + `ABC(p, q);                 // `A, `ABC: keyword
   body name that spells no formal is not a parameter (ST-64).
 - **ST-64** The body (replacement text) of a `` `define `` is highlighted
   like source: keywords keep the classes of ST-02 to ST-09, and numbers,
-  strings, operators, system names (ST-40) and macro usages (ST-21) keep
-  their types. Slang keeps, for every expanded token, the body location it
+  strings, operators, system names and scope names (ST-40) and macro usages
+  (ST-21) keep their types. Slang keeps, for every expanded token, the body location it
   was copied from; each body name takes the type and modifiers that the
   macro's expansions give the name at that location (ST-10 to ST-20, ST-65).
   When the expansions disagree on the type or role, or the macro is never
