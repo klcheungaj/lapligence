@@ -68,6 +68,8 @@ mod parameter_hover;
 use parameter_hover::{param_hover_markup, value_line};
 #[path = "lsp_stdio/inactive_ranges.rs"]
 mod inactive_ranges;
+#[path = "lsp_stdio/include_path_tokens.rs"]
+mod include_path_tokens;
 #[path = "lsp_stdio/macro_hover.rs"]
 mod macro_hover;
 #[path = "lsp_stdio/macro_tokens.rs"]

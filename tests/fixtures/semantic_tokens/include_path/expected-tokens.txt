@@ -1,0 +1,13 @@
+0 0 "`include" keyword controlFlow
+0 9 "\"defs.vh\"" string 
+1 0 "`include" keyword controlFlow
+1 9 "<defs.vh>" string 
+2 0 "module" keyword 
+2 7 "t" class declaration
+2 8 ";" operator 
+3 2 "string" keyword primitive
+3 9 "s" variable declaration
+3 11 "=" operator 
+3 13 "\"abc\"" string 
+3 18 ";" operator 
+4 0 "endmodule" keyword 

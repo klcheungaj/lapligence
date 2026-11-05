@@ -343,6 +343,92 @@ fn st_semantic_token_requirements_hold_in_both_serving_paths() {
     client.shutdown();
 }
 
+const INCLUDE_SOURCE: &str = include_str!("../fixtures/semantic_tokens/include_path/t.sv");
+const INCLUDE_MACRO_SOURCE: &str =
+    include_str!("../fixtures/semantic_tokens/include_path/macro_operand.sv");
+
+const INCLUDE_CHECKS: &[Check] = &[
+    ("ST-06", "`include \"defs", 0, 0, "keyword", CONTROL),
+    ("ST-06", "`include <defs", 0, 0, "keyword", CONTROL),
+    // The whole operand, delimiters included, is one `string` token.
+    ("ST-23", "\"defs.vh\"", 0, 0, "string", NONE),
+    ("ST-23", "<defs.vh>", 0, 0, "string", NONE),
+    // An ordinary string literal is unchanged.
+    ("ST-23", "\"abc\"", 0, 0, "string", NONE),
+];
+
+const INCLUDE_MACRO_CHECKS: &[Check] = &[
+    ("ST-06", "`include `HDR_QUOTED", 0, 0, "keyword", CONTROL),
+    ("ST-06", "`include `HDR_ANGLE", 0, 0, "keyword", CONTROL),
+    // The macro use is a plain keyword (ST-21); the operand it expands to
+    // has no written token of its own.
+    ("ST-21", "`HDR_QUOTED", 0, 0, "keyword", NONE),
+    ("ST-21", "`HDR_ANGLE", 0, 0, "keyword", NONE),
+    // The string written in the macro body keeps its type.
+    ("ST-23", "\"defs.vh\"", 0, 0, "string", NONE),
+];
+
+/// ST-06, ST-21, ST-23: the operand of `` `include `` is a `string` with no
+/// modifiers in the forms `"file"` and `<file>`, and a macro operand keeps
+/// only the use-site token, in both serving paths.
+#[test]
+fn st_23_include_path_operands_are_strings_in_both_serving_paths() {
+    let (_cleanup, root) = include_path_tokens::include_path_root("rows");
+    let files = [
+        ("t.sv", INCLUDE_SOURCE, INCLUDE_CHECKS),
+        (
+            "macro_operand.sv",
+            INCLUDE_MACRO_SOURCE,
+            INCLUDE_MACRO_CHECKS,
+        ),
+    ];
+    let mut client = LspProcess::spawn(&root);
+    let initialize = client
+        .initialize(&[("project", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    for (name, _, _) in files {
+        wait_for_diagnostics(&mut client, &file_uri(&root.join(name)), |_| true);
+    }
+    for opened in [false, true] {
+        for (name, source, checks) in files {
+            let path = root.join(name);
+            if opened {
+                client.open(&path, source).expect("open include fixture");
+            }
+            let result = client
+                .request(
+                    "textDocument/semanticTokens/full",
+                    json!({ "textDocument": { "uri": file_uri(&path) } }),
+                )
+                .expect("include semantic token response");
+            let rows = semantic_token_rows(&result, &types, &modifiers);
+            let label = if opened { "open buffer" } else { "project" };
+            let label = format!("{name} {label}");
+            for check in checks {
+                assert_check(&rows, source, check, &label);
+            }
+            let tokens_on = |needle: &str| {
+                let (line, _) = position_of(source, needle, 0);
+                rows.iter().filter(|row| row.line == line).count()
+            };
+            if name == "t.sv" {
+                // The operand is one token: nothing starts inside it.
+                for needle in ["`include \"defs.vh\"", "`include <defs.vh>"] {
+                    assert_eq!(tokens_on(needle), 2, "ST-23 {label}: {needle:?}");
+                }
+            } else {
+                for needle in ["`include `HDR_QUOTED", "`include `HDR_ANGLE"] {
+                    assert_eq!(tokens_on(needle), 2, "ST-21 {label}: {needle:?}");
+                }
+            }
+        }
+    }
+    client.shutdown();
+}
+
 /// ST-18: navigation from a member reference and a pattern key reaches the
 /// member declaration.
 #[test]
