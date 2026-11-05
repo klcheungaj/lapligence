@@ -134,14 +134,16 @@ fn run_time_record_elements_bind_ref_formals() {
 }
 
 #[test]
+fn module_records_bind_ref_formals_of_virtual_interface_methods() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_ref_interface_method.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_ref_interface_method", expected, &[], &[]);
+}
+
+#[test]
 fn unbindable_record_ref_actuals_are_rejected_explicitly() {
     const UNBOUND: &str = "ref actual of native record formal `r` in `tb` must be a whole subroutine record, or a module, static or procedural-block record or a constant member/index selection of one, of the same type (SIM-008)";
     sim_cli::reject_case(SUITE, "neg_record_ref_container_member", UNBOUND);
-    sim_cli::reject_case(
-        SUITE,
-        "neg_record_ref_interface_method",
-        "a module, static or procedural-block record as the actual of native record `ref` formal `r` of virtual-interface method `f` in `tb` is not supported (SIM-008)",
-    );
     sim_cli::reject_case(
         SUITE,
         "neg_record_ref_const_write",

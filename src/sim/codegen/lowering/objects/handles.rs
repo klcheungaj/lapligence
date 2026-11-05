@@ -595,15 +595,8 @@ impl Codegen<'_> {
             let args = self.call_argument_nodes(node);
             let bound = self.bind_call_args(self.inst, &meta.formals, &args)?;
             let dispatch = self.record_ref_dispatch(node, false);
-            let function = self.record_ref_callee(
-                path,
-                ft,
-                callee_inst,
-                &meta.formals,
-                &bound,
-                meta.ir,
-                dispatch,
-            )?;
+            let function =
+                self.record_ref_callee(ft, callee_inst, &meta.formals, &bound, meta.ir, dispatch)?;
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
             let mut arg_irs = vec![None; meta.formals.len()];

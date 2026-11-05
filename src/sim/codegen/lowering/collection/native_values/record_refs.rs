@@ -26,7 +26,9 @@
 //!
 //! A class method keeps its receiver in a specialization. A virtual call
 //! specializes the whole override family under a fresh virtual slot, so the
-//! ordinary dispatchers serve it and nothing changes for unbound calls.
+//! ordinary dispatchers serve it and nothing changes for unbound calls. A
+//! virtual-interface call likewise reaches a new method of its descriptor
+//! holding each instance's specialization.
 
 use super::*;
 use crate::sim::ir::{IrElementRef, IrElementRefKind, IrElementRoot, IrElementStep, IrValueSlot};
@@ -368,11 +370,10 @@ impl Codegen<'_> {
     /// The model function a call of `function` reaches: `template`, or the
     /// specialization binding its record `ref` actuals. A specialization
     /// keeps its method's receiver; a virtual call (`dispatch`) reaches the
-    /// family of `record_ref_family`.
-    #[allow(clippy::too_many_arguments)]
+    /// family of `record_ref_family`. A virtual-interface call with bindings
+    /// takes `record_ref_interface_method` instead.
     pub(in crate::sim::codegen::lowering) fn record_ref_callee(
         &mut self,
-        path: &str,
         function: NodeId,
         inst: NodeId,
         formals: &[(NodeId, bool)],
@@ -386,7 +387,6 @@ impl Codegen<'_> {
             // actuals; every other callee is the template itself.
             return self.dpi_open_callee(template, formals, bound);
         }
-        self.reject_interface_record_refs(path, function, &records, dispatch)?;
         if dispatch == RecordRefDispatch::Virtual {
             return self.record_ref_family(function, records);
         }
@@ -408,23 +408,127 @@ impl Codegen<'_> {
         }
     }
 
-    /// A virtual-interface call selects its implementation through the
-    /// interface slot, which no record binding can extend.
-    pub(in crate::sim::codegen::lowering) fn reject_interface_record_refs(
-        &self,
-        path: &str,
+    /// A dispatch entry of virtual-interface method `method` for one set of
+    /// record bindings: a new method of the descriptor whose implementations
+    /// are each instance's specialization, so the ordinary dispatchers serve
+    /// the call and code grows with distinct actuals. Returns the method and
+    /// its representative function. Instances name their own formals, so a
+    /// binding carries over by formal position.
+    pub(in crate::sim::codegen::lowering) fn record_ref_interface_method(
+        &mut self,
+        interface: usize,
+        method: usize,
         function: NodeId,
         records: &[RecordRefBinding],
-        dispatch: RecordRefDispatch,
-    ) -> Result<(), String> {
-        match records.first() {
-            Some(first) if dispatch == RecordRefDispatch::Interface => Err(format!(
-                "a module, static or procedural-block record as the actual of native record `ref` formal `{}` of virtual-interface method `{}` in `{path}` is not supported (SIM-008)",
-                self.node(first.formal).name,
-                self.node(function).name
-            )),
-            _ => Ok(()),
+    ) -> Result<(usize, usize), String> {
+        let positions = self.record_ref_positions(function, records)?;
+        let key = (interface, method, positions.clone());
+        if let Some(entry) = self.record_ref_interface_methods.get(&key) {
+            return Ok(*entry);
         }
+        let entry = self.model.virtual_interfaces[interface].methods[method].clone();
+        let mut implementations = Vec::with_capacity(entry.instances.len());
+        let mut representative = None;
+        for implementation in &entry.instances {
+            let Some(implementation) = *implementation else {
+                implementations.push(None);
+                continue;
+            };
+            let (&concrete, _) = self
+                .func_meta
+                .iter()
+                .find(|(_, meta)| meta.ir == implementation)
+                .ok_or_else(|| {
+                    format!(
+                        "virtual interface method `{}` has no function metadata",
+                        entry.name
+                    )
+                })?;
+            let inst = self.callable_environment(concrete).ok_or_else(|| {
+                format!(
+                    "virtual interface method `{}` has no concrete interface environment",
+                    entry.name
+                )
+            })?;
+            let bindings = self.record_ref_rebind(concrete, &positions)?;
+            let index = self.task_specialization(concrete, inst, Vec::new(), bindings)?;
+            if implementation == entry.function {
+                representative = Some(index);
+            }
+            implementations.push(Some(index));
+        }
+        let representative = representative.ok_or_else(|| {
+            format!(
+                "virtual interface method `{}` has no representative implementation",
+                entry.name
+            )
+        })?;
+        let descriptor = &mut self.model.virtual_interfaces[interface];
+        let bound = descriptor.methods.len();
+        for (instance, implementation) in descriptor.instances.iter_mut().zip(&implementations) {
+            instance.methods.push(*implementation);
+        }
+        descriptor
+            .methods
+            .push(crate::sim::ir::IrVirtualInterfaceMethod {
+                name: entry.name,
+                function: representative,
+                instances: implementations,
+            });
+        self.record_ref_interface_methods
+            .insert(key, (bound, representative));
+        Ok((bound, representative))
+    }
+
+    /// The formal position, record and prefix of each binding of a call of
+    /// `function`.
+    fn record_ref_positions(
+        &self,
+        function: NodeId,
+        records: &[RecordRefBinding],
+    ) -> Result<RecordRefPositions, String> {
+        let formals = self.func_formals(function);
+        records
+            .iter()
+            .map(|binding| {
+                let position = formals
+                    .iter()
+                    .position(|(formal, _)| *formal == binding.formal)
+                    .ok_or_else(|| {
+                        format!(
+                            "record `ref` formal `{}` is not a formal of `{}`",
+                            self.node(binding.formal).name,
+                            self.node(function).name
+                        )
+                    })?;
+                Ok((position, binding.root, binding.prefix.clone()))
+            })
+            .collect()
+    }
+
+    /// `positions` as bindings of the formals of `function`.
+    fn record_ref_rebind(
+        &self,
+        function: NodeId,
+        positions: &RecordRefPositions,
+    ) -> Result<Vec<RecordRefBinding>, String> {
+        let formals = self.func_formals(function);
+        positions
+            .iter()
+            .map(|(position, root, prefix)| {
+                let (formal, _) = formals.get(*position).ok_or_else(|| {
+                    format!(
+                        "override `{}` has no formal {position}",
+                        self.node(function).name
+                    )
+                })?;
+                Ok(RecordRefBinding {
+                    formal: *formal,
+                    root: *root,
+                    prefix: prefix.clone(),
+                })
+            })
+            .collect()
     }
 
     /// A specialization of every override of a virtual method for one set
@@ -441,23 +545,7 @@ impl Codegen<'_> {
             .method_virtual_slots
             .get(&function)
             .ok_or_else(|| format!("method `{}` has no virtual slot", self.node(function).name))?;
-        let formals = self.func_formals(function);
-        let positions = records
-            .iter()
-            .map(|binding| {
-                let position = formals
-                    .iter()
-                    .position(|(formal, _)| *formal == binding.formal)
-                    .ok_or_else(|| {
-                        format!(
-                            "record `ref` formal `{}` is not a formal of `{}`",
-                            self.node(binding.formal).name,
-                            self.node(function).name
-                        )
-                    })?;
-                Ok((position, binding.root, binding.prefix.clone()))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let positions = self.record_ref_positions(function, &records)?;
         if let Some(family) = self.record_ref_families.get(&(slot, positions.clone())) {
             if let Some(index) = family.get(&function) {
                 return Ok(*index);
@@ -473,23 +561,7 @@ impl Codegen<'_> {
                 {
                     continue;
                 }
-                let overrides = self.func_formals(method);
-                let bindings = positions
-                    .iter()
-                    .map(|(position, root, prefix)| {
-                        let (formal, _) = overrides.get(*position).ok_or_else(|| {
-                            format!(
-                                "override `{}` has no formal {position}",
-                                self.node(method).name
-                            )
-                        })?;
-                        Ok(RecordRefBinding {
-                            formal: *formal,
-                            root: *root,
-                            prefix: prefix.clone(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
+                let bindings = self.record_ref_rebind(method, &positions)?;
                 let index = self.task_specialization(method, class, Vec::new(), bindings)?;
                 self.model.funcs[index].virtual_slot = Some(family_slot);
                 family.insert(method, index);

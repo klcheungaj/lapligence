@@ -113,7 +113,7 @@ impl<'a> Codegen<'a> {
         // Only the outermost call may be a container-result call whose
         // storage the caller appends; nested argument calls may not.
         let container_result_call = std::mem::take(&mut self.container_result_call);
-        let virtual_call_info = self.virtual_interface_method_info(h)?;
+        let mut virtual_call_info = self.virtual_interface_method_info(h)?;
         let (ft, callee_inst) = if let Some((_, _, ft, callee_inst, _)) = virtual_call_info {
             (ft, callee_inst)
         } else {
@@ -142,15 +142,16 @@ impl<'a> Codegen<'a> {
         let formals = meta.formals.clone();
         let bound = self.bind_call_args(self.inst, &formals, args)?;
         let dispatch = self.record_ref_dispatch(h, virtual_call_info.is_some());
-        let function = self.record_ref_callee(
-            scope_path,
-            ft,
-            callee_inst,
-            &formals,
-            &bound,
-            meta.ir,
-            dispatch,
-        )?;
+        let records = self.record_ref_bindings(&formals, &bound);
+        let function = match virtual_call_info.as_mut().filter(|_| !records.is_empty()) {
+            Some((interface, method, ..)) => {
+                let (bound_method, function) =
+                    self.record_ref_interface_method(*interface, *method, ft, &records)?;
+                *method = bound_method;
+                function
+            }
+            None => self.record_ref_callee(ft, callee_inst, &formals, &bound, meta.ir, dispatch)?,
+        };
         // `ret` is `None` for void functions; when the frontend accepts one as
         // a value (for example `out <= vf(4'd2);`), emit the call for its
         // side effects and yields all-X.

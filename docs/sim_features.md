@@ -560,7 +560,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | --- | --- | --- | --- | --- | --- | --- |
 | Module/static variable | yes, member defaults applied; initializer from a pattern, copy, call result or conditional | yes | yes, including nested records and member arrays | constant, run-time index (at most 4,096 elements) and packed-member bit/part select: yes | `ref`/`const ref` actual, whole or a constant member/index selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); run-time-indexed member: rejected | model close |
 | Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 4,096 elements): yes | `ref`/`const ref` actual, whole record and members: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | scope exit, cancel, close |
-| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal: a whole subroutine record passes by address, a module, static or block record (or a constant selection of one) binds a specialization of the callee: yes; fixed-array or container element actual, and members of one: a retained reference shares the element ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); class methods take them too, a virtual call through one family per binding; a virtual-interface method: rejected | scope exit, cancel, close |
+| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal: a whole subroutine record passes by address, a module, static or block record (or a constant selection of one) binds a specialization of the callee: yes; fixed-array or container element actual, and members of one: a retained reference shares the element ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); class methods take them too, a virtual call through one family per binding; a virtual-interface method through one dispatch entry per binding | scope exit, cancel, close |
 | NBA target or source | module record and static subroutine root: yes (untimed and `#delay`), members of fixed-array elements and container members too; automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
 | Unpacked array element, slice | fixed arrays of any dimension: yes, elements and rows ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); row equality and rows as `ref` actuals: rejected | yes, elements, rows, constant/indexed slices, patterns, conditional merges, untimed and `#delay` NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
@@ -1777,9 +1777,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   A run-time record element of a module record binds through one
   specialization per element under a decision tree in statement calls
   ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  Virtual-interface methods take these actuals through a bound dispatch entry
+  ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   Records with container members as elements, such elements in calls inside
-  expressions, virtual-interface method formals and reference-formal NBAs
-  remain restricted. Fixed packed scanner destinations retain checked selected
+  expressions and reference-formal NBAs remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;
   packed bit/part actuals rejected by the frontend are not legalized by internal

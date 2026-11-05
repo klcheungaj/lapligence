@@ -156,7 +156,7 @@ impl Codegen<'_> {
             let bound = self.bind_call_args(self.inst, &formals, &actuals)?;
             let dispatch = self.record_ref_dispatch(node, false);
             let function =
-                self.record_ref_callee(path, ft, callee_inst, &formals, &bound, meta.ir, dispatch)?;
+                self.record_ref_callee(ft, callee_inst, &formals, &bound, meta.ir, dispatch)?;
             let mut arg_irs = vec![None; formals.len()];
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();

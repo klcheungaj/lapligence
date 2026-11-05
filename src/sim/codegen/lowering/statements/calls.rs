@@ -91,7 +91,7 @@ impl EmitCtx<'_, '_> {
         } else {
             None
         };
-        let call_receiver = LoweredCallReceiver {
+        let mut call_receiver = LoweredCallReceiver {
             class: receiver,
             virtual_interface: virtual_call,
         };
@@ -104,8 +104,6 @@ impl EmitCtx<'_, '_> {
         // formals select a specialization (`record_refs`).
         let records = self.cg.record_ref_bindings(&formals, &bound);
         let dispatch = self.cg.record_ref_dispatch(h, virtual_call_info.is_some());
-        self.cg
-            .reject_interface_record_refs(&self.path, ft, &records, dispatch)?;
         if let Some(select) = self.cg.record_ref_select(&self.path, &formals, &bound)? {
             let waits = match dispatch {
                 RecordRefDispatch::Virtual => {
@@ -129,6 +127,17 @@ impl EmitCtx<'_, '_> {
                     );
             }
         }
+        if let Some(call) = call_receiver
+            .virtual_interface
+            .as_mut()
+            .filter(|_| !records.is_empty())
+        {
+            let (method, function) =
+                self.cg
+                    .record_ref_interface_method(call.interface, call.method, ft, &records)?;
+            call.method = method;
+            specialized = Some(function);
+        }
         if specialized.is_none() && !records.is_empty() {
             let template = self
                 .cg
@@ -137,7 +146,6 @@ impl EmitCtx<'_, '_> {
                 .map(|meta| meta.ir)
                 .ok_or_else(|| format!("task `{name}` has no C name"))?;
             specialized = Some(self.cg.record_ref_callee(
-                &self.path,
                 ft,
                 callee_inst,
                 &formals,

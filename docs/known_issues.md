@@ -570,11 +570,7 @@ container element or subroutine record, and a run-time-indexed record element
 of a module, static or block record bound by a call in an expression, below a
 constant index (`o.m[1].a[k]`), or among more than 256 elements or combinations
 (a statement call lowers once per element, `tr(o.e[i])`; a task that waits on
-the formal stops the run if the index selects no element), and as the actual of
-a native record `ref` formal of a
-virtual-interface method, any module, static or block record (whole subroutine records, array elements and module, static
-and block records or constant selections of them bind, class methods
-included); an event control on a member
+the formal stops the run if the index selects no element); an event control on a member
 of such a formal when the actual is a subroutine record (a generic lowering
 diagnostic); a `queue` of native records as a member of a module record element
 (the element has no type descriptor); sub-record, member-array or handle selects of a native call
