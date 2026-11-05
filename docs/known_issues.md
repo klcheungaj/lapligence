@@ -1463,13 +1463,6 @@ Four neighbouring forms still reject with a diagnostic at the call:
 - **A `$strobe` helper that prints** (`$display` inside the function): it has
   output effects, which the private evaluator refuses; about a day.
 
-A `$monitor` compares every printed argument, `$time` included, once one of its
-reads changes. When a read is a whole array and the change leaves the printed
-value alone (`$monitor("%0t %0d", $time, f(arr[1:2]))`, then `arr[0] = 5`), the
-report repeats with the new time, where 21.2.3 excludes `$time` from the trigger.
-Without a time argument the value comparison holds it back. The fix is a per-
-argument mask in the comparison; about half a day.
-
 `$finish` also drops the reports still pending in its own slot
 ([S25-D5](lrm_decisions.md)); a `$strobe` in a `final` block rejects because no
 Postponed region runs after finals.

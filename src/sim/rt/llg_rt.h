@@ -532,6 +532,9 @@ typedef struct {
 // at every settled time slot because an argument reads through a class or
 // virtual-interface handle. Other kinds are llg_fmt_kind values.
 #define LLG_MONITOR_READ_POLL 100
+// A trigger entry whose `ptr` holds the index of a displayed argument that
+// only reads simulation time: it prints but triggers no report (SV 21.2.3).
+#define LLG_MONITOR_TIME_ARG 101
 
 // ── Collapsed inout nets ──────────────────────────────────────────────────────
 //

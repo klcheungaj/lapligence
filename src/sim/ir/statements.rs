@@ -990,6 +990,9 @@ pub enum IrStmt {
         /// virtual-interface handle (or a synchronization object), which no
         /// fixed `reads` entry can name: the monitor re-evaluates every slot.
         poll: bool,
+        /// Arguments that only read `$time`, `$stime` or `$realtime`: they
+        /// print but do not trigger a report (SV 21.2.3).
+        time_args: Box<[u32]>,
         default_radix: IrDisplayRadix,
         /// HDL hierarchy used by `%m`; never a generated C identifier.
         scope: String,

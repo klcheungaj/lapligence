@@ -582,6 +582,7 @@ impl Frame<'_, '_> {
             n_args,
             reads,
             poll,
+            time_args,
             scope,
             descriptor,
             ..
@@ -686,6 +687,11 @@ impl Frame<'_, '_> {
             if *poll {
                 pointers.push("{ LLG_MONITOR_READ_POLL, NULL }".to_owned());
             }
+            pointers.extend(
+                time_args
+                    .iter()
+                    .map(|index| format!("{{ LLG_MONITOR_TIME_ARG, (void*)(uintptr_t){index}u }}")),
+            );
             let pointers_len = pointers.len();
             let pointer = if pointers.is_empty() {
                 "NULL".to_owned()

@@ -27,6 +27,13 @@ fn strobe_reports_settled_values_last_issued_first() {
 }
 
 #[test]
+fn time_arguments_print_but_never_trigger() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_025/monitor_time_args.out");
+    sim_cli::run_case(SUITE, "monitor_time_args", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "monitor_time_args", expected, &[], &[]);
+}
+
+#[test]
 fn scope_and_time_in_monitored_lists() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_025/scope_time.out");
     sim_cli::run_case(SUITE, "scope_time", expected, "", &[]);

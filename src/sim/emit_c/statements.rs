@@ -1159,6 +1159,7 @@ fn render_stmt_scoped(
             n_args,
             reads,
             poll,
+            time_args,
             scope,
             descriptor,
             ..
@@ -1184,6 +1185,9 @@ fn render_stmt_scoped(
                 if *poll {
                     read_entries.push("{ LLG_MONITOR_READ_POLL, NULL }".to_owned());
                 }
+                read_entries.extend(time_args.iter().map(|index| {
+                    format!("{{ LLG_MONITOR_TIME_ARG, (void*)(uintptr_t){index}u }}")
+                }));
                 let read_count = read_entries.len();
                 let read_ptrs = read_entries.join(", ");
                 let declaration = if read_ptrs.is_empty() {

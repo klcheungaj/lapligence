@@ -357,6 +357,12 @@ impl EmitCtx<'_, '_> {
                                     ) if pattern.reaches_class(&self.cg.model)
                                 )
                             }));
+                    let time_args = display_args
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, argument)| !strobe && display_reads_only_time(argument))
+                        .map(|(index, _)| index as u32)
+                        .collect();
                     return Ok(vec![IrStmt::MonitorSet {
                         strobe,
                         fmt,
@@ -364,6 +370,7 @@ impl EmitCtx<'_, '_> {
                         n_args: display_args.len(),
                         reads,
                         poll,
+                        time_args,
                         default_radix,
                         scope: self.format_scope(h),
                         descriptor: descriptor.map(Box::new),
@@ -836,5 +843,40 @@ impl EmitCtx<'_, '_> {
             }
             _ => Err(format!("unsupported system task {name} in `{}`", self.path)),
         }
+    }
+}
+
+/// Whether a displayed argument computes only from `$time`, `$stime` or
+/// `$realtime`, so it changes with nothing but simulation time.
+fn display_reads_only_time(argument: &crate::sim::ir::IrDisplayArg) -> bool {
+    use crate::sim::ir::IrDisplayArg;
+    let (IrDisplayArg::Packed(value) | IrDisplayArg::Real(value)) = argument else {
+        return false;
+    };
+    expression_reads_time(value) == Some(true)
+}
+
+/// `Some(true)` for an expression of constants and at least one time
+/// function, `Some(false)` for constants alone, `None` for anything else.
+fn expression_reads_time(expression: &crate::sim::ir::IrExpr) -> Option<bool> {
+    use crate::sim::ir::{IrExprKind, IrSysFunc};
+    match &expression.kind {
+        IrExprKind::Const(_) => Some(false),
+        IrExprKind::SysFunc(function) => matches!(
+            **function,
+            IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. }
+        )
+        .then_some(true),
+        IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
+            Some(expression_reads_time(a)? | expression_reads_time(b)?)
+        }
+        IrExprKind::Un { a, .. }
+        | IrExprKind::RealUn { a, .. }
+        | IrExprKind::CastToReal { a, .. }
+        | IrExprKind::CastToPacked { a }
+        | IrExprKind::Resize { a }
+        | IrExprKind::Convert { a }
+        | IrExprKind::ToTwoState { a } => expression_reads_time(a),
+        _ => None,
     }
 }

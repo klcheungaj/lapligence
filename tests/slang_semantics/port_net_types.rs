@@ -187,10 +187,7 @@ fn port_net_type_delay_selection_prefers_the_dominating_declaration() {
                 .count(),
             4
         );
-        assert_eq!(
-            groups.iter().filter(|net| !net.propagation_enabled).count(),
-            0
-        );
+        assert!(groups.iter().all(|net| net.delays != [0, 0, 0]));
     }
 }
 

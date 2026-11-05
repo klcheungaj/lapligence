@@ -206,6 +206,7 @@ fn typed_strobe_callback_observes_the_nba_value() {
             n_args: 1,
             reads: vec![],
             poll: false,
+            time_args: Default::default(),
             default_radix: IrDisplayRadix::Decimal,
             scope: "regression".to_owned(),
             descriptor: None,
