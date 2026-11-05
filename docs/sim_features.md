@@ -2246,7 +2246,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `function`) and named events (`$var event`, one change per triggering time
   step); `$dumpfile` takes a literal or computed name. Strings, handles,
   dynamic containers, event arrays, block-level unpacked arrays and automatic
-  variables are not dumped and naming one in `$dumpvars` is an error.
+  variables are not dumped and naming one in `$dumpvars` is an error. A block,
+  task or function may name a `$dumpvars` scope, the depth counting from it.
   `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
   `$dumpflush` follow the dump state; an output error is reported, stops the
   dump and fails the run (decisions S47-D1..D13; [SIM-047
