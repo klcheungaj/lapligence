@@ -8608,7 +8608,10 @@ private:
       kind = LLG_SLANG_LEXICAL_IDENTIFIER;
     else if (parsing::LexerFacts::isKeyword(token.kind))
       kind = LLG_SLANG_LEXICAL_KEYWORD;
-    else if (token.kind == parsing::TokenKind::StringLiteral)
+    else if (token.kind == parsing::TokenKind::StringLiteral ||
+             // The operand of `include, `"file"` or `<file>` with its
+             // delimiters (IEEE 1800-2009 22.4): a path, not an operator.
+             token.kind == parsing::TokenKind::IncludeFileName)
       kind = LLG_SLANG_LEXICAL_STRING;
     else if (token.kind == parsing::TokenKind::IntegerLiteral ||
              token.kind == parsing::TokenKind::IntegerBase ||

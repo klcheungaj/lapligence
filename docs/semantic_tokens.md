@@ -103,7 +103,11 @@ positional words and bindings come from the capture in
   leaves it uncolored.
 - **ST-23** Strings are `string`, numbers `number`, operators and
   punctuation (also `->`) `operator`. Comments and attribute names get no
-  token.
+  token. The path operand of `` `include `` (22.4) is `string` with no
+  modifiers in both forms, `` "file" `` and `` <file> ``: one token over the
+  whole operand, delimiters included. A macro operand
+  (`` `include `PATH ``) has only the use-site token (ST-21), and the string
+  written in the `` `define `` body keeps its `string` type (ST-64).
 - **ST-28** The names of an import or export item (26.3, 26.6) are
   references, never declarations or document symbols: `pk` in `import pk::*`
   and `import pk::x` is `namespace`, and `x` has the type of what it imports
