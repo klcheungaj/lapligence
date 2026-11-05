@@ -726,8 +726,9 @@ impl Codegen<'_> {
         nba: bool,
     ) -> Result<IrStmt, String> {
         let mut statements = Vec::new();
+        let hoist = select.hoist || self.native_select_at_issue;
         let (index, width) =
-            self.member_select_index(path, select.index, select.hoist, &mut statements)?;
+            self.member_select_index(path, select.index, hoist, &mut statements)?;
         // Every element and the default fill one temporary, which then moves
         // to the target, so a queued write has one source.
         let temporary = self.native_temporary(node)?;
@@ -766,8 +767,9 @@ impl Codegen<'_> {
             IrStmt::NativeValueDeclare(temporary),
             self.native_assign_into(path, &value, &descriptor, rhs, false)?,
         ];
+        let hoist = select.hoist || self.native_select_at_issue;
         let (index, width) =
-            self.member_select_index(path, select.index, select.hoist, &mut statements)?;
+            self.member_select_index(path, select.index, hoist, &mut statements)?;
         let mut branches = Vec::with_capacity(select.elements.len());
         for (declared, element) in &select.elements {
             let copy = self.native_transfer(path, element, &value, nba)?;
@@ -816,16 +818,18 @@ impl Codegen<'_> {
             NativeSelectForm::Located {
                 root: ItemRoot::Element(selection),
                 ..
-            } => Some(if selection.side_effect_free(self) {
-                self.lower_element_slot(path, selection)?
-            } else {
-                self.element_nba_slot(path, selection, prelude)?
-            }),
+            } => Some(
+                if selection.side_effect_free(self) && !self.native_select_at_issue {
+                    self.lower_element_slot(path, selection)?
+                } else {
+                    self.element_nba_slot(path, selection, prelude)?
+                },
+            ),
             _ => None,
         };
         let mut indices = Vec::with_capacity(select.indices.len());
         for node in &select.indices {
-            let hoist = !self.side_effect_free(*node);
+            let hoist = self.native_select_at_issue || !self.side_effect_free(*node);
             let mut index = self.lower_container_index(path, *node)?;
             if matches!(select.form, NativeSelectForm::Leaves(_)) {
                 let width = index.width.max(32) + 1;
@@ -1328,14 +1332,22 @@ impl Codegen<'_> {
         let sequence = self.native_copy_sequence;
         self.native_copy_sequence += 1;
         let mut statements = Vec::new();
+        // An event-controlled write evaluates its selectors first.
+        let early = self
+            .native_select_at_issue
+            .then(|| self.lower_select_indices(path, select, &mut statements))
+            .transpose()?;
         let value = self.native_leaf_source(path, ty, rhs)?;
         let value = capture_leaf(
             value,
             format!("_llg_member_select_{sequence}"),
             &mut statements,
         );
-        // The value is evaluated before a hoisted index.
-        let lowered = self.lower_select_indices(path, select, &mut statements)?;
+        // Otherwise the value is evaluated before a hoisted index.
+        let lowered = match early {
+            Some(lowered) => lowered,
+            None => self.lower_select_indices(path, select, &mut statements)?,
+        };
         self.select_store(path, select, &lowered, value, nba, &mut statements)?;
         Ok(IrStmt::Block(statements))
     }

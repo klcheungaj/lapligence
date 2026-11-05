@@ -170,6 +170,12 @@ fn assignment_operators_evaluate_run_time_selects_once() {
 }
 
 #[test]
+fn record_targets_take_event_controlled_nonblocking_writes() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/record_event_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_event_nba", expected, &[], &[]);
+}
+
+#[test]
 fn record_element_members_take_nonblocking_writes() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/record_element_member_nba.out");
@@ -501,8 +507,8 @@ fn container_elements_hold_records_with_container_members() {
     );
     sim_cli::reject_case(
         SUITE,
-        "bad_record_element_event_nba",
-        "an event-controlled nonblocking assignment to a member of a record element in `tb` is not supported; use a delay or assign the whole element",
+        "bad_record_container_event_nba",
+        "an event-controlled nonblocking assignment of a queue, dynamic or associative member in `tb` is not supported; use a delay or an event control before the statement",
     );
     sim_cli::reject_case(
         SUITE,

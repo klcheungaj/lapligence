@@ -51,7 +51,12 @@ Blocking delay and event intra-assignment timing share
 element's value) is captured before the wait and the destination store runs
 after it. Event-controlled string/handle NBAs copy the value at issue into a
 detached process frame (`lower_native_event_nba`) that waits through
-`ProcessEventPlan` and then queues the native NBA.
+`ProcessEventPlan` and then queues the native NBA. Targets that need a location
+at run time (`lower_located_event_nba`: record element members, whole records,
+members selected by index) go the same way: selectors, then the right side, then
+the repeat count are evaluated at issue into captured locals, and the waiter
+lowers the ordinary nonblocking write against those locals. Queue, dynamic and
+associative members of records are rejected there with an explicit diagnostic.
 
 Sequential predicates evaluate clauses once, left-to-right, continuing only on
 definite true. Preserve explicit branches/pattern bindings and short-circuit

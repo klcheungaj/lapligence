@@ -5,8 +5,74 @@
 //! retimed. Every RHS leaf is still evaluated once, at issue.
 
 use super::*;
+use std::collections::HashSet;
 
 impl EmitCtx<'_, '_> {
+    /// Whether a nonblocking event-controlled target lies inside a native
+    /// value or a record element, or is a whole native record: a queued write
+    /// there is a located one, or one write per leaf, rather than one store.
+    pub(super) fn located_event_nba(&self, lhs: NodeId) -> bool {
+        let member = self.cg.p30_unwrap_cast(lhs);
+        self.cg.names_element_member(member)
+            || self.cg.is_container_record(member)
+            || matches!(
+                self.cg.native_member_select(&self.path, member),
+                Ok(Some(_))
+            )
+            || matches!(
+                self.cg.native_record_select(&self.path, member),
+                Ok(Some(_))
+            )
+            || self.cg.persistent_native_target(member)
+            || (self.cg.native_record_target(member) && !self.native_nba_target(lhs))
+    }
+
+    /// `target <= @(e) value` over a located target. The untimed write is
+    /// lowered with its selectors as locals and split: everything a queued
+    /// write needs is evaluated at issue, in selector, value, repeat count
+    /// order, and copied into the frame of a detached process that waits for
+    /// the control and then issues the same writes (SV 9.4.5, 10.4.2).
+    pub(super) fn lower_located_event_nba(
+        &mut self,
+        h: NodeId,
+        lhs: NodeId,
+        rhs: NodeId,
+        specs: &[EventSpec],
+        count: Option<IrExpr>,
+    ) -> Result<Vec<IrStmt>, String> {
+        self.cg.native_select_at_issue = true;
+        let statement =
+            self.lower_assignment_operands(lhs, rhs, false, Operation::Assignment, false);
+        self.cg.native_select_at_issue = false;
+        let frame = self.cg.new_frame_id()?;
+        let mut split = EventNbaSplit {
+            ctx: self,
+            frame,
+            prefix: format!("_ne{}", h.0),
+            sequence: 0,
+            before: Vec::new(),
+            captures: Vec::new(),
+            captured: HashSet::new(),
+        };
+        let mut action = Vec::new();
+        split.statement(statement?, &mut action)?;
+        let EventNbaSplit {
+            mut before,
+            captures,
+            ..
+        } = split;
+        before.push(self.spawn_process_evaluated_action(
+            h,
+            specs,
+            count,
+            frame,
+            captures,
+            action,
+            "event_native_nba",
+        )?);
+        Ok(vec![IrStmt::Block(before)])
+    }
+
     /// Lower `record = #d value` or `record <= #d value` for a native record
     /// target. The nonblocking form queues every leaf with the same delay;
     /// the blocking form captures every leaf before suspending and performs
@@ -66,6 +132,260 @@ impl EmitCtx<'_, '_> {
         before.extend(wait);
         before.extend(after);
         Ok(vec![IrStmt::Block(before)])
+    }
+}
+
+/// Whether `statement` queues a nonblocking write.
+fn queues_write(statement: &IrStmt) -> bool {
+    match statement.unlocated() {
+        IrStmt::Block(statements) => statements.iter().any(queues_write),
+        IrStmt::If { then_, els, .. } => {
+            then_.iter().any(queues_write)
+                || els
+                    .as_ref()
+                    .is_some_and(|statements| statements.iter().any(queues_write))
+        }
+        IrStmt::Assign { nba, .. } => *nba,
+        IrStmt::DelayedAssign { .. }
+        | IrStmt::DelayedStringAssign { .. }
+        | IrStmt::DelayedChandleAssign { .. } => true,
+        IrStmt::Container(operation) => matches!(
+            **operation,
+            IrContainerStmt::NbaLocate { .. } | IrContainerStmt::NbaLocateEnd
+        ),
+        _ => false,
+    }
+}
+
+/// Splits a lowered untimed nonblocking write into what runs at issue and
+/// what the detached process runs after the event control.
+struct EventNbaSplit<'e, 'c, 'a> {
+    ctx: &'e EmitCtx<'c, 'a>,
+    frame: FrameId,
+    prefix: String,
+    sequence: usize,
+    before: Vec<IrStmt>,
+    captures: Vec<IrCapture>,
+    /// Locals with a copy in the process frame. Any other local read names
+    /// issue-time storage, such as a leaf of a temporary.
+    captured: HashSet<String>,
+}
+
+impl EventNbaSplit<'_, '_, '_> {
+    fn fresh(&mut self) -> String {
+        self.sequence += 1;
+        format!("{}_{}", self.prefix, self.sequence)
+    }
+
+    fn storage(&self, kind: StorageKind) -> StorageRef {
+        StorageRef::new(
+            self.frame,
+            self.captures.len() as u32,
+            StorageLifetime::Automatic,
+            StorageOwnership::Owned,
+        )
+        .with_kind(kind)
+    }
+
+    /// Declare the packed or real local `name` at issue and name its copy in
+    /// the process frame the same way.
+    fn capture_value(&mut self, name: &str, width: u32, signed: bool) {
+        self.captured.insert(name.to_owned());
+        let kind = if width == 0 {
+            StorageKind::Real
+        } else {
+            StorageKind::Packed
+        };
+        let capture = IrCapture::new(
+            self.storage(kind),
+            IrExpr::new(IrExprKind::LocalRead(name.to_owned()), width, signed, None),
+        )
+        .with_alias(Some(name.to_owned()));
+        self.captures.push(capture);
+    }
+
+    fn capture_string(&mut self, name: &str) {
+        self.captured.insert(name.to_owned());
+        let capture = IrCapture::new(
+            self.storage(StorageKind::String),
+            IrExpr::new(IrExprKind::LocalRead(name.to_owned()), 0, false, None),
+        );
+        self.captures.push(capture);
+    }
+
+    fn capture_handle(&mut self, name: &str) {
+        self.captured.insert(name.to_owned());
+        let capture = IrCapture::new(
+            self.storage(StorageKind::Opaque),
+            IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
+                    IrChandleExpr::LocalRead(name.to_owned()),
+                ))),
+                1,
+                false,
+                None,
+            ),
+        );
+        self.captures.push(capture);
+    }
+
+    /// `value` as a read of a local evaluated at issue.
+    fn issue_value(&mut self, value: IrExpr) -> IrExpr {
+        if matches!(value.kind(), IrExprKind::LocalRead(name) if self.captured.contains(name)) {
+            return value;
+        }
+        let name = self.fresh();
+        let (width, signed) = (value.width, value.signed);
+        self.before.push(IrStmt::DeclLocal {
+            name: name.clone(),
+            width,
+            signed,
+            two_state: false,
+            init: Some(Box::new(value)),
+        });
+        self.capture_value(&name, width, signed);
+        IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
+    }
+
+    fn issue_lhs(&mut self, lhs: IrLhs) -> Result<IrLhs, String> {
+        self.ctx
+            .capture_event_assignment_lhs(self.frame, &mut self.captures, lhs)
+    }
+
+    fn statement(&mut self, statement: IrStmt, action: &mut Vec<IrStmt>) -> Result<(), String> {
+        match statement {
+            IrStmt::Block(statements) => {
+                for statement in statements {
+                    self.statement(statement, action)?;
+                }
+            }
+            IrStmt::Located { statement, .. } => self.statement(*statement, action)?,
+            IrStmt::If {
+                cond,
+                then_,
+                els,
+                check,
+            } if then_.iter().any(queues_write)
+                || els
+                    .as_ref()
+                    .is_some_and(|statements| statements.iter().any(queues_write)) =>
+            {
+                let mut then_action = Vec::new();
+                for statement in then_ {
+                    self.statement(statement, &mut then_action)?;
+                }
+                let mut else_action = Vec::new();
+                for statement in els.into_iter().flatten() {
+                    self.statement(statement, &mut else_action)?;
+                }
+                action.push(IrStmt::If {
+                    cond,
+                    then_: then_action,
+                    els: (!else_action.is_empty()).then_some(else_action),
+                    check,
+                });
+            }
+            IrStmt::Assign {
+                lhs,
+                rhs,
+                nba: true,
+            }
+            | IrStmt::DelayedAssign { lhs, rhs, .. } => {
+                let lhs = self.issue_lhs(lhs)?;
+                let rhs = self.issue_value(rhs);
+                action.push(IrStmt::Assign {
+                    lhs,
+                    rhs,
+                    nba: true,
+                });
+            }
+            IrStmt::DelayedStringAssign { target, rhs, ticks } => {
+                let rhs = if matches!(&rhs, IrStringExpr::LocalRead(name) if self.captured.contains(name))
+                {
+                    rhs
+                } else {
+                    let name = self.fresh();
+                    self.before.push(IrStmt::DeclString {
+                        name: name.clone(),
+                        init: Some(rhs),
+                    });
+                    self.capture_string(&name);
+                    IrStringExpr::LocalRead(name)
+                };
+                action.push(IrStmt::DelayedStringAssign { target, rhs, ticks });
+            }
+            IrStmt::DelayedChandleAssign { target, rhs, ticks } => {
+                let rhs = if matches!(&rhs, IrChandleExpr::LocalRead(name) if self.captured.contains(name))
+                {
+                    rhs
+                } else {
+                    let name = self.fresh();
+                    self.before
+                        .push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                            name.clone(),
+                            Some(rhs),
+                        ))));
+                    self.capture_handle(&name);
+                    IrChandleExpr::LocalRead(name)
+                };
+                action.push(IrStmt::DelayedChandleAssign { target, rhs, ticks });
+            }
+            IrStmt::Container(operation)
+                if matches!(
+                    *operation,
+                    IrContainerStmt::NbaLocate { .. } | IrContainerStmt::NbaLocateEnd
+                ) =>
+            {
+                action.push(IrStmt::Container(operation));
+            }
+            IrStmt::Container(operation)
+                if matches!(*operation, IrContainerStmt::ContainerNonblocking { .. }) =>
+            {
+                return Err(format!(
+                    "an event-controlled nonblocking assignment of a queue, dynamic or associative member in `{}` is not supported; use a delay or an event control before the statement",
+                    self.ctx.path
+                ));
+            }
+            IrStmt::DeclLocal {
+                name,
+                width,
+                signed,
+                two_state,
+                init,
+            } => {
+                self.before.push(IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width,
+                    signed,
+                    two_state,
+                    init,
+                });
+                self.capture_value(&name, width, signed);
+            }
+            IrStmt::DeclString { name, init } => {
+                self.before.push(IrStmt::DeclString {
+                    name: name.clone(),
+                    init,
+                });
+                self.capture_string(&name);
+            }
+            IrStmt::Object(operation)
+                if matches!(*operation, IrObjectStmt::ChandleDeclareLocal(..)) =>
+            {
+                let IrObjectStmt::ChandleDeclareLocal(name, init) = *operation else {
+                    unreachable!("guard checked the statement");
+                };
+                self.before
+                    .push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                        name.clone(),
+                        init,
+                    ))));
+                self.capture_handle(&name);
+            }
+            // Temporaries and the calls that produce sources run at issue.
+            statement => self.before.push(statement),
+        }
+        Ok(())
     }
 }
 

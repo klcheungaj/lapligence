@@ -5077,6 +5077,22 @@ fn s07_d5_whole_container_nba() {
 }
 
 #[test]
+fn s07_d6_record_event_nba() {
+    run_decision(
+        "S07-D6_record_event_nba",
+        include_str!("fixtures/sim/lrm_decisions/S07-D6_record_event_nba.out"),
+    );
+}
+
+#[test]
+fn s14_d7_event_nba_order() {
+    run_decision(
+        "S14-D7_event_nba_order",
+        include_str!("fixtures/sim/lrm_decisions/S14-D7_event_nba_order.out"),
+    );
+}
+
+#[test]
 fn s07_d4_record_element_member_nba() {
     run_decision(
         "S07-D4_record_element_member_nba",

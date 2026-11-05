@@ -549,11 +549,10 @@ assignment, call or system-task statement (a condition or loop header that
 pops it), or named as the target of a timing-controlled assignment or a
 `ref` actual (reads in conditions, loop headers,
 `foreach`, initializers and timed assignment values copy the member at each
-evaluation); an event-controlled nonblocking write of a member of a
-fixed-array record element (the detached event assignment does not carry the
-position captured at issue; untimed and `#delay` writes work); an event-controlled nonblocking write of a whole
-module native record (`n <= @(e) m`) or through a run-time index
-(`m.e[k].s <= @(e) t`); instance class properties of a record type with container
+evaluation); an event-controlled nonblocking write of a queue, dynamic or
+associative member, or of a record that has one (the detached process has no
+frame storage for the container copied at issue; untimed and `#delay` writes
+work); instance class properties of a record type with container
 members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
 properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
