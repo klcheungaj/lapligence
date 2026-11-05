@@ -1253,7 +1253,7 @@ element-wise expressions run as cell loops.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_005/neg_real_queue_ref.sv`.
+`x = (f() == g()) ? 1 : 0;` with `f` and `g` returning real arrays.
 
 ## Streaming `with` targets outside the direct assignment path
 
