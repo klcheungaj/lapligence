@@ -94,6 +94,9 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
     free(wake);
     deferred_trigger_event(ev);
     if (LLG_CO_UNLIKELY(ev->vpi_watches) && value_watch_hook) value_watch_hook(ev);
+#ifdef LLG_WAVEFORM
+    llg_wave_changed_event(ev);
+#endif
 }
 
 static void event_trigger_object(llg_event_object_t* ev) {

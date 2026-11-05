@@ -934,6 +934,7 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
                         | NodeKind::Net { .. }
                         | NodeKind::Var { .. }
                         | NodeKind::Array { .. }
+                        | NodeKind::NamedEvent
                 ) || db.is_clocking_block(target)
                     || db.is_clocking_var(target))
         }

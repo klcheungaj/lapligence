@@ -845,31 +845,34 @@ unsupported targets explicitly (decision S47-D9).
 
 ### Symptom
 
-`$dumpvars` leaves out static variables declared in named blocks, tasks and
-functions, and named events, although 1364/1800 VCD can describe them (scope
-types `begin`/`task`/`function`, var type `event`); naming one of these
-variables in `$dumpvars` stops compilation with "has no VCD/FST
-representation". `$dumpfile` takes only a literal name, not a string
-variable. An FST file flushed by `$dumpflush` cannot be opened by GTKWave's
-reader until the run closes it.
+- `$dumpvars` naming a block, task or function as a scope (`$dumpvars(1,
+  tb.blk)`) stops in the frontend with "expected module or variable name".
+  Scope dumps of an enclosing instance include them, and their variables can
+  be named one by one; a formal cannot be named.
+- An unpacked structure variable declared in a block appears as one packed
+  vector, not as a scope of its members.
+- An unnamed block directly inside a task or function adds no
+  `unnamed$$_N` scope: its variables appear in the subroutine's scope.
+- An FST file flushed by `$dumpflush` cannot be opened by GTKWave's reader
+  until the run closes it.
 
 ### Cause
 
-Waveform registrations come only from model signals with an HDL name, record
-member signals and fixed arrays; subroutine and block statics are lowered
-without a waveform name, and events have no registered storage. libfst writes
-the hierarchy and block index at close.
+Slang's `$dumpvars` argument binding accepts only variables, nets and module
+instances. Block structures live in one flattened signal, and a registration
+names a whole signal. The owned DB parents variables of such an unnamed block
+to the subroutine. libfst writes the hierarchy and block index at close.
 
 ### Intended direction
 
-Give block and subroutine statics a waveform name with their scope type,
-register events as `event` variables written on trigger, and accept a string
-expression in `$dumpfile`. The FST behaviour follows the format.
+A tracked Slang patch admits block and subroutine symbols (about a quarter of
+a day); a registration with a bit range serves the flattened structures. The
+FST behaviour follows the format.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_047/reject_block_variable.sv`, and
-`flush_read.sv` with `FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
+`$dumpvars(1, tb.blk);` for a named block `blk`; `flush_read.sv` with
+`FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
 
 ## Random stream limits
 

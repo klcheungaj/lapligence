@@ -769,6 +769,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             suffix.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
         }
         IrStmt::WaveLimit(limit) => walk_expr_mut(limit, f),
+        IrStmt::WaveFileValue(path) => {
+            path.expressions_mut(&mut |expression| walk_expr_mut(expression, f))
+        }
         IrStmt::Call(call) => {
             walk_call_args_mut(&mut call.args, f);
             if let Some(receiver) = &mut call.receiver {

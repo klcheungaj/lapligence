@@ -171,6 +171,8 @@ pub(super) struct Frame<'a, 'm> {
     labels: Vec<HashMap<String, bool>>,
     temp_roots: Vec<Vec<bool>>,
     return_address: Option<String>,
+    /// `return` publishes through the ordinary store (a dumped static result).
+    return_publishes: bool,
     allow_calls: bool,
     read_only_callback: bool,
     /// A `$strobe`/`$monitor` evaluator, run only in the read-only Postponed
@@ -465,6 +467,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             labels: Vec::new(),
             temp_roots: Vec::new(),
             return_address: None,
+            return_publishes: false,
             allow_calls: true,
             read_only_callback: false,
             branch_formals: None,

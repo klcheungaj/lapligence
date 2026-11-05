@@ -1001,6 +1001,8 @@ pub enum IrStmt {
     MonitorEnable(bool),
     /// `$dumpfile("path")` — the literal HDL string, escaped by the backend.
     WaveFile(String),
+    /// `$dumpfile(expression)` — a file name computed at run time.
+    WaveFileValue(IrStringExpr),
     /// `$dumpvars(...)`; the depth and source-identity selection are captured
     /// before C emission so the runtime never has to infer HDL meaning from a
     /// generated identifier.
@@ -1125,6 +1127,55 @@ impl IrWaveDumpVars {
 
     pub fn names(&self) -> &[String] {
         &self.names
+    }
+}
+
+/// The scope kinds of a waveform name: one letter per scope component, in
+/// `llg_wave_register_scoped_*` spelling (`m` module or generate scope, `b`
+/// `begin` block, `k` `fork` block, `t` task, `f` function; `B` and `K` for
+/// unnamed blocks, whose generated names the writer does not escape).
+pub type IrWaveScopes = String;
+
+/// Which storage an [`IrWaveVariable`] names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrWaveStorage {
+    /// A model signal that has no [`crate::sim::ir::IrSignal::hdl_name`].
+    Signal(usize),
+    /// A model event; its synchronization object marks the change.
+    Event(usize),
+}
+
+/// A variable the waveform dumps beside the signals named by `hdl_name`:
+/// static block and subroutine storage and named events. A separate table
+/// keeps these out of the VPI catalog and of diagnostics, which read
+/// `hdl_name`, and costs nothing in a model without waveform dumping.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrWaveVariable {
+    pub(in crate::sim) storage: IrWaveStorage,
+    /// Hierarchy name in the [`IrWaveDumpVars`] encoding.
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) scopes: IrWaveScopes,
+}
+
+impl IrWaveVariable {
+    pub fn new(storage: IrWaveStorage, name: String, scopes: IrWaveScopes) -> Self {
+        Self {
+            storage,
+            name,
+            scopes,
+        }
+    }
+
+    pub fn storage(&self) -> IrWaveStorage {
+        self.storage
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn scopes(&self) -> &str {
+        &self.scopes
     }
 }
 

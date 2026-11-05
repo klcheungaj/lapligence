@@ -1229,6 +1229,9 @@ fn render_stmt_scoped(
                 c_string_literal(path)
             )
         }
+        IrStmt::WaveFileValue(_) => {
+            return Err("a computed $dumpfile name requires the structured owned emitter".to_owned())
+        }
         IrStmt::WaveDumpVars(selection) => {
             if selection.names().is_empty() {
                 format!(

@@ -1406,6 +1406,10 @@ fn collect_statement_expression_effects(
         | IrStmt::Repeat { count: rhs, .. }
         | IrStmt::WaitCond { cond: rhs, .. }
         | IrStmt::WaveLimit(rhs) => collect_expression_effects(ir, rhs, effects, visited_calls),
+        IrStmt::WaveFileValue(path) => {
+            effects.push(ExecutionEffect::RuntimeService);
+            collect_string_effects(ir, path, effects, visited_calls);
+        }
         IrStmt::ImmediateAssertion { condition, .. } => {
             collect_expression_effects(ir, condition, effects, visited_calls)
         }

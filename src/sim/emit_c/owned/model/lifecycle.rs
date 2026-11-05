@@ -8,6 +8,9 @@ use std::collections::HashMap;
 enum StartupKind {
     WaveSv4,
     WaveReal,
+    WaveScopedSv4,
+    WaveScopedReal,
+    WaveEvent,
     Spawn,
     ProgramSpawn,
     InstanceSpawn,
@@ -24,6 +27,9 @@ impl StartupKind {
         match self {
             Self::WaveSv4 => "llg_wave_register_sv4",
             Self::WaveReal => "llg_wave_register_real",
+            Self::WaveScopedSv4 => "llg_wave_register_scoped_sv4",
+            Self::WaveScopedReal => "llg_wave_register_scoped_real",
+            Self::WaveEvent => "llg_wave_register_event",
             Self::Spawn => "llg_spawn_in_region",
             Self::ProgramSpawn => "llg_spawn_program_in_region",
             Self::InstanceSpawn => "llg_spawn_instance_in_region",
@@ -43,6 +49,22 @@ impl StartupKind {
                 ("uint32_t width", "width"),
             ],
             Self::WaveReal => &[("const char* name", "name"), ("double* value", "value")],
+            Self::WaveScopedSv4 => &[
+                ("const char* name", "name"),
+                ("const char* scopes", "scopes"),
+                ("sv4_t* value", "value"),
+                ("uint32_t width", "width"),
+            ],
+            Self::WaveScopedReal => &[
+                ("const char* name", "name"),
+                ("const char* scopes", "scopes"),
+                ("double* value", "value"),
+            ],
+            Self::WaveEvent => &[
+                ("const char* name", "name"),
+                ("const char* scopes", "scopes"),
+                ("llg_event_object_t* event", "event"),
+            ],
             Self::Spawn => &[
                 ("const llg_co_desc_t* desc", "desc"),
                 ("const char* name", "name"),
@@ -85,6 +107,9 @@ impl StartupKind {
         match self {
             Self::WaveSv4 => "llg_model_wave_sv4_args_t",
             Self::WaveReal => "llg_model_wave_real_args_t",
+            Self::WaveScopedSv4 => "llg_model_wave_scoped_sv4_args_t",
+            Self::WaveScopedReal => "llg_model_wave_scoped_real_args_t",
+            Self::WaveEvent => "llg_model_wave_event_args_t",
             Self::Spawn => "llg_model_spawn_args_t",
             Self::ProgramSpawn => "llg_model_program_spawn_args_t",
             Self::InstanceSpawn => "llg_model_instance_spawn_args_t",
@@ -98,7 +123,14 @@ impl StartupKind {
     /// Registration failures abort startup; spawns report fatal errors
     /// themselves.
     fn checked(self) -> bool {
-        matches!(self, Self::WaveSv4 | Self::WaveReal)
+        matches!(
+            self,
+            Self::WaveSv4
+                | Self::WaveReal
+                | Self::WaveScopedSv4
+                | Self::WaveScopedReal
+                | Self::WaveEvent
+        )
     }
 }
 
@@ -413,6 +445,38 @@ pub(in crate::sim::emit_c) fn main(
                 IrType::Real { .. } => StartupCall {
                     kind: StartupKind::WaveReal,
                     args: vec![c_string_literal(name), format!("&{}", signal.c_name)],
+                },
+            });
+        }
+        for variable in &model.wave_variables {
+            let name = c_string_literal(variable.name());
+            let scopes = c_string_literal(variable.scopes());
+            registrations.push(match variable.storage() {
+                IrWaveStorage::Signal(index) => {
+                    let signal = model.signal(index);
+                    match signal.ty {
+                        IrType::Packed { width, .. } => StartupCall {
+                            kind: StartupKind::WaveScopedSv4,
+                            args: vec![
+                                name,
+                                scopes,
+                                format!("&{}", signal.c_name),
+                                width.to_string(),
+                            ],
+                        },
+                        IrType::Real { .. } => StartupCall {
+                            kind: StartupKind::WaveScopedReal,
+                            args: vec![name, scopes, format!("&{}", signal.c_name)],
+                        },
+                    }
+                }
+                IrWaveStorage::Event(index) => StartupCall {
+                    kind: StartupKind::WaveEvent,
+                    args: vec![
+                        name,
+                        scopes,
+                        format!("&{}__object", model.events[index].c_name),
+                    ],
                 },
             });
         }

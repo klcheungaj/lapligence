@@ -712,7 +712,8 @@ fn lower_model_with(
     let semantic = checked_semantic(db)?;
     let lowering_stage = crate::profile::Stage::new("lowering");
     let mut cg = Codegen::new(&semantic);
-    cg.vpi_return_signals = options.vpi;
+    // A dumped static function shows its result like any other variable.
+    cg.vpi_return_signals = options.vpi || waveform.is_some() || db_dumps_waveforms(db);
     cg.user_system_functions = options.user_system_functions.iter().cloned().collect();
     cg.collapse_ports = sharing == PortSharing::All;
     cg.alias_net_ports = matches!(sharing, PortSharing::All | PortSharing::Nets);
@@ -831,6 +832,9 @@ fn lower_model_with(
     // Every driver site and delayed-driver start now exists.
     net_delay_layout::assign_net_delay_layouts(&mut model);
     let retry_ports = cg.port_collapse_retries(&model);
+    if model.waveform {
+        cg.collect_wave_variables(&mut model);
+    }
     check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
     let timing = cg.vpi_timing_metadata(&tops);
     model.vpi_delays_writable = options.vpi;
@@ -922,11 +926,11 @@ fn lower_model_with(
 }
 
 /// A `$dumpvars` variable argument must name waveform storage: a packed or
-/// real signal, a record or union whose members are such signals, or a
-/// fixed array or one of its elements. Strings, class handles, events,
-/// dynamic, queue and associative arrays and activation storage have no
-/// registration; naming one is an error rather than a silently empty
-/// selection (S47-D9).
+/// real signal, a static block or subroutine variable, an event, a record or
+/// union whose members are such signals, or a fixed array or one of its
+/// elements. Strings, class handles, dynamic, queue and associative arrays
+/// and activation storage have no registration; naming one is an error
+/// rather than a silently empty selection (S47-D9).
 fn check_wave_variable_targets(
     targets: &[(String, String, String)],
     model: &IrModel,
@@ -941,6 +945,7 @@ fn check_wave_variable_targets(
             .signals
             .iter()
             .filter_map(|signal| signal.hdl_name.as_deref())
+            .chain(model.wave_variables.iter().map(|variable| variable.name()))
             .any(|candidate| under(candidate, name));
         let array = model.arrays.iter().any(|array| {
             !array.activation
@@ -951,13 +956,23 @@ fn check_wave_variable_targets(
             return Err(format!(
                 "`$dumpvars` argument `{text}` in `{scope}` has no VCD/FST representation: \
                  llg dumps packed and real variables and nets, their fixed unpacked \
-                 arrays and unpacked structure members declared in instance and \
-                 generate scopes; strings, class handles, dynamic, queue and \
-                 associative arrays and block or subroutine variables are not dumped"
+                 arrays and unpacked structure members, single events, and the static \
+                 packed, real and unpacked structure variables of blocks and \
+                 non-automatic subroutines; strings, class handles, automatic \
+                 variables, event arrays, block-level unpacked arrays and dynamic, \
+                 queue and associative arrays are not dumped"
             ));
         }
     }
     Ok(())
+}
+
+/// Whether any `$dumpvars` runs in the design. Lowering needs the answer
+/// before the statement is lowered, to give static results their storage.
+fn db_dumps_waveforms(db: &Db) -> bool {
+    db.node_ids().any(
+        |id| matches!(&db.node(id).kind, NodeKind::SysCall { name, .. } if name == "$dumpvars"),
+    )
 }
 
 fn finish_generation(
@@ -2058,6 +2073,13 @@ struct Codegen<'a> {
     /// (waveform name, dotted source path, calling scope). Checked against the
     /// finished storage catalog.
     wave_variable_targets: Vec<(String, String, String)>,
+    /// Static subroutine locals and results with signal storage, by
+    /// declaration, for the waveform table.
+    wave_subroutine_statics: Vec<(NodeId, usize)>,
+    /// Static block record leaves: declaration, leaf signal and the leaf's
+    /// member path, each member behind the hierarchy separator.
+    wave_block_records: Vec<(NodeId, usize, String)>,
+    wave_unnamed_blocks: std::cell::OnceCell<HashMap<NodeId, u32>>,
     /// Assertion action helpers are registered by the runtime and must not
     /// also be spawned as ordinary design processes at time zero.
     assertion_action_procs: HashSet<String>,
@@ -2445,6 +2467,9 @@ impl<'a> Codegen<'a> {
             final_procs: Vec::new(),
             armed_procs: HashSet::new(),
             wave_variable_targets: Vec::new(),
+            wave_subroutine_statics: Vec::new(),
+            wave_block_records: Vec::new(),
+            wave_unnamed_blocks: std::cell::OnceCell::new(),
             assertion_action_procs: HashSet::new(),
             checker_free: Vec::new(),
             free_set_plans: Vec::new(),

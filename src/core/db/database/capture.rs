@@ -409,6 +409,15 @@ impl Db {
         let instance_array_ranges = instance_array_ranges(snapshot);
         let mut keyword_lines = statement_keyword_lines(snapshot, &mut source_positions)?;
         keyword_lines.extend(port_header_lines(snapshot, &mut source_positions)?);
+        let fork_blocks = snapshot
+            .semantic_nodes
+            .iter()
+            .filter(|node| {
+                node.kind == SemanticKind::Statement && (56..=58).contains(&node.subkind)
+            })
+            .filter_map(|node| node.target_id())
+            .map(|symbol| semantic_id(&ids, symbol))
+            .collect::<Result<HashSet<_>, _>>()?;
         let mut arrays = HashMap::new();
         let mut event_arrays = HashMap::new();
         let mut subroutine_arrays = HashMap::new();
@@ -1605,6 +1614,7 @@ impl Db {
             primitive_array_positions,
             instance_array_ranges,
             keyword_lines,
+            fork_blocks,
             source_libraries,
             declaration_time_scales,
             class_declaring_scopes,

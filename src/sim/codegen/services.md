@@ -119,7 +119,11 @@ the runtime then re-evaluates it at every settled slot (`LLG_MONITOR_READ_POLL`)
 Deferred callbacks need owned environments. Waveform controls preserve source/depth
 identity against the fixed catalog; a `$dumpvars` argument naming a variable must
 match waveform storage after lowering (S47-D9), and waveform names drop the loop
-generate construct level (`tb.g[0]`, S47-D10); omit waveform/libfst when unused, reject
+generate construct level (`tb.g[0]`, S47-D10). Static block and subroutine
+variables and events go in `IrModel::wave_variables`, built once at the end of
+lowering in waveform models only, so they reach neither the VPI catalog nor
+`hdl_name` diagnostics; a `$dumpvars` anywhere gives static functions result
+signals so the result can be dumped; omit waveform/libfst when unused, reject
 `$dumpports`, warn/skip `$displayon`/`$displayoff`. Packed string literals remain
 unsigned MSB-first byte vectors (empty is one zero byte), with normal pad/truncate;
 SystemVerilog strings remain separate native owners.

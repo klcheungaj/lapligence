@@ -529,25 +529,21 @@ impl EmitCtx<'_, '_> {
                 // The file name is optional and defaults to `dump.vcd`
                 // (IEEE 1800-2009 21.7.1.1). A `.fst` name selects FST at
                 // run time; any other name is a VCD file (S47-D7).
-                let path = match args.as_slice() {
-                    [] => "dump.vcd".to_owned(),
-                    [argument] => self
-                        .literal_string(*argument, "$dumpfile path")?
-                        .ok_or_else(|| {
-                            format!(
-                                "$dumpfile requires a literal string argument in `{}`",
-                                self.path
-                            )
-                        })?,
+                let statement = match args.as_slice() {
+                    [] => IrStmt::WaveFile("dump.vcd".to_owned()),
+                    [argument] => match self.literal_string(*argument, "$dumpfile path")? {
+                        Some(path) => IrStmt::WaveFile(path),
+                        None => IrStmt::WaveFileValue(self.cg.lower_string(&self.path, *argument)?),
+                    },
                     _ => {
                         return Err(format!(
-                            "$dumpfile takes at most one literal string argument in `{}`",
+                            "$dumpfile takes at most one file name in `{}`",
                             self.path
                         ))
                     }
                 };
                 self.cg.model.waveform = true;
-                Ok(vec![IrStmt::WaveFile(path)])
+                Ok(vec![statement])
             }
             "$dumpvars" => {
                 self.cg.model.waveform = true;

@@ -2237,8 +2237,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   of that step. Each changed variable is recorded once per time step with its
   end-of-step value. Packed values, array elements with declared bounds, real
   values, X/Z, aliases (one identifier code per merged net), hierarchy with
-  `g[i]` loop generate scopes and femtosecond timestamps are represented;
-  strings, handles, events, dynamic containers and block or subroutine
+  `g[i]` loop generate scopes and femtosecond timestamps are represented, and
+  so are the static variables of blocks, tasks and functions (their scopes,
+  named `unnamed$$_N` for unnamed blocks, with type `begin`, `fork`, `task` or
+  `function`) and named events (`$var event`, one change per triggering time
+  step); `$dumpfile` takes a literal or computed name. Strings, handles,
+  dynamic containers, event arrays, block-level unpacked arrays and automatic
   variables are not dumped and naming one in `$dumpvars` is an error.
   `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
   `$dumpflush` follow the dump state; an output error is reported, stops the

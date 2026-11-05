@@ -315,6 +315,8 @@ pub struct Db {
     /// its range's start, and a task or function body list (no range) where
     /// it opens; and the module header line of a non-ANSI port.
     keyword_lines: HashMap<NodeId, u32>,
+    /// The block symbols of `fork` statements; other block symbols are `begin`.
+    fork_blocks: HashSet<NodeId>,
     /// Source library of each elaborated instance (its selected definition's
     /// library), package and compilation unit, copied from the frontend's
     /// library binding so `%l` survives snapshot destruction.
@@ -519,6 +521,7 @@ impl Db {
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
             keyword_lines: HashMap::new(),
+            fork_blocks: HashSet::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
@@ -622,6 +625,7 @@ impl Db {
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
             keyword_lines: HashMap::new(),
+            fork_blocks: HashSet::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
@@ -866,6 +870,11 @@ impl Db {
                 Some(NodeKind::Stmt(StmtKind::Begin | StmtKind::Fork { .. }))
             )
         })
+    }
+
+    /// Whether block scope `id` is the block of a `fork` statement.
+    pub fn is_fork_block(&self, id: NodeId) -> bool {
+        self.fork_blocks.contains(&id)
     }
 
     /// The line where task or function body list `id` (several statements,

@@ -1658,6 +1658,9 @@ impl Validator<'_> {
             IrStmt::WaveLimit(expr) => {
                 self.validate_expr(expr, formals, &format!("{path}.limit"))?;
             }
+            IrStmt::WaveFileValue(file) => {
+                file.validate(self.model, self.string_return.get())?;
+            }
             IrStmt::PrintTimescale {
                 unit_fs,
                 precision_fs,

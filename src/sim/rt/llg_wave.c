@@ -44,6 +44,7 @@ typedef enum {
     EV_LIMIT,
     EV_CHANGE_SV4,
     EV_CHANGE_REAL,
+    EV_CHANGE_EVENT,
     EV_CLOSE
 } event_kind_t;
 
@@ -63,8 +64,15 @@ typedef struct {
     } payload;
 } wave_event_t;
 
+// How a registration appears in the file. A signal is `wire` like every
+// module-level signal; block and subroutine storage is `reg`.
+typedef enum { VAR_WIRE, VAR_REG, VAR_REAL, VAR_EVENT } var_kind_t;
+
 typedef struct {
     char* name;
+    // One scope-kind letter per name scope, or NULL for all modules; model
+    // storage, not owned.
+    const char* scopes;
     void* ptr;
     uint32_t width;
     uint32_t next_alias;
@@ -73,6 +81,7 @@ typedef struct {
     // Fixed when the dump starts; producer-only afterwards.
     uint32_t dump_reg;
     uint8_t is_real;
+    uint8_t var_kind;
     uint8_t selected;
     // Producer-only: queued in `dirty` for the end of the current time step.
     uint8_t dirty;
@@ -675,8 +684,45 @@ static uint32_t* sorted_registrations(void) {
     return order;
 }
 
+static char* literal_identifier(const char* src, size_t len) {
+    char* dst = (char*)malloc(len + 1u);
+    if (!dst) {
+        wave_error("out of memory while serializing waveform hierarchy");
+        return NULL;
+    }
+    memcpy(dst, src, len);
+    dst[len] = 0;
+    return dst;
+}
+
+// The `$scope` keyword and FST scope type of one scope letter.
+static const char* vcd_scope_kind(char kind) {
+    switch (kind) {
+        case 'b':
+        case 'B': return "begin";
+        case 'k':
+        case 'K': return "fork";
+        case 't': return "task";
+        case 'f': return "function";
+        default: return "module";
+    }
+}
+
+static enum fstScopeType fst_scope_kind(char kind) {
+    switch (kind) {
+        case 'b':
+        case 'B': return FST_ST_VCD_BEGIN;
+        case 'k':
+        case 'K': return FST_ST_VCD_FORK;
+        case 't': return FST_ST_VCD_TASK;
+        case 'f': return FST_ST_VCD_FUNCTION;
+        default: return FST_ST_VCD_MODULE;
+    }
+}
+
 static void scope_transition(writer_t* w, const char* previous,
-                             const char* current) {
+                             const registration_t* next) {
+    const char* current = next ? next->name : NULL;
     uint32_t previous_count = previous ? scope_count(previous) : 0;
     uint32_t current_count = current ? scope_count(current) : 0;
     uint32_t common = common_scope_count(previous, current);
@@ -688,14 +734,21 @@ static void scope_transition(writer_t* w, const char* previous,
         const char* part;
         size_t len;
         scope_segment(current, i, &part, &len);
-        char* serialized = serialize_identifier(part, len);
+        char kind = next->scopes ? next->scopes[i] : 'm';
+        // A generated name has its `$` written; serialized source names never
+        // do, so the two cannot collide.
+        char* serialized = kind == 'B' || kind == 'K' ? literal_identifier(part, len)
+                                                      : serialize_identifier(part, len);
         if (!serialized) return;
         if (w->format == FORMAT_VCD) {
-            writer_bytes(w, "$scope module ", 14u);
+            const char* keyword = vcd_scope_kind(kind);
+            writer_bytes(w, "$scope ", 7u);
+            writer_bytes(w, keyword, strlen(keyword));
+            writer_bytes(w, " ", 1u);
             writer_bytes(w, serialized, strlen(serialized));
             writer_bytes(w, " $end\n", 6u);
         } else {
-            fstWriterSetScope(w->fst, FST_ST_VCD_MODULE, serialized, NULL);
+            fstWriterSetScope(w->fst, fst_scope_kind(kind), serialized, NULL);
         }
         free(serialized);
     }
@@ -713,10 +766,11 @@ static void vcd_var(writer_t* w, uint32_t reg_index) {
     if (!serialized) return;
     char id[8];
     compact_id(selected_canonical(reg_index), id);
-    if (reg->is_real) {
-        writer_printf(w, "$var real 64 %s ", id);
-    } else {
-        writer_printf(w, "$var wire %u %s ", reg->width, id);
+    switch ((var_kind_t)reg->var_kind) {
+        case VAR_REAL: writer_printf(w, "$var real 64 %s ", id); break;
+        case VAR_EVENT: writer_printf(w, "$var event 1 %s ", id); break;
+        case VAR_REG: writer_printf(w, "$var reg %u %s ", reg->width, id); break;
+        case VAR_WIRE: writer_printf(w, "$var wire %u %s ", reg->width, id); break;
     }
     writer_bytes(w, serialized, strlen(serialized));
     writer_bytes(w, " $end\n", 6u);
@@ -735,7 +789,7 @@ static void vcd_header(writer_t* w) {
     for (uint32_t pos = 0; pos < g_wave.reg_count; pos++) {
         uint32_t i = order[pos];
         if (!g_wave.regs[i].selected) continue;
-        scope_transition(w, previous, g_wave.regs[i].name);
+        scope_transition(w, previous, &g_wave.regs[i]);
         vcd_var(w, i);
         previous = g_wave.regs[i].name;
     }
@@ -765,7 +819,7 @@ static void fst_header(writer_t* w) {
         uint32_t i = order[pos];
         const registration_t* reg = &g_wave.regs[i];
         if (!reg->selected) continue;
-        scope_transition(w, previous, reg->name);
+        scope_transition(w, previous, reg);
         char* serialized = leaf_name(reg->name);
         if (!serialized) {
             free(order);
@@ -773,7 +827,10 @@ static void fst_header(writer_t* w) {
         }
         uint32_t canonical = selected_canonical(i);
         fstHandle alias = w->fst_handles[canonical];
-        enum fstVarType type = reg->is_real ? FST_VT_VCD_REAL : FST_VT_VCD_WIRE;
+        enum fstVarType type = FST_VT_VCD_WIRE;
+        if (reg->var_kind == VAR_REAL) type = FST_VT_VCD_REAL;
+        else if (reg->var_kind == VAR_REG) type = FST_VT_VCD_REG;
+        else if (reg->var_kind == VAR_EVENT) type = FST_VT_VCD_EVENT;
         fstHandle handle = fstWriterCreateVar(
             w->fst, type, FST_VD_IMPLICIT, reg->is_real ? 64u : reg->width,
             serialized, alias);
@@ -952,12 +1009,26 @@ static void writer_real_aliases(writer_t* w, uint32_t first, double value) {
     }
 }
 
+// An event has no value: every change is the same mark.
+static void writer_event(writer_t* w, uint32_t first) {
+    while (first != LLG_WAVE_NO_REG && !g_wave.regs[first].selected)
+        first = g_wave.regs[first].next_alias;
+    if (first == LLG_WAVE_NO_REG) return;
+    if (w->format == FORMAT_VCD) {
+        char id[8];
+        compact_id(first, id);
+        writer_printf(w, "x%s\n", id);
+    } else {
+        fstWriterEmitValueChange(w->fst, w->fst_handles[first], "x");
+    }
+}
+
 static void vcd_off_values(writer_t* w) {
     for (uint32_t i = 0; i < g_wave.reg_count; i++) {
         if (!g_wave.regs[i].selected || selected_canonical(i) != i) continue;
         char id[8];
         compact_id(i, id);
-        if (g_wave.regs[i].is_real) writer_printf(w, "rNaN %s\n", id);
+        if (g_wave.regs[i].var_kind == VAR_REAL) writer_printf(w, "rNaN %s\n", id);
         else if (g_wave.regs[i].width == 1u) writer_printf(w, "x%s\n", id);
         else writer_printf(w, "bx %s\n", id);
     }
@@ -1029,6 +1100,13 @@ static void process_event(writer_t* w, const wave_event_t* e) {
                 if (!writer_write_header(w)) break;
                 writer_time(w, e->now);
                 writer_real_aliases(w, e->first_reg, e->payload.real);
+            }
+            break;
+        case EV_CHANGE_EVENT:
+            if (w->active || e->snapshot) {
+                if (!writer_write_header(w)) break;
+                writer_time(w, e->now);
+                writer_event(w, e->first_reg);
             }
             break;
         case EV_FLUSH:
@@ -1121,6 +1199,24 @@ static int capture_sv4(wave_event_t* event, const sv4_t* value) {
     return 1;
 }
 
+// The change record of one registration's current value.
+static int fill_change(wave_event_t* event, const registration_t* reg) {
+    switch ((var_kind_t)reg->var_kind) {
+        case VAR_REAL:
+            event->kind = EV_CHANGE_REAL;
+            event->payload.real = *(double*)reg->ptr;
+            return 1;
+        case VAR_EVENT:
+            event->kind = EV_CHANGE_EVENT;
+            return 1;
+        case VAR_WIRE:
+        case VAR_REG:
+            break;
+    }
+    event->kind = EV_CHANGE_SV4;
+    return capture_sv4(event, (const sv4_t*)reg->ptr);
+}
+
 // Streams the current values of every selected address; the ring's
 // backpressure bounds the snapshot memory whatever the design size.
 static void enqueue_snapshot(uint64_t now, snapshot_kind_t kind) {
@@ -1129,12 +1225,10 @@ static void enqueue_snapshot(uint64_t now, snapshot_kind_t kind) {
         registration_t* reg = &g_wave.regs[i];
         if (reg->dump_reg == LLG_WAVE_NO_REG) continue;
         wave_event_t event = {0};
-        event.kind = reg->is_real ? EV_CHANGE_REAL : EV_CHANGE_SV4;
         event.now = now;
         event.first_reg = reg->dump_reg;
         event.snapshot = 1;
-        if (reg->is_real) event.payload.real = *(double*)reg->ptr;
-        else if (!capture_sv4(&event, (const sv4_t*)reg->ptr)) continue;
+        if (!fill_change(&event, reg)) continue;
         queue_push(&event);
     }
     enqueue_simple(EV_SNAPSHOT_END, now, 0);
@@ -1148,11 +1242,9 @@ static void flush_dirty(uint64_t now) {
         registration_t* reg = &g_wave.regs[g_wave.dirty[n]];
         reg->dirty = 0;
         wave_event_t event = {0};
-        event.kind = reg->is_real ? EV_CHANGE_REAL : EV_CHANGE_SV4;
         event.now = now;
         event.first_reg = reg->dump_reg;
-        if (reg->is_real) event.payload.real = *(double*)reg->ptr;
-        else if (!capture_sv4(&event, (const sv4_t*)reg->ptr)) continue;
+        if (!fill_change(&event, reg)) continue;
         queue_push(&event);
     }
     g_wave.dirty_count = 0;
@@ -1250,8 +1342,9 @@ int llg_wave_model_init(uint64_t precision_fs) {
     return 0;
 }
 
-static int register_value(const char* name, void* ptr, uint32_t width,
-                          int is_real) {
+static int register_value(const char* name, const char* scopes, void* ptr,
+                          uint32_t width, var_kind_t var_kind) {
+    int is_real = var_kind == VAR_REAL;
     if (!require_producer("registration")) return -1;
     if (g_wave.worker_started) {
         wave_error("signal `%s` registered after waveform writer startup",
@@ -1284,7 +1377,9 @@ static int register_value(const char* name, void* ptr, uint32_t width,
     reg->name = wave_strdup(name);
     reg->ptr = ptr;
     reg->width = width;
+    reg->scopes = scopes;
     reg->is_real = (uint8_t)is_real;
+    reg->var_kind = (uint8_t)var_kind;
     reg->next_alias = LLG_WAVE_NO_REG;
     reg->selected = 0;
     reg->dirty = 0;
@@ -1298,11 +1393,25 @@ static int register_value(const char* name, void* ptr, uint32_t width,
 }
 
 int llg_wave_register_sv4(const char* name, sv4_t* value, uint32_t width) {
-    return register_value(name, value, width, 0);
+    return register_value(name, NULL, value, width, VAR_WIRE);
 }
 
 int llg_wave_register_real(const char* name, double* value) {
-    return register_value(name, value, 64u, 1);
+    return register_value(name, NULL, value, 64u, VAR_REAL);
+}
+
+int llg_wave_register_scoped_sv4(const char* name, const char* scopes, sv4_t* value,
+                                 uint32_t width) {
+    return register_value(name, scopes, value, width, VAR_REG);
+}
+
+int llg_wave_register_scoped_real(const char* name, const char* scopes, double* value) {
+    return register_value(name, scopes, value, 64u, VAR_REAL);
+}
+
+int llg_wave_register_event(const char* name, const char* scopes,
+                            llg_event_object_t* event) {
+    return register_value(name, scopes, event, 1u, VAR_EVENT);
 }
 
 // The last name before the dump starts is used (S47-D7); the file is opened
@@ -1323,6 +1432,18 @@ void llg_wave_file(const char* path, uint64_t now) {
     }
     free(g_wave.pending_file);
     g_wave.pending_file = copy;
+}
+
+void llg_wave_file_bytes(const char* path, size_t len, uint64_t now) {
+    char* copy = (char*)malloc(len + 1u);
+    if (!copy) {
+        wave_error("$dumpfile path allocation failed");
+        return;
+    }
+    if (len) memcpy(copy, path, len);
+    copy[len] = 0;
+    llg_wave_file(copy, now);
+    free(copy);
 }
 
 void llg_wave_dumpvars(uint64_t now) {
@@ -1435,6 +1556,8 @@ static void mark_changed(const void* ptr) {
 void llg_wave_changed_sv4(const sv4_t* ptr) { mark_changed(ptr); }
 
 void llg_wave_changed_real(const double* ptr) { mark_changed(ptr); }
+
+void llg_wave_changed_event(const llg_event_object_t* ptr) { mark_changed(ptr); }
 
 int llg_wave_close(uint64_t now) {
     if (!g_wave.initialized) return 0;
