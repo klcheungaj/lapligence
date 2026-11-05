@@ -200,6 +200,13 @@ fn strength_only_changes_reach_monitors_and_event_controls() {
 }
 
 #[test]
+fn lone_delayed_enable_gates_publish_every_output() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_012/lone_enable_gates.out");
+    sim_cli::run_case(SUITE, "lone_enable_gates", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "lone_enable_gates", expected, &[], &[]);
+}
+
+#[test]
 fn unconnected_drive_follows_directive_lifetime_and_net_type() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/rtl_012/directive_lifetime.out");
