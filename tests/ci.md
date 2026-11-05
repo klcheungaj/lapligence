@@ -107,7 +107,9 @@ the rules a change must keep. Platform pitfalls are in
   caches and failure-time disk/memory telemetry. Generated-C sanitizer flags stay
   separate.
 - The generated-runtime-sanitizers job (180 min) runs the suites listed in
-  `ci.yml` with GCC ASan/UBSan; it is not LSP admission coverage. The
+  `ci.yml` with ASan/UBSan, once with GCC on `ubuntu-22.04` and once with Clang
+  on `ubuntu-24.04`, which needs the `libclang-rt` package of that image's
+  Clang; it is not LSP admission coverage. The
   dependency audit (15 min) runs `cargo audit` on the same triggers and Mondays
   04:17 UTC; reports stay in workflow logs.
 - `dependency-audit.yml` (Mondays 05:23 UTC and manual) is the upgrade reminder:
