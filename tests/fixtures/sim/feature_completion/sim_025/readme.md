@@ -31,6 +31,12 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
   strobes issued by a loop in one slot all print the end-of-slot values.
   Reports of one slot appear in reverse call order, the last issued first
   (decision S25-D6, industry-standard behaviour: the text names no order).
+- `strobe_container_actuals`: queue, dynamic and associative actuals of input
+  formals, element records and strings, nested calls and an assignment pattern
+  all read at the end of the slot (21.2.2). The two pattern lines are derived by
+  hand: the reference run rejects a pattern actual there and agrees on the rest.
+- `neg_strobe_container_conversion`: a conversion between container kinds has
+  no evaluator form, so it rejects at the call and names the formal.
 - `scope_time`: `$time` alone never triggers a report (L36517-36518); two
   `$fmonitor` lists registered by different instances stay active together
   (L36676-36677) and `%m` names each instance.

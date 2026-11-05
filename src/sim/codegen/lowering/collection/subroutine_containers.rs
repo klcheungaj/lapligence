@@ -354,6 +354,11 @@ impl Codegen<'_> {
         // Inside an assignment or system-task statement, an actual without
         // side effects may be built before the statement: evaluating it
         // early cannot be observed, even under a short-circuit.
+        if self.deferred_display_args {
+            return Err(format!(
+                "a `$strobe` or `$monitor` argument for container formal `{name}` in `{path}` must be a container variable of the formal's type, because it is read when the report prints; assign it to a variable of that type first"
+            ));
+        }
         if self.container_call_prelude.is_some() && self.side_effect_free(actual) {
             let temporary = self.container_temporary_like(like);
             let build = self.lower_container_into(path, formal, temporary, actual)?;

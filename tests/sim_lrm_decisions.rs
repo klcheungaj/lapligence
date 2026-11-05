@@ -662,6 +662,14 @@ fn s25_d6_report_order_in_slot() {
 }
 
 #[test]
+fn s25_d8_deferred_slice_actuals() {
+    run_decision(
+        "S25-D8_deferred_slice_actuals",
+        include_str!("fixtures/sim/lrm_decisions/S25-D8_deferred_slice_actuals.out"),
+    );
+}
+
+#[test]
 fn s25_d7_output_to_closed_descriptors() {
     run_decision(
         "S25-D7_output_to_closed_descriptors",

@@ -1489,6 +1489,28 @@ reject:
   the evaluator has no receiver, so even arguments naming only module
   variables reject. Move the report to module code.
 
+An input queue, dynamic or associative formal of a `$strobe` helper reads the
+actual at the end of the slot, as a slice does ([S25-D8](lrm_decisions.md)).
+Four neighbouring forms still reject with a diagnostic at the call:
+
+- **A `$strobe` actual that needs a container conversion** (a queue for a
+  dynamic-array formal,
+  [`neg_strobe_container_conversion.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_strobe_container_conversion.sv))
+  **or an unpacked concatenation** (`f({1, 2, k})`; `f('{1, 2, k})` works). The
+  evaluator would have to build the temporary itself; about a day.
+- **`$monitor` of a helper with a container formal.** Change detection does not
+  see through the formal yet; about a day. Assign the result to a variable.
+- **A `$strobe` helper with a string formal** (about half a day).
+- **A `$strobe` helper that prints** (`$display` inside the function): it has
+  output effects, which the private evaluator refuses; about a day.
+
+A `$monitor` compares every printed argument, `$time` included, once one of its
+reads changes. When a read is a whole array and the change leaves the printed
+value alone (`$monitor("%0t %0d", $time, f(arr[1:2]))`, then `arr[0] = 5`), the
+report repeats with the new time, where 21.2.3 excludes `$time` from the trigger.
+Without a time argument the value comparison holds it back. The fix is a per-
+argument mask in the comparison; about half a day.
+
 `$finish` also drops the reports still pending in its own slot
 ([S25-D5](lrm_decisions.md)); a `$strobe` in a `final` block rejects because no
 Postponed region runs after finals.

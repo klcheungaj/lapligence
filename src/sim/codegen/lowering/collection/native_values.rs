@@ -2842,7 +2842,10 @@ impl Codegen<'_> {
                 // free of side effects (such as a container element with a
                 // queue member) may be built in a temporary just before the
                 // statement, as container actuals are.
-                if self.container_call_prelude.is_some() && self.side_effect_free(actual) {
+                if self.container_call_prelude.is_some()
+                    && !self.deferred_display_args
+                    && self.side_effect_free(actual)
+                {
                     let temporary = self.native_temporary(formal)?;
                     let target = NativeEndpoint::Value {
                         value: temporary,
