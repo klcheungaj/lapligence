@@ -843,10 +843,6 @@ unsupported targets explicitly (decision S47-D9).
 
 ### Symptom
 
-- `$dumpvars` naming a block, task or function as a scope (`$dumpvars(1,
-  tb.blk)`) stops in the frontend with "expected module or variable name".
-  Scope dumps of an enclosing instance include them, and their variables can
-  be named one by one; a formal cannot be named.
 - An unpacked structure variable declared in a block appears as one packed
   vector, not as a scope of its members.
 - An unnamed block directly inside a task or function adds no
@@ -856,21 +852,18 @@ unsupported targets explicitly (decision S47-D9).
 
 ### Cause
 
-Slang's `$dumpvars` argument binding accepts only variables, nets and module
-instances. Block structures live in one flattened signal, and a registration
+Block structures live in one flattened signal, and a registration
 names a whole signal. The owned DB parents variables of such an unnamed block
 to the subroutine. libfst writes the hierarchy and block index at close.
 
 ### Intended direction
 
-A tracked Slang patch admits block and subroutine symbols (about a quarter of
-a day); a registration with a bit range serves the flattened structures. The
-FST behaviour follows the format.
+A registration with a bit range serves the flattened structures. The FST
+behaviour follows the format.
 
 ### Reproduce
 
-`$dumpvars(1, tb.blk);` for a named block `blk`; `flush_read.sv` with
-`FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
+`flush_read.sv` with `FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
 
 ## Sibling ports with different net delays
 

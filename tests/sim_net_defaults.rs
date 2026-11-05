@@ -196,7 +196,9 @@ endmodule
             .map_err(|error| error.to_string())?;
             assert_eq!(
                 sim_harness::run_executable(&exe)?,
-                "nets=00\nnets=10\nnets=00\nevents=2/0\n",
+                // Pu0 to St0 at time 1 is a strength-only change (T1-D8); the
+                // z at time 3 keeps `pulled` at 0 and only changes its strength.
+                "nets=00\nnets=00\nnets=10\nnets=00\nevents=3/0\n",
                 "{variant}"
             );
         }
