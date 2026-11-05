@@ -306,7 +306,8 @@ impl EmitCtx<'_, '_> {
         implicit: bool,
         body: NodeId,
     ) -> Result<IrStmt, String> {
-        let spec_pairs = self.lower_event_specs(specs)?;
+        let mut spec_pairs = self.lower_event_specs(specs)?;
+        self.add_strength_events(specs, &mut spec_pairs)?;
         Ok(if implicit || spec_pairs.is_empty() {
             // @* / always_comb without explicit sensitivity, or a condition
             // that produced no specs: wait on the body's read set.
@@ -322,12 +323,13 @@ impl EmitCtx<'_, '_> {
             };
             // An implicit list follows reads through virtual interfaces
             // (SV 9.4.2.2); its wait arms again after every wake.
-            let reads = if implicit {
+            let mut reads = if implicit {
                 self.cg
                     .with_interface_reads(&path, body, !at_star, collect)?
             } else {
                 collect(self.cg)?
             };
+            self.cg.add_strength_reads(&mut reads)?;
             if implicit && self.process_kind == Some(AlwaysKind::Always) && reads.is_empty() {
                 // An empty `@*` sensitivity list waits forever. Keep the
                 // explicit never-triggered event as the source-level sentinel.
@@ -517,6 +519,8 @@ impl EmitCtx<'_, '_> {
         enum Source {
             Value(NodeId, IrEdge),
             Named(NodeId),
+            /// The strength view of a value source's net (decision T1-D8).
+            Strength(IrExpr),
         }
         fn flatten(
             cg: &Codegen<'_>,
@@ -553,6 +557,15 @@ impl EmitCtx<'_, '_> {
         for spec in specs {
             flatten(self.cg, spec, None, &mut sources);
         }
+        let mut strength = Vec::new();
+        for (source, condition) in &sources {
+            if let Source::Value(expression, IrEdge::Any) = source {
+                if let Some(view) = self.cg.varying_strength_view(*expression)? {
+                    strength.push((Source::Strength(view), *condition));
+                }
+            }
+        }
+        sources.extend(strength);
         let bit = |value: u64, x: u64, z: u64| -> Result<IrExpr, String> {
             let constant = IrConst::packed(vec![value], vec![x], vec![z], 1, false, None)
                 .map_err(|error| error.to_string())?;
@@ -683,6 +696,19 @@ impl EmitCtx<'_, '_> {
                         local(&next, 64, false),
                     );
                     (count, changed)
+                }
+                Source::Strength(view) => {
+                    for read in self.cg.strength_view_reads(&view) {
+                        if !sens.contains(&read) {
+                            sens.push(read);
+                        }
+                    }
+                    let changed = binary(
+                        IrBinOp::CaseNeq,
+                        local(&last, view.width, false),
+                        local(&next, view.width, false),
+                    );
+                    (view, changed)
                 }
                 Source::Value(expression, edge) => {
                     self.reject_chandle_event(expression)?;
@@ -1167,6 +1193,58 @@ impl EmitCtx<'_, '_> {
             }
         }
         Ok(lowered)
+    }
+
+    /// A value event on a net whose strength can change alone also occurs on
+    /// that change (decision T1-D8): one more source per event, watching the
+    /// view of the bits it names under the event's own qualifier.
+    pub(super) fn add_strength_events(
+        &mut self,
+        specs: &[EventSpec],
+        lowered: &mut Vec<(IrWaitSrc, IrEdge)>,
+    ) -> Result<(), String> {
+        for spec in specs {
+            let (sig, condition) = match spec {
+                EventSpec::AnyChange { sig } => (*sig, None),
+                EventSpec::Qualified { event, condition } => match &**event {
+                    EventSpec::AnyChange { sig } => (*sig, Some(*condition)),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            if self.cg.event_target_of(sig).is_some() {
+                continue;
+            }
+            let Some(view) = self.cg.varying_strength_view(sig)? else {
+                continue;
+            };
+            let reads = self.cg.strength_view_reads(&view);
+            let condition = condition
+                .map(|condition| self.event_evaluator(condition).map(|(name, _)| name))
+                .transpose()?;
+            if let (IrExprKind::SigRead(signal), None) = (view.kind(), &condition) {
+                let name = self.cg.model.signal(*signal).c_name.clone();
+                lowered.push((IrWaitSrc::Sig(name), IrEdge::Any));
+                continue;
+            }
+            let eval = self.cg.new_fn_name(&self.path, "event_eval");
+            self.pre_fns.push(crate::sim::ir::IrPreFn::MonEval {
+                c_name: eval.clone(),
+                args: vec![view],
+                context: None,
+                item: false,
+                real_item: false,
+            });
+            lowered.push((
+                IrWaitSrc::Evaluated {
+                    eval,
+                    condition,
+                    reads,
+                },
+                IrEdge::Any,
+            ));
+        }
+        Ok(())
     }
 
     /// `$global_clock` stands for the global clocking block's event list

@@ -23,7 +23,7 @@ backends.
   gives StH, and L/H combine with pull, weak and net-array-cell drivers
   (650, 651, 630, 36X).
 - `strength_wakeups.sv`: Pu1/St1 and Pu0/St0 strength-only changes reach a
-  `%v` monitor while `@` waiters stay asleep; an unchanged reassignment wakes
+  `%v` monitor and `@` waiters (decision T1-D8); an unchanged reassignment wakes
   nobody.
 - `directive_lifetime.sv` with `directive_pull0.svh`: an included
   `unconnected_drive pull0`, `resetall`, `nounconnected_drive`, wire, tri0,

@@ -62,7 +62,11 @@ net-array formal (variables receive the value only); input net-array links and
 gate outputs on net-array cells publish through their port/gate cell slots.
 `%v` on a net, its constant projections, aliases or net-array cells reads a lazily
 created strength-view signal (`collection/strength_views.rs`); monitors depend on
-that view, so strength-only changes reach them without waking value readers. Reject trireg before storage collection,
+that view, so strength-only changes reach them without waking value readers. An
+event control naming a net, an implicit event list, `wait` and `$monitor` also watch
+the views of the bits they name (T1-D8), only on groups `note_strength_nets` marks
+(a non-strong slot, `tri0`/`tri1`, a switch terminal), so strong nets get no view; a
+`$monitor` view is a trailing argument no conversion prints. Reject trireg before storage collection,
 including undriven arrays, and dynamic net selectors. Keep disjoint constant
 uwire selections legal; overlapping drivers reject.
 

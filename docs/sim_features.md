@@ -1464,12 +1464,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   and supplies are pull/supply sources, not post-resolution defaults. `%v`
   reports the resolved strength range (mnemonic, two-digit range, L/H) of nets,
   their constant selects, aliases and net-array cells; strength-only changes
-  reach `%v` monitors while value readers wake only on value changes. The
+  reach `%v` monitors, and readers that name the net (event controls, implicit
+  event lists, `wait`, `$monitor` arguments; decision T1-D8), while edges and
+  derived values wake only on value changes. The
   [RTL-012 matrix](../tests/fixtures/sim/feature_completion/rtl_012/readme.md)
   checks every source pair against an exhaustive outcome oracle in both
   editions. Explicit continuous strengths on vectors, selected vector bits and
   supply nets reject; gate instance arrays keep per-instance strengths. Delayed
-  enable gates still drive X for an unknown enable; VPI reads these strengths
+  enable gates drive L/H too (decision T1-D1); VPI reads these strengths
   through `vpiStrengthVal` (decision A20-D21); charge and resistive contexts
   are outside this row (`trireg` and the resistive
   MOS primitives are unsupported by design).

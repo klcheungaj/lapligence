@@ -1,6 +1,6 @@
-// RTL-012: a strength-only change (Pu1 <-> St1) reaches `%v` monitors but not
-// value waiters; an unchanged resolution wakes nobody (IEEE 1364-2001 7.10,
-// 17.1.1.5; IEEE 1800-2009 4.4, 21.2.3). Hand-derived output.
+// RTL-012: a strength-only change (Pu1 <-> St1) reaches `%v` monitors and
+// event controls on the net (decision T1-D8); an unchanged resolution wakes
+// nobody (IEEE 1364-2001 7.10, 17.1.1.5; IEEE 1800-2009 4.4, 21.2.3).
 module tb;
   reg s, k;
   wire w;

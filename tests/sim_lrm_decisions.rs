@@ -29,6 +29,22 @@ fn t1_d2_event_compare_wait_rejected() {
 }
 
 #[test]
+fn t1_d8_strength_only_events() {
+    run_decision(
+        "T1-D8_strength_only_events",
+        include_str!("fixtures/sim/lrm_decisions/T1-D8_strength_only_events.out"),
+    );
+}
+
+#[test]
+fn t1_d9_output_port_delay_merges() {
+    run_decision(
+        "T1-D9_output_port_delay_merges",
+        include_str!("fixtures/sim/lrm_decisions/T1-D9_output_port_delay_merges.out"),
+    );
+}
+
+#[test]
 fn t1_d4_port_delay_merges() {
     run_decision(
         "T1-D4_port_delay_merges",

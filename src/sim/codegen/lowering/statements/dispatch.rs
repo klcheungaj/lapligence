@@ -504,6 +504,7 @@ impl EmitCtx<'_, '_> {
                     .cg
                     .with_dynamic_reads(&path, *cond, |cg| cg.collect_read_signals(&path, *cond))?;
                 sens.extend(self.cg.shared_event_dependencies(*cond));
+                self.cg.add_strength_reads(&mut sens)?;
                 self.saw_wait = true;
                 // The body is optional (`wait (cond);`); the semantic database
                 // captures it as a child only when the statement is present.

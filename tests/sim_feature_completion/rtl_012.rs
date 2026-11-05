@@ -192,7 +192,7 @@ fn unknown_enables_drive_l_and_h() {
 }
 
 #[test]
-fn strength_only_changes_reach_monitors_but_not_value_waiters() {
+fn strength_only_changes_reach_monitors_and_event_controls() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_012/strength_wakeups.out");
     sim_cli::run_case(SUITE, "strength_wakeups", expected, "", &[]);
     sim_cli::run_case_backend_parity(SUITE, "strength_wakeups", expected, &[], &[]);

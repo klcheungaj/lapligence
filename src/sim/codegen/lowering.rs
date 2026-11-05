@@ -791,6 +791,7 @@ fn lower_model_with(
     for top in &tops {
         cg.emit_pass(*top, Pass::Links)?;
     }
+    cg.note_strength_nets();
     for top in &tops {
         cg.emit_pass(*top, Pass::Procs)?;
     }
@@ -1537,6 +1538,8 @@ struct Codegen<'a> {
     /// Pass switches in lowering order; their networks are numbered after
     /// every process is lowered (`finish_switch_network`).
     pending_switches: Vec<collection::PendingSwitch>,
+    /// Nets whose strength can change alone; empty until the first process.
+    strength_nets: collection::StrengthNets,
     /// Persistent native string storage for static delay-bearing task locals.
     static_string_task_locals: HashMap<(NodeId, NodeId), usize>,
     /// Persistent native-pointer storage for static chandle locals in
@@ -2290,6 +2293,7 @@ impl<'a> Codegen<'a> {
             next_virtual_slot: 0,
             pending_specializations: Vec::new(),
             pending_switches: Vec::new(),
+            strength_nets: Default::default(),
             static_string_task_locals: HashMap::new(),
             static_task_chandle_locals: HashMap::new(),
             continuous_lowering: false,

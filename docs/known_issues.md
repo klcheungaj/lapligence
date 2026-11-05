@@ -872,6 +872,46 @@ FST behaviour follows the format.
 `$dumpvars(1, tb.blk);` for a named block `blk`; `flush_read.sv` with
 `FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
 
+## Sibling ports with different net delays
+
+**Status:** open by decision (T1-D4); the form stops code generation with a
+located error. It compiled before T1-D4, silently without a delay.
+
+### Symptom
+
+Two or more ports merge into one net, their formals declare different net
+delays, and no dominating declaration has a delay:
+
+```systemverilog
+module leaf(n); inout n; wire #D n; endmodule
+wire e;
+leaf #(3) a(.n(e));
+leaf #(2) b(.n(e));
+```
+
+llg stops with `net propagation delay for ... has conflicting member delays`.
+
+### Cause
+
+23.3.3.7 gives the simulated net the delay of the dominating net, and T1-D4
+falls back to the outermost declared delay. Siblings are equally far out, so
+the fallback names no single delay; one simulated net can hold only one.
+
+### Intended direction
+
+Keep the rejection until a rule is defensible. A simulator tried gives none:
+with the formals read hierarchically the net takes the largest delay on every
+transition, without such a read later transitions take no delay at all, a
+first value set at time 0 took 2, 6 and 8 for sets of delays where another
+design took 3, 4 and 5, and rise and fall delays do not combine per transition.
+Taking the largest delay or none would both invent a behaviour. The workaround
+is to give the dominating (outer) net a delay, or the same delay to every
+formal.
+
+### Reproduce
+
+`T1-D4` covers the accepted forms; the snippet above rejects.
+
 ## randsequence limits (ADV-016)
 
 **Status:** open (ADV-016); the forms below stop code generation with a

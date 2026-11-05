@@ -52,7 +52,11 @@
 //! plain second name of its source: the sink follows after its own delay.
 //! A sink that differs merges all the same; the simulated net takes the
 //! dominating declaration's delay, or the outermost declared delay when that
-//! declaration has none (T1-D4, `NetCollapsePlan::port_batch`).
+//! declaration has none (T1-D4, `NetCollapsePlan::port_batch`). An inout
+//! connection alone does not make a delayed sink differ: some net of its
+//! inout union must have a driver besides the port. An output port whose
+//! actual declares the delay and whose formal declares none merges too, so
+//! the formal shows the delayed net (T1-D9).
 
 use super::super::net_cells::NetCellPlan;
 use super::*;
@@ -97,6 +101,27 @@ pub(super) struct PortMerges {
     pub(super) selected: Vec<SelectedPortMerge>,
 }
 
+/// The root of `net` in the whole-net inout forest.
+fn inout_root(parent: &HashMap<NodeId, NodeId>, net: NodeId) -> NodeId {
+    let mut root = net;
+    while let Some(next) = parent.get(&root).filter(|next| **next != root) {
+        root = *next;
+    }
+    root
+}
+
+/// The members of each whole-net inout union, by root.
+fn inout_unions(parent: &HashMap<NodeId, NodeId>) -> HashMap<NodeId, Vec<NodeId>> {
+    let mut unions: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for net in parent.keys() {
+        unions
+            .entry(inout_root(parent, *net))
+            .or_default()
+            .push(*net);
+    }
+    unions
+}
+
 /// The facts of `build_net_groups` the merge decision reads.
 pub(super) struct MergeContext<'n> {
     pub(super) nodes: &'n [NodeId],
@@ -127,6 +152,16 @@ impl Codegen<'_> {
         if candidates.is_empty() {
             return PortMerges::default();
         }
+        let unions = inout_unions(context.parent);
+        let in_union = |sink: NodeId, candidate: &MergeCandidate| {
+            let Some(members) = unions.get(&inout_root(context.parent, sink)) else {
+                return false;
+            };
+            !candidate.delayed
+                || members
+                    .iter()
+                    .any(|net| self.sink_differs_from_source(*net, candidate.port, context))
+        };
         let merged = Self::propagate_merges(&candidates, context, |candidate| {
             match &candidate.connection {
                 // A merged selected port is never slower or larger than its
@@ -134,17 +169,19 @@ impl Codegen<'_> {
                 MergeConnection::Selected { .. } if !candidate.delayed => true,
                 MergeConnection::Selected { output, nets, .. } => {
                     let sinks = if *output { &nets[1..] } else { &nets[..1] };
-                    sinks.iter().any(|sink| {
-                        context.parent.contains_key(sink)
-                            || self.sink_differs_from_source(*sink, candidate.port, context)
-                    })
+                    (*output && self.db.net_delay(nets[0]).is_none())
+                        || sinks.iter().any(|sink| {
+                            in_union(*sink, candidate)
+                                || self.sink_differs_from_source(*sink, candidate.port, context)
+                        })
                 }
                 MergeConnection::Whole {
                     actual,
                     formal,
                     sink,
                 } => {
-                    context.parent.contains_key(sink)
+                    (candidate.delayed && sink != formal && self.db.net_delay(*formal).is_none())
+                        || in_union(*sink, candidate)
                         || self.is_uwire(*actual)
                         || self.is_uwire(*formal)
                         || self.sink_differs_from_source(*sink, candidate.port, context)

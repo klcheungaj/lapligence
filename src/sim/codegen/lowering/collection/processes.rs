@@ -2151,12 +2151,13 @@ impl<'a> Codegen<'a> {
                 // always_comb/always_latch/always_ff without any event or
                 // delay control use the existing sensitivity-driven shape.
                 // Run once at t=0, then re-run whenever a read signal changes.
-                let sigs = ctx.cg.with_interface_reads(
+                let mut sigs = ctx.cg.with_interface_reads(
                     path,
                     stmt,
                     always_type != Some(AlwaysKind::Always),
                     |cg| cg.collect_process_sensitivity(path, stmt, always_type),
                 )?;
+                ctx.cg.add_strength_reads(&mut sigs)?;
                 if sigs.is_empty() {
                     ctx.cg.warnings.push(format!(
                         "combinational always process in `{}` reads no \

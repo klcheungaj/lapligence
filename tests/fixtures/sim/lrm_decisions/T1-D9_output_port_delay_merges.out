@@ -1,0 +1,15 @@
+1 w=x/x wd=x/x n=x/x nd=x/x plain=z/z v=x/x pd=x/x g=1/x
+3 w=z/z wd=z/z n=z/z nd=z/z plain=z/z v=z/z pd=x/x g=1/x
+4 w=z/z wd=z/z n=z/z nd=z/z plain=z/z v=z/z pd=x/x g=1/1
+5 w=z/z wd=z/z n=z/z nd=z/z plain=z/z v=z/z pd=x/z g=1/1
+6 w=z/z wd=z/z n=z/z nd=z/z plain=1/1 v=z/z pd=x/z g=1/1
+7 w=z/z wd=z/z n=z/z nd=z/z plain=1/1 v=z/z pd=z/z g=1/1
+8 w=1/1 wd=1/1 n=1/1 nd=0/0 plain=1/1 v=1/1 pd=z/z g=1/1
+10 w=1/1 wd=1/1 n=1/1 nd=0/0 plain=1/1 v=1/1 pd=z/1 g=1/1
+12 w=1/1 wd=1/1 n=1/1 nd=0/0 plain=1/1 v=1/1 pd=1/1 g=1/1
+16 w=1/1 wd=1/1 n=1/1 nd=0/0 plain=z/z v=1/1 pd=1/1 g=1/1
+18 w=z/z wd=z/z n=z/z nd=z/z plain=z/z v=z/z pd=1/1 g=1/1
+31 w=z/z wd=z/z n=z/z nd=z/z plain=z/z v=z/z pd=1/1 g=0/1
+33 w=z/z wd=0/0 n=z/z nd=0/0 plain=z/z v=z/z pd=1/1 g=0/1
+34 w=z/z wd=0/0 n=z/z nd=0/0 plain=z/z v=z/z pd=1/1 g=0/0
+43 w=z/z wd=z/z n=z/z nd=z/z plain=z/z v=z/z pd=1/1 g=0/0

@@ -1,7 +1,8 @@
 # Lowering: events, predicates, aggregates and streams
 
 Register event or-lists atomically with `llg_wait_any_events`, never sequential
-waits. True waits execute once immediately; false/X/Z constant waits suspend on
+waits. A value event on a net whose strength can change alone adds one source on
+its strength view (`add_strength_events`, T1-D8, [nets](nets.md)). True waits execute once immediately; false/X/Z constant waits suspend on
 empty dependencies without polling or blocking time advancement. Evaluated events
 compare expression values, not every operand change; qualifiers run at trigger.
 Packed edges use LSB, real any-change uses IEEE bits (signed-zero changes wake;
