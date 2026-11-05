@@ -219,6 +219,23 @@ fn global_include_root_precedes_library_incdir() {
     );
 }
 
+/// T1-D6: a format known only at run time prints the bound library.cell.
+#[test]
+fn runtime_formats_print_the_library_binding() {
+    sim_cli::run_case_with_inputs(
+        SUITE,
+        "runtime_binding",
+        &["runtime_binding.map", "lib/runtime_bound.sv"],
+        "rtl.rtl018_runtime_bound|rtl.rtl018_runtime_bound|tb.u|%l|7\n\
+         rtl.rtl018_runtime_bound|rtl.rtl018_runtime_bound|tb.u|%l|7\n\
+         rtl.rtl018_runtime_bound\n\
+         work.tb\n",
+        "llg: $finish at time 1000 at tb:11:5\n",
+        &["--libmap", "runtime_binding.map"],
+        &[],
+    );
+}
+
 /// A02: without a configuration, the declared library order resolves the
 /// implementation-defined tie between same-named cells; a configuration
 /// `use` clause overrides it. `%l` reports the bound library.cell (SV §33.7).

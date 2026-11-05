@@ -193,6 +193,7 @@ impl Frame<'_, '_> {
                 format,
                 args,
                 scope,
+                binding,
             } => {
                 let format = self.string(format)?;
                 // Reserve before publishing formatter arguments: this is the
@@ -201,12 +202,21 @@ impl Frame<'_, '_> {
                 let arguments = self.formatted_arguments(args, self.ctx.model.precision_fs)?;
                 self.line(super::super::destinations::assign_string(
                     &result.address,
-                    &format!(
-                        "llg_string_format_typed({}, {arguments}, {}, {})",
-                        format.take_string(),
-                        args.len(),
-                        c_string_literal(scope)
-                    ),
+                    &match binding {
+                        Some(binding) => format!(
+                            "llg_string_format_bound({}, {arguments}, {}, {}, {})",
+                            format.take_string(),
+                            args.len(),
+                            c_string_literal(scope),
+                            c_string_literal(binding)
+                        ),
+                        None => format!(
+                            "llg_string_format_typed({}, {arguments}, {}, {})",
+                            format.take_string(),
+                            args.len(),
+                            c_string_literal(scope)
+                        ),
+                    },
                 ));
                 self.native_discard(format);
                 result

@@ -665,8 +665,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   generate scopes, composed with binds, interface memories and descriptor-sized
   fixed memories crossing configured and bound ports. `%l` prints the bound
   `library.cell` (or `library.$unit` outside a design element) for literal
-  formats (V §13.6; SV §33.7); a runtime-built `$sformatf` format still
-  prints `work.<scope>`. Without a configuration, the declared library order
+  and run-time formats (V §13.6; SV §33.7). Without a configuration, the declared library order
   resolves same-named cells, an implementation-defined tie. Library sources follow
   `--compilation-units`: separate mode preprocesses each file alone, merged mode
   shares one preprocessor and `$unit` per library in admission order. Included maps and
@@ -1923,8 +1922,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   for other handles; output is capped at 1 MiB with a warning
   ([sim_024](../tests/fixtures/sim/feature_completion/sim_024/readme.md)).
   Tagged unions and semaphore/mailbox handles reject under `%p`; non-`%p`
-  conversions of unpacked values or handles reject; run-time formats keep
-  `%l` approximate. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
+  conversions of unpacked values or handles reject. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
 - 🟨 **Postponed output** — Strobes print once at the end of their slot, after
   Active/Inactive/NBA iteration and after the slot's monitor reports, the last
   issued first (S25-D6); `$monitor` keeps one list
