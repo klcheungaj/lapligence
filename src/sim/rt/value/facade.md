@@ -66,6 +66,15 @@ backends. There is no per-value backend tag, virtual/function table, TLS/global
 scratch, backend branch inside an operation, or operation-level fallback.
 Inline/wide and B-present checks are representation checks within GMP.
 
+Every operation the headers declare is compared between the backends:
+`tests/runtime_value_storage/facade_comparisons.tsv` names, for each one, the test
+that gives legacy and compact the same input and compares the results, and
+`scripts/check_value_comparisons.py` (run by `runtime_value_facade`) rejects an
+operation without a row. A new operation therefore needs a line in
+`facade_compare_bridge.c` and a row before it can land. The two backends differ
+only where this contract says so: value ABI number, `sv4_bytes` accounting, descriptor
+size (`ValueBackend::descriptor_bytes()`) and the link guard symbol.
+
 ## Width, sign and language behavior
 
 The frontend and IR determine context widths and signedness. A value records
