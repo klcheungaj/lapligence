@@ -54,16 +54,12 @@ impl Frame<'_, '_> {
     /// handle is per site: a gate output is one fixed net selection.
     pub(super) fn inertial_enable(
         &mut self,
-        zero_lhs: &IrLhs,
-        zero_rhs: &IrExpr,
-        one_lhs: &IrLhs,
-        one_rhs: &IrExpr,
-        delay: &IrInertialDelay,
+        enable: &crate::sim::ir::IrInertialEnable,
     ) -> Result<(), String> {
-        let zero = self.expression(zero_rhs)?;
-        let one = self.expression(one_rhs)?;
-        let zero_target = self.target(zero_lhs)?;
-        let one_target = self.target(one_lhs)?;
+        let zero = self.expression(&enable.zero_rhs)?;
+        let one = self.expression(&enable.one_rhs)?;
+        let zero_target = self.target(&enable.zero_lhs)?;
+        let one_target = self.target(&enable.one_lhs)?;
         let (Some((net, zero_slot)), Some((_, one_slot))) =
             (zero_target.net.clone(), one_target.net.clone())
         else {
@@ -71,7 +67,7 @@ impl Frame<'_, '_> {
         };
         let zero = self.convert(zero, zero_target.width, false, false, false);
         let one = self.convert(one, one_target.width, false, false, false);
-        let delays = self.inertial_delays(delay)?;
+        let delays = self.inertial_delays(&enable.delay)?;
         let storage_width = zero_target.binding.width;
         let (plan, reverse) = match &zero_target.selection {
             Some(selection) => self.selection_plan(selection, storage_width),

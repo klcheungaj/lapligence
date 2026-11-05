@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::core::db::{UdpRow, UdpTable};
+use crate::sim::ir::IrInertialEnable;
 use crate::sim::ir::{
     IrUdpEdge, IrUdpInput, IrUdpNext, IrUdpOutput, IrUdpRow, IrUdpSequential, IrUdpSequentialRow,
     IrUdpTable,
@@ -549,13 +550,13 @@ impl<'a> Codegen<'a> {
                     let (zero_lhs, zero_rhs) = sides.pop().expect("two enable sides");
                     self.initialize_delayed_lhs(&zero_lhs)?;
                     self.initialize_delayed_lhs(&one_lhs)?;
-                    vec![IrStmt::InertialEnable {
+                    vec![IrStmt::InertialEnable(Box::new(IrInertialEnable {
                         zero_lhs,
                         zero_rhs,
                         one_lhs,
                         one_rhs,
                         delay,
-                    }]
+                    }))]
                 } else {
                     let mut body = Vec::new();
                     for (side, terminal) in [(zero_side, 0), (one_side, ENABLE_ONE_SIDE_TERMINAL)] {
@@ -601,13 +602,13 @@ impl<'a> Codegen<'a> {
                     Some(delay) => {
                         self.initialize_delayed_lhs(&lhs)?;
                         self.initialize_delayed_lhs(&one_lhs)?;
-                        vec![IrStmt::InertialEnable {
+                        vec![IrStmt::InertialEnable(Box::new(IrInertialEnable {
                             zero_lhs: lhs,
                             zero_rhs: zero_side,
                             one_lhs,
                             one_rhs: one_side,
                             delay,
-                        }]
+                        }))]
                     }
                     None => vec![
                         IrStmt::Assign {

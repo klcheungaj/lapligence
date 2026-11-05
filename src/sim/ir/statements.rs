@@ -624,13 +624,7 @@ pub enum IrStmt {
     /// slots are one inertial driver, scheduled and published together with
     /// the delay of the combined output (0 falls, 1 rises, Z turns off, X, L
     /// and H take the smallest delay).
-    InertialEnable {
-        zero_lhs: IrLhs,
-        zero_rhs: IrExpr,
-        one_lhs: IrLhs,
-        one_rhs: IrExpr,
-        delay: IrInertialDelay,
-    },
+    InertialEnable(Box<IrInertialEnable>),
     /// Blocking (`nba == false`) or nonblocking assignment, including reals.
     Assign {
         lhs: IrLhs,
@@ -1141,6 +1135,17 @@ impl IrWaveDumpVars {
     }
 }
 
+/// The operands of [`IrStmt::InertialEnable`]; boxed because delayed enable
+/// gates are rare and every statement pays for the largest variant.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrInertialEnable {
+    pub(in crate::sim) zero_lhs: IrLhs,
+    pub(in crate::sim) zero_rhs: IrExpr,
+    pub(in crate::sim) one_lhs: IrLhs,
+    pub(in crate::sim) one_rhs: IrExpr,
+    pub(in crate::sim) delay: IrInertialDelay,
+}
+
 /// The scope kinds of a waveform name: one letter per scope component, in
 /// `llg_wave_register_scoped_*` spelling (`m` module or generate scope, `b`
 /// `begin` block, `k` `fork` block, `t` task, `f` function; `B` and `K` for
@@ -1244,9 +1249,8 @@ impl IrStmt {
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
             } => ticks.expression().into_iter().collect(),
-            Self::InertialAssign { delay, .. } | Self::InertialEnable { delay, .. } => {
-                delay.expressions()
-            }
+            Self::InertialAssign { delay, .. } => delay.expressions(),
+            Self::InertialEnable(enable) => enable.delay.expressions(),
             Self::SetNetDelay { delay, .. } => delay.expressions(),
             _ => Vec::new(),
         }
@@ -1262,9 +1266,8 @@ impl IrStmt {
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
             } => ticks.expression_mut().into_iter().collect(),
-            Self::InertialAssign { delay, .. } | Self::InertialEnable { delay, .. } => {
-                delay.expressions_mut()
-            }
+            Self::InertialAssign { delay, .. } => delay.expressions_mut(),
+            Self::InertialEnable(enable) => enable.delay.expressions_mut(),
             Self::SetNetDelay { delay, .. } => delay.expressions_mut(),
             _ => Vec::new(),
         }

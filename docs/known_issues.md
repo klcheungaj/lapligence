@@ -1557,9 +1557,32 @@ Pass a native record's leaf markers with the record value.
 `tests/fixtures/sim/feature_completion/sim_009/neg_record_ref_wait_actual.sv`,
 `neg_string_event_control.sv`.
 
-## Rebinding a class event property in a fork branch publishes at the return
+## Rebinding a class event property through an output formal publishes at the return
 
 ### Symptom
+
+A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
+on a rebinding through a `ref` event formal at the rebinding, also in a
+fork-join branch of the callee, except when the callee forwards the formal to
+an output event formal: it then wakes when the outermost call returns. Waits
+on the event itself are not affected: they follow the object named when armed.
+
+### Cause
+
+An output event formal works on its own handle and assigns it back at the
+return, and it has no marker parameter.
+
+### Intended direction
+
+Publish at the copy-out of each call level, if a design needs it. Estimate: a
+quarter of a day.
+
+### Reproduce
+
+A task with `output event e` assigning `e = g`, called with a `ref` event
+formal of the enclosing task bound to `c.ev`, while `wait (c.ev == g)` waits.
+
+## Symptom
 
 A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
 on a rebinding through a `ref` event formal at the rebinding, except when the

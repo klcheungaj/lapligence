@@ -436,7 +436,7 @@ fn render_stmt_scoped(
         IrStmt::SetNetDelay { group, delay } => {
             super::assignments::render_set_net_delay(ctx, *group, delay)?
         }
-        IrStmt::InertialEnable { .. } => {
+        IrStmt::InertialEnable(_) => {
             return Err("delayed enable gates require the structured owned emitter".to_owned())
         }
         IrStmt::InertialAssign { lhs, rhs, delay } => {

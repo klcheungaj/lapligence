@@ -170,7 +170,13 @@ impl Frame<'_, '_> {
                                 "fork capture of a `ref` formal requires its descriptor".to_owned()
                             );
                         }
-                        if captured_formals.contains(index) {
+                        let markerless_event = self
+                            .formal_function()
+                            .and_then(|function| function.formals.get(*index))
+                            .is_some_and(|formal| formal.event && !formal.event_marker);
+                        if captured_formals.contains(index) && markerless_event {
+                            self.scalar("void*", "NULL".to_owned())
+                        } else if captured_formals.contains(index) {
                             let marker = super::super::model::handle_marker_param(*index);
                             let marker = self.scalar("void*", format!("(void*){marker}"));
                             values.push((storage, CapturedValue::RefMarker(*index, marker)));
@@ -475,7 +481,7 @@ impl Frame<'_, '_> {
     /// Bind the descriptor of `ref` formal `index` that a fork-join branch
     /// captured under its parameter name (`rN`), so formal reads, stores,
     /// selects and waits in the branch emit exactly as in the subroutine.
-    /// With `marker`, bind a handle formal's change marker parameter, which
+    /// With `marker`, bind a handle or event formal's change marker parameter, which
     /// the branch captured in the slot after the descriptor's.
     pub(super) fn bind_ref_formal_capture(
         &mut self,
@@ -492,8 +498,13 @@ impl Frame<'_, '_> {
             .get(index)
             .filter(|formal| formal.is_ref())
             .ok_or("captured `ref` formal is not a `ref` formal")?;
-        if marker && !formal.chandle {
-            return Err("only a handle `ref` formal captures a change marker".to_owned());
+        if marker && !formal.chandle && !formal.event {
+            return Err("only a handle or event `ref` formal captures a change marker".to_owned());
+        }
+        // The slot is reserved in every model; only some give the formal a
+        // marker parameter (`IrFormal::event_marker`).
+        if marker && formal.event && !formal.event_marker {
+            return Ok(());
         }
         let name = if marker {
             super::super::model::handle_marker_param(index)

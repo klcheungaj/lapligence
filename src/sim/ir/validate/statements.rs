@@ -112,13 +112,14 @@ impl Validator<'_> {
             delay: crate::sim::ir::IrInertialDelay::Runtime(delay),
             ..
         }
-        | IrStmt::InertialEnable {
-            delay: crate::sim::ir::IrInertialDelay::Runtime(delay),
-            ..
-        }
         | IrStmt::SetNetDelay { delay, .. } = stmt
         {
             delays.extend(delay.values());
+        }
+        if let IrStmt::InertialEnable(enable) = stmt {
+            if let crate::sim::ir::IrInertialDelay::Runtime(delay) = &enable.delay {
+                delays.extend(delay.values());
+            }
         }
         if let IrStmt::SetNetDelay { group, .. } = stmt {
             if *group >= self.model.net_groups.len() {
@@ -976,13 +977,14 @@ impl Validator<'_> {
                 self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
                 self.validate_expr(rhs, formals, &format!("{path}.rhs"))?;
             }
-            IrStmt::InertialEnable {
-                zero_lhs,
-                zero_rhs,
-                one_lhs,
-                one_rhs,
-                delay,
-            } => {
+            IrStmt::InertialEnable(enable) => {
+                let crate::sim::ir::IrInertialEnable {
+                    zero_lhs,
+                    zero_rhs,
+                    one_lhs,
+                    one_rhs,
+                    delay,
+                } = enable.as_ref();
                 match delay {
                     crate::sim::ir::IrInertialDelay::Annotated(slot)
                         if *slot as usize >= self.model.sdf_gate_delays.len() =>

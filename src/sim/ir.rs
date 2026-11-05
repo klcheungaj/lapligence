@@ -133,9 +133,10 @@ pub use randomize::{
 mod statements;
 pub use statements::{
     IrActivationTarget, IrCaseItem, IrCaseKind, IrClockingSampleMode, IrDisplayRadix, IrFileOp,
-    IrMemoryAccess, IrMemoryAddressingPolicy, IrMemoryImage, IrMemoryRadix, IrMemorySelector,
-    IrMemorySelectorKind, IrMemoryStorage, IrMemoryView, IrStmt, IrStochasticStmt,
-    IrUniquePriorityCheck, IrWaveDumpVars, IrWaveScopes, IrWaveStorage, IrWaveVariable,
+    IrInertialEnable, IrMemoryAccess, IrMemoryAddressingPolicy, IrMemoryImage, IrMemoryRadix,
+    IrMemorySelector, IrMemorySelectorKind, IrMemoryStorage, IrMemoryView, IrStmt,
+    IrStochasticStmt, IrUniquePriorityCheck, IrWaveDumpVars, IrWaveScopes, IrWaveStorage,
+    IrWaveVariable,
 };
 mod events;
 pub use events::{

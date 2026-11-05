@@ -385,8 +385,10 @@ impl EmitCtx<'_, '_> {
                 _ => None,
             };
         }
+        // An event formal's marker slot is filled when the model needs it,
+        // which is known only after every body is lowered.
         if let Some(IrEventRef::Formal(index)) = function.event_args.get(&target) {
-            return Some(RefFormalBinding::Descriptor(*index));
+            return Some(RefFormalBinding::Handle(*index));
         }
         if let Some(IrStringExpr::FormalRead(index)) = function.string_read.get(&target) {
             return Some(RefFormalBinding::Descriptor(*index));
