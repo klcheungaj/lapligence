@@ -143,6 +143,13 @@ impl Frame<'_, '_> {
                 key,
                 write,
             } => return self.container_element(*container, indices, key.as_deref(), *write),
+            IrChandleExpr::NativeRoot(value) => return self.native_value_read(*value),
+            IrChandleExpr::ItemElement {
+                base,
+                items,
+                indices,
+                dimensions,
+            } => return self.item_element(base, items, indices, dimensions),
             IrChandleExpr::Process(process) => {
                 // The retained temporary stays alive until its lexical scope
                 // ends, after the consuming element store has retained it.
@@ -662,6 +669,71 @@ impl Frame<'_, '_> {
                 _ => false,
             })
             .cloned()
+    }
+
+    /// The flat position `indices` select in an array of `dimensions`, as a
+    /// C `int64_t` that is negative for an invalid index.
+    pub(super) fn item_position(
+        &mut self,
+        indices: &[IrExpr],
+        dimensions: &[(i32, i32)],
+    ) -> Result<String, String> {
+        let mut position = None;
+        for (index, (left, right)) in indices.iter().zip(dimensions) {
+            let index = self.expression(index)?;
+            let selected = self.scalar(
+                "int64_t",
+                format!("llg_native_item_position({}, {left}, {right})", index.code),
+            );
+            self.discard(index);
+            position = Some(match position {
+                None => selected,
+                Some(outer) => {
+                    let extent = i64::from(*left).abs_diff(i64::from(*right)) + 1;
+                    self.scalar(
+                        "int64_t",
+                        format!(
+                            "{outer} < 0 || {selected} < 0 ? -1 : {outer} * {extent} + {selected}"
+                        ),
+                    )
+                }
+            });
+        }
+        position.ok_or_else(|| "a fixed array has dimensions".to_owned())
+    }
+
+    /// Address of the array element run-time indices select below `base`;
+    /// an invalid index resolves to a fresh default value of the element
+    /// type, which keeps reads defined and drops writes (SV 7.4.6).
+    fn item_element(
+        &mut self,
+        base: &IrChandleExpr,
+        items: &[u32],
+        indices: &[IrExpr],
+        dimensions: &[(i32, i32)],
+    ) -> Result<String, String> {
+        let base = self.chandle(base)?;
+        let mut array = format!("((llg_value_t*){base})");
+        for (depth, step) in items.iter().enumerate() {
+            array = if depth == 0 {
+                format!("{array}->value.items[{step}]")
+            } else {
+                format!("{array}.value.items[{step}]")
+            };
+        }
+        if !items.is_empty() {
+            array = format!("&{array}");
+        }
+        let array = self.scalar("llg_value_t*", array);
+        let position = self.item_position(indices, dimensions)?;
+        let element = self.scalar(
+            "llg_value_t*",
+            format!("{position} < 0 ? NULL : &{array}->value.items[{position}]"),
+        );
+        self.line(format!(
+            "if (!{element}) {{ {element} = (llg_value_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_value_t), llg_native_value_destroy)); llg_native_value_init({element}, {array}->desc->element); }}"
+        ));
+        Ok(element)
     }
 
     /// Address of one element of descriptor-backed container storage for an

@@ -26,6 +26,16 @@ pub(in crate::sim::codegen) struct ElementSelection {
 }
 
 impl ElementSelection {
+    /// Whether evaluating the selection changes nothing.
+    pub(super) fn side_effect_free(&self, codegen: &Codegen<'_>) -> bool {
+        match &self.selector {
+            ElementSelector::Indices(indices) => {
+                indices.iter().all(|index| codegen.side_effect_free(*index))
+            }
+            ElementSelector::Key(key) => codegen.side_effect_free(*key),
+        }
+    }
+
     pub(super) fn depth(&self) -> usize {
         match &self.selector {
             ElementSelector::Indices(indices) => indices.len(),
@@ -77,7 +87,7 @@ fn unstaged_member_error(path: &[AggregatePathPart]) -> String {
 }
 
 /// The value of a fresh element-leaf access named `name`.
-fn element_leaf_value(name: String, ty: IrClassFieldType) -> LeafValue {
+pub(super) fn element_leaf_value(name: String, ty: IrClassFieldType) -> LeafValue {
     match ty {
         IrClassFieldType::String => LeafValue::String(IrStringExpr::LocalRead(name)),
         IrClassFieldType::Chandle => LeafValue::Chandle(IrChandleExpr::LocalRead(name)),

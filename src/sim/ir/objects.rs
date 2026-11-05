@@ -383,6 +383,21 @@ pub enum IrChandleExpr {
     /// handle). Only container element writes consume it: an event element
     /// stores this identity, never a copy of the object.
     EventObject(Box<IrEventRef>),
+    /// Borrowed address of native value `0`, used only as the root of an
+    /// [`Self::ItemElement`] locator.
+    NativeRoot(usize),
+    /// Borrowed address of the element of the fixed array at `items` below
+    /// `base` that the run-time `indices` select, one per dimension of the
+    /// array, as the receiver of an `ElementItem` native access or the base
+    /// of another locator. An invalid index resolves to a default scratch
+    /// value of the element type (SV 7.4.6), so reads see the default and
+    /// writes are dropped.
+    ItemElement {
+        base: Box<IrChandleExpr>,
+        items: Vec<u32>,
+        indices: Vec<IrExpr>,
+        dimensions: Vec<(i32, i32)>,
+    },
     /// Borrowed address of one element of descriptor-backed container
     /// storage, used only as the receiver of an `ElementItem` native access.
     /// A missing or invalid element resolves to a default scratch value; a
@@ -2086,6 +2101,67 @@ impl IrObjectStmt {
 }
 
 impl IrChandleExpr {
+    /// The native value a run-time item locator starts from.
+    pub(in crate::sim) fn located_native_root(&self) -> Option<usize> {
+        match self {
+            Self::NativeRoot(value) => Some(*value),
+            Self::ItemElement { base, .. } => base.located_native_root(),
+            _ => None,
+        }
+    }
+
+    /// The type of the value a locator addresses.
+    pub(in crate::sim) fn located_value<'a>(
+        &self,
+        model: &'a super::IrModel,
+    ) -> Result<&'a super::IrContainerElement, super::IrValidationError> {
+        let invalid =
+            |message: &str| super::IrValidationError::new("value locator", message.to_owned());
+        match self {
+            Self::NativeRoot(value) => model
+                .native_values
+                .get(*value)
+                .and_then(|value| model.native_types.get(value.ty))
+                .ok_or_else(|| invalid("native value is out of bounds")),
+            Self::ContainerElement {
+                container,
+                indices,
+                key,
+                ..
+            } => {
+                let container = model
+                    .containers
+                    .get(*container)
+                    .ok_or_else(|| invalid("container index is out of bounds"))?;
+                super::IrValueSlot::Element {
+                    indices: indices.clone(),
+                    key: key.as_deref().cloned(),
+                }
+                .located_element(container, None, model)
+            }
+            Self::ItemElement {
+                base,
+                items,
+                indices,
+                dimensions,
+            } => {
+                let array =
+                    super::native_values::native_leaf_type(base.located_value(model)?, items)
+                        .ok_or_else(|| invalid("item path does not select an array"))?;
+                match array {
+                    super::IrContainerElement::FixedArray {
+                        dimensions: declared,
+                        element,
+                    } if declared == dimensions && indices.len() == dimensions.len() => {
+                        Ok(element.as_ref())
+                    }
+                    _ => Err(invalid("run-time index does not select a fixed array")),
+                }
+            }
+            _ => Err(invalid("not a value locator")),
+        }
+    }
+
     /// A side-effect-free read of handle storage, possibly null-checked:
     /// a receiver that may be evaluated again at every use.
     pub(in crate::sim) fn is_plain_receiver(&self) -> bool {
@@ -2200,6 +2276,11 @@ impl IrChandleExpr {
                     key: key.as_deref().cloned(),
                 };
                 slot.located_element(container, None, model).map(|_| ())
+            }
+            Self::NativeRoot(_) => self.located_value(model).map(|_| ()),
+            Self::ItemElement { base, .. } => {
+                self.located_value(model)?;
+                base.validate(model, formals, chandle_return)
             }
             Self::QueuePop { container, .. } => {
                 if !model.containers.get(*container).is_some_and(|container| {
@@ -2461,6 +2542,11 @@ impl IrChandleExpr {
                     key.expressions(visit);
                 }
             }
+            Self::NativeRoot(_) => {}
+            Self::ItemElement { base, indices, .. } => {
+                base.expressions(visit);
+                indices.iter().for_each(&mut *visit);
+            }
             Self::Null
             | Self::Construct(_)
             | Self::InterfaceInstance { .. }
@@ -2507,6 +2593,11 @@ impl IrChandleExpr {
                 if let Some(key) = key {
                     key.expressions_mut(visit);
                 }
+            }
+            Self::NativeRoot(_) => {}
+            Self::ItemElement { base, indices, .. } => {
+                base.expressions_mut(visit);
+                indices.iter_mut().for_each(&mut *visit);
             }
             Self::Null
             | Self::Construct(_)

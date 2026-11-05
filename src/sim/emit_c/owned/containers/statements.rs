@@ -1156,12 +1156,17 @@ pub(super) fn render(
             };
             format!("    llg_container_nba_after({kind}, {target}, &{source}, {ticks});\n")
         }
-        IrContainerStmt::NbaLocate { root, items } => {
-            let list = items
-                .iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
+        IrContainerStmt::NbaLocate {
+            root,
+            items,
+            selects,
+        } => {
+            let mut list = items.iter().map(u32::to_string).collect::<Vec<_>>();
+            for select in selects {
+                let position = frame.item_position(&select.indices, &select.dimensions)?;
+                list[select.slot] = format!("llg_native_item_step({position})");
+            }
+            let list = list.join(", ");
             let items = format!("(const uint32_t[]){{ {list} }}, {}", items.len());
             match root {
                 IrValueItemRoot::Value(value) => format!(

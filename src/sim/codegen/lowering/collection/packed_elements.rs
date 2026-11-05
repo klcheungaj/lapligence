@@ -5,6 +5,7 @@ use super::*;
 use crate::core::db::PackedMember;
 use crate::sim::ir::IrPackedSelect;
 
+#[derive(Clone)]
 pub(in super::super) enum Select {
     Elements(Vec<NodeId>),
     Part(NodeId, NodeId),
@@ -520,7 +521,7 @@ impl<'a> Codegen<'a> {
     /// roots keep the offset arithmetic for their constant selectors: their
     /// selected-reference dependencies treat a constant step over an already
     /// selected actual as a nested slice.
-    fn packed_selection_steps_folding(
+    pub(in super::super) fn packed_selection_steps_folding(
         &mut self,
         path: &str,
         base: NodeId,

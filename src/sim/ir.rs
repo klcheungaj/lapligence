@@ -44,8 +44,8 @@ mod validate;
 pub use containers::{
     IrAssocKey, IrAssocTraversal, IrBitStream, IrContainer, IrContainerElement, IrContainerExpr,
     IrContainerKind, IrContainerMember, IrContainerMethod, IrContainerReduction, IrContainerStmt,
-    IrQueueBound, IrQueueSource, IrStreamSegment, IrStreamSelector, IrValueItemRoot, IrValueSlot,
-    PROCESS_ELEMENT_KIND,
+    IrItemSelect, IrQueueBound, IrQueueSource, IrStreamSegment, IrStreamSelector, IrValueItemRoot,
+    IrValueSlot, PROCESS_ELEMENT_KIND,
 };
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,

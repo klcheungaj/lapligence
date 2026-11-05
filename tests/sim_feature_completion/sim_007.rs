@@ -150,6 +150,26 @@ fn record_element_members_take_event_controls_and_selects() {
 }
 
 #[test]
+fn run_time_indices_select_below_record_elements() {
+    let selects =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_member_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_member_selects", selects, &[], &[]);
+    let invalid =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_member_select_invalid.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_member_select_invalid", invalid, &[], &[]);
+    let queued =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_member_select_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_member_select_nba", queued, &[], &[]);
+}
+
+#[test]
+fn assignment_operators_evaluate_run_time_selects_once() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_compound_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_compound_selects", expected, &[], &[]);
+}
+
+#[test]
 fn record_element_members_take_nonblocking_writes() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/record_element_member_nba.out");

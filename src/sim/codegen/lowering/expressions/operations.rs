@@ -658,6 +658,19 @@ impl<'a> Codegen<'a> {
         if overloaded {
             self.check_overloaded_update_target(scope_path, lhs_node)?;
         }
+        if !overloaded {
+            if let Some(select) = self.native_member_select(scope_path, lhs_node)? {
+                let post = matches!(op, Operation::PostIncrement | Operation::PostDecrement);
+                return self.native_member_select_mutation(
+                    scope_path,
+                    &select,
+                    post,
+                    &mut |codegen, current| {
+                        codegen.mutation_value(scope_path, op, operands, current)
+                    },
+                );
+            }
+        }
         let lhs = self.lower_lhs(scope_path, lhs_node)?;
         // An overload's target is an ordinary typed lvalue (an unpacked
         // record's members form a `Stream` of leaves), never a streaming
@@ -704,45 +717,7 @@ impl<'a> Codegen<'a> {
                 current_type.signed,
                 None,
             );
-            let rhs = if matches!(
-                op,
-                Operation::PreIncrement
-                    | Operation::PostIncrement
-                    | Operation::PreDecrement
-                    | Operation::PostDecrement
-            ) {
-                if current.is_real() {
-                    real_literal_expr(1.0)
-                } else {
-                    IrExpr::new(
-                        IrExprKind::Const(IrConst {
-                            bits: vec![1],
-                            x: vec![0],
-                            z: vec![0],
-                            width: 32,
-                            signed: true,
-                            real: None,
-                            fill: None,
-                        }),
-                        32,
-                        true,
-                        None,
-                    )
-                }
-            } else {
-                let rhs_node = *operands.get(1).ok_or_else(|| {
-                    format!("compound assignment in `{scope_path}` has no right operand")
-                })?;
-                self.lower_expr(scope_path, rhs_node)?
-            };
-            let arithmetic = if matches!(op, Operation::PreDecrement | Operation::PostDecrement) {
-                Operation::Subtract
-            } else if matches!(op, Operation::PreIncrement | Operation::PostIncrement) {
-                Operation::Add
-            } else {
-                op
-            };
-            super::super::lower_compound_expr_ir(scope_path, arithmetic, current, rhs)?
+            self.mutation_value(scope_path, op, operands, current)?
         };
         Ok(IrExpr::new(
             IrExprKind::Mutation(Box::new(crate::sim::ir::IrMutationExpr {
@@ -757,6 +732,56 @@ impl<'a> Codegen<'a> {
             current_type.signed,
             None,
         ))
+    }
+
+    /// The value a built-in assignment-like operation stores, from the
+    /// value `current` of its target.
+    fn mutation_value(
+        &mut self,
+        scope_path: &str,
+        op: Operation,
+        operands: &[NodeId],
+        current: IrExpr,
+    ) -> Result<IrExpr, String> {
+        let rhs = if matches!(
+            op,
+            Operation::PreIncrement
+                | Operation::PostIncrement
+                | Operation::PreDecrement
+                | Operation::PostDecrement
+        ) {
+            if current.is_real() {
+                real_literal_expr(1.0)
+            } else {
+                IrExpr::new(
+                    IrExprKind::Const(IrConst {
+                        bits: vec![1],
+                        x: vec![0],
+                        z: vec![0],
+                        width: 32,
+                        signed: true,
+                        real: None,
+                        fill: None,
+                    }),
+                    32,
+                    true,
+                    None,
+                )
+            }
+        } else {
+            let rhs_node = *operands.get(1).ok_or_else(|| {
+                format!("compound assignment in `{scope_path}` has no right operand")
+            })?;
+            self.lower_expr(scope_path, rhs_node)?
+        };
+        let arithmetic = if matches!(op, Operation::PreDecrement | Operation::PostDecrement) {
+            Operation::Subtract
+        } else if matches!(op, Operation::PreIncrement | Operation::PostIncrement) {
+            Operation::Add
+        } else {
+            op
+        };
+        super::super::lower_compound_expr_ir(scope_path, arithmetic, current, rhs)
     }
 
     /// An overloaded update (IEEE 1800-2009 11.11) that yields a value or binds

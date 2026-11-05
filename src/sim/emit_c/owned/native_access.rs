@@ -73,6 +73,11 @@ impl Frame<'_, '_> {
         if let IrNativeAccessKind::ElementItem { ty } = access.kind {
             // The locator is re-evaluated at every use: element addresses
             // are borrowed only until the container next changes shape.
+            if !reading {
+                if let Some(value) = access.receiver.located_native_root() {
+                    self.note_ref_store(value)?;
+                }
+            }
             let element = self.chandle(&access.receiver)?;
             let mut item = format!("((llg_value_t*){element})");
             for (depth, step) in access.item_path.iter().enumerate() {
@@ -82,9 +87,12 @@ impl Frame<'_, '_> {
                     format!("{item}.value.items[{step}]")
                 };
             }
-            if access.item_path.is_empty() {
-                return Err("element item requires an item path".to_owned());
-            }
+            // A locator that selects the leaf itself leaves no path.
+            let item = if access.item_path.is_empty() {
+                format!("(*{item})")
+            } else {
+                item
+            };
             let c_type = match ty {
                 IrClassFieldType::Packed { .. } => "sv4_t*",
                 IrClassFieldType::Real { .. } => "double*",

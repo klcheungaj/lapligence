@@ -142,10 +142,15 @@ impl EmitCtx<'_, '_> {
         }
         if let Some(select) = self.cg.native_member_select(&self.path, lhs)? {
             if op != Operation::Assignment {
-                return Err(format!(
-                    "compound assignment to a run-time selected native record member element in `{}` is not supported",
-                    self.path
-                ));
+                let path = self.path.clone();
+                return self.cg.native_member_select_update(
+                    &self.path,
+                    &select,
+                    &mut |cg, current| {
+                        let rhs = cg.lower_expr(&path, rhs)?;
+                        super::super::lower_compound_expr_ir(&path, op, current, rhs)
+                    },
+                );
             }
             return self
                 .cg
@@ -680,6 +685,14 @@ impl EmitCtx<'_, '_> {
     }
 
     fn lower_inc_dec_captured(&mut self, op: Operation, operand: NodeId) -> Result<IrStmt, String> {
+        if let Some(select) = self.cg.native_member_select(&self.path, operand)? {
+            let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
+            return self
+                .cg
+                .native_member_select_update(&self.path, &select, &mut |_, current| {
+                    Ok(inc_dec_value(current, increment))
+                });
+        }
         if self.cg.is_container_element(operand) {
             let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
             return self.cg.lower_container_element_update(

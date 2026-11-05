@@ -90,6 +90,7 @@ feature_completion/sim_007/native_tagged_nba.sv	mixed-assignments	32:5
 feature_completion/sim_007/record_container_nba.sv	mixed-assignments	10:3
 feature_completion/sim_007/record_container_nba_sources.sv	mixed-assignments	18:3
 feature_completion/sim_007/record_element_member_nba.sv	mixed-assignments	19:3
+feature_completion/sim_007/record_member_select_nba.sv	mixed-assignments	21:3
 force/Force_Advanced_Contexts.sv	mixed-assignments	32:3
 group1_repairs/packed_selection_capture.sv	mixed-assignments	5:3
 group1_repairs/subaggregate_types.sv	mixed-assignments	8:5

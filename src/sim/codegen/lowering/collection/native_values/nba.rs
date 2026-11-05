@@ -14,7 +14,7 @@ enum ElementNbaTarget {
 }
 
 /// A queued write of `value` to the located leaf whose access is `name`.
-fn element_leaf_nba(
+pub(super) fn element_leaf_nba(
     model: &IrModel,
     name: String,
     ty: IrClassFieldType,
@@ -97,6 +97,7 @@ impl Codegen<'_> {
         statements.push(IrStmt::Container(Box::new(IrContainerStmt::NbaLocate {
             root,
             items: leaf.items.clone(),
+            selects: Vec::new(),
         })));
         let ticks = delay.unwrap_or(IrDelay::Constant(0));
         self.element_nba_target = Some(slot);
@@ -156,20 +157,31 @@ impl Codegen<'_> {
         leaf: &NativeLeaf,
         value: LeafValue,
     ) -> Result<IrStmt, String> {
-        if !self.persistent_native_value(native) {
-            return Err(format!(
-                "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
-            ));
-        }
+        self.require_persistent_native(path, native)?;
         let name = self.native_leaf_symbol(native, leaf);
         Ok(IrStmt::Block(vec![
             IrStmt::Container(Box::new(IrContainerStmt::NbaLocate {
                 root: IrValueItemRoot::Value(native),
                 items: leaf.items.clone(),
+                selects: Vec::new(),
             })),
             element_leaf_nba(&self.model, name, leaf.ty, value, IrDelay::Constant(0))?,
             IrStmt::Container(Box::new(IrContainerStmt::NbaLocateEnd)),
         ]))
+    }
+
+    /// Reject a queued write to a leaf of an activation's native value.
+    pub(super) fn require_persistent_native(
+        &self,
+        path: &str,
+        native: usize,
+    ) -> Result<(), String> {
+        if self.persistent_native_value(native) {
+            return Ok(());
+        }
+        Err(format!(
+            "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
+        ))
     }
 
     /// `r.m <= v`, also a select inside a packed member, where `r` is a
@@ -220,6 +232,7 @@ impl Codegen<'_> {
             IrStmt::Container(Box::new(IrContainerStmt::NbaLocate {
                 root: IrValueItemRoot::Value(native),
                 items: leaf.items.clone(),
+                selects: Vec::new(),
             })),
             write,
             IrStmt::Container(Box::new(IrContainerStmt::NbaLocateEnd)),
@@ -279,6 +292,7 @@ impl Codegen<'_> {
                     write: false,
                 }),
                 items: leaf.items.clone(),
+                selects: Vec::new(),
             })));
             let name = self.element_nba_access(path, &selection, &slot, &leaf)?;
             statements.push(element_leaf_nba(
@@ -307,6 +321,7 @@ impl Codegen<'_> {
                     write: false,
                 }),
                 items: leaf.items.clone(),
+                selects: Vec::new(),
             })));
             statements.push(IrStmt::Container(Box::new(
                 IrContainerStmt::ContainerNonblocking {

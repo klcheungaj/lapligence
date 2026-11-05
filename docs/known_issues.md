@@ -551,20 +551,16 @@ pops it), or named as the target of a timing-controlled assignment or a
 `foreach`, initializers and timed assignment values copy the member at each
 evaluation); an event-controlled nonblocking write of a member of a
 fixed-array record element (the detached event assignment does not carry the
-position captured at issue; untimed and `#delay` writes work); a run-time index
-into a member array of a fixed-array element (`nb[1].a[k]`), two run-time
-indices into nested member arrays (`m.e[k].a[j]`) and bit selects below a
-run-time index (`m.e[k].b[2]`); an event-controlled nonblocking write of a whole
+position captured at issue; untimed and `#delay` writes work); an event-controlled nonblocking write of a whole
 module native record (`n <= @(e) m`) or through a run-time index
 (`m.e[k].s <= @(e) t`); instance class properties of a record type with container
 members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
 properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
-compound writes through a run-time index (`r.a[k] += 1`);
-a run-time index into a native member array of more than 4,096 elements
-(`NATIVE_MEMBER_SELECT_LIMIT`), 256 when it selects whole records
-(`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a
+a run-time selection among more than 4,096 leaves of a module record
+(`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
+record (`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a
 container element whose record has container members, a real member of a
 container element or subroutine record, and a run-time-indexed record element
 of a module, static or block record (`tr(o.e[i])`; its scalar members and

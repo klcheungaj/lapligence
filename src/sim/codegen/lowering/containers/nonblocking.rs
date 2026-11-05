@@ -17,6 +17,15 @@ impl Codegen<'_> {
         rhs: NodeId,
         delay: Option<IrDelay>,
     ) -> Result<Option<IrStmt>, String> {
+        // A timed write of a run-time selection is retimed by the caller.
+        if let Some(select) = self.native_member_select(path, lhs)? {
+            return match delay {
+                Some(_) => Ok(None),
+                None => self
+                    .native_member_select_write(path, &select, rhs, true)
+                    .map(Some),
+            };
+        }
         let zero = || pattern_key_expr(0, 64, true, false);
         // Whole array or slice target.
         let target = match self.fixed_view_slice(path, lhs)? {

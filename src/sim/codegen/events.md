@@ -160,8 +160,11 @@ to the source. Sample types are limited to packed, real and shortreal.
 Nonblocking writes below a native value use `collection/native_values/nba.rs`:
 indices become issue-time locals (`element_nba_slot`) and the write runs under
 an `NbaLocate` marker. `collection/native_values/member_select.rs` lowers a
-run-time index into a member array to a balanced decision tree over the
-declared indices; its code is linear in the array per access site.
+run-time index below a native value or a record element to an item locator
+(`IrChandleExpr::ItemElement`), constant in code per site and in access cost.
+A module record keeps each element as its own object, so a run-time index
+there is a balanced decision tree over the declared indices, one nested tree
+per run-time index, whose code is linear in the leaves per access site.
 
 Resizable containers in subroutine, procedural-block and class storage
 (SIM-006) use `collection/subroutine_containers.rs`: storage per (instance,
