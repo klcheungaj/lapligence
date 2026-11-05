@@ -80,6 +80,11 @@ impl<'a> Codegen<'a> {
         expression: NodeId,
         scope_path: &str,
     ) -> Result<EventEvaluation, String> {
+        let mut pending = vec![expression];
+        while let Some(node) = pending.pop() {
+            pending.extend(self.node(node).children.iter().copied());
+            self.reject_event_comparison(scope_path, node)?;
+        }
         Ok(
             match self.event_expression_effects(expression, scope_path)?.0 {
                 Some(reason) => EventEvaluation::Process(reason),

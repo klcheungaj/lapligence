@@ -16,6 +16,19 @@ fn run_decision(case: &str, expected: &str) {
 }
 
 #[test]
+fn t1_d2_event_compare_wait_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/T1-D2_event_compare_wait_rejected.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "T1-D2_event_compare_wait_rejected",
+        "an event variable comparison at",
+    );
+}
+
+#[test]
 fn t1_d1_enable_output_delay() {
     run_decision(
         "T1-D1_enable_output_delay",

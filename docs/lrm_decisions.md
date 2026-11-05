@@ -1075,6 +1075,7 @@ input grammar is ADV-011. Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | ID | Decision | Clause | Case | Basis |
 |---|---|---|---|---|
 | T1-D1 | **A delayed enable gate drives L or H for an unknown enable, and its delay follows the new output alone**: 0 falls, 1 rises, Z turns off, X, L and H take the smallest delay, also from L to H; the two halves publish together. | 28.6 L47216-47224 (the text gives no delay for L or H) | `T1-D1_enable_output_delay` | industry-standard behaviour |
+| T1-D2 | **A wait or event control on a comparison of event variables or event formals rejects** with its location, as does a continuous assignment of one; a comparison naming a class event property stays served, and its rebinding wakes the wait. Some simulators also reject the class property form. | 9.4.3 L12032-12033 | `T1-D2_event_compare_wait_rejected` | industry-standard behaviour |
 
 ## Earlier decisions
 

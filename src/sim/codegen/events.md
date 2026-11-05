@@ -13,7 +13,9 @@ function and method bodies are walked with class-handle formals bound to the
 lowered actuals and `this` to the receiver (`CalleeReceivers`); a method body's
 module storage reads are added there, since the ordinary read walk does not
 enter methods. A read no wait can observe rejects with its location, never
-compiles to a wait that cannot wake (a missed dependency is a hang). Only waits that
+compiles to a wait that cannot wake (a missed dependency is a hang), so a
+comparison of event variables or event formals rejects (T1-D2), while one naming
+a class event property is served through its rebinding marker. Only waits that
 re-arm after every wake (`wait`, process-evaluated event plans) may use it, so
 such event controls, foreign functions and `ref`-formal selects take the
 process plan. always_comb/always_latch add nothing for a class property path or
