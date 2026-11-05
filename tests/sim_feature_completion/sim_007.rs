@@ -170,6 +170,13 @@ fn assignment_operators_evaluate_run_time_selects_once() {
 }
 
 #[test]
+fn queues_of_records_are_members_of_record_elements() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_queue_members.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_queue_members", expected, &[], &[]);
+}
+
+#[test]
 fn record_targets_take_event_controlled_nonblocking_writes() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_007/record_event_nba.out");
     sim_cli::run_case_backend_parity(SUITE, "record_event_nba", expected, &[], &[]);

@@ -568,8 +568,11 @@ virtual-interface method, any module, static or block record (whole subroutine r
 and block records or constant selections of them bind, class methods
 included); an event control on a member
 of such a formal when the actual is a subroutine record (a generic lowering
-diagnostic); a `queue` of native records as a member of a module record element
-(the element has no type descriptor); sub-record, member-array or handle selects of a native call
+diagnostic); a queue, dynamic or associative member of a module record element selected at
+run time (`m.e[k].q`, a generic lowering diagnostic; a constant `m.e[1].q` works,
+as does a run-time element of a fixed array of records, `a[k].q`, because each
+element of a module record owns its own container and the select would need a
+run-time choice among them, about three days); sub-record, member-array or handle selects of a native call
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles

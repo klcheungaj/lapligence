@@ -627,6 +627,22 @@ impl<'a> Codegen<'a> {
                 .native_companion(*value, &path)
                 .map(|ir| ContainerInfo { ir });
         }
+        // The owner is an element select when records nest (`m.e[1].q[0]`), and
+        // each element of `m.e` has its own member container.
+        if matches!(
+            self.kind(owner),
+            NodeKind::Expr(ExprKind::ArraySelect { .. })
+        ) {
+            let (target, mut path) = self.unpacked_path_for_expr(owner)?;
+            path.extend(members.iter().cloned().map(AggregatePathPart::Member));
+            return self
+                .unpacked_aggregates
+                .get(&target)?
+                .leaves
+                .iter()
+                .find(|leaf| leaf.path == path)
+                .and_then(|leaf| leaf.container.clone());
+        }
         self.unpacked_aggregates
             .get(&owner)?
             .leaves

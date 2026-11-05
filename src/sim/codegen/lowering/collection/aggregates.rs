@@ -882,9 +882,18 @@ impl<'a> Codegen<'a> {
                 let suffix = aggregate_path_suffix(member_path);
                 let display = format!("{object_name}.{suffix}");
                 let ir = self.model.containers.len();
+                let element = lower_container_element(element)?;
+                // No declaration node types a member container, and record
+                // elements take their leaves from this descriptor.
+                if matches!(
+                    element,
+                    crate::sim::ir::IrContainerElement::Aggregate { .. }
+                ) {
+                    self.staged_container_types.insert(ir, descriptor.clone());
+                }
                 self.model.containers.push(crate::sim::ir::IrContainer {
                     c_name: self.c_name("G", path, &[object_name, &suffix]),
-                    element: lower_container_element(element)?,
+                    element,
                     kind: ir_container_kind(array, &display, path)?,
                     initial_size: None,
                     activation: false,
