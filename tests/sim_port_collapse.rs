@@ -676,6 +676,31 @@ endmodule
     }
 }
 
+/// Instances of a delayed enable gate differ only in their two driver slots
+/// and output bit, so they share one body.
+#[test]
+fn delayed_enable_gates_share_one_body() {
+    let model = render(
+        "module stage(input d, input en, output l);
+  bufif1 #1 t(l, d, en);
+endmodule
+module tb;
+  logic d = 0, en = 1;
+  wire [7:0] l;
+  for (genvar i = 0; i < 8; i++) begin : g
+    stage s(.d(d), .en(en), .l(l[i]));
+  end
+  initial #5 $finish;
+endmodule
+",
+    );
+    assert_eq!(
+        model.matches("llg_inertial_enable_net(").count(),
+        1,
+        "{model}"
+    );
+}
+
 #[test]
 fn uwire_ports_read_one_net() {
     sim_cli::run_case(

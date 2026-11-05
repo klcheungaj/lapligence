@@ -534,6 +534,7 @@ fn normalize(
                         "llg_inertial_net"
                         | "llg_inertial_selected_net"
                         | "llg_inertial_part_net" => *arg == 2,
+                        "llg_inertial_enable_net" => (2..=3).contains(arg),
                         "llg_activation_enter" => *arg < 2,
                         "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
                         _ => false,
