@@ -1,0 +1,24 @@
+q 1 1 7 1 9
+d 1 1 x
+f 1 1
+a 1 1 1
+m 1 1
+e 1 1
+r 5
+1 main q 1
+2 slow q 2 50
+4 slow done
+q 3 50 2
+alias 4 3
+alias 3
+q 3
+6 moved 4
+3 4
+8 moved 1
+2 1
+w 5 1 55
+s 2 3 2
+c 2
+v 11
+x 2
+seen 3

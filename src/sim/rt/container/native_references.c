@@ -26,10 +26,22 @@
  * through the formal's marker or llg_ref_t cell functions. */
 typedef struct llg_native_ref llg_native_ref_t;
 
+/* `contents` comes first: the container's notify function gets its address. */
+typedef struct llg_native_ref_mirror {
+    sv4_t contents;
+    llg_native_ref_t* ref;
+    llg_value_t* item;
+    void* container;
+    struct llg_native_ref_mirror* next;
+    int kind;
+    uint8_t syncing;
+} llg_native_ref_mirror_t;
+
 /* `marker` comes first: llg_native_ref_stored gets its address. */
 struct llg_native_ref {
     sv4_t marker;
     llg_value_t value;
+    llg_native_ref_mirror_t* mirrors;
     void* owner;
     llg_native_ref_t* parent;
     llg_value_t* member;
@@ -296,7 +308,35 @@ static int llg_native_ref_refresh(llg_native_ref_t* ref) {
     return 1;
 }
 
+static void llg_native_ref_mirror_load(llg_native_ref_mirror_t* mirror) {
+    mirror->syncing = 1;
+    switch (mirror->kind) {
+    case LLG_NATIVE_MIRROR_DYN:
+        llg_value_item_to_dyn(mirror->container, mirror->item);
+        break;
+    case LLG_NATIVE_MIRROR_QUEUE:
+        llg_value_item_to_queue(mirror->container, mirror->item);
+        break;
+    case LLG_NATIVE_MIRROR_DYN_VALUE:
+        llg_value_item_to_dyn_value(mirror->container, mirror->item);
+        break;
+    default:
+        llg_value_item_to_queue_value(mirror->container, mirror->item);
+        break;
+    }
+    mirror->syncing = 0;
+}
+
+/* Mirrors run no subscribers, so the walk needs no rescan. */
+static void llg_native_refs_mirrors_load(void) {
+    for (llg_native_ref_t* ref = llg_native_refs_all; ref; ref = ref->all_next)
+        for (llg_native_ref_mirror_t* mirror = ref->mirrors; mirror;
+             mirror = mirror->next)
+            if (!mirror->syncing) llg_native_ref_mirror_load(mirror);
+}
+
 static void llg_native_refs_notify(sv4_t* contents, sv4_t* shape, int change) {
+    llg_native_refs_mirrors_load();
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;)
         ref = llg_native_ref_refresh(ref) ? llg_native_refs_all : ref->all_next;
     if (llg_native_refs_forward) llg_native_refs_forward(contents, shape, change);
@@ -331,6 +371,96 @@ static void llg_native_ref_touch(llg_native_ref_t* ref) {
     default:
         break;
     }
+}
+
+/* The companion changed: replace the nested slot, then tell the element's
+ * container, whose notify recopies any other mirror of the slot. */
+static void llg_native_ref_mirror_changed(sv4_t* contents, sv4_t* shape,
+                                          int change) {
+    (void)shape;
+    (void)change;
+    llg_native_ref_mirror_t* mirror = (llg_native_ref_mirror_t*)contents;
+    if (mirror->syncing) return;
+    mirror->syncing = 1;
+    switch (mirror->kind) {
+    case LLG_NATIVE_MIRROR_DYN:
+        llg_value_item_from_dyn(mirror->item, mirror->container);
+        break;
+    case LLG_NATIVE_MIRROR_QUEUE:
+        llg_value_item_from_queue(mirror->item, mirror->container);
+        break;
+    case LLG_NATIVE_MIRROR_DYN_VALUE:
+        llg_value_item_from_dyn_value(mirror->item, mirror->container);
+        break;
+    default:
+        llg_value_item_from_queue_value(mirror->item, mirror->container);
+        break;
+    }
+    llg_native_ref_t* ref = mirror->ref;
+    llg_native_ref_touch(ref->member ? ref->parent : ref);
+    mirror->syncing = 0;
+}
+
+static void llg_native_ref_mirror_install(llg_native_ref_mirror_t* mirror,
+                                          sv4_t* contents,
+                                          llg_container_notify_fn notify) {
+    switch (mirror->kind) {
+    case LLG_NATIVE_MIRROR_DYN: {
+        llg_dyn_array_t* array = mirror->container;
+        array->contents_dependency = contents;
+        array->notify = notify;
+        break;
+    }
+    case LLG_NATIVE_MIRROR_QUEUE: {
+        llg_queue_t* queue = mirror->container;
+        queue->contents_dependency = contents;
+        queue->notify = notify;
+        break;
+    }
+    case LLG_NATIVE_MIRROR_DYN_VALUE: {
+        llg_dyn_value_array_t* array = mirror->container;
+        array->contents_dependency = contents;
+        array->notify = notify;
+        break;
+    }
+    default: {
+        llg_queue_value_array_t* queue = mirror->container;
+        queue->contents_dependency = contents;
+        queue->notify = notify;
+        break;
+    }
+    }
+}
+
+void* llg_native_ref_mirror(void* reference, llg_value_t* item, void* container,
+                            int kind) {
+    llg_native_ref_t* ref = reference;
+    llg_native_ref_mirror_t* mirror = llg_alloc_items(1, sizeof(*mirror));
+    memset(mirror, 0, sizeof(*mirror));
+    mirror->contents = sv4_from_u64(1u, 1u, 0);
+    mirror->ref = llg_native_ref_share(ref);
+    mirror->item = item;
+    mirror->container = container;
+    mirror->kind = kind;
+    llg_native_ref_mirror_load(mirror);
+    llg_native_ref_mirror_install(mirror, &mirror->contents,
+                                  llg_native_ref_mirror_changed);
+    mirror->next = ref->mirrors;
+    ref->mirrors = mirror;
+    return mirror;
+}
+
+void llg_native_ref_mirror_scope_release(void* object) {
+    llg_native_ref_mirror_t* mirror = *(void**)object;
+    if (!mirror) return;
+    llg_native_ref_mirror_t** link = &mirror->ref->mirrors;
+    while (*link != mirror) link = &(*link)->next;
+    *link = mirror->next;
+    llg_native_ref_mirror_install(mirror, NULL, NULL);
+    llg_native_ref_t* ref = mirror->ref;
+    sv4_destroy(&mirror->contents);
+    free(mirror);
+    llg_native_ref_release(ref);
 }
 
 void llg_native_ref_value_stored(llg_value_t* value) {

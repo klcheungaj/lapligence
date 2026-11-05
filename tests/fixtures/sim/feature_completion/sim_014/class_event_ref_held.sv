@@ -11,11 +11,26 @@ module tb;
     int big[1000];
   endclass
 
+  class M;
+    virtual task run(ref event e, input event to);
+    endtask
+  endclass
+  class N extends M;
+    virtual task run(ref event e, input event to);
+      #1 e = to;
+      #2 $display("%0t run returns", $time);
+    endtask
+  endclass
+
   C c;
   C d = new;
   C e2 = new;
+  C f = new;
+  C v = new;
+  C b2 = new;
   B b;
   event g;
+  M m;
 
   task automatic churn();
     for (int i = 0; i < 200; i++) b = new;
@@ -39,9 +54,25 @@ module tb;
   endtask
   task automatic late(ref event e, input event to);
     #2 e = to;
+    #3 $display("%0t late returns", $time);
+  endtask
+  task automatic forward(ref event e, input event to);
+    #1 late(e, to);
+    $display("%0t forward returns", $time);
+  endtask
+  task automatic reader(ref event e);
+    #1 -> e;
+  endtask
+  task automatic in_branch(ref event e, input event to);
+    fork
+      #1 e = to;
+    join
+    #1 $display("%0t in_branch returns", $time);
   endtask
 
   initial begin
+    N n = new;
+    m = n;
     c = new;
     fork
       drop_event(c.ev);
@@ -56,6 +87,19 @@ module tb;
       begin wait (e2.ev == g) $display("%0t e2 is g", $time); end
       late(e2.ev, g);
     join
+    fork
+      begin wait (f.ev == g) $display("%0t f is g", $time); end
+      forward(f.ev, g);
+    join
+    fork
+      begin wait (v.ev == g) $display("%0t v is g", $time); end
+      m.run(v.ev, g);
+    join
+    fork
+      begin wait (b2.ev == g) $display("%0t b2 is g", $time); end
+      in_branch(b2.ev, g);
+    join
+    reader(f.ev);
     $finish;
   end
 endmodule

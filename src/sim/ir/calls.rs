@@ -85,8 +85,11 @@ pub enum IrCallArg {
     EventAddr(IrEventRef),
     /// `ref` named-event formal bound to a class event property. The slot
     /// holds the object identity, the one `void*` an `llg_event_t` holds, so
-    /// a rebinding by the callee reaches the property at once (SV 13.5.2);
-    /// the object's handle marker changes when the call returns.
+    /// a rebinding by the callee reaches the property at once (SV 13.5.2),
+    /// and publishes the object's handle marker when the formal has one
+    /// ([`super::IrFormal::event_marker`]), else when the call returns.
+    /// An output or inout formal of a value call instead receives a copy of
+    /// the slot, stored back when the call returns.
     EventSlot(String),
     /// Output/inout chandle formal bound to a caller-owned `void **`.
     ChandleAddr(String),
@@ -221,6 +224,19 @@ pub struct IrElementRef {
     pub(in crate::sim) steps: Vec<IrElementStep>,
     pub(in crate::sim) kind: IrElementRefKind,
     pub(in crate::sim) const_ref: bool,
+    /// For a record with queue or dynamic-array members: the formal's
+    /// companion containers, which the call creates and keeps equal to the
+    /// element's nested slots for as long as the reference lives.
+    pub(in crate::sim) companions: Vec<IrRefCompanion>,
+}
+
+/// One companion container of a record element bound to a `ref` formal.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrRefCompanion {
+    /// Activation container of the member's type, created by the call.
+    pub(in crate::sim) container: usize,
+    /// Item path of the member's nested slot in the record.
+    pub(in crate::sim) items: Vec<u32>,
 }
 
 impl IrElementRef {

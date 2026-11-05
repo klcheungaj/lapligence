@@ -559,15 +559,14 @@ properties, SIM-011, and static record properties are one shared record); equali
 with an ambiguous predicate on such records);
 a run-time selection among more than 4,096 leaves of a module record
 (`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
-record (`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a
-container element whose record has container members, a real member of a
-container element or subroutine record, and a run-time-indexed record element
-of a module, static or block record (`tr(o.e[i])`; its scalar members and
-members bind), and as the actual of a native record `ref` formal of a
-virtual-interface method, any module, static or block record (whole subroutine records, array elements and module, static
-and block records or constant selections of them bind, class methods
-included); an event control on a member
-of such a formal when the actual is a subroutine record (a generic lowering
+record (`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a member of a subroutine
+record whose type has container members, and a run-time-indexed record element
+of a module, static or block record bound by a call in an expression, below a
+constant index (`o.m[1].a[k]`), or among more than 256 elements or combinations
+(a statement call lowers once per element, `tr(o.e[i])`; a task that waits on
+the formal stops the run if the index selects no element); an event control on
+a member of a native record `ref` formal when the actual is a subroutine record
+(a generic lowering
 diagnostic); a queue, dynamic or associative member of a module record element selected at
 run time (`m.e[k].q`, a generic lowering diagnostic; a constant `m.e[1].q` works,
 as does a run-time element of a fixed array of records, `a[k].q`, because each
@@ -617,12 +616,12 @@ constant has no captured value. A native `ref` formal is the caller's
 `llg_value_t` and companion containers when the actual is a whole subroutine
 record; a module-like record has no such value, so a call binding one runs a
 specialization of the subroutine that names the record's leaves directly,
-which needs the record statically: a run-time record element has neither form
-(a scalar leaf is chosen among stable addresses at the call), and a
-virtual-interface slot does not reach specializations
-(a class method's virtual family gets one slot per binding). An element reference shares the element's item array, but
-the companion containers of a record with container members belong to the
-element's own frame.
+which needs the record statically: a run-time record element lowers the call
+once per element under a decision tree, and only a statement can branch that
+way (a scalar leaf is chosen among stable addresses at the call). An element
+reference shares the element's item array; a queue or dynamic-array member is
+a nested slot of another representation, so the call mirrors it in a companion
+container, at the member's size per change in either direction.
 
 ### Intended direction
 
@@ -636,7 +635,7 @@ roots for forked automatic block records, strings and handles.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
-`sim_008/neg_record_ref_{container_member,interface_method}.sv`,
+`sim_008/neg_record_ref_element_select_value.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
@@ -1252,7 +1251,7 @@ element-wise expressions run as cell loops.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_005/neg_real_queue_ref.sv`.
+`x = (f() == g()) ? 1 : 0;` with `f` and `g` returning real arrays.
 
 ## Streaming `with` targets outside the direct assignment path
 
@@ -1575,61 +1574,55 @@ Pass a native record's leaf markers with the record value.
 `tests/fixtures/sim/feature_completion/sim_009/neg_record_ref_wait_actual.sv`,
 `neg_string_event_control.sv`.
 
-## Event formals without a typed handle binding
-
-**Status:** narrowed (FIN-001 G3, F06-06). Output and inout event formals bound
-to class event properties execute in statement calls (copied in at the call and
-back at return, `sim_014/class_event_formals`); a `ref` event formal binds a
-class event property through its object's slot
-(`sim_014/class_event_ref_formal`); output, inout and `ref` event formals of
-functions called in integral expressions bind event variables (decision S13-D3).
-
-### Symptom
-
-These legal forms reject with explicit diagnostics: a class event property as
-the actual of an output or inout event formal of a function called in an
-expression (`x = f(c.ev)`), and any non-input event formal of a function
-returning a string or a handle in an expression.
-
-### Cause
-
-The copy-back of a class event property is a statement after the call, which
-a value call has no place for; the string and handle value call paths pass no
-event operands.
-
-### Intended direction
-
-Hoist such calls into a prelude as other copy-out targets do, and share the
-event operand with the string and handle value call paths. Estimate: half a
-day each.
-
-### Reproduce
-
-`tests/fixtures/sim/feature_completion/sim_014/neg_class_event_output_value_call.sv`.
-
-## Rebinding a class event property through a formal publishes at the return
+## Rebinding a class event property in a fork branch publishes at the return
 
 ### Symptom
 
 A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
-on a rebinding through a `ref` event formal when the call returns, not at the
-rebinding, so a callee that suspends afterwards wakes the wait late. Waits on
-the event itself are not affected: they follow the object named when armed.
+on a rebinding through a `ref` event formal at the rebinding, except when the
+rebinding runs in a fork-join branch of the callee (or through an output event
+formal the callee forwards it to): it then wakes when the outermost call
+returns. Waits on the event itself are not affected: they follow the object
+named when armed.
 
 ### Cause
 
-The formal is a plain `llg_event_t*` to the property's slot, and only the
-caller knows the slot belongs to an object with a change marker.
+A branch receives the formal's address, not its marker parameter, which exists
+only in models that need it and is decided after the branch is lowered.
 
 ### Intended direction
 
-Pass the marker with `ref` event formals, as handle formals do, if a design
-needs it. Estimate: half a day.
+Capture the marker in a second slot, as handle formals do, if a design needs
+it. Estimate: a quarter of a day.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_014/class_event_ref_held.sv`, with
-a delay added after the rebinding in `late`.
+`tests/fixtures/sim/feature_completion/sim_014/class_event_ref_held.sv`
+(`in_branch`).
+
+## Level waits on the identity of an event variable hang
+
+### Symptom
+
+`wait (k == g)` on event variables or a `ref` event formal never wakes after
+`k = g`: the run ends with a deadlock report instead of a wake or a diagnostic.
+Class event properties are served.
+
+### Cause
+
+Event variables have no change marker, and the wait lowering does not reject
+the read.
+
+### Intended direction
+
+Reject the read with its location, or give `llg_event_assign` a marker. Some
+simulators reject any event operand in a `wait` expression. Estimate: a quarter
+of a day to reject, half a day to serve.
+
+### Reproduce
+
+`module tb; event g, k; initial fork wait (k == g) $display("woke"); #1 k = g;
+join endmodule`
 
 ## Wired-logic nets in bidirectional switch networks
 

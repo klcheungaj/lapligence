@@ -128,6 +128,7 @@ impl<'a> Codegen<'a> {
                                     shortreal: ty.kind == "shortreal",
                                     chandle: is_handle_kind(&ty.kind),
                                     event: ty.kind == "event",
+                                    event_marker: false,
                                     string: ty.kind == "string",
                                     shared_local: None,
                                     shared_observed: false,

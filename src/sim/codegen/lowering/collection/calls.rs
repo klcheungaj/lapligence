@@ -113,7 +113,7 @@ impl<'a> Codegen<'a> {
         // Only the outermost call may be a container-result call whose
         // storage the caller appends; nested argument calls may not.
         let container_result_call = std::mem::take(&mut self.container_result_call);
-        let virtual_call_info = self.virtual_interface_method_info(h)?;
+        let mut virtual_call_info = self.virtual_interface_method_info(h)?;
         let (ft, callee_inst) = if let Some((_, _, ft, callee_inst, _)) = virtual_call_info {
             (ft, callee_inst)
         } else {
@@ -142,15 +142,16 @@ impl<'a> Codegen<'a> {
         let formals = meta.formals.clone();
         let bound = self.bind_call_args(self.inst, &formals, args)?;
         let dispatch = self.record_ref_dispatch(h, virtual_call_info.is_some());
-        let function = self.record_ref_callee(
-            scope_path,
-            ft,
-            callee_inst,
-            &formals,
-            &bound,
-            meta.ir,
-            dispatch,
-        )?;
+        let records = self.record_ref_bindings(&formals, &bound);
+        let function = match virtual_call_info.as_mut().filter(|_| !records.is_empty()) {
+            Some((interface, method, ..)) => {
+                let (bound_method, function) =
+                    self.record_ref_interface_method(*interface, *method, ft, &records)?;
+                *method = bound_method;
+                function
+            }
+            None => self.record_ref_callee(ft, callee_inst, &formals, &bound, meta.ir, dispatch)?,
+        };
         // `ret` is `None` for void functions; when the frontend accepts one as
         // a value (for example `out <= vf(4'd2);`), emit the call for its
         // side effects and yields all-X.
@@ -167,37 +168,14 @@ impl<'a> Codegen<'a> {
         let mut record_out_args = Vec::new();
         let mut record_in_args = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if bound[idx].is_event && (*is_out || self.is_ref_formal(*io)) {
-                let target = self.event_target_of(bound[idx].expr).ok_or_else(|| {
-                    format!(
-                        "event actual for formal `{}` in `{scope_path}` is not a named event handle",
-                        self.node(*io).name
-                    )
-                })?;
-                if target.access.is_some() && *is_out {
-                    return Err(format!(
-                        "class event property actual of output or inout event formal `{}` of function `{name}` called in an expression in `{scope_path}` has no copy-back path; call the function as a statement",
-                        self.node(*io).name
-                    ));
-                }
-                out_args.push(self.event_handle_argument(scope_path, *io, &target)?);
-                continue;
-            }
             if bound[idx].is_event {
-                // An input event formal receives the actual's handle, which
-                // shares its synchronization object (SV 15.5.5).
-                let event = if self.is_null_event_expression(bound[idx].expr) {
-                    IrEventRef::Null
+                let (address, argument) =
+                    self.event_call_argument(scope_path, name, *io, *is_out, bound[idx].expr)?;
+                if address {
+                    out_args.push(argument);
                 } else {
-                    let target = self.event_target_of(bound[idx].expr).ok_or_else(|| {
-                        format!(
-                            "event actual for formal `{}` of `{name}` in `{scope_path}` is not an event handle",
-                            self.node(*io).name
-                        )
-                    })?;
-                    self.event_ref_of(&target, scope_path)?
-                };
-                in_args.push((idx, IrCallArg::EventVal(event)));
+                    in_args.push((idx, argument));
+                }
                 continue;
             }
             if self.is_subroutine_container(*io) {

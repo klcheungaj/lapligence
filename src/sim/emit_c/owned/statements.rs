@@ -730,12 +730,21 @@ impl Frame<'_, '_> {
                 self.line(format!("llg_nba_event_after({event}, {delay});"));
             }
             IrStmt::EventAssign { target, source } => {
+                let marker = self.event_formal_marker(target);
                 let target = self.event_address(target)?;
+                let previous = marker
+                    .as_ref()
+                    .map(|_| self.scalar("void*", format!("({target})->object")));
                 if let Some(source) = source {
                     let source = self.event_address(source)?;
                     self.line(format!("llg_event_assign({target}, {source});"));
                 } else {
                     self.line(format!("llg_event_assign_null({target});"));
+                }
+                if let (Some(marker), Some(previous)) = (marker, previous) {
+                    self.line(format!(
+                        "if (({target})->object != {previous}) llg_dependency_changed({marker});"
+                    ));
                 }
             }
             IrStmt::WaitEventTriggered { event, body } => {

@@ -4,7 +4,7 @@
 use super::native::{NativeKind, NativeValue};
 use super::streaming::CapturedAssignment;
 use super::*;
-use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrElementStep};
+use crate::sim::ir::{IrContainerKind, IrElementRefKind, IrElementRoot, IrElementStep};
 
 /// An output/inout copy-out target, bound at the call or resolved at copy-out.
 enum CopyOutTarget<'l> {
@@ -363,6 +363,7 @@ impl Frame<'_, '_> {
         // change marker after the callee returns (SIM-007).
         let mut handle_publishes = Vec::new();
         let mut property_publishes = Vec::new();
+        let mut event_copyouts = Vec::new();
         let mut container_copyouts = Vec::new();
         let mut string_copyouts = Vec::new();
         let mut real_copyouts = Vec::new();
@@ -686,16 +687,38 @@ impl Frame<'_, '_> {
                         "(llg_event_t){{ {pointer} ? {pointer}->object : NULL }}"
                     ));
                 }
-                IrCallArg::EventAddr(event) => parameters.push(self.event_address(event)?),
+                IrCallArg::EventAddr(event) => {
+                    parameters.push(self.event_address(event)?);
+                    if formal.event_marker {
+                        parameters.push(self.event_marker(event));
+                    }
+                }
+                IrCallArg::EventSlot(address) if !formal.is_ref() => {
+                    // A value call has no statement after it: the operand
+                    // holds the copy the callee writes, stored back like a
+                    // statement call's (`event_copyouts`).
+                    let slot = self.native_address(address, NativeKind::Chandle)?.address;
+                    let copy = self.scalar(
+                        "llg_event_t",
+                        format!("(llg_event_t){{ *(void**)({slot}) }}"),
+                    );
+                    event_copyouts.push((address.clone(), copy.clone()));
+                    parameters.push(format!("&{copy}"));
+                }
                 IrCallArg::EventSlot(address) => {
                     let slot = self.native_address(address, NativeKind::Chandle)?.address;
-                    // The callee rebinds through `llg_event_assign`, which
-                    // cannot reach the object's marker: a changed slot
-                    // publishes when the call returns.
+                    // `llg_event_assign` cannot reach the object's marker.
+                    // The marker parameter, when the model has one, publishes
+                    // at the rebinding. Stores that reach the slot without
+                    // it (a fork branch, an output formal) publish when the
+                    // call returns; the second toggle only rechecks a wait.
                     if let Some(publish) = self.handle_store_publish(address, &slot)? {
                         property_publishes.push(publish);
                     }
                     parameters.push(format!("(llg_event_t*){slot}"));
+                    if formal.event_marker {
+                        parameters.push(self.handle_ref_marker(address, &slot)?);
+                    }
                 }
                 IrCallArg::StringRefAddr {
                     addr: address,
@@ -966,6 +989,12 @@ impl Frame<'_, '_> {
         for publish in property_publishes {
             self.finish_handle_store_publish(Some(publish));
         }
+        for (address, copy) in event_copyouts {
+            let slot = self.native_address(&address, NativeKind::Chandle)?.address;
+            let publish = self.handle_store_publish(&address, &slot)?;
+            self.line(format!("*(void**)({slot}) = {copy}.object;"));
+            self.finish_handle_store_publish(publish);
+        }
         for (target, storage) in string_copyouts {
             self.line(format!(
                 "llg_string_assign({}, {});",
@@ -1038,7 +1067,14 @@ impl Frame<'_, '_> {
                 format!("llg_native_ref_marker({acquire})"),
             ],
             IrElementRefKind::Real { .. } => vec![format!("llg_native_ref_real({acquire})")],
-            IrElementRefKind::Record => vec![format!("llg_native_ref_value({acquire})")],
+            IrElementRefKind::Record => {
+                let value = format!("llg_native_ref_value({acquire})");
+                let mut parameters = vec![value.clone()];
+                for companion in &reference.companions {
+                    parameters.push(self.companion_mirror(&acquire, &value, companion)?);
+                }
+                parameters
+            }
             IrElementRefKind::Packed {
                 width,
                 signed,
@@ -1054,6 +1090,40 @@ impl Frame<'_, '_> {
                 vec![pointer]
             }
         })
+    }
+
+    /// The companion parameter of a record element's container member: a
+    /// call-owned container the runtime keeps equal to the member's nested
+    /// slot. Its scope opens after the reference's and the mirror's after
+    /// both, so unwinding detaches the mirror before the container goes.
+    fn companion_mirror(
+        &mut self,
+        reference: &str,
+        value: &str,
+        companion: &crate::sim::ir::IrRefCompanion,
+    ) -> Result<String, String> {
+        let storage = self.new_container(companion.container)?;
+        self.containers.insert(companion.container, storage.clone());
+        let container = &self.ctx.model.containers[companion.container];
+        let kind = match (&container.kind, container.element.is_packed()) {
+            (IrContainerKind::Dynamic, true) => "LLG_NATIVE_MIRROR_DYN",
+            (IrContainerKind::Queue { .. }, true) => "LLG_NATIVE_MIRROR_QUEUE",
+            (IrContainerKind::Dynamic, false) => "LLG_NATIVE_MIRROR_DYN_VALUE",
+            (IrContainerKind::Queue { .. }, false) => "LLG_NATIVE_MIRROR_QUEUE_VALUE",
+            (IrContainerKind::Associative { .. }, _) => {
+                return Err("an associative record member has no nested value form".into())
+            }
+        };
+        let item = self.value_item(value, &companion.items)?;
+        let scope = self.scalar(
+            "llg_value_scope_t*",
+            "llg_value_scope_begin_object(sizeof(void*), llg_native_ref_mirror_scope_release)"
+                .to_owned(),
+        );
+        self.line(format!(
+            "*(void**)llg_value_scope_object({scope}) = llg_native_ref_mirror({reference}, {item}, &{storage}, {kind});"
+        ));
+        Ok(format!("(void*)&{storage}"))
     }
 
     /// The formal's parameters for one of the stable leaves a run-time index

@@ -98,8 +98,13 @@ A string, handle, record or packed element or member actual
 scope that ends with the call or its cancellation; the formal gets the
 reference's stable address and, for a handle, its marker (a packed leaf gets an
 `llg_ref_t` over the leaf in that scope), so the callee's code does not depend
-on what it is bound to. A run-time index into a module-like record picks among
-the leaves' stable addresses instead (`IrElementRoot::Leaves`). A `ref` event
+on what it is bound to. A record element with queue or dynamic-array members also
+gets call-owned companion containers, one per member, each mirrored to the
+member's nested slot by `llg_native_ref_mirror` from its own scope object, so
+unwinding detaches it before the container goes (`IrElementRef::companions`). A
+run-time index into a module-like record picks among the leaves' stable
+addresses instead (`IrElementRoot::Leaves`); for a whole record element, a
+statement call lowers once per element (`lower_record_ref_select`). A `ref` event
 formal bound to a class event property takes the address of its object's slot
 (`IrCallArg::EventSlot`), which holds the one `void*` an `llg_event_t` holds; the
 same type on both sides keeps this within ISO C aliasing. The callee's frame is
@@ -255,3 +260,11 @@ holder's own marker (`llg_frame_opaque_marker`), so sibling branches' stores
 and waits meet. A process handle `ref` formal binds the same way; a store
 through it (`llg_process_assign` on the caller's counted slot) publishes the
 marker when the handle changes, like other handle stores.
+A `ref` event formal is its `llg_event_t*` alone unless the model binds a class
+event property to a `ref` formal and some wait reads such a property's identity.
+Then every writable `ref` event formal also takes `d<idx>`
+(`IrFormal::event_marker`, model-wide so overrides and forwarding agree): the
+object's `llg_class_handle_dependency` for a property, its own `d<idx>` when
+forwarded, else NULL, and `IrStmt::EventAssign` publishes it when the object
+changes. The call site also compares the slot at the return, which covers
+stores that have no marker parameter (a fork-join branch, an output formal).

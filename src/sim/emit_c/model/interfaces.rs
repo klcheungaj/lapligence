@@ -223,7 +223,12 @@ pub(super) fn render_virtual_interface_call_bodies(
                 else {
                     continue;
                 };
-                let Some(concrete_function) = model.funcs.get(concrete_index) else {
+                // A template has no body: its calls take a bound method.
+                let Some(concrete_function) = model
+                    .funcs
+                    .get(concrete_index)
+                    .filter(|function| !function.inline_expanded)
+                else {
                     continue;
                 };
                 out.push_str(&format!("        case {instance_id}:\n"));

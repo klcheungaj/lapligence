@@ -156,11 +156,22 @@ impl Codegen<'_> {
             let bound = self.bind_call_args(self.inst, &formals, &actuals)?;
             let dispatch = self.record_ref_dispatch(node, false);
             let function =
-                self.record_ref_callee(path, ft, callee_inst, &formals, &bound, meta.ir, dispatch)?;
+                self.record_ref_callee(ft, callee_inst, &formals, &bound, meta.ir, dispatch)?;
             let mut arg_irs = vec![None; formals.len()];
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
             for (idx, (io, is_out)) in formals.iter().enumerate() {
+                if bound[idx].is_event {
+                    let name = self.node(ft).name.clone();
+                    let (address, argument) =
+                        self.event_call_argument(path, &name, *io, *is_out, bound[idx].expr)?;
+                    if address {
+                        out_args.push(argument);
+                    } else {
+                        in_args.push(argument);
+                    }
+                    continue;
+                }
                 if self.is_subroutine_container(*io) {
                     let argument =
                         self.container_call_argument(path, *io, bound[idx].expr, None, None)?;
@@ -304,6 +315,9 @@ impl Codegen<'_> {
                 matches!(
                     arg,
                     IrCallArg::StringVal(_)
+                        | IrCallArg::EventVal(_)
+                        | IrCallArg::EventAddr(_)
+                        | IrCallArg::EventSlot(_)
                         | IrCallArg::ChandleVal(_)
                         | IrCallArg::ChandleAddr(_)
                         | IrCallArg::ChandleRefAddr(_)

@@ -41,7 +41,9 @@ mod lvalues;
 mod module_paths;
 mod names;
 pub(super) mod native_values;
-pub(super) use native_values::RecordRefDispatch;
+pub(super) use native_values::{
+    member_select_statement, RecordRefDispatch, RecordRefPin, RecordRefSelect,
+};
 mod net_arrays;
 mod net_cells;
 mod net_collapse;

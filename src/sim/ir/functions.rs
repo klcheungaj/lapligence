@@ -60,6 +60,13 @@ pub struct IrFormal {
     /// output, inout or ref event formal is the caller's handle address
     /// (`IrCallArg::EventAddr`).
     pub(in crate::sim) event: bool,
+    /// For a `ref` event formal: a `sv4_t* d{idx}` parameter follows the
+    /// address, naming the change marker of the object whose property the
+    /// formal binds (NULL for an event variable), and a rebinding publishes
+    /// it at once. Set model-wide, so overrides and forwarding agree, only
+    /// when a class event property is bound to a `ref` formal and some wait
+    /// reads such a property's identity; no other model pays for it.
+    pub(in crate::sim) event_marker: bool,
     /// Native arbitrary-byte string formal. String formals use
     /// `llg_string_t` values/pointers rather than packed storage.
     pub(in crate::sim) string: bool,
@@ -346,6 +353,7 @@ impl IrFormal {
             shortreal: false,
             chandle: false,
             event: false,
+            event_marker: false,
             string: false,
             shared_local: None,
             shared_observed: false,

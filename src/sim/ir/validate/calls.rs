@@ -499,7 +499,22 @@ impl Validator<'_> {
                             formal.real && formal.shortreal == shortreal
                         }
                         IrElementRefKind::Record => {
-                            formal.native_value.is_some() && formal.native_companions.is_empty()
+                            formal.native_value.is_some()
+                                && formal.native_companions.len() == reference.companions.len()
+                                && reference.companions.iter().all(|companion| {
+                                    !companion.items.is_empty()
+                                        && self
+                                            .model
+                                            .containers
+                                            .get(companion.container)
+                                            .is_some_and(|container| {
+                                                container.activation
+                                                    && !matches!(
+                                                        container.kind,
+                                                        IrContainerKind::Associative { .. }
+                                                    )
+                                            })
+                                })
                         }
                         IrElementRefKind::Packed {
                             width,
@@ -598,8 +613,8 @@ impl Validator<'_> {
                     self.validate_event_ref(event, formals, &arg_path)?;
                 }
                 IrCallArg::EventSlot(address) => {
-                    if !formal.event || !formal.is_ref() || address.is_empty() {
-                        return self.fail(arg_path, "event slot requires a ref event formal");
+                    if !formal.event || !formal.is_address() || address.is_empty() {
+                        return self.fail(arg_path, "event slot requires an address event formal");
                     }
                 }
                 IrCallArg::ChandleAddr(addr) => {

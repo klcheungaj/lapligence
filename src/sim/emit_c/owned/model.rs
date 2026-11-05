@@ -742,6 +742,7 @@ fn render_function(
             // A private handle copy: assigning the formal rebinds only this
             // activation, exactly like a by-value input.
             let handle = frame.declare("llg_event_t", "event_formal", name);
+            frame.line(format!("(void){handle};"));
             frame
                 .event_bindings
                 .first_mut()

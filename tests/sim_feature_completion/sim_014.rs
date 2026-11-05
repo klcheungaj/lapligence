@@ -142,11 +142,13 @@ fn ref_event_formals_bind_class_event_properties() {
 }
 
 #[test]
-fn neg_class_event_property_output_of_value_call() {
-    sim_cli::reject_case(
+fn event_formals_of_value_calls() {
+    sim_cli::run_case_backend_parity(
         SUITE,
-        "neg_class_event_output_value_call",
-        "class event property actual of output or inout event formal `o` of function `f` called in an expression in `tb` has no copy-back path",
+        "event_formals_value_calls",
+        include_str!("../fixtures/sim/feature_completion/sim_014/event_formals_value_calls.out"),
+        &[],
+        &[],
     );
 }
 

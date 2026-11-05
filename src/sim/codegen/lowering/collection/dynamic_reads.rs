@@ -737,6 +737,7 @@ impl Codegen<'_> {
         let Some((class, index)) = self.class_fields.get(&field).copied() else {
             return Ok(());
         };
+        self.class_event_identity_read |= self.is_class_event_field(field);
         let access = self.native_access_symbol(
             receiver,
             IrNativeAccessKind::ClassField {
@@ -984,6 +985,7 @@ impl Codegen<'_> {
                     // String and handle properties have no packed cell: name
                     // the property itself.
                     let (class, index) = self.class_fields[&field];
+                    self.class_event_identity_read |= self.is_class_event_field(field);
                     let receiver = self.class_receiver_for(path, node, field)?;
                     Some(IrExprKind::LocalRead(self.native_access_symbol(
                         receiver,

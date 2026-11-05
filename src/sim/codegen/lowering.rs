@@ -848,6 +848,11 @@ fn lower_model_with(
     cg.link_toggle_objects(&mut model);
     cg.populate_vpi_builtin_calls(&mut model);
     cg.finish_dpi(&mut model)?;
+    if cg.class_event_ref_bound && cg.class_event_identity_read {
+        for formal in model.funcs.iter_mut().flat_map(|func| &mut func.formals) {
+            formal.event_marker = formal.event && formal.is_ref() && !formal.const_ref;
+        }
+    }
     // Final-block processes render like any other but spawn into the
     // post-simulation phase: they run after `llg_rt_run` returns, not at
     // t=0.
@@ -1508,6 +1513,9 @@ struct Codegen<'a> {
     /// binding (formal position, root, member path), each override's
     /// specialization. Slots above the design's are allocated on demand.
     record_ref_families: HashMap<RecordRefFamilyKey, HashMap<NodeId, usize>>,
+    /// Bound method and representative function of a virtual-interface
+    /// method, by descriptor, method and record bindings.
+    record_ref_interface_methods: HashMap<(usize, usize, RecordRefPositions), (usize, usize)>,
     next_virtual_slot: usize,
     /// Specializations whose bodies are lowered after all call sites exist.
     pending_specializations: Vec<PendingSpecialization>,
@@ -1562,6 +1570,10 @@ struct Codegen<'a> {
     alias_net_ports: bool,
     /// Some port sink shares variable storage.
     shared_variable_ports: bool,
+    /// Some call binds a class event property to a `ref` event formal.
+    class_event_ref_bound: bool,
+    /// Some wait reads a class event property's identity.
+    class_event_identity_read: bool,
     /// Input and output net ports may merge into one group
     /// (`collection/nets/port_merges.rs`): false for `--vpi-port-delays` and
     /// the SDF target scan.
@@ -1741,6 +1753,10 @@ struct Codegen<'a> {
     /// Native record `ref` formals of the specialization being lowered, each
     /// bound to declaration-owned record storage (SIM-008).
     record_ref_aliases: HashMap<NodeId, RecordRefBinding>,
+    /// Actuals whose run-time selection the call being lowered fixes to one
+    /// element, and the branches the selections so far multiply to.
+    record_ref_pins: HashMap<NodeId, collection::RecordRefPin>,
+    record_ref_pin_span: usize,
     /// Shared access names of native leaves, by value and item path.
     native_leaf_symbols: HashMap<(usize, Vec<u32>), String>,
     /// Distinguishes the capture locals of successive native transfers.
@@ -2248,6 +2264,7 @@ impl<'a> Codegen<'a> {
             static_task_locals: HashMap::new(),
             task_specializations: HashMap::new(),
             record_ref_families: HashMap::new(),
+            record_ref_interface_methods: HashMap::new(),
             next_virtual_slot: 0,
             pending_specializations: Vec::new(),
             pending_switches: Vec::new(),
@@ -2266,6 +2283,8 @@ impl<'a> Codegen<'a> {
             collapse_ports: false,
             alias_net_ports: false,
             shared_variable_ports: false,
+            class_event_ref_bound: false,
+            class_event_identity_read: false,
             merge_ports: false,
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),
@@ -2330,6 +2349,8 @@ impl<'a> Codegen<'a> {
             native_value_layouts: HashMap::new(),
             native_roots: HashMap::new(),
             record_ref_aliases: HashMap::new(),
+            record_ref_pins: HashMap::new(),
+            record_ref_pin_span: 1,
             native_leaf_symbols: HashMap::new(),
             native_copy_sequence: 0,
             element_nba_target: None,
@@ -3099,7 +3120,8 @@ type SpecializationKey = (NodeId, NodeId, Vec<usize>, Vec<RecordRefBinding>);
 
 /// Identity of one virtual family bound to records; see
 /// [`Codegen::record_ref_families`].
-type RecordRefFamilyKey = (usize, Vec<(usize, NodeId, Vec<AggregatePathPart>)>);
+type RecordRefPositions = Vec<(usize, NodeId, Vec<AggregatePathPart>)>;
+type RecordRefFamilyKey = (usize, RecordRefPositions);
 
 /// A task specialization awaiting body lowering. `ir` indexes the model
 /// entry cloned from the task's template definition.
