@@ -686,16 +686,26 @@ impl Frame<'_, '_> {
                         "(llg_event_t){{ {pointer} ? {pointer}->object : NULL }}"
                     ));
                 }
-                IrCallArg::EventAddr(event) => parameters.push(self.event_address(event)?),
+                IrCallArg::EventAddr(event) => {
+                    parameters.push(self.event_address(event)?);
+                    if formal.event_marker {
+                        parameters.push(self.event_marker(event));
+                    }
+                }
                 IrCallArg::EventSlot(address) => {
                     let slot = self.native_address(address, NativeKind::Chandle)?.address;
-                    // The callee rebinds through `llg_event_assign`, which
-                    // cannot reach the object's marker: a changed slot
-                    // publishes when the call returns.
+                    // `llg_event_assign` cannot reach the object's marker.
+                    // The marker parameter, when the model has one, publishes
+                    // at the rebinding. Stores that reach the slot without
+                    // it (a fork branch, an output formal) publish when the
+                    // call returns; the second toggle only rechecks a wait.
                     if let Some(publish) = self.handle_store_publish(address, &slot)? {
                         property_publishes.push(publish);
                     }
                     parameters.push(format!("(llg_event_t*){slot}"));
+                    if formal.event_marker {
+                        parameters.push(self.handle_ref_marker(address, &slot)?);
+                    }
                 }
                 IrCallArg::StringRefAddr {
                     addr: address,

@@ -848,6 +848,11 @@ fn lower_model_with(
     cg.link_toggle_objects(&mut model);
     cg.populate_vpi_builtin_calls(&mut model);
     cg.finish_dpi(&mut model)?;
+    if cg.class_event_ref_bound && cg.class_event_identity_read {
+        for formal in model.funcs.iter_mut().flat_map(|func| &mut func.formals) {
+            formal.event_marker = formal.event && formal.is_ref() && !formal.const_ref;
+        }
+    }
     // Final-block processes render like any other but spawn into the
     // post-simulation phase: they run after `llg_rt_run` returns, not at
     // t=0.
@@ -1562,6 +1567,10 @@ struct Codegen<'a> {
     alias_net_ports: bool,
     /// Some port sink shares variable storage.
     shared_variable_ports: bool,
+    /// Some call binds a class event property to a `ref` event formal.
+    class_event_ref_bound: bool,
+    /// Some wait reads a class event property's identity.
+    class_event_identity_read: bool,
     /// Input and output net ports may merge into one group
     /// (`collection/nets/port_merges.rs`): false for `--vpi-port-delays` and
     /// the SDF target scan.
@@ -2263,6 +2272,8 @@ impl<'a> Codegen<'a> {
             collapse_ports: false,
             alias_net_ports: false,
             shared_variable_ports: false,
+            class_event_ref_bound: false,
+            class_event_identity_read: false,
             merge_ports: false,
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),

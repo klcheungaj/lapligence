@@ -250,6 +250,7 @@ impl<'a> Codegen<'a> {
     ) -> Result<IrCallArg, String> {
         if let Some(access) = target.access {
             let slot = self.class_event_slot(path, access, target.declaration)?;
+            self.class_event_ref_bound = true;
             return Ok(IrCallArg::EventSlot(format!("&{slot}")));
         }
         let event = self.event_ref_of(target, path)?;

@@ -255,3 +255,11 @@ holder's own marker (`llg_frame_opaque_marker`), so sibling branches' stores
 and waits meet. A process handle `ref` formal binds the same way; a store
 through it (`llg_process_assign` on the caller's counted slot) publishes the
 marker when the handle changes, like other handle stores.
+A `ref` event formal is its `llg_event_t*` alone unless the model binds a class
+event property to a `ref` formal and some wait reads such a property's identity.
+Then every writable `ref` event formal also takes `d<idx>`
+(`IrFormal::event_marker`, model-wide so overrides and forwarding agree): the
+object's `llg_class_handle_dependency` for a property, its own `d<idx>` when
+forwarded, else NULL, and `IrStmt::EventAssign` publishes it when the object
+changes. The call site also compares the slot at the return, which covers
+stores that have no marker parameter (a fork-join branch, an output formal).

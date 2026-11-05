@@ -93,6 +93,27 @@ impl Frame<'_, '_> {
         })
     }
 
+    /// The marker parameter of `event` when it names a `ref` event formal
+    /// that has one. A fork-join branch has only the formal's address; its
+    /// rebinding publishes when the subroutine's caller regains control.
+    pub(super) fn event_formal_marker(&self, event: &IrEventRef) -> Option<String> {
+        let IrEventRef::Formal(index) = event else {
+            return None;
+        };
+        let formal = self.ctx.func?.formals.get(*index)?;
+        formal
+            .event_marker
+            .then(|| super::super::model::handle_marker_param(*index))
+    }
+
+    /// The marker a forwarded event actual passes to a marker parameter.
+    /// Only a class property's slot has one, so an event variable passes
+    /// NULL; a formal forwards its own.
+    pub(super) fn event_marker(&self, event: &IrEventRef) -> String {
+        self.event_formal_marker(event)
+            .unwrap_or_else(|| "NULL".to_owned())
+    }
+
     /// The change marker of the fork-shared string or handle bound to
     /// `local`: the string carries the marker its frame owns; a handle's
     /// slot marker is allocated when a wait first arms on it, after which

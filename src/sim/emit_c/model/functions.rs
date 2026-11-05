@@ -105,6 +105,9 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
                 "llg_event_t*".to_owned(),
                 format!("{}{idx}", if form.is_ref() { "r" } else { "o" }),
             ));
+            if form.event_marker {
+                params.push(("sv4_t*".to_owned(), handle_marker_param(idx)));
+            }
         } else if form.is_ref() {
             if form.string {
                 let qualifier = if form.is_const_ref() { "const " } else { "" };

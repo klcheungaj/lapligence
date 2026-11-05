@@ -1587,29 +1587,55 @@ day each.
 
 `tests/fixtures/sim/feature_completion/sim_014/neg_class_event_output_value_call.sv`.
 
-## Rebinding a class event property through a formal publishes at the return
+## Rebinding a class event property in a fork branch publishes at the return
 
 ### Symptom
 
 A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
-on a rebinding through a `ref` event formal when the call returns, not at the
-rebinding, so a callee that suspends afterwards wakes the wait late. Waits on
-the event itself are not affected: they follow the object named when armed.
+on a rebinding through a `ref` event formal at the rebinding, except when the
+rebinding runs in a fork-join branch of the callee (or through an output event
+formal the callee forwards it to): it then wakes when the outermost call
+returns. Waits on the event itself are not affected: they follow the object
+named when armed.
 
 ### Cause
 
-The formal is a plain `llg_event_t*` to the property's slot, and only the
-caller knows the slot belongs to an object with a change marker.
+A branch receives the formal's address, not its marker parameter, which exists
+only in models that need it and is decided after the branch is lowered.
 
 ### Intended direction
 
-Pass the marker with `ref` event formals, as handle formals do, if a design
-needs it. Estimate: half a day.
+Capture the marker in a second slot, as handle formals do, if a design needs
+it. Estimate: a quarter of a day.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_014/class_event_ref_held.sv`, with
-a delay added after the rebinding in `late`.
+`tests/fixtures/sim/feature_completion/sim_014/class_event_ref_held.sv`
+(`in_branch`).
+
+## Level waits on the identity of an event variable hang
+
+### Symptom
+
+`wait (k == g)` on event variables or a `ref` event formal never wakes after
+`k = g`: the run ends with a deadlock report instead of a wake or a diagnostic.
+Class event properties are served.
+
+### Cause
+
+Event variables have no change marker, and the wait lowering does not reject
+the read.
+
+### Intended direction
+
+Reject the read with its location, or give `llg_event_assign` a marker. Some
+simulators reject any event operand in a `wait` expression. Estimate: a quarter
+of a day to reject, half a day to serve.
+
+### Reproduce
+
+`module tb; event g, k; initial fork wait (k == g) $display("woke"); #1 k = g;
+join endmodule`
 
 ## Wired-logic nets in bidirectional switch networks
 
