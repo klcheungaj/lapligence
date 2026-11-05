@@ -52,6 +52,9 @@ wording for the VCD tasks.
 - SV L37961 (21.7.1.6 Example 2): "$dumpon; //no effect the first time
   through".
 - SV L38066: "Strength information and memories are not dumped."
+- SV L38181-L38184 (21.7.2.2): "The $scope section defines the scope of the
+  variables being dumped. The scope type indicates one of the following
+  scopes"; the list names `module`, `task`, `function`, `begin` and `fork`.
 - SV L38068: "A real number is dumped using a %.16g printf() format."
 - SV L38073-38074: "The identifier code is a code composed of the printable
   characters, which are in the ASCII character set from ! to ~ (decimal 33 to
@@ -117,9 +120,19 @@ variable has two ordinary records in one step (S47-D2).
 - `depth_only.sv` (step 2): `$dumpvars(1)` called in the child selects one
   level below the top instance: only `tb.t` (00@0, 11@1), not `tb.u.c`
   (S47-D4).
-- `excluded.sv` (A03): `$dumpvars(0, tb)` dumps `count`, `ratio` and `total`
-  only; the string, handle, dynamic/queue/associative arrays, event,
-  automatic function variable and block variable are left out (S47-D9).
+- `block_statics.sv` (A03): a dump reaches the static storage of blocks,
+  tasks and functions in scopes of those types, the formals and result of a
+  non-automatic function, and events (`tb.tick` at 0, 1, 8, 9; two triggers
+  at 9 make one change). An unnamed block with declarations is `unnamed$$_0`,
+  `plain` (automatic) is absent, and the name reaches `$dumpfile` from a
+  string variable. The whole file was compared, scopes and values, with
+  industry-standard output.
+- `named_statics.sv` (A03): `$dumpvars` names a block variable, a function
+  static and an event, and only those three are dumped. Naming an event is an
+  llg extension of "individual variables"; some simulators reject it.
+- `excluded.sv` (A03): `$dumpvars(0, tb)` dumps `count`, `ratio`, `total` and
+  the event `tick` only; the string, handle, dynamic/queue/associative arrays,
+  automatic function variable and block handle are left out (S47-D9).
   Objects are linked and dropped every cycle under `LLG_GC_STRESS=1`.
   `total` = list sum + dyn size + queue size + entry count: 1+1+1+1 = 4,
   0+2+2+2 = 6 (the list is dropped at count 2), 3+3+3+3 = 12, 7+4+4+4 = 19;

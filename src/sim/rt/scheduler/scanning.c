@@ -906,11 +906,20 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
         cap = llg_format_size_add(cap, (size_t)spec.width);
         cap = llg_format_size_add(cap, (size_t)spec.precision);
         cap = llg_format_size_add(cap, scope ? strlen(scope) : 0);
+        cap = llg_format_size_add(cap, llg_format_binding ? strlen(llg_format_binding) : 0);
         if (*p) ++p;
     }
     char* out = llg_checked_malloc(cap, 1, "typed formatted line");
     *length = llg_format_typed(out, cap, fmt, args, n, scope);
     return out;
+}
+
+llg_string_t llg_string_format_bound(llg_string_t format, llg_fmt_arg_t* args,
+                                     int n, const char* scope, const char* binding) {
+    llg_format_binding = binding;
+    llg_string_t result = llg_string_format_typed(format, args, n, scope);
+    llg_format_binding = NULL;
+    return result;
 }
 
 llg_string_t llg_string_format_typed(llg_string_t format, llg_fmt_arg_t* args,

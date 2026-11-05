@@ -40,6 +40,43 @@ impl<'a> Codegen<'a> {
         None
     }
 
+    /// The initialization stream a static declaration initializer draws
+    /// from: its declaring instance or package (SV 18.14.1), where a stream
+    /// is observable and the initializer can reach a draw. Calling
+    /// subroutines is enough, so a draw inside a function is covered without
+    /// walking its body. A declaration outside any instance or package keeps
+    /// the root stream.
+    fn random_initializer_scope(&self, declaration: u32, observed: bool) -> Option<String> {
+        if let Some(scope) = self.initializer_random_scopes.get(&declaration) {
+            return Some(scope.clone());
+        }
+        if !observed {
+            return None;
+        }
+        let node = NodeId::from_index(declaration as usize);
+        let initializer = self
+            .db
+            .var_initializer(node)
+            .or_else(|| self.db.array_meta(node).and_then(|meta| meta.initializer()))?;
+        if !self.can_draw(initializer) {
+            return None;
+        }
+        let owner = self.owner_instance(node)?;
+        Some(format!("{}.initializer", self.instance_path_of(owner)))
+    }
+
+    /// Whether any call, user or system, occurs in the expression at `node`.
+    fn can_draw(&self, node: NodeId) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::FuncCall { .. } | NodeKind::SysCall { .. } | NodeKind::MethodCall { .. }
+        ) || self
+            .node(node)
+            .children
+            .iter()
+            .any(|child| self.can_draw(*child))
+    }
+
     /// The class whose method declares `node`, if any.
     fn owner_class(&self, node: NodeId) -> Option<NodeId> {
         let mut current = Some(node);
@@ -205,9 +242,16 @@ impl<'a> Codegen<'a> {
             .collect::<Vec<_>>();
         let values = self.declaration_inits.len();
         let statements = self.declaration_statements.len();
+        let random_threads = model.random.threads;
         for entry in self.initializer_schedule(&declarations) {
             model.init_steps.push(match entry.checked_sub(values) {
-                None => IrInitStep::Initialize(self.declaration_inits[entry].clone()),
+                None => {
+                    let initialization = self.declaration_inits[entry].clone();
+                    let scope = self
+                        .random_initializer_scope(initialization.declaration(), random_threads)
+                        .map(String::into_boxed_str);
+                    IrInitStep::Initialize(initialization.with_random_scope(scope))
+                }
                 Some(statement) => {
                     let (declaration, body) = match statement.checked_sub(statements) {
                         None => self.declaration_statements[statement].clone(),
@@ -216,7 +260,7 @@ impl<'a> Codegen<'a> {
                     IrInitStep::Execute {
                         declaration,
                         body: Box::new(body),
-                        random_scope: self.initializer_random_scopes.get(&declaration).cloned(),
+                        random_scope: self.random_initializer_scope(declaration, random_threads),
                     }
                 }
             });

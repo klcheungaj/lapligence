@@ -843,67 +843,34 @@ unsupported targets explicitly (decision S47-D9).
 
 ### Symptom
 
-`$dumpvars` leaves out static variables declared in named blocks, tasks and
-functions, and named events, although 1364/1800 VCD can describe them (scope
-types `begin`/`task`/`function`, var type `event`); naming one of these
-variables in `$dumpvars` stops compilation with "has no VCD/FST
-representation". `$dumpfile` takes only a literal name, not a string
-variable. An FST file flushed by `$dumpflush` cannot be opened by GTKWave's
-reader until the run closes it.
+- `$dumpvars` naming a block, task or function as a scope (`$dumpvars(1,
+  tb.blk)`) stops in the frontend with "expected module or variable name".
+  Scope dumps of an enclosing instance include them, and their variables can
+  be named one by one; a formal cannot be named.
+- An unpacked structure variable declared in a block appears as one packed
+  vector, not as a scope of its members.
+- An unnamed block directly inside a task or function adds no
+  `unnamed$$_N` scope: its variables appear in the subroutine's scope.
+- An FST file flushed by `$dumpflush` cannot be opened by GTKWave's reader
+  until the run closes it.
 
 ### Cause
 
-Waveform registrations come only from model signals with an HDL name, record
-member signals and fixed arrays; subroutine and block statics are lowered
-without a waveform name, and events have no registered storage. libfst writes
-the hierarchy and block index at close.
+Slang's `$dumpvars` argument binding accepts only variables, nets and module
+instances. Block structures live in one flattened signal, and a registration
+names a whole signal. The owned DB parents variables of such an unnamed block
+to the subroutine. libfst writes the hierarchy and block index at close.
 
 ### Intended direction
 
-Give block and subroutine statics a waveform name with their scope type,
-register events as `event` variables written on trigger, and accept a string
-expression in `$dumpfile`. The FST behaviour follows the format.
+A tracked Slang patch admits block and subroutine symbols (about a quarter of
+a day); a registration with a bit range serves the flattened structures. The
+FST behaviour follows the format.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_047/reject_block_variable.sv`, and
-`flush_read.sv` with `FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
-
-## Random stream limits
-
-**Status:** open (SIM-028); static processes, static class-object
-initializers, threads and objects follow SV 18.14.
-
-### Symptom
-
-- A `$urandom` or `$urandom_range` in a static variable declaration
-  initializer (`int x = $urandom;` in a module) draws from one model-wide
-  initialization stream in initializer order, not from its instance's
-  initialization RNG (SV 18.14.1 L31148-31151). Adding such an initializer to
-  one instance can change the values of initializers in other instances.
-- An unpacked-structure member as the seed of `$random` or `$dist_*` stops
-  code generation with `legacy random seed must be an integral variable`.
-  Whole variables, array elements, class properties and formals work.
-
-### Cause
-
-Static variable initializers run in `llg_model_initializers` before any
-process exists and without their instance's identity; the per-instance
-streams are keyed by the process label at spawn time. The legacy seed
-writeback lowers only packed variables, elements, class properties and
-formals as in/out targets.
-
-### Intended direction
-
-Emit each instance's variable initializers inside that instance's
-initialization stream (the table in `scheduler/process_registry.c`), and
-route the seed writeback through the native member writer.
-
-### Reproduce
-
-`module m; int x = $urandom; endmodule` instantiated twice next to another
-instance that gains a `$urandom` initializer; for the seed,
-`struct { integer s; } st; initial r = $random(st.s);`.
+`$dumpvars(1, tb.blk);` for a named block `blk`; `flush_read.sv` with
+`FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
 
 ## randsequence limits (ADV-016)
 
@@ -1439,16 +1406,6 @@ module tb;
 endmodule
 ```
 
-## `%l` in runtime-built format strings
-
-Lowering replaces `%l`/`%L` with the scope's static `library.cell` binding in
-every literal format (V §13.6; SV §33.7). A `$sformat`/`$sformatf` whose format
-is a string value built at run time is interpreted by the runtime formatter,
-which has no library table and still prints `work.<scope>`. Fixing it means
-passing the binding next to the scope string through the runtime formatting
-entry points. Reproduce with `string f = "%l"; $display("%s", $sformatf(f));`
-inside a cell bound from a non-`work` library.
-
 ## `%p` of tagged unions and built-in synchronization handles
 
 SIM-024 formats every other value under `%p` from a display-type table, but
@@ -1505,13 +1462,6 @@ Four neighbouring forms still reject with a diagnostic at the call:
 - **A `$strobe` helper with a string formal** (about half a day).
 - **A `$strobe` helper that prints** (`$display` inside the function): it has
   output effects, which the private evaluator refuses; about a day.
-
-A `$monitor` compares every printed argument, `$time` included, once one of its
-reads changes. When a read is a whole array and the change leaves the printed
-value alone (`$monitor("%0t %0d", $time, f(arr[1:2]))`, then `arr[0] = 5`), the
-report repeats with the new time, where 21.2.3 excludes `$time` from the trigger.
-Without a time argument the value comparison holds it back. The fix is a per-
-argument mask in the comparison; about half a day.
 
 `$finish` also drops the reports still pending in its own slot
 ([S25-D5](lrm_decisions.md)); a `$strobe` in a `final` block rejects because no
@@ -1574,9 +1524,32 @@ Pass a native record's leaf markers with the record value.
 `tests/fixtures/sim/feature_completion/sim_009/neg_record_ref_wait_actual.sv`,
 `neg_string_event_control.sv`.
 
-## Rebinding a class event property in a fork branch publishes at the return
+## Rebinding a class event property through an output formal publishes at the return
 
 ### Symptom
+
+A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
+on a rebinding through a `ref` event formal at the rebinding, also in a
+fork-join branch of the callee, except when the callee forwards the formal to
+an output event formal: it then wakes when the outermost call returns. Waits
+on the event itself are not affected: they follow the object named when armed.
+
+### Cause
+
+An output event formal works on its own handle and assigns it back at the
+return, and it has no marker parameter.
+
+### Intended direction
+
+Publish at the copy-out of each call level, if a design needs it. Estimate: a
+quarter of a day.
+
+### Reproduce
+
+A task with `output event e` assigning `e = g`, called with a `ref` event
+formal of the enclosing task bound to `c.ev`, while `wait (c.ev == g)` waits.
+
+## Symptom
 
 A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
 on a rebinding through a `ref` event formal at the rebinding, except when the
@@ -1885,23 +1858,6 @@ full suite and the language-server tests for the frontend patch.
 
 Pinned by `static_memory_force_witness` in
 [sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md).
-
-## Delayed enable gates drive X instead of L/H
-
-**Status:** open (RTL-012 deferral).
-
-An undelayed `bufif0/1` or `notif0/1` output is split into a strength0-only and
-a strength1-only contribution, so an unknown enable drives L or H (IEEE
-1364-2001 7.4, 7.10.2) and, for example, `bufif1 (w, 1'b0, 1'bx)` with a
-`pulldown (w)` resolves to `650`/0. A gate with a delay keeps one contribution:
-splitting would turn a 0-to-1 output into a turn-off of one slot and a rise of
-the other, so the net could pass through Z and use the wrong transition delay.
-The delayed gate therefore drives X (StX) for an unknown enable, and the same
-pulldown example resolves to x. Supporting it needs one inertial handle that
-publishes both halves with the transition delay of the combined output.
-
-Reproduce with `bufif1 #1 (w, d, e); pulldown (w);`, `d = 0; e = 1'bx;` and
-`#2 $display("%v", w);` (prints `StX`; the LRM result is `650`).
 
 ## Operator-overload update values on oversized or native targets
 
@@ -2233,37 +2189,28 @@ other items need small hand-written cases.
 ## Port connections kept as continuous assignments
 
 **Status:** open; whole variable and `wire` ports share their source's
-storage, whole net ports whose sink has drivers or a net type of its own
-merge with their source into one resolved net, and selected, net-array
-element and concatenated net actuals merge bit by bit (decisions
-A21-D1..A21-D5 in [LRM decisions](lrm_decisions.md)).
+storage, net ports whose sink has drivers or a net type of its own merge with
+their source into one resolved net, whatever net delays or `uwire` sides they
+have, and selected, net-array element and concatenated net actuals merge bit
+by bit (decisions A21-D1..A21-D5, T1-D4, T1-D5 in
+[LRM decisions](lrm_decisions.md)).
 
 ### Symptom
 
-- A net port whose sink has drivers of its own (a coerced input net) still
-  runs one copy process when either side has a net delay, when a side is a
-  `uwire` net, or when its actual selects a `wire`/`tri`/`logic` net-array
-  cell that nothing else connects; a variable sink of a net source keeps its
-  copy too. Every change of the source then wakes the copy before any
-  reader of the sink.
-- The copy resolves each side separately, which differs from a simulated
-  net. `tests/fixtures/sim/port_collapse/fallbacks.sv` prints
-  `delay: dl=1 u3.n=x` for a child driving its delayed input net.
+A variable sink of a net source runs one copy process: every change of the
+source wakes the copy before any reader of the sink, one update later than a
+shared storage would show it. A port with a delay on either side whose sink
+has no other driver stays a link too, which is the right behaviour (T1-D4).
 
 ### Cause
 
-`lowering/collection/nets/port_merges.rs` leaves net delays and `uwire` nets
-out because a merge would change which delay applies or turn a second driver
-into an error, which no reference behaviour confirms yet. An unconnected
-`wire` net-array cell is a constant run outside the bit-level union. A
-variable is no net to merge with: sharing its storage with a net source
+A variable is no net to merge with: sharing its storage with a net source
 would let a procedural write or a force of the variable reach the net.
 
 ### Intended direction
 
-Decide the delay of a merged net with a delayed side from Table 23-1's
-dominating declaration, keeping copies only for conversions and where SDF or
-specify paths need each side's own net.
+Keep copies only for conversions, variables and where SDF or specify paths
+need each side's own net.
 
 ### Reproduce
 

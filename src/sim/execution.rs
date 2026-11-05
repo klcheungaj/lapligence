@@ -806,7 +806,7 @@ fn collect_effects(
     for statement in statements {
         let statement = statement.unlocated();
         match statement {
-            IrStmt::InertialAssign { .. } => {
+            IrStmt::InertialAssign { .. } | IrStmt::InertialEnable(_) => {
                 effects.push(ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active))
             }
             // Advances the instance's model-owned state record in place.
@@ -1325,6 +1325,12 @@ fn collect_statement_expression_effects(
             collect_expression_effects(ir, rhs, effects, visited_calls);
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
         }
+        IrStmt::InertialEnable(enable) => {
+            collect_expression_effects(ir, &enable.zero_rhs, effects, visited_calls);
+            collect_expression_effects(ir, &enable.one_rhs, effects, visited_calls);
+            collect_lhs_expression_effects(ir, &enable.zero_lhs, effects, visited_calls);
+            collect_lhs_expression_effects(ir, &enable.one_lhs, effects, visited_calls);
+        }
         IrStmt::Stochastic(operation) => match operation.as_ref() {
             IrStochasticStmt::Initialize {
                 q_id,
@@ -1406,6 +1412,10 @@ fn collect_statement_expression_effects(
         | IrStmt::Repeat { count: rhs, .. }
         | IrStmt::WaitCond { cond: rhs, .. }
         | IrStmt::WaveLimit(rhs) => collect_expression_effects(ir, rhs, effects, visited_calls),
+        IrStmt::WaveFileValue(path) => {
+            effects.push(ExecutionEffect::RuntimeService);
+            collect_string_effects(ir, path, effects, visited_calls);
+        }
         IrStmt::ImmediateAssertion { condition, .. } => {
             collect_expression_effects(ir, condition, effects, visited_calls)
         }

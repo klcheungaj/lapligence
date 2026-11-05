@@ -414,8 +414,11 @@ attaching a VPI-owned one (`llg_net_strength_attach`) to a net without a
 
 End-of-step recording, the pending dump and the producer-side dump state
 (SIM-047, S47-D1..D8): `llg_wave.h` and `llg_wave.c` comments. Registrations name
-static model storage only (signals, record members, fixed arrays); nothing
-collectable is registered, so no handle outlives its storage.
+static model storage only (signals, record members, fixed arrays, static block
+and subroutine variables, the object declared with an event); nothing
+collectable is registered, so no handle outlives its storage. A scoped
+registration carries one letter per scope for its `$scope` type; an event has
+no value, so a trigger only marks it and the writer emits the marker.
 The producer/writer threading and fence rules are in the `llg_wave.c` comments.
 A second producer needs a separate ring or changed concurrency design.
 Only the simulation thread prints waveform reports, each in one stdio call: the

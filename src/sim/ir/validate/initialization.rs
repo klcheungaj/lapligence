@@ -42,7 +42,9 @@ impl Validator<'_> {
                             continue;
                         }
                         let repeated = captured_formals.contains(index);
-                        let handle = formals.get(*index).is_some_and(|formal| formal.chandle);
+                        let handle = formals
+                            .get(*index)
+                            .is_some_and(|formal| formal.chandle || formal.event);
                         let paired = capture_idx > 0
                             && matches!(captures[capture_idx - 1].initial().kind(),
                                 IrExprKind::FormalRead(previous) if previous == index)
@@ -59,7 +61,7 @@ impl Validator<'_> {
                         if (repeated && !(handle && paired)) || marker_expected {
                             return self.fail(
                                 format!("{path}.pre_fns[{idx}].captures[{capture_idx}]"),
-                                "a `ref` formal is captured once, followed by its change marker for a handle formal",
+                                "a `ref` formal is captured once, followed by its change marker for a handle or event formal",
                             );
                         }
                         captured_formals.push(*index);

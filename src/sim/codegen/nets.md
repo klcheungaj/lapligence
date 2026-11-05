@@ -53,9 +53,10 @@ possibility. High-Z adds no drive. Wired-AND 0 and wired-OR 1 dominate X; all-Z
 sources resolve Z unless a default source applies. Pull/supply defaults are
 strength-bearing, not unconditional values. Preserve scalar strengths; explicit
 vector (including selected-bit) and supply-net continuous strengths reject; gate
-instance-array strengths stay legal. Undelayed enable gates split into a
-strength0-only and a strength1-only slot so an unknown enable drives L/H; delayed
-ones keep one slot (X) so each transition keeps a single delay. An omitted input
+instance-array strengths stay legal. Enable gates split into a
+strength0-only and a strength1-only slot so an unknown enable drives L/H; a delayed
+one schedules both as one `IrStmt::InertialEnable` driver with the delay of the
+combined output (T1-D1), so the net never shows a value between the halves. An omitted input
 under `unconnected_drive` is a pull-strength slot of its port on every net or
 net-array formal (variables receive the value only); input net-array links and
 gate outputs on net-array cells publish through their port/gate cell slots.

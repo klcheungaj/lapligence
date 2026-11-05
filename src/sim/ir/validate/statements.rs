@@ -116,6 +116,11 @@ impl Validator<'_> {
         {
             delays.extend(delay.values());
         }
+        if let IrStmt::InertialEnable(enable) = stmt {
+            if let crate::sim::ir::IrInertialDelay::Runtime(delay) = &enable.delay {
+                delays.extend(delay.values());
+            }
+        }
         if let IrStmt::SetNetDelay { group, .. } = stmt {
             if *group >= self.model.net_groups.len() {
                 return self.fail(path, "net delay update names no net group");
@@ -972,6 +977,46 @@ impl Validator<'_> {
                 self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
                 self.validate_expr(rhs, formals, &format!("{path}.rhs"))?;
             }
+            IrStmt::InertialEnable(enable) => {
+                let crate::sim::ir::IrInertialEnable {
+                    zero_lhs,
+                    zero_rhs,
+                    one_lhs,
+                    one_rhs,
+                    delay,
+                } = enable.as_ref();
+                match delay {
+                    crate::sim::ir::IrInertialDelay::Annotated(slot)
+                        if *slot as usize >= self.model.sdf_gate_delays.len() =>
+                    {
+                        return self.fail(path, "annotated gate delay slot out of range");
+                    }
+                    crate::sim::ir::IrInertialDelay::Runtime(delay)
+                        if delay.writable.is_some_and(|slot| {
+                            slot as usize + 1 >= self.model.sdf_gate_delays.len()
+                        }) =>
+                    {
+                        return self.fail(path, "writable gate delay slots out of range");
+                    }
+                    _ => {}
+                }
+                let net_slot = |lhs: &IrLhs| match lhs {
+                    IrLhs::Whole(index) | IrLhs::Bit(index, ..) | IrLhs::Part(index, ..) => {
+                        self.model.signals.get(*index).and_then(|signal| signal.net_driver)
+                    }
+                    _ => None,
+                };
+                let (Some(zero), Some(one)) = (net_slot(zero_lhs), net_slot(one_lhs)) else {
+                    return self.fail(path, "enable driver requires two net driver slots");
+                };
+                if zero.0 != one.0 || zero.1 == one.1 || zero_rhs.is_real() || one_rhs.is_real() {
+                    return self.fail(path, "enable driver requires two slots of one net");
+                }
+                self.validate_lhs(zero_lhs, formals, &format!("{path}.zero_lhs"))?;
+                self.validate_expr(zero_rhs, formals, &format!("{path}.zero_rhs"))?;
+                self.validate_lhs(one_lhs, formals, &format!("{path}.one_lhs"))?;
+                self.validate_expr(one_rhs, formals, &format!("{path}.one_rhs"))?;
+            }
             IrStmt::EventAssign { target, source } => {
                 self.validate_event_ref(target, formals, &format!("{path}.target"))?;
                 if let Some(source) = source {
@@ -1657,6 +1702,9 @@ impl Validator<'_> {
             }
             IrStmt::WaveLimit(expr) => {
                 self.validate_expr(expr, formals, &format!("{path}.limit"))?;
+            }
+            IrStmt::WaveFileValue(file) => {
+                file.validate(self.model, self.string_return.get())?;
             }
             IrStmt::PrintTimescale {
                 unit_fs,

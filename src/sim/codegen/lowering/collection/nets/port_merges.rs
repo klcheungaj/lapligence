@@ -32,17 +32,27 @@
 //!
 //! A port also keeps its link when a merge would change more than the nets'
 //! resolution: either side is not a net of a type the merge supports (a
-//! variable, a `uwire` or `trireg` net), the sides differ in width or
-//! packed type or the actual converts (the link converts), either side has a
-//! net delay or a net takes part in a net alias, the port has a drive
+//! variable or a `trireg` net), the sides differ in width or
+//! packed type or the actual converts (the link converts), a net takes part
+//! in a net alias, the port has a drive
 //! strength, a member write the resolved group rejects reaches either side,
-//! a select is not constant, a selected net-array cell has no other
-//! connection, the design reads SDF, either instance has module paths or
+//! a select is not constant, a selected net-array cell that the child does
+//! not drive has no other connection, the design reads SDF, either instance has module paths or
 //! timing checks, or the model is generated with `--vpi-port-delays` (every
 //! port keeps a net of its own for VPI port delays). A model that keeps the
 //! VPI catalog merges too (A21-D6): both names stay nets of the one group,
 //! so `vpi_handle_by_name` of either shows the merged value and drivers, and
 //! a put or force through either name reaches both, as for an inout port.
+//!
+//! A `uwire` on either side merges whatever the sink is: 23.3.3.6 wants a
+//! warning for a port that does not, and the merged net's drivers then meet
+//! the single-driver check of 6.6.2.
+//!
+//! A port with a net delay on either side stays a link while its sink is a
+//! plain second name of its source: the sink follows after its own delay.
+//! A sink that differs merges all the same; the simulated net takes the
+//! dominating declaration's delay, or the outermost declared delay when that
+//! declaration has none (T1-D4, `NetCollapsePlan::port_batch`).
 
 use super::super::net_cells::NetCellPlan;
 use super::*;
@@ -51,6 +61,9 @@ use super::*;
 struct MergeCandidate {
     port: NodeId,
     connection: MergeConnection,
+    /// A net on either side declares a delay, so only a sink that differs
+    /// from its source merges this port.
+    delayed: bool,
 }
 
 enum MergeConnection {
@@ -118,9 +131,22 @@ impl Codegen<'_> {
             match &candidate.connection {
                 // A merged selected port is never slower or larger than its
                 // copy (A21-D5 trade-off) and is exactly one simulated net.
-                MergeConnection::Selected { .. } => true,
-                MergeConnection::Whole { sink, .. } => {
+                MergeConnection::Selected { .. } if !candidate.delayed => true,
+                MergeConnection::Selected { output, nets, .. } => {
+                    let sinks = if *output { &nets[1..] } else { &nets[..1] };
+                    sinks.iter().any(|sink| {
+                        context.parent.contains_key(sink)
+                            || self.sink_differs_from_source(*sink, candidate.port, context)
+                    })
+                }
+                MergeConnection::Whole {
+                    actual,
+                    formal,
+                    sink,
+                } => {
                     context.parent.contains_key(sink)
+                        || self.is_uwire(*actual)
+                        || self.is_uwire(*formal)
                         || self.sink_differs_from_source(*sink, candidate.port, context)
                 }
             }
@@ -166,8 +192,11 @@ impl Codegen<'_> {
             } = &candidate.connection
             {
                 by_sink.entry(*sink).or_default().push(index);
-                by_net.entry(*actual).or_default().push(index);
-                by_net.entry(*formal).or_default().push(index);
+                // A delayed link keeps its own timing next to a bit-level net.
+                if !candidate.delayed {
+                    by_net.entry(*actual).or_default().push(index);
+                    by_net.entry(*formal).or_default().push(index);
+                }
             } else if let MergeConnection::Selected { output, nets, .. } = &candidate.connection {
                 // The sink: the formal of an input, the actual nets of an
                 // output.
@@ -313,7 +342,17 @@ impl Codegen<'_> {
         {
             return None;
         }
-        Some(MergeCandidate { port, connection })
+        let delayed = nets.iter().any(|net| self.db.net_delay(*net).is_some())
+            || matches!(&connection, MergeConnection::Selected { bits, .. }
+            if bits.iter().any(|(actual, _)| {
+                matches!(actual, AliasBit::Array { .. })
+                    && self.db.net_delay(actual.owner()).is_some()
+            }));
+        Some(MergeCandidate {
+            port,
+            connection,
+            delayed,
+        })
     }
 
     fn whole_merge_connection(
@@ -440,9 +479,14 @@ impl Codegen<'_> {
     /// The net-array bits an input port reads that the net-cell inventory
     /// connects so a merge can reach them: bits of a selected actual whose
     /// array has a type that dominates a `wire` formal (`tri0`, `tri1`,
-    /// `supply0`, wired types), which always merge. A `wire`/`tri`/`logic`
-    /// cell nothing else connects is a constant run; its port keeps the copy.
-    pub(in super::super) fn input_merge_cells(&self, port: NodeId) -> Vec<AliasBit> {
+    /// `supply0`, wired types), or whose port's formal the child drives
+    /// (`driven`): both always merge. Any other `wire`/`tri`/`logic` cell
+    /// nothing else connects is a constant run; its port keeps the copy.
+    pub(in super::super) fn input_merge_cells(
+        &self,
+        port: NodeId,
+        driven: &HashSet<NodeId>,
+    ) -> Vec<AliasBit> {
         let NodeKind::Port {
             direction: DbDirection::Input,
             high,
@@ -471,11 +515,56 @@ impl Codegen<'_> {
                 .and_then(|meta| meta.net_type())
                 .is_some_and(|kind| {
                     Self::mergeable_net_type(kind)
-                        && !matches!(kind, NetType::Wire | NetType::Tri | NetType::Logic)
+                        && (driven.contains(&port)
+                            || !matches!(kind, NetType::Wire | NetType::Tri | NetType::Logic))
                 }),
             AliasBit::Net { .. } => false,
         });
         bits
+    }
+
+    /// The input ports with a selected net-array actual whose formal has a
+    /// driver besides the port. Most designs have no such actual, so the
+    /// writer index is built only once one appears.
+    pub(in super::super) fn input_ports_on_driven_cells(
+        &self,
+        nodes: &[NodeId],
+    ) -> HashSet<NodeId> {
+        let mut driven = HashSet::new();
+        if !self.merge_ports || self.reads_sdf() {
+            return driven;
+        }
+        let mut writers = None;
+        for port in nodes {
+            let NodeKind::Port {
+                direction: DbDirection::Input,
+                high,
+                low: Some(formal),
+                high_expr,
+                ..
+            } = self.kind(*port)
+            else {
+                continue;
+            };
+            let selects_cell = high_expr.or(*high).is_some_and(|actual| {
+                self.whole_port_connection(*port).is_none()
+                    && self.plain_net_selection(actual)
+                    && self.alias_expression_bits(*port, actual).is_ok_and(|bits| {
+                        bits.iter().any(|bit| matches!(bit, AliasBit::Array { .. }))
+                    })
+            });
+            if !selects_cell {
+                continue;
+            }
+            let writers = writers.get_or_insert_with(|| self.net_writer_index(nodes));
+            if self
+                .structural_site_sources(nodes, writers, &[*formal])
+                .is_ok_and(|sources| sources.iter().any(|(source, _)| source != port))
+            {
+                driven.insert(*port);
+            }
+        }
+        driven
     }
 
     /// Whether `expression` names only nets and net-array cells through
@@ -513,22 +602,20 @@ impl Codegen<'_> {
     }
 
     /// A plain net of a type the merged group supports, outside any net
-    /// alias, without a net delay.
+    /// alias.
     fn mergeable_port_net(&self, net: NodeId, true_aliases: &HashSet<NodeId>) -> bool {
         matches!(
             self.kind(net),
             NodeKind::Net { net_type, .. } if Self::mergeable_net_type(*net_type)
         ) && !true_aliases.contains(&net)
-            && self.db.net_delay(net).is_none()
     }
 
-    /// A net array of a type the merged group supports, without a net delay.
+    /// A net array of a type the merged group supports.
     fn mergeable_port_array(&self, owner: NodeId) -> bool {
         self.db
             .array_meta(owner)
             .and_then(|meta| meta.net_type())
             .is_some_and(Self::mergeable_net_type)
-            && self.db.net_delay(owner).is_none()
     }
 
     fn mergeable_net_type(net_type: NetType) -> bool {
@@ -545,7 +632,59 @@ impl Codegen<'_> {
                 | NetType::Tri1
                 | NetType::Supply0
                 | NetType::Supply1
+                | NetType::Uwire
         )
+    }
+
+    fn is_uwire(&self, net: NodeId) -> bool {
+        matches!(
+            self.kind(net),
+            NodeKind::Net {
+                net_type: NetType::Uwire,
+                ..
+            }
+        )
+    }
+
+    /// Warn for each port with a `uwire` side that did not merge, as 23.3.3.6
+    /// requires; `merged` holds the ports that lost their link.
+    pub(super) fn warn_unmerged_uwire_ports(&mut self, nodes: &[NodeId], merged: &HashSet<NodeId>) {
+        if !nodes.iter().any(|node| self.is_uwire(*node)) {
+            return;
+        }
+        for port in nodes {
+            let NodeKind::Port {
+                direction: DbDirection::Input | DbDirection::Output,
+                high,
+                low: Some(formal),
+                high_expr,
+                ..
+            } = self.kind(*port)
+            else {
+                continue;
+            };
+            let formal = *formal;
+            let actual = high_expr.or(*high);
+            if merged.contains(port) {
+                continue;
+            }
+            let actual_uwire = actual.is_some_and(|actual| {
+                self.alias_expression_bits(*port, actual)
+                    .is_ok_and(|bits| bits.iter().any(|bit| self.is_uwire(bit.owner())))
+            });
+            if actual.is_some() && (self.is_uwire(formal) || actual_uwire) {
+                let node = self.node(*port);
+                let message = format!(
+                    "port `{}` connects a uwire net but keeps a continuous assignment; the two \
+                     sides stay separate nets (IEEE 1800-2009 23.3.3.6) at {}:{}:{}",
+                    self.display_name(*port),
+                    node.file.as_deref().unwrap_or("<unknown>"),
+                    node.line,
+                    node.col,
+                );
+                self.warnings.push(message);
+            }
+        }
     }
 
     /// Whether the merged net would differ from the sink's source: the sink

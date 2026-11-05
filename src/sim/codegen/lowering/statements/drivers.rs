@@ -533,6 +533,10 @@ fn continuous_writes(statement: &IrStmt, out: &mut Vec<usize>) {
         IrStmt::Assign { lhs, .. } | IrStmt::InertialAssign { lhs, .. } => {
             lhs_signals(lhs, out);
         }
+        IrStmt::InertialEnable(enable) => {
+            lhs_signals(&enable.zero_lhs, out);
+            lhs_signals(&enable.one_lhs, out);
+        }
         IrStmt::Located { statement, .. } => continuous_writes(statement, out),
         IrStmt::Block(statements)
         | IrStmt::While {

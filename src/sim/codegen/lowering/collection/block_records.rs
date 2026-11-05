@@ -178,10 +178,19 @@ impl Codegen<'_> {
                 "procedural-block record `{name}` in `{path}` has no leaf storage"
             ));
         }
-        // Block declarations have no waveform identity, like other
-        // procedural locals.
-        for signal in &mut self.model.signals[first_signal..] {
-            signal.hdl_name = None;
+        // A block declaration's waveform identity needs its block scopes,
+        // which `hdl_name` does not carry; it also stays out of the VPI
+        // catalog. The waveform table takes the member paths.
+        let prefix = self.waveform_name(declaration);
+        for ir in first_signal..self.model.signals.len() {
+            if let Some(name) = self.model.signals[ir].hdl_name.take() {
+                if lifetime == VariableLifetime::Static {
+                    if let Some(suffix) = name.strip_prefix(&prefix) {
+                        self.wave_block_records
+                            .push((declaration, ir, suffix.to_owned()));
+                    }
+                }
+            }
         }
         self.block_records.insert(declaration, path.to_owned());
         if lifetime == VariableLifetime::Static {

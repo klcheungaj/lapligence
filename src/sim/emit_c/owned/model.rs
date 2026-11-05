@@ -594,6 +594,7 @@ fn render_function(
             );
         }
         frame.return_address = Some("&_ret".to_owned());
+        frame.return_publishes = ctx.model.waveform && function.return_signal.is_some();
     }
     for (index, formal) in function.formals.iter().enumerate() {
         if let Some(container) = formal.container {

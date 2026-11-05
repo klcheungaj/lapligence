@@ -125,6 +125,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         // Waveform models keep every HDL-visible signal (below).
         waveform,
         wave_start: _,
+        wave_variables,
         signals: _,
         net_groups: _,
         arrays,
@@ -424,11 +425,21 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
     }
     let waveform = *waveform;
     // One pass over the catalog: every signal is VPI-visible in a model with
-    // a full catalog, so a per-signal scan would be quadratic.
-    let mut vpi_visible = vec![false; model.signals.len()];
+    // a full catalog, so a per-signal scan would be quadratic. Dumped static
+    // variables stay for the same reason: something outside the model reads
+    // them.
+    let mut externally_read = vec![false; model.signals.len()];
     for object in vpi_objects {
-        if let Some(visible) = object.signal.and_then(|signal| vpi_visible.get_mut(signal)) {
+        if let Some(visible) = object
+            .signal
+            .and_then(|signal| externally_read.get_mut(signal))
+        {
             *visible = true;
+        }
+    }
+    for variable in wave_variables {
+        if let crate::sim::ir::IrWaveStorage::Signal(signal) = variable.storage() {
+            externally_read[signal] = true;
         }
     }
     let mut flags: Vec<bool> = model
@@ -436,7 +447,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         .iter()
         .enumerate()
         .map(|(i, sig)| {
-            !(waveform && sig.hdl_name.is_some()) && !vpi_visible[i] && !rw.referenced(i)
+            !(waveform && sig.hdl_name.is_some()) && !externally_read[i] && !rw.referenced(i)
         })
         .collect();
     // Alias source cells are retained for descriptor refreshes and debug/
@@ -636,6 +647,12 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);
+        }
+        IrStmt::InertialEnable(enable) => {
+            collect_lhs_rw(&enable.zero_lhs, model, rw);
+            collect_expr_reads(&enable.zero_rhs, model, rw);
+            collect_lhs_rw(&enable.one_lhs, model, rw);
+            collect_expr_reads(&enable.one_rhs, model, rw);
         }
         IrStmt::Stochastic(operation) => match operation.as_ref() {
             IrStochasticStmt::Initialize {
@@ -898,6 +915,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             suffix.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
         }
         IrStmt::WaveLimit(limit) => collect_expr_reads(limit, model, rw),
+        IrStmt::WaveFileValue(path) => {
+            path.expressions(&mut |expression| collect_expr_reads(expression, model, rw))
+        }
         IrStmt::Call(call) => collect_call_rw(call, model, rw),
         IrStmt::Return { value: Some(value) } => collect_expr_reads(value, model, rw),
         // Task-position `$system` and process RNG statements carry owned string

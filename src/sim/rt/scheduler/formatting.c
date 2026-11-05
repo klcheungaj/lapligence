@@ -694,6 +694,10 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
 
 }
 
+// The `%l` text of the run-time format being expanded; formatting neither
+// yields nor nests, so `llg_string_format_bound` holds it for one call.
+static const char* llg_format_binding;
+
 static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
                                const llg_fmt_arg_t* args, int n,
                                const char* scope) {
@@ -724,6 +728,11 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             // `%l` has no width-bearing form in the Slang grammar, so append
             // the library-qualified HDL scope directly and avoid allocating a
             // model-width temporary on the coroutine stack.
+            if (llg_format_binding) {
+                llg_append_text(out, cap, &len, llg_format_binding,
+                                strlen(llg_format_binding));
+                continue;
+            }
             llg_append_text(out, cap, &len, "work.", 5);
             if (scope && scope[0])
                 llg_append_text(out, cap, &len, scope, strlen(scope));

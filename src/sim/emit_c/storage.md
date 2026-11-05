@@ -251,7 +251,7 @@ of its subroutine through an owned opaque capture whose initializer is
 which the branch rebinds under the same name and type, and the branch frame
 takes the subroutine's formal table (`Frame::formal_function`), so formal
 reads, stores, selects and waits emit unchanged. The subroutine waits for every
-branch, so the descriptor outlives them. A handle formal's second capture, the
+branch, so the descriptor outlives them. A handle or event formal's second capture, the
 same `FormalRead(index)` in the next slot, carries its change marker parameter:
 the fork stores the caller's marker (NULL for an actual no other process can
 name) in one holder frame slot per formal that every branch aliases, and a
@@ -267,4 +267,4 @@ Then every writable `ref` event formal also takes `d<idx>`
 object's `llg_class_handle_dependency` for a property, its own `d<idx>` when
 forwarded, else NULL, and `IrStmt::EventAssign` publishes it when the object
 changes. The call site also compares the slot at the return, which covers
-stores that have no marker parameter (a fork-join branch, an output formal).
+stores that have no marker parameter (an output formal).

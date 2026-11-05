@@ -532,6 +532,9 @@ typedef struct {
 // at every settled time slot because an argument reads through a class or
 // virtual-interface handle. Other kinds are llg_fmt_kind values.
 #define LLG_MONITOR_READ_POLL 100
+// A trigger entry whose `ptr` holds the index of a displayed argument that
+// only reads simulation time: it prints but triggers no report (SV 21.2.3).
+#define LLG_MONITOR_TIME_ARG 101
 
 // ── Collapsed inout nets ──────────────────────────────────────────────────────
 //
@@ -885,6 +888,15 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
 void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
                            sv4_t value, sv4_select_plan_t plan, int reverse,
                            uint64_t rise, uint64_t fall, uint64_t turn_off);
+// The output of a delayed enable gate: `zero` for strength0-only slot
+// `zero_slot` and `one` for strength1-only slot `one_slot`, over the bits
+// `plan` selects. One driver schedules both, with the delay of the combined
+// output: 0 falls, 1 rises, Z turns off, and X, L and H take the smallest
+// delay, whatever the old output was. The net publishes them as one update.
+void llg_inertial_enable_net(llg_inertial_t** handle, llg_net_t* net, int zero_slot,
+                             int one_slot, sv4_t zero, sv4_t one,
+                             sv4_select_plan_t plan, int reverse, uint64_t rise,
+                             uint64_t fall, uint64_t turn_off);
 // Drop the pending update of the driver behind `handle`, and move a
 // pending update due later to the current time (no driver or none pending:
 // no effect). A vpi_put_value to a delayed sequential UDP (IEEE 1800-2009
@@ -1943,6 +1955,10 @@ void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int n,
 // consumed exactly once, including destruction of every owned packed/string member.
 llg_string_t llg_string_format_typed(llg_string_t format, llg_fmt_arg_t* args,
                                      int n, const char* scope);
+// A format known only at run time: `binding` is the caller's `%l` text
+// (`library.cell`). Literal formats have `%l` expanded during lowering.
+llg_string_t llg_string_format_bound(llg_string_t format, llg_fmt_arg_t* args,
+                                     int n, const char* scope, const char* binding);
 // Runtime severity tasks use the same typed formatter as display tasks and
 // write one source-context diagnostic to stderr. The argument array is
 // consumed exactly once, including destruction of owned packed values and strings.
@@ -3708,6 +3724,7 @@ void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref);
 void llg_process_get_randstate_to(llg_string_t* dst);
 void llg_process_handle_get_randstate_to(llg_string_t* dst, llg_process_handle_t* handle);
 void llg_string_format_typed_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int n, const char* scope);
+void llg_string_format_bound_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int n, const char* scope, const char* binding);
 /* Implemented with the container runtime; declared in both headers. */
 void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int right_to_left);

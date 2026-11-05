@@ -359,6 +359,7 @@ impl Frame<'_, '_> {
                 self.vpi_auto_bind(VpiAutoKey::Name(name.clone()));
             }
             IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, delay)?,
+            IrStmt::InertialEnable(enable) => self.inertial_enable(enable)?,
             IrStmt::SetNetDelay { group, delay } => self.set_net_delay(*group, delay)?,
             IrStmt::UdpStep { state, inputs } => self.udp_step(*state, inputs)?,
             IrStmt::ModulePathStamp { set } => {
@@ -1041,8 +1042,17 @@ impl Frame<'_, '_> {
                         target.two_state,
                         target.shortreal,
                     );
+                    // A dumped result publishes: its waveform entry needs the
+                    // change mark of an ordinary store.
+                    let publish = self.return_publishes && !self.read_only_callback;
                     if target.width == 0 {
-                        self.line(format!("*({}) = {};", target.address, value.code));
+                        self.line(if publish {
+                            format!("llg_ba_d({}, {});", target.address, value.code)
+                        } else {
+                            format!("*({}) = {};", target.address, value.code)
+                        });
+                    } else if publish {
+                        self.line(format!("llg_ba_from({}, &{});", target.address, value.code));
                     } else {
                         self.line(format!("sv4_move({}, &{});", target.address, value.code));
                     }
@@ -1060,6 +1070,7 @@ impl Frame<'_, '_> {
             }
             IrStmt::Goto(label) => self.goto(label)?,
             IrStmt::WaveFile(_)
+            | IrStmt::WaveFileValue(_)
             | IrStmt::WaveDumpVars(_)
             | IrStmt::WaveLimit(_)
             | IrStmt::WaveOn
@@ -1074,6 +1085,14 @@ impl Frame<'_, '_> {
                         "llg_wave_file({}, llg_time());",
                         c_string_literal(path)
                     )),
+                    IrStmt::WaveFileValue(path) => {
+                        let path = self.string(path)?;
+                        let address = &path.address;
+                        self.line(format!(
+                            "llg_wave_file_bytes(({address})->data, ({address})->len, llg_time());"
+                        ));
+                        self.native_discard(path);
+                    }
                     IrStmt::WaveDumpVars(selection) => {
                         if selection.names().is_empty() {
                             self.line(format!(

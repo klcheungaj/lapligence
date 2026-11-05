@@ -86,6 +86,7 @@ impl Codegen<'_> {
                 format: Box::new(IrStringExpr::Literal(format)),
                 args: values,
                 scope,
+                binding: None,
             });
         }
         let format = self.lower_string(path, format_node)?;
@@ -97,6 +98,11 @@ impl Codegen<'_> {
             format: Box::new(format),
             args: values,
             scope,
+            binding: Some(
+                library
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| self.library_binding(self.inst)),
+            ),
         })
     }
 

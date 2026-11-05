@@ -27,8 +27,8 @@ Clauses (SystemVerilog-1800-2009.txt):
   all drivers of the net-gate outputs, module outputs, and continuous
   assignments-until a release procedural statement is executed on the net."
 - 6.6.1 / 28.16 (net delays) are not restated: `delayed` shows the formal's own
-  net delay, which a merge would drop (23.3.3.7 gives the simulated net the
-  dominating net's delay).
+  net delay on a sink only the port drives, which stays a link; a sink with a
+  driver merges and takes the dominating net's delay (23.3.3.7, T1-D4).
 
 ## `merged.sv`
 
@@ -153,5 +153,13 @@ change something (A21-D2, A21-D4 and A21-D5 exceptions).
   converting copy.
 - `variable actual: vr=1 u4.n=x`: a variable is no net to merge with; the
   formal resolves the port's 1 with the child's 0.
-- `delay: dl=1 u3.n=x` then `delay later: dl=1 u3.n=1`: the formal's own
-  `#2` net delay applies to the copy.
+- `delay: dl=1 u3.n=x` then `delay later: dl=1 u3.n=1`: the child does not
+  drive the formal, so its own `#2` net delay applies to the copy (T1-D4).
+
+## `uwire_ports.sv`, `reject_uwire_two_drivers.sv`
+
+A port with a `uwire` side merges (T1-D5). 23.3.3.6 L41587-41588: "If the net
+on either side of a port has the net type uwire, a warning shall be issued if
+the nets are not merged into a single net". 6.6.2 L4794-4795: "It shall be an
+error to connect any bit of a uwire net to more than one driver." The
+simulator tried does not parse `uwire`, so these follow the text.

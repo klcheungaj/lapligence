@@ -24,6 +24,7 @@ typedef struct llg_monitor_state {
     llg_fmt_arg_t* typed_work;
     llg_display_read_t* typed_reads;
     int n_typed_reads;
+    unsigned char* time_args;  // per argument: only reads time; NULL when none
     char* scope;
     int typed;
     uint32_t descriptor;

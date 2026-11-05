@@ -8,6 +8,7 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
 `pdftotext -layout` extraction); `llg policy` marks what the text leaves open.
 
 ## A01: final settled values (`monitor_final`, `strobe_final`, `scope_time`, `static_subroutines`)
+- `monitor_time_args` (T1-D7): `$time`, `$stime`, `$realtime` and expressions of them alone print but trigger nothing, also where a whole-array read marks the list changed (21.2.3 L36517-36518, quoted in the fixture). A simulator misses `2 a 5` (a slice actual of a helper) and `1 15 d` (a helper's own read); the text asks for both, so those two lines follow it.
 
 - Postponed region, L3210-3213: "$monitor, $strobe and other similar events
   are scheduled in the Postponed region." / "No new value changes are allowed

@@ -436,6 +436,9 @@ fn render_stmt_scoped(
         IrStmt::SetNetDelay { group, delay } => {
             super::assignments::render_set_net_delay(ctx, *group, delay)?
         }
+        IrStmt::InertialEnable(_) => {
+            return Err("delayed enable gates require the structured owned emitter".to_owned())
+        }
         IrStmt::InertialAssign { lhs, rhs, delay } => {
             super::assignments::render_inertial(ctx, lhs, rhs, delay)?
         }
@@ -1156,6 +1159,7 @@ fn render_stmt_scoped(
             n_args,
             reads,
             poll,
+            time_args,
             scope,
             descriptor,
             ..
@@ -1181,6 +1185,9 @@ fn render_stmt_scoped(
                 if *poll {
                     read_entries.push("{ LLG_MONITOR_READ_POLL, NULL }".to_owned());
                 }
+                read_entries.extend(time_args.iter().map(|index| {
+                    format!("{{ LLG_MONITOR_TIME_ARG, (void*)(uintptr_t){index}u }}")
+                }));
                 let read_count = read_entries.len();
                 let read_ptrs = read_entries.join(", ");
                 let declaration = if read_ptrs.is_empty() {
@@ -1228,6 +1235,9 @@ fn render_stmt_scoped(
                 "    llg_wave_file({}, llg_time());\n",
                 c_string_literal(path)
             )
+        }
+        IrStmt::WaveFileValue(_) => {
+            return Err("a computed $dumpfile name requires the structured owned emitter".to_owned())
         }
         IrStmt::WaveDumpVars(selection) => {
             if selection.names().is_empty() {

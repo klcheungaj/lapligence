@@ -103,7 +103,7 @@ int llg_checker_free_set(llg_free_solve_fn solve, const uint64_t* assumes,
     }
     // The set draws like a static process of its checker instance (18.14.1).
     llg_rng_state_t* parent = g.rng_instance_streams && label
-        ? rng_instance_stream(label)
+        ? &rng_instance_stream(label)->rng
         : &g.rng_root;
     llg_rng_state_child(parent, &set->rng);
     // Registration order is the solving order.

@@ -366,6 +366,9 @@ impl<'a> Codegen<'a> {
             self.signals.push(info.clone());
             self.insert_sig_global(local, info.clone());
             persistent.insert(local, info.clone());
+            if !matches!(self.kind(local), NodeKind::Array { .. }) {
+                self.wave_subroutine_statics.push((local, info.ir));
+            }
             static_local_signals.insert(local, info);
         }
         // A statically allocated numeric function result normally uses the
@@ -422,6 +425,8 @@ impl<'a> Codegen<'a> {
                     });
                     self.signals.push(info.clone());
                     self.insert_sig_global(return_variable, info.clone());
+                    self.wave_subroutine_statics
+                        .push((return_variable, info.ir));
                     persistent.insert(return_variable, info.clone());
                     persistent.insert(ft, info.clone());
                     Some(info)

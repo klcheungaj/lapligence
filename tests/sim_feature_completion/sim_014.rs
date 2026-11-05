@@ -334,3 +334,11 @@ fn neg_function_event_control() {
         "statements that pass time are not allowed in this context",
     );
 }
+
+#[test]
+fn event_variable_comparisons_in_waits_reject() {
+    let reason = "an event variable comparison at";
+    sim_cli::reject_case(SUITE, "reject_event_wait_compare", reason);
+    sim_cli::reject_case(SUITE, "reject_event_ref_wait_compare", reason);
+    sim_cli::reject_case(SUITE, "reject_event_control_compare", reason);
+}

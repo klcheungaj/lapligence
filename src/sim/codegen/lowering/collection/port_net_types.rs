@@ -149,6 +149,7 @@ impl Codegen<'_> {
         merged: &HashSet<NodeId>,
     ) -> Result<NetCollapsePlan, String> {
         let mut plan = NetCollapsePlan::default();
+        plan.set_delayed(self.db.net_delays().keys().copied().collect());
         // One representative per undriven net-array class shape.
         for (owner, element) in cells.representative_points() {
             self.insert_collapse_point(

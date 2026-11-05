@@ -33,6 +33,9 @@ pub struct IrInitialization {
     pub(in crate::sim) target: IrInitTarget,
     pub(in crate::sim) value: IrExpr,
     pub(in crate::sim) origin: crate::sim::semantic::Origin,
+    /// Label of the instance initialization stream the value may draw from
+    /// (SV 18.14.1); `None` when it draws nothing or has no instance.
+    pub(in crate::sim) random_scope: Option<Box<str>>,
 }
 
 impl IrInitialization {
@@ -51,7 +54,18 @@ impl IrInitialization {
             target,
             value,
             origin,
+            random_scope: None,
         }
+    }
+
+    /// Names the instance initialization stream the value draws from.
+    pub fn with_random_scope(mut self, scope: Option<Box<str>>) -> Self {
+        self.random_scope = scope;
+        self
+    }
+
+    pub fn random_scope(&self) -> Option<&str> {
+        self.random_scope.as_deref()
     }
 
     pub fn declaration(&self) -> u32 {

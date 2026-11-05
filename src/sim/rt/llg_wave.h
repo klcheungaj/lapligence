@@ -12,7 +12,23 @@ int llg_wave_model_init(uint64_t precision_fs);
 int llg_wave_register_sv4(const char* hierarchical_name, sv4_t* value,
                           uint32_t width);
 int llg_wave_register_real(const char* hierarchical_name, double* value);
+// Registrations whose scopes are not all modules: `scopes` has one letter per
+// scope of `hierarchical_name`, outermost first (`m` module or generate scope,
+// `b` begin block, `k` fork block, `t` task, `f` function; `B` and `K` for an
+// unnamed block, whose generated `unnamed$$_N` name is written as it stands).
+// The string must outlive the model; the writer reads it for the header.
+int llg_wave_register_scoped_sv4(const char* hierarchical_name, const char* scopes,
+                                 sv4_t* value, uint32_t width);
+int llg_wave_register_scoped_real(const char* hierarchical_name, const char* scopes,
+                                  double* value);
+// A named event: `$var event`, with a change in each time step that triggers
+// its synchronization object. Later handle assignments do not move the
+// registration; it follows the object declared with the event.
+int llg_wave_register_event(const char* hierarchical_name, const char* scopes,
+                            llg_event_object_t* event);
 void llg_wave_file(const char* path, uint64_t now);
+// `$dumpfile` of a computed name: `len` bytes, not terminated, copied here.
+void llg_wave_file_bytes(const char* path, size_t len, uint64_t now);
 void llg_wave_dumpvars(uint64_t now);
 void llg_wave_dumpvars_select(uint64_t now, uint32_t depth,
                               const char* const* names, uint32_t name_count);
@@ -40,6 +56,7 @@ void llg_wave_slot_end(uint64_t now);
 // the writer never reads mutable model storage.
 void llg_wave_changed_sv4(const sv4_t* ptr);
 void llg_wave_changed_real(const double* ptr);
+void llg_wave_changed_event(const llg_event_object_t* ptr);
 
 #ifdef __cplusplus
 }

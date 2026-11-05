@@ -672,8 +672,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   generate scopes, composed with binds, interface memories and descriptor-sized
   fixed memories crossing configured and bound ports. `%l` prints the bound
   `library.cell` (or `library.$unit` outside a design element) for literal
-  formats (V §13.6; SV §33.7); a runtime-built `$sformatf` format still
-  prints `work.<scope>`. Without a configuration, the declared library order
+  and run-time formats (V §13.6; SV §33.7). Without a configuration, the declared library order
   resolves same-named cells, an implementation-defined tie. Library sources follow
   `--compilation-units`: separate mode preprocesses each file alone, merged mode
   shares one preprocessor and `$unit` per library in admission order. Included maps and
@@ -1930,8 +1929,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   for other handles; output is capped at 1 MiB with a warning
   ([sim_024](../tests/fixtures/sim/feature_completion/sim_024/readme.md)).
   Tagged unions and semaphore/mailbox handles reject under `%p`; non-`%p`
-  conversions of unpacked values or handles reject; run-time formats keep
-  `%l` approximate. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
+  conversions of unpacked values or handles reject. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
 - 🟨 **Postponed output** — Strobes print once at the end of their slot, after
   Active/Inactive/NBA iteration and after the slot's monitor reports, the last
   issued first (S25-D6); `$monitor` keeps one list
@@ -2154,8 +2152,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `$dist_uniform`, `$dist_normal`, `$dist_exponential`, `$dist_poisson`,
   `$dist_chi_square`, `$dist_t` and `$dist_erlang` match independent Annex N
   reference vectors, including invalid parameters (result 0, seed unchanged);
-  seeds are written back through formals, elements, class properties and
-  variables of any width, and also in `void'(...)` statements. Every thread
+  seeds are written back through formals, elements, class properties,
+  unpacked-structure members and variables of any width, and also in `void'(...)` statements. Every thread
   owns a stream: a static process is seeded from its instance's
   initialization stream, a forked child from its parent, so processes added to
   another instance or later in the same instance leave existing streams
@@ -2167,10 +2165,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   reals
   ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md),
   decisions S28-D1 to S28-D9 in [lrm_decisions](lrm_decisions.md)). A
-  `$urandom` in a static variable initializer draws from one model-wide
-  initialization stream; an unpacked-structure member as a legacy seed is
-  rejected
-  ([random stream limits](known_issues.md#random-stream-limits)).
+  draw in a static initializer takes the next value of its instance's or
+  package's initialization stream, like an object a static initializer
+  creates (T1-D3); static process seeds keep a separate state of that stream.
   `randcase` (SV §18.16) selects one branch by weight: the weights are
   self-determined unsigned values evaluated once each in source order, added
   without wrapping, and one value of the calling thread's stream (the value
@@ -2244,8 +2241,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   of that step. Each changed variable is recorded once per time step with its
   end-of-step value. Packed values, array elements with declared bounds, real
   values, X/Z, aliases (one identifier code per merged net), hierarchy with
-  `g[i]` loop generate scopes and femtosecond timestamps are represented;
-  strings, handles, events, dynamic containers and block or subroutine
+  `g[i]` loop generate scopes and femtosecond timestamps are represented, and
+  so are the static variables of blocks, tasks and functions (their scopes,
+  named `unnamed$$_N` for unnamed blocks, with type `begin`, `fork`, `task` or
+  `function`) and named events (`$var event`, one change per triggering time
+  step); `$dumpfile` takes a literal or computed name. Strings, handles,
+  dynamic containers, event arrays, block-level unpacked arrays and automatic
   variables are not dumped and naming one in `$dumpvars` is an error.
   `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
   `$dumpflush` follow the dump state; an output error is reported, stops the

@@ -108,6 +108,12 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         };
         // Directive and macro-usage words arrive as operator-kind tokens.
         if kind == TOKEN_SLANG_OPERATOR {
+            // `$unit` and `$root` are scope names, not system names
+            // (ST-40); Slang lexes them as their own token kinds, which the
+            // capture reports as operators.
+            if matches!(node.name.as_deref(), Some("$unit" | "$root")) {
+                token_type = TT_NAMESPACE;
+            }
             match node.name.as_deref().and_then(backtick_word) {
                 Some(BacktickWord::Directive) => {
                     token_type = TT_KEYWORD;
@@ -240,7 +246,15 @@ fn backtick_word(name: &str) -> Option<BacktickWord> {
         | "timescale"
         | "unconnected_drive"
         | "undef"
-        | "undefineall" => BacktickWord::Directive,
+        | "undefineall"
+        // IEEE 1800-2009 Annex E (1364-2001 Annex D): informative, but
+        // Slang lexes them as directives, so they steer compilation too.
+        | "default_decay_time"
+        | "default_trireg_strength"
+        | "delay_mode_distributed"
+        | "delay_mode_path"
+        | "delay_mode_unit"
+        | "delay_mode_zero" => BacktickWord::Directive,
         _ => BacktickWord::MacroUsage,
     })
 }
@@ -1494,6 +1508,47 @@ endmodule\n";
         }
     }
 
+    /// Annex E directives, `pragma` operands and the `$unit`/`$root` scope
+    /// names (ST-06, ST-40), in every capture profile, with a real system
+    /// name still a library function.
+    const SCOPE_DIRECTIVE_SOURCE: &str = "`default_decay_time 100
+`delay_mode_path
+`pragma protect foo
+int g;
+`define U $unit::g
+module m;
+  int a = $unit::g;
+  initial $display(\"%0d\", $root.m.a);
+endmodule
+";
+
+    #[test]
+    fn annex_directives_pragma_operands_and_scope_names_in_every_profile() {
+        let source = SCOPE_DIRECTIVE_SOURCE;
+        let control = 1 << TM_CONTROL_FLOW;
+        let library = 1 << TM_DEFAULT_LIBRARY;
+        for (profile, tokens) in profiles(source) {
+            for (line, word, token_type, bits) in [
+                (0, "`default_decay_time", TT_KEYWORD, control),
+                (1, "`delay_mode_path", TT_KEYWORD, control),
+                (2, "`pragma", TT_KEYWORD, control),
+                (2, "protect", TT_KEYWORD, 0),
+                (2, "foo", TT_KEYWORD, 0),
+                (4, "$unit", TT_NAMESPACE, 0),
+                (6, "$unit", TT_NAMESPACE, 0),
+                (7, "$root", TT_NAMESPACE, 0),
+                (7, "$display", TT_FUNCTION, library),
+            ] {
+                let token = token_at(&tokens, source, line, word, 0);
+                assert_eq!(
+                    (token.3, token.4),
+                    (token_type, bits),
+                    "{profile}: {word} on line {line}"
+                );
+            }
+        }
+    }
+
     /// A known definition lacking most connected ports, a repeated port, an
     /// unknown definition and out-of-range constant selects (ST-76, ST-77).
     const UNBOUND_CONNECTION_SOURCE: &str = "module probe(input logic clk, input logic [31:0] a0);
@@ -1620,13 +1675,19 @@ endmodule
             "`unconnected_drive",
             "`undef",
             "`undefineall",
+            "`default_decay_time",
+            "`default_trireg_strength",
+            "`delay_mode_distributed",
+            "`delay_mode_path",
+            "`delay_mode_unit",
+            "`delay_mode_zero",
         ] {
             assert_eq!(backtick_word(word), Some(BacktickWord::Directive), "{word}");
         }
         for word in ["`ifdef", "`ifndef", "`elsif", "`else", "`endif"] {
             assert_eq!(backtick_word(word), Some(BacktickWord::Directive), "{word}");
         }
-        for word in ["`WIDTH", "`_m", "`__FILE__", "`definex"] {
+        for word in ["`WIDTH", "`_m", "`__FILE__", "`definex", "`accelerate"] {
             assert_eq!(
                 backtick_word(word),
                 Some(BacktickWord::MacroUsage),

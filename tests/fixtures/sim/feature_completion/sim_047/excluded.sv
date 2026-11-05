@@ -1,8 +1,8 @@
 // llg-test-fixture: tests/fixtures/sim/feature_completion/sim_047/excluded.sv
-// SIM-047 A03: a scope dump covers packed and real storage only. Strings,
-// class handles, events, dynamic, queue and associative arrays, automatic
-// subroutine variables and block variables have no VCD encoding in llg and
-// are left out (S47-D9). Objects are created and dropped every cycle, so the
+// SIM-047 A03: a scope dump covers packed, real and event storage only.
+// Strings, class handles, dynamic, queue and associative arrays and automatic
+// subroutine variables have no VCD encoding in llg and are left out
+// (S47-D9). Objects are created and dropped every cycle, so the
 // collector reclaims them while the dump runs; no registration names them.
 `timescale 1ns/1ns
 class Node;

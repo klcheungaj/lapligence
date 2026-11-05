@@ -429,6 +429,97 @@ fn st_23_include_path_operands_are_strings_in_both_serving_paths() {
     client.shutdown();
 }
 
+const SCOPE_DIRECTIVE_SOURCE: &str =
+    include_str!("../fixtures/semantic_tokens/scopes_and_directives.sv");
+
+const SCOPE_DIRECTIVE_CHECKS: &[Check] = &[
+    // ST-06: the directives of 1800-2009 Annex E (1364-2001 Annex D) are directives like the
+    // rest.
+    ("ST-06", "`default_decay_time 100", 0, 0, "keyword", CONTROL),
+    (
+        "ST-06",
+        "`default_decay_time infinite",
+        0,
+        0,
+        "keyword",
+        CONTROL,
+    ),
+    (
+        "ST-06",
+        "`default_trireg_strength",
+        0,
+        0,
+        "keyword",
+        CONTROL,
+    ),
+    ("ST-06", "`delay_mode_distributed", 0, 0, "keyword", CONTROL),
+    ("ST-06", "`delay_mode_path", 0, 0, "keyword", CONTROL),
+    ("ST-06", "`delay_mode_unit", 0, 0, "keyword", CONTROL),
+    ("ST-06", "`delay_mode_zero", 0, 0, "keyword", CONTROL),
+    ("ST-06", "`pragma protect", 0, 0, "keyword", CONTROL),
+    // ST-06: the names after `pragma are plain keywords (deliberate: the
+    // pragma name is not a directive and its operands are free text).
+    ("ST-06", "protect foo", 0, 0, "keyword", NONE),
+    ("ST-06", "foo = 3", 0, 0, "keyword", NONE),
+    // ST-40: `$unit` and `$root` are scope names (`namespace`), not system
+    // names, in every position a scope can be written.
+    ("ST-40", "$unit::unit_g;", 0, 0, "namespace", NONE),
+    ("ST-40", "$unit::unit_t b", 0, 0, "namespace", NONE),
+    ("ST-40", "$unit::unit_g;", 1, 0, "namespace", NONE),
+    ("ST-40", "$unit::unit_f(2)", 0, 0, "namespace", NONE),
+    ("ST-40", "$unit::unit_g\n", 0, 0, "namespace", NONE),
+    ("ST-40", "$root.sd_top.a;", 0, 0, "namespace", NONE),
+    ("ST-40", "$root.sd_top.a = 2", 0, 0, "namespace", NONE),
+    ("ST-40", "$root.sd_top.c", 0, 0, "namespace", NONE),
+    // The names after the scope keep their own types, and a real system
+    // task still is `function` + `defaultLibrary`.
+    ("ST-40", "$unit::unit_g;", 0, 7, "variable", NONE),
+    ("ST-40", "$display", 0, 0, "function", LIB),
+];
+
+/// ST-06, ST-40: the Annex D/E directives are `keyword` + `controlFlow`,
+/// `` `pragma `` operand names stay `keyword`, and `$unit`/`$root` are
+/// `namespace`, in both serving paths.
+#[test]
+fn st_06_and_st_40_annex_directives_pragma_operands_and_scope_names_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("st_scope_directives.sv");
+    fs::write(&path, SCOPE_DIRECTIVE_SOURCE).expect("write scope and directive fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    assert!(types.iter().any(|name| name == "namespace"), "ST-01");
+    let uri = file_uri(&path);
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+    let mut streams = Vec::new();
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, SCOPE_DIRECTIVE_SOURCE)
+                .expect("open scope and directive buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("scope and directive semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        let label = if opened { "open buffer" } else { "project" };
+        for check in SCOPE_DIRECTIVE_CHECKS {
+            assert_check(&rows, SCOPE_DIRECTIVE_SOURCE, check, label);
+        }
+        streams.push(result["data"].clone());
+    }
+    assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
+    client.shutdown();
+}
+
 /// ST-18: navigation from a member reference and a pattern key reaches the
 /// member declaration.
 #[test]

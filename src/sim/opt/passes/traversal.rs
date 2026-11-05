@@ -561,6 +561,12 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
         }
+        IrStmt::InertialEnable(enable) => {
+            walk_lhs_mut(&mut enable.zero_lhs, f);
+            walk_expr_mut(&mut enable.zero_rhs, f);
+            walk_lhs_mut(&mut enable.one_lhs, f);
+            walk_expr_mut(&mut enable.one_rhs, f);
+        }
         IrStmt::Stochastic(operation) => match operation.as_mut() {
             IrStochasticStmt::Initialize {
                 q_id,
@@ -769,6 +775,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             suffix.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
         }
         IrStmt::WaveLimit(limit) => walk_expr_mut(limit, f),
+        IrStmt::WaveFileValue(path) => {
+            path.expressions_mut(&mut |expression| walk_expr_mut(expression, f))
+        }
         IrStmt::Call(call) => {
             walk_call_args_mut(&mut call.args, f);
             if let Some(receiver) = &mut call.receiver {

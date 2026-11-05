@@ -163,7 +163,7 @@ fn port_net_type_selected_alias_array_and_ascending_contexts_lower() {
 }
 
 #[test]
-fn port_net_type_delay_selection_drops_dominated_delays_including_zero() {
+fn port_net_type_delay_selection_prefers_the_dominating_declaration() {
     let database = capture(
         "delays.sv",
         include_str!("../fixtures/sim/port_net_types/delays.sv"),
@@ -178,23 +178,16 @@ fn port_net_type_delay_selection_drops_dominated_delays_including_zero() {
             .filter(|net| net.resolver == "LLG_RESOLVE_WAND")
             .collect::<Vec<_>>();
         assert_eq!(groups.len(), 4);
-        // A net delay without separately delayed parts.
+        // Two dominating declarations have a delay; the other two have none,
+        // so their nets take the dominated declaration's delay (T1-D4).
         assert_eq!(
             groups
                 .iter()
                 .filter(|net| net.propagation_enabled && net.segments == 0)
                 .count(),
-            2
+            4
         );
-        assert_eq!(
-            groups
-                .iter()
-                .filter(|net| {
-                    !net.propagation_enabled && net.segments == 0 && net.delays == [0, 0, 0]
-                })
-                .count(),
-            2
-        );
+        assert!(groups.iter().all(|net| net.delays != [0, 0, 0]));
     }
 }
 

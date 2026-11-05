@@ -115,11 +115,18 @@ time-only arguments do not retrigger. A deferred report in a static subroutine m
 name model storage (static formals and locals included); activation-bound storage
 (`activation_bound_ref`) and class methods reject. A monitor whose arguments read
 handle-selected storage or `%p` a class object sets `IrStmt::MonitorSet::poll`:
-the runtime then re-evaluates it at every settled slot (`LLG_MONITOR_READ_POLL`).
+the runtime then re-evaluates it at every settled slot (`LLG_MONITOR_READ_POLL`). An
+argument that computes only from `$time`, `$stime` or `$realtime` is listed in
+`time_args`: it prints but never triggers a report (SV 21.2.3,
+`LLG_MONITOR_TIME_ARG`).
 Deferred callbacks need owned environments. Waveform controls preserve source/depth
 identity against the fixed catalog; a `$dumpvars` argument naming a variable must
 match waveform storage after lowering (S47-D9), and waveform names drop the loop
-generate construct level (`tb.g[0]`, S47-D10); omit waveform/libfst when unused, reject
+generate construct level (`tb.g[0]`, S47-D10). Static block and subroutine
+variables and events go in `IrModel::wave_variables`, built once at the end of
+lowering in waveform models only, so they reach neither the VPI catalog nor
+`hdl_name` diagnostics; a `$dumpvars` anywhere gives static functions result
+signals so the result can be dumped; omit waveform/libfst when unused, reject
 `$dumpports`, warn/skip `$displayon`/`$displayoff`. Packed string literals remain
 unsigned MSB-first byte vectors (empty is one zero byte), with normal pad/truncate;
 SystemVerilog strings remain separate native owners.

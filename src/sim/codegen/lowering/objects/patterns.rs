@@ -172,6 +172,7 @@ impl Codegen<'_> {
             format: Box::new(IrStringExpr::Literal(format)),
             args,
             scope: self.display_path(path).to_owned(),
+            binding: None,
         }))
     }
 
@@ -199,6 +200,7 @@ impl Codegen<'_> {
             format: Box::new(IrStringExpr::Literal(format)),
             args,
             scope: self.display_path(path).to_owned(),
+            binding: None,
         }))
     }
 

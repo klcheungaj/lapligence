@@ -446,7 +446,12 @@ fn dynamic_objects_are_excluded_while_the_collector_reclaims_them() {
         );
         assert!(runtime_stderr(&output).is_empty(), "{label}: {output:?}");
         let vcd = read_vcd(&label, &dir, "trace.vcd");
-        assert_eq!(vcd.paths(), ["tb.count", "tb.ratio", "tb.total"], "{label}");
+        assert_eq!(
+            vcd.paths(),
+            ["tb.count", "tb.ratio", "tb.tick", "tb.total"],
+            "{label}"
+        );
+        assert_eq!(vcd.var("tb.tick").kind, "event");
         assert_eq!(vcd.var("tb.ratio").kind, "real");
         assert_eq!(vcd.var("tb.total").width, 32);
         assert_steps(
@@ -484,7 +489,125 @@ fn naming_storage_without_a_vcd_encoding_is_rejected() {
     sim_cli::reject_case(SUITE, "reject_string", reason);
     sim_cli::reject_case(SUITE, "reject_handle", reason);
     sim_cli::reject_case(SUITE, "reject_dynamic", reason);
-    sim_cli::reject_case(SUITE, "reject_block_variable", reason);
+    sim_cli::reject_case(SUITE, "reject_event_array", reason);
+    sim_cli::reject_case(SUITE, "reject_block_array", reason);
+}
+
+/// The dumped static variables of `block_statics.sv`, as `(path, kind, width)`.
+const BLOCK_STATICS: &[(&str, &str, u32)] = &[
+    ("tb.accumulate.accumulate", "reg", 32),
+    ("tb.accumulate.step", "reg", 32),
+    ("tb.accumulate.total", "reg", 32),
+    ("tb.main.keep", "reg", 32),
+    ("tb.main.mark", "event", 1),
+    ("tb.main.mask", "reg", 8),
+    ("tb.main.nested.deep", "reg", 32),
+    ("tb.main.nested.unnamed$$_0.anonymous", "reg", 32),
+    ("tb.main.parallel.first.value", "reg", 32),
+    ("tb.main.ratio", "real", 64),
+    ("tb.pulse.inner.next", "reg", 16),
+    ("tb.pulse.level", "reg", 32),
+    ("tb.pulse.seen", "reg", 8),
+    ("tb.tick", "event", 1),
+    ("tb.u.done", "event", 1),
+    ("tb.u.run.state", "reg", 2),
+];
+
+#[test]
+fn dumpvars_names_block_statics_and_events() {
+    let (dir, output) = sim_cli::run_case_keeping_dir(SUITE, "named_statics", true, &[], &[]);
+    assert_success(
+        "named_statics",
+        &output,
+        include_str!("../fixtures/sim/feature_completion/sim_047/named_statics.out"),
+    );
+    let vcd = read_vcd("named_statics", &dir, "dump.vcd");
+    assert_eq!(
+        vcd.paths(),
+        ["tb.main.count", "tb.pulse", "tb.sum.total"],
+        "only the named variables"
+    );
+}
+
+#[test]
+fn block_and_subroutine_statics_and_events_are_dumped() {
+    for optimized in [true, false] {
+        let label = format!("block_statics, optimized={optimized}");
+        let (dir, output) =
+            sim_cli::run_case_keeping_dir(SUITE, "block_statics", optimized, &[], &[]);
+        assert_success(
+            &label,
+            &output,
+            include_str!("../fixtures/sim/feature_completion/sim_047/block_statics.out"),
+        );
+        let vcd = read_vcd(&label, &dir, "statics.vcd");
+        for (path, kind, width) in BLOCK_STATICS {
+            let var = vcd.var(path);
+            assert_eq!((var.kind.as_str(), var.width), (*kind, *width), "{path}");
+        }
+        assert!(
+            vcd.paths().iter().all(|path| !path.contains("plain")),
+            "{label}: an automatic function is no scope"
+        );
+        let scope = |path: &str| {
+            vcd.scopes
+                .iter()
+                .find(|scope| scope.0 == path)
+                .unwrap_or_else(|| panic!("{path}: {:?}", vcd.scopes))
+                .1
+                .clone()
+        };
+        assert_eq!(scope("tb.accumulate"), "function");
+        assert_eq!(scope("tb.pulse"), "task");
+        assert_eq!(scope("tb.pulse.inner"), "begin");
+        assert_eq!(scope("tb.main.parallel"), "fork");
+        assert_eq!(scope("tb.main.nested.unnamed$$_0"), "begin");
+        assert_eq!(scope("tb.u"), "module");
+        let marks = |path: &str| {
+            vcd.changes_of(path)
+                .into_iter()
+                .map(|(time, _)| time)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(marks("tb.tick"), [0, 1, 8, 9], "{label}");
+        assert_eq!(marks("tb.main.mark"), [0, 2], "{label}");
+        assert_eq!(marks("tb.u.done"), [0, 3], "{label}");
+        let word = |value: u32| format!("{value:032b}");
+        assert_eq!(
+            vcd.changes_of("tb.accumulate.accumulate"),
+            [(0, word(0)), (2, word(3))],
+            "{label}: a repeated result is no change"
+        );
+        assert_eq!(
+            vcd.changes_of("tb.main.keep"),
+            [(0, word(5))],
+            "{label}: 3+2 stores the value it starts with"
+        );
+        let (dir, output) = sim_cli::run_case_keeping_dir(
+            SUITE,
+            "block_statics",
+            optimized,
+            &["--define", "FILE=\"statics.fst\""],
+            &[],
+        );
+        assert_success(
+            &label,
+            &output,
+            include_str!("../fixtures/sim/feature_completion/sim_047/block_statics.out"),
+        );
+        let fst =
+            fst_dump(dir.path(), "statics.fst").unwrap_or_else(|error| panic!("{label}: {error}"));
+        for (path, _, _) in BLOCK_STATICS {
+            fst.handle(path);
+        }
+        let times = |path: &str| {
+            fst.changes_of(path)
+                .into_iter()
+                .map(|(time, _)| time)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(times("tb.tick"), [0, 1, 8, 9], "{label}");
+    }
 }
 
 #[test]

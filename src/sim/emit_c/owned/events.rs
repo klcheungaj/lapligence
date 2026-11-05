@@ -94,13 +94,12 @@ impl Frame<'_, '_> {
     }
 
     /// The marker parameter of `event` when it names a `ref` event formal
-    /// that has one. A fork-join branch has only the formal's address; its
-    /// rebinding publishes when the subroutine's caller regains control.
+    /// that has one; a fork-join branch binds it from its second capture.
     pub(super) fn event_formal_marker(&self, event: &IrEventRef) -> Option<String> {
         let IrEventRef::Formal(index) = event else {
             return None;
         };
-        let formal = self.ctx.func?.formals.get(*index)?;
+        let formal = self.formal_function()?.formals.get(*index)?;
         formal
             .event_marker
             .then(|| super::super::model::handle_marker_param(*index))

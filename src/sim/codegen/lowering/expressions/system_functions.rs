@@ -1483,7 +1483,19 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 let lhs = self.lower_lhs(scope_path, node)?;
-                let Some((width, _signed, _two_state, const_ref)) = self.ref_lhs_type(&lhs) else {
+                // A member of a fixed unpacked aggregate selects from the
+                // stream of the aggregate's leaves.
+                let writable = match &lhs {
+                    IrLhs::PackedSelect { target, steps, .. }
+                        if matches!(**target, IrLhs::Stream { .. }) =>
+                    {
+                        steps.last().map(|step| (step.width, false))
+                    }
+                    lhs => self
+                        .ref_lhs_type(lhs)
+                        .map(|(width, _, _, const_ref)| (width, const_ref)),
+                };
+                let Some((width, const_ref)) = writable else {
                     return Err(format!(
                         "legacy random seed must be an integral variable in `{scope_path}`"
                     ));

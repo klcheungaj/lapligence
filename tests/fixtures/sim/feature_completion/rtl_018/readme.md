@@ -13,6 +13,7 @@ compilation-unit modes for library sources, map-local macro isolation,
 command-line defines and include precedence (`global/mark.vh` versus the
 library's `units/headers/`). `binding.sv` covers the library search order, a
 configuration `use` clause, `%l`, and missing/unreachable/ambiguous bindings.
+`runtime_binding.sv` prints `%l` through formats built at run time (T1-D6).
 
 The `bind_*.sv` files are single-fault negatives (package, class, generate-block
 and program targets, module into interface, repeated bound names) plus the

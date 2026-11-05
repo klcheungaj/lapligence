@@ -210,6 +210,9 @@ pub enum IrStringExpr {
         format: Box<IrStringExpr>,
         args: Vec<IrDisplayArg>,
         scope: String,
+        /// The `%l` text of a format known only at run time; lowering expands
+        /// `%l` in a literal format, which has none.
+        binding: Option<String>,
     },
     Case(Box<IrStringExpr>, bool),
     Substr(Box<IrStringExpr>, Box<IrExpr>, Box<IrExpr>),
@@ -688,6 +691,7 @@ impl IrStringExpr {
             format,
             args,
             scope,
+            ..
         } = self
         {
             if scope.is_empty() {

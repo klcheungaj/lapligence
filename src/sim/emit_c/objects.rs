@@ -175,7 +175,8 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             format,
             args,
             scope,
-        } => render_string_format(ctx, format, args, scope)?,
+            binding,
+        } => render_string_format(ctx, format, args, scope, binding.as_deref())?,
         IrStringExpr::Case(value, upper) => format!(
             "llg_string_case({}, {})",
             string(ctx, value)?,
@@ -195,13 +196,19 @@ fn render_string_format(
     format: &IrStringExpr,
     args: &[IrDisplayArg],
     scope: &str,
+    binding: Option<&str>,
 ) -> Result<String, String> {
     let format = string(ctx, format)?;
     let scope = c_string_literal(scope);
+    let (formatter, trailing) = match binding {
+        Some(binding) => (
+            "llg_string_format_bound",
+            format!(", {}", c_string_literal(binding)),
+        ),
+        None => ("llg_string_format_typed", String::new()),
+    };
     if args.is_empty() {
-        return Ok(format!(
-            "llg_string_format_typed({format}, NULL, 0, {scope})"
-        ));
+        return Ok(format!("{formatter}({format}, NULL, 0, {scope}{trailing})"));
     }
 
     // C does not specify the evaluation order of aggregate initializers.
@@ -239,7 +246,7 @@ fn render_string_format(
         statements.push(assignment);
     }
     statements.push(format!(
-        "llg_string_t _llg_format_result = llg_string_format_typed(_llg_format, _llg_format_args, {}, {scope});",
+        "llg_string_t _llg_format_result = {formatter}(_llg_format, _llg_format_args, {}, {scope}{trailing});",
         args.len()
     ));
     statements.push("_llg_format_result;".to_owned());

@@ -620,6 +620,11 @@ pub enum IrStmt {
         rhs: IrExpr,
         delay: IrInertialDelay,
     },
+    /// A delayed enable gate's output: its strength0-only and strength1-only
+    /// slots are one inertial driver, scheduled and published together with
+    /// the delay of the combined output (0 falls, 1 rises, Z turns off, X, L
+    /// and H take the smallest delay).
+    InertialEnable(Box<IrInertialEnable>),
     /// Blocking (`nba == false`) or nonblocking assignment, including reals.
     Assign {
         lhs: IrLhs,
@@ -985,6 +990,9 @@ pub enum IrStmt {
         /// virtual-interface handle (or a synchronization object), which no
         /// fixed `reads` entry can name: the monitor re-evaluates every slot.
         poll: bool,
+        /// Arguments that only read `$time`, `$stime` or `$realtime`: they
+        /// print but do not trigger a report (SV 21.2.3).
+        time_args: Box<[u32]>,
         default_radix: IrDisplayRadix,
         /// HDL hierarchy used by `%m`; never a generated C identifier.
         scope: String,
@@ -1001,6 +1009,8 @@ pub enum IrStmt {
     MonitorEnable(bool),
     /// `$dumpfile("path")` — the literal HDL string, escaped by the backend.
     WaveFile(String),
+    /// `$dumpfile(expression)` — a file name computed at run time.
+    WaveFileValue(IrStringExpr),
     /// `$dumpvars(...)`; the depth and source-identity selection are captured
     /// before C emission so the runtime never has to infer HDL meaning from a
     /// generated identifier.
@@ -1128,6 +1138,66 @@ impl IrWaveDumpVars {
     }
 }
 
+/// The operands of [`IrStmt::InertialEnable`]; boxed because delayed enable
+/// gates are rare and every statement pays for the largest variant.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrInertialEnable {
+    pub(in crate::sim) zero_lhs: IrLhs,
+    pub(in crate::sim) zero_rhs: IrExpr,
+    pub(in crate::sim) one_lhs: IrLhs,
+    pub(in crate::sim) one_rhs: IrExpr,
+    pub(in crate::sim) delay: IrInertialDelay,
+}
+
+/// The scope kinds of a waveform name: one letter per scope component, in
+/// `llg_wave_register_scoped_*` spelling (`m` module or generate scope, `b`
+/// `begin` block, `k` `fork` block, `t` task, `f` function; `B` and `K` for
+/// unnamed blocks, whose generated names the writer does not escape).
+pub type IrWaveScopes = String;
+
+/// Which storage an [`IrWaveVariable`] names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrWaveStorage {
+    /// A model signal that has no [`crate::sim::ir::IrSignal::hdl_name`].
+    Signal(usize),
+    /// A model event; its synchronization object marks the change.
+    Event(usize),
+}
+
+/// A variable the waveform dumps beside the signals named by `hdl_name`:
+/// static block and subroutine storage and named events. A separate table
+/// keeps these out of the VPI catalog and of diagnostics, which read
+/// `hdl_name`, and costs nothing in a model without waveform dumping.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrWaveVariable {
+    pub(in crate::sim) storage: IrWaveStorage,
+    /// Hierarchy name in the [`IrWaveDumpVars`] encoding.
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) scopes: IrWaveScopes,
+}
+
+impl IrWaveVariable {
+    pub fn new(storage: IrWaveStorage, name: String, scopes: IrWaveScopes) -> Self {
+        Self {
+            storage,
+            name,
+            scopes,
+        }
+    }
+
+    pub fn storage(&self) -> IrWaveStorage {
+        self.storage
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn scopes(&self) -> &str {
+        &self.scopes
+    }
+}
+
 impl IrStmt {
     /// Attach owned provenance without changing the operation's scope or effects.
     pub fn with_origin(self, origin: crate::sim::semantic::Origin) -> Self {
@@ -1183,6 +1253,7 @@ impl IrStmt {
                 ticks: Some(ticks), ..
             } => ticks.expression().into_iter().collect(),
             Self::InertialAssign { delay, .. } => delay.expressions(),
+            Self::InertialEnable(enable) => enable.delay.expressions(),
             Self::SetNetDelay { delay, .. } => delay.expressions(),
             _ => Vec::new(),
         }
@@ -1199,6 +1270,7 @@ impl IrStmt {
                 ticks: Some(ticks), ..
             } => ticks.expression_mut().into_iter().collect(),
             Self::InertialAssign { delay, .. } => delay.expressions_mut(),
+            Self::InertialEnable(enable) => enable.delay.expressions_mut(),
             Self::SetNetDelay { delay, .. } => delay.expressions_mut(),
             _ => Vec::new(),
         }

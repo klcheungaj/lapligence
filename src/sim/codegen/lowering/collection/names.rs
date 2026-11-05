@@ -473,6 +473,173 @@ impl<'a> Codegen<'a> {
         self.hierarchy_name(id, false).join("\u{1f}")
     }
 
+    /// The number of each unnamed block a dump shows, in one pass on the
+    /// first request: an unnamed block that declares variables is a scope
+    /// `unnamed$$_N`, numbered in source order (node order) from zero under
+    /// its enclosing named scope; one without declarations is no scope.
+    fn wave_unnamed_blocks(&self) -> &HashMap<NodeId, u32> {
+        self.wave_unnamed_blocks.get_or_init(|| {
+            let mut numbers = HashMap::new();
+            let mut next = HashMap::<Option<NodeId>, u32>::new();
+            for id in self.db.node_ids() {
+                let node = self.node(id);
+                let declares = matches!(node.kind, NodeKind::Stmt(StmtKind::Begin))
+                    && node.name.is_empty()
+                    && node.children.iter().any(|item| {
+                        self.node(*item).parent == Some(id)
+                            && matches!(
+                                self.kind(*item),
+                                NodeKind::Var { .. }
+                                    | NodeKind::Array { .. }
+                                    | NodeKind::NamedEvent
+                            )
+                    });
+                if !declares {
+                    continue;
+                }
+                let named_scope =
+                    std::iter::successors(node.parent, |scope| self.node(*scope).parent).find(
+                        |scope| {
+                            let scope = self.node(*scope);
+                            !scope.name.is_empty()
+                                || !matches!(
+                                    scope.kind,
+                                    NodeKind::Stmt(_) | NodeKind::Process { .. }
+                                )
+                        },
+                    );
+                let number = next.entry(named_scope).or_insert(0);
+                numbers.insert(id, *number);
+                *number += 1;
+            }
+            numbers
+        })
+    }
+
+    /// Waveform identity of a declaration or scope below an instance: its
+    /// hierarchy name with block and subroutine scopes, and the kind of each
+    /// scope above the last name component (for a scope `id` itself, also
+    /// its own kind). `None` for what a dump does not show: anything outside
+    /// the instance tree (packages, classes) or inside an automatic
+    /// subroutine, whose scope has no storage to show.
+    pub(in super::super) fn wave_scoped_name(&self, id: NodeId) -> Option<(String, String)> {
+        let mut parts = Vec::new();
+        let mut kinds = Vec::new();
+        let unnamed = self.wave_unnamed_blocks();
+        let scope_part = |scope_id: NodeId| -> Option<(String, char)> {
+            let scope = self.node(scope_id);
+            let kind = match scope.kind {
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope => 'm',
+                NodeKind::Stmt(StmtKind::Begin) if self.db.is_fork_block(scope_id) => 'k',
+                NodeKind::Stmt(StmtKind::Begin) => 'b',
+                NodeKind::FuncTask { is_task: true, .. } => 't',
+                NodeKind::FuncTask { .. } => 'f',
+                _ => return None,
+            };
+            Some(match scope.kind {
+                NodeKind::ModuleInst { is_top: true, .. } => {
+                    (strip_lib(&scope.name).to_string(), kind)
+                }
+                _ if !scope.name.is_empty() => (scope.name.clone(), kind),
+                // The capital letter tells the writer not to escape the `$`
+                // of a name no source identifier can collide with.
+                _ => match unnamed.get(&scope_id) {
+                    Some(index) => (format!("unnamed$$_{index}"), kind.to_ascii_uppercase()),
+                    None => (String::new(), kind),
+                },
+            })
+        };
+        match scope_part(id) {
+            Some((name, _)) if name.is_empty() => return None,
+            Some((name, kind)) => {
+                parts.push(name);
+                kinds.push(kind);
+            }
+            None => parts.push(self.node(id).name.clone()),
+        }
+        let mut current = self.node(id).parent;
+        let mut reached_instance = matches!(self.kind(id), NodeKind::ModuleInst { .. });
+        while let Some(scope_id) = current {
+            let scope = self.node(scope_id);
+            if let NodeKind::FuncTask {
+                automatic: true, ..
+            } = scope.kind
+            {
+                return None;
+            }
+            if self.is_runtime_environment(scope_id) {
+                return None;
+            }
+            if let Some((name, kind)) = scope_part(scope_id) {
+                if !name.is_empty() {
+                    parts.push(name);
+                    kinds.push(kind);
+                }
+                reached_instance |= matches!(scope.kind, NodeKind::ModuleInst { .. });
+            }
+            current = scope.parent;
+        }
+        if !reached_instance {
+            return None;
+        }
+        parts.reverse();
+        kinds.reverse();
+        Some((parts.join("\u{1f}"), kinds.into_iter().collect()))
+    }
+
+    /// Fill the model's table of dumped static variables, once every
+    /// declaration is known. Sorted: the storage maps have no stable order.
+    pub(in super::super) fn collect_wave_variables(&self, model: &mut IrModel) {
+        use crate::sim::ir::{IrWaveStorage, IrWaveVariable};
+        let mut variables = Vec::new();
+        let mut signal = |node: NodeId, ir: usize| {
+            if let Some((name, scopes)) = self.wave_scoped_name(node) {
+                variables.push(IrWaveVariable::new(IrWaveStorage::Signal(ir), name, scopes));
+            }
+        };
+        for ((_, node), info) in &self.proc_local_instances {
+            if let (NodeKind::Var { .. }, Some(info)) = (self.kind(*node), &info.static_signal) {
+                signal(*node, info.ir);
+            }
+        }
+        for ((_, node), info) in self.static_formals.iter().chain(&self.static_task_locals) {
+            if !matches!(self.kind(*node), NodeKind::Array { .. }) {
+                signal(*node, info.ir);
+            }
+        }
+        for (node, ir) in &self.wave_subroutine_statics {
+            signal(*node, *ir);
+        }
+        for (declaration, ir, suffix) in &self.wave_block_records {
+            if let Some((mut name, mut scopes)) = self.wave_scoped_name(*declaration) {
+                // Each member path level below the record is a scope, and
+                // the record itself is one: `blk.r.a`.
+                scopes.extend(suffix.matches('\u{1f}').map(|_| 'b'));
+                name.push_str(suffix);
+                variables.push(IrWaveVariable::new(
+                    IrWaveStorage::Signal(*ir),
+                    name,
+                    scopes,
+                ));
+            }
+        }
+        for (declaration, info) in &self.event_globals {
+            if self.db.variable_lifetime(*declaration) == VariableLifetime::Automatic {
+                continue;
+            }
+            if let Some((name, scopes)) = self.wave_scoped_name(*declaration) {
+                variables.push(IrWaveVariable::new(
+                    IrWaveStorage::Event(info.ir),
+                    name,
+                    scopes,
+                ));
+            }
+        }
+        variables.sort_by(|left, right| left.name.cmp(&right.name));
+        variables.dedup_by(|left, right| left.name == right.name);
+        model.wave_variables = variables;
+    }
+
     /// Dotted hierarchical name of an assertion-control selector target
     /// (SV 20.11-20.12): instance and generate scopes as in waveform names,
     /// plus the named blocks and subroutines that also name assertion
@@ -619,9 +786,22 @@ impl<'a> Codegen<'a> {
             | NodeKind::GenScopeArray
             | NodeKind::GenScope
             | NodeKind::Port { .. }
-            | NodeKind::Net { .. }
-            | NodeKind::Var { .. }
-            | NodeKind::Array { .. } => Ok(self.waveform_name(node)),
+            | NodeKind::Net { .. } => Ok(self.waveform_name(node)),
+            NodeKind::Var { .. } | NodeKind::Array { .. } | NodeKind::NamedEvent => Ok(self
+                .wave_scoped_name(node)
+                .map_or_else(|| self.waveform_name(node), |(name, _)| name)),
+            NodeKind::FuncArg { .. }
+            | NodeKind::FuncTask { .. }
+            | NodeKind::Stmt(StmtKind::Begin | StmtKind::Fork { .. }) => self
+                .wave_scoped_name(node)
+                .map(|(name, _)| name)
+                .ok_or_else(|| {
+                    format!(
+                        "`$dumpvars` argument `{}` has no VCD/FST scope: llg dumps static \
+                         block and subroutine storage below an instance",
+                        self.node(node).name
+                    )
+                }),
             _ => Err(format!(
                 "`$dumpvars` argument `{}` is not a scope or dumpable storage reference",
                 self.node(node).name
@@ -656,7 +836,9 @@ impl<'a> Codegen<'a> {
             NodeKind::Port { .. }
             | NodeKind::Net { .. }
             | NodeKind::Var { .. }
-            | NodeKind::Array { .. } => Some(self.assertion_selector_name(node)),
+            | NodeKind::Array { .. }
+            | NodeKind::FuncArg { .. }
+            | NodeKind::NamedEvent => Some(self.assertion_selector_name(node)),
             _ => None,
         }
     }

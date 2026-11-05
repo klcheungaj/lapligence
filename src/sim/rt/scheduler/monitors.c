@@ -22,6 +22,7 @@ static void monitor_destroy(llg_monitor_state_t* m) {
     free(m->typed_last);
     free(m->typed_work);
     free(m->typed_reads);
+    free(m->time_args);
     free(m->scope);
     free(m);
 }
@@ -210,8 +211,16 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
         m->typed_reads = (llg_display_read_t*)llg_checked_malloc(
             (size_t)n_reads, sizeof(llg_display_read_t), "monitor trigger set");
         for (int i = 0; i < n_reads; i++) {
-            if (reads[i].kind == LLG_MONITOR_READ_POLL) m->poll = 1;
-            else m->typed_reads[m->n_typed_reads++] = reads[i];
+            if (reads[i].kind == LLG_MONITOR_READ_POLL) {
+                m->poll = 1;
+            } else if (reads[i].kind == LLG_MONITOR_TIME_ARG) {
+                if (!m->time_args)
+                    m->time_args = (unsigned char*)llg_checked_calloc(
+                        (size_t)alloc, 1, "monitor time arguments");
+                m->time_args[(uintptr_t)reads[i].ptr] = 1;
+            } else {
+                m->typed_reads[m->n_typed_reads++] = reads[i];
+            }
         }
     }
 }
@@ -267,6 +276,7 @@ static void check_monitor(llg_monitor_state_t* m) {
         int changed = m->force_report;
         if (!changed) {
             for (int i = 0; i < m->n; i++) {
+                if (m->time_args && m->time_args[i]) continue;
                 if (!llg_fmt_arg_same(&m->typed_work[i], &m->typed_last[i])) {
                     changed = 1;
                     break;

@@ -133,9 +133,10 @@ pub use randomize::{
 mod statements;
 pub use statements::{
     IrActivationTarget, IrCaseItem, IrCaseKind, IrClockingSampleMode, IrDisplayRadix, IrFileOp,
-    IrMemoryAccess, IrMemoryAddressingPolicy, IrMemoryImage, IrMemoryRadix, IrMemorySelector,
-    IrMemorySelectorKind, IrMemoryStorage, IrMemoryView, IrStmt, IrStochasticStmt,
-    IrUniquePriorityCheck, IrWaveDumpVars,
+    IrInertialEnable, IrMemoryAccess, IrMemoryAddressingPolicy, IrMemoryImage, IrMemoryRadix,
+    IrMemorySelector, IrMemorySelectorKind, IrMemoryStorage, IrMemoryView, IrStmt,
+    IrStochasticStmt, IrUniquePriorityCheck, IrWaveDumpVars, IrWaveScopes, IrWaveStorage,
+    IrWaveVariable,
 };
 mod events;
 pub use events::{
@@ -588,6 +589,9 @@ pub struct IrModel {
     pub(in crate::sim) waveform: bool,
     /// Driver-requested dumping that starts at time zero.
     pub(in crate::sim) wave_start: Option<IrWaveStart>,
+    /// Static block and subroutine variables and events the waveform dumps;
+    /// empty unless `waveform`.
+    pub(in crate::sim) wave_variables: Vec<IrWaveVariable>,
     pub(in crate::sim) signals: Vec<IrSignal>,
     pub(in crate::sim) net_groups: Vec<IrNetGroup>,
     pub(in crate::sim) arrays: Vec<IrArray>,
@@ -796,6 +800,7 @@ pub struct IrRandomUse {
 pub struct IrModelParts {
     pub waveform: bool,
     pub wave_start: Option<IrWaveStart>,
+    pub wave_variables: Vec<IrWaveVariable>,
     pub signals: Vec<IrSignal>,
     pub net_groups: Vec<IrNetGroup>,
     pub arrays: Vec<IrArray>,
@@ -842,6 +847,7 @@ impl IrModel {
             precision_fs,
             waveform: parts.waveform || parts.wave_start.is_some(),
             wave_start: parts.wave_start,
+            wave_variables: parts.wave_variables,
             signals: parts.signals,
             net_groups: parts.net_groups,
             arrays: parts.arrays,

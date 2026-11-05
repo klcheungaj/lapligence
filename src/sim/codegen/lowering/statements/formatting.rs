@@ -119,6 +119,7 @@ impl EmitCtx<'_, '_> {
             format: Box::new(IrStringExpr::Literal(format)),
             args: values,
             scope: self.format_scope(site),
+            binding: None,
         })
     }
 

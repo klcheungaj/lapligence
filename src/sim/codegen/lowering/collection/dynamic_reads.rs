@@ -223,6 +223,35 @@ impl Codegen<'_> {
         )
     }
 
+    /// Reject a comparison of event variables under a wait or event
+    /// expression: assigning an event variable publishes nothing, so the
+    /// result never changes for a waiter. A class event property is the
+    /// served form, with its rebinding marker.
+    pub(in super::super) fn reject_event_comparison(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<(), String> {
+        if let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = self.kind(node) {
+            if matches!(
+                op,
+                Operation::Equal
+                    | Operation::NotEqual
+                    | Operation::CaseEqual
+                    | Operation::CaseNotEqual
+            ) && operands
+                .iter()
+                .any(|operand| self.event_target_of(*operand).is_some())
+                && !operands
+                    .iter()
+                    .any(|operand| self.dynamic_class_property(*operand).is_some())
+            {
+                return Err(self.unobservable_read(path, node, "an event variable comparison"));
+            }
+        }
+        Ok(())
+    }
+
     /// Reject reads in a wait or event expression that publish no change:
     /// mailbox and semaphore methods other than `num()`, whose count change
     /// a mailbox publishes once a wait observes it.
@@ -230,6 +259,7 @@ impl Codegen<'_> {
         if self.synchronization_method_call(node) && !self.mailbox_num_call(node) {
             return Err(self.unobservable_read(path, node, "a mailbox or semaphore method call"));
         }
+        self.reject_event_comparison(path, node)?;
         // An event array property publishes no change of its handles.
         if self.container_of(node).is_some_and(|container| {
             self.model

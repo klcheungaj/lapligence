@@ -75,9 +75,10 @@ initialize on each entry. Class-handle, semaphore, mailbox and string
 initializers (module, package, `$unit`, static subroutine and class-method
 locals, static class properties) and static native-record locals are
 `IrInitStep::Execute` statements in the same schedule, never run-once
-processes or first-call code; a handle initializer carries its instance as
-`random_scope` so created objects seed from that instance's initialization RNG
-(SV 18.14.1). `initialization/effects.rs` rejects a static initializer whose
+processes or first-call code; a handle initializer, and in a model that
+observes a stream any declaration initializer with a call, carries its
+instance as `random_scope`, so draws and created objects use that instance's
+initialization RNG (SV 18.14.1, T1-D3). `initialization/effects.rs` rejects a static initializer whose
 calls (or constructor) reach a fork, nonblocking assignment or nonblocking
 trigger (SV 13.4.4); `collection/const_writes.rs` rejects modifying built-in
 methods on `const` declarations (SV 6.20.6, `Db::is_const_variable`). A name
@@ -102,7 +103,7 @@ merges both nets like an inout connection (`collection/nets/port_merges.rs`,
 A21-D4; selected actuals bit by bit, A21-D5), in VPI models too. The link stays when a force/release
 names a variable sink (or a net sink of a variable), the types differ, the
 sink has an initializer, a net delay, or another driver or type of its own
-that no merge covers (a variable, a `uwire`), either
+that no merge covers (a variable), either
 instance owns specify paths or timing checks, the design reads
 SDF, the model keeps the VPI catalog and the source is a variable, the model
 is generated with `--vpi-port-delays`, the sink is a ref-port target, or a source that does not start at X has

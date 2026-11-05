@@ -1,9 +1,9 @@
 // Decision S47-D9: VCD/FST dumps hold packed and real variables and nets,
-// fixed unpacked arrays of them and unpacked structure members declared in
-// instance and generate scopes. Strings, class handles, events, dynamic,
-// queue and associative arrays, automatic variables and variables declared
-// in blocks or subroutines are left out of a scope dump; naming one of them
-// in $dumpvars is a compile error (case S47-D9_named_string_rejected).
+// fixed unpacked arrays of them, unpacked structure members, events and the
+// static variables of blocks and subroutines. Strings, class handles,
+// dynamic, queue and associative arrays and automatic variables are left out
+// of a scope dump; naming one of them in $dumpvars is a compile error (case
+// S47-D9_named_string_rejected).
 //
 // IEEE 1800-2009 21.7.2.1 (SystemVerilog-1800-2009.txt L38065-38066): "Value
 // changes for all other variables are specified in binary format by 0, 1, x,
