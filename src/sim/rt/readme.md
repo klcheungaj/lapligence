@@ -165,9 +165,11 @@ odd stream increment, child count):
   model enables this with
   `llg_rt_use_instance_random_streams`, before its static initializers, when
   it observes any stream; other models seed static processes from the root
-  stream in spawn order and skip the table. A static handle initializer runs
-  in the initialization frame between `llg_rng_initializer_scope_begin(label)`
-  and `_end()`: objects it creates draw from that instance's stream
+  stream in spawn order and skip the table. A static initializer that can draw
+  or create runs in the initialization frame between
+  `llg_rng_initializer_scope_begin(label)` and `_end()`: its draws and the
+  objects it creates use a second state of that instance's stream, so process
+  seeds do not move (T1-D3)
   (`tb.u.initializer` -> `tb.u`, SV 18.14.1). A forked or detached child is
   seeded with its parent's next value.
 - A class object keeps a stream only when the model inspects object streams

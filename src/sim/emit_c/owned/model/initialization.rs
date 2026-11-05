@@ -1069,12 +1069,22 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
             if initialization.phase() != IrInitPhase::BeforeProcesses {
                 return Ok(());
             }
+            if let Some(scope) = initialization.random_scope() {
+                frame.line(format!(
+                    "llg_rng_initializer_scope_begin({});",
+                    crate::sim::emit_c::constants::c_string_literal(scope)
+                ));
+            }
             if let IrInitTarget::Fixed(lhs) = initialization.target() {
-                return frame.statement(&IrStmt::Assign {
+                frame.statement(&IrStmt::Assign {
                     lhs: *lhs.clone(),
                     rhs: initialization.value().clone(),
                     nba: false,
-                });
+                })?;
+                if initialization.random_scope().is_some() {
+                    frame.line("llg_rng_initializer_scope_end();");
+                }
+                return Ok(());
             }
             let target = match initialization.target() {
                 IrInitTarget::Fixed(_) => unreachable!("fixed initializer emitted above"),
@@ -1095,6 +1105,9 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
             };
             let value = frame.expression(initialization.value())?;
             set_initial(frame, target, value);
+            if initialization.random_scope().is_some() {
+                frame.line("llg_rng_initializer_scope_end();");
+            }
         }
     }
     Ok(())

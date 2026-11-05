@@ -238,11 +238,15 @@ static uint32_t llg_rng_argument(sv4_t value) {
  * its index. "Each initialization RNG is seeded with the default seed", so
  * every instance stream starts from the same state: identical instances draw
  * identical sequences, and processes added to one instance never move
- * another instance's seeds. The name only keys the table. */
+ * another instance's seeds. The name only keys the table. Static process
+ * seeds and static initializers keep separate states of that stream, so an
+ * added initializer moves neither the instance's process seeds nor another
+ * instance (T1-D3). */
 typedef struct llg_rng_scope_entry {
     const char* scope;
     size_t length;
     llg_rng_state_t rng;
+    llg_rng_state_t initializers;
 } llg_rng_scope_t;
 
 static size_t rng_scope_length(const char* name) {
@@ -286,7 +290,7 @@ static void rng_scopes_grow(void) {
     g.rng_scope_capacity = capacity;
 }
 
-static llg_rng_state_t* rng_instance_stream(const char* name) {
+static llg_rng_scope_t* rng_instance_stream(const char* name) {
     static const char model_scope[] = "";
     size_t length = rng_scope_length(name);
     const char* scope = length ? name : model_scope;
@@ -298,15 +302,16 @@ static llg_rng_state_t* rng_instance_stream(const char* name) {
     while (g.rng_scopes[slot].scope) {
         llg_rng_scope_t* entry = &g.rng_scopes[slot];
         if (entry->length == length && memcmp(entry->scope, scope, length) == 0)
-            return &entry->rng;
+            return entry;
         slot = (slot + 1) & mask;
     }
     llg_rng_scope_t* entry = &g.rng_scopes[slot];
     entry->scope = scope;
     entry->length = length;
     llg_rng_state_seed(&entry->rng, LLG_RNG_DEFAULT_SEED);
+    entry->initializers = entry->rng;
     ++g.rng_scope_count;
-    return &entry->rng;
+    return entry;
 }
 
 static void rng_scopes_free(void) {
@@ -322,7 +327,7 @@ static void rng_scopes_free(void) {
  * seeding: no label hashing or instance table on its spawns. */
 static void rng_seed_static(llg_proc_t* p) {
     llg_rng_state_t* parent = g.rng_instance_streams
-        ? rng_instance_stream(p->name)
+        ? &rng_instance_stream(p->name)->rng
         : &g.rng_root;
     llg_rng_state_child(parent, &p->rng);
 }
@@ -331,12 +336,13 @@ void llg_rt_use_instance_random_streams(void) {
     g.rng_instance_streams = 1;
 }
 
-/* A static handle initializer runs in the initialization frame, outside any
- * process; the objects it creates seed from the declaring instance's
- * initialization stream, like a static process of that instance. `label` is
- * a static string whose last component names nothing (`tb.u.initializer`). */
+/* A static declaration initializer runs in the initialization frame, outside
+ * any process; the values it draws and the objects it creates come from the
+ * declaring instance's initialization stream (SV 18.14.1). `label` is a
+ * static string whose last component names nothing (`tb.u.initializer`). */
 void llg_rng_initializer_scope_begin(const char* label) {
-    g.rng_initializer = g.rng_instance_streams ? rng_instance_stream(label) : NULL;
+    g.rng_initializer =
+        g.rng_instance_streams ? &rng_instance_stream(label)->initializers : NULL;
 }
 
 void llg_rng_initializer_scope_end(void) {

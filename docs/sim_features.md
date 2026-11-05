@@ -2147,8 +2147,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `$dist_uniform`, `$dist_normal`, `$dist_exponential`, `$dist_poisson`,
   `$dist_chi_square`, `$dist_t` and `$dist_erlang` match independent Annex N
   reference vectors, including invalid parameters (result 0, seed unchanged);
-  seeds are written back through formals, elements, class properties and
-  variables of any width, and also in `void'(...)` statements. Every thread
+  seeds are written back through formals, elements, class properties,
+  unpacked-structure members and variables of any width, and also in `void'(...)` statements. Every thread
   owns a stream: a static process is seeded from its instance's
   initialization stream, a forked child from its parent, so processes added to
   another instance or later in the same instance leave existing streams
@@ -2160,10 +2160,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   reals
   ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md),
   decisions S28-D1 to S28-D9 in [lrm_decisions](lrm_decisions.md)). A
-  `$urandom` in a static variable initializer draws from one model-wide
-  initialization stream; an unpacked-structure member as a legacy seed is
-  rejected
-  ([random stream limits](known_issues.md#random-stream-limits)).
+  draw in a static initializer takes the next value of its instance's or
+  package's initialization stream, like an object a static initializer
+  creates (T1-D3); static process seeds keep a separate state of that stream.
   `randcase` (SV §18.16) selects one branch by weight: the weights are
   self-determined unsigned values evaluated once each in source order, added
   without wrapping, and one value of the calling thread's stream (the value

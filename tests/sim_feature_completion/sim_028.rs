@@ -66,6 +66,17 @@ fn writable_seeds_through_formals_elements_and_widths() {
 }
 
 #[test]
+fn unpacked_members_are_legacy_seeds() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "seed_members",
+        include_str!("../fixtures/sim/feature_completion/sim_028/seed_members.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn object_streams_seed_save_and_restore() {
     sim_cli::run_case_backend_parity(
         SUITE,

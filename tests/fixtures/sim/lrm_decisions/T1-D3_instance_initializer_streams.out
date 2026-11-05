@@ -1,0 +1,10 @@
+identical a 1
+identical b 1
+identical c 1
+identical range 1
+identical spawned 1
+a draws differ 1
+first value everywhere 1
+added initializers leave the next instance 1
+objects and draws share the stream 1
+added initializers leave process seeds 1

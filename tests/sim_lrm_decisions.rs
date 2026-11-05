@@ -29,6 +29,14 @@ fn t1_d2_event_compare_wait_rejected() {
 }
 
 #[test]
+fn t1_d3_instance_initializer_streams() {
+    run_decision(
+        "T1-D3_instance_initializer_streams",
+        include_str!("fixtures/sim/lrm_decisions/T1-D3_instance_initializer_streams.out"),
+    );
+}
+
+#[test]
 fn t1_d1_enable_output_delay() {
     run_decision(
         "T1-D1_enable_output_delay",
