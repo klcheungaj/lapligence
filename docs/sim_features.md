@@ -368,12 +368,16 @@ Macros, includes and their edition-specific behavior are counted in §11.
   runtime in module, static, subroutine and port storage: run-time selects,
   slices, patterns, whole copies, equality, ambiguous conditional merges and
   untimed or `#delay` NBAs act on owned elements, and on members of elements
-  (decision S07-D4); event controls and bit/part selects reach those members.
+  (decision S07-D4); event controls and bit/part selects reach those members,
+  and event-controlled NBAs reach record targets (S07-D6).
   Class handles are identity leaves of native records (`r.h.v` reaches the
-  object). Run-time indices into native member arrays select among at most
-  4,096 elements (`NATIVE_MEMBER_SELECT_LIMIT`, 256 for whole records) through
-  a balanced decision tree over the declared indices, including members below
-  a record element (`r.e[k].s`, `r.e[k].h.v`, `r.e[k].inner`); an index with side effects is evaluated once; packed members of module native records take
+  object). Run-time indices into native member arrays of subroutine records and
+  record elements locate the element at run time, with the same code for any
+  array size, at any depth (`nb[1].a[k]`, `r.e[k].a[j]`); module records select
+  among at most 4,096 leaves (`NATIVE_MEMBER_SELECT_LIMIT`) through a balanced
+  decision tree over the declared indices, because each leaf is its own signal
+  or object. A selection of whole records (`r.e[k]`, `r.e[k].inner`) uses that
+  tree in every storage, for at most 256 elements; an index with side effects is evaluated once; packed members of module native records take
   bit/part selects ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)).
   Patterns that read their own destination see the old string and handle
   members. Queue, dynamic and associative members of records are their own
@@ -559,7 +563,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Context | Storage / default | Copy | `==`/`!=`, `===` | Member select | Reference | Destruction |
 | --- | --- | --- | --- | --- | --- | --- |
 | Module/static variable | yes, member defaults applied; initializer from a pattern, copy, call result or conditional | yes | yes, including nested records and member arrays | constant, run-time index (at most 4,096 elements) and packed-member bit/part select: yes | `ref`/`const ref` actual, whole or a constant member/index selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); run-time-indexed member: rejected | model close |
-| Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 4,096 elements): yes | `ref`/`const ref` actual, whole record and members: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | scope exit, cancel, close |
+| Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index: yes | `ref`/`const ref` actual, whole record and members: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | scope exit, cancel, close |
 | Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal: a whole subroutine record passes by address, a module, static or block record (or a constant selection of one) binds a specialization of the callee: yes; fixed-array or container element actual, and members of one: a retained reference shares the element ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); class methods take them too, a virtual call through one family per binding; a virtual-interface method: rejected | scope exit, cancel, close |
 | NBA target or source | module record and static subroutine root: yes (untimed and `#delay`), members of fixed-array elements and container members too; automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
@@ -567,7 +571,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Queue/dynamic/associative element | yes (missing: default), including queue and dynamic-array members ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); associative members: rejected | yes, whole element and push/insert/pop | yes, element-wise, including container members (whole associative arrays of records: rejected, [known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes; container members in assignment, call and system-task statements | SIM-008 | delete, resize, container close |
 | Class property | instance property: yes, one value per object with member defaults and a per-object initializer, through `this`, handles and handle chains ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)); static, or with container members: rejected | yes | yes | constant: yes | SIM-011 | with its object, when the collector reclaims it or at model close ([sim_018](../tests/fixtures/sim/feature_completion/sim_018/readme.md)) |
 | DPI argument | sized unpacked structure formal of bit/logic/integral members, nested records and arrays: yes, in the C layout ([sim_040](../tests/fixtures/sim/feature_completion/sim_040/readme.md)); string, real, shortreal or chandle members: rejected ([known issue](known_issues.md#dpi-c-import-limits-sim-040)) | yes, copy-in/out through a thunk-owned buffer | n/a | n/a | n/a | end of the call |
-| Process-block local (static or automatic) | yes, including container members, member defaults and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record that a `join_any`/`join_none` fork running again can keep live: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes, including nested records and member arrays | constant and run-time index (at most 4,096 elements): yes | `ref`/`const ref` actual, whole or a constant selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | model close; automatic leaves reset at the next entry |
+| Process-block local (static or automatic) | yes, including container members, member defaults and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record that a `join_any`/`join_none` fork running again can keep live: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes, including nested records and member arrays | constant and run-time index: yes | `ref`/`const ref` actual, whole or a constant selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | model close; automatic leaves reset at the next entry |
 
 ## 3. Modules, ports, parameters, hierarchy
 

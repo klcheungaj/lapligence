@@ -120,3 +120,14 @@ element (packed, real or string), stable and O(n log n), applying the
 permutation in place by cycles; a key count that differs from the receiver
 size warns and leaves the receiver unchanged. `llg_{dyn,queue}_value_copy_from_*`
 copy between a descriptor-backed dynamic array and queue.
+
+## Item locators
+
+A run-time index below a value tree (`r.a[k]`, `nb[1].e[k].s`) reaches its item
+through `IrChandleExpr::ItemElement`. Generated code calls
+`llg_native_item_position` for each array level and combines positions with
+`llg_native_item_step`, so one site has the same code for any array size. X, Z or
+an index outside the declared range yields `LLG_NATIVE_ITEM_INVALID`: a read sees
+a default value in a value scope and a write lands in that scratch value (SV
+7.4.6). A located NBA carries its positions in `IrContainerStmt::NbaLocate` and
+`apply_located_nba` drops an invalid one at commit.

@@ -3,7 +3,9 @@
 //! patterns, slices, conditionals, equality, calls and nonblocking writes,
 //! in module storage and in procedural blocks.
 //! Oracles are derived by hand in the fixture readme.
-use super::sim_cli;
+use super::{sim_cli, sim_harness};
+use std::process::Command;
+use std::time::Duration;
 
 const SUITE: &str = "feature_completion/sim_007";
 
@@ -167,6 +169,45 @@ fn assignment_operators_evaluate_run_time_selects_once() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_compound_selects.out");
     sim_cli::run_case_backend_parity(SUITE, "native_compound_selects", expected, &[], &[]);
+}
+
+#[test]
+fn run_time_selects_of_value_trees_do_not_grow_with_the_array() {
+    let model_lines = |size: usize| {
+        let directory = sim_harness::TempDir::new("native_select_size").expect("scratch directory");
+        let source = format!(
+            "module tb;
+  typedef struct {{ string s; int a[{size}]; }} r_t;
+  r_t nb[3];
+  int k = 3;
+  task automatic t();
+    r_t r;
+    r.a[k] = 7;
+    nb[1].a[k] = r.a[k];
+  endtask
+  initial begin t(); $display(\"%0d\", nb[1].a[k]); $finish(0); end
+endmodule
+"
+        );
+        std::fs::write(directory.path().join("wide.sv"), source).expect("write source");
+        let output = sim_harness::run_command(
+            Command::new(env!("CARGO_BIN_EXE_llg"))
+                .current_dir(directory.path())
+                .args(["--gen-only", "--top", "tb", "--out-dir", "out", "wide.sv"]),
+            Duration::from_secs(30),
+        )
+        .expect("run llg");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::read_to_string(directory.path().join("out/sim/tb/model.c"))
+            .expect("read model")
+            .lines()
+            .count()
+    };
+    assert_eq!(model_lines(64), model_lines(4000));
 }
 
 #[test]
