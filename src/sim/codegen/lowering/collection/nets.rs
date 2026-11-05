@@ -1597,6 +1597,7 @@ impl<'a> Codegen<'a> {
             self.port_aliases.insert(merge.port);
             merged_ports.insert(merge.port);
         }
+        self.warn_unmerged_uwire_ports(&nodes, &merged_ports);
 
         // Port traversal order must not split a whole-net connection from a
         // selected or explicitly aliased endpoint discovered later.

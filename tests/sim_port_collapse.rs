@@ -507,7 +507,7 @@ endmodule
 
 /// A port keeps its link where a merge would change more than the
 /// resolution: a variable source, a conversion, a non-constant select or
-/// expression actual, a net delay or a `uwire` net. A drive strength on the
+/// expression actual. A drive strength on the
 /// formal of an output does not matter: its actual merges as a second name
 /// (A21-D2).
 #[test]
@@ -572,25 +572,10 @@ fn net_ports_that_a_merge_would_change_keep_the_link() {
         (
             "input wire a",
             "assign a = 1'b0;",
-            "uwire [3:0] x = {4{y}};",
-            ".a(x[1])",
-            "uwire actual",
-        ),
-        (
-            "input wire a",
-            "assign a = 1'b0;",
-            "wire [3:0] #2 x; assign x = {4{y}};",
-            ".a(x[1])",
-            "delayed selected actual",
-        ),
-        (
-            "input wire a",
-            "assign a = 1'b0;",
             "wire x = y;",
             ".a(~x)",
             "expression",
         ),
-        ("input uwire a", "", "wire x = y;", ".a(x)", "uwire formal"),
         (
             "output wire a",
             "assign (weak0, weak1) a = 1'b0;",
@@ -614,26 +599,101 @@ endmodule
         let expected = usize::from(label != "strength of the formal does not matter");
         assert_eq!(links(&model), expected, "{label}: {model}");
     }
-    // A net delay on the formal (a non-ANSI declaration may give one) or
-    // on the actual.
-    for (formal, actual) in [("wire #2 a;", "wire x;"), ("wire a;", "wire #2 x;")] {
-        let model = render(&format!(
+}
+
+/// A sink with a driver of its own merges past a net delay on either side
+/// (T1-D4), a selected actual included; a sink only the port drives keeps its
+/// link, so each side keeps its own timing. A `uwire` on either side merges
+/// (23.3.3.6).
+#[test]
+fn delayed_and_uwire_ports_merge() {
+    let child = |formal: &str, drive: &str| {
+        format!(
             "module child(a);
   input a;
   {formal}
-  assign a = 1'b0;
+  {drive}
 endmodule
-module tb;
+"
+        )
+    };
+    for (formal, drive, actual, connection, expected, label) in [
+        (
+            "wire #2 a;",
+            "assign a = 1'b0;",
+            "wire x;",
+            ".a(x)",
+            0,
+            "delayed formal",
+        ),
+        (
+            "wire a;",
+            "assign a = 1'b0;",
+            "wire #2 x;",
+            ".a(x)",
+            0,
+            "delayed actual",
+        ),
+        (
+            "wire #2 a;",
+            "",
+            "wire x;",
+            ".a(x)",
+            1,
+            "undriven delayed formal",
+        ),
+        (
+            "wire a;",
+            "",
+            "wire #2 x;",
+            ".a(x)",
+            0,
+            "undriven plain formal",
+        ),
+        (
+            "wire a;",
+            "assign a = 1'b0;",
+            "wire [3:0] #2 x;",
+            ".a(x[1])",
+            0,
+            "delayed selected actual",
+        ),
+        ("uwire a;", "", "wire x;", ".a(x)", 0, "uwire formal"),
+        ("wire a;", "", "uwire x;", ".a(x)", 0, "uwire actual"),
+    ] {
+        let model = render(&format!(
+            "{}module tb;
   {actual}
   logic y;
   assign x = y;
-  child u(.a(x));
+  child u({connection});
   initial begin y = 0; #1 y = 1; #3 $finish; end
 endmodule
-"
+",
+            child(formal, drive)
         ));
-        assert_eq!(links(&model), 1, "net delay {formal} {actual}: {model}");
+        assert_eq!(links(&model), expected, "{label}: {model}");
     }
+}
+
+#[test]
+fn uwire_ports_read_one_net() {
+    sim_cli::run_case(
+        "port_collapse",
+        "uwire_ports",
+        "1 1 1 1 0 0\n1 1\n0 0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn a_merged_uwire_rejects_a_second_driver() {
+    sim_cli::reject_case(
+        "port_collapse",
+        "reject_uwire_two_drivers",
+        "a collapsed uwire net has 2 drivers",
+    );
 }
 
 /// A force on a net sink merged with a source net forces the merged net; a

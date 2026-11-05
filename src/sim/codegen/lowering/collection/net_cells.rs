@@ -286,6 +286,7 @@ impl Codegen<'_> {
                 }
             }
         };
+        let driven_cells = self.input_ports_on_driven_cells(nodes);
         for id in nodes {
             let targets = match self.kind(*id) {
                 NodeKind::NetAlias { nets } => {
@@ -342,7 +343,7 @@ impl Codegen<'_> {
                 NodeKind::ContAssign { .. } | NodeKind::Gate { .. } | NodeKind::Port { .. } => {
                     // An input port that may merge with its selected actual
                     // (`nets/port_merges.rs`) reaches the cells it reads.
-                    mark_bits(plan, &self.input_merge_cells(*id));
+                    mark_bits(plan, &self.input_merge_cells(*id, &driven_cells));
                     self.structural_source_targets(*id)
                 }
                 _ => continue,

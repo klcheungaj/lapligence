@@ -1,6 +1,7 @@
 // Ports that keep their continuous assignment where a merge would drop
-// something (decisions A21-D2, A21-D4, A21-D5): a net delay of the formal,
-// a width conversion and a variable actual of a net formal the child drives.
+// something (decisions A21-D2, A21-D4, A21-D5, T1-D4): a net delay on a formal
+// only the port drives, a width conversion and a variable actual of a net
+// formal the child drives.
 module coerced(input wire n);
   assign n = 1'b0;
 endmodule

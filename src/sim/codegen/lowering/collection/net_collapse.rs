@@ -1,7 +1,7 @@
 //! Directional port-collapse policy, independent of storage and driver allocation.
 
 use super::{AliasBit, NetType, NodeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Whole connections need one entry, not one allocation per packed bit. A net
 /// promoted to the selected/alias path uses bit entries everywhere instead.
@@ -143,7 +143,8 @@ pub(super) fn port_choice(internal: NetType, external: NetType) -> Option<PortCh
 pub(super) struct CollapsedType {
     pub(super) kind: NetType,
     /// True aliases have no external side: every member's declaration stays a
-    /// delay owner. A port selects only the winning component's declaration(s).
+    /// delay owner. A port selects the winning component's declaration(s), or
+    /// the outermost delayed ones when those declare no delay (T1-D4).
     /// Members named in alias statements come first, in the order they first
     /// appear there (decision S2-D8); the rest follow in declaration order.
     pub(super) delay_members: Vec<NodeId>,
@@ -187,9 +188,26 @@ pub(super) struct NetCollapsePlan {
     any_uwire: bool,
     /// Rank of each declaration by its first appearance in an alias statement.
     alias_order: HashMap<NodeId, usize>,
+    /// Declarations with a net delay of their own.
+    delayed: HashSet<NodeId>,
 }
 
 impl NetCollapsePlan {
+    /// Names the declarations that carry a net delay. Call before any port
+    /// batch.
+    pub(super) fn set_delayed(&mut self, delayed: HashSet<NodeId>) {
+        self.delayed = delayed;
+    }
+
+    /// The delay owners of `roots` that declare a delay.
+    fn delayed_members(&self, roots: &[usize]) -> Vec<NodeId> {
+        roots
+            .iter()
+            .flat_map(|root| self.entries[*root].resolved.delay_members.iter().copied())
+            .filter(|member| self.delayed.contains(member))
+            .collect()
+    }
+
     pub(super) fn insert(&mut self, point: NetPoint, kind: NetType) -> Result<(), String> {
         let kind = canonical_net_type(kind).ok_or("port collapse requires a net type")?;
         if !self.points.contains_key(&point) {
@@ -305,7 +323,11 @@ impl NetCollapsePlan {
     /// types of one merged component reduce to the types no other winner
     /// dominates (Table 23-1 strict dominance, independent of sides); a
     /// remaining warning-only tie selects the first in `tie_order`.
-    /// The delay owners are every winning declaration of the selected type.
+    /// The delay owners are the winning declarations of the selected type
+    /// that declare a delay; without one, the outermost declarations with a
+    /// delay (decision T1-D4); without any, every winning declaration of the
+    /// selected type. Batches run from the top down, so the external side
+    /// already holds every delay above this depth.
     /// Returns the per-edge pairwise warnings and any ties.
     pub(super) fn port_batch(
         &mut self,
@@ -367,8 +389,10 @@ impl NetCollapsePlan {
                 local.insert(high, low);
             }
         }
-        // Per merged component: its first edge, all roots and winning roots.
-        let mut components: HashMap<usize, (usize, Vec<usize>, Vec<usize>)> = HashMap::new();
+        // Per merged component: its first edge, all roots, winning roots and
+        // external roots.
+        type Component = (usize, Vec<usize>, Vec<usize>, Vec<usize>);
+        let mut components: HashMap<usize, Component> = HashMap::new();
         for (index, edge) in winners.iter().enumerate() {
             let Some((internal, external, winner)) = *edge else {
                 continue;
@@ -376,18 +400,21 @@ impl NetCollapsePlan {
             let root = find(&mut local, internal);
             let component = components
                 .entry(root)
-                .or_insert_with(|| (index, Vec::new(), Vec::new()));
+                .or_insert_with(|| (index, Vec::new(), Vec::new(), Vec::new()));
             component.1.extend([internal, external]);
             component.2.push(winner);
+            component.3.push(external);
         }
         let mut components = components.into_values().collect::<Vec<_>>();
         components.sort_by_key(|component| component.0);
         let mut ties = Vec::new();
-        for (edge, mut roots, mut winning) in components {
+        for (edge, mut roots, mut winning, mut external) in components {
             roots.sort_unstable();
             roots.dedup();
             winning.sort_unstable();
             winning.dedup();
+            external.sort_unstable();
+            external.dedup();
             let mut kinds = winning
                 .iter()
                 .map(|root| self.entries[*root].resolved.kind)
@@ -407,11 +434,24 @@ impl NetCollapsePlan {
                     selected,
                 });
             }
-            let mut delay_members = winning
+            let selected_roots = winning
                 .iter()
-                .filter(|root| self.entries[**root].resolved.kind == selected)
-                .flat_map(|root| self.entries[*root].resolved.delay_members.iter().copied())
+                .copied()
+                .filter(|root| self.entries[*root].resolved.kind == selected)
                 .collect::<Vec<_>>();
+            let mut delay_members = self.delayed_members(&selected_roots);
+            if delay_members.is_empty() {
+                delay_members = self.delayed_members(&external);
+            }
+            if delay_members.is_empty() {
+                delay_members = self.delayed_members(&roots);
+            }
+            if delay_members.is_empty() {
+                delay_members = selected_roots
+                    .iter()
+                    .flat_map(|root| self.entries[*root].resolved.delay_members.iter().copied())
+                    .collect();
+            }
             let aliased_delay_members = self.order_delay_members(&mut delay_members);
             let resolved = CollapsedType {
                 kind: selected,

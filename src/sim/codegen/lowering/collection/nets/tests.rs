@@ -628,6 +628,18 @@ fn delayed_per_bit_drivers_of_a_shared_vector_write_only_their_bits() {
                 assert_eq!((left, rhs.width()), (right, 1), "one bit per gate");
                 delayed.push(*left);
             }
+            IrStmt::InertialEnable(enable) => {
+                let IrLhs::Part(signal, left, right, false) = &enable.zero_lhs else {
+                    panic!("an enable gate's driver writes one bit");
+                };
+                assert!(model.signals[*signal].net_driver.is_some());
+                assert_eq!(
+                    (left, enable.zero_rhs.width()),
+                    (right, 1),
+                    "one bit per gate"
+                );
+                delayed.push(*left);
+            }
             IrStmt::Assign {
                 lhs: IrLhs::Part(signal, left, right, false),
                 rhs,

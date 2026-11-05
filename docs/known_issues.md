@@ -2166,37 +2166,28 @@ other items need small hand-written cases.
 ## Port connections kept as continuous assignments
 
 **Status:** open; whole variable and `wire` ports share their source's
-storage, whole net ports whose sink has drivers or a net type of its own
-merge with their source into one resolved net, and selected, net-array
-element and concatenated net actuals merge bit by bit (decisions
-A21-D1..A21-D5 in [LRM decisions](lrm_decisions.md)).
+storage, net ports whose sink has drivers or a net type of its own merge with
+their source into one resolved net, whatever net delays or `uwire` sides they
+have, and selected, net-array element and concatenated net actuals merge bit
+by bit (decisions A21-D1..A21-D5, T1-D4, T1-D5 in
+[LRM decisions](lrm_decisions.md)).
 
 ### Symptom
 
-- A net port whose sink has drivers of its own (a coerced input net) still
-  runs one copy process when either side has a net delay, when a side is a
-  `uwire` net, or when its actual selects a `wire`/`tri`/`logic` net-array
-  cell that nothing else connects; a variable sink of a net source keeps its
-  copy too. Every change of the source then wakes the copy before any
-  reader of the sink.
-- The copy resolves each side separately, which differs from a simulated
-  net. `tests/fixtures/sim/port_collapse/fallbacks.sv` prints
-  `delay: dl=1 u3.n=x` for a child driving its delayed input net.
+A variable sink of a net source runs one copy process: every change of the
+source wakes the copy before any reader of the sink, one update later than a
+shared storage would show it. A port with a delay on either side whose sink
+has no other driver stays a link too, which is the right behaviour (T1-D4).
 
 ### Cause
 
-`lowering/collection/nets/port_merges.rs` leaves net delays and `uwire` nets
-out because a merge would change which delay applies or turn a second driver
-into an error, which no reference behaviour confirms yet. An unconnected
-`wire` net-array cell is a constant run outside the bit-level union. A
-variable is no net to merge with: sharing its storage with a net source
+A variable is no net to merge with: sharing its storage with a net source
 would let a procedural write or a force of the variable reach the net.
 
 ### Intended direction
 
-Decide the delay of a merged net with a delayed side from Table 23-1's
-dominating declaration, keeping copies only for conversions and where SDF or
-specify paths need each side's own net.
+Keep copies only for conversions, variables and where SDF or specify paths
+need each side's own net.
 
 ### Reproduce
 
