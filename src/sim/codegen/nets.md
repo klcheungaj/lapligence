@@ -56,7 +56,9 @@ vector (including selected-bit) and supply-net continuous strengths reject; gate
 instance-array strengths stay legal. Enable gates split into a
 strength0-only and a strength1-only slot so an unknown enable drives L/H; a delayed
 one schedules both as one `IrStmt::InertialEnable` driver with the delay of the
-combined output (T1-D1), so the net never shows a value between the halves. An omitted input
+combined output (T1-D1), so the net never shows a value between the halves; a
+plain scalar net with that pair alone takes a known output without a resolution
+(`enable_pair_alone`), which saves most of the second slot's time. An omitted input
 under `unconnected_drive` is a pull-strength slot of its port on every net or
 net-array formal (variables receive the value only); input net-array links and
 gate outputs on net-array cells publish through their port/gate cell slots.
