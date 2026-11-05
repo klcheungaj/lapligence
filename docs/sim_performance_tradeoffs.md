@@ -321,6 +321,51 @@ code at `-O1` instead of 0.13×).
   C changes only in long bodies and in formatting calls with constant
   arguments; `perf/` hot loops keep their C.
 
+### Record storage by selection
+
+- **Trade-off:** a module record below `LLG_DENSE_FIXED_ARRAY_CELLS` keeps one
+  leaf per member cell, each with direct access, and stores one descriptor
+  column per member (`IrArray::descriptor`) only when
+  `collection/record_columns/choice.rs` chooses its type: on a run-time index
+  into a member array of at least `LLG_RECORD_COLUMN_MIN_CELLS` (16) cells, or
+  on any select of one in a record that fits the packed limit, which otherwise
+  flattens all its leaves on each access. A column replaces the branch per
+  cell (or the whole-record flatten) with one hash lookup, at the price of a
+  lookup on constant selects and slower whole-record operations.
+- **Why a preference:** column layout does not cover every use of a type
+  (see the [known issue](known_issues.md#unpacked-records-with-dense-member-arrays-emit-per-cell-code)),
+  so `lower_model` lowers the chosen types first and keeps the per-cell model
+  if that fails. A model with the VPI catalog or toggle coverage stays per
+  cell, since each observes member leaves. Chosen columns dump under the leaf
+  names, with the same values and hierarchy.
+- **Result:** `r.a[k] = 7; y = r.a[k];` at 4,095 cells, one site: 179,889 lines
+  and a build over 300 s become 261 lines and 0.3 s, with a `string` member;
+  33,571 lines and 15.8 s become 260 lines and 0.3 s with a packed one. Medians of 5 interleaved rounds
+  pinned to one core, seconds for 5M iterations, per-cell to column:
+
+  | Access | `string` member, 16 | 1,024 | Packed record, 16 | 64 |
+  | --- | --- | --- | --- | --- |
+  | Read, constant index | 0.58 → 0.62 | 0.79 → 0.87 | 3.99 → 0.71 | 22.2 → 0.62 |
+  | Write, constant index | 0.66 → 0.93 | 0.86 → 1.30 | 15.0 → 0.86 | 47.9 → 0.93 |
+  | Read-modify-write, constant | 0.91 → 1.15 | 1.25 → 1.67 | 17.2 → 1.51 | 63.2 → 1.30 |
+  | Read, run-time index | 1.76 → 1.08 | 4.17 → 1.33 | 4.39 → 1.73 | 24.0 → 0.97 |
+  | Write, run-time index | 1.97 → 1.34 | 4.24 → 1.06 | 15.4 → 1.38 | 49.8 → 1.24 |
+  | Read-modify-write, run-time | 2.89 → 1.59 | 8.20 → 2.16 | 18.2 → 1.65 | 62.1 → 1.52 |
+
+  Whole-record operations go the other way, seconds for 1M operations:
+
+  | Whole record | `string` member, 16 | 256 | Packed record, 16 | 256 |
+  | --- | --- | --- | --- | --- |
+  | Copy | 0.63 → 2.08 | 8.69 → 40.2 | 1.44 → 2.43 | 65.3 → 43.0 |
+  | Compare | 0.47 → 3.05 | 4.56 → 54.7 | 0.35 → 3.34 | 4.56 → 57.5 |
+
+  Memory per written cell: 112 bytes in a column, about 45 for a leaf of a
+  record with a `string` member and about 330 for a leaf of a packed record;
+  an unwritten column cell costs nothing.
+- **Threshold:** 16 cells. Columns already win on accesses at 4 cells, but
+  below 16 the tree stays a few hundred lines and whole-record operations are
+  the larger risk, so small records keep their form.
+
 ### Coroutine frame: C locals wherever possible
 
 - **Trade-off:** keeping every local in the coroutine frame is simplest and
