@@ -28,7 +28,9 @@ See [shared lint](../readme.md).
   selects (`collect_element_writes`); a bit range inside an element still counts
   as disjoint. Each assignment of a checker procedure drives only its constant
   target bits (the 17.7.1 Single Assignment Rule keeps them disjoint), so two
-  checker procedures assigning different bits are not two drivers.
+  checker procedures assigning different bits are not two drivers. A member
+  array counts per variable and member path, since its node belongs to the
+  record type: `a.m[i]` and `b.m[i]` are two objects.
 - `unconnected-port` (`unconnected_port.rs`): top ports are external boundaries;
   interface connections refer to actual instances, without frontend-generated
   copies.

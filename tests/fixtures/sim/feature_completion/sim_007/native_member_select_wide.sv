@@ -48,15 +48,14 @@ module tb;
     #4 $finish(0);
   end
   // Nonblocking writes through the select: the branch is chosen at issue.
-  typedef struct { string ns[65]; real nr[66]; } nwide_t;
-  nwide_t q;
+  wide_t q;
   int i = 9;
   initial #0 i = 3;
   initial begin
-    q.ns[i] <= "n9";
-    q.nr[i] <= #2 2.5;
-    $display("[%s]", q.ns[9]);
-    #1 $display("[%s] %0.1f", q.ns[9], q.nr[9]);
-    #2 $display("%0.1f", q.nr[9]);
+    q.s[i] <= "n9";
+    q.r[i] <= #2 2.5;
+    $display("[%s]", q.s[9]);
+    #1 $display("[%s] %0.1f", q.s[9], q.r[9]);
+    #2 $display("%0.1f", q.r[9]);
   end
 endmodule
