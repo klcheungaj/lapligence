@@ -494,12 +494,11 @@ impl<'a> Codegen<'a> {
                     // split the output into a strength0-only and a
                     // strength1-only contribution: the disabled arm drives the
                     // value that slot cannot carry, so an unknown enable
-                    // merges a known data bit into one-sided X. Delayed gates
-                    // keep one slot so each transition retains its single
-                    // rise/fall/turn-off delay.
-                    if scaled_delay.is_none()
-                        && (alias_bindings.is_some() || structural_terminal.is_some())
-                    {
+                    // merges a known data bit into one-sided X. A delayed gate
+                    // publishes both slots as one inertial driver, so a
+                    // transition keeps its single delay and the net never
+                    // passes through a value between the two halves.
+                    if alias_bindings.is_some() || structural_terminal.is_some() {
                         enable_halves = Some((
                             enable_mux(data.clone(), const_bits_expr(output_width, true)),
                             enable_mux(data.clone(), const_bits_expr(output_width, false)),
@@ -530,19 +529,48 @@ impl<'a> Codegen<'a> {
                 for group in groups {
                     self.split_enable_driver(g, group, driver_strengths)?;
                 }
-                let mut body = Vec::new();
-                for (side, terminal) in [(zero_side, 0), (one_side, ENABLE_ONE_SIDE_TERMINAL)] {
-                    for (lhs, rhs) in
-                        self.alias_driver_assignments(g, bindings, side, |_| terminal)?
-                    {
-                        body.push(IrStmt::Assign {
-                            lhs,
-                            rhs,
-                            nba: false,
-                        });
+                if let Some(delay) = scaled_delay.clone() {
+                    let mut sides = [(zero_side, 0), (one_side, ENABLE_ONE_SIDE_TERMINAL)]
+                        .into_iter()
+                        .map(|(side, terminal)| {
+                            let mut assignment =
+                                self.alias_driver_assignments(g, bindings, side, |_| terminal)?;
+                            match (assignment.pop(), assignment.is_empty()) {
+                                (Some(assignment), true) => Ok(assignment),
+                                _ => Err(format!(
+                                    "delayed enable gate `{shown}` in `{path}` at {} drives \
+                                     several pieces of an aliased net, which llg does not support",
+                                    self.source_location(g)
+                                )),
+                            }
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    let (one_lhs, one_rhs) = sides.pop().expect("two enable sides");
+                    let (zero_lhs, zero_rhs) = sides.pop().expect("two enable sides");
+                    self.initialize_delayed_lhs(&zero_lhs)?;
+                    self.initialize_delayed_lhs(&one_lhs)?;
+                    vec![IrStmt::InertialEnable {
+                        zero_lhs,
+                        zero_rhs,
+                        one_lhs,
+                        one_rhs,
+                        delay,
+                    }]
+                } else {
+                    let mut body = Vec::new();
+                    for (side, terminal) in [(zero_side, 0), (one_side, ENABLE_ONE_SIDE_TERMINAL)] {
+                        for (lhs, rhs) in
+                            self.alias_driver_assignments(g, bindings, side, |_| terminal)?
+                        {
+                            body.push(IrStmt::Assign {
+                                lhs,
+                                rhs,
+                                nba: false,
+                            });
+                        }
                     }
+                    body
                 }
-                body
             } else if let Some(bindings) = alias_bindings {
                 let value_name = format!("_alias_gate_value_{}_{}", g.index(), output_ordinal);
                 let value_read = IrExpr::new(
@@ -563,6 +591,37 @@ impl<'a> Codegen<'a> {
                     assignments,
                     scaled_delay.clone(),
                 )?
+            } else if let (Some((group, 0)), Some((zero_side, one_side))) =
+                (structural_terminal, enable_halves)
+            {
+                self.split_enable_driver(g, group, driver_strengths)?;
+                let one_lhs =
+                    self.remap_structural_lhs_for_terminal(raw_lhs, g, ENABLE_ONE_SIDE_TERMINAL);
+                match scaled_delay.clone() {
+                    Some(delay) => {
+                        self.initialize_delayed_lhs(&lhs)?;
+                        self.initialize_delayed_lhs(&one_lhs)?;
+                        vec![IrStmt::InertialEnable {
+                            zero_lhs: lhs,
+                            zero_rhs: zero_side,
+                            one_lhs,
+                            one_rhs: one_side,
+                            delay,
+                        }]
+                    }
+                    None => vec![
+                        IrStmt::Assign {
+                            lhs,
+                            rhs: zero_side,
+                            nba: false,
+                        },
+                        IrStmt::Assign {
+                            lhs: one_lhs,
+                            rhs: one_side,
+                            nba: false,
+                        },
+                    ],
+                }
             } else if let Some(delay) = scaled_delay.clone() {
                 self.initialize_delayed_lhs(&lhs)?;
                 vec![IrStmt::InertialAssign {
@@ -570,24 +629,6 @@ impl<'a> Codegen<'a> {
                     rhs: value,
                     delay,
                 }]
-            } else if let (Some((group, 0)), Some((zero_side, one_side))) =
-                (structural_terminal, enable_halves)
-            {
-                self.split_enable_driver(g, group, driver_strengths)?;
-                let one_lhs =
-                    self.remap_structural_lhs_for_terminal(raw_lhs, g, ENABLE_ONE_SIDE_TERMINAL);
-                vec![
-                    IrStmt::Assign {
-                        lhs,
-                        rhs: zero_side,
-                        nba: false,
-                    },
-                    IrStmt::Assign {
-                        lhs: one_lhs,
-                        rhs: one_side,
-                        nba: false,
-                    },
-                ]
             } else {
                 vec![IrStmt::Assign {
                     lhs,
@@ -629,7 +670,7 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// Give an undelayed enable gate a second driver slot in `group`: the
+    /// Give an enable gate a second driver slot in `group`: the
     /// primary slot keeps only strength0 and the new slot only strength1.
     fn split_enable_driver(
         &mut self,

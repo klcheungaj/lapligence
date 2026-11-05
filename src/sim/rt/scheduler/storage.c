@@ -186,11 +186,14 @@ struct llg_inertial {
     sv4_t* target;
     llg_net_t* net;
     llg_net_t* publication_net; // net-delay commit, not a driver contribution
-    uint32_t publication_bit;   // the bit a per-bit net delay commits
+    uint32_t publication_bit;   // the bit a per-bit net delay commits; an enable
+                                // pair's strength1-only slot
     int8_t bit_publication;     // commits bits from publication_bit of publication_net
     int8_t path_stage;          // a module path destination bit, before the net delay
     int8_t lsb_rule;            // net delay: the new LSB value selects the delay
-    int8_t part;                // drives bits [part_lsb, part_lsb + part_width) of net slot `slot`
+    int8_t part;                // drives bits [part_lsb, part_lsb + part_width) of net slot
+                                // `slot`; LLG_INERTIAL_ENABLE_PAIR also of a second slot, with
+                                // `current` and `value` holding {strength1, strength0} halves
     uint32_t part_lsb;
     uint32_t part_width;
     int slot;

@@ -359,6 +359,13 @@ impl Frame<'_, '_> {
                 self.vpi_auto_bind(VpiAutoKey::Name(name.clone()));
             }
             IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, delay)?,
+            IrStmt::InertialEnable {
+                zero_lhs,
+                zero_rhs,
+                one_lhs,
+                one_rhs,
+                delay,
+            } => self.inertial_enable(zero_lhs, zero_rhs, one_lhs, one_rhs, delay)?,
             IrStmt::SetNetDelay { group, delay } => self.set_net_delay(*group, delay)?,
             IrStmt::UdpStep { state, inputs } => self.udp_step(*state, inputs)?,
             IrStmt::ModulePathStamp { set } => {

@@ -3,6 +3,100 @@ use super::stores::Selection;
 use super::*;
 
 impl Frame<'_, '_> {
+    /// The `rise, fall, turn_off` arguments of one scheduling call.
+    fn inertial_delays(&mut self, delay: &IrInertialDelay) -> Result<String, String> {
+        Ok(match delay {
+            IrInertialDelay::Constant(delay) => format!(
+                "{}ULL, {}ULL, {}ULL",
+                delay.rise, delay.fall, delay.turn_off
+            ),
+            IrInertialDelay::Annotated(slot) => {
+                let base = 3 * *slot;
+                format!(
+                    "llg_sdf_gate_delays[{base}], llg_sdf_gate_delays[{}], llg_sdf_gate_delays[{}]",
+                    base + 1,
+                    base + 2
+                )
+            }
+            // Runtime values are evaluated each time the site schedules.
+            IrInertialDelay::Runtime(delay) => {
+                let rise = self.delay(&delay.rise)?;
+                let fall = match &delay.fall {
+                    Some(fall) => self.delay(fall)?,
+                    None => rise.clone(),
+                };
+                let turn_off = match (&delay.turn_off, &delay.fall) {
+                    (Some(turn_off), _) => self.delay(turn_off)?,
+                    (None, Some(_)) => format!("({rise} < {fall} ? {rise} : {fall})"),
+                    (None, None) => rise.clone(),
+                };
+                match delay.writable {
+                    // A VPI application may have written the delays in use.
+                    Some(slot) => {
+                        let delays = self.declare(
+                            "const uint64_t*",
+                            "gate_delays",
+                            format!(
+                                "llg_gate_delays_refresh(&llg_sdf_gate_delays[{}], {rise}, \
+                                 {fall}, {turn_off})",
+                                3 * slot
+                            ),
+                        );
+                        format!("{delays}[0], {delays}[1], {delays}[2]")
+                    }
+                    None => format!("{rise}, {fall}, {turn_off}"),
+                }
+            }
+        })
+    }
+
+    /// One inertial driver of the two slots of a delayed enable gate. The
+    /// handle is per site: a gate output is one fixed net selection.
+    pub(super) fn inertial_enable(
+        &mut self,
+        zero_lhs: &IrLhs,
+        zero_rhs: &IrExpr,
+        one_lhs: &IrLhs,
+        one_rhs: &IrExpr,
+        delay: &IrInertialDelay,
+    ) -> Result<(), String> {
+        let zero = self.expression(zero_rhs)?;
+        let one = self.expression(one_rhs)?;
+        let zero_target = self.target(zero_lhs)?;
+        let one_target = self.target(one_lhs)?;
+        let (Some((net, zero_slot)), Some((_, one_slot))) =
+            (zero_target.net.clone(), one_target.net.clone())
+        else {
+            return Err("delayed enable gate requires net driver slots".to_owned());
+        };
+        let zero = self.convert(zero, zero_target.width, false, false, false);
+        let one = self.convert(one, one_target.width, false, false, false);
+        let delays = self.inertial_delays(delay)?;
+        let storage_width = zero_target.binding.width;
+        let (plan, reverse) = match &zero_target.selection {
+            Some(selection) => self.selection_plan(selection, storage_width),
+            None => (
+                format!(
+                    "sv4_select_plan_part({storage_width}, {}LL, 0LL)",
+                    storage_width - 1
+                ),
+                false,
+            ),
+        };
+        let handle = self.site_static("llg_inertial_t*", "inertial", None);
+        self.line(format!(
+            "llg_inertial_enable_net(&{handle}, &{net}, {zero_slot}, {one_slot}, {}, {}, {plan}, {}, {delays});",
+            zero.code,
+            one.code,
+            u8::from(reverse)
+        ));
+        self.discard(one);
+        self.discard(zero);
+        self.release_target(one_target);
+        self.release_target(zero_target);
+        Ok(())
+    }
+
     pub(super) fn inertial_assign(
         &mut self,
         lhs: &IrLhs,
@@ -51,49 +145,7 @@ impl Frame<'_, '_> {
             let driver = self.site_static("llg_inertial_t*", "inertial", None);
             format!("&{driver}")
         };
-        let delays = match delay {
-            IrInertialDelay::Constant(delay) => format!(
-                "{}ULL, {}ULL, {}ULL",
-                delay.rise, delay.fall, delay.turn_off
-            ),
-            IrInertialDelay::Annotated(slot) => {
-                let base = 3 * *slot;
-                format!(
-                    "llg_sdf_gate_delays[{base}], llg_sdf_gate_delays[{}], llg_sdf_gate_delays[{}]",
-                    base + 1,
-                    base + 2
-                )
-            }
-            // Runtime values are evaluated each time the site schedules.
-            IrInertialDelay::Runtime(delay) => {
-                let rise = self.delay(&delay.rise)?;
-                let fall = match &delay.fall {
-                    Some(fall) => self.delay(fall)?,
-                    None => rise.clone(),
-                };
-                let turn_off = match (&delay.turn_off, &delay.fall) {
-                    (Some(turn_off), _) => self.delay(turn_off)?,
-                    (None, Some(_)) => format!("({rise} < {fall} ? {rise} : {fall})"),
-                    (None, None) => rise.clone(),
-                };
-                match delay.writable {
-                    // A VPI application may have written the delays in use.
-                    Some(slot) => {
-                        let delays = self.declare(
-                            "const uint64_t*",
-                            "gate_delays",
-                            format!(
-                                "llg_gate_delays_refresh(&llg_sdf_gate_delays[{}], {rise}, \
-                                 {fall}, {turn_off})",
-                                3 * slot
-                            ),
-                        );
-                        format!("{delays}[0], {delays}[1], {delays}[2]")
-                    }
-                    None => format!("{rise}, {fall}, {turn_off}"),
-                }
-            }
-        };
+        let delays = self.inertial_delays(delay)?;
         self.line(format!("if ({}) {{", target.valid));
         let part = match (&target.selection, &target.net) {
             (Some(selection @ Selection::Part(left, right)), Some(net))

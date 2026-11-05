@@ -1070,6 +1070,12 @@ input grammar is ADV-011. Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | S07-D4 | **A nonblocking write to a member of a record element keeps its element position and reaches the element current at commit.** `nb[k].n <= 11;` evaluates `k` and the value when it executes; a whole-element write to `nb[k]`, or a later change of `k`, before the NBA region does not cancel or move it, so the new element takes member `n` (and an out-of-range position writes nothing). | 10.4.2 L13070-13072 | `S07-D4_record_element_member_nba` | LRM text. Some simulators reject nonblocking writes to variables of dynamic types; 10.4.2 bars only automatic variables, so llg serves them |
 | S07-D5 | **A whole queue, dynamic or associative array takes nonblocking writes.** `q <= r;`, `rec <= other;` with a queue member and `rec.q <= r;` copy the source when they execute and replace the array in the NBA region. Elements of such arrays stay illegal. | 6.21 L7007-7008; 10.4.2 L13048 | `S07-D5_whole_container_nba` | LRM text: the clauses bar automatic variables and members or elements of dynamic variables, not a whole array. Some simulators reject nonblocking writes to variables of dynamic types; llg follows the clause text. Was a code generation error |
 
+## Forms that differed with no report (FIN-001 Tier 1)
+
+| ID | Decision | Clause | Case | Basis |
+|---|---|---|---|---|
+| T1-D1 | **A delayed enable gate drives L or H for an unknown enable, and its delay follows the new output alone**: 0 falls, 1 rises, Z turns off, X, L and H take the smallest delay, also from L to H; the two halves publish together. | 28.6 L47216-47224 (the text gives no delay for L or H) | `T1-D1_enable_output_delay` | industry-standard behaviour |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

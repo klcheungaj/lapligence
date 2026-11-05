@@ -806,7 +806,7 @@ fn collect_effects(
     for statement in statements {
         let statement = statement.unlocated();
         match statement {
-            IrStmt::InertialAssign { .. } => {
+            IrStmt::InertialAssign { .. } | IrStmt::InertialEnable { .. } => {
                 effects.push(ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active))
             }
             // Advances the instance's model-owned state record in place.
@@ -1324,6 +1324,18 @@ fn collect_statement_expression_effects(
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_expression_effects(ir, rhs, effects, visited_calls);
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+        }
+        IrStmt::InertialEnable {
+            zero_lhs,
+            zero_rhs,
+            one_lhs,
+            one_rhs,
+            ..
+        } => {
+            collect_expression_effects(ir, zero_rhs, effects, visited_calls);
+            collect_expression_effects(ir, one_rhs, effects, visited_calls);
+            collect_lhs_expression_effects(ir, zero_lhs, effects, visited_calls);
+            collect_lhs_expression_effects(ir, one_lhs, effects, visited_calls);
         }
         IrStmt::Stochastic(operation) => match operation.as_ref() {
             IrStochasticStmt::Initialize {

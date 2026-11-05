@@ -648,6 +648,18 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);
         }
+        IrStmt::InertialEnable {
+            zero_lhs,
+            zero_rhs,
+            one_lhs,
+            one_rhs,
+            ..
+        } => {
+            collect_lhs_rw(zero_lhs, model, rw);
+            collect_expr_reads(zero_rhs, model, rw);
+            collect_lhs_rw(one_lhs, model, rw);
+            collect_expr_reads(one_rhs, model, rw);
+        }
         IrStmt::Stochastic(operation) => match operation.as_ref() {
             IrStochasticStmt::Initialize {
                 q_id,

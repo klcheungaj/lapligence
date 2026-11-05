@@ -561,6 +561,18 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
         }
+        IrStmt::InertialEnable {
+            zero_lhs,
+            zero_rhs,
+            one_lhs,
+            one_rhs,
+            ..
+        } => {
+            walk_lhs_mut(zero_lhs, f);
+            walk_expr_mut(zero_rhs, f);
+            walk_lhs_mut(one_lhs, f);
+            walk_expr_mut(one_rhs, f);
+        }
         IrStmt::Stochastic(operation) => match operation.as_mut() {
             IrStochasticStmt::Initialize {
                 q_id,

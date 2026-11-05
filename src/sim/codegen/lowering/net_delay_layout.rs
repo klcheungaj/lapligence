@@ -137,6 +137,15 @@ fn visit_statement(model: &IrModel, statement: &IrStmt, drives: &mut HashMap<usi
             lhs_bits(model, lhs, &mut site);
             record_site(model, site, drives);
         }
+        IrStmt::InertialEnable {
+            zero_lhs, one_lhs, ..
+        } => {
+            for lhs in [zero_lhs, one_lhs] {
+                let mut site = SiteBits::default();
+                lhs_bits(model, lhs, &mut site);
+                record_site(model, site, drives);
+            }
+        }
         IrStmt::Block(body)
         | IrStmt::While { body, .. }
         | IrStmt::Repeat { body, .. }

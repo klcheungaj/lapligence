@@ -16,6 +16,14 @@ fn run_decision(case: &str, expected: &str) {
 }
 
 #[test]
+fn t1_d1_enable_output_delay() {
+    run_decision(
+        "T1-D1_enable_output_delay",
+        include_str!("fixtures/sim/lrm_decisions/T1-D1_enable_output_delay.out"),
+    );
+}
+
+#[test]
 fn aa_d1_implication_one_result() {
     run_decision(
         "AA-D1_implication_one_result",

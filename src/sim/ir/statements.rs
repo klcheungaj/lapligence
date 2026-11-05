@@ -620,6 +620,17 @@ pub enum IrStmt {
         rhs: IrExpr,
         delay: IrInertialDelay,
     },
+    /// A delayed enable gate's output: its strength0-only and strength1-only
+    /// slots are one inertial driver, scheduled and published together with
+    /// the delay of the combined output (0 falls, 1 rises, Z turns off, X, L
+    /// and H take the smallest delay).
+    InertialEnable {
+        zero_lhs: IrLhs,
+        zero_rhs: IrExpr,
+        one_lhs: IrLhs,
+        one_rhs: IrExpr,
+        delay: IrInertialDelay,
+    },
     /// Blocking (`nba == false`) or nonblocking assignment, including reals.
     Assign {
         lhs: IrLhs,
@@ -1233,7 +1244,9 @@ impl IrStmt {
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
             } => ticks.expression().into_iter().collect(),
-            Self::InertialAssign { delay, .. } => delay.expressions(),
+            Self::InertialAssign { delay, .. } | Self::InertialEnable { delay, .. } => {
+                delay.expressions()
+            }
             Self::SetNetDelay { delay, .. } => delay.expressions(),
             _ => Vec::new(),
         }
@@ -1249,7 +1262,9 @@ impl IrStmt {
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
             } => ticks.expression_mut().into_iter().collect(),
-            Self::InertialAssign { delay, .. } => delay.expressions_mut(),
+            Self::InertialAssign { delay, .. } | Self::InertialEnable { delay, .. } => {
+                delay.expressions_mut()
+            }
             Self::SetNetDelay { delay, .. } => delay.expressions_mut(),
             _ => Vec::new(),
         }

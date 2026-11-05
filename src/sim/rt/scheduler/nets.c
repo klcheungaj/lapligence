@@ -1406,6 +1406,8 @@ static void inertial_merge(sv4_t* target, const sv4_t* value,
     llg_sv4_masked_copy(target, *value, *mask);
 }
 
+enum { LLG_INERTIAL_ENABLE_PAIR = 2 };
+
 enum {
     INERTIAL_NO_TRANSITION = 0,
     INERTIAL_RISE = 1,
@@ -1684,6 +1686,132 @@ void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
         inertial_update(handle, net->drivers[slot], net, slot, selected, NULL, rise,
                         fall, turn_off, 1, plan.storage_lsb);
     sv4_destroy(&selected);
+}
+
+// The part a driver's halves occupy in their net slots: `driver->current`
+// starts as what the two slots hold.
+static sv4_t enable_pair_slots(const llg_net_t* net, int zero_slot, int one_slot,
+                               uint32_t lsb, uint32_t width) {
+    int64_t high = (int64_t)lsb + width - 1;
+    sv4_t zero = sv4_part_select(*net->drivers[zero_slot], high, lsb);
+    sv4_t one = sv4_part_select(*net->drivers[one_slot], high, lsb);
+    sv4_t both = sv4_concat(one, zero);
+    sv4_destroy(&one);
+    sv4_destroy(&zero);
+    return both;
+}
+
+// The combined output of an enable pair's bit `bit` in the states of
+// inertial_transition: L and H are unknowns, Z has both slots absent.
+static int enable_pair_state(const sv4_t* halves, uint32_t bit, uint32_t width) {
+    int zero = inertial_bit(halves, bit);
+    int one = inertial_bit(halves, bit + width);
+    if (zero == 0 && one == 0) return 0;
+    if (zero == 1 && one == 1) return 1;
+    if (zero == 1 && one == 0) return 3;
+    return 2;
+}
+
+static uint64_t enable_pair_ticks(const sv4_t* old_halves, const sv4_t* new_halves,
+                                  uint32_t width, uint64_t rise, uint64_t fall,
+                                  uint64_t turn_off) {
+    int old_zero = 1;
+    int new_zero = 1;
+    int new_z = 1;
+    int new_state = 0;
+    for (uint32_t bit = 0; bit < width; bit++) {
+        new_state = enable_pair_state(new_halves, bit, width);
+        old_zero &= enable_pair_state(old_halves, bit, width) == 0;
+        new_zero &= new_state == 0;
+        new_z &= new_state == 3;
+    }
+    if (width == 1) {
+        if (new_state == 0) return fall;
+        if (new_state == 1) return rise;
+        if (new_state == 3) return turn_off;
+        uint64_t ticks = rise < fall ? rise : fall;
+        return turn_off < ticks ? turn_off : ticks;
+    }
+    if (new_z) return turn_off;
+    if (new_zero && !old_zero) return fall;
+    return rise;
+}
+
+void llg_inertial_enable_net(llg_inertial_t** handle, llg_net_t* net, int zero_slot,
+                             int one_slot, sv4_t zero, sv4_t one,
+                             sv4_select_plan_t plan, int reverse, uint64_t rise,
+                             uint64_t fall, uint64_t turn_off) {
+    if (zero_slot < 0 || zero_slot >= net->n_drivers || !net->drivers[zero_slot] ||
+        one_slot < 0 || one_slot >= net->n_drivers || !net->drivers[one_slot] ||
+        plan.storage_width != net->width) {
+        fprintf(stderr, "llg: fatal: invalid inertial net driver slot\n");
+        abort();
+    }
+    if (!region_can_mutate("inertial scheduling")) return;
+    // Scheduling runs no callback, so the slices need no value scope.
+    sv4_t zero_bits = sv4_select_plan_slice(zero, &plan, reverse);
+    sv4_t one_bits = sv4_select_plan_slice(one, &plan, reverse);
+    sv4_t halves = sv4_concat(one_bits, zero_bits);
+    uint32_t width = llg_sv4_width(zero_bits);
+    sv4_destroy(&one_bits);
+    sv4_destroy(&zero_bits);
+    llg_inertial_t* driver = *handle;
+    if (!driver) {
+        driver = llg_checked_calloc(1, sizeof(*driver), "inertial driver");
+        driver->handle = handle;
+        driver->target = net->drivers[zero_slot];
+        driver->net = net;
+        driver->slot = zero_slot;
+        driver->publication_bit = (uint32_t)one_slot;
+        driver->part = LLG_INERTIAL_ENABLE_PAIR;
+        driver->part_lsb = plan.storage_lsb;
+        driver->part_width = width;
+        driver->current = enable_pair_slots(net, zero_slot, one_slot, plan.storage_lsb, width);
+        driver->next_all = g.inertial_drivers;
+        g.inertial_drivers = driver;
+        *handle = driver;
+    }
+    driver->region = region_is_reactive(g.current_region) ? LLG_REGION_REACTIVE
+                                                          : LLG_REGION_ACTIVE;
+    if (driver->pending) {
+        // Unchanged values keep the original propagation time.
+        if (sv4_same(driver->value, halves)) goto cleanup;
+        inertial_unlink_pending(driver);
+    }
+    if (sv4_same(driver->current, halves)) goto cleanup;
+    driver->rise = rise;
+    driver->fall = fall;
+    driver->turn_off = turn_off;
+    uint64_t ticks = enable_pair_ticks(&driver->current, &halves, width, rise, fall, turn_off);
+    if (ticks > UINT64_MAX - g.now) {
+        fprintf(stderr, "llg: fatal: simulation time overflow while scheduling an inertial update\n");
+        abort();
+    }
+    sv4_move(&driver->value, &halves);
+    driver->time = g.now + ticks;
+    driver->pending = 1;
+    inertial_pending_insert(driver);
+cleanup:
+    sv4_destroy(&halves);
+}
+
+// Write both halves as one update of the net: the batch's exact deferral would
+// otherwise publish the first half before the second touches the same bits.
+static void enable_pair_commit(llg_inertial_t* driver, const sv4_t* halves) {
+    uint32_t width = driver->part_width;
+    llg_net_t* net = driver->net;
+    sv4_t zero = sv4_part_select(*halves, width - 1u, 0);
+    sv4_t one = sv4_part_select(*halves, 2u * width - 1u, width);
+    int whole = width == net->width;
+    if (whole) llg_net_write(net, driver->slot, zero);
+    else llg_net_write_slice(net, driver->slot, zero, driver->part_lsb);
+    int exact = net_defer_exact;
+    net_defer_exact = 0;
+    if (whole) llg_net_write(net, (int)driver->publication_bit, one);
+    else llg_net_write_slice(net, (int)driver->publication_bit, one, driver->part_lsb);
+    net_defer_exact = exact;
+    sv4_destroy(&one);
+    sv4_destroy(&zero);
 }
 
 // The publication record of bits [lsb, lsb + width) of `net`, created on
@@ -2371,6 +2499,13 @@ static void commit_inertial(llg_region_t region) {
                             value))
             llg_net_alias_refresh_all(publication_net);
         llg_net_strength_publish(publication_net);
+        sv4_destroy(&mask);
+        sv4_destroy(&value);
+        return;
+    }
+    if (driver->part == LLG_INERTIAL_ENABLE_PAIR) {
+        sv4_copy(&driver->current, &value);
+        enable_pair_commit(driver, &value);
         sv4_destroy(&mask);
         sv4_destroy(&value);
         return;

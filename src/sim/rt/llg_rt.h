@@ -885,6 +885,15 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
 void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
                            sv4_t value, sv4_select_plan_t plan, int reverse,
                            uint64_t rise, uint64_t fall, uint64_t turn_off);
+// The output of a delayed enable gate: `zero` for strength0-only slot
+// `zero_slot` and `one` for strength1-only slot `one_slot`, over the bits
+// `plan` selects. One driver schedules both, with the delay of the combined
+// output: 0 falls, 1 rises, Z turns off, and X, L and H take the smallest
+// delay, whatever the old output was. The net publishes them as one update.
+void llg_inertial_enable_net(llg_inertial_t** handle, llg_net_t* net, int zero_slot,
+                             int one_slot, sv4_t zero, sv4_t one,
+                             sv4_select_plan_t plan, int reverse, uint64_t rise,
+                             uint64_t fall, uint64_t turn_off);
 // Drop the pending update of the driver behind `handle`, and move a
 // pending update due later to the current time (no driver or none pending:
 // no effect). A vpi_put_value to a delayed sequential UDP (IEEE 1800-2009
