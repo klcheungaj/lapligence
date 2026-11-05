@@ -1555,38 +1555,6 @@ Pass a native record's leaf markers with the record value.
 `tests/fixtures/sim/feature_completion/sim_009/neg_record_ref_wait_actual.sv`,
 `neg_string_event_control.sv`.
 
-## Event formals without a typed handle binding
-
-**Status:** narrowed (FIN-001 G3, F06-06). Output and inout event formals bound
-to class event properties execute in statement calls (copied in at the call and
-back at return, `sim_014/class_event_formals`); a `ref` event formal binds a
-class event property through its object's slot
-(`sim_014/class_event_ref_formal`); output, inout and `ref` event formals of
-functions called in integral expressions bind event variables (decision S13-D3).
-
-### Symptom
-
-These legal forms reject with explicit diagnostics: a class event property as
-the actual of an output or inout event formal of a function called in an
-expression (`x = f(c.ev)`), and any non-input event formal of a function
-returning a string or a handle in an expression.
-
-### Cause
-
-The copy-back of a class event property is a statement after the call, which
-a value call has no place for; the string and handle value call paths pass no
-event operands.
-
-### Intended direction
-
-Hoist such calls into a prelude as other copy-out targets do, and share the
-event operand with the string and handle value call paths. Estimate: half a
-day each.
-
-### Reproduce
-
-`tests/fixtures/sim/feature_completion/sim_014/neg_class_event_output_value_call.sv`.
-
 ## Rebinding a class event property in a fork branch publishes at the return
 
 ### Symptom

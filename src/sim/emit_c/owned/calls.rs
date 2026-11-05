@@ -363,6 +363,7 @@ impl Frame<'_, '_> {
         // change marker after the callee returns (SIM-007).
         let mut handle_publishes = Vec::new();
         let mut property_publishes = Vec::new();
+        let mut event_copyouts = Vec::new();
         let mut container_copyouts = Vec::new();
         let mut string_copyouts = Vec::new();
         let mut real_copyouts = Vec::new();
@@ -692,6 +693,18 @@ impl Frame<'_, '_> {
                         parameters.push(self.event_marker(event));
                     }
                 }
+                IrCallArg::EventSlot(address) if !formal.is_ref() => {
+                    // A value call has no statement after it: the operand
+                    // holds the copy the callee writes, stored back like a
+                    // statement call's (`event_copyouts`).
+                    let slot = self.native_address(address, NativeKind::Chandle)?.address;
+                    let copy = self.scalar(
+                        "llg_event_t",
+                        format!("(llg_event_t){{ *(void**)({slot}) }}"),
+                    );
+                    event_copyouts.push((address.clone(), copy.clone()));
+                    parameters.push(format!("&{copy}"));
+                }
                 IrCallArg::EventSlot(address) => {
                     let slot = self.native_address(address, NativeKind::Chandle)?.address;
                     // `llg_event_assign` cannot reach the object's marker.
@@ -975,6 +988,12 @@ impl Frame<'_, '_> {
         }
         for publish in property_publishes {
             self.finish_handle_store_publish(Some(publish));
+        }
+        for (address, copy) in event_copyouts {
+            let slot = self.native_address(&address, NativeKind::Chandle)?.address;
+            let publish = self.handle_store_publish(&address, &slot)?;
+            self.line(format!("*(void**)({slot}) = {copy}.object;"));
+            self.finish_handle_store_publish(publish);
         }
         for (target, storage) in string_copyouts {
             self.line(format!(

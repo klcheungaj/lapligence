@@ -167,37 +167,14 @@ impl<'a> Codegen<'a> {
         let mut record_out_args = Vec::new();
         let mut record_in_args = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if bound[idx].is_event && (*is_out || self.is_ref_formal(*io)) {
-                let target = self.event_target_of(bound[idx].expr).ok_or_else(|| {
-                    format!(
-                        "event actual for formal `{}` in `{scope_path}` is not a named event handle",
-                        self.node(*io).name
-                    )
-                })?;
-                if target.access.is_some() && *is_out {
-                    return Err(format!(
-                        "class event property actual of output or inout event formal `{}` of function `{name}` called in an expression in `{scope_path}` has no copy-back path; call the function as a statement",
-                        self.node(*io).name
-                    ));
-                }
-                out_args.push(self.event_handle_argument(scope_path, *io, &target)?);
-                continue;
-            }
             if bound[idx].is_event {
-                // An input event formal receives the actual's handle, which
-                // shares its synchronization object (SV 15.5.5).
-                let event = if self.is_null_event_expression(bound[idx].expr) {
-                    IrEventRef::Null
+                let (address, argument) =
+                    self.event_call_argument(scope_path, &name, *io, *is_out, bound[idx].expr)?;
+                if address {
+                    out_args.push(argument);
                 } else {
-                    let target = self.event_target_of(bound[idx].expr).ok_or_else(|| {
-                        format!(
-                            "event actual for formal `{}` of `{name}` in `{scope_path}` is not an event handle",
-                            self.node(*io).name
-                        )
-                    })?;
-                    self.event_ref_of(&target, scope_path)?
-                };
-                in_args.push((idx, IrCallArg::EventVal(event)));
+                    in_args.push((idx, argument));
+                }
                 continue;
             }
             if self.is_subroutine_container(*io) {

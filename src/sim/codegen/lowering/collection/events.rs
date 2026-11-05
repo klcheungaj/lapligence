@@ -241,7 +241,8 @@ impl<'a> Codegen<'a> {
 
     /// The call operand binding an output, inout or `ref` event formal to
     /// the caller's handle storage. A class property's handle lives in its
-    /// object's slot; callers copy one in and back for an output formal.
+    /// object's slot, which a `ref` formal addresses and an output or inout
+    /// formal copies in and back (`IrCallArg::EventSlot`).
     pub(in super::super) fn event_handle_argument(
         &mut self,
         path: &str,
@@ -250,7 +251,7 @@ impl<'a> Codegen<'a> {
     ) -> Result<IrCallArg, String> {
         if let Some(access) = target.access {
             let slot = self.class_event_slot(path, access, target.declaration)?;
-            self.class_event_ref_bound = true;
+            self.class_event_ref_bound |= self.is_ref_formal(formal);
             return Ok(IrCallArg::EventSlot(format!("&{slot}")));
         }
         let event = self.event_ref_of(target, path)?;
@@ -261,6 +262,42 @@ impl<'a> Codegen<'a> {
             ));
         }
         Ok(IrCallArg::EventAddr(event))
+    }
+
+    /// The operand of event formal `formal` in a call that yields a value,
+    /// and whether it passes by address with the outputs. An input receives
+    /// the actual's handle, which shares its synchronization object (SV
+    /// 15.5.5). An output or inout bound to a class event property works on
+    /// a copy of the handle that the call stores back at its return.
+    pub(in super::super) fn event_call_argument(
+        &mut self,
+        path: &str,
+        function: &str,
+        formal: NodeId,
+        is_out: bool,
+        actual: NodeId,
+    ) -> Result<(bool, IrCallArg), String> {
+        if is_out || self.is_ref_formal(formal) {
+            let target = self.event_target_of(actual).ok_or_else(|| {
+                format!(
+                    "event actual for formal `{}` in `{path}` is not a named event handle",
+                    self.node(formal).name
+                )
+            })?;
+            return Ok((true, self.event_handle_argument(path, formal, &target)?));
+        }
+        let event = if self.is_null_event_expression(actual) {
+            IrEventRef::Null
+        } else {
+            let target = self.event_target_of(actual).ok_or_else(|| {
+                format!(
+                    "event actual for formal `{}` of `{function}` in `{path}` is not an event handle",
+                    self.node(formal).name
+                )
+            })?;
+            self.event_ref_of(&target, path)?
+        };
+        Ok((false, IrCallArg::EventVal(event)))
     }
 
     /// Whether `node` declares resizable container storage of events (at any

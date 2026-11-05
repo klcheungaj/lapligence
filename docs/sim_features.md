@@ -1086,12 +1086,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Output and inout event formals bound to class event properties copy the
   property's handle in at the call and back at return
   (`class_event_formals`), and a `ref` event formal rebinds the property's
-  slot at once (`class_event_ref_formal`). Function calls in integral
-  expressions take output, inout and `ref` event formals (decision S13-D3).
+  slot at once (`class_event_ref_formal`). Function calls in expressions take
+  output, inout and `ref` event formals for any result type
+  (`event_formals_value_calls`, decision S13-D3).
   Event handles other than declared named events in process-evaluated lists
-  reject; a class event property as an output of a value call and event
-  formals of string or handle value calls reject explicitly
-  ([known issue](known_issues.md#event-formals-without-a-typed-handle-binding)).
+  reject.
   V §9.7.3; SV §15.5 **[1995/SV-2005]**.
 - 🟨 **Cycle delays** — Procedural `##N` repeats the resolved default clocking
   event, including irregular periods; `##0` continues in a step where the

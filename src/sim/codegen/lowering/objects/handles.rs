@@ -608,6 +608,17 @@ impl Codegen<'_> {
             let mut in_args = Vec::new();
             let mut arg_irs = vec![None; meta.formals.len()];
             for (idx, (formal, is_out)) in meta.formals.iter().enumerate() {
+                if bound[idx].is_event {
+                    let name = self.node(ft).name.clone();
+                    let (address, argument) =
+                        self.event_call_argument(path, &name, *formal, *is_out, bound[idx].expr)?;
+                    if address {
+                        out_args.push(argument);
+                    } else {
+                        in_args.push(argument);
+                    }
+                    continue;
+                }
                 if self.is_subroutine_container(*formal) {
                     let argument =
                         self.container_call_argument(path, *formal, bound[idx].expr, None, None)?;

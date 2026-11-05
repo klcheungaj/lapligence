@@ -598,8 +598,8 @@ impl Validator<'_> {
                     self.validate_event_ref(event, formals, &arg_path)?;
                 }
                 IrCallArg::EventSlot(address) => {
-                    if !formal.event || !formal.is_ref() || address.is_empty() {
-                        return self.fail(arg_path, "event slot requires a ref event formal");
+                    if !formal.event || !formal.is_address() || address.is_empty() {
+                        return self.fail(arg_path, "event slot requires an address event formal");
                     }
                 }
                 IrCallArg::ChandleAddr(addr) => {

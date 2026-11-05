@@ -2385,6 +2385,10 @@ impl IrChandleExpr {
                                 ));
                             }
                         }
+                        (IrCallArg::EventVal(_), formal)
+                            if formal.event && !formal.is_address() => {}
+                        (IrCallArg::EventAddr(_) | IrCallArg::EventSlot(_), formal)
+                            if formal.event && formal.is_address() => {}
                         (IrCallArg::ChandleAddr(addr), formal)
                             if formal.chandle && formal.is_out && !formal.is_ref() =>
                         {
