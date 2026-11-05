@@ -34,7 +34,7 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
 - `strobe_container_actuals`: queue, dynamic and associative actuals of input
   formals, element records and strings, nested calls and an assignment pattern
   all read at the end of the slot (21.2.2). The two pattern lines are derived by
-  hand: the reference run rejects a pattern actual there and agrees on the rest.
+  hand from 21.2.2 because other simulators reject a pattern actual there.
 - `neg_strobe_container_conversion`: a conversion between container kinds has
   no evaluator form, so it rejects at the call and names the formal.
 - `scope_time`: `$time` alone never triggers a report (L36517-36518); two
