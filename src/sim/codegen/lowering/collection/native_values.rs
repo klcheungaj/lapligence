@@ -22,6 +22,9 @@ mod member_select;
 mod messages;
 mod nba;
 mod record_refs;
+pub(in crate::sim::codegen::lowering) use member_select::{
+    member_select_statement, RecordRefPin, RecordRefSelect,
+};
 pub(in crate::sim::codegen::lowering) use record_refs::RecordRefDispatch;
 mod tagged;
 pub(in crate::sim::codegen) use tagged::{
@@ -2121,6 +2124,11 @@ impl Codegen<'_> {
     ) -> Result<IrCallArg, String> {
         if self.record_ref_binding(formal, actual).is_some() {
             return Ok(IrCallArg::NativeRefBound);
+        }
+        if let Some(RecordRefPin::Default(value)) =
+            self.record_ref_pins.get(&self.p30_unwrap_cast(actual))
+        {
+            return Ok(IrCallArg::NativeValue(*value));
         }
         if layout.containers.is_empty() {
             let const_ref = matches!(

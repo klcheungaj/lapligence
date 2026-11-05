@@ -95,6 +95,45 @@ fn timed_record_refs_share_the_record_with_other_processes() {
 }
 
 #[test]
+fn run_time_record_elements_bind_ref_formals() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_ref_element_select.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_ref_element_select", expected, &[], &[]);
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_element_select_fatal.out"
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "record_ref_element_select_fatal",
+        &[],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+            assert!(
+                stderr.contains("selects no element of a task that waits on the formal"),
+                "{label}: {stderr}"
+            );
+        },
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_record_ref_element_select_limit",
+        "run-time selection of a whole record among 257 elements in `tb` is not supported; at most 256 are",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_record_ref_element_select_product",
+        "run-time selection among 400 element combinations of record `ref` actuals in `tb` is not supported; at most 256 are",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_record_ref_element_select_value",
+        "ref actual of native record formal `r` in `tb` must be a whole subroutine record",
+    );
+}
+
+#[test]
 fn unbindable_record_ref_actuals_are_rejected_explicitly() {
     const UNBOUND: &str = "ref actual of native record formal `r` in `tb` must be a whole subroutine record, or a module, static or procedural-block record or a constant member/index selection of one, of the same type (SIM-008)";
     sim_cli::reject_case(SUITE, "neg_record_ref_container_member", UNBOUND);

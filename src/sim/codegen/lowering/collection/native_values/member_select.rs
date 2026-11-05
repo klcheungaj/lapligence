@@ -26,7 +26,8 @@ pub(in crate::sim::codegen) const NATIVE_MEMBER_SELECT_LIMIT: usize = 4096;
 const NATIVE_MEMBER_SELECT_LINEAR: usize = 8;
 
 /// Largest member array selected whole by a run-time index: every branch
-/// copies one whole record.
+/// copies one whole record, or calls one specialization for a record `ref`
+/// actual, where it also bounds the combinations of several such actuals.
 const NATIVE_RECORD_SELECT_LIMIT: usize = 256;
 
 /// The elements of a member array of records selected whole by a run-time
@@ -35,6 +36,53 @@ pub(in crate::sim::codegen) struct NativeRecordSelect {
     elements: Vec<(i32, NativeEndpoint)>,
     index: NodeId,
     hoist: bool,
+}
+
+/// How a run-time selected record `ref` actual binds while a call is lowered
+/// once per element (`EmitCtx::lower_record_ref_select`).
+#[derive(Clone)]
+pub(in crate::sim::codegen) enum RecordRefPin {
+    /// The element a branch of the call binds: the prefix below a root.
+    Element {
+        root: NodeId,
+        prefix: Vec<AggregatePathPart>,
+    },
+    /// A private lexical value: an index that selects no element reads the
+    /// default and drops writes (SV 7.4.6).
+    Default(usize),
+}
+
+/// A record `ref` actual whose element the call's index selects at run time.
+pub(in crate::sim::codegen) struct RecordRefSelect {
+    /// The actual, as `record_ref_pins` keys it.
+    pub(in crate::sim::codegen) source: NodeId,
+    pub(in crate::sim::codegen) formal: NodeId,
+    /// One pin per element, with its declared index.
+    pub(in crate::sim::codegen) pins: Vec<(i32, RecordRefPin)>,
+    index: NodeId,
+    hoist: bool,
+}
+
+/// A run-time selection of a whole record: its root, the path to the array,
+/// the path below the selected element and the array's bounds.
+struct NativeRecordShape {
+    value_root: Option<usize>,
+    module_root: Option<NodeId>,
+    descriptor: TypeDescriptor,
+    prefix: Vec<AggregatePathPart>,
+    trailing: Vec<AggregatePathPart>,
+    bounds: (i32, i32),
+    index: NodeId,
+}
+
+impl NativeRecordShape {
+    /// The path of the element at `declared`.
+    fn member(&self, declared: i32) -> Vec<AggregatePathPart> {
+        let mut member = self.prefix.clone();
+        member.push(AggregatePathPart::Index(declared));
+        member.extend(self.trailing.iter().cloned());
+        member
+    }
 }
 
 /// The elements of a member array selected by a run-time index.
@@ -257,11 +305,11 @@ impl Codegen<'_> {
 
     /// `r.e[k]` or `r.e[k].inner` with a non-constant `k`, where the
     /// selection is a whole record or array rather than one leaf.
-    pub(in crate::sim::codegen) fn native_record_select(
+    fn native_record_select_shape(
         &self,
         path: &str,
         node: NodeId,
-    ) -> Result<Option<NativeRecordSelect>, String> {
+    ) -> Result<Option<NativeRecordShape>, String> {
         let Some((select, base, index, trailing)) = self.member_select_parts(node)? else {
             return Ok(None);
         };
@@ -310,13 +358,16 @@ impl Codegen<'_> {
         let [(left, right)] = dimensions[..] else {
             return Ok(None);
         };
-        let member = |declared: i32| {
-            let mut member = prefix.clone();
-            member.push(AggregatePathPart::Index(declared));
-            member.extend(trailing.iter().cloned());
-            member
+        let shape = NativeRecordShape {
+            value_root: value_root.map(|(value, _)| value),
+            module_root: module_root.map(|(root, _)| root),
+            descriptor,
+            prefix,
+            trailing,
+            bounds: (left, right),
+            index,
         };
-        let selected = Self::descriptor_at_path(&descriptor, &member(left));
+        let selected = Self::descriptor_at_path(&shape.descriptor, &shape.member(left));
         if !selected.is_some_and(|selected| {
             matches!(
                 selected.shape,
@@ -331,26 +382,39 @@ impl Codegen<'_> {
                 "run-time selection of a whole record among {count} elements in `{path}` is not supported; at most {NATIVE_RECORD_SELECT_LIMIT} are"
             ));
         }
-        let mut elements = Vec::with_capacity(count);
+        Ok(Some(shape))
+    }
+
+    /// The elements of a run-time selection of a whole record or array.
+    pub(in crate::sim::codegen) fn native_record_select(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<NativeRecordSelect>, String> {
+        let Some(shape) = self.native_record_select_shape(path, node)? else {
+            return Ok(None);
+        };
+        let (left, right) = shape.bounds;
+        let mut elements = Vec::with_capacity(left.abs_diff(right) as usize + 1);
         for declared in left.min(right)..=left.max(right) {
-            let endpoint = if let Some((value, _)) = &value_root {
+            let endpoint = if let Some(value) = shape.value_root {
                 NativeEndpoint::Value {
-                    value: *value,
-                    prefix: member(declared),
+                    value,
+                    prefix: shape.member(declared),
                 }
             } else {
-                let Some((root, _)) = &module_root else {
+                let Some(root) = shape.module_root else {
                     return Ok(None);
                 };
-                let Some(storage) = self.unpacked_aggregates.get(root) else {
+                let Some(storage) = self.unpacked_aggregates.get(&root) else {
                     return Ok(None);
                 };
-                let prefix = member(declared);
-                let Some(descriptor) = Self::descriptor_at_path(&descriptor, &prefix) else {
+                let prefix = shape.member(declared);
+                let Some(descriptor) = Self::descriptor_at_path(&shape.descriptor, &prefix) else {
                     return Ok(None);
                 };
                 NativeEndpoint::Module(Box::new(AggregateSelection {
-                    root: *root,
+                    root,
                     prefix,
                     descriptor,
                     storage: storage.clone(),
@@ -358,12 +422,82 @@ impl Codegen<'_> {
             };
             elements.push((declared, endpoint));
         }
-        let hoist = !self.side_effect_free(index);
+        let hoist = !self.side_effect_free(shape.index);
         Ok(Some(NativeRecordSelect {
             elements,
-            index,
+            index: shape.index,
             hoist,
         }))
+    }
+
+    /// The first run-time selected record element among a call's actuals
+    /// that binds no native record `ref` formal yet, as (actual, formal,
+    /// elements). Only module-like records qualify: a native value's element
+    /// has a place of its own.
+    pub(in crate::sim::codegen) fn record_ref_select(
+        &self,
+        path: &str,
+        formals: &[(NodeId, bool)],
+        bound: &[BoundArg],
+    ) -> Result<Option<RecordRefSelect>, String> {
+        for ((formal, _), argument) in formals.iter().zip(bound) {
+            if !self.is_ref_formal(*formal)
+                || !self.native_layouts.contains_key(formal)
+                || self.record_ref_binding(*formal, argument.expr).is_some()
+            {
+                continue;
+            }
+            let source = self.p30_unwrap_cast(argument.expr);
+            if self.record_ref_pins.contains_key(&source) {
+                continue;
+            }
+            let Some(shape) = self.native_record_select_shape(path, source)? else {
+                continue;
+            };
+            let Some(root) = shape.module_root else {
+                continue;
+            };
+            if self
+                .unpacked_aggregates
+                .get(&root)
+                .is_none_or(|storage| storage.columns)
+            {
+                continue;
+            }
+            let (left, right) = shape.bounds;
+            // Pins name their element, not the root's whole leaf table: a
+            // selection holds up to the record limit of them.
+            let pins = (left.min(right)..=left.max(right))
+                .map(|declared| {
+                    let prefix = shape.member(declared);
+                    (declared, RecordRefPin::Element { root, prefix })
+                })
+                .collect::<Vec<_>>();
+            let span = self.record_ref_pin_span.saturating_mul(pins.len());
+            if span > NATIVE_RECORD_SELECT_LIMIT {
+                return Err(format!(
+                    "run-time selection among {span} element combinations of record `ref` actuals in `{path}` is not supported; at most {NATIVE_RECORD_SELECT_LIMIT} are"
+                ));
+            }
+            return Ok(Some(RecordRefSelect {
+                source,
+                formal: *formal,
+                pins,
+                index: shape.index,
+                hoist: !self.side_effect_free(shape.index),
+            }));
+        }
+        Ok(None)
+    }
+
+    /// The index of `select`, evaluated once.
+    pub(in crate::sim::codegen) fn record_ref_select_index(
+        &mut self,
+        path: &str,
+        select: &RecordRefSelect,
+        prelude: &mut Vec<IrStmt>,
+    ) -> Result<(IrExpr, u32), String> {
+        self.member_select_index(path, select.index, select.hoist, prelude)
     }
 
     /// Copy the selected element into `target`; an unmatched index copies
@@ -393,7 +527,7 @@ impl Codegen<'_> {
             let copy = self.native_transfer(path, &value, element, false)?;
             branches.push((*declared, Some(copy)));
         }
-        statements.extend(member_select_statement(branches, &index, width));
+        statements.extend(member_select_statement(branches, &index, width, None));
         statements.push(self.native_transfer(path, target, &value, nba)?);
         Ok(IrStmt::Block(statements))
     }
@@ -425,7 +559,7 @@ impl Codegen<'_> {
             let copy = self.native_transfer(path, element, &value, nba)?;
             branches.push((*declared, Some(copy)));
         }
-        statements.extend(member_select_statement(branches, &index, width));
+        statements.extend(member_select_statement(branches, &index, width, None));
         Ok(IrStmt::Block(statements))
     }
 
@@ -590,7 +724,7 @@ impl Codegen<'_> {
             let write = self.endpoint_leaf_write(path, leaf, value.clone(), nba)?;
             branches.push((*declared, Some(write)));
         }
-        statements.extend(member_select_statement(branches, &index, width));
+        statements.extend(member_select_statement(branches, &index, width, None));
         Ok(IrStmt::Block(statements))
     }
 }
@@ -633,21 +767,28 @@ fn member_select_tree<V: Clone>(
     join(known, then, els)
 }
 
-/// The statement that runs the branch selected by `index`, if any.
-fn member_select_statement(
+/// The statement that runs the branch selected by `index`, or `otherwise`.
+pub(in crate::sim::codegen) fn member_select_statement(
     mut branches: Vec<(i32, Option<IrStmt>)>,
     index: &IrExpr,
     width: u32,
+    otherwise: Option<IrStmt>,
 ) -> Option<IrStmt> {
     branches.sort_by_key(|(declared, _)| *declared);
-    member_select_tree(&branches, index, width, &None, &mut |test, then, els| {
-        Ok(Some(IrStmt::If {
-            cond: test,
-            then_: then.into_iter().collect(),
-            els: els.map(|statement| vec![statement]),
-            check: IrUniquePriorityCheck::None,
-        }))
-    })
+    member_select_tree(
+        &branches,
+        index,
+        width,
+        &otherwise,
+        &mut |test, then, els| {
+            Ok(Some(IrStmt::If {
+                cond: test,
+                then_: then.into_iter().collect(),
+                els: els.map(|statement| vec![statement]),
+                check: IrUniquePriorityCheck::None,
+            }))
+        },
+    )
     .ok()
     .flatten()
 }

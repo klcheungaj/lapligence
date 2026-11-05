@@ -1,6 +1,9 @@
 //! Calls.
 
-use super::super::collection::{CallWriteback, RecordRefDispatch, TargetSelectors};
+use super::super::collection::{
+    member_select_statement, CallWriteback, RecordRefDispatch, RecordRefPin, RecordRefSelect,
+    TargetSelectors,
+};
 use super::*;
 
 impl EmitCtx<'_, '_> {
@@ -103,6 +106,15 @@ impl EmitCtx<'_, '_> {
         let dispatch = self.cg.record_ref_dispatch(h, virtual_call_info.is_some());
         self.cg
             .reject_interface_record_refs(&self.path, ft, &records, dispatch)?;
+        if let Some(select) = self.cg.record_ref_select(&self.path, &formals, &bound)? {
+            let waits = match dispatch {
+                RecordRefDispatch::Virtual => {
+                    self.cg.any_override_waits_on_record_ref(ft, callee_inst)
+                }
+                _ => self.cg.waits_on_record_ref(ft, callee_inst),
+            };
+            return self.lower_record_ref_select(h, name, is_task, callee, select, waits);
+        }
         let mut specialized = None;
         if !shape.static_refs.is_empty()
             && (records.is_empty() || dispatch == RecordRefDispatch::Direct)
@@ -193,6 +205,73 @@ impl EmitCtx<'_, '_> {
         } else {
             Ok(call)
         }
+    }
+
+    /// Lower call `h` once per element of a run-time selected record `ref`
+    /// actual, under a decision tree over the index taken at the call. An
+    /// index selecting no element reaches the callee with a private default
+    /// value (SV 7.4.6). A task waiting on the formal has no body without a
+    /// binding, so that index stops the run there instead.
+    fn lower_record_ref_select(
+        &mut self,
+        h: NodeId,
+        name: &str,
+        is_task: bool,
+        callee: Option<NodeId>,
+        select: RecordRefSelect,
+        waits: bool,
+    ) -> Result<IrStmt, String> {
+        let mut statements = Vec::new();
+        let (index, width) =
+            self.cg
+                .record_ref_select_index(&self.path, &select, &mut statements)?;
+        let span = self.cg.record_ref_pin_span;
+        self.cg.record_ref_pin_span = span * select.pins.len();
+        let source = select.source;
+        let pinned = |ctx: &mut Self, pin: RecordRefPin| {
+            ctx.cg.record_ref_pins.insert(source, pin);
+            let call = ctx.lower_task_call(h, name, is_task, callee);
+            ctx.cg.record_ref_pins.remove(&source);
+            call
+        };
+        let mut branches = Vec::with_capacity(select.pins.len());
+        let mut result = Ok(());
+        for (declared, pin) in select.pins {
+            match pinned(self, pin) {
+                Ok(call) => branches.push((declared, Some(call))),
+                Err(error) => {
+                    result = Err(error);
+                    break;
+                }
+            }
+        }
+        let otherwise = result.and_then(|()| {
+            if waits {
+                return Ok(IrStmt::Severity {
+                    level: crate::sim::ir::IrSeverityLevel::Fatal,
+                    fmt: "\"index of a record `ref` actual selects no element of a task that waits on the formal\"".to_owned(),
+                    args: Vec::new(),
+                    scope: self.path.clone(),
+                    location: self.cg.source_location(h),
+                    fatal_finish_number: Some(0),
+                    runtime_failure: true,
+                    skip_finals: false,
+                });
+            }
+            let value = self.cg.native_temporary(select.formal)?;
+            Ok(IrStmt::Block(vec![
+                IrStmt::NativeValueDeclare(value),
+                pinned(self, RecordRefPin::Default(value))?,
+            ]))
+        });
+        self.cg.record_ref_pin_span = span;
+        statements.extend(member_select_statement(
+            branches,
+            &index,
+            width,
+            Some(otherwise?),
+        ));
+        Ok(IrStmt::Block(statements))
     }
 
     /// The whole-signal actuals of the `ref` formals `needed` at one call, or

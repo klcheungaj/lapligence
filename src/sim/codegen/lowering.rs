@@ -1750,6 +1750,10 @@ struct Codegen<'a> {
     /// Native record `ref` formals of the specialization being lowered, each
     /// bound to declaration-owned record storage (SIM-008).
     record_ref_aliases: HashMap<NodeId, RecordRefBinding>,
+    /// Actuals whose run-time selection the call being lowered fixes to one
+    /// element, and the branches the selections so far multiply to.
+    record_ref_pins: HashMap<NodeId, collection::RecordRefPin>,
+    record_ref_pin_span: usize,
     /// Shared access names of native leaves, by value and item path.
     native_leaf_symbols: HashMap<(usize, Vec<u32>), String>,
     /// Distinguishes the capture locals of successive native transfers.
@@ -2338,6 +2342,8 @@ impl<'a> Codegen<'a> {
             native_value_layouts: HashMap::new(),
             native_roots: HashMap::new(),
             record_ref_aliases: HashMap::new(),
+            record_ref_pins: HashMap::new(),
+            record_ref_pin_span: 1,
             native_leaf_symbols: HashMap::new(),
             native_copy_sequence: 0,
             element_nba_target: None,

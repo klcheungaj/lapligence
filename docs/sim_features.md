@@ -1774,8 +1774,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   elements and their members bind through a retained reference, and every store
   through the formal reaches the element's readers at that store, whatever its
   form ([record_ref_write_paths](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
-  Records with container members as elements, run-time record elements of
-  module records, virtual-interface method formals and reference-formal NBAs
+  A run-time record element of a module record binds through one
+  specialization per element under a decision tree in statement calls
+  ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  Records with container members as elements, such elements in calls inside
+  expressions, virtual-interface method formals and reference-formal NBAs
   remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;

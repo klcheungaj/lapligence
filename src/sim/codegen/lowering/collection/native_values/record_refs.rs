@@ -17,6 +17,13 @@
 //! such elements have a value but no stable address: those actuals lower to an
 //! [`IrElementRef`] walking from the root through member and index steps.
 //!
+//! A record element selected at run time (`t(m.e[i])`) has no single binding:
+//! the call lowers once per element, under a decision tree over the index
+//! taken at the call, each branch reaching that element's specialization
+//! (`EmitCtx::lower_record_ref_select`). Specializations are shared, so code
+//! grows with the elements and calls of each site, bounded by
+//! `NATIVE_RECORD_SELECT_LIMIT`.
+//!
 //! A class method keeps its receiver in a specialization. A virtual call
 //! specializes the whole override family under a fresh virtual slot, so the
 //! ordinary dispatchers serve it and nothing changes for unbound calls.
@@ -316,26 +323,27 @@ impl Codegen<'_> {
         }
         let layout = self.native_layouts.get(&formal)?;
         let source = self.p30_unwrap_cast(actual);
-        if !matches!(self.native_path_of(source), Ok(None)) {
-            return None;
-        }
-        let selection = self.resolve_unpacked_aggregate(source)?;
-        if selection.storage.columns || !same_record_type(&layout.descriptor, &selection.descriptor)
-        {
-            return None;
-        }
+        let (root, prefix) = match self.record_ref_pins.get(&source) {
+            Some(RecordRefPin::Element { root, prefix }) => (*root, prefix.clone()),
+            Some(RecordRefPin::Default(_)) => return None,
+            None if matches!(self.native_path_of(source), Ok(None)) => {
+                let selection = self.resolve_unpacked_aggregate(source)?;
+                if selection.storage.columns
+                    || !same_record_type(&layout.descriptor, &selection.descriptor)
+                {
+                    return None;
+                }
+                (selection.root, selection.prefix)
+            }
+            None => return None,
+        };
         // A formal that is itself bound forwards the record it names.
-        let (root, prefix) = match self.record_ref_aliases.get(&selection.root) {
+        let (root, prefix) = match self.record_ref_aliases.get(&root) {
             Some(alias) => (
                 alias.root,
-                alias
-                    .prefix
-                    .iter()
-                    .cloned()
-                    .chain(selection.prefix)
-                    .collect(),
+                alias.prefix.iter().cloned().chain(prefix).collect(),
             ),
-            None => (selection.root, selection.prefix),
+            None => (root, prefix),
         };
         Some(RecordRefBinding {
             formal,

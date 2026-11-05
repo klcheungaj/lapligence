@@ -567,8 +567,11 @@ a run-time index into a native member array of more than 4,096 elements
 (`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a
 container element whose record has container members, a real member of a
 container element or subroutine record, and a run-time-indexed record element
-of a module, static or block record (`tr(o.e[i])`; its scalar members and
-members bind), and as the actual of a native record `ref` formal of a
+of a module, static or block record bound by a call in an expression, below a
+constant index (`o.m[1].a[k]`), or among more than 256 elements or combinations
+(a statement call lowers once per element, `tr(o.e[i])`; a task that waits on
+the formal stops the run if the index selects no element), and as the actual of
+a native record `ref` formal of a
 virtual-interface method, any module, static or block record (whole subroutine records, array elements and module, static
 and block records or constant selections of them bind, class methods
 included); an event control on a member
