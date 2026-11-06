@@ -632,7 +632,7 @@ roots for forked automatic block records, strings and handles.
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_008/neg_record_ref_element_select_value.sv`,
-`sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
+`sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
 `sim_011/neg_record_container_property.sv`, `sim_007/bad_multidim_row_*.sv` and `sim_007/bad_tagged_*.sv`.
@@ -1858,19 +1858,31 @@ state but not per-cell generated code; see the remaining steps in
 so its selections do not grow with the array. Below 16 cells each cell is its
 own leaf, a structural rule: the code is small and a reader needs no lookup.
 
-An unpacked structure or union whose member is a dense unpacked array and has
-no column form (for example `typedef struct { logic [3:0] a; real m[4096]; }
-rec_t;`) is stored as one leaf signal per member cell. Every operation on such
-a variable is then linear in the cell count in generated C, including its
-declaration, a whole copy, `==`/`===`, an ambiguous `?:` merge, a continuous
-assignment, `%p` and even a dynamic element access, which builds one reference
-per cell. Measured with `--gen-only` on a quick build, a 4,096-cell member array
-gives 5.7 MB (`%p`) to 9.8 MB (continuous assignment) of `model.c`.
+Every shape follows that rule. A member array of integral, packed or `real`
+elements in a structure that also holds a member with no packed width, such as
+`typedef struct { logic [3:0] a; real m[4096]; string t; } rec_t;`, is one
+column; `string`, handle and record elements, and any element above 4,096 cells
+without a packed width, are one container. No operation on such a member is
+linear in generated C.
 
-The per-cell form stays at 16 cells or more only for members that are not
-packed: `real`, `shortreal`, `string` and handle arrays, and arrays of such
-records, have no column form. A run-time index into one still costs one branch
-per cell (a `string a[4095]` selection is 201,877 lines).
+Two shapes are not columns at this size:
+
+- An unpacked union with a member array keeps its packed image.
+- A record with a member array above 4,096 cells and another member array whose
+  elements have no packed width, such as `struct { int p[5000]; string d[20]; }`,
+  keeps the packed member in a container too: 40 bytes per declared cell instead
+  of the sparse column's cost per written cell.
+
+Members held in a container (`string`, handles, records with such members) have
+these limits, each an error at its source location unless noted:
+
+- an event-controlled non-blocking assignment to one of their elements.
+- an event control on a `ref` formal bound to one of their elements.
+- a nested record whose type has the column layout on its own, inside a record
+  that holds a native member array: `o.i = x` with `x` declared alone is not
+  resolved.
+- not an error: a dump omits the members of an array of records held in a
+  container (`rows__iN__n`), like the other contents of a container.
 
 A use the column form cannot lower is an error at its source location. These
 limits apply to the form named:

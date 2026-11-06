@@ -329,7 +329,9 @@ code at `-O1` instead of 0.13×).
   `collection/record_columns/choice.rs` decides from the type alone. A column
   replaces the branch per cell (or the whole-record flatten) with one lookup.
   Unwritten cells cost nothing, written ones are lazy heap cells, and the
-  site stays about 261 lines at any size.
+  site stays about 261 lines at any size. Elements without a packed form
+  follow the same rule: `real` cells are a column of doubles, and `string`,
+  handle and record elements are one container.
 - **Why a fixed rule:** nothing else selects the form. A use the column form
   cannot lower is an error at its source location, never a second lowering in
   the other form, so a design's speed does not depend on what else it does.
