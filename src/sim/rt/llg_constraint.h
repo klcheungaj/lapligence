@@ -87,8 +87,8 @@ enum {
      * instance itself). */
     LLG_CR_REF,         /* object: handle slot a of the object ref b names;
                            c = element index node of a handle array slot
-                           (constants and loop indices only), else
-                           LLG_CR_NONE. No value of its own. */
+                           (constants, loop indices and state values),
+                           else LLG_CR_NONE. No value of its own. */
     LLG_CR_HVAR,        /* variable b of the object ref a names */
     LLG_CR_AELEM,       /* element at 0-based position (node b) of array a
                            of the object ref c names */
@@ -183,7 +183,8 @@ typedef struct {
 
 /* Array kinds. A fixed array's position i has the declared index
  * left + i (left <= right) or left - i (left > right). */
-enum { LLG_CR_ARRAY_FIXED = 0, LLG_CR_ARRAY_DYNAMIC = 1, LLG_CR_ARRAY_QUEUE = 2 };
+enum { LLG_CR_ARRAY_FIXED = 0, LLG_CR_ARRAY_DYNAMIC = 1, LLG_CR_ARRAY_QUEUE = 2,
+       LLG_CR_ARRAY_SIZE = 3 /* only the random size of a handle array */ };
 
 /* Bit marking a handle-array slot in LLG_CR_ASIZE / LLG_CR_FOREACH. */
 #define LLG_CR_SLOT_ARRAY 0x80000000u
@@ -413,6 +414,9 @@ int llg_cr_inst_random(const llg_cr_session_t* s, uint32_t inst);
 uint32_t llg_cr_link(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t index,
                      void* child, uint32_t unit, int random);
 void llg_cr_set_slot_size(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t count);
+/* After a solve: handle array slot `slot` keeps its first `count` elements;
+ * instances no random link reaches any more leave llg_cr_visit (18.4). */
+void llg_cr_trim_slot(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t count);
 void llg_cr_iset_var(llg_cr_session_t* s, uint32_t inst, uint32_t var, const uint64_t* words,
                      int active, int input_state);
 void llg_cr_iset_block(llg_cr_session_t* s, uint32_t inst, uint32_t block, int enabled);

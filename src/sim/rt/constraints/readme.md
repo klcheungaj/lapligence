@@ -32,7 +32,13 @@ their cycle state passed in and out through `llg_cr_set_cyclic` /
 A problem with units (`llg_cr_unit_t`) is a template. Each unit is one class
 layout: it lists its variables, arrays (`llg_cr_array_t`: fixed, dynamic or
 queue, packed elements) and handle properties (`llg_cr_slot_t`, scalar or
-array), and owns a range of blocks and leaves. Variables, arrays and slots
+array), and owns a range of blocks and leaves. A `rand` dynamic array or queue
+of handles also has a size-only array (`LLG_CR_ARRAY_SIZE`): it joins the size
+phase and its loops run over the solved size. Elements a resize dropped stay
+solved; `llg_cr_trim_slot` takes objects only they reached out of the
+`post_randomize` order. State values a handle element index reads are
+constants of the expansion and part of its cache key, since they select
+objects. Variables, arrays and slots
 are problem-wide (one per property), so an inherited property has one index
 in every derived unit; variables listed by no unit are global (static
 properties). Template nodes `REF`, `HVAR`, `AELEM`, `ASIZE`, `ITER`,

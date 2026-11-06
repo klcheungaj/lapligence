@@ -418,17 +418,38 @@ impl Frame<'_, '_> {
             IrRandStmt::Link {
                 inst,
                 slot,
+                index,
                 child,
                 unit,
                 random,
                 ..
             } => {
                 let inst = self.rand_index(inst)?;
+                let index = match index {
+                    Some(index) => self.rand_index(index)?,
+                    None => "0u".to_owned(),
+                };
                 let random = self.condition(random)?;
                 let child = self.chandle(child)?;
                 self.line(format!(
-                    "(void)llg_cr_link({s}, {inst}, {slot}u, 0u, {child}, {unit}u, {random});"
+                    "(void)llg_cr_link({s}, {inst}, {slot}u, {index}, {child}, {unit}u, {random});"
                 ));
+            }
+            IrRandStmt::SetSlotSize {
+                inst, slot, size, ..
+            } => {
+                let inst = self.rand_index(inst)?;
+                let size = self.rand_index(size)?;
+                self.line(format!(
+                    "llg_cr_set_slot_size({s}, {inst}, {slot}u, {size});"
+                ));
+            }
+            IrRandStmt::TrimSlot {
+                inst, slot, size, ..
+            } => {
+                let inst = self.rand_index(inst)?;
+                let size = self.rand_index(size)?;
+                self.line(format!("llg_cr_trim_slot({s}, {inst}, {slot}u, {size});"));
             }
         }
         Ok(())

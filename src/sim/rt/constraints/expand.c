@@ -132,6 +132,8 @@ struct cr_tpl {
     uint32_t* leaf_words;   /* per unit */
     uint32_t* leaf_unit;
     uint32_t* block_unit;
+    uint8_t* leaf_index;    /* per leaf: a handle element index reads it */
+    int has_leaf_index;
     uint8_t* global;        /* per var */
     uint32_t* g_off;
     uint32_t* g_cyc_off;
@@ -231,7 +233,7 @@ static void cr_tpl_validate(const llg_cr_problem_t* p) {
             if (cr_unit_slots(p, u)[i] >= p->slot_count) cr_fatal("unit slot out of range");
     }
     for (uint32_t a = 0; a < p->array_count; ++a)
-        if (p->arrays[a].elem_width == 0u || p->arrays[a].kind > LLG_CR_ARRAY_QUEUE)
+        if (p->arrays[a].elem_width == 0u || p->arrays[a].kind > LLG_CR_ARRAY_SIZE)
             cr_fatal("invalid array");
     for (uint32_t n = 0; n < p->node_count; ++n) {
         const llg_cr_node_t* nd = &p->nodes[n];
@@ -427,6 +429,26 @@ static cr_tpl_t* cr_tpl_new(const llg_cr_problem_t* p) {
         }
         t->deps[n] = d;
     }
+    /* A handle element selects an object, so the state values its index
+     * reads shape the expansion: they are constants and part of its key. */
+    t->leaf_index = (uint8_t*)cr_alloc(p->leaf_count ? p->leaf_count : 1u, 1u);
+    cr_u32vec_t cone = {0, 0, 0};
+    for (uint32_t n = 0; n < p->node_count; ++n) {
+        if (p->nodes[n].op == LLG_CR_REF && p->nodes[n].c != LLG_CR_NONE)
+            cr_u32_push(&cone, p->nodes[n].c);
+    }
+    while (cone.len) {
+        uint32_t n = cone.data[--cone.len];
+        if (p->nodes[n].op == LLG_CR_STATE) {
+            t->leaf_index[p->nodes[n].a] = 1;
+            t->has_leaf_index = 1;
+            continue;
+        }
+        ops.len = 0;
+        cr_tpl_operands(p, n, &ops);
+        for (size_t i = 0; i < ops.len; ++i) cr_u32_push(&cone, ops.data[i]);
+    }
+    free(cone.data);
     free(ops.data);
     t->phase = CR_PH_IDLE;
     return t;
@@ -676,6 +698,36 @@ uint32_t llg_cr_link(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t
     return id;
 }
 
+/* Instances a walk over the kept links reaches stay in the post_randomize
+ * order; `visited` marks the order on the way in, so it is reused here. */
+void llg_cr_trim_slot(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t count) {
+    cr_tpl_t* t = s->tpl;
+    cr_islot_t* sl = cr_inst_slot(s, inst, slot);
+    if (count >= sl->count) return;
+    sl->count = count;
+    for (uint32_t i = 0; i < t->count; ++i) t->inst[i].visited = 0;
+    cr_u32vec_t pending = {0, 0, 0};
+    t->inst[0].visited = 1;
+    cr_u32_push(&pending, 0u);
+    while (pending.len) {
+        const cr_inst_t* in = &t->inst[pending.data[--pending.len]];
+        for (uint32_t k = 0; k < t->p->units[in->unit].slot_count; ++k) {
+            const cr_islot_t* link = &in->slots[k];
+            for (uint32_t j = 0; j < link->count; ++j) {
+                uint32_t id = link->target[j];
+                if (id == LLG_CR_NONE || !t->inst[id].random || t->inst[id].visited) continue;
+                t->inst[id].visited = 1;
+                cr_u32_push(&pending, id);
+            }
+        }
+    }
+    free(pending.data);
+    size_t kept = 0;
+    for (size_t i = 0; i < t->order.len; ++i)
+        if (t->inst[t->order.data[i]].visited) t->order.data[kept++] = t->order.data[i];
+    t->order.len = kept;
+}
+
 static uint32_t cr_inst_var(const cr_tpl_t* t, const cr_inst_t* in, uint32_t var) {
     if (var >= t->vc) cr_fatal("variable out of range");
     uint32_t pos = t->var_pos[(size_t)in->unit * t->vc + var];
@@ -834,6 +886,16 @@ static void cr_tpl_key(const cr_tpl_t* t, int phase, cr_u32vec_t* key) {
                 cr_u32_push(key, cr_random_size(t, in, k) ? LLG_CR_NONE : arr->size);
             else
                 cr_u32_push(key, arr->chosen);
+        }
+        if (!t->has_leaf_index) continue;
+        for (uint32_t l = u->leaf_first; l < u->leaf_first + u->leaf_count; ++l) {
+            if (!t->leaf_index[l]) continue;
+            cr_u32_push(key, in->leaf_input[l - u->leaf_first]);
+            const uint64_t* value = in->leaf_val + t->leaf_off[l];
+            for (uint32_t w = 0; w < CR_WORDS(t->p->leaves[l].bit_width); ++w) {
+                cr_u32_push(key, (uint32_t)value[w]);
+                cr_u32_push(key, (uint32_t)(value[w] >> 32));
+            }
         }
     }
 }
@@ -1211,6 +1273,9 @@ static uint32_t cr_fx_leaf(cr_ex_t* ex, uint32_t inst, uint32_t leaf) {
     const llg_cr_unit_t* u = &ex->p->units[t->inst[inst].unit];
     if (leaf < u->leaf_first || leaf >= u->leaf_first + u->leaf_count)
         cr_fatal("state leaf of another unit");
+    if (t->leaf_index[leaf] && t->inst[inst].leaf_input[leaf - u->leaf_first] == LLG_CR_INPUT_KNOWN)
+        return cr_fb_const(ex, t->inst[inst].leaf_val + t->leaf_off[leaf],
+                           ex->p->leaves[leaf].bit_width, ex->p->leaves[leaf].sign_flag);
     uint32_t* slot = &f->leaf_map[f->leaf_base[inst] + (leaf - u->leaf_first)];
     if (*slot == LLG_CR_NONE) {
         llg_cr_leaf_t* l = CR_VEC_PUSH(f->leaves, f->leaves_len, f->leaves_cap);
@@ -1507,7 +1572,8 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
         uint32_t index = 0;
         if (nd->c != LLG_CR_NONE) {
             uint32_t ix = cr_ex_res(ex, nd->c);
-            if (!cr_fb_is_const(ex, ix)) cr_fatal("handle array index is not a loop index");
+            /* Not known: a state value with X or Z bits or read through null. */
+            if (!cr_fb_is_const(ex, ix)) return CR_X_NULL;
             const llg_cr_node_t* ni = &f->nodes[ix];
             int64_t value;
             if (!bv_index(f->consts.data + ni->a, ni->bit_width, ni->sign_flag, &value) ||
@@ -1872,7 +1938,8 @@ static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
             const llg_cr_unit_t* u = &p->units[in->unit];
             for (uint32_t k = 0; k < u->var_count; ++k) cr_fx_var(&ex, i, cr_unit_vars(p, in->unit)[k]);
             for (uint32_t k = 0; k < u->array_count; ++k)
-                if (in->arrays[k].active)
+                if (in->arrays[k].active &&
+                    p->arrays[cr_unit_arrays(p, in->unit)[k]].kind != LLG_CR_ARRAY_SIZE)
                     cr_fx_table(&ex, i, cr_unit_arrays(p, in->unit)[k], f->arr_base[i] + k);
         }
     }
@@ -2262,6 +2329,7 @@ static void cr_tpl_free(cr_tpl_t* t) {
     free(t->queue.data);
     free(t->order.data);
     free(t->hkey); free(t->hval);
+    free(t->leaf_index);
     free(t->var_pos); free(t->arr_pos); free(t->slot_pos);
     free(t->var_off); free(t->var_off_base); free(t->cyc_off);
     free(t->leaf_off); free(t->leaf_words); free(t->leaf_unit); free(t->block_unit);

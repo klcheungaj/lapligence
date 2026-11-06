@@ -1817,6 +1817,14 @@ fn s29_d10_search_not_uniform() {
 }
 
 #[test]
+fn s30_d13_handle_array_grows_null() {
+    run_decision(
+        "S30-D13_handle_array_grows_null",
+        include_str!("fixtures/sim/lrm_decisions/S30-D13_handle_array_grows_null.out"),
+    );
+}
+
+#[test]
 fn s30_d12_super_randomize() {
     run_decision(
         "S30-D12_super_randomize",

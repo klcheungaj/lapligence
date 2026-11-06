@@ -26,7 +26,7 @@ use crate::core::db::{ConstraintBlockInfo, RandQualifier, VariableLifetime};
 use crate::sim::ir::{
     IrContainerElement, IrContainerExpr, IrContainerKind, IrContainerStmt, IrInsideItem,
     IrNativeAccessKind, IrRandArray, IrRandArrayKind, IrRandOp, IrRandQuery, IrRandSlot,
-    IrRandStmt, IrRandUnit, IrSysFunc, RAND_NONE,
+    IrRandStmt, IrRandUnit, IrSysFunc, RAND_NONE, RAND_SLOT_ARRAY,
 };
 
 /// Which arrays and handles of unit 0 are random (18.11).
@@ -74,13 +74,28 @@ struct ArrayInfo {
     two_state: bool,
 }
 
-/// One `rand` class handle property.
+/// One class handle property, or handle array, the problem follows.
 struct SlotInfo {
     decl: NodeId,
-    owner: NodeId,
+    /// Declaring class of an instance property; `None` for an array of the
+    /// randomize call's scope (unit 0 only).
+    owner: Option<NodeId>,
     /// The handle's declared class.
     target: NodeId,
-    field: (usize, usize),
+    /// Where a scalar handle lives.
+    field: Option<(usize, usize)>,
+    array: Option<SlotArray>,
+}
+
+/// The storage of a handle array.
+struct SlotArray {
+    container: usize,
+    kind: IrRandArrayKind,
+    left: i32,
+    right: i32,
+    /// The size-only array of a `rand` dynamic array or queue: 18.4 resizes
+    /// it, and loops run over the solved size.
+    size: Option<u32>,
 }
 
 /// Units, arrays and slots of one problem with units.
@@ -94,6 +109,9 @@ pub(super) struct UnitState {
     array_of: HashMap<NodeId, u32>,
     slots: Vec<SlotInfo>,
     slot_of: HashMap<NodeId, u32>,
+    /// Non-random packed properties that constraints read through a handle
+    /// array element: inactive variables of their objects.
+    state_vars: Vec<NodeId>,
     /// Array expressions a template form reads (not their storage).
     consumed: HashSet<NodeId>,
     /// Template placeholders created for, and read by, the constraint
@@ -111,6 +129,13 @@ impl UnitState {
     /// Leaves of unit 0 (the problem's first leaves).
     pub(super) fn root_leaf_count(&self) -> usize {
         self.units[0].leaf_count as usize
+    }
+
+    fn unit_has_slot(&self, unit: usize, slot: &SlotInfo) -> bool {
+        match slot.owner {
+            Some(owner) => self.units[unit].chain.contains(&owner),
+            None => unit == 0,
+        }
     }
 
     fn unit_has_array(&self, unit: usize, array: &ArrayInfo) -> bool {
@@ -271,6 +296,22 @@ impl Codegen<'_> {
         matches!(self.kind(decl), NodeKind::Var { ty } if ty.kind == "class")
     }
 
+    /// Whether `decl` is an unpacked array of class handles.
+    fn is_handle_array(&self, decl: NodeId) -> bool {
+        self.db.array_meta(decl).is_some()
+            && self.array_element_kind(decl).as_deref() == Some("class")
+    }
+
+    /// The class of the elements of handle array `decl`.
+    fn handle_array_class(&self, decl: NodeId) -> Option<NodeId> {
+        match &self.db.type_descriptor(decl)?.shape {
+            TypeShape::Container { element, .. } | TypeShape::FixedArray { element, .. } => {
+                self.db.class_for_type(element.id)
+            }
+            _ => None,
+        }
+    }
+
     /// The unpacked array declaration an expression names (`a`, `this.a`,
     /// `h.a`).
     fn array_expr_decl(&self, expr: NodeId) -> Option<NodeId> {
@@ -425,6 +466,7 @@ impl Codegen<'_> {
             array_of: HashMap::new(),
             slots: Vec::new(),
             slot_of: HashMap::new(),
+            state_vars: Vec::new(),
             consumed: HashSet::new(),
             created: Vec::new(),
             used: HashSet::new(),
@@ -441,6 +483,10 @@ impl Codegen<'_> {
         child: NodeId,
         randomized: bool,
     ) -> Result<bool, String> {
+        if self.is_handle_array(child) {
+            self.unit_slot(path, node, builder, child, None)?;
+            return Ok(true);
+        }
         if self.db.array_meta(child).is_some() {
             if self.db.rand_qualifier(child) == RandQualifier::RandC {
                 return Err(self.rand_error(
@@ -457,7 +503,7 @@ impl Codegen<'_> {
             return Ok(true);
         }
         if self.is_handle_property(child) {
-            self.unit_slot(path, node, builder, child)?;
+            self.unit_slot(path, node, builder, child, None)?;
             return Ok(true);
         }
         Ok(false)
@@ -621,34 +667,112 @@ impl Codegen<'_> {
         Ok(index)
     }
 
-    /// The problem-wide slot of `rand` handle property `decl`.
+    /// The problem-wide slot of handle property or handle array `decl`;
+    /// `expr` names a handle array of the call's scope.
     fn unit_slot(
         &mut self,
         path: &str,
         at: NodeId,
         builder: &mut ProblemBuilder,
         decl: NodeId,
+        expr: Option<NodeId>,
     ) -> Result<u32, String> {
         if let Some(index) = state(builder).slot_of.get(&decl) {
             return Ok(*index);
         }
         let name = self.node(decl).name.clone();
-        if self.db.variable_lifetime(decl) == VariableLifetime::Static {
+        let is_array = self.is_handle_array(decl);
+        let class_owner = self
+            .node(decl)
+            .parent
+            .filter(|parent| self.class_nodes.contains_key(parent));
+        let is_static = self.db.variable_lifetime(decl) == VariableLifetime::Static;
+        if is_static && class_owner.is_some() && self.db.rand_qualifier(decl) != RandQualifier::None
+        {
             return Err(self.rand_error(
                 at,
                 path,
                 &format!("static `rand` class handle `{name}` is not supported"),
             ));
         }
-        let field = self.class_fields.get(&decl).copied();
-        let owner = self.node(decl).parent;
-        let target = self.class_node_for_type_expr(decl);
-        let (Some(field), Some(owner), Some(target)) = (field, owner, target) else {
-            return Err(self.rand_error(
-                at,
-                path,
-                &format!("`rand` class handle `{name}` has no known class layout"),
-            ));
+        let target = if is_array {
+            self.handle_array_class(decl)
+        } else {
+            self.class_node_for_type_expr(decl)
+        };
+        let missing = || format!("`rand` class handle `{name}` has no known class layout");
+        let Some(target) = target else {
+            return Err(self.rand_error(at, path, &missing()));
+        };
+        let (owner, field, array) = if is_array {
+            let (owner, container) = match class_owner.filter(|_| !is_static) {
+                Some(class) => (
+                    Some(class),
+                    self.container_globals.get(&decl).map(|info| info.ir),
+                ),
+                None => (
+                    None,
+                    expr.and_then(|expr| self.container_of(expr))
+                        .map(|info| info.ir)
+                        .or_else(|| self.container_globals.get(&decl).map(|info| info.ir)),
+                ),
+            };
+            let Some(container) = container else {
+                return Err(self.rand_error(at, path, &missing()));
+            };
+            if self.fixed_view_dims.contains_key(&container) {
+                return Err(self.rand_error(
+                    at,
+                    path,
+                    &format!("array `{name}` is not supported in constraints: it has more than one unpacked dimension"),
+                ));
+            }
+            let (kind, left, right) = match &self.model.containers[container].kind {
+                IrContainerKind::Queue { .. } => (IrRandArrayKind::Queue, 0, 0),
+                IrContainerKind::Dynamic => match self.fixed_view_ranges.get(&container) {
+                    Some((left, right)) => (IrRandArrayKind::Fixed, *left, *right),
+                    None => (IrRandArrayKind::Dynamic, 0, 0),
+                },
+                IrContainerKind::Associative { .. } => {
+                    return Err(self.rand_error(
+                        at,
+                        path,
+                        &format!("array `{name}` is not supported in constraints: associative arrays are not supported"),
+                    ))
+                }
+            };
+            let rand = self.db.rand_qualifier(decl) != RandQualifier::None;
+            let size = (rand && kind != IrRandArrayKind::Fixed).then(|| {
+                let st = state(builder);
+                st.arrays.push(ArrayInfo {
+                    decl,
+                    owner,
+                    container,
+                    kind: IrRandArrayKind::Size,
+                    left: 0,
+                    right: 0,
+                    width: 1,
+                    signed: false,
+                    two_state: true,
+                });
+                (st.arrays.len() - 1) as u32
+            });
+            (
+                owner,
+                None,
+                Some(SlotArray {
+                    container,
+                    kind,
+                    left,
+                    right,
+                    size,
+                }),
+            )
+        } else {
+            let Some(field) = self.class_fields.get(&decl).copied() else {
+                return Err(self.rand_error(at, path, &missing()));
+            };
+            (self.node(decl).parent, Some(field), None)
         };
         let st = state(builder);
         let index = st.slots.len() as u32;
@@ -657,6 +781,7 @@ impl Codegen<'_> {
             owner,
             target,
             field,
+            array,
         });
         st.slot_of.insert(decl, index);
         Ok(index)
@@ -698,6 +823,9 @@ impl Codegen<'_> {
         };
         let (index, _) = builder.add_var(name, width, signed);
         builder.decl_vars.insert(decl, index);
+        if self.db.rand_qualifier(decl) == RandQualifier::None {
+            state(builder).state_vars.push(decl);
+        }
         if let Some(metadata) = self.enum_metadata_for_expr(decl).cloned() {
             let values = metadata
                 .members
@@ -715,9 +843,122 @@ impl Codegen<'_> {
         Ok(index)
     }
 
-    /// The template reference of `rand` handle path `handles` (the first a
-    /// property of the current unit's class), or `None` when some handle is
-    /// not a `rand` handle of these objects.
+    /// The array expression an `ArraySelect` selects from (its `base` field
+    /// names the declaration).
+    fn select_base(&self, node: NodeId) -> Option<NodeId> {
+        let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) else {
+            return None;
+        };
+        self.node(node)
+            .children
+            .iter()
+            .copied()
+            .find(|child| !indices.contains(child))
+    }
+
+    /// Whether `item`, a step of a handle path, selects an element of a
+    /// handle array, or is the iterator over one.
+    fn element_step(&self, item: NodeId) -> bool {
+        matches!(
+            self.kind(item),
+            NodeKind::Expr(ExprKind::ArraySelect { .. })
+        ) || self
+            .rand_lowering
+            .as_ref()
+            .is_some_and(|lowering| lowering.element_refs.contains_key(&item))
+    }
+
+    /// Whether handle path `handles` can be followed: every step is a
+    /// `rand` handle, a handle the problem already follows or an element
+    /// of a handle array that is `rand`, followed, or read at a loop index.
+    fn slot_path_known(&self, builder: &ProblemBuilder, handles: &[NodeId]) -> bool {
+        let unit = builder.unit as usize;
+        let st = builder.units.as_deref().expect("unit state");
+        for (position, item) in handles.iter().copied().enumerate() {
+            if self
+                .rand_lowering
+                .as_ref()
+                .is_some_and(|lowering| lowering.element_refs.contains_key(&item))
+            {
+                continue;
+            }
+            let decl = match self.kind(item) {
+                NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => {
+                    let [index] = indices.as_slice() else {
+                        return false;
+                    };
+                    let Some(base) = self.select_base(item) else {
+                        return false;
+                    };
+                    let Some(decl) = self
+                        .array_expr_decl(base)
+                        .filter(|decl| self.is_handle_array(*decl))
+                    else {
+                        return false;
+                    };
+                    if self.db.rand_qualifier(decl) == RandQualifier::None
+                        && !st.slot_of.contains_key(&decl)
+                        && !self.template_reads(*index)
+                    {
+                        return false;
+                    }
+                    let Some(decls) = self.path_decls(base) else {
+                        return false;
+                    };
+                    let (_, prefix) = decls.split_last().expect("a path has a declaration");
+                    if !self.slot_path_known(builder, prefix) {
+                        return false;
+                    }
+                    if !prefix.is_empty() {
+                        continue;
+                    }
+                    decl
+                }
+                _ => {
+                    if !st.slot_of.contains_key(&item)
+                        && !(self.is_handle_property(item)
+                            && self.db.rand_qualifier(item) != RandQualifier::None)
+                    {
+                        return false;
+                    }
+                    item
+                }
+            };
+            if position == 0 {
+                let owner = self.node(decl).parent;
+                let scope_array = self.is_handle_array(decl)
+                    && !owner.is_some_and(|owner| self.class_nodes.contains_key(&owner));
+                let in_unit = owner.is_some_and(|owner| st.units[unit].chain.contains(&owner));
+                if !in_unit && !(scope_array && unit == 0) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// The template object of slot `slot`'s element at index node `index`
+    /// of the object `reference` names.
+    fn slot_element(
+        &self,
+        builder: &mut ProblemBuilder,
+        slot: u32,
+        reference: u32,
+        index: u32,
+    ) -> Result<u32, String> {
+        let st = builder.units.as_deref().expect("unit state");
+        let array = st.slots[slot as usize]
+            .array
+            .as_ref()
+            .expect("an element of a handle array");
+        let (kind, left, right) = (array.kind, array.left, array.right);
+        let position = builder.position(kind, left, right, index)?;
+        Ok(builder.template(IrRandOp::Ref, false, 1, [slot, reference, position]))
+    }
+
+    /// The template reference of handle path `handles` (the first a
+    /// property of the current unit's class), or `None` when some step
+    /// cannot be followed.
     fn slot_reference(
         &mut self,
         path: &str,
@@ -725,27 +966,106 @@ impl Codegen<'_> {
         builder: &mut ProblemBuilder,
         handles: &[NodeId],
     ) -> Result<Option<u32>, String> {
-        let unit = builder.unit as usize;
-        for (position, decl) in handles.iter().enumerate() {
-            let registered = state(builder).slot_of.contains_key(decl);
-            let rand_handle = self.is_handle_property(*decl)
-                && self.db.rand_qualifier(*decl) != RandQualifier::None;
-            if !registered && !rand_handle {
-                return Ok(None);
-            }
-            if position == 0 {
-                let owner = self.node(*decl).parent;
-                if !owner.is_some_and(|owner| state(builder).units[unit].chain.contains(&owner)) {
-                    return Ok(None);
-                }
-            }
+        if !self.slot_path_known(builder, handles) {
+            return Ok(None);
         }
         let mut reference = RAND_NONE;
-        for decl in handles {
-            let slot = self.unit_slot(path, at, builder, *decl)?;
-            reference = builder.template(IrRandOp::Ref, false, 1, [slot, reference, RAND_NONE]);
+        for item in handles.iter().copied() {
+            if let Some(element) = self
+                .rand_lowering
+                .as_ref()
+                .and_then(|lowering| lowering.element_refs.get(&item))
+            {
+                reference = *element;
+                continue;
+            }
+            let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(item) else {
+                let slot = self.unit_slot(path, at, builder, item, None)?;
+                reference = builder.template(IrRandOp::Ref, false, 1, [slot, reference, RAND_NONE]);
+                continue;
+            };
+            let index = indices[0];
+            let Some(base) = self.select_base(item) else {
+                return Ok(None);
+            };
+            let Some((array, parent)) = self.handle_array(path, builder, base)? else {
+                return Ok(None);
+            };
+            state(builder).consumed.insert(base);
+            let (index, lowered) = self.template_operand(path, builder, index)?;
+            let loops_only = self.rand_lowering.as_ref().is_some_and(|lowering| {
+                let bound = lowering
+                    .bindings
+                    .values()
+                    .flat_map(placeholders_in)
+                    .collect::<HashSet<_>>();
+                placeholders_in(&lowered)
+                    .iter()
+                    .all(|name| bound.contains(name))
+            });
+            if !loops_only {
+                return Err(self.rand_error(
+                    item,
+                    path,
+                    "a handle array element in a constraint needs a constant, state or loop index (18.4)",
+                ));
+            }
+            reference = self
+                .slot_element(builder, array, parent, index)
+                .map_err(|error| self.rand_error(item, path, &error))?;
         }
         Ok(Some(reference))
+    }
+
+    /// The slot and owner reference of the handle array `expr` names.
+    fn handle_array(
+        &mut self,
+        path: &str,
+        builder: &mut ProblemBuilder,
+        expr: NodeId,
+    ) -> Result<Option<(u32, u32)>, String> {
+        let Some(decls) = self.path_decls(expr) else {
+            return Ok(None);
+        };
+        let Some((&decl, handles)) = decls.split_last() else {
+            return Ok(None);
+        };
+        if !self.is_handle_array(decl) {
+            return Ok(None);
+        }
+        if handles.is_empty() {
+            let unit = builder.unit as usize;
+            let in_unit = self
+                .node(decl)
+                .parent
+                .is_some_and(|owner| state(builder).units[unit].chain.contains(&owner));
+            let scope = !self
+                .node(decl)
+                .parent
+                .is_some_and(|owner| self.class_nodes.contains_key(&owner));
+            if !in_unit && !(scope && unit == 0) {
+                return Ok(None);
+            }
+        }
+        let Some(reference) = self.slot_reference(path, expr, builder, handles)? else {
+            return Ok(None);
+        };
+        let slot = self.unit_slot(path, expr, builder, decl, Some(expr))?;
+        Ok(Some((slot, reference)))
+    }
+
+    /// The solver's array argument of handle array slot `slot`: its size
+    /// array when randomize can resize it.
+    fn slot_array_operand(builder: &ProblemBuilder, slot: u32) -> u32 {
+        let st = builder.units.as_deref().expect("unit state");
+        match st.slots[slot as usize]
+            .array
+            .as_ref()
+            .and_then(|array| array.size)
+        {
+            Some(size) => size,
+            None => slot | RAND_SLOT_ARRAY,
+        }
     }
 
     /// The declarations of a path expression with a leading constraint
@@ -758,6 +1078,7 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
                 refs.iter().copied().collect::<Option<Vec<_>>>()?
             }
+            NodeKind::Expr(ExprKind::ArraySelect { .. }) => vec![expr],
             _ => return None,
         };
         if refs.len() > 1
@@ -790,6 +1111,16 @@ impl Codegen<'_> {
         };
         if self.db.array_meta(decl).is_none() {
             return Ok(None);
+        }
+        if self.is_handle_array(decl) {
+            let followed = state(builder).slot_of.contains_key(&decl)
+                || self.db.rand_qualifier(decl) != RandQualifier::None;
+            if !followed && !create {
+                return Ok(None);
+            }
+            return Ok(self
+                .handle_array(path, builder, expr)?
+                .map(|(slot, reference)| (Self::slot_array_operand(builder, slot), reference)));
         }
         let known = state(builder).array_of.get(&decl).copied();
         let rand = self.db.rand_qualifier(decl) != RandQualifier::None;
@@ -1022,13 +1353,7 @@ impl Codegen<'_> {
         node: NodeId,
         indices: &[NodeId],
     ) -> Result<(), String> {
-        let Some(base) = self
-            .node(node)
-            .children
-            .iter()
-            .copied()
-            .find(|child| !indices.contains(child))
-        else {
+        let Some(base) = self.select_base(node) else {
             return Ok(());
         };
         let [index] = indices else {
@@ -1041,6 +1366,14 @@ impl Codegen<'_> {
             }
             return Ok(());
         };
+        // An element of a handle array is an object: the path through it
+        // or the null test around it reads the select.
+        if self
+            .array_expr_decl(base)
+            .is_some_and(|decl| self.is_handle_array(decl))
+        {
+            return Ok(());
+        }
         let random = self.template_reads(*index);
         let Some((array, reference)) = self.template_array(path, builder, base, random)? else {
             return Ok(());
@@ -1067,8 +1400,9 @@ impl Codegen<'_> {
         let Some((&last, handles)) = decls.split_last() else {
             return Ok(());
         };
+        let through_element = handles.iter().any(|handle| self.element_step(*handle));
         if handles.is_empty()
-            || self.db.rand_qualifier(last) == RandQualifier::None
+            || (self.db.rand_qualifier(last) == RandQualifier::None && !through_element)
             || self.db.array_meta(last).is_some()
             || self.is_handle_property(last)
             || !matches!(self.kind(last), NodeKind::Var { .. })
@@ -1288,6 +1622,57 @@ impl Codegen<'_> {
         };
         let loop_index = builder.new_loop();
         let iter = builder.template(IrRandOp::Iter, true, 32, [loop_index, 0, 0]);
+        let slot = self
+            .array_expr_decl(receiver)
+            .and_then(|decl| state(builder).slot_of.get(&decl).copied());
+        if let Some(slot) = slot {
+            let Some(with) = with else {
+                return Err(self.rand_error(
+                    node,
+                    path,
+                    "a reduction of a handle array needs a `with` clause",
+                ));
+            };
+            let element = self
+                .slot_element(builder, slot, reference, iter)
+                .map_err(|error| self.rand_error(node, path, &error))?;
+            let iterator = self
+                .db
+                .method_call_iterator(node)
+                .ok_or_else(|| self.rand_error(node, path, "the `with` clause has no iterator"))?;
+            let index = builder.template_placeholder(iter);
+            let calls = self.index_calls(with, iterator);
+            if let Some(lowering) = self.rand_lowering.as_mut() {
+                lowering.element_refs.insert(iterator, element);
+                for call in &calls {
+                    lowering.templates.insert(*call, index.clone());
+                }
+            }
+            let lowered = self
+                .template_visit(path, builder, with)
+                .and_then(|()| self.template_operand(path, builder, with));
+            if let Some(lowering) = self.rand_lowering.as_mut() {
+                lowering.element_refs.remove(&iterator);
+            }
+            let (body, lowered) = lowered?;
+            if lowered.is_real() || lowered.width == 0 {
+                return Err(self.rand_error(
+                    with,
+                    path,
+                    "a real-valued `with` expression is not supported in constraints",
+                ));
+            }
+            let args =
+                builder.push_args(&[array, body, reference, loop_index, u32::from(op.code())]);
+            let reduce = builder.template(
+                IrRandOp::Reduce,
+                lowered.signed,
+                lowered.width,
+                [0, args, 0],
+            );
+            self.register_template(builder, node, reduce);
+            return Ok(true);
+        }
         let element = self
             .loop_element(builder, array, reference, iter)
             .map_err(|error| self.rand_error(node, path, &error))?;
@@ -1418,7 +1803,7 @@ impl Codegen<'_> {
             return Err(self.rand_error(
                 array,
                 path,
-                "`foreach` in a constraint needs a one-dimensional array of packed integral elements that is a property of the randomized objects or a dynamic array or queue of the calling scope",
+                "`foreach` in a constraint needs a one-dimensional array of packed integral elements or class handles that is a property of the randomized objects or a dynamic array or queue of the calling scope",
             ));
         };
         state(builder).consumed.insert(array);
@@ -1444,6 +1829,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
         builder: &mut ProblemBuilder,
+        root_vars: &mut Vec<VarPlan>,
     ) -> Result<(), String> {
         let blocks = builder.problem.blocks.len() as u32;
         let leaves = builder.leaves.len() as u32;
@@ -1465,6 +1851,34 @@ impl Codegen<'_> {
             for class in self.class_cases(target) {
                 if !state(builder).unit_of_class.contains_key(&class) {
                     self.build_unit(path, node, builder, class)?;
+                }
+            }
+        }
+        // Non-random properties read through handle array elements are fed
+        // like variables, in every unit that has them, and stay inactive.
+        for decl in std::mem::take(&mut state(builder).state_vars) {
+            let owner = self.node(decl).parent;
+            for unit in 0..state(builder).units.len() {
+                let info = &state(builder).units[unit];
+                if !owner.is_some_and(|owner| info.chain.contains(&owner)) {
+                    continue;
+                }
+                let Some(object) = info.object.clone() else {
+                    continue;
+                };
+                let Some((plan, _)) =
+                    self.class_var_plan(builder, decl, &object, &RandSelection::Checker, false)?
+                else {
+                    return Err(self.rand_error(
+                        decl,
+                        path,
+                        "a property read through a handle array element in a constraint must be a packed integral value",
+                    ));
+                };
+                if unit == 0 {
+                    root_vars.push(plan);
+                } else {
+                    state(builder).units[unit].vars.push(plan);
                 }
             }
         }
@@ -1563,8 +1977,12 @@ impl Codegen<'_> {
             Some(object.clone()),
             placeholders,
         ));
+        let bound = self.bind_constraint_containers(&chain, &effective, None, &object);
         let lowered = self.lower_class_blocks(path, builder, &vars, &object, &effective, None);
         self.rand_lowering = saved;
+        for node in bound {
+            self.receiver_containers.remove(&node);
+        }
         let blocks = lowered?;
         let pre = self
             .randomize_hook(class, "pre_randomize")
@@ -1607,10 +2025,13 @@ impl Codegen<'_> {
             .iter()
             .map(|slot| IrRandSlot {
                 name: self.node(slot.decl).name.clone(),
-                kind: IrRandArrayKind::Fixed,
-                is_array: false,
-                left: 0,
-                right: 0,
+                kind: slot
+                    .array
+                    .as_ref()
+                    .map_or(IrRandArrayKind::Fixed, |array| array.kind),
+                is_array: slot.array.is_some(),
+                left: slot.array.as_ref().map_or(0, |array| array.left),
+                right: slot.array.as_ref().map_or(0, |array| array.right),
             })
             .collect();
         builder.problem.units = st
@@ -1631,7 +2052,7 @@ impl Codegen<'_> {
                     .filter(|array| st.unit_has_array(index, &st.arrays[*array as usize]))
                     .collect(),
                 slots: (0..st.slots.len() as u32)
-                    .filter(|slot| unit.chain.contains(&st.slots[*slot as usize].owner))
+                    .filter(|slot| st.unit_has_slot(index, &st.slots[*slot as usize]))
                     .collect(),
                 block_first: unit.block_first,
                 block_count: unit.block_count,
@@ -1668,6 +2089,72 @@ impl Codegen<'_> {
             (Some(_), Some(object)) => self.class_container_alias(array.container, object.clone()),
             _ => array.container,
         }
+    }
+
+    /// The commit of a `rand` handle array's size (18.4): the array grows
+    /// with null elements or loses its last ones; a dynamic array keeps its
+    /// elements through `new[size](array)` (7.5.1).
+    fn resize_handle_array(
+        &self,
+        problem: usize,
+        st: &UnitState,
+        array_index: u32,
+        container: usize,
+        committed: IrExpr,
+    ) -> Vec<IrStmt> {
+        let size = || container_read(IrContainerExpr::Size(container), 32, true);
+        let chosen = || {
+            query(
+                problem,
+                IrRandQuery::ArraySize(array_index),
+                Some(committed.clone()),
+                None,
+                32,
+                true,
+            )
+        };
+        let (slot, kind) = st
+            .slots
+            .iter()
+            .enumerate()
+            .find_map(|(index, slot)| {
+                let array = slot.array.as_ref()?;
+                (array.size == Some(array_index)).then_some((index as u32, array.kind))
+            })
+            .expect("a size array belongs to a handle array");
+        let stmt = |statement: IrContainerStmt| IrStmt::Container(Box::new(statement));
+        let mut body = vec![IrStmt::Randomize(Box::new(IrRandStmt::TrimSlot {
+            problem,
+            inst: committed.clone(),
+            slot,
+            size: chosen(),
+        }))];
+        if kind == IrRandArrayKind::Queue {
+            body.push(IrStmt::While {
+                cond: bin32(IrBinOp::Lt, chosen(), size()),
+                body: vec![stmt(IrContainerStmt::DeleteIndex {
+                    container,
+                    index: bin32(IrBinOp::Sub, size(), int_const(1)),
+                })],
+            });
+            body.push(IrStmt::While {
+                cond: bin32(IrBinOp::Lt, size(), chosen()),
+                body: vec![stmt(IrContainerStmt::QueuePushBackChandle {
+                    container,
+                    value: IrChandleExpr::Null,
+                })],
+            });
+        } else {
+            body.push(when(
+                bin32(IrBinOp::Neq, chosen(), size()),
+                vec![stmt(IrContainerStmt::DynamicNew {
+                    container,
+                    size: chosen(),
+                    initializer: Some(container),
+                })],
+            ));
+        }
+        body
     }
 
     /// The instance walk that feeds every unit after unit 0's variables,
@@ -1827,6 +2314,22 @@ impl Codegen<'_> {
                     size: size.clone(),
                     active,
                 }));
+                if array.kind == IrRandArrayKind::Size {
+                    let body =
+                        self.resize_handle_array(problem, &st, array_index, container, committed());
+                    commit.push(when(
+                        query(
+                            problem,
+                            IrRandQuery::ArrayActive(array_index),
+                            Some(committed()),
+                            None,
+                            1,
+                            false,
+                        ),
+                        body,
+                    ));
+                    continue;
+                }
                 feed.push(counted(
                     &counter,
                     size,
@@ -1888,7 +2391,7 @@ impl Codegen<'_> {
                     IrRandArrayKind::Queue => {
                         vec![container_stmt(IrContainerStmt::Delete(container))]
                     }
-                    IrRandArrayKind::Fixed => Vec::new(),
+                    IrRandArrayKind::Fixed | IrRandArrayKind::Size => Vec::new(),
                 };
                 body.push(counted(&counter, chosen, vec![store]));
                 commit.push(when(
@@ -1904,38 +2407,61 @@ impl Codegen<'_> {
                 ));
             }
             for (slot_index, slot) in st.slots.iter().enumerate() {
-                if !unit.chain.contains(&slot.owner) {
+                if !st.unit_has_slot(index, slot) {
                     continue;
                 }
-                let Some(object) = object else {
+                let random = self.unit_active(&st.root, index, slot.decl, object)?;
+                let cases = self.class_cases(slot.target);
+                let links = |child: &IrChandleExpr, at: Option<IrExpr>| -> Vec<Vec<IrStmt>> {
+                    cases
+                        .iter()
+                        .map(|case| {
+                            vec![rand(IrRandStmt::Link {
+                                problem,
+                                inst: inst(),
+                                slot: slot_index as u32,
+                                index: at.clone(),
+                                child: child.clone(),
+                                unit: st.unit_of_class[case],
+                                random: random.clone(),
+                            })]
+                        })
+                        .collect()
+                };
+                let local = format!("{tag}_l{index}_{slot_index}");
+                if let Some(array) = &slot.array {
+                    let container = match (slot.owner, object) {
+                        (Some(_), Some(object)) => {
+                            self.class_container_alias(array.container, object.clone())
+                        }
+                        _ => array.container,
+                    };
+                    let size = container_read(IrContainerExpr::Size(container), 32, true);
+                    feed.push(rand(IrRandStmt::SetSlotSize {
+                        problem,
+                        inst: inst(),
+                        slot: slot_index as u32,
+                        size: size.clone(),
+                    }));
+                    let at = local_read(&counter, 32, true);
+                    let child = IrChandleExpr::ContainerGet {
+                        container,
+                        index: Box::new(at.clone()),
+                    };
+                    let bodies = links(&child, Some(at));
+                    let body = self.class_case_chain(&local, &child, &cases, bodies);
+                    feed.push(counted(&counter, size, body));
+                    continue;
+                }
+                let (Some(object), Some((class, field))) = (object, slot.field) else {
                     continue;
                 };
-                let random = self.unit_active(&st.root, index, slot.decl, Some(object))?;
-                let (class, field) = slot.field;
                 let child = IrChandleExpr::LocalRead(self.native_access_symbol(
                     object.clone(),
                     IrNativeAccessKind::ClassField { class, field },
                 ));
-                let cases = self.class_cases(slot.target);
-                let bodies = cases
-                    .iter()
-                    .map(|case| {
-                        vec![rand(IrRandStmt::Link {
-                            problem,
-                            inst: inst(),
-                            slot: slot_index as u32,
-                            child: child.clone(),
-                            unit: st.unit_of_class[case],
-                            random: random.clone(),
-                        })]
-                    })
-                    .collect();
-                feed.extend(self.class_case_chain(
-                    &format!("{tag}_l{index}_{slot_index}"),
-                    &child,
-                    &cases,
-                    bodies,
-                ));
+                let bodies = links(&child, None);
+                feed.extend(self.class_case_chain(&local, &child, &cases, bodies));
             }
             if !feed.is_empty() {
                 feeds.push((index as u32, feed));

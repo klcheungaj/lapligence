@@ -208,6 +208,9 @@ pub enum IrRandArrayKind {
     Fixed = 0,
     Dynamic = 1,
     Queue = 2,
+    /// Only the random size of a dynamic array or queue of handles: it has
+    /// no elements of its own, the slot's links are the objects.
+    Size = 3,
 }
 
 /// A random (or state) unpacked array of packed elements of one unit
@@ -600,15 +603,34 @@ pub enum IrRandStmt {
         index: IrExpr,
         value: IrExpr,
     },
-    /// Handle slot `slot` of instance `inst` names `child`, an object of
-    /// class unit `unit` (`random`: the handle is `rand` and enabled).
+    /// Handle slot `slot` of instance `inst` names `child` at `index` (none
+    /// for a scalar slot), an object of class unit `unit` (`random`: the
+    /// handle is `rand` and enabled).
     Link {
         problem: usize,
         inst: IrExpr,
         slot: u32,
+        index: Option<IrExpr>,
         child: IrChandleExpr,
         unit: u32,
         random: IrExpr,
+    },
+    /// Handle array slot `slot` of instance `inst` has `size` elements, all
+    /// null until linked.
+    SetSlotSize {
+        problem: usize,
+        inst: IrExpr,
+        slot: u32,
+        size: IrExpr,
+    },
+    /// The solution shrank handle array slot `slot` of instance `inst` to
+    /// `size` elements: objects only its dropped elements reached get no
+    /// `post_randomize`.
+    TrimSlot {
+        problem: usize,
+        inst: IrExpr,
+        slot: u32,
+        size: IrExpr,
     },
 }
 
@@ -627,6 +649,8 @@ impl IrRandStmt {
             | Self::ISetLeaf { problem, .. }
             | Self::ISetCyclic { problem, .. }
             | Self::SetArray { problem, .. }
+            | Self::SetSlotSize { problem, .. }
+            | Self::TrimSlot { problem, .. }
             | Self::SetElem { problem, .. }
             | Self::Link { problem, .. } => *problem,
         }
@@ -648,6 +672,8 @@ impl IrRandStmt {
             | Self::ISetLeaf { .. }
             | Self::ISetCyclic { .. }
             | Self::SetArray { .. }
+            | Self::SetSlotSize { .. }
+            | Self::TrimSlot { .. }
             | Self::SetElem { .. } => Vec::new(),
         }
     }
@@ -667,6 +693,8 @@ impl IrRandStmt {
             | Self::ISetLeaf { .. }
             | Self::ISetCyclic { .. }
             | Self::SetArray { .. }
+            | Self::SetSlotSize { .. }
+            | Self::TrimSlot { .. }
             | Self::SetElem { .. } => Vec::new(),
         }
     }
@@ -698,7 +726,15 @@ impl IrRandStmt {
             Self::SetElem {
                 inst, index, value, ..
             } => vec![inst, index, value],
-            Self::Link { inst, random, .. } => vec![inst, random],
+            Self::Link {
+                inst,
+                index,
+                random,
+                ..
+            } => [inst, random].into_iter().chain(index.iter()).collect(),
+            Self::SetSlotSize { inst, size, .. } | Self::TrimSlot { inst, size, .. } => {
+                vec![inst, size]
+            }
         }
     }
 
@@ -728,7 +764,15 @@ impl IrRandStmt {
             Self::SetElem {
                 inst, index, value, ..
             } => vec![inst, index, value],
-            Self::Link { inst, random, .. } => vec![inst, random],
+            Self::Link {
+                inst,
+                index,
+                random,
+                ..
+            } => [inst, random].into_iter().chain(index.iter_mut()).collect(),
+            Self::SetSlotSize { inst, size, .. } | Self::TrimSlot { inst, size, .. } => {
+                vec![inst, size]
+            }
         }
     }
 }

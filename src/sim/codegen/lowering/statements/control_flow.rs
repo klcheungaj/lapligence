@@ -1287,7 +1287,22 @@ impl EmitCtx<'_, '_> {
             return Ok(vec![IrStmt::Block(declarations)]);
         }
 
+        // `foreach (h.a[i])` reads the array of the object `h` names.
+        let selected = self
+            .cg
+            .node(h)
+            .children
+            .iter()
+            .copied()
+            .filter(|child| {
+                matches!(
+                    self.cg.kind(*child),
+                    NodeKind::Expr(ExprKind::HierPath { .. })
+                )
+            })
+            .find_map(|child| self.cg.container_of(child));
         let Some(container) = staged
+            .or(selected)
             .or_else(|| self.cg.container_globals.get(&array).cloned())
             .or_else(|| self.cg.container_of_select(h, array))
         else {

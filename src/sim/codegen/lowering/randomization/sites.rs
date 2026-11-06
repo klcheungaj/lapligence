@@ -225,9 +225,20 @@ impl Codegen<'_> {
         )))];
         let cases = self.class_cases(static_class);
         let mut bodies = Vec::new();
+        // Container properties a constraint reads as state are those of the
+        // randomized object; only `this` is the enclosing method's receiver.
+        let explicit_object = receiver.is_some_and(|receiver| self.node(receiver).name != "this");
         for class in &cases {
             bodies.push(self.class_randomize_case(
-                path, node, *class, &object, &selection, inline, result, &site,
+                path,
+                node,
+                *class,
+                &object,
+                &selection,
+                inline,
+                result,
+                &site,
+                explicit_object,
             )?);
         }
         statements.extend(self.class_case_chain(&local, &object, &cases, bodies));
@@ -297,6 +308,7 @@ impl Codegen<'_> {
         inline: Option<NodeId>,
         result: &str,
         site: &str,
+        explicit_object: bool,
     ) -> Result<Vec<IrStmt>, String> {
         let chain = self.class_chain(class);
         let class_name = self.node(class).name.clone();
@@ -398,11 +410,20 @@ impl Codegen<'_> {
             Some(object.clone()),
             placeholders,
         ));
+        let bound = if explicit_object {
+            self.bind_constraint_containers(&chain, &effective, inline, object)
+        } else {
+            Vec::new()
+        };
         let lowered =
             self.lower_class_blocks(path, &mut builder, &vars, object, &effective, inline);
         self.rand_lowering = saved;
+        for node in bound {
+            self.receiver_containers.remove(&node);
+        }
         let blocks = lowered?;
         if builder.units.is_some() {
+            self.lower_units(path, node, &mut builder, &mut vars)?;
             // Instance variables of the object are unit 0's; static ones
             // are global.
             let own = vars
@@ -410,7 +431,6 @@ impl Codegen<'_> {
                 .filter(|var| !matches!(var.direct, DirectRead::Signal(_)))
                 .map(|var| var.index)
                 .collect::<Vec<_>>();
-            self.lower_units(path, node, &mut builder)?;
             self.finish_units(&mut builder, own);
         }
         let pre = self.randomize_hook(class, "pre_randomize");
@@ -437,6 +457,49 @@ impl Codegen<'_> {
             post.into_iter().collect(),
         )?);
         Ok(statements)
+    }
+
+    /// Resolve the container properties that the constraints of an object
+    /// of class `chain` name through `object`; returns the nodes bound.
+    pub(super) fn bind_constraint_containers(
+        &mut self,
+        chain: &[NodeId],
+        effective: &[(NodeId, crate::core::db::ConstraintBlockInfo)],
+        inline: Option<NodeId>,
+        object: &IrChandleExpr,
+    ) -> Vec<NodeId> {
+        let mut bound = Vec::new();
+        let mut pending = effective
+            .iter()
+            .filter_map(|(_, info)| info.body)
+            .chain(inline)
+            .collect::<Vec<_>>();
+        while let Some(node) = pending.pop() {
+            pending.extend(self.node(node).children.iter().copied());
+            let NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) = self.kind(node)
+            else {
+                continue;
+            };
+            let target = *target;
+            if !self
+                .node(target)
+                .parent
+                .is_some_and(|owner| chain.contains(&owner))
+            {
+                continue;
+            }
+            let Some(container) = self.container_globals.get(&target).map(|info| info.ir) else {
+                continue;
+            };
+            if self.model.containers[container].class_field.is_some() {
+                let alias = self.class_container_alias(container, object.clone());
+                self.receiver_containers.insert(node, alias);
+                bound.push(node);
+            }
+        }
+        bound
     }
 
     /// Effective constraint blocks of an object whose class has `chain`
@@ -1065,7 +1128,7 @@ impl Codegen<'_> {
         }
         if builder.units.is_some() {
             // std::randomize arguments are global variables.
-            self.lower_units(path, node, &mut builder)?;
+            self.lower_units(path, node, &mut builder, &mut vars)?;
             self.finish_units(&mut builder, Vec::new());
         }
         let plan = ProblemPlan {

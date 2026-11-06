@@ -2495,8 +2495,8 @@ these forms remain outside them.
 
 ### Symptom
 
-- Rejected with a located `randomization:` error: arrays of class handles,
-  multidimensional and associative arrays, random bounded queues, static
+- Rejected with a located `randomization:` error: multidimensional and
+  associative arrays, random bounded queues, static
   random arrays and static random properties of objects reached through a
   `rand` handle, `randc` arrays and `randc` variables wider than 16 bits,
   elements of an enum or tagged-union type in a random array, a random array
@@ -2542,14 +2542,12 @@ these forms remain outside them.
 
 The exact engine counts models over the whole component, which a product of
 wide variables can exceed; the CDCL fallback finds one solution without
-counting. Arrays of handles need per-element object links in the lowering
-(the solver already has them); the other rejected forms need storage or
-expansion paths the lowering does not have.
+counting. The other rejected forms need storage or expansion paths the
+lowering does not have.
 
 ### Intended direction
 
-Arrays of `rand` handles and multidimensional arrays if a workload needs
-them; near-uniform sampling for the search fallback (hashing-based).
+Multidimensional arrays if a workload needs them; near-uniform sampling for the search fallback (hashing-based).
 
 ### Reproduce
 

@@ -28,9 +28,11 @@ contexts (a wait, an event control) reject.
 Commit-after-solve (18.6.3): `randomization.rs` module docs.
 
 Arrays, `foreach` and `rand` object members make a problem a template with
-units (`templates.rs`, decisions S30-D5..D11): unit 0 is the randomized object
+units (`templates.rs`, decisions S30-D5..D13): unit 0 is the randomized object
 or `std::randomize` scope, each other unit a class an object reached through a
-`rand` handle can have; variables, arrays and handle slots are problem-wide,
+`rand` handle can have, or a handle array (a slot with `llg_cr_link` per
+element; non-random properties read through its elements are inactive
+variables); variables, arrays and handle slots are problem-wide,
 one per property declaration. `template_forms` runs before a constraint
 expression is lowered and registers array selects, `size()`, reductions
 (`item`, `item.index`), `inside` an array, members and null tests through

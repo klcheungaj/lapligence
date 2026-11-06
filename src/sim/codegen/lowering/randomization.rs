@@ -49,6 +49,8 @@ pub(super) struct RandLowering {
     templates: HashMap<NodeId, IrExpr>,
     /// Loop variable or `with` iterator declaration -> its placeholder.
     bindings: HashMap<NodeId, IrExpr>,
+    /// `with` iterator of a handle array -> the template object it names.
+    element_refs: HashMap<NodeId, u32>,
 }
 
 impl RandLowering {
@@ -63,6 +65,7 @@ impl RandLowering {
             placeholders,
             templates: HashMap::new(),
             bindings: HashMap::new(),
+            element_refs: HashMap::new(),
         }
     }
 }

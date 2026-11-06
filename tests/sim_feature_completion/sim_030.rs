@@ -168,10 +168,10 @@ fn unsupported_array_and_object_forms_are_located_errors() {
     names_source_position("neg_array_compare");
     sim_cli::reject_case(
         SUITE,
-        "neg_handle_array",
-        "array `l` is not supported in constraints: arrays of class handles are not supported",
+        "neg_handle_index",
+        "a handle array element in a constraint needs a constant, state or loop index",
     );
-    names_source_position("neg_handle_array");
+    names_source_position("neg_handle_index");
     sim_cli::reject_case(
         SUITE,
         "neg_foreach_2d",
@@ -302,4 +302,26 @@ fn fallback_that_drops_weights_warns_once_per_call_site() {
         );
     }
     sim_cli::run_case_backend_parity(SUITE, "dist_fallback_warning", expected, &[], &[]);
+}
+
+#[test]
+fn handle_arrays_link_their_elements() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "handle_arrays",
+        include_str!("../fixtures/sim/feature_completion/sim_030/handle_arrays.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn handle_arrays_resize_without_allocating() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "handle_array_resize",
+        include_str!("../fixtures/sim/feature_completion/sim_030/handle_array_resize.out"),
+        &[],
+        &[],
+    );
 }
