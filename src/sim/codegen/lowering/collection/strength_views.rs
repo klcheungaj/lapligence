@@ -3,19 +3,205 @@
 //!
 //! A strength view is a two-state signal with eight bits per net bit that the
 //! runtime republishes after every resolution of its net (`llg_net_t.strength`).
-//! It exists only for nets that a `%v` argument reads, so ordinary nets keep
-//! their value-only resolution. Monitors depend on the view itself, which is
-//! how a strength-only change, such as St1 to Pu1, still reaches them.
+//! It exists only for nets that a `%v` argument reads or whose strength-only
+//! changes something waits for, so ordinary nets keep their value-only
+//! resolution. Monitors depend on the view itself, which is how a strength-only
+//! change, such as St1 to Pu1, still reaches them.
+//!
+//! An event control on a net or a constant projection of nets, an implicit
+//! event list, `wait` and `$monitor` also watch the views of the nets they read
+//! (decision T1-D8). Only a net whose strength can change without its value
+//! has a view for them ([`Codegen::note_strength_nets`]): one with nothing but
+//! strong drivers shows one strength for each value, so it costs nothing.
 
 use super::*;
 use crate::sim::emit_c::LLG_MAX_WIDTH;
-use crate::sim::ir::IrDisplayArg;
+use crate::sim::ir::{IrDependency, IrDisplayArg, IrNetKind};
 
 /// Bits of view storage per net bit.
 const VIEW_BITS: u32 = 8;
 
+/// The nets whose strength can change while their value holds.
+#[derive(Default)]
+pub(in super::super) struct StrengthNets {
+    /// By net group; groups created later never vary.
+    groups: Vec<bool>,
+    /// The dependency name of each signal with a bit on such a net.
+    signals: HashMap<String, usize>,
+}
+
 impl Codegen<'_> {
-    /// The view signal of one net group, created on first use.
+    /// Record the groups whose strength can change without their value, once
+    /// every driver slot and switch is known and before the first process.
+    ///
+    /// With strong drivers alone each value has one strength. Any other drive
+    /// strength can differ from the next driver's, or from the strong value of
+    /// a force; a `tri0` or `tri1` net has its pull as a second strength; a
+    /// switch reduces strength or hands a net another net's. A reader of a group
+    /// whose view would pass the packed width limit rejects
+    /// ([`Self::net_strength_view`]); the group costs nothing while none reads it.
+    pub(in super::super) fn note_strength_nets(&mut self) {
+        let mut groups: Vec<bool> = self
+            .model
+            .net_groups
+            .iter()
+            .map(|group| {
+                matches!(group.kind, IrNetKind::Tri0 | IrNetKind::Tri1)
+                    || group.driver_strengths.iter().any(|slot| *slot != (6, 6))
+            })
+            .collect();
+        for group in self.pending_switch_groups() {
+            groups[group] = true;
+        }
+        let mut signals = HashMap::new();
+        if groups.contains(&true) {
+            for (index, signal) in self.model.signals.iter().enumerate() {
+                let bound = signal.net_alias.iter().any(|binding| groups[binding.group]);
+                if bound || signal.net_driver.is_some_and(|(group, _)| groups[group]) {
+                    signals.insert(self.signal_dependency_name(index), index);
+                }
+            }
+        }
+        self.strength_nets = StrengthNets { groups, signals };
+    }
+
+    fn strength_varies(&self, group: usize) -> bool {
+        self.strength_nets.groups.get(group) == Some(&true)
+    }
+
+    /// The bits `lsb..lsb + width` of `signal` as ascending
+    /// `(group, group bit, count)` runs on nets whose strength can vary.
+    fn signal_strength_runs(&self, signal: usize, lsb: u32, width: u32) -> Vec<(usize, u32, u32)> {
+        let info = self.model.signal(signal);
+        if info.net_alias.is_empty() {
+            return info
+                .net_driver
+                .into_iter()
+                .filter(|(group, _)| self.strength_varies(*group))
+                .map(|(group, _)| (group, lsb, width))
+                .collect();
+        }
+        let mut bits = info
+            .net_alias
+            .iter()
+            .filter(|binding| {
+                binding.signal_bit >= lsb
+                    && binding.signal_bit - lsb < width
+                    && self.strength_varies(binding.group)
+            })
+            .map(|binding| (binding.group, binding.group_bit))
+            .collect::<Vec<_>>();
+        bits.sort_unstable();
+        let mut runs: Vec<(usize, u32, u32)> = Vec::new();
+        for (group, bit) in bits {
+            match runs.last_mut() {
+                Some((last, low, count)) if *last == group && *low + *count == bit => *count += 1,
+                _ => runs.push((group, bit, 1)),
+            }
+        }
+        runs
+    }
+
+    /// Add to `reads` the strength views of the nets it reads, so that a wait
+    /// on them wakes on a strength-only change of the bits it reads. A model
+    /// without such a net keeps `reads` as it is.
+    pub(in super::super) fn add_strength_reads(
+        &mut self,
+        reads: &mut Vec<IrDependency>,
+    ) -> Result<(), String> {
+        if self.strength_nets.signals.is_empty() {
+            return Ok(());
+        }
+        let mut views = Vec::new();
+        for read in reads.iter() {
+            let (storage, range) = match read {
+                IrDependency::PackedRange {
+                    storage,
+                    lsb,
+                    width,
+                } => (&**storage, Some((*lsb, *width))),
+                other => (other, None),
+            };
+            let signals = match storage {
+                IrDependency::Scalar(name) => self
+                    .strength_nets
+                    .signals
+                    .get(name)
+                    .copied()
+                    .into_iter()
+                    .collect(),
+                IrDependency::ArrayElement { array, index } => self.model.arrays[*array]
+                    .net_elements
+                    .iter()
+                    .filter(|(element, _)| *element == *index)
+                    .map(|(_, signal)| *signal)
+                    .collect(),
+                IrDependency::ArrayContents(array) => self.model.arrays[*array]
+                    .net_elements
+                    .iter()
+                    .map(|(_, signal)| *signal)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for signal in signals {
+                let (lsb, width) = range.unwrap_or((0, self.model.signal(signal).ty.width()));
+                views.extend(self.signal_strength_runs(signal, lsb, width));
+            }
+        }
+        for (group, low, count) in views {
+            let view = self.net_strength_view(group)?;
+            let name = self.model.signals[view].c_name.clone();
+            let read = if low == 0 && count == self.model.net_groups[group].width {
+                IrDependency::Scalar(name)
+            } else {
+                IrDependency::PackedRange {
+                    storage: Box::new(IrDependency::Scalar(name)),
+                    lsb: low * VIEW_BITS,
+                    width: count * VIEW_BITS,
+                }
+            };
+            if !reads.contains(&read) {
+                reads.push(read);
+            }
+        }
+        Ok(())
+    }
+
+    /// The view of `node` when it is a net or a constant projection of nets
+    /// and the strength of one of its bits can change without its value: an
+    /// event on it, or a `$monitor` argument naming it, also compares this.
+    pub(in super::super) fn varying_strength_view(
+        &mut self,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        if self.strength_nets.signals.is_empty() {
+            return Ok(None);
+        }
+        let varies = |cg: &Self, electrical: &[(usize, u32)]| {
+            electrical
+                .iter()
+                .any(|(group, _)| cg.strength_varies(*group))
+        };
+        self.net_strength_expr(node, varies)
+    }
+
+    /// The hierarchical source name of a net group, or its C name when no
+    /// declared signal names it.
+    fn net_group_name(&self, group: usize) -> String {
+        self.model
+            .signals
+            .iter()
+            .find(|signal| {
+                signal.net_driver.is_some_and(|(owner, _)| owner == group)
+                    || signal.net_alias.iter().any(|bit| bit.group == group)
+            })
+            .and_then(|signal| signal.hdl_name.as_deref())
+            .unwrap_or(&self.model.net_groups[group].c_name)
+            .replace('\u{1f}', ".")
+    }
+
+    /// The view signal of one net group, created on first use. A net too wide
+    /// for a view rejects, so no reader of its strength loses a wake.
     fn net_strength_view(&mut self, group: usize) -> Result<usize, String> {
         let net = &self.model.net_groups[group];
         if let Some(view) = net.strength_view {
@@ -27,8 +213,9 @@ impl Codegen<'_> {
             .filter(|width| *width <= LLG_MAX_WIDTH)
             .ok_or_else(|| {
                 format!(
-                    "`%v` strength view of a {}-bit net exceeds the packed width limit",
-                    net.width
+                    "strength view of the {}-bit net `{}` takes {VIEW_BITS} bits per net bit, past the packed width limit of {LLG_MAX_WIDTH} bits",
+                    net.width,
+                    self.net_group_name(group)
                 )
             })?;
         let c_name = format!("{}__strength", net.c_name);
@@ -110,6 +297,18 @@ impl Codegen<'_> {
         &mut self,
         node: NodeId,
     ) -> Result<Option<IrDisplayArg>, String> {
+        Ok(self
+            .net_strength_expr(node, |_, _| true)?
+            .map(IrDisplayArg::Strength))
+    }
+
+    /// The strength view of a net or constant projection of nets whose
+    /// resolved bits `accept` admits.
+    fn net_strength_expr(
+        &mut self,
+        node: NodeId,
+        accept: impl Fn(&Self, &[(usize, u32)]) -> bool,
+    ) -> Result<Option<IrExpr>, String> {
         let Ok(bits) = self.alias_expression_bits(node, node) else {
             return Ok(None);
         };
@@ -135,7 +334,7 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        if electrical.is_empty() {
+        if electrical.is_empty() || !accept(self, &electrical) {
             return Ok(None);
         }
         // Bits arrive most significant first; coalesce descending runs.
@@ -158,40 +357,55 @@ impl Codegen<'_> {
             width = width
                 .checked_add(count * VIEW_BITS)
                 .filter(|width| *width <= LLG_MAX_WIDTH)
-                .ok_or("`%v` strength view exceeds the packed width limit")?;
+                .ok_or_else(|| {
+                    format!(
+                        "strength view of `{}` takes {VIEW_BITS} bits per net bit, past the packed width limit of {LLG_MAX_WIDTH} bits",
+                        self.net_group_name(group)
+                    )
+                })?;
         }
         let view = if parts.len() == 1 {
             parts.pop().expect("one strength view run")
         } else {
             IrExpr::new(IrExprKind::Concat { parts }, width, false, None)
         };
-        Ok(Some(IrDisplayArg::Strength(view)))
+        Ok(Some(view))
+    }
+
+    /// The dependencies of a strength view expression.
+    pub(in super::super) fn strength_view_reads(&self, view: &IrExpr) -> Vec<IrDependency> {
+        let mut reads = Vec::new();
+        let mut pending = vec![view];
+        while let Some(expr) = pending.pop() {
+            match &expr.kind {
+                &IrExprKind::SigRead(signal) => {
+                    if let Some(info) = self.model.signals.get(signal) {
+                        let read = IrDependency::Scalar(info.c_name.clone());
+                        if !reads.contains(&read) {
+                            reads.push(read);
+                        }
+                    }
+                }
+                IrExprKind::PartSel { base, .. } => pending.push(base),
+                IrExprKind::Concat { parts } => pending.extend(parts),
+                _ => {}
+            }
+        }
+        reads
     }
 
     /// Monitor dependencies on the strength views read by `%v` arguments.
     pub(in crate::sim::codegen::lowering) fn strength_view_dependencies(
         &self,
         args: &[IrDisplayArg],
-    ) -> Vec<crate::sim::ir::IrDependency> {
+    ) -> Vec<IrDependency> {
         let mut reads = Vec::new();
         for arg in args {
-            let IrDisplayArg::Strength(view) = arg else {
-                continue;
-            };
-            let mut pending = vec![view];
-            while let Some(expr) = pending.pop() {
-                match &expr.kind {
-                    &IrExprKind::SigRead(signal) => {
-                        if let Some(info) = self.model.signals.get(signal) {
-                            let read = crate::sim::ir::IrDependency::Scalar(info.c_name.clone());
-                            if !reads.contains(&read) {
-                                reads.push(read);
-                            }
-                        }
+            if let IrDisplayArg::Strength(view) = arg {
+                for read in self.strength_view_reads(view) {
+                    if !reads.contains(&read) {
+                        reads.push(read);
                     }
-                    IrExprKind::PartSel { base, .. } => pending.push(base),
-                    IrExprKind::Concat { parts } => pending.extend(parts),
-                    _ => {}
                 }
             }
         }

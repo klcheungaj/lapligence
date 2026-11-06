@@ -1797,11 +1797,53 @@ cleanup:
 
 // Write both halves as one update of the net: the batch's exact deferral would
 // otherwise publish the first half before the second touches the same bits.
+static void enable_pair_store(llg_net_t* net, int idx, sv4_t value) {
+    if (llg_net_has_index(net)) llg_net_index_remove(net, idx);
+    sv4_copy(net->drivers[idx], &value);
+    uint32_t low = 0;
+    uint32_t high = 0;
+    if (llg_net_driven_extent(net->drivers[idx], &low, &high) && llg_net_has_index(net))
+        llg_net_index_insert(net, idx, low, high);
+}
+
+// A plain scalar net with this pair for its only drivers takes the gate's
+// output without a resolution, as a net with one driver does, unless the
+// output is L or H or a strength hides a half.
+static int enable_pair_alone(llg_inertial_t* driver, sv4_t zero, sv4_t one) {
+    llg_net_t* net = driver->net;
+    if (net->width != 1 || net->n_drivers != 2 || net->silent_slots || net->unsettled ||
+        net->switch_net || net->propagation_enabled || net->resolution != LLG_RESOLVE_WIRE ||
+        net->start_pending || llg_is_forced(&net->resolved) ||
+        !net->strength0 || !net->strength1 ||
+        !net->strength0[driver->slot] || !net->strength1[driver->publication_bit])
+        return 0;
+    int zero_bit = inertial_bit(&zero, 0);
+    int one_bit = inertial_bit(&one, 0);
+    // A slot drives only its own value, so the halves agree on 0 and 1, and
+    // a 1 in the strength0 slot over a 0 in the strength1 slot is Z.
+    if (zero_bit > 1 || one_bit > 1) return 0;
+    int high_z = zero_bit == 1 && one_bit == 0;
+    llg_net_defer_prepare(net, 0, 0);
+    if (net->deferred_slot > 0) return 0;
+    enable_pair_store(net, driver->slot, zero);
+    enable_pair_store(net, (int)driver->publication_bit, one);
+    sv4_t value = high_z ? sv4_fill(3, 1, 0) : sv4_from_u64((uint64_t)zero_bit, 1, 0);
+    llg_net_publish_range(net, 0, value);
+    sv4_destroy(&value);
+    llg_net_strength_publish(net);
+    return 1;
+}
+
 static void enable_pair_commit(llg_inertial_t* driver, const sv4_t* halves) {
     uint32_t width = driver->part_width;
     llg_net_t* net = driver->net;
     sv4_t zero = sv4_part_select(*halves, width - 1u, 0);
     sv4_t one = sv4_part_select(*halves, 2u * width - 1u, width);
+    if (enable_pair_alone(driver, zero, one)) {
+        sv4_destroy(&one);
+        sv4_destroy(&zero);
+        return;
+    }
     int whole = width == net->width;
     if (whole) llg_net_write(net, driver->slot, zero);
     else llg_net_write_slice(net, driver->slot, zero, driver->part_lsb);

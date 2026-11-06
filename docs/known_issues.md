@@ -843,10 +843,6 @@ unsupported targets explicitly (decision S47-D9).
 
 ### Symptom
 
-- `$dumpvars` naming a block, task or function as a scope (`$dumpvars(1,
-  tb.blk)`) stops in the frontend with "expected module or variable name".
-  Scope dumps of an enclosing instance include them, and their variables can
-  be named one by one; a formal cannot be named.
 - An unpacked structure variable declared in a block appears as one packed
   vector, not as a scope of its members.
 - An unnamed block directly inside a task or function adds no
@@ -856,21 +852,116 @@ unsupported targets explicitly (decision S47-D9).
 
 ### Cause
 
-Slang's `$dumpvars` argument binding accepts only variables, nets and module
-instances. Block structures live in one flattened signal, and a registration
+Block structures live in one flattened signal, and a registration
 names a whole signal. The owned DB parents variables of such an unnamed block
 to the subroutine. libfst writes the hierarchy and block index at close.
 
 ### Intended direction
 
-A tracked Slang patch admits block and subroutine symbols (about a quarter of
-a day); a registration with a bit range serves the flattened structures. The
-FST behaviour follows the format.
+A registration with a bit range serves the flattened structures. The FST
+behaviour follows the format.
 
 ### Reproduce
 
-`$dumpvars(1, tb.blk);` for a named block `blk`; `flush_read.sv` with
-`FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
+`flush_read.sv` with `FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
+
+## Strength-only events a reader does not see
+
+**Status:** open; these forms wake on value changes only (T1-D8).
+
+### Symptom
+
+- `@(v[i])` with a dynamic select does not run on a strength-only change of the
+  selected bit; `@(v[0])` and `@*` reading `v[i]` do.
+- A net read through a port link that converts, such as a widening port, shows
+  and wakes on the strength of the link, not of the net outside.
+
+### Cause
+
+An event on a net or constant projection compares the strength view of the bits
+it names, which `alias_expression_bits` resolves statically; a dynamic select
+has no static bits. A converting port stays a continuous assignment, whose
+driver has one strength.
+
+### Intended direction
+
+Evaluate the view of a dynamic select in the process-evaluated event plan. A
+converting port needs strength carried through a link, which only matters for
+a design reading strength across one.
+
+### Reproduce
+
+Two drivers of different strength on `v[0]`, `i = 0`, and `always @(v[i])`; a
+one-bit net with such drivers on a two-bit input port with `always @(i)`.
+
+## Strength views past the packed width limit
+
+**Status:** open by decision (T1-D8); the form stops code generation with an
+error that names the net and the limit.
+
+### Symptom
+
+A reader of a net's strength-only changes (an event on the net or a select of
+it, `@*`, `always_comb`, `always_latch`, `wait`, a `$monitor` argument) or a `%v`
+of it rejects when the net has more than 131071 bits. The net compiles while
+nothing reads its strength this way.
+
+### Cause
+
+A strength view takes eight bits per net bit and is one packed signal, so the
+packed width limit of 1048575 bits applies to the whole net, even when the
+reader selects a few bits of it. Waking on values alone would lose runs without
+notice.
+
+### Intended direction
+
+Allocate the view as bytes outside packed storage, which only matters for a
+design reading the strength of such a net.
+
+### Reproduce
+
+`tri1 [131071:0] w; always @(w) $display("woke");`
+(`T1-D8_wide_strength_view_rejected`).
+
+## Sibling ports with different net delays
+
+**Status:** open by decision (T1-D4); the form stops code generation with a
+located error. It compiled before T1-D4, silently without a delay.
+
+### Symptom
+
+Two or more ports merge into one net, their formals declare different net
+delays, and no dominating declaration has a delay:
+
+```systemverilog
+module leaf(n); inout n; wire #D n; endmodule
+wire e;
+leaf #(3) a(.n(e));
+leaf #(2) b(.n(e));
+```
+
+llg stops with `net propagation delay for ... has conflicting member delays`.
+
+### Cause
+
+23.3.3.7 gives the simulated net the delay of the dominating net, and T1-D4
+falls back to the outermost declared delay. Siblings are equally far out, so
+the fallback names no single delay; one simulated net can hold only one.
+
+### Intended direction
+
+Keep the rejection until a rule is defensible. A simulator tried gives none:
+with the formals read hierarchically the net takes the largest delay on every
+transition, without such a read later transitions take no delay at all, a
+first value set at time 0 took 2, 6 and 8 for sets of delays where another
+design took 3, 4 and 5, and rise and fall delays do not combine per transition.
+Taking the largest delay or none would both invent a behaviour. The workaround
+is to give the dominating (outer) net a delay, or the same delay to every
+formal.
+
+### Reproduce
+
+`T1-D4` covers the accepted forms; the snippet above rejects.
 
 ## randsequence limits (ADV-016)
 

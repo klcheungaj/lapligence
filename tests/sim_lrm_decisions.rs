@@ -29,6 +29,112 @@ fn t1_d2_event_compare_wait_rejected() {
 }
 
 #[test]
+fn t1_d8_strength_only_events() {
+    run_decision(
+        "T1-D8_strength_only_events",
+        include_str!("fixtures/sim/lrm_decisions/T1-D8_strength_only_events.out"),
+    );
+}
+
+#[test]
+fn t1_d9_output_port_delay_merges() {
+    run_decision(
+        "T1-D9_output_port_delay_merges",
+        include_str!("fixtures/sim/lrm_decisions/T1-D9_output_port_delay_merges.out"),
+    );
+}
+
+#[test]
+fn t1_d8_wide_net_no_strength_reader() {
+    run_decision(
+        "T1-D8_wide_net_no_strength_reader",
+        include_str!("fixtures/sim/lrm_decisions/T1-D8_wide_net_no_strength_reader.out"),
+    );
+}
+
+#[test]
+fn t1_d8_wide_strength_view_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/T1-D8_wide_strength_view_rejected.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "T1-D8_wide_strength_view_rejected",
+        "strength view of the 131072-bit net `tb.w` takes 8 bits per net bit, past the packed width limit of 1048575 bits",
+    );
+}
+
+#[test]
+fn t1_d10_ansi_port_redeclared_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/T1-D10_ansi_port_redeclared_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "T1-D10_ansi_port_redeclared_rejected",
+        "redefinition of `i` in scope `tb.u`",
+    );
+}
+
+#[test]
+fn t1_d10_ansi_port_other_width_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/T1-D10_ansi_port_other_width_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "T1-D10_ansi_port_other_width_rejected",
+        "redefinition of `i` in scope `tb.u`",
+    );
+}
+
+#[test]
+fn t1_d10_ansi_port_other_sign_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/T1-D10_ansi_port_other_sign_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "T1-D10_ansi_port_other_sign_rejected",
+        "redefinition of `a` in scope `tb.u`",
+    );
+}
+
+#[test]
+fn t1_d10_ansi_port_other_kind_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/T1-D10_ansi_port_other_kind_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "T1-D10_ansi_port_other_kind_rejected",
+        "redefinition of `o` in scope `tb.u`",
+    );
+}
+
+#[test]
+fn t1_d10_net_redeclared_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/T1-D10_net_redeclared_rejected.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "T1-D10_net_redeclared_rejected",
+        "redefinition of `a` in scope `tb`",
+    );
+}
+
+#[test]
 fn t1_d4_port_delay_merges() {
     run_decision(
         "T1-D4_port_delay_merges",

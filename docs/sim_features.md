@@ -1467,12 +1467,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   and supplies are pull/supply sources, not post-resolution defaults. `%v`
   reports the resolved strength range (mnemonic, two-digit range, L/H) of nets,
   their constant selects, aliases and net-array cells; strength-only changes
-  reach `%v` monitors while value readers wake only on value changes. The
+  reach `%v` monitors, and readers that name the net (event controls, implicit
+  event lists, `wait`, `$monitor` arguments; decision T1-D8), while edges and
+  derived values wake only on value changes. The
   [RTL-012 matrix](../tests/fixtures/sim/feature_completion/rtl_012/readme.md)
   checks every source pair against an exhaustive outcome oracle in both
   editions. Explicit continuous strengths on vectors, selected vector bits and
   supply nets reject; gate instance arrays keep per-instance strengths. Delayed
-  enable gates still drive X for an unknown enable; VPI reads these strengths
+  enable gates drive L/H too (decision T1-D1); VPI reads these strengths
   through `vpiStrengthVal` (decision A20-D21); charge and resistive contexts
   are outside this row (`trireg` and the resistive
   MOS primitives are unsupported by design).
@@ -2247,7 +2249,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `function`) and named events (`$var event`, one change per triggering time
   step); `$dumpfile` takes a literal or computed name. Strings, handles,
   dynamic containers, event arrays, block-level unpacked arrays and automatic
-  variables are not dumped and naming one in `$dumpvars` is an error.
+  variables are not dumped and naming one in `$dumpvars` is an error. A block,
+  task or function may name a `$dumpvars` scope, the depth counting from it.
   `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
   `$dumpflush` follow the dump state; an output error is reported, stops the
   dump and fails the run (decisions S47-D1..D13; [SIM-047

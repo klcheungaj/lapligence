@@ -279,7 +279,7 @@ pub(super) fn node_kind_from_slang(
         // resolved target as owned scope metadata instead of exposing a
         // borrowed/opaque executable node to simulator lowering.
         SemanticKind::Unsupported if node.detail == "ArbitrarySymbol" => {
-            match first(SemanticEdgeRole::Reference)? {
+            match scope_reference_target(snapshot, ids, edges)? {
                 Some(target) => NodeKind::Expr(ExprKind::ScopeRef { target }),
                 None => NodeKind::Other,
             }

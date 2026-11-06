@@ -135,6 +135,20 @@ fn release_runtime_units_build_under_strict_warnings() {
     );
 }
 
+/// Native build tool arguments that let a configured `build_dir` finish every
+/// target a failure does not block, so one run reports all broken sources
+/// instead of the first (a Windows `/WX` failure otherwise costs one CI run
+/// per file). Successful builds are unaffected.
+fn keep_going_args(build_dir: &Path) -> &'static [&'static str] {
+    if build_dir.join("build.ninja").exists() {
+        &["--", "-k", "0"]
+    } else if build_dir.join("Makefile").exists() {
+        &["--", "-k"]
+    } else {
+        &[]
+    }
+}
+
 fn run_storage_tests(label: &str, options: &[String]) {
     run_storage_stages_with_flags(label, options, "Debug", &[], &[], &[]);
 }
@@ -227,6 +241,9 @@ fn run_storage_stages_with_flags(
         stages.push(("test", &mut test, timeout));
     }
     for (stage, command, timeout) in stages {
+        if stage == "build" {
+            command.args(keep_going_args(dir.path()));
+        }
         let output = sim_harness::run_command(command, timeout)
             .unwrap_or_else(|error| panic!("storage tests {stage}: {error}"));
         assert!(

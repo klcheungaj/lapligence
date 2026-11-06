@@ -1657,7 +1657,9 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                Ok((self.lower_event_specs(specs)?, None))
+                let mut lowered = self.lower_event_specs(specs)?;
+                self.add_strength_events(specs, &mut lowered)?;
+                Ok((lowered, None))
             }
             IntraControl::Repeat { count, event, .. } => {
                 let count = self.lower_repeat_count(*count)?;

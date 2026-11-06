@@ -36,6 +36,7 @@ impl Frame<'_, '_> {
             fill: None,
             slot: value.slot,
             borrowed_address: None,
+            truth: false,
         }
     }
 
@@ -47,6 +48,7 @@ impl Frame<'_, '_> {
             signed,
             fill: None,
             slot: None,
+            truth: false,
         }
     }
 
@@ -58,6 +60,7 @@ impl Frame<'_, '_> {
             fill: None,
             slot: None,
             borrowed_address: Some(binding.address.clone()),
+            truth: false,
         }
     }
 

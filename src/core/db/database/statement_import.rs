@@ -479,6 +479,30 @@ fn unique_priority_check(value: u64) -> Result<UniquePriorityCheck, DbError> {
     })
 }
 
+/// The node a symbol operand names: a statement block's own statement, which
+/// is what the owned tree keeps of it, else the reference target.
+pub(super) fn scope_reference_target(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    edges: &[crate::ffi::slang::SemanticEdge],
+) -> Result<Option<NodeId>, DbError> {
+    let block = edges
+        .iter()
+        .find(|edge| edge.role == SemanticEdgeRole::Reference)
+        .filter(|edge| {
+            usize::try_from(edge.target_id)
+                .ok()
+                .and_then(|index| snapshot.semantic_nodes.get(index))
+                .is_some_and(|target| target.detail == "StatementBlock")
+        });
+    if let Some(edge) = block {
+        if let Some(statement) = block_statement_for_symbol(snapshot, ids, edge.target_id)? {
+            return Ok(Some(statement));
+        }
+    }
+    edge_target(ids, edges, SemanticEdgeRole::Reference)
+}
+
 fn block_statement_for_symbol(
     snapshot: &SlangSnapshot,
     ids: &SemanticIds,

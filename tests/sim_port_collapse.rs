@@ -1367,3 +1367,33 @@ fn vpi_models_merge_the_same_selected_nets() {
         &["--vpi"],
     );
 }
+
+/// Only a net whose strength can change without its value pays for a strength
+/// view: strong drivers alone show one strength per value (T1-D8).
+#[test]
+fn strength_views_exist_only_for_varying_nets() {
+    let strong = render(
+        "module tb;
+  reg a, b;
+  wire w;
+  assign w = a;
+  assign w = b;
+  always @(w) $display(\"%b\", w);
+  always @* $display(\"%b\", w);
+  initial $monitor(\"%b\", w);
+endmodule
+",
+    );
+    assert!(!strong.contains("__strength"), "{strong}");
+    let mixed = render(
+        "module tb;
+  reg a, b;
+  wire w;
+  assign (strong1, strong0) w = a;
+  assign (pull1, pull0) w = b;
+  always @(w) $display(\"%b\", w);
+endmodule
+",
+    );
+    assert!(mixed.contains("__strength"), "{mixed}");
+}

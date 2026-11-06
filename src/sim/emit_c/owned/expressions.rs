@@ -548,6 +548,9 @@ impl Frame<'_, '_> {
         if matches!(op, IrBinOp::LogAnd | IrBinOp::LogOr | IrBinOp::LogImpl) {
             return self.short_circuit(op, left, right);
         }
+        if matches!(op, IrBinOp::IndexEq | IrBinOp::IndexLt) {
+            return self.index_test(op, left, right);
+        }
         let mut a = if operands::stable_expression(right) {
             self.operand(left)?
         } else {
@@ -601,9 +604,11 @@ impl Frame<'_, '_> {
                 IrBinOp::Ashl => "sv4_ashl",
                 IrBinOp::Ashr => "sv4_ashr",
                 IrBinOp::LogEquiv => "sv4_logequiv",
-                IrBinOp::LogAnd | IrBinOp::LogOr | IrBinOp::LogImpl => {
-                    unreachable!("handled above")
-                }
+                IrBinOp::LogAnd
+                | IrBinOp::LogOr
+                | IrBinOp::LogImpl
+                | IrBinOp::IndexEq
+                | IrBinOp::IndexLt => unreachable!("handled above"),
             };
             format!("{function}({}, {})", a.code, b.code)
         };
@@ -640,6 +645,47 @@ impl Frame<'_, '_> {
         };
         Ok(result)
     }
+    /// One test of a member select's decision tree: a runtime call, so a test
+    /// costs no temporaries or inlined value operations at its site. The
+    /// widening `Convert` lowering puts around an index keeps the value, which
+    /// the runtime reads from the source with its own signedness.
+    fn index_test(&mut self, op: IrBinOp, index: &IrExpr, key: &IrExpr) -> Result<Value, String> {
+        let source = match &index.kind {
+            IrExprKind::Convert { a } if a.width != 0 => a.as_ref(),
+            _ => index,
+        };
+        let IrExprKind::Const(constant) = &key.kind else {
+            return Err("a member select test needs a constant declared index".to_owned());
+        };
+        // Declared indices are `i32`: the low word, sign-extended from the
+        // constant's width, is the whole value.
+        let shift = 64 - constant.width().min(64);
+        let word = constant.bits().first().copied().unwrap_or(0);
+        let key = ((word << shift) as i64) >> shift;
+        let function = if op == IrBinOp::IndexEq {
+            "llg_index_eq"
+        } else {
+            "llg_index_lt"
+        };
+        let source = self.operand(source)?;
+        let test = format!("{function}({}, {key})", source.code);
+        let code = if source.slot.is_some() {
+            self.scalar("int", test)
+        } else {
+            test
+        };
+        self.discard(source);
+        Ok(Value {
+            code,
+            width: 0,
+            signed: false,
+            fill: None,
+            slot: None,
+            borrowed_address: None,
+            truth: true,
+        })
+    }
+
     pub(super) fn boolean_value(&mut self, value: Value) -> Value {
         if value.width != 0 {
             return value;

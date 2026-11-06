@@ -2752,6 +2752,12 @@ llg_semaphore_t* llg_semaphore_new(sv4_t key_count);
 void llg_semaphore_put(llg_semaphore_t* semaphore, sv4_t key_count);
 int llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count);
 
+// Tests of a run-time member select's decision tree: whether `index` is known
+// and equals (is below) the declared index `key`. Out of line because a select
+// site holds one test per element.
+int llg_index_eq(sv4_t index, int64_t key);
+int llg_index_lt(sv4_t index, int64_t key);
+
 // Cooperative generated-loop interruption point. Zero means the loop may
 // continue. Nonzero means the process budget was exhausted: the diagnostic
 // and failure bookkeeping are complete and chain.exiting is ABANDON. A

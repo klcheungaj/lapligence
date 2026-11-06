@@ -529,6 +529,33 @@ fn dumpvars_names_block_statics_and_events() {
     );
 }
 
+/// A block, task or function names a scope of the dump; the depth counts from
+/// it, and an automatic subroutine adds no variable.
+#[test]
+fn dumpvars_takes_block_and_subroutine_scopes() {
+    let (dir, output) = sim_cli::run_case_keeping_dir(SUITE, "scope_args", true, &[], &[]);
+    assert_success(
+        "scope_args",
+        &output,
+        include_str!("../fixtures/sim/feature_completion/sim_047/scope_args.out"),
+    );
+    let vcd = read_vcd("scope_args", &dir, "scopes.vcd");
+    assert_eq!(
+        vcd.paths(),
+        [
+            "tb.blk.c",
+            "tb.blk.inner.d",
+            "tb.blk.inner.deep.e",
+            "tb.f1.f1",
+            "tb.f1.k",
+            "tb.f1.x",
+            "tb.t1.m",
+            "tb.t1.x"
+        ],
+        "the named scopes to their depths"
+    );
+}
+
 #[test]
 fn block_and_subroutine_statics_and_events_are_dumped() {
     for optimized in [true, false] {

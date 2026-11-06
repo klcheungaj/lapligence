@@ -295,6 +295,14 @@ impl Codegen<'_> {
     /// contiguously, in order of first use, and store the network in the
     /// model. Switch indices keep their lowering order, which the control
     /// processes and direct controls already name.
+    /// The net groups the pass switches lowered so far touch.
+    pub(super) fn pending_switch_groups(&self) -> Vec<usize> {
+        self.pending_switches
+            .iter()
+            .flat_map(|switch| [switch.a.group, switch.b.group])
+            .collect()
+    }
+
     pub(in super::super) fn finish_switch_network(&mut self) -> Result<(), String> {
         let pending = std::mem::take(&mut self.pending_switches);
         if pending.is_empty() {

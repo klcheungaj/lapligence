@@ -1,7 +1,8 @@
 # Lowering: events, predicates, aggregates and streams
 
 Register event or-lists atomically with `llg_wait_any_events`, never sequential
-waits. True waits execute once immediately; false/X/Z constant waits suspend on
+waits. A value event on a net whose strength can change alone adds one source on
+its strength view (`add_strength_events`, T1-D8, [nets](nets.md)). True waits execute once immediately; false/X/Z constant waits suspend on
 empty dependencies without polling or blocking time advancement. Evaluated events
 compare expression values, not every operand change; qualifiers run at trigger.
 Packed edges use LSB, real any-change uses IEEE bits (signed-zero changes wake;
@@ -172,7 +173,9 @@ run-time index below a native value or a record element to an item locator
 (`IrChandleExpr::ItemElement`), constant in code per site and in access cost.
 A module record keeps each element as its own object, so a run-time index
 there is a balanced decision tree over the declared indices, one nested tree
-per run-time index, whose code is linear in the leaves per access site.
+per run-time index, whose code is linear in the leaves per access site. Each
+test is one runtime call (`IrBinOp::IndexEq`, `IrBinOp::IndexLt`, predicates
+only), so a site's C holds no packed comparison per element.
 
 Resizable containers in subroutine, procedural-block and class storage
 (SIM-006) use `collection/subroutine_containers.rs`: storage per (instance,

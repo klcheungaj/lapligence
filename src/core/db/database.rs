@@ -111,7 +111,7 @@ use assertion_import::assertion_expr_from_slang;
 mod node_import;
 use node_import::{node_kind_from_slang, udp_tables_from_slang};
 mod statement_import;
-use statement_import::{event_specs, statement_from_slang};
+use statement_import::{event_specs, scope_reference_target, statement_from_slang};
 mod expression_import;
 use expression_import::{
     assign_semantic_full_names, enclosing_scope_name, expression_from_slang, source_position,

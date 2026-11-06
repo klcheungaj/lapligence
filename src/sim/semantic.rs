@@ -928,7 +928,8 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
                     NodeKind::ModuleInst { .. }
                         | NodeKind::GenScope
                         | NodeKind::GenScopeArray
-                        | NodeKind::Stmt(StmtKind::Begin)
+                        | NodeKind::Stmt(StmtKind::Begin | StmtKind::Fork { .. })
+                        | NodeKind::FuncTask { .. }
                         | NodeKind::Port { .. }
                         | NodeKind::IoDecl { .. }
                         | NodeKind::Net { .. }

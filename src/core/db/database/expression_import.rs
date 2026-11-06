@@ -35,7 +35,9 @@ pub(super) fn expression_from_slang(
     };
     if node.detail == "ArbitrarySymbol" {
         return Ok(NodeKind::Expr(ExprKind::ScopeRef {
-            target: required(SemanticEdgeRole::Reference, "scope reference target")?,
+            target: scope_reference_target(snapshot, ids, edges)?.ok_or_else(|| {
+                DbError::InvalidSnapshot("scope reference target is missing".into())
+            })?,
         }));
     }
     if node.detail == "DataType" {

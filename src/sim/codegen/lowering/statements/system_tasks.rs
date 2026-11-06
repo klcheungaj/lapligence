@@ -313,7 +313,16 @@ impl EmitCtx<'_, '_> {
                     let outer = std::mem::replace(&mut self.cg.deferred_display_args, true);
                     let parsed = self.parse_display_call(name, display_args_source, default_radix);
                     self.cg.deferred_display_args = outer;
-                    let (fmt, display_args) = parsed?;
+                    let (fmt, mut display_args) = parsed?;
+                    if !strobe {
+                        // Trailing views no conversion prints: they only join
+                        // the comparison that decides a report (T1-D8).
+                        for argument in display_args_source {
+                            if let Some(view) = self.cg.varying_strength_view(*argument)? {
+                                display_args.push(crate::sim::ir::IrDisplayArg::Strength(view));
+                            }
+                        }
+                    }
                     let reads = if !strobe {
                         let mut reads = self.collect_monitor_reads(display_args_source)?;
                         for read in self.cg.strength_view_dependencies(&display_args) {

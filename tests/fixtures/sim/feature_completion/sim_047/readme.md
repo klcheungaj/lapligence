@@ -130,6 +130,14 @@ variable has two ordinary records in one step (S47-D2).
 - `named_statics.sv` (A03): `$dumpvars` names a block variable, a function
   static and an event, and only those three are dumped. Naming an event is an
   llg extension of "individual variables"; some simulators reject it.
+- `scope_args.sv`: 21.7.1.2 (`SystemVerilog-1800-2009.txt` L37789-37791)
+  "Subsequent arguments specify which scopes of the model to dump to the VCD
+  file. These arguments can specify entire modules or individual variables
+  within a module." A named block, task or function is taken as a scope too,
+  as simulators do, though Syntax 21-15 lists modules and variables only. The
+  depth counts from the named scope, and an automatic subroutine adds no
+  variable. Paths compared with industry-standard output, which also shows an
+  empty scope for the automatic function.
 - `excluded.sv` (A03): `$dumpvars(0, tb)` dumps `count`, `ratio`, `total` and
   the event `tick` only; the string, handle, dynamic/queue/associative arrays,
   automatic function variable and block handle are left out (S47-D9).

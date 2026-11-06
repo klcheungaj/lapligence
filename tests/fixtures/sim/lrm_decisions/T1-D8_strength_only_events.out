@@ -1,0 +1,36 @@
+1: @(w) @* comb latch or @(y) @(v) @(v[0]) @(v[1]) @(concat) @(t0) @(eo) @(wa) @(n[1]) @(p) @(u) @(ch.i) @* v[1]
+  w=z HiZ v=01 St0 Pu1 t0=Pu0 eo=HiZ wa=HiZ n=HiZ p=HiZ u=HiZ y=HiZ x2=StX i=HiZ calls=2
+2 monitor 1
+3: @(w) @* comb latch or posedge and @(y) @(x2) @(concat) @(t0) @(wa) @(n[1]) @(u) @(ch.i) intra
+  w=1 St1 v=01 St0 Pu1 t0=St1 eo=HiZ wa=St1 n=St1 p=HiZ u=St1 y=St1 x2=St1 i=St1 calls=3
+5: @(p)
+  w=1 St1 v=01 St0 Pu1 t0=St1 eo=HiZ wa=St1 n=St1 p=Pu1 u=St1 y=St1 x2=St1 i=St1 calls=3
+6 monitor 1
+7: @(w) @* comb latch or @(concat) @(wa) @(n[1]) @(ch.i) intra
+  w=1 Pu1 v=01 St0 Pu1 t0=St1 eo=HiZ wa=Pu1 n=Pu1 p=Pu1 u=St1 y=St1 x2=St1 i=Pu1 calls=4
+8 monitor 1
+9: @(w) @* comb latch or @(concat) @(wa) @(n[1]) @(ch.i) intra
+  w=1 St1 v=01 St0 Pu1 t0=St1 eo=HiZ wa=St1 n=St1 p=Pu1 u=St1 y=St1 x2=St1 i=St1 calls=5
+11: @(v) @(v[0])
+  w=1 St1 v=01 St0 St1 t0=St1 eo=HiZ wa=St1 n=St1 p=Pu1 u=St1 y=St1 x2=St1 i=St1 calls=5
+12 monitor v0 1
+13: @(v) @(v[0])
+  w=1 St1 v=01 St0 Pu1 t0=St1 eo=HiZ wa=St1 n=St1 p=Pu1 u=St1 y=St1 x2=St1 i=St1 calls=5
+15: or @(v) @(v[1]) @(concat) @* v[1]
+  w=1 St1 v=11 St1 Pu1 t0=St1 eo=HiZ wa=St1 n=St1 p=Pu1 u=St1 y=St1 x2=St1 i=St1 calls=5
+16 monitor v1 1
+17: @(t0)
+  w=1 St1 v=11 St1 Pu1 t0=Pu0 eo=HiZ wa=St1 n=St1 p=Pu1 u=St1 y=St1 x2=St1 i=St1 calls=5
+19: @(t0)
+  w=1 St1 v=11 St1 Pu1 t0=St0 eo=HiZ wa=St1 n=St1 p=Pu1 u=St1 y=St1 x2=St1 i=St1 calls=5
+20 monitor and 1
+21: @(eo)
+  w=1 St1 v=11 St1 Pu1 t0=St0 eo=StL wa=St1 n=St1 p=Pu1 u=St1 y=St1 x2=St1 i=St1 calls=5
+23: @(t0) @(eo)
+  w=1 St1 v=11 St1 Pu1 t0=St1 eo=StH wa=St1 n=St1 p=Pu1 u=St1 y=St1 x2=St1 i=St1 calls=5
+25: @(w) @* comb latch or @(concat) @(wa) @(n[1]) @(ch.i) intra
+  w=1 Pu1 v=11 St1 Pu1 t0=St1 eo=StH wa=Pu1 n=Pu1 p=Pu1 u=St1 y=St1 x2=St1 i=Pu1 calls=6
+27: @(p)
+  w=1 Pu1 v=11 St1 Pu1 t0=St1 eo=StH wa=Pu1 n=Pu1 p=St1 u=St1 y=St1 x2=St1 i=Pu1 calls=6
+29: @(p)
+  w=1 Pu1 v=11 St1 Pu1 t0=St1 eo=StH wa=Pu1 n=Pu1 p=Pu1 u=St1 y=St1 x2=St1 i=Pu1 calls=6
