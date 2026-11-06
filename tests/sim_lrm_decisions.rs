@@ -520,6 +520,22 @@ fn s13_d2_ref_binds_missing_entry() {
 }
 
 #[test]
+fn s12_d1_foreach_array_each_bound_check() {
+    run_decision(
+        "S12-D1_foreach_array_each_bound_check",
+        include_str!("fixtures/sim/lrm_decisions/S12-D1_foreach_array_each_bound_check.out"),
+    );
+}
+
+#[test]
+fn s11_d4_short_circuit_container_actual() {
+    run_decision(
+        "S11-D4_short_circuit_container_actual",
+        include_str!("fixtures/sim/lrm_decisions/S11-D4_short_circuit_container_actual.out"),
+    );
+}
+
+#[test]
 fn s13_d1_copy_out_target_at_return() {
     run_decision(
         "S13-D1_copy_out_target_at_return",

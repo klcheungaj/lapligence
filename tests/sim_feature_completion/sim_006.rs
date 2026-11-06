@@ -325,3 +325,33 @@ fn block_static_locals_wake_fork_events() {
         include_str!("../fixtures/sim/feature_completion/sim_006/static_block_event.out");
     sim_cli::run_case_backend_parity(SUITE, "static_block_event", expected, &[], &[]);
 }
+
+#[test]
+fn nested_elements_bind_ref_formals_of_functions() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_ref_actuals.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_ref_actuals", expected, &[], &[]);
+}
+
+#[test]
+fn subroutine_and_object_containers_wake_waits() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/subroutine_container_waits.out");
+    sim_cli::run_case_backend_parity(SUITE, "subroutine_container_waits", expected, &[], &[]);
+}
+
+#[test]
+fn nested_associative_handles_survive_rewrites() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative_handles.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative_handles", expected, &[], &[]);
+}
+
+#[test]
+fn a_task_reference_to_a_nested_queue_is_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_nested_task_ref",
+        "ref actual of container formal `t` in `tb` must be a container variable of the same type",
+    );
+}

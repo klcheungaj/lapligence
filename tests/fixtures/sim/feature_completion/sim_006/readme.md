@@ -47,6 +47,10 @@ handle only, never the designated object.
 | `record_element_compound`, `record_field_compound` | §11.4.1. Compound writes and increments of members of record elements of queues, dynamic and associative arrays, fixed arrays and class properties; a missing associative key reads its default first. Output recorded from the reference. |
 | `semaphore_try_get_statement` | §15.3.4 L20422: "The semaphore try_get() method is used to procure a specified number of keys from a semaphore, but without blocking."; the result may be discarded with `void'`. Hand-derived: two of two keys taken, the third try returns 0; after one `put` the try returns 1. |
 | `static_block_event` | §9.4.2. A static local of a procedural block is a variable `@` can wait on from a fork branch. Output recorded from the reference. |
+| `nested_ref_actuals` | §13.5.2 L19103: "Arguments passed by reference are not copied into the subroutine area, rather, a reference to the original argument is passed to the subroutine." A `ref` actual may be a class property through any handle, a record member or an element nested in a queue or string-keyed array. Output recorded from the reference. |
+| `neg_nested_task_ref` | Legal by §13.5.2; a task can suspend while its reference is live, so a staged copy of a nested queue cannot stand in for the element: rejected explicitly. |
+| `subroutine_container_waits` | §§9.4.2, 9.4.3. `wait` and `@` on containers of formals, automatic locals and class properties wake when the element, size or property changes. Output recorded from the reference. |
+| `nested_associative_handles` | §7.8; §8.5. Handles held in a nested associative array stay reachable through overwrites and shared elements; a subroutine called by the value of an element write sees the array it writes (`put`). Output recorded from the reference. |
 
 ### Clause quotes for `nested_element_methods`
 
