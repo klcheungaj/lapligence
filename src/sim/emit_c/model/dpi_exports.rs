@@ -404,6 +404,11 @@ fn render_export_thunk(
                         array.total,
                         super::super::expressions::fixed_array_initial(array)
                     ));
+                    if let Some(cells) =
+                        super::super::expressions::fixed_array_initial_cells(array, column)
+                    {
+                        body.push_str(&format!("    {cells}\n"));
+                    }
                 }
                 let payload = record_payload(record)?;
                 let (_, table) = layouts[index]

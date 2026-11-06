@@ -3,6 +3,27 @@
 use super::*;
 
 impl Codegen<'_> {
+    /// `value` after `statements`, which run as the predicate of a
+    /// conditional that always selects it.
+    fn string_after_statements(statements: Vec<IrStmt>, value: IrStringExpr) -> IrStringExpr {
+        if statements.is_empty() {
+            return value;
+        }
+        IrStringExpr::Conditional {
+            predicate: Box::new(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements,
+                    value: super::super::containers::pattern_key_expr(1, 1, false, false),
+                })),
+                1,
+                false,
+                None,
+            )),
+            then: Box::new(value),
+            otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
+        }
+    }
+
     pub(in super::super) fn lower_string(
         &mut self,
         path: &str,
@@ -21,19 +42,7 @@ impl Codegen<'_> {
             if let Some(before) = self.stage_expression_members(path, node)? {
                 let value = self.lower_string(path, node);
                 self.end_element_member_staging();
-                return Ok(IrStringExpr::Conditional {
-                    predicate: Box::new(IrExpr::new(
-                        IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
-                            statements: before,
-                            value: super::super::containers::pattern_key_expr(1, 1, false, false),
-                        })),
-                        1,
-                        false,
-                        None,
-                    )),
-                    then: Box::new(value?),
-                    otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
-                });
+                return Ok(Self::string_after_statements(before, value?));
             }
         }
         if let Some(value) = self.lower_object_random_state(path, node)? {
@@ -160,7 +169,35 @@ impl Codegen<'_> {
             let mut arg_irs = vec![None; formals.len()];
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
+            // Columns after the first of column-layout record formals, and
+            // the temporaries of record arguments that are no record storage.
+            let mut record_out_args = Vec::new();
+            let mut record_in_args = Vec::new();
+            let mut record_before = Vec::new();
+            let mut record_after = Vec::new();
             for (idx, (io, is_out)) in formals.iter().enumerate() {
+                if self.record_declaration(*io) {
+                    let address = *is_out || self.is_ref_formal(*io);
+                    let mut columns = self
+                        .record_call_columns(
+                            path,
+                            *io,
+                            bound[idx].expr,
+                            Some((&mut record_before, &mut record_after)),
+                        )?
+                        .into_iter();
+                    let first = columns
+                        .next()
+                        .ok_or("column-layout record formal has no columns")?;
+                    if address {
+                        out_args.push(first);
+                        record_out_args.extend(columns);
+                    } else {
+                        in_args.push(first);
+                        record_in_args.extend(columns);
+                    }
+                    continue;
+                }
                 if bound[idx].is_event {
                     let name = self.node(ft).name.clone();
                     let (address, argument) =
@@ -310,11 +347,21 @@ impl Codegen<'_> {
                     in_args.push(IrCallArg::Val(arg));
                 }
             }
+            if !record_after.is_empty() {
+                return Err(format!(
+                    "an output record argument of string function `{}` in `{path}` must be record storage",
+                    self.node(ft).name
+                ));
+            }
+            out_args.extend(record_out_args);
             out_args.extend(in_args);
+            out_args.extend(record_in_args);
             let typed = out_args.iter().any(|arg| {
                 matches!(
                     arg,
                     IrCallArg::StringVal(_)
+                        | IrCallArg::FixedValue(_)
+                        | IrCallArg::FixedArray(_)
                         | IrCallArg::EventVal(_)
                         | IrCallArg::EventAddr(_)
                         | IrCallArg::EventSlot(_)
@@ -349,14 +396,15 @@ impl Codegen<'_> {
                     vpi_call: self.vpi_call_origin(node),
                 });
             }
-            return Ok(IrStringExpr::TypedCall {
+            let call = IrStringExpr::TypedCall {
                 receiver: self.class_method_receiver(path, node)?.map(Box::new),
                 virtual_dispatch: self.class_method_virtual_dispatch(node),
                 function,
                 args: out_args,
                 depth: parse_depth(&self.depth_arg),
                 vpi_call: self.vpi_call_origin(node),
-            });
+            };
+            return Ok(Self::string_after_statements(record_before, call));
         }
         if let Some(index) = self.object_of(path, node) {
             if self.model.objects[index].ty == IrObjectType::String {

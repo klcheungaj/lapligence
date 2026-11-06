@@ -212,6 +212,20 @@ fn native_values_carry_records_of_the_column_form() {
     assert!(model.contains("llg_fixed_array_items_source("), "{model}");
 }
 
+/// Ports, nets, dense arrays, initializers, mailboxes, queues, `matches` and
+/// separate writers of one member.
+#[test]
+fn records_of_the_column_form_cross_the_design_structure() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_structure.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_structure", expected, &[], &[]);
+}
+
+#[test]
+fn record_elements_of_a_column_project_and_move_as_values() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_elements.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_elements", expected, &[], &[]);
+}
+
 #[test]
 fn ref_formals_alias_records_of_the_column_form() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_ref.out");

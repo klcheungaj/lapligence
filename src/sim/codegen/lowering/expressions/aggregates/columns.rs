@@ -6,7 +6,9 @@
 //! (patterns, conditionals, calls) are first built into a lexical temporary
 //! record, so every source is evaluated once before any destination write.
 use super::super::super::collection::native_values::NativeEndpointLeaf;
-use super::super::super::collection::{column_tagged_union, RecordColumn, RecordValue};
+use super::super::super::collection::{
+    column_tagged_union, port_array_index_vectors, RecordColumn, RecordValue,
+};
 use super::*;
 use crate::sim::ir::{IrFixedValue, IrMemoryView};
 
@@ -371,9 +373,7 @@ impl Codegen<'_> {
         }
         let Some(destination) = self.column_record_storage(lhs) else {
             if self.column_record_storage(rhs).is_some() || self.column_record_type(rhs) {
-                return Err(format!(
-                    "a column-layout record value in `{path}` can only be assigned to record storage of the same type"
-                ));
+                return self.lower_record_image_assignment(path, lhs, rhs, nba, op);
             }
             return Ok(None);
         };
@@ -501,9 +501,173 @@ impl Codegen<'_> {
             out.extend(statements);
             return Ok(());
         }
-        Err(format!(
-            "column-layout record value in `{path}` must be record storage, a pattern, a conditional or a function call"
+        // Any other value of the type is its packed image: an element of an
+        // array of records, a parameter, a bit-stream cast.
+        let image = self.lower_expr(path, node)?;
+        self.record_store_image(path, dst, image, nba, out)
+    }
+
+    /// The packed image of a record: the first member is the most
+    /// significant, as in the leaf layout of the same type.
+    pub(in crate::sim::codegen::lowering) fn record_image(
+        &self,
+        path: &str,
+        value: &RecordValue,
+    ) -> Result<IrExpr, String> {
+        let mut parts = Vec::with_capacity(value.columns.len());
+        for (member, column) in &value.columns {
+            let part = match column {
+                RecordColumn::Array(array) => self.column_image(*array).ok_or_else(|| {
+                    format!(
+                        "record member `{}` in `{path}` exceeds packed capacity",
+                        aggregate_path_suffix(member)
+                    )
+                })?,
+                _ => self.record_column_read(column)?,
+            };
+            if part.is_real() {
+                return Err(format!(
+                    "real record member `{}` has no packed image in `{path}`",
+                    aggregate_path_suffix(member)
+                ));
+            }
+            parts.push(part);
+        }
+        let width = parts.iter().map(|part| u64::from(part.width)).sum::<u64>();
+        let width = u32::try_from(width)
+            .ok()
+            .filter(|width| *width <= LLG_MAX_WIDTH)
+            .ok_or_else(|| format!("record value in `{path}` exceeds packed capacity"))?;
+        Ok(IrExpr::new(
+            IrExprKind::Concat { parts },
+            width,
+            false,
+            None,
         ))
+    }
+
+    /// Store the packed image of a record into its columns. The image is
+    /// captured first, so it may read the record it replaces.
+    fn record_store_image(
+        &mut self,
+        path: &str,
+        dst: &RecordValue,
+        image: IrExpr,
+        nba: bool,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<(), String> {
+        let width = Self::record_payload_width(&dst.descriptor)
+            .ok_or_else(|| format!("record value in `{path}` has no packed image"))?;
+        if image.width != width {
+            return Err(format!(
+                "record value in `{path}` is {} bits wide for a record of {width} bits",
+                image.width
+            ));
+        }
+        let name = self.new_fn_name(path, "record_image");
+        out.push(IrStmt::DeclLocal {
+            name: name.clone(),
+            width,
+            signed: false,
+            two_state: false,
+            init: Some(Box::new(IrExpr::resize_to(image, width, false))),
+        });
+        let mut left = i64::from(width);
+        for (member, column) in &dst.columns {
+            let (bits, cell_width, two_state) = match column {
+                RecordColumn::Array(array) | RecordColumn::Cell(array) => {
+                    let array = &self.model.arrays[self.reference_array(*array)];
+                    (
+                        array.total * u64::from(array.elem_width),
+                        array.elem_width,
+                        array.two_state,
+                    )
+                }
+                RecordColumn::Leaf(leaf) if leaf.object.is_none() => {
+                    let read = self.record_column_read(column)?;
+                    (u64::from(read.width), read.width, false)
+                }
+                RecordColumn::Leaf(_) | RecordColumn::Native(..) => {
+                    return Err(format!(
+                        "record member `{}` has no packed image in `{path}`",
+                        aggregate_path_suffix(member)
+                    ));
+                }
+            };
+            let right = left - bits as i64;
+            let slice = IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(IrExpr::new(
+                        IrExprKind::LocalRead(name.clone()),
+                        width,
+                        false,
+                        None,
+                    )),
+                    left: left - 1,
+                    right,
+                },
+                bits as u32,
+                false,
+                None,
+            );
+            let slice = if two_state {
+                IrExpr::to_two_state(slice)
+            } else {
+                slice
+            };
+            left = right;
+            if let RecordColumn::Array(array) = column {
+                out.push(IrStmt::FixedValueAssign {
+                    dst: self.record_column_view(*array),
+                    src: Box::new(IrFixedValue::Packed {
+                        value: Box::new(slice),
+                        cell_width,
+                        runtime_sized: false,
+                    }),
+                    nba,
+                });
+            } else {
+                let lhs = self.record_column_lhs(column)?;
+                out.push(IrStmt::Assign {
+                    rhs: apply_lhs_assignment_context(&self.model, &lhs, slice),
+                    lhs,
+                    nba,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// `lhs = rhs` where `lhs` holds a record as a packed image, not as
+    /// columns: an element of an array of records.
+    fn lower_record_image_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
+        if op != Operation::Assignment {
+            return Err(format!(
+                "compound assignment of unpacked aggregates in `{path}` is not supported"
+            ));
+        }
+        let descriptor = self
+            .query_descriptor(lhs)
+            .cloned()
+            .ok_or_else(|| format!("record assignment target in `{path}` has no type"))?;
+        let mut out = Vec::new();
+        let source = self.record_value_of(path, &descriptor, rhs, &mut out)?;
+        let image = self.record_image(path, &source)?;
+        let target = self.analyze_lhs(path, lhs)?;
+        let target = self.lhs_to_ir(target)?;
+        out.push(IrStmt::Assign {
+            rhs: apply_lhs_assignment_context(&self.model, &target, image),
+            lhs: target,
+            nba,
+        });
+        Ok(Some(IrStmt::Block(out)))
     }
 
     /// The statements of a declaration initializer of record `value`.
@@ -532,7 +696,7 @@ impl Codegen<'_> {
     }
 
     /// The value of `node` as storage, or as a temporary built from it.
-    fn record_value_of(
+    pub(in crate::sim::codegen::lowering) fn record_value_of(
         &mut self,
         path: &str,
         descriptor: &TypeDescriptor,
@@ -1105,6 +1269,86 @@ impl Codegen<'_> {
                     else {
                         return Err(format!("record member array has no column in `{path}`"));
                     };
+                    // A net array has no memory view: one assignment drives
+                    // it, as continuous pattern leaves expect (SV 10.9).
+                    if let Some(array) = self.array_of(target).filter(|a| a.is_net).cloned() {
+                        let value = self.column_image(*column).ok_or_else(|| {
+                            format!("record member array in `{path}` exceeds packed capacity")
+                        })?;
+                        let arr = self.reference_array(array.ir);
+                        let parts = port_array_index_vectors(&array.dims)
+                            .into_iter()
+                            .map(|cell| {
+                                (
+                                    IrLhs::ArrayElem {
+                                        arr,
+                                        indices: cell
+                                            .into_iter()
+                                            .map(|index| lhs_integer_expr(i128::from(index)))
+                                            .collect(),
+                                        elem_sel: IrElemSel::Whole,
+                                    },
+                                    array.elem_width,
+                                )
+                            })
+                            .collect();
+                        writes.push(IrStmt::Assign {
+                            lhs: IrLhs::Stream {
+                                parts,
+                                width: value.width,
+                                slice: 1,
+                                direction: IrStreamDirection::LeftToRight,
+                            },
+                            rhs: value,
+                            nba,
+                        });
+                        continue;
+                    }
+                    // A dense array takes no descriptor assignment.
+                    if let Some(array) = self
+                        .array_of(target)
+                        .filter(|array| !self.model.arrays[array.ir].sparse())
+                        .cloned()
+                    {
+                        let source = self.reference_array(*column);
+                        let info = self.model.arrays[source].clone();
+                        let cells = port_array_index_vectors(&array.dims);
+                        let values = port_array_index_vectors(&info.dims);
+                        if cells.len() != values.len() {
+                            return Err(format!(
+                                "assignment-pattern lvalue array shape mismatch in `{path}`"
+                            ));
+                        }
+                        for (cell, value) in cells.into_iter().zip(values) {
+                            let lhs = self.lhs_to_ir(Lhs::ArrayElem(ArrayElemLhs {
+                                arr: array.clone(),
+                                indices: cell
+                                    .into_iter()
+                                    .map(|index| lhs_integer_expr(i128::from(index)))
+                                    .collect(),
+                                elem_sel: ElemSel::Whole,
+                            }))?;
+                            let value = IrExpr::new(
+                                IrExprKind::ArrayRead {
+                                    arr: source,
+                                    indices: value
+                                        .into_iter()
+                                        .map(|index| lhs_integer_expr(i128::from(index)))
+                                        .collect(),
+                                    elem_sel: IrElemSel::Whole,
+                                },
+                                info.elem_width,
+                                info.signed,
+                                None,
+                            );
+                            writes.push(IrStmt::Assign {
+                                rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+                                lhs,
+                                nba,
+                            });
+                        }
+                        continue;
+                    }
                     let mut view = self.fixed_memory_view(path, target)?;
                     for selector in &mut view.selectors {
                         let name = self.new_fn_name(path, "pattern_selector");
@@ -1332,9 +1576,8 @@ impl Codegen<'_> {
         self.record_call_result = true;
         let expression = self.lower_func_call_expr(path, node, &name, callee);
         self.record_call_result = false;
-        let IrExprKind::CallFn(expression) = expression?.kind else {
-            return Err("record call did not lower to a typed call".into());
-        };
+        let expression = Self::record_staged_call(expression?, &mut out)
+            .ok_or("record call did not lower to a typed call")?;
         let mut args = expression.args;
         let outputs = self.model.funcs[expression.f]
             .formals
@@ -1428,9 +1671,12 @@ impl Codegen<'_> {
             }
             match this.record_call_function(node)? {
                 Some(function) => this.record_call_result_value(path, function, node, statements),
-                None => Err(format!(
-                    "equality of a column-layout record value in `{path}` requires record storage or function call operands"
-                )),
+                None => {
+                    let descriptor = this.query_descriptor(node).cloned().ok_or_else(|| {
+                        format!("record equality operand in `{path}` has no type")
+                    })?;
+                    this.record_value_of(path, &descriptor, node, statements)
+                }
             }
         };
         let left = operand(self, lhs, &mut statements)?;
@@ -1452,7 +1698,128 @@ impl Codegen<'_> {
         Ok(Some(Self::record_sequence(statements, value)))
     }
 
-    fn record_sequence(statements: Vec<IrStmt>, value: IrExpr) -> IrExpr {
+    /// A call operand with the statements staging its record arguments.
+    pub(in crate::sim::codegen::lowering) fn record_call_operand(
+        &mut self,
+        path: &str,
+        mut before: Vec<IrStmt>,
+        call: IrExpr,
+        after: Vec<IrStmt>,
+    ) -> Result<IrExpr, String> {
+        if after.is_empty() {
+            return Ok(Self::record_sequence(before, call));
+        }
+        if call.is_real() || call.width == 0 {
+            return Err(format!(
+                "an output record argument in `{path}` must be record storage when the call's result is not packed"
+            ));
+        }
+        let name = self.new_fn_name(path, "record_call");
+        let (width, signed) = (call.width, call.signed);
+        before.push(IrStmt::DeclLocal {
+            name: name.clone(),
+            width,
+            signed,
+            two_state: false,
+            init: Some(Box::new(call)),
+        });
+        before.extend(after);
+        Ok(Self::record_sequence(
+            before,
+            IrExpr::new(IrExprKind::LocalRead(name), width, signed, None),
+        ))
+    }
+
+    /// The call of a lowered call operand, inside the statements staging its
+    /// record arguments if it has any.
+    pub(in crate::sim::codegen::lowering) fn record_staged_call_mut(
+        expression: &mut IrExpr,
+    ) -> Option<&mut crate::sim::ir::IrCallExpr> {
+        match &mut expression.kind {
+            IrExprKind::CallFn(call) => Some(call),
+            IrExprKind::Sequence(sequence) => Self::record_staged_call_mut(&mut sequence.value),
+            _ => None,
+        }
+    }
+
+    /// One packed target for a whole record: its leaves, first member most
+    /// significant, for a context that writes the record's image.
+    pub(in crate::sim::codegen::lowering) fn record_image_lhs(
+        &self,
+        path: &str,
+        value: &RecordValue,
+    ) -> Result<IrLhs, String> {
+        let mut parts = Vec::new();
+        for (member, column) in &value.columns {
+            match column {
+                RecordColumn::Array(array) => {
+                    let array = self.reference_array(*array);
+                    let info = &self.model.arrays[array];
+                    for coordinates in port_array_index_vectors(&info.dims) {
+                        parts.push((
+                            IrLhs::ArrayElem {
+                                arr: array,
+                                indices: coordinates
+                                    .into_iter()
+                                    .map(|index| lhs_integer_expr(i128::from(index)))
+                                    .collect(),
+                                elem_sel: IrElemSel::Whole,
+                            },
+                            info.elem_width,
+                        ));
+                    }
+                }
+                RecordColumn::Native(..) => {
+                    return Err(format!(
+                        "record member `{}` has no packed image in `{path}`",
+                        aggregate_path_suffix(member)
+                    ));
+                }
+                _ => {
+                    let read = self.record_column_read(column)?;
+                    if read.is_real() {
+                        return Err(format!(
+                            "real record member `{}` has no packed image in `{path}`",
+                            aggregate_path_suffix(member)
+                        ));
+                    }
+                    parts.push((self.record_column_lhs(column)?, read.width));
+                }
+            }
+        }
+        let width = parts.iter().map(|(_, width)| *width).sum();
+        Ok(IrLhs::Stream {
+            parts,
+            width,
+            slice: 1,
+            direction: IrStreamDirection::LeftToRight,
+        })
+    }
+
+    /// The call of a lowered call operand; the statements staging its record
+    /// arguments go to `out`.
+    pub(in crate::sim::codegen::lowering) fn record_staged_call(
+        expression: IrExpr,
+        out: &mut Vec<IrStmt>,
+    ) -> Option<Box<crate::sim::ir::IrCallExpr>> {
+        match expression.kind {
+            IrExprKind::CallFn(call) => Some(call),
+            IrExprKind::Sequence(sequence) => {
+                let sequence = *sequence;
+                out.extend(sequence.statements);
+                match sequence.value.kind {
+                    IrExprKind::CallFn(call) => Some(call),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(in crate::sim::codegen::lowering) fn record_sequence(
+        statements: Vec<IrStmt>,
+        value: IrExpr,
+    ) -> IrExpr {
         if statements.is_empty() {
             return value;
         }
@@ -1740,12 +2107,21 @@ impl Codegen<'_> {
             .cloned()
             .ok_or("column-layout record formal has no columns")?;
         let actual_node = self.p30_unwrap_cast(actual);
-        let value = self.column_record_storage(actual_node).ok_or_else(|| {
-            format!(
-                "column-layout record argument for `{}` in `{path}` must be a record variable, member or formal",
-                self.node(formal).name
-            )
-        })?;
+        let mut prelude = prelude;
+        let value = match (self.column_record_storage(actual_node), prelude.as_mut()) {
+            (Some(value), _) => value,
+            // A value that is no record storage crosses in a temporary: an
+            // element of an array of records, a pattern, a parameter.
+            (None, Some((before, after))) => {
+                self.record_call_staged(path, formal, &shape, actual_node, before, after)?
+            }
+            (None, None) => {
+                return Err(format!(
+                    "column-layout record argument for `{}` in `{path}` must be a record variable, member or formal",
+                    self.node(formal).name
+                ))
+            }
+        };
         self.record_shapes_match(path, &shape, &value)?;
         let mut arguments = value
             .columns
@@ -1849,6 +2225,44 @@ impl Codegen<'_> {
         }
         arguments.push(IrCallArg::NativeValue(temporary));
         Ok(arguments)
+    }
+
+    /// A temporary for a record argument that is no record storage: an
+    /// input takes the value before the call, an output gives it back after.
+    fn record_call_staged(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        shape: &RecordValue,
+        actual: NodeId,
+        before: &mut Vec<IrStmt>,
+        after: &mut Vec<IrStmt>,
+    ) -> Result<RecordValue, String> {
+        let direction = match self.kind(formal) {
+            NodeKind::FuncArg { direction, .. } => *direction,
+            _ => DbDirection::Input,
+        };
+        if matches!(direction, DbDirection::Ref) {
+            return Err(format!(
+                "ref argument for `{}` in `{path}` must be a record variable or member",
+                self.node(formal).name
+            ));
+        }
+        let temporary = self.record_temporary(path, &shape.descriptor, before)?;
+        if !matches!(direction, DbDirection::Output) {
+            self.lower_record_value_into(path, &temporary, actual, false, before)?;
+        }
+        if !matches!(direction, DbDirection::Input) {
+            let image = self.record_image(path, &temporary)?;
+            let target = self.analyze_lhs(path, actual)?;
+            let target = self.lhs_to_ir(target)?;
+            after.push(IrStmt::Assign {
+                rhs: apply_lhs_assignment_context(&self.model, &target, image),
+                lhs: target,
+                nba: false,
+            });
+        }
+        Ok(temporary)
     }
 
     /// Declare an automatic column-layout record local and run its

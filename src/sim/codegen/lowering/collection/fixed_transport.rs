@@ -826,6 +826,11 @@ impl Codegen<'_> {
                     && self.descriptor_operand(operands[1])
                     && self.descriptor_operand(operands[2])
             }
+            NodeKind::Expr(
+                ExprKind::PartSelect { base, .. } | ExprKind::IndexedPartSelect { base, .. },
+            ) => self
+                .p30_array_prefix_base(*base)
+                .is_some_and(|(array, _)| self.model.arrays[array.ir].sparse()),
             NodeKind::FuncCall { callee, .. } => {
                 callee.is_some_and(|function| self.nonflatten_function(function))
             }

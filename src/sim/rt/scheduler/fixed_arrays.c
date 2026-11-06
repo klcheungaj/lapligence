@@ -1134,6 +1134,24 @@ static uint64_t fixed_plane_window(sv4_t value, uint64_t start, uint32_t width,
     return width < 64u ? result & ((UINT64_C(1) << width) - 1u) : result;
 }
 
+/* One cell of `width` bits from the image bits at `low`. Built from the image
+ * words directly; a part select per cell would go through the general
+ * selection path. `planes` holds three planes of `words` scratch words. */
+static sv4_t fixed_cell_of_image(sv4_t image, uint64_t low, uint32_t width, size_t words,
+                                 uint64_t* planes, int is_signed, int two_state) {
+    for (size_t word = 0; word < words; ++word) {
+        uint32_t bits = width - (uint32_t)(word * 64u);
+        if (bits > 64u) bits = 64u;
+        for (unsigned plane = 0; plane < 3u; ++plane)
+            planes[plane * words + word] =
+                fixed_plane_window(image, low + word * 64u, bits, plane);
+    }
+    sv4_t value = sv4_from_limbs(planes, planes + words, planes + 2u * words, width,
+                                 (int8_t)is_signed);
+    if (two_state) sv4_replace(&value, sv4_to_two_state(value));
+    return value;
+}
+
 static void fixed_run_store(const fixed_cell_run_t* run, uint64_t count, const sv4_t* image,
                             int64_t left, uint32_t width, int is_signed, int two_state,
                             int nba) {
@@ -1142,24 +1160,13 @@ static void fixed_run_store(const fixed_cell_run_t* run, uint64_t count, const s
         (uint64_t)left >= llg_sv4_width(*image) ||
         count > ((uint64_t)left + 1u) / width)
         fixed_bad_state("invalid cell run store");
-    /* Each cell is built from its image words directly; a part select per
-     * cell would go through the general selection path. */
     size_t words = (size_t)((width + 63u) / 64u);
     uint64_t one[3];
     uint64_t* planes = words == 1 ? one :
         llg_checked_calloc(3u * words, sizeof(uint64_t), "cell run store");
     for (uint64_t i = 0; i < count; ++i, left -= (int64_t)width) {
-        uint64_t low = (uint64_t)left - width + 1u;
-        for (size_t word = 0; word < words; ++word) {
-            uint32_t bits = width - (uint32_t)(word * 64u);
-            if (bits > 64u) bits = 64u;
-            for (unsigned plane = 0; plane < 3u; ++plane)
-                planes[plane * words + word] =
-                    fixed_plane_window(*image, low + word * 64u, bits, plane);
-        }
-        sv4_t value = sv4_from_limbs(planes, planes + words, planes + 2u * words, width,
-                                     (int8_t)is_signed);
-        if (two_state) sv4_replace(&value, sv4_to_two_state(value));
+        sv4_t value = fixed_cell_of_image(*image, (uint64_t)left - width + 1u, width, words,
+                                          planes, is_signed, two_state);
         sv4_t* cell = fixed_run_cell(run, i);
         if (nba) llg_nba_after(cell, value, 0);
         else llg_ba(cell, value);
@@ -1234,6 +1241,23 @@ void llg_fixed_array_cells_store(llg_fixed_array_t* array, uint64_t first, uint6
                                  int is_signed, int two_state, int nba) {
     fixed_cell_run_t run = {NULL, array, first};
     fixed_run_store(&run, count, image, left, width, is_signed, two_state, nba);
+}
+
+void llg_fixed_array_initial_cells(llg_fixed_array_t* array, sv4_t image, int is_signed,
+                                   int two_state) {
+    uint32_t width = llg_sv4_width(array->initial);
+    uint64_t total = array->total;
+    if (!width || (uint64_t)llg_sv4_width(image) != total * width)
+        fixed_bad_state("invalid initial cell image");
+    size_t words = (size_t)((width + 63u) / 64u);
+    uint64_t* planes = llg_checked_calloc(3u * words, sizeof(uint64_t), "initial cells");
+    for (uint64_t i = 0; i < total; ++i) {
+        sv4_t value = fixed_cell_of_image(image, (total - 1u - i) * width, width, words, planes,
+                                          is_signed, two_state);
+        sv4_replace(llg_fixed_array_cell(array, i), value);
+    }
+    free(planes);
+    sv4_destroy(&image);
 }
 
 void llg_fixed_array_cells_fill(llg_fixed_array_t* array, uint64_t first, uint64_t count,

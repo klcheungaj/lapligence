@@ -76,6 +76,7 @@ impl Codegen<'_> {
             net: None,
             net_elements: Vec::new(),
             element_default: None,
+            initial_cells: None,
             element_uninitialized: None,
             c_name: global.clone(),
             hdl_name: String::new(),

@@ -601,7 +601,35 @@ impl Codegen<'_> {
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
             let mut arg_irs = vec![None; meta.formals.len()];
+            // Columns after the first of column-layout record formals, and
+            // the temporaries of record arguments that are no record storage.
+            let mut record_out_args = Vec::new();
+            let mut record_in_args = Vec::new();
+            let mut record_before = Vec::new();
+            let mut record_after = Vec::new();
             for (idx, (formal, is_out)) in meta.formals.iter().enumerate() {
+                if self.record_declaration(*formal) {
+                    let address = *is_out || self.is_ref_formal(*formal);
+                    let mut columns = self
+                        .record_call_columns(
+                            path,
+                            *formal,
+                            bound[idx].expr,
+                            Some((&mut record_before, &mut record_after)),
+                        )?
+                        .into_iter();
+                    let first = columns
+                        .next()
+                        .ok_or("column-layout record formal has no columns")?;
+                    if address {
+                        out_args.push(first);
+                        record_out_args.extend(columns);
+                    } else {
+                        in_args.push(first);
+                        record_in_args.extend(columns);
+                    }
+                    continue;
+                }
                 if bound[idx].is_event {
                     let name = self.node(ft).name.clone();
                     let (address, argument) =
@@ -688,14 +716,33 @@ impl Codegen<'_> {
                     in_args.push(IrCallArg::Val(value));
                 }
             }
+            if !record_after.is_empty() {
+                return Err(format!(
+                    "an output record argument of handle function `{}` in `{path}` must be record storage",
+                    self.node(ft).name
+                ));
+            }
+            out_args.extend(record_out_args);
             out_args.extend(in_args);
-            return Ok(IrChandleExpr::Call {
+            out_args.extend(record_in_args);
+            let call = IrChandleExpr::Call {
                 receiver: self.class_method_receiver(path, node)?.map(Box::new),
                 virtual_dispatch: self.class_method_virtual_dispatch(node),
                 function,
                 args: out_args,
                 depth: parse_depth(&self.depth_arg),
                 vpi_call: self.vpi_call_origin(node),
+            };
+            if record_before.is_empty() {
+                return Ok(call);
+            }
+            return Ok(IrChandleExpr::Conditional {
+                predicate: Box::new(Self::record_sequence(
+                    record_before,
+                    super::super::containers::pattern_key_expr(1, 1, false, false),
+                )),
+                then: Box::new(call),
+                otherwise: Box::new(IrChandleExpr::Null),
             });
         }
         Err(format!(

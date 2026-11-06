@@ -1458,13 +1458,39 @@ impl<'a> Codegen<'a> {
             // A record-valued expression (a function call, such as a
             // resolved operator overload, IEEE 1800-2009 11.11) drives an
             // input port like a continuous assignment of its value (23.3.3.2).
-            (Some(_), None) if direction == DbDirection::Input && self.native_call_node(actual) => {
+            (Some(_), None)
+                if direction == DbDirection::Input
+                    && (self.native_call_node(actual) || self.column_record_type(internal)) =>
+            {
                 let reads = self.collect_read_signals(parent_path, actual)?;
                 let statement = self
                     .lower_unpacked_aggregate_assignment(
                         child_path,
                         internal,
                         actual,
+                        false,
+                        Operation::Assignment,
+                    )?
+                    .ok_or_else(|| {
+                        format!(
+                            "aggregate port `{}` did not lower as a complete aggregate assignment",
+                            self.display_name(port)
+                        )
+                    })?;
+                self.emit_link_process(parent_path, child_path, port, reads, statement);
+                return Ok(true);
+            }
+            // An output record port of the column form drives the packed
+            // image of an element of an array of records.
+            (Some((_, child)), None)
+                if direction == DbDirection::Output && self.column_record_type(internal) =>
+            {
+                let reads = self.aggregate_link_dependencies(&child);
+                let statement = self
+                    .lower_unpacked_aggregate_assignment(
+                        parent_path,
+                        actual,
+                        internal,
                         false,
                         Operation::Assignment,
                     )?

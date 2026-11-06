@@ -90,18 +90,25 @@ fn ref_formals_reach_the_string_member_of_a_column_record() {
     sim_cli::run_case_backend_parity(SUITE, "ref_native_member", "y\n", &[], &[]);
 }
 
+/// A large member array starts with its initializer's cells.
+#[test]
+fn nonuniform_member_initializers_start_their_cells() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/rtl_101b/nonuniform_member_initializer.out"
+    );
+    sim_cli::run_case(SUITE, "nonuniform_member_initializer", expected, "", &[]);
+}
+
+/// An output of a call inside an expression copies back after the call.
+#[test]
+fn record_outputs_with_native_members_copy_back_in_expressions() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101b/native_output_in_expression.out");
+    sim_cli::run_case(SUITE, "native_output_in_expression", expected, "", &[]);
+}
+
 #[test]
 fn neg_column_record_follow_up_limits() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_nonuniform_member_initializer",
-        "member initializer of `a` gives the column's cells different values; column layout keeps one element default",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_native_output_in_expression",
-        "output record argument for `o` in `tb` with real, string or chandle members must be a subroutine record of the same type unless the call is a statement",
-    );
     sim_cli::reject_case(
         SUITE,
         "neg_call_member_array",

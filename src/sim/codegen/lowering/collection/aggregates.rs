@@ -1068,6 +1068,7 @@ impl<'a> Codegen<'a> {
                     _ => None,
                 }
             }),
+            initial_cells: None,
             element_uninitialized: self.query_descriptor(node).and_then(|descriptor| {
                 match &descriptor.shape {
                     TypeShape::FixedArray { element, .. } => {

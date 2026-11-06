@@ -1291,6 +1291,22 @@ pub(super) fn coerce_two_state(code: String, two_state: bool) -> String {
     }
 }
 
+/// The statement starting the cells of descriptor array `array`, at C
+/// address `address`, from their initial image, if they have one.
+pub(super) fn fixed_array_initial_cells(
+    array: &crate::sim::ir::IrArray,
+    address: &str,
+) -> Option<String> {
+    array.initial_cells.as_ref().map(|image| {
+        format!(
+            "llg_fixed_array_initial_cells({address}, {}, {}, {});",
+            super::constants::emit_const(image),
+            u8::from(array.signed),
+            u8::from(array.two_state)
+        )
+    })
+}
+
 /// C initial cell value of descriptor array `array`.
 pub(super) fn fixed_array_initial(array: &crate::sim::ir::IrArray) -> String {
     array

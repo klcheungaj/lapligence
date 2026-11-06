@@ -667,6 +667,10 @@ impl Codegen<'_> {
         let Some((select, base, index, trailing)) = self.member_select_parts(node)? else {
             return Ok(None);
         };
+        // A record element of a column is one cell, selected like any other.
+        if self.record_column_select(select).is_some() {
+            return Ok(None);
+        }
         let select_path = self.db.array_select_path(select);
         let value_root = match &select_path {
             Some((owner, members)) => self.native_roots.get(owner).map(|value| {

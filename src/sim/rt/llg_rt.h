@@ -123,6 +123,11 @@ extern "C" {
  * cell remains stable until array destruction. Destroy globals after runtime cleanup.
  * copy snapshots its entire source before publishing any destination. */
 void llg_fixed_array_init(llg_fixed_array_t*, uint64_t, sv4_t, sv4_t*);
+/* Start every cell of a freshly initialized array from the consumed `image`,
+ * first cell most significant. Nothing observes the array yet, so nothing is
+ * published. */
+void llg_fixed_array_initial_cells(llg_fixed_array_t* array, sv4_t image, int is_signed,
+                                   int two_state);
 /* Nothing in the model names this array's contents marker: writes skip it. */
 void llg_fixed_array_unobserved(llg_fixed_array_t*);
 /* Keep the Preponed value of each cell for llg_fixed_array_sampled_peek. */

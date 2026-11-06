@@ -141,20 +141,29 @@ fn single_member_record(member: &AggregateMember, clear: bool) -> TypeDescriptor
     }
 }
 
-/// Element default of the member-array column at `path`: the uniform cell
-/// value of the nearest enclosing member initializer (SV 7.2.2), else the
-/// element type's own default. A column holds one element default, so an
-/// initializer giving cells different values is rejected rather than
-/// expanded per cell.
+/// The element default of a member-array column, and the whole packed image
+/// its cells start with when they differ.
+pub(in super::super) struct ColumnDefault {
+    pub(in super::super) element: Option<IrConst>,
+    pub(in super::super) cells: Option<IrConst>,
+}
+
+/// Default of the member-array column at `path`: the uniform cell value of
+/// the nearest enclosing member initializer (SV 7.2.2), else the element
+/// type's own default. An initializer giving cells different values keeps the
+/// type's default as the element default and starts the cells from its image.
 fn record_array_default(
     root: &TypeDescriptor,
     path: &[AggregatePathPart],
     element: &TypeDescriptor,
     two_state: bool,
-) -> Result<Option<IrConst>, String> {
+) -> Result<ColumnDefault, String> {
     let chain = path_members(root, path).ok_or("member path is unresolved")?;
     let Some(owner) = chain.iter().position(|member| member.initializer.is_some()) else {
-        return Ok(Codegen::fixed_descriptor_default(element));
+        return Ok(ColumnDefault {
+            element: Codegen::fixed_descriptor_default(element),
+            cells: None,
+        });
     };
     let member = chain[owner];
     let initializer = member.initializer.as_ref().expect("checked initializer");
@@ -207,20 +216,31 @@ fn record_array_default(
             bit
         }
     };
-    for index in 0..cell {
+    let uniform = (0..cell).all(|index| {
         let first = bit(offset + index);
-        if (1..cells).any(|position| bit(offset + position * cell + index) != first) {
-            return Err(format!(
-                "member initializer of `{}` gives the column's cells different values; column layout keeps one element default",
-                member.name
-            ));
-        }
+        (1..cells).all(|position| bit(offset + position * cell + index) == first)
+    });
+    if !uniform {
+        let mut bits = (0..cells * cell)
+            .map(|index| bit(offset + index))
+            .collect::<Vec<_>>();
+        bits.reverse();
+        return Ok(ColumnDefault {
+            element: Codegen::fixed_descriptor_default(element),
+            cells: Some(val_to_const(&elab::Value::from_bits(bits, false))?),
+        });
     }
     let mut bits = (0..cell)
         .map(|index| bit(offset + index))
         .collect::<Vec<_>>();
     bits.reverse();
-    val_to_const(&elab::Value::from_bits(bits, element.info.signed)).map(Some)
+    Ok(ColumnDefault {
+        element: Some(val_to_const(&elab::Value::from_bits(
+            bits,
+            element.info.signed,
+        ))?),
+        cells: None,
+    })
 }
 
 /// The column shape of one record leaf, used to allocate temporaries.
@@ -361,8 +381,8 @@ impl Codegen<'_> {
         let chain = path_members(&root, member_path)
             .ok_or_else(|| format!("record column path `{suffix}` in `{path}` is unresolved"))?;
         let two_state = element.two_state || chain.iter().any(|member| member.two_state);
-        let element_default = record_array_default(&root, member_path, element, two_state)
-            .map_err(|error| {
+        let defaults =
+            record_array_default(&root, member_path, element, two_state).map_err(|error| {
                 format!("record member array `{object_name}.{suffix}` in `{path}`: {error}")
             })?;
         // A column only the design's selections chose dumps like the leaves
@@ -388,7 +408,8 @@ impl Codegen<'_> {
             descriptor: true,
             net: None,
             net_elements: Vec::new(),
-            element_default,
+            element_default: defaults.element,
+            initial_cells: defaults.cells,
             element_uninitialized: Self::fixed_element_uninitialized(element),
             c_name: c_name.clone(),
             hdl_name,
@@ -471,6 +492,7 @@ impl Codegen<'_> {
             net: None,
             net_elements: Vec::new(),
             element_default: Some(default),
+            initial_cells: None,
             element_uninitialized: Self::fixed_descriptor_uninitialized(descriptor)
                 .filter(|_| matches!(descriptor.shape, TypeShape::Aggregate(_))),
             c_name: c_name.clone(),
@@ -549,6 +571,7 @@ impl Codegen<'_> {
             net: None,
             net_elements: Vec::new(),
             element_default: None,
+            initial_cells: None,
             element_uninitialized: None,
             c_name: c_name.clone(),
             hdl_name,
@@ -653,7 +676,7 @@ impl Codegen<'_> {
         &mut self,
         path: &str,
         descriptor: &TypeDescriptor,
-        default: Option<IrConst>,
+        default: ColumnDefault,
         activation: bool,
     ) -> Result<usize, String> {
         let TypeShape::FixedArray {
@@ -678,7 +701,10 @@ impl Codegen<'_> {
             descriptor: !activation,
             net: None,
             net_elements: Vec::new(),
-            element_default: default.or_else(|| Self::fixed_descriptor_default(element)),
+            element_default: default
+                .element
+                .or_else(|| Self::fixed_descriptor_default(element)),
+            initial_cells: default.cells,
             element_uninitialized: Self::fixed_element_uninitialized(element),
             c_name,
             hdl_name: String::new(),
@@ -749,6 +775,7 @@ impl Codegen<'_> {
             net: None,
             net_elements: Vec::new(),
             element_default: default,
+            initial_cells: None,
             element_uninitialized: None,
             c_name,
             hdl_name: String::new(),
@@ -1040,6 +1067,11 @@ impl Codegen<'_> {
             .is_some_and(|descriptor| !column_layout_of(descriptor, &HashSet::new()))
     }
 
+    /// Width of the packed image of a record of this type, if it has one.
+    pub(in super::super) fn record_payload_width(descriptor: &TypeDescriptor) -> Option<u32> {
+        fixed_width(descriptor)
+    }
+
     /// The packed image of a member-array leaf, one runtime read of the
     /// column in declaration order, when it fits packed capacity.
     pub(in super::super) fn column_leaf_image(&self, leaf: &AggregateMemberInfo) -> Option<IrExpr> {
@@ -1051,12 +1083,37 @@ impl Codegen<'_> {
     pub(in super::super) fn column_image(&self, array: usize) -> Option<IrExpr> {
         let array = self.reference_array(array);
         let info = &self.model.arrays[array];
-        let [(left, right)] = info.dims[..] else {
-            return None;
-        };
         let width = u32::try_from(info.total.checked_mul(u64::from(info.elem_width))?)
             .ok()
             .filter(|width| *width <= LLG_MAX_WIDTH)?;
+        let [(left, right)] = info.dims[..] else {
+            // Emission joins this run of constant-index reads into one call
+            // (`emit_c/owned/dense_cells.rs`).
+            let parts = port_array_index_vectors(&info.dims)
+                .into_iter()
+                .map(|coordinates| {
+                    IrExpr::new(
+                        IrExprKind::ArrayRead {
+                            arr: array,
+                            indices: coordinates
+                                .into_iter()
+                                .map(|index| lhs_integer_expr(i128::from(index)))
+                                .collect(),
+                            elem_sel: IrElemSel::Whole,
+                        },
+                        info.elem_width,
+                        info.signed,
+                        None,
+                    )
+                })
+                .collect();
+            return Some(IrExpr::new(
+                IrExprKind::Concat { parts },
+                width,
+                false,
+                None,
+            ));
+        };
         let image = IrExpr::new(
             IrExprKind::FixedStream {
                 array,

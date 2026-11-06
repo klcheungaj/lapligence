@@ -135,9 +135,11 @@ impl<'a> Codegen<'a> {
             ));
         }
         if self.record_return(ft) && !std::mem::take(&mut self.record_call_result) {
-            return Err(format!(
-                "function `{name}` returns a column-layout record; call it only as the source of a record assignment or return in `{scope_path}`"
-            ));
+            // Outside a record context the result is its packed image.
+            let mut statements = Vec::new();
+            let value = self.record_call_result_value(scope_path, ft, h, &mut statements)?;
+            let image = self.record_image(scope_path, &value)?;
+            return Ok(Self::record_sequence(statements, image));
         }
         let formals = meta.formals.clone();
         let bound = self.bind_call_args(self.inst, &formals, args)?;
@@ -167,6 +169,10 @@ impl<'a> Codegen<'a> {
         // order their trailing IR formals were declared.
         let mut record_out_args = Vec::new();
         let mut record_in_args = Vec::new();
+        // Temporaries of record arguments that are no record storage, around
+        // a call that is an operand.
+        let mut record_before = Vec::new();
+        let mut record_after = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if bound[idx].is_event {
                 let (address, argument) =
@@ -203,7 +209,10 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *io,
                     bound[idx].expr,
-                    prelude.as_mut().map(|(before, after)| (before, after)),
+                    Some(match prelude.as_mut() {
+                        Some((before, after)) => (before, after),
+                        None => (&mut record_before, &mut record_after),
+                    }),
                 );
                 self.native_call_prelude = prelude;
                 let mut columns = columns?.into_iter();
@@ -553,7 +562,7 @@ impl<'a> Codegen<'a> {
             ));
         }
         let depth = parse_depth(&self.depth_arg);
-        Ok(IrExpr::new(
+        let call = IrExpr::new(
             IrExprKind::CallFn(Box::new(IrCallExpr {
                 f: function,
                 args: out_args,
@@ -568,6 +577,7 @@ impl<'a> Codegen<'a> {
             ret_w,
             ret_s,
             None,
-        ))
+        );
+        self.record_call_operand(scope_path, record_before, call, record_after)
     }
 }

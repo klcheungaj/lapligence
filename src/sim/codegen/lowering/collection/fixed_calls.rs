@@ -106,6 +106,7 @@ impl Codegen<'_> {
             net: None,
             net_elements: Vec::new(),
             element_default: Self::fixed_descriptor_default(element),
+            initial_cells: None,
             element_uninitialized: Self::fixed_element_uninitialized(element),
             c_name: name,
             hdl_name: String::new(),
@@ -206,9 +207,9 @@ impl Codegen<'_> {
             .ok_or("fixed function result requires an array destination")?
             .ir;
         let expression = self.lower_func_call_expr(path, call, &name, callee)?;
-        let IrExprKind::CallFn(mut expression) = expression.kind else {
-            return Err("fixed call did not lower to a typed call".into());
-        };
+        let mut statements = Vec::new();
+        let mut expression = Self::record_staged_call(expression, &mut statements)
+            .ok_or("fixed call did not lower to a typed call")?;
         let output_count = self.model.funcs[expression.f]
             .formals
             .iter()
@@ -217,7 +218,7 @@ impl Codegen<'_> {
         expression
             .args
             .insert(output_count - 1, IrCallArg::FixedArray(dst));
-        Ok(Some(IrStmt::Call(Box::new(
+        statements.push(IrStmt::Call(Box::new(
             IrCall::new(
                 expression.f,
                 expression.args,
@@ -226,6 +227,11 @@ impl Codegen<'_> {
                 Vec::new(),
             )
             .with_vpi_call(expression.vpi_call),
-        ))))
+        )));
+        Ok(Some(if statements.len() == 1 {
+            statements.remove(0)
+        } else {
+            IrStmt::Block(statements)
+        }))
     }
 }

@@ -47,6 +47,12 @@ impl<'a, 'm> Frame<'a, 'm> {
         self.line(format!(
             "llg_fixed_array_init({pointer}, {total}ULL, {initial}, NULL);"
         ));
+        if let Some(cells) = super::super::expressions::fixed_array_initial_cells(
+            self.ctx.model.array(index),
+            &pointer,
+        ) {
+            self.line(cells);
+        }
         Ok(pointer)
     }
 

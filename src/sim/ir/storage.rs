@@ -327,6 +327,11 @@ pub struct IrArray {
     pub(in crate::sim) net_elements: Vec<(u64, usize)>,
     /// Typed default for a fixed aggregate element, before declaration initialization.
     pub(in crate::sim) element_default: Option<IrConst>,
+    /// Whole packed image the cells of a descriptor column start from, when
+    /// a member initializer gives them different values (SV 7.2.2). Unlike
+    /// `element_default`, it is written once per allocation, so every cell
+    /// is materialized.
+    pub(in crate::sim) initial_cells: Option<IrConst>,
     /// Default-uninitialized element value read through an invalid index
     /// (SV 7.4.6). Differs from `packed_default` only for mixed-state
     /// aggregate elements; member initializers are excluded.
@@ -397,6 +402,7 @@ impl IrArray {
             net: None,
             net_elements: Vec::new(),
             element_default: None,
+            initial_cells: None,
             element_uninitialized: None,
             elem_width,
             signed,

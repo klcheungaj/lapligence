@@ -100,6 +100,12 @@ column. Expected values are derived by hand below; none were captured from
 - `chosen_ref`: `ref` formals of a chosen record with a string member are bound
   by specializing the subroutine for the actual, so a reader sees the writes of
   a suspended task; a subroutine local passes its native value by address.
+- `chosen_elements`: a record element of a member array is one column cell.
+  Its members select from that cell at constant and run-time indices, and it
+  moves as a value to and from record variables, arrays of records, arguments
+  and streams. Expected lines equal the per-cell form's at `N = 15`, with the
+  three run-time selected whole elements written as constants there, because a
+  whole record with a member array has no run-time selection below 16 cells.
 - `chosen_whole_values`: whole copies and comparisons of chosen records, which
   read whole operands in place and write only differing cells. A copy that
   changes nothing wakes nothing (`q = p` at time 2). `q.a[7]`, a cell only `q`
@@ -114,3 +120,8 @@ column. Expected values are derived by hand below; none were captured from
   match industry-standard behaviour with `name` packed: an NBA of a record with a
   `string` member is not portable, so that form is checked by llg's own storage
   forms only.
+- `chosen_structure`: records of the column form as a port connected to an
+  element of an array of records, a member array driving a net array and a
+  dense array through one pattern, an initializer whose cells differ, a mailbox,
+  a queue, an array of records and `matches` on an element. Rebuilt with
+  `-D N=8` it takes the per-cell paths and prints the same lines.

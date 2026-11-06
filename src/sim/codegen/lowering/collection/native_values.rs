@@ -548,9 +548,13 @@ impl Codegen<'_> {
     /// A fresh lexical value of the same type as `node`, for caller-side
     /// transfers. The caller declares it with `NativeValueDeclare`.
     pub(in super::super) fn native_temporary(&mut self, node: NodeId) -> Result<usize, String> {
-        let layout = self
-            .native_layout(node)?
-            .ok_or("native temporary requires a native record type")?;
+        let layout = self.native_layout(node)?.ok_or_else(|| {
+            format!(
+                "{}: a whole record with a member array selected at a run-time index is not supported below {} cells",
+                self.source_location(node),
+                crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS
+            )
+        })?;
         let companions = self.native_companions(&layout, true);
         let index = self.model.native_values.len();
         self.model.native_values.push(IrNativeValue {

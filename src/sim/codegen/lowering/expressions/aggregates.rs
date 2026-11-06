@@ -1465,6 +1465,9 @@ impl<'a> Codegen<'a> {
                 None,
             ));
         }
+        if let Some(image) = self.column_leaf_image(leaf) {
+            return Ok(image);
+        }
         let signal = leaf.signal.as_ref().ok_or_else(|| {
             format!(
                 "aggregate member `{}` is not a packed or real expression",
