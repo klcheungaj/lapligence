@@ -375,9 +375,10 @@ code at `-O1` instead of 0.13×).
   Per-cell packed records above 16 cells ran fewer iterations (4,096 at
   4,095 cells); the rates are scaled to 1M. Whole compare at 4,095 `string`
   cells has no per-cell figure: the C compiler was killed building its 266,360
-  lines, twice. Timing spread between rounds was 6.8% at the median, and the
-  one row at or above per cell (scalar member at 16 cells) is 1.6% off, inside
-  it.
+  lines, twice. Spread between rounds was 2.5% at the median on a quiet host
+  and 19% across these rounds, which ran beside other jobs. The two column
+  figures above per cell, `string` scalar member at 16 cells and read at 256,
+  are 1.1% and 1.0% off, inside it.
 
   Memory per cell: a written column cell is about 104 bytes (112 before), a
   leaf 45-83 bytes in a record with a `string` member and 145-346 in a packed
