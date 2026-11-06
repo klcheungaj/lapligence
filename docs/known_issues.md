@@ -1877,22 +1877,30 @@ threshold.
 
 The per-cell form stays for:
 
-- a model with the VPI catalog or toggle coverage: column records have no
-  structure object or member rows, and a toggle entity is a packed variable;
-- a record with only constant selections, unless it fits the packed limit: a
-  leaf access is direct, and whole copies are faster;
+- a record below the 16-cell minimum, or one no selection reaches: the code is
+  small or no access pays for it;
 - members that are not packed: `real`, `string` and handle arrays, and arrays
   of such records, have no column form. A run-time index into one still costs
   one branch per cell (a `string a[4095]` selection is 201,877 lines);
 - a design that uses a chosen type in a way column layout does not cover: the
   column lowering fails and the whole design is lowered per cell, with the
-  cost above. Known causes are `%p` of a whole record, a copy between a member
-  and a directly addressed array (`r.a = q`), a `ref` formal of a record with a
-  string member, `$rose` and concurrent assertions on a member cell, a member
-  initializer with different cell values, a function returning a fixed record
-  (`invalid simulator IR`), DPI arguments, and class properties and containers
-  of a record with a string member. Each is a limit of column records above
-  the threshold as well.
+  cost above and no message. This retry awaits a decision. The focused suites
+  never reach it on their own (64 of 64 lowerings of chosen types succeed);
+  forcing every eligible record gives 209 of 426. Each cause is a limit of
+  column records above the threshold as well:
+  - sampled values: `$rose`, `$past`, `$changed` and concurrent assertions on
+    a member cell, which support only scalar signals;
+  - transport: a `ref` formal of a record with a string member, DPI arguments,
+    class properties and queues of a record with a string member, a string
+    member of a function result, records moved through a native value
+    (`native record transfer has incompatible leaf layouts`);
+  - hierarchy: a member reached by a hierarchical path, an aggregate port on a
+    non-aggregate actual, a member connected to a net;
+  - a member initializer with different cell values;
+  - nested members that are records or arrays of records (`aggregate member`
+    errors, a pattern with no destination, `inside` on a member);
+  - different bit ranges of one scalar member written by separate processes
+    or continuous assignments, which a one-cell column sees as one writer.
 
 codegen-size made whole-value reads and writes of unpacked arrays O(1)
 in generated C (`emit_c/owned/dense_cells.rs`), and removed the lowering
@@ -1902,9 +1910,8 @@ stack overflow that whole equality of such records hit from about 256 leaves
 Reproduce with the record above, `rec_t a, b; initial b = a;` and
 `--gen-only`, then measure `model.c`.
 
-The intended direction is to close the column gaps above so that the fallback
-stops being needed, and to speed up whole copies of columns, which are slower
-than per-cell runs.
+The intended direction is to close the column gaps above so that the retry
+stops being needed.
 
 ## Gate and UDP array elements emit one process function each
 

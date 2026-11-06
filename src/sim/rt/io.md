@@ -260,7 +260,9 @@ assign lhs/rhs, primitive terminals) as compile-argument references plus
 constant digits, which `conn_handle`/`read_conn` turn into the object, select,
 element or a `SLOT_CONN` handle. Port bits, primitive terminals and interface
 port reference objects are dynamic slots on their row (`SLOT_PORTBIT`,
-`SLOT_PRIMTERM`, `SLOT_REFOBJ`). Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
+`SLOT_PRIMTERM`, `SLOT_REFOBJ`). A scalar member of a chosen column record is a row with
+`LLG_VPI_OBJ_FIXED_CELL`: the row names its one-cell descriptor, and decoding
+materializes the cell, which never moves. Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
 out of the name index; instance array elements are found by composing the
 array's full name with the indices.
 Net and variable connectivity (vpiDriver, vpiLoad, their local forms,

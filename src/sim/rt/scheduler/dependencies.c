@@ -6,6 +6,7 @@
 
 static void force_dependency_changed(sv4_t* sig, double* real, int is_real);
 static void sig_write(sv4_t* target, sv4_t value);
+static int marker_flip(sv4_t* marker);
 static void fixed_array_changed(sv4_t* target);
 
 enum { LLG_DEPENDENCY_INITIAL_BUCKETS = 64u };
@@ -103,7 +104,7 @@ sv4_t* llg_dependency_or_never(sv4_t* dependency) {
 }
 
 void llg_dependency_changed(sv4_t* dependency) {
-    if (!dependency) return;
+    if (!dependency || marker_flip(dependency)) return;
     uint64_t bit = llg_sv4_word(*dependency, 0, LLG_SV4_BITS) & 1u;
     /* A reference marker keeps its width: the value already stored through
      * the reference reaches its element before readers wake. */
@@ -855,6 +856,29 @@ static void sig_write(sv4_t* target, sv4_t value) {
     sig_publish_changed(target, old, value);
     llg_value_scope_end(snapshots);
     if (target_pin) llg_value_scope_end(target_pin);
+}
+
+// The two values of a one-bit marker: permanent and never changed, so a
+// callback that abandons the writer leaves nothing to release.
+static sv4_t marker_values[2];
+
+// A marker flips on every change of what it stands for, and sig_write's owned
+// snapshots would cost more than the rest of the publication. A marker holding
+// a known bit flips in place; anything else takes the general write.
+static int marker_flip(sv4_t* marker) {
+    if (llg_sv4_width(*marker) != 1 || region_is_read_only_now(g.current_region))
+        return 0;
+    unsigned old = llg_sv4_state(*marker, 0);
+    if (old > 1u) return 0;
+    if (!llg_sv4_width(marker_values[0])) {
+        marker_values[0] = sv4_from_u64(0u, 1, 0);
+        marker_values[1] = sv4_from_u64(1u, 1, 0);
+    }
+    llg_value_scope_t* target_pin = value_target_pin(marker);
+    llg_sv4_set_state(marker, 0, old ^ 1u);
+    sig_publish_changed(marker, marker_values[old], marker_values[old ^ 1u]);
+    if (target_pin) llg_value_scope_end(target_pin);
+    return 1;
 }
 
 static int sig_range_same(const sv4_t* target, uint32_t offset,

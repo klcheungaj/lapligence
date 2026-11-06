@@ -140,10 +140,12 @@ selected write over the same range keeps its node, and a same-width unchanged
 driver returns before any resize. Publication snapshots and resolved net
 values live in private value scopes (`value_scope_begin_private`): they are
 never write, NBA or clocking targets, so they skip the address index and
-clocking history and allocate node and cells together. Pending inertial
-updates form a doubly linked list sorted by time (FIFO among equal times);
-insertion searches from the tail and the due-now scans stop at the first later
-time.
+clocking history and allocate node and cells together. A change marker holding
+a known bit flips in place and publishes two permanent values, without
+snapshots, because a marker can flip on every cell or string write. Pending
+inertial updates form a doubly linked list sorted by time (FIFO among equal
+times); insertion searches from the tail and the due-now scans stop at the
+first later time.
 
 Stop/resume retains a live context; close releases observers/queues before model
 storage. Runtime ticks are integer design-precision units; lowering supplies

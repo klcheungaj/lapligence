@@ -326,45 +326,67 @@ code at `-O1` instead of 0.13×).
 - **Trade-off:** a module record below `LLG_DENSE_FIXED_ARRAY_CELLS` keeps one
   leaf per member cell, each with direct access, and stores one descriptor
   column per member (`IrArray::descriptor`) only when
-  `collection/record_columns/choice.rs` chooses its type: on a run-time index
-  into a member array of at least `LLG_RECORD_COLUMN_MIN_CELLS` (16) cells, or
-  on any select of one in a record that fits the packed limit, which otherwise
-  flattens all its leaves on each access. A column replaces the branch per
-  cell (or the whole-record flatten) with one hash lookup, at the price of a
-  lookup on constant selects and slower whole-record operations.
-- **Why a preference:** column layout does not cover every use of a type
+  `collection/record_columns/choice.rs` chooses its type: on any selection of
+  a member array of at least `LLG_RECORD_COLUMN_MIN_CELLS` (16) cells, in a
+  type whose member arrays all have elements of packed width. A column
+  replaces the branch per cell (or the whole-record flatten) with one lookup.
+  Unwritten cells cost nothing, written ones are lazy heap cells, and the
+  site stays about 261 lines at any size.
+- **Why a preference:** column layout does not yet cover every use of a type
   (see the [known issue](known_issues.md#unpacked-records-with-dense-member-arrays-emit-per-cell-code)),
   so `lower_model` lowers the chosen types first and keeps the per-cell model
-  if that fails. A model with the VPI catalog or toggle coverage stays per
-  cell, since each observes member leaves. Chosen columns dump under the leaf
-  names, with the same values and hierarchy.
+  if that fails. Chosen columns show the VPI objects, toggle entities and
+  dump names of the leaf form, with the same values.
+- **What made columns no slower than leaves:**
+  - A constant cell index reaches its bucket through a direct table of up to
+    4,096 entries, one load instead of a hash probe.
+  - The contents marker that lets `@(r)` and `$changed` see a cell write used
+    to be republished through the full signal path on every cell change. It
+    was the main cost of a write (0.169 → 0.110 s per 1M at 64 cells) and of a
+    whole copy (3.38 → 1.03 s). `model.c` is scanned after rendering, the same
+    way as unreferenced descriptor tables: a marker nothing reads is cleared
+    at start, and a run with no marked array skips the lookup.
+  - A write to an array something does read still flips the marker, but a
+    flip no longer allocates: `sv4_t` owns heap storage, and `sig_write` built
+    three owners to change one bit. An established marker flips in place and
+    publishes two constant values (0.168 → 0.122 s per 1M at 64 to 1,024
+    cells), the same publication and order as before.
+  - Copies and comparisons read whole arrays in place instead of through a
+    scratch image built one allocated cell at a time, and a blocking copy
+    between arrays of one type writes only the cells that differ.
 - **Result:** `r.a[k] = 7; y = r.a[k];` at 4,095 cells, one site: 179,889 lines
   and a build over 300 s become 261 lines and 0.3 s, with a `string` member;
-  33,571 lines and 15.8 s become 260 lines and 0.3 s with a packed one. Medians of 5 interleaved rounds
-  pinned to one core, seconds for 5M iterations, per-cell to column:
+  33,571 lines and 15.8 s become 260 lines and 0.3 s with a packed one.
+  Medians of 5 interleaved rounds pinned to one core, seconds for 1M
+  operations, per cell to column:
 
-  | Access | `string` member, 16 | 1,024 | Packed record, 16 | 64 |
-  | --- | --- | --- | --- | --- |
-  | Read, constant index | 0.58 → 0.62 | 0.79 → 0.87 | 3.99 → 0.71 | 22.2 → 0.62 |
-  | Write, constant index | 0.66 → 0.93 | 0.86 → 1.30 | 15.0 → 0.86 | 47.9 → 0.93 |
-  | Read-modify-write, constant | 0.91 → 1.15 | 1.25 → 1.67 | 17.2 → 1.51 | 63.2 → 1.30 |
-  | Read, run-time index | 1.76 → 1.08 | 4.17 → 1.33 | 4.39 → 1.73 | 24.0 → 0.97 |
-  | Write, run-time index | 1.97 → 1.34 | 4.24 → 1.06 | 15.4 → 1.38 | 49.8 → 1.24 |
-  | Read-modify-write, run-time | 2.89 → 1.59 | 8.20 → 2.16 | 18.2 → 1.65 | 62.1 → 1.52 |
+  | Operation | `string` member, 16 | 256 | 4,095 | Packed record, 16 | 256 | 4,095 |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Read, constant index | 0.115 → 0.113 | 0.117 → 0.118 | 0.117 → 0.111 | 0.689 → 0.111 | 52.2 → 0.113 | 12,600 → 0.112 |
+  | Write, constant index | 0.122 → 0.102 | 0.124 → 0.103 | 0.123 → 0.102 | 2.92 → 0.108 | 41.3 → 0.102 | 2,110 → 0.102 |
+  | Read-modify-write, constant | 0.178 → 0.156 | 0.186 → 0.161 | 0.181 → 0.156 | 3.39 → 0.158 | 52.1 → 0.161 | 2,280 → 0.156 |
+  | Scalar member read-modify-write | 0.122 → 0.124 | 0.128 → 0.122 | 0.124 → 0.124 | 3.79 → 0.122 | 50.5 → 0.124 | 2,240 → 0.123 |
+  | Read, run-time index | 0.25 → 0.215 | 0.264 → 0.189 | not built → 0.182 | 0.887 → 0.219 | 51.9 → 0.186 | not built → 0.185 |
+  | Write, run-time index | 0.276 → 0.206 | 0.282 → 0.176 | not built → 0.173 | 2.98 → 0.208 | 41.5 → 0.177 | not built → 0.188 |
+  | Whole copy | 0.63 → 0.15 | 8.71 → 0.954 | 173 → 13.9 | 1.38 → 0.115 | 64.6 → 0.896 | 13,100 → 14.1 |
+  | Whole copy, all cells written | 2.13 → 1.21 | 31.6 → 16.3 | 621 → 262 | 3.67 → 1.17 | 147 → 16.1 | 24,500 → 256 |
+  | Whole compare | 0.479 → 0.269 | 4.58 → 1.13 | no build → 15.2 | 0.354 → 0.144 | 4.76 → 1.00 | 1,560 → 15.6 |
 
-  Whole-record operations go the other way, seconds for 1M operations:
+  Per-cell packed records above 16 cells ran fewer iterations (4,096 at
+  4,095 cells); the rates are scaled to 1M. Whole compare at 4,095 `string`
+  cells has no per-cell figure: the C compiler was killed building its 266,360
+  lines, twice. Timing spread between rounds was 6.8% at the median, and the
+  one row at or above per cell (scalar member at 16 cells) is 1.6% off, inside
+  it.
 
-  | Whole record | `string` member, 16 | 256 | Packed record, 16 | 256 |
-  | --- | --- | --- | --- | --- |
-  | Copy | 0.63 → 2.08 | 8.69 → 40.2 | 1.44 → 2.43 | 65.3 → 43.0 |
-  | Compare | 0.47 → 3.05 | 4.56 → 54.7 | 0.35 → 3.34 | 4.56 → 57.5 |
-
-  Memory per written cell: 112 bytes in a column, about 45 for a leaf of a
-  record with a `string` member and about 330 for a leaf of a packed record;
-  an unwritten column cell costs nothing.
+  Memory per cell: a written column cell is about 104 bytes (112 before), a
+  leaf 45-83 bytes in a record with a `string` member and 145-346 in a packed
+  record. The direct table adds 8-15 bytes per declared cell to an array with
+  any written cell (up to 32 KiB at 4,096), where a leaf record with a
+  `string` member costs nothing until a cell is written.
 - **Threshold:** 16 cells. Columns already win on accesses at 4 cells, but
-  below 16 the tree stays a few hundred lines and whole-record operations are
-  the larger risk, so small records keep their form.
+  below 16 the tree stays a few hundred lines, so small records keep their
+  form.
 
 ### Coroutine frame: C locals wherever possible
 

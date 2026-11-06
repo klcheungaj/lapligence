@@ -83,6 +83,14 @@ released cell (decision A19-D78); outlined runs hold no such locals.
 - Writable callback leaves must all be proven private. Never allow external refs,
   net/scheduler writes or NBAs through this path.
 
+A descriptor array's contents marker is a file-scope static, so only `model.c`
+can give the runtime its address. `render_model` scans the finished text and
+`llg_model_unobserved_contents` clears the marker of each array named only by
+its four storage lines: a cell write then publishes nothing array-wide, which
+is most of what such a write would cost. Any other mention keeps the marker,
+whichever context rendered it. A constant in-range selection of a descriptor
+emits its linear index directly (`Frame::array_cell`).
+
 ## Native boundaries
 
 String inputs are copied; reserve return ownership before argument scopes. Check
