@@ -2500,13 +2500,12 @@ these forms remain outside them.
 ### Symptom
 
 - Rejected with a located `randomization:` error: nested dynamic arrays and
-  queues, associative arrays, static
-  random arrays and static random properties of objects reached through a
-  `rand` handle, `randc` arrays and `randc` variables wider than 16 bits,
-  a random untagged union with enum members, a random array
-  read other than through element selects, `size()`, the reductions,
-  `inside` and `foreach` (for example compared whole), a `solve...before` that solves a variable before an array size or
-  names a non-constant element, and an inline `local::` name that also names an object property.
+  queues, associative arrays, `randc` arrays and `randc` variables wider than
+  16 bits (18.4.2 lets an implementation limit them), a random untagged union
+  with enum members, a `solve...before` that solves a variable before an
+  array size (S30-D5 solves sizes first) or names an element at a non-constant
+  index, and a row of a multidimensional array in `inside`. A whole array in
+  a constraint is also rejected, as 18.3 requires (S30-D15).
 - A constraint function reached for an object of the randomized class other
   than the randomized object ends the run with a fatal error: its receiver is
   fixed at the call. Objects of other classes evaluate their own functions.

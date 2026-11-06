@@ -31,6 +31,17 @@ fn std_randomize_writes_fixed_arrays_of_any_scope() {
 }
 
 #[test]
+fn randomize_lists_name_inherited_properties() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "randomize_inherited_list",
+        include_str!("../fixtures/sim/feature_completion/sim_029/randomize_inherited_list.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn enum_elements_and_members_hold_named_values() {
     sim_cli::run_case_backend_parity(
         SUITE,

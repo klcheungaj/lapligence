@@ -48,6 +48,9 @@ legal member value.
 `scope_fixed_arrays` runs `std::randomize` (18.12) over fixed arrays of a module
 and of a subroutine, of one or several dimensions.
 
+`randomize_inherited_list` names inherited properties in `randomize(list)`
+(18.11), which needs `slang-randomize-inherited-property.patch`.
+
 `randomize_value_forms` uses `randomize()` as a value where other operands decide
 whether it runs, and in loop conditions. Its output is the reference run: the
 counters of `pre_randomize` show which calls ran. 11.3.5 L14434-14435: "When short

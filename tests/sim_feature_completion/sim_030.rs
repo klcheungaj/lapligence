@@ -354,6 +354,17 @@ fn solve_before_orders_array_primaries() {
 }
 
 #[test]
+fn static_random_properties_are_one_variable() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "static_random",
+        include_str!("../fixtures/sim/feature_completion/sim_030/static_random.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn handle_arrays_link_their_elements() {
     sim_cli::run_case_backend_parity(
         SUITE,

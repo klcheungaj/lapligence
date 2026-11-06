@@ -1360,6 +1360,13 @@ static uint32_t cr_fx_arr(cr_ex_t* ex, uint32_t inst, uint32_t array) {
     return ex->f->arr_base[inst] + pos;
 }
 
+/* The instance holding `array` for an object `inst`: a static property's
+ * array is shared, listed only by unit 0. */
+static uint32_t cr_fx_arr_inst(const cr_ex_t* ex, uint32_t inst, uint32_t array) {
+    const cr_tpl_t* t = ex->t;
+    return t->arr_pos[(size_t)t->inst[inst].unit * t->ac + array] == LLG_CR_NONE ? 0u : inst;
+}
+
 /* Flat variable of element `e` of array slot `k` (= cr_fx_arr). */
 static uint32_t cr_fx_elem(cr_ex_t* ex, uint32_t inst, uint32_t array, uint32_t k, uint32_t e) {
     cr_flat_t* f = ex->f;
@@ -1427,6 +1434,7 @@ static uint32_t cr_fx_count(cr_ex_t* ex, uint32_t inst, uint32_t array, int* ran
         if (pos == LLG_CR_NONE) cr_fatal("slot of another unit");
         return t->inst[inst].slots[pos].count;
     }
+    inst = cr_fx_arr_inst(ex, inst, array);
     uint32_t k = cr_fx_arr(ex, inst, array);
     uint32_t pos = k - ex->f->arr_base[inst];
     if (ex->phase == CR_PH_SIZES && cr_random_size(t, &t->inst[inst], pos)) *random_size = 1;
@@ -1645,6 +1653,7 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
     case LLG_CR_AELEM: {
         uint32_t inst = cr_ex_ref(ex, nd->c);
         if (inst == CR_X_NULL) return cr_fx_null(ex, nd->bit_width, nd->sign_flag);
+        inst = cr_fx_arr_inst(ex, inst, nd->a);
         uint32_t k = cr_fx_arr(ex, inst, nd->a);
         if (ex->phase == CR_PH_SIZES && cr_random_size(t, &t->inst[inst], k - f->arr_base[inst]))
             return CR_X_DROP;
@@ -1672,6 +1681,7 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
         int random_size;
         uint32_t count = cr_fx_count(ex, inst, nd->a, &random_size);
         if (random_size) {
+            inst = cr_fx_arr_inst(ex, inst, nd->a);
             uint32_t k = cr_fx_arr(ex, inst, nd->a);
             return cr_fx_var_node(ex, cr_fx_size_var(ex, inst, nd->a, k));
         }

@@ -1817,6 +1817,23 @@ fn s29_d10_search_not_uniform() {
 }
 
 #[test]
+fn s30_d15_array_compare_rejected() {
+    sim_cli::reject_case(
+        SUITE,
+        "S30-D15_array_compare_rejected",
+        "a random array may be used in a constraint only through element selects",
+    );
+}
+
+#[test]
+fn s30_d14_inline_names_of_same_class() {
+    run_decision(
+        "S30-D14_inline_names_of_same_class",
+        include_str!("fixtures/sim/lrm_decisions/S30-D14_inline_names_of_same_class.out"),
+    );
+}
+
+#[test]
 fn s30_d13_handle_array_grows_null() {
     run_decision(
         "S30-D13_handle_array_grows_null",

@@ -204,22 +204,6 @@ impl Codegen<'_> {
                 RandSelection::List(declarations)
             }
         };
-        // Inline constraints of a call on another object of the caller's
-        // own class hierarchy could name the caller's properties through
-        // `local::`, which the captured names do not distinguish.
-        if inline.is_some() && receiver.is_some() && caller_receiver.is_some() {
-            if let Some(caller_class) = self.class_method_owner(node) {
-                let overlap = self.class_chain(caller_class).contains(&static_class)
-                    || self.class_chain(static_class).contains(&caller_class);
-                if overlap {
-                    return Err(self.rand_error(
-                        node,
-                        path,
-                        "inline constraints on another object of the calling method's class hierarchy are not supported (`local::` resolution)",
-                    ));
-                }
-            }
-        }
         self.model.random.threads = true;
         self.model.random.objects = true;
         let local = format!("_llg_rand_{}", node.index());
@@ -389,7 +373,7 @@ impl Codegen<'_> {
                         return Err(self.rand_error(
                             node,
                             path,
-                            &format!("random property `{name}` of class `{}` is not a packed integral value, a one-dimensional array of packed integral elements or a class handle, or is a structure with enum or tagged-union members", self.node(member).name),
+                            &format!("random property `{name}` of class `{}` is not a packed integral value, an array of packed integral elements or a class handle, or is a structure with enum or tagged-union members", self.node(member).name),
                         ));
                     }
                     continue;
@@ -415,11 +399,16 @@ impl Codegen<'_> {
             .iter()
             .filter_map(|member| self.class_nodes.get(member).copied())
             .collect::<HashSet<_>>();
-        let saved = self.rand_lowering.replace(RandLowering::new(
-            classes,
-            Some(object.clone()),
-            placeholders,
-        ));
+        // An inline constraint's names are the object's; only `local::`
+        // names the caller's, even for a property of the same class.
+        let caller_overlap = inline.is_some()
+            && self.class_method_owner(node).is_some_and(|caller| {
+                self.class_chain(caller).contains(&class)
+                    || self.class_chain(class).contains(&caller)
+            });
+        let mut scoped = RandLowering::new(classes, Some(object.clone()), placeholders);
+        scoped.inline_local = caller_overlap;
+        let saved = self.rand_lowering.replace(scoped);
         let bound = if explicit_object {
             self.bind_constraint_containers(&chain, &effective, inline, object)
         } else {

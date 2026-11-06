@@ -52,6 +52,10 @@ pub(super) struct RandLowering {
     bindings: HashMap<NodeId, IrExpr>,
     /// `with` iterator of a handle array -> the template object it names.
     element_refs: HashMap<NodeId, u32>,
+    /// An inline constraint inside the object's class hierarchy: a `local::`
+    /// name resolves to the same declaration as an unqualified one, so its
+    /// source spelling tells them apart.
+    inline_local: bool,
 }
 
 impl RandLowering {
@@ -67,6 +71,7 @@ impl RandLowering {
             templates: HashMap::new(),
             bindings: HashMap::new(),
             element_refs: HashMap::new(),
+            inline_local: false,
         }
     }
 }
@@ -275,9 +280,24 @@ impl Codegen<'_> {
         )
     }
 
+    /// Whether `node` is a `local::` name of the caller while lowering an
+    /// inline constraint whose names could also be the object's.
+    pub(super) fn names_caller(&self, node: NodeId) -> bool {
+        self.rand_lowering
+            .as_ref()
+            .is_some_and(|lowering| lowering.inline_local)
+            && self.span_text(node).is_some_and(|text| {
+                text.strip_prefix("local")
+                    .is_some_and(|rest| rest.trim_start().starts_with("::"))
+            })
+    }
+
     /// The placeholder standing for a random variable that `node` names
     /// through the implicit or explicit `this` of the randomized object.
     pub(super) fn random_placeholder(&self, node: NodeId) -> Option<IrExpr> {
+        if self.names_caller(node) {
+            return None;
+        }
         if let Some(lowering) = self.rand_lowering.as_ref() {
             if let Some(template) = lowering.templates.get(&node) {
                 return Some(template.clone());
@@ -305,6 +325,9 @@ impl Codegen<'_> {
     /// without an object or through the constraint block's `this`; `node`
     /// may select members after it.
     pub(super) fn random_field_placeholder(&self, node: NodeId, field: NodeId) -> Option<IrExpr> {
+        if self.names_caller(node) {
+            return None;
+        }
         let lowering = self.rand_lowering.as_ref()?;
         let placeholder = lowering.placeholders.get(&field)?;
         match self.kind(node) {
@@ -352,7 +375,7 @@ impl Codegen<'_> {
     /// The randomized object for `this` inside a class constraint block.
     pub(super) fn rand_this_receiver(&self, target: NodeId) -> Option<IrChandleExpr> {
         let lowering = self.rand_lowering.as_ref()?;
-        (self.node(target).name == "this" && self.rand_this(target))
+        (self.node(target).name == "this" && (self.rand_this(target) || lowering.inline_local))
             .then(|| lowering.receiver.clone())
             .flatten()
     }

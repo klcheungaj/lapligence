@@ -206,6 +206,8 @@ pub(super) struct UnitState {
     /// Non-random packed properties that constraints read through a handle
     /// array element: inactive variables of their objects.
     state_vars: Vec<NodeId>,
+    /// Static random properties named outside unit 0's variables.
+    global_vars: Vec<NodeId>,
     /// Array expressions a template form reads (not their storage).
     consumed: HashSet<NodeId>,
     /// Template placeholders created for, and read by, the constraint
@@ -677,6 +679,7 @@ impl Codegen<'_> {
             slots: Vec::new(),
             slot_of: HashMap::new(),
             state_vars: Vec::new(),
+            global_vars: Vec::new(),
             consumed: HashSet::new(),
             created: Vec::new(),
             used: HashSet::new(),
@@ -798,17 +801,12 @@ impl Codegen<'_> {
                 Some(class),
                 self.container_globals.get(&decl).map(|info| info.ir),
             ),
-            _ => {
-                if class_owner.is_some() && random {
-                    return Err(unsupported(self, "a static random array is not supported"));
-                }
-                (
-                    None,
-                    expr.and_then(|expr| self.container_of(expr))
-                        .map(|info| info.ir)
-                        .or_else(|| self.container_globals.get(&decl).map(|info| info.ir)),
-                )
-            }
+            _ => (
+                None,
+                expr.and_then(|expr| self.container_of(expr))
+                    .map(|info| info.ir)
+                    .or_else(|| self.container_globals.get(&decl).map(|info| info.ir)),
+            ),
         };
         if container.is_none() {
             if let Some(index) = self.scope_model_array(path, at, builder, decl, expr, random)? {
@@ -1488,7 +1486,7 @@ impl Codegen<'_> {
             {
                 return Ok(None);
             }
-            if !instance && unit != 0 {
+            if class_owner.is_none() && unit != 0 {
                 return Err(self.rand_error(
                     expr,
                     path,
@@ -1864,14 +1862,11 @@ impl Codegen<'_> {
         let Some(reference) = self.slot_reference(path, node, builder, handles)? else {
             return Ok(());
         };
-        if self.db.variable_lifetime(last) == VariableLifetime::Static {
-            return Err(self.rand_error(
-                node,
-                path,
-                "a static random property selected through a `rand` handle is not supported in constraints",
-            ));
-        }
-        let var = self.unit_var(path, node, builder, last)?;
+        let var = if self.db.variable_lifetime(last) == VariableLifetime::Static {
+            self.static_unit_var(path, node, builder, last)?
+        } else {
+            self.unit_var(path, node, builder, last)?
+        };
         let (width, signed) = {
             let var = &builder.problem.vars[var as usize];
             (var.width, var.signed)
@@ -1879,6 +1874,39 @@ impl Codegen<'_> {
         let member = builder.template(IrRandOp::HVar, signed, width, [reference, var, 0]);
         self.register_template(builder, node, member);
         Ok(())
+    }
+
+    /// The global variable of static random property `decl` named through
+    /// a handle.
+    fn static_unit_var(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        builder: &mut ProblemBuilder,
+        decl: NodeId,
+    ) -> Result<u32, String> {
+        let unit = builder.unit as usize;
+        let Some(object) = state(builder).units[unit].object.clone() else {
+            return Err(self.rand_error(
+                node,
+                path,
+                "a static random property needs a randomized object in this constraint",
+            ));
+        };
+        let Some((plan, _)) =
+            self.class_var_plan(builder, decl, &object, &RandSelection::Default, false)?
+        else {
+            return Err(self.rand_error(
+                node,
+                path,
+                "a static random property selected through a `rand` handle must be packed",
+            ));
+        };
+        if plan.cyclic.is_some() {
+            builder.set_cyclic(plan.index);
+        }
+        state(builder).global_vars.push(decl);
+        Ok(plan.index)
     }
 
     /// `a[i].m.n`: packed members of a template array element are its bits.
@@ -2478,7 +2506,7 @@ impl Codegen<'_> {
             return Err(self.rand_error(
                 array,
                 path,
-                "`foreach` in a constraint needs a one-dimensional array of packed integral elements or class handles that is a property of the randomized objects or a dynamic array or queue of the calling scope",
+                "`foreach` in a constraint needs an array of packed integral elements or class handles that is a property of the randomized objects or a dynamic array or queue of the calling scope",
             ));
         };
         state(builder).consumed.insert(array);
@@ -2626,6 +2654,19 @@ impl Codegen<'_> {
                 }
             }
         }
+        for decl in std::mem::take(&mut state(builder).global_vars) {
+            let Some(object) = state(builder).units[0].object.clone() else {
+                continue;
+            };
+            let Some((plan, _)) =
+                self.class_var_plan(builder, decl, &object, &RandSelection::Default, false)?
+            else {
+                continue;
+            };
+            if !root_vars.iter().any(|var| var.index == plan.index) {
+                root_vars.push(plan);
+            }
+        }
         // Non-random properties read through handle array elements are fed
         // like variables, in every unit that has them, and stay inactive.
         for decl in std::mem::take(&mut state(builder).state_vars) {
@@ -2701,13 +2742,6 @@ impl Codegen<'_> {
                 }
                 let name = self.node(child).name.clone();
                 let member_name = self.node(member).name.clone();
-                if self.db.variable_lifetime(child) == VariableLifetime::Static {
-                    return Err(self.rand_error(
-                        node,
-                        path,
-                        &format!("static random property `{name}` of class `{member_name}`, whose objects are randomized through a `rand` handle, is not supported"),
-                    ));
-                }
                 if self.root_unit_property(path, node, builder, child, true)? {
                     continue;
                 }
@@ -2729,13 +2763,18 @@ impl Codegen<'_> {
                     return Err(self.rand_error(
                         node,
                         path,
-                        &format!("random property `{name}` of class `{member_name}` is not a packed integral value, a one-dimensional array of packed integral elements or a class handle, or is a structure with enum or tagged-union members"),
+                        &format!("random property `{name}` of class `{member_name}` is not a packed integral value, an array of packed integral elements or a class handle, or is a structure with enum or tagged-union members"),
                     ));
                 };
                 if plan.0.cyclic.is_some() {
                     builder.set_cyclic(plan.0.index);
                 }
                 placeholders.insert(child, plan.1);
+                // A static variable is one global variable, fed once.
+                if self.db.variable_lifetime(child) == VariableLifetime::Static {
+                    state(builder).global_vars.push(child);
+                    continue;
+                }
                 vars.push(plan.0);
             }
         }
