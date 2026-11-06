@@ -91,6 +91,11 @@ is most of what such a write would cost. Any other mention keeps the marker,
 whichever context rendered it. A constant in-range selection of a descriptor
 emits its linear index directly (`Frame::array_cell`).
 
+A `real` record column has no contents array to clear: each cell has a marker
+and two dependency bindings at start, which cost more than the double. The same
+scan drops the marker and bindings of each column named only by their four
+storage lines, so such a column is its doubles alone.
+
 A sampled expression selects a descriptor cell through
 `llg_fixed_array_sampled_peek`, and `llg_model_unobserved_contents` flags each
 array the rendered model reads that way (`llg_fixed_array_sampled`). A flagged
