@@ -51,6 +51,27 @@ fn nested_element_methods_and_whole_uses_stage_the_element() {
 }
 
 #[test]
+fn class_containers_are_reached_through_computed_handles() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/computed_handle_containers.out");
+    sim_cli::run_case_backend_parity(SUITE, "computed_handle_containers", expected, &[], &[]);
+}
+
+#[test]
+fn computed_handles_with_no_evaluation_point_are_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_computed_handle_wait",
+        "class container property `q` in `tb` is selected through a handle that is not a variable, formal or property",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_computed_handle_assoc_foreach",
+        "`foreach` over `m` in `tb` calls a subroutine for its handle",
+    );
+}
+
+#[test]
 fn nested_elements_pass_whole_to_input_formals() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/nested_element_arguments.out");

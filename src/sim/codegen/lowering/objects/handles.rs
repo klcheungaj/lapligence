@@ -348,6 +348,15 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrChandleExpr, String> {
+        if let Some(before) = self.enter_receiver_root(node) {
+            let value = self.lower_chandle(path, node);
+            self.leave_receiver_root(node, &before);
+            return Ok(IrChandleExpr::Conditional {
+                predicate: Box::new(super::strings::always_after(before)),
+                then: Box::new(value?),
+                otherwise: Box::new(IrChandleExpr::Null),
+            });
+        }
         if let Some(value) = self.native_tagged_chandle(path, node)? {
             return Ok(value);
         }

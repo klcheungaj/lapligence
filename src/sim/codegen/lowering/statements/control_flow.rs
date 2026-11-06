@@ -1288,7 +1288,7 @@ impl EmitCtx<'_, '_> {
         }
 
         // `foreach (h.a[i])` reads the array of the object `h` names.
-        let selected = self
+        let paths: Vec<NodeId> = self
             .cg
             .node(h)
             .children
@@ -1297,10 +1297,22 @@ impl EmitCtx<'_, '_> {
             .filter(|child| {
                 matches!(
                     self.cg.kind(*child),
-                    NodeKind::Expr(ExprKind::HierPath { .. })
+                    NodeKind::Expr(ExprKind::HierPath { .. } | ExprKind::MemberSelect { .. })
                 )
             })
-            .find_map(|child| self.cg.container_of(child));
+            .collect();
+        let selected = paths.iter().find_map(|child| self.cg.container_of(*child));
+        // The computed handles of the array: at each bound check of an
+        // indexed traversal, once before a keyed or nested one.
+        let mut handles = Vec::new();
+        let mut effects = false;
+        for path in paths {
+            if let Some(before) = self.cg.enter_receiver_root(path) {
+                self.cg.leave_receiver_root(path, &before);
+                handles.extend(before);
+                effects |= !self.cg.side_effect_free(path);
+            }
+        }
         let Some(container) = staged
             .or(selected)
             .or_else(|| self.cg.container_globals.get(&array).cloned())
@@ -1312,8 +1324,29 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         };
+        // Every bound check of these traversals would have to call again.
+        if effects
+            && (vars.len() > 1
+                || matches!(
+                    self.cg.model.containers[container.ir].kind,
+                    IrContainerKind::Associative { .. }
+                ))
+        {
+            return Err(format!(
+                "`foreach` over `{}` in `{}` calls a subroutine for its handle; only an indexed one-dimensional traversal supports that; assign the handle to a variable first",
+                self.cg.node(array).name,
+                self.path
+            ));
+        }
         if vars.len() > 1 {
-            return self.lower_nested_container_foreach(array, container.ir, &vars, body);
+            let mut statements = handles;
+            statements.extend(self.lower_nested_container_foreach(
+                array,
+                container.ir,
+                &vars,
+                body,
+            )?);
+            return Ok(vec![IrStmt::Block(statements)]);
         }
         if vars.len() != 1 {
             return Err(format!(
@@ -1371,7 +1404,19 @@ impl EmitCtx<'_, '_> {
                 true,
                 None,
             );
-            let cond = common_bin_expr(IrBinOp::Lt, read(), size);
+            let mut cond = common_bin_expr(IrBinOp::Lt, read(), size);
+            if !handles.is_empty() {
+                let (width, signed) = (cond.width, cond.signed);
+                cond = IrExpr::new(
+                    IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                        statements: handles,
+                        value: cond,
+                    })),
+                    width,
+                    signed,
+                    None,
+                );
+            }
             let next = common_bin_expr(IrBinOp::Add, read(), loop_index_expr(1));
             let init = IrStmt::Assign {
                 lhs: local_lhs(&local),
@@ -1393,6 +1438,7 @@ impl EmitCtx<'_, '_> {
             return Ok(vec![IrStmt::Block(declarations)]);
         }
 
+        declarations.extend(handles);
         // Associative arrays are ordered by key.  The traversal expressions
         // update the iterator in place and return whether a key was found;
         // the first/next choice is guarded by a one-bit state local so first

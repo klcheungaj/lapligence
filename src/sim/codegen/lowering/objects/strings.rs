@@ -14,6 +14,15 @@ impl Codegen<'_> {
         {
             return Ok(value);
         }
+        if let Some(before) = self.enter_receiver_root(node) {
+            let value = self.lower_string(path, node);
+            self.leave_receiver_root(node, &before);
+            return Ok(IrStringExpr::Conditional {
+                predicate: Box::new(always_after(before)),
+                then: Box::new(value?),
+                otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
+            });
+        }
         // Element container members read outside a staged statement are
         // copied out first; the copies run as the predicate of a conditional
         // that always selects the value.
@@ -22,15 +31,7 @@ impl Codegen<'_> {
                 let value = self.lower_string(path, node);
                 self.end_element_member_staging();
                 return Ok(IrStringExpr::Conditional {
-                    predicate: Box::new(IrExpr::new(
-                        IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
-                            statements: before,
-                            value: super::super::containers::pattern_key_expr(1, 1, false, false),
-                        })),
-                        1,
-                        false,
-                        None,
-                    )),
+                    predicate: Box::new(always_after(before)),
                     then: Box::new(value?),
                     otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
                 });
@@ -521,4 +522,18 @@ impl Codegen<'_> {
 fn string_literal(mut bytes: Vec<u8>) -> IrStringExpr {
     bytes.retain(|byte| *byte != 0);
     IrStringExpr::Literal(bytes)
+}
+
+/// A true predicate that runs `statements` first, for values with no
+/// sequence form of their own.
+pub(in super::super) fn always_after(statements: Vec<IrStmt>) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+            statements,
+            value: super::super::containers::pattern_key_expr(1, 1, false, false),
+        })),
+        1,
+        false,
+        None,
+    )
 }

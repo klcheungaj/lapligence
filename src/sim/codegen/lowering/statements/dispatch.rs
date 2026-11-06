@@ -8,7 +8,10 @@ impl EmitCtx<'_, '_> {
     /// the pre-IR emitter decision-for-decision: same errors, warnings,
     /// sensitivity sets and wait tracking.
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
-        self.cg.qualify_class_containers(&self.path, h)?;
+        let outer_receivers = std::mem::take(&mut self.cg.receiver_prelude);
+        let receiver_roots = self.cg.qualify_class_containers(&self.path, h);
+        let receivers = std::mem::replace(&mut self.cg.receiver_prelude, outer_receivers);
+        let receiver_roots = receiver_roots?;
         // Container operands that cannot be built inside an expression are
         // built just before a statement that evaluates its operands once;
         // nested statements never inherit that prelude. Whole-value pattern
@@ -73,6 +76,17 @@ impl EmitCtx<'_, '_> {
             std::mem::replace(&mut self.cg.mailbox_statement_prelude, saved_mailbox);
         let rand_prelude = std::mem::replace(&mut self.cg.rand_prelude, saved_rand);
         let mut statements = lowered?;
+        // An operand reached by another path than the expression lowering
+        // would read a handle local that was never set.
+        for root in receiver_roots {
+            self.cg.receiver_roots.remove(&root);
+            if !self.cg.receiver_roots_lowered.remove(&root) {
+                return Err(format!(
+                    "a class property selected through a computed handle in `{}` is not supported in this operand; assign the handle to a variable first",
+                    self.path
+                ));
+            }
+        }
         if let Some((_, mut prelude)) = rand_prelude.filter(|(_, prelude)| !prelude.is_empty()) {
             prelude.append(&mut statements);
             statements = prelude;
@@ -94,6 +108,21 @@ impl EmitCtx<'_, '_> {
         }
         if !declarations.is_empty() {
             statements.splice(0..0, declarations);
+        }
+        // Computed handles of the statement's operands are read by every
+        // copy made above.
+        if !receivers.is_empty() {
+            if matches!(
+                self.cg.kind(h),
+                NodeKind::Var { .. } | NodeKind::Stmt(StmtKind::VariableDecl { .. })
+            ) {
+                // The declared variable outlives this statement.
+                statements.splice(0..0, receivers);
+            } else {
+                statements = vec![IrStmt::Block(
+                    receivers.into_iter().chain(statements).collect(),
+                )];
+            }
         }
         // Statement coverage counts the statement as it starts (40.2.2).
         if let Some(hit) = self.cg.statement_hit(h) {

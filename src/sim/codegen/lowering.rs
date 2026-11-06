@@ -1241,6 +1241,26 @@ struct ArrayInfo {
     ir: usize,
 }
 
+/// A class property path selected through a computed handle: the property
+/// (and its storage until the first alias exists).
+#[derive(Clone, Copy, PartialEq)]
+enum ReceiverScope {
+    /// Evaluated once with the statement.
+    Statement,
+    /// Evaluated with this operand, which the statement may skip or repeat.
+    Operand(NodeId),
+    /// Below a nested statement, which is prepared on its own.
+    Body,
+}
+
+#[derive(Clone, Copy)]
+enum ReceiverAlias {
+    UnqualifiedNative(NodeId, usize),
+    UnqualifiedContainer(NodeId, usize),
+    Native(NodeId),
+    Container(NodeId),
+}
+
 #[derive(Clone)]
 struct ContainerInfo {
     ir: usize,
@@ -2009,6 +2029,15 @@ struct Codegen<'a> {
     /// (`get().v`) while one read-modify-write statement is lowered, so the
     /// base is evaluated once (SV 11.4.1-11.4.2).
     computed_receivers: HashMap<NodeId, IrChandleExpr>,
+    /// Property paths selected through a computed handle (`list[i].q`).
+    computed_receiver_aliases: HashMap<NodeId, ReceiverAlias>,
+    /// Declarations of the computed handles of the statement being lowered.
+    receiver_prelude: Vec<IrStmt>,
+    /// Declarations of computed handles of operands evaluated lazily or
+    /// repeatedly, run at each evaluation of the operand.
+    receiver_roots: HashMap<NodeId, Vec<IrStmt>>,
+    /// The operands of `receiver_roots` an expression lowering reached.
+    receiver_roots_lowered: HashSet<NodeId>,
     /// Owning module-instance arena node of the current emission context;
     /// used to resolve unbound callees by name.
     inst: NodeId,
@@ -2456,6 +2485,10 @@ impl<'a> Codegen<'a> {
             depth_arg: "0".to_string(),
             overload_current: Vec::new(),
             computed_receivers: HashMap::new(),
+            computed_receiver_aliases: HashMap::new(),
+            receiver_prelude: Vec::new(),
+            receiver_roots: HashMap::new(),
+            receiver_roots_lowered: HashSet::new(),
             inst: NodeId(0),
             design_name: String::new(),
             proc_seq: 0,

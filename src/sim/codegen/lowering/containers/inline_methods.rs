@@ -480,6 +480,7 @@ impl Codegen<'_> {
             return Ok(false);
         };
         if self.reads_activation_state(with_node)
+            || self.receiver_roots.contains_key(&with_node)
             || self.calls_subroutine(with_node)
             || self.non_integral_with(with_node)
         {

@@ -480,13 +480,11 @@ impl<'a> Codegen<'a> {
             | NodeKind::NamedEvent
             | NodeKind::FuncArg { .. }
             | NodeKind::FuncTask { .. } => self.container_declaration(node),
-            NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
-                if self.receiver_containers.contains_key(&node) =>
-            {
-                Some(ContainerInfo {
-                    ir: self.receiver_containers[&node],
-                })
-            }
+            NodeKind::Expr(
+                ExprKind::Ref { .. } | ExprKind::HierPath { .. } | ExprKind::MemberSelect { .. },
+            ) if self.receiver_containers.contains_key(&node) => Some(ContainerInfo {
+                ir: self.receiver_containers[&node],
+            }),
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) => self.container_declaration(*target),

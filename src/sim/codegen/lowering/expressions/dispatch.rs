@@ -767,6 +767,22 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_random_value(scope_path, h)? {
             return Ok(value);
         }
+        // A skipped or repeated operand evaluates its computed handles itself.
+        if let Some(before) = self.enter_receiver_root(h) {
+            let value = self.lower_expr(scope_path, h);
+            self.leave_receiver_root(h, &before);
+            let value = value?;
+            let (width, signed) = (value.width, value.signed);
+            return Ok(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements: before,
+                    value,
+                })),
+                width,
+                signed,
+                None,
+            ));
+        }
         // An expression outside a staged statement (a condition, loop bound
         // or initializer) reads element container members from copies made
         // before each evaluation.
