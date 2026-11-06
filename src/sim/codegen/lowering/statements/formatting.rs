@@ -54,6 +54,17 @@ impl EmitCtx<'_, '_> {
                 }
             }
         }
+        // A helper's container formals live in its activation; what they
+        // copy, the actual, is a read of the call itself.
+        let containers = &self.cg.model.containers;
+        reads.retain(|read| {
+            !matches!(
+                read,
+                crate::sim::ir::IrDependency::ContainerContents(index)
+                    | crate::sim::ir::IrDependency::ContainerShape(index)
+                    if containers[*index].activation
+            )
+        });
         Ok(reads)
     }
 

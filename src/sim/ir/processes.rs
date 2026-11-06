@@ -56,6 +56,9 @@ pub enum IrPreFn {
         /// ordinary calls inside a runtime private-evaluation bracket, which
         /// applies those Postponed-region stores without publication.
         private_effects: bool,
+        /// Run before the arguments are read: they build the temporaries of
+        /// container actuals, which live and die with the evaluation.
+        prelude: Vec<IrStmt>,
         /// The local that names the report's class-method receiver, which the
         /// evaluator binds to its context.
         receiver: Option<String>,

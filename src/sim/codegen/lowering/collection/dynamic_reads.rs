@@ -5,7 +5,8 @@
 //! [`IrDependency::NativeAccess`] that the waiting process resolves again
 //! every time it arms.
 //!
-//! Only `wait` conditions and event expressions observe such storage (SV
+//! `wait` conditions, event expressions and `$monitor` observe such storage
+//! (a monitor through `report_dependencies`; SV
 //! 9.4.2: `@(p.status)` follows the object `p` names, and "changing the
 //! value of object data members ... referenced by a method or function
 //! shall cause the event expression to be reevaluated"). The bodies of the
@@ -153,6 +154,27 @@ impl Codegen<'_> {
                         .is_some_and(|body| self.reads_dynamic_storage_in(body, visited))
                 {
                     return true;
+                }
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        false
+    }
+
+    /// Whether `root` calls a function with a string formal, directly or in
+    /// the body of a function it calls.
+    pub(in super::super) fn calls_string_formal_helper(&self, root: NodeId) -> bool {
+        let mut visited = HashSet::new();
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            if let Some(callee) = self.called_subroutine(node) {
+                if self.func_formals(callee).iter().any(|(formal, _)| {
+                    matches!(self.kind(*formal), NodeKind::FuncArg { ty, .. } if ty.kind == "string")
+                }) {
+                    return true;
+                }
+                if visited.insert(callee) {
+                    pending.extend(self.func_body(callee));
                 }
             }
             pending.extend(self.node(node).children.iter().copied());

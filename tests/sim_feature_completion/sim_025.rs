@@ -27,6 +27,14 @@ fn strobe_reports_settled_values_last_issued_first() {
 }
 
 #[test]
+fn reports_build_their_actuals_when_they_print() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/strobe_built_actuals.out");
+    sim_cli::run_case(SUITE, "strobe_built_actuals", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "strobe_built_actuals", expected, &[], &[]);
+}
+
+#[test]
 fn time_arguments_print_but_never_trigger() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_025/monitor_time_args.out");
     sim_cli::run_case(SUITE, "monitor_time_args", expected, "", &[]);

@@ -162,7 +162,12 @@ impl Validator<'_> {
                         }
                     }
                 }
-                IrPreFn::DisplayEval { args, .. } => {
+                IrPreFn::DisplayEval { args, prelude, .. } => {
+                    self.validate_stmts(
+                        prelude,
+                        branch_formals,
+                        &format!("{path}.pre_fns[{idx}].prelude"),
+                    )?;
                     for (arg_idx, arg) in args.iter().enumerate() {
                         arg.validate(
                             self.model,

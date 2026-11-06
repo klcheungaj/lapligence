@@ -1528,18 +1528,13 @@ left:
   member or `%p` of an object** are not exact: such a `$monitor` re-evaluates at
   every settled slot, which costs one evaluation per slot.
 
-An input queue, dynamic or associative formal of a `$strobe` helper reads the
-actual at the end of the slot, as a slice does ([S25-D8](lrm_decisions.md)).
-Four neighbouring forms still reject with a diagnostic at the call:
+A report reads container and string actuals at the end of the slot, and builds
+a conversion or an unpacked concatenation then ([S25-D8](lrm_decisions.md)). A
+neighbouring form still rejects at the call:
 
-- **A `$strobe` actual that needs a container conversion** (a queue for a
-  dynamic-array formal,
-  [`neg_strobe_container_conversion.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_strobe_container_conversion.sv))
-  **or an unpacked concatenation** (`f({1, 2, k})`; `f('{1, 2, k})` works). The
-  evaluator would have to build the temporary itself; about a day.
-- **`$monitor` of a helper with a container formal.** Change detection does not
-  see through the formal yet; about a day. Assign the result to a variable.
-- **A `$strobe` helper with a string formal** (about half a day).
+- **A `$strobe` actual with a side effect that needs building**
+  ([`neg_strobe_container_conversion.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_strobe_container_conversion.sv)):
+  the Postponed region writes nothing.
 - **A `$strobe` helper that prints** (`$display` inside the function): it has
   output effects, which the private evaluator refuses; about a day.
 

@@ -513,10 +513,11 @@ fn collect_pre_fns_rw(pre_fns: &[IrPreFn], model: &IrModel, rw: &mut Rw) {
                 }
                 collect_stmts_rw(body, model, rw);
             }
-            IrPreFn::DisplayEval { args, .. } => {
+            IrPreFn::DisplayEval { args, prelude, .. } => {
                 for arg in args {
                     arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
+                collect_stmts_rw(prelude, model, rw);
             }
             IrPreFn::MonitorReads { reads, .. } => {
                 for dependency in reads {

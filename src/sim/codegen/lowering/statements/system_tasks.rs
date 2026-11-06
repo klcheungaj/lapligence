@@ -305,6 +305,7 @@ impl EmitCtx<'_, '_> {
                     let outer = std::mem::replace(&mut self.cg.deferred_display_args, true);
                     let parsed = self.parse_display_call(name, display_args_source, default_radix);
                     self.cg.deferred_display_args = outer;
+                    let prelude = std::mem::take(&mut self.cg.deferred_prelude);
                     let (fmt, mut display_args) = parsed?;
                     if !strobe {
                         // Trailing views no conversion prints: they only join
@@ -357,7 +358,8 @@ impl EmitCtx<'_, '_> {
                         c_name: eval_name.clone(),
                         args: display_args.clone(),
                         time_unit_fs: self.cg.timescale_of_node(h).unit_fs,
-                        private_effects,
+                        private_effects: private_effects || !prelude.is_empty(),
+                        prelude,
                         receiver: receiver_local.clone(),
                     });
                     // Calls, virtual-interface members and `%p` of class

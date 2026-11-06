@@ -216,6 +216,7 @@ fn render_with_frame(
             args,
             time_unit_fs,
             private_effects,
+            prelude,
             receiver,
         } => {
             // Lowering proved that a private-effect helper stores only to its
@@ -227,6 +228,9 @@ fn render_with_frame(
             frame.line("(void)out; (void)context;");
             bind_receiver(&mut frame, receiver.as_deref());
             frame.line("{");
+            for statement in prelude {
+                frame.statement(statement)?;
+            }
             let values = frame.formatted_arguments(args, *time_unit_fs)?;
             // Arguments have all been evaluated before this ownership transfer;
             // no callback or user expression can abandon a partial out buffer.
@@ -423,7 +427,7 @@ fn bind_receiver(frame: &mut Frame<'_, '_>, receiver: Option<&str>) {
         return;
     };
     if receiver == "_this" {
-        frame.line("void* _this = context;");
+        frame.line("void* _this = context; (void)_this;");
     } else {
         let binding = frame.native_local(receiver, NativeKind::Chandle);
         frame.line(format!("*({}) = context;", binding.address));

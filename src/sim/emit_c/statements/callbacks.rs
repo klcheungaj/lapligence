@@ -201,9 +201,10 @@ pub(in super::super) fn render_pre_fn_impl(
             args,
             time_unit_fs,
             private_effects,
+            prelude,
             receiver,
         } => {
-            if *private_effects || receiver.is_some() {
+            if *private_effects || receiver.is_some() || !prelude.is_empty() {
                 return Err(
                     "private-effect and receiver display evaluators require the owned emitter"
                         .to_owned(),

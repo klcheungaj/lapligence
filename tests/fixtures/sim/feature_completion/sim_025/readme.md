@@ -36,8 +36,13 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
   formals, element records and strings, nested calls and an assignment pattern
   all read at the end of the slot (21.2.2). The two pattern lines are derived by
   hand from 21.2.2 because other simulators reject a pattern actual there.
-- `neg_strobe_container_conversion`: a conversion between container kinds has
-  no evaluator form, so it rejects at the call and names the formal.
+- `strobe_built_actuals`: a conversion between container kinds and an unpacked
+  concatenation are built by the evaluator from the end-of-slot values (L36482-36484,
+  S25-D8), and helpers with string or container formals report the same way. Some
+  simulators read the concatenation at the call (6, not 7) and reject the queue
+  and string `$monitor` lines; the file is derived by hand from the clauses.
+- `neg_strobe_container_conversion`: an actual with a side effect cannot be built
+  in the Postponed region, so it rejects at the call and names the formal.
 - `scope_time`: `$time` alone never triggers a report (L36517-36518); two
   `$fmonitor` lists registered by different instances stay active together
   (L36676-36677) and `%m` names each instance.

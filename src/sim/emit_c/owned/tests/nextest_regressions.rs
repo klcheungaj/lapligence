@@ -186,6 +186,7 @@ fn typed_strobe_callback_observes_the_nba_value() {
         c_name: "print_current".to_owned(),
         time_unit_fs: 1,
         private_effects: false,
+        prelude: Vec::new(),
         receiver: None,
         args: vec![IrDisplayArg::Packed(IrExpr::new(
             IrExprKind::SigRead(0),

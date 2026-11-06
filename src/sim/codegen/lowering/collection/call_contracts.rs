@@ -119,11 +119,15 @@ impl<'a> Codegen<'a> {
                 "{reason}: `$monitor`/`$strobe` arguments are evaluated in the read-only Postponed region (IEEE 1800-2009 4.4.2.9)"
             ));
         }
-        Ok(if process.is_some() {
-            PostponedEvaluation::PrivateEffects
-        } else {
-            PostponedEvaluation::Callback
-        })
+        // A string formal is copied into the callee's activation, which only an
+        // ordinary call has.
+        Ok(
+            if process.is_some() || self.calls_string_formal_helper(expression) {
+                PostponedEvaluation::PrivateEffects
+            } else {
+                PostponedEvaluation::Callback
+            },
+        )
     }
 
     /// `(process, external)`: why the expression cannot be a read-only
@@ -192,7 +196,15 @@ impl<'a> Codegen<'a> {
         if self.container_of(receiver).is_some() {
             return matches!(name, "size" | "num" | "exists");
         }
-        self.is_string_expr(scope_path, receiver)
+        // A helper's string formal or local is resolved only in its own
+        // context, which this walk of the callee's body does not enter.
+        let helper_string = matches!(self.kind(receiver), NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) if matches!(
+            self.kind(*target),
+            NodeKind::FuncArg { ty, .. } | NodeKind::Var { ty } if ty.kind == "string"
+        ));
+        (helper_string || self.is_string_expr(scope_path, receiver))
             && matches!(
                 name,
                 "len"
