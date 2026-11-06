@@ -193,6 +193,31 @@ static int llg_index(sv4_t value, size_t upper_exclusive, int allow_end,
     return 1;
 }
 
+/* The elements Q[a:b] selects from a queue of `size` elements (SV 7.10.1):
+ * a < 0 reads as 0 and b > $ as $, so a partly outside slice is clipped; a
+ * bound that is X or Z, or whose value lies outside the 32-bit range, makes
+ * the slice empty, as does a > b or a slice wholly outside the queue. A bound
+ * beyond 32 bits is never truncated to a position. */
+static void llg_queue_slice_range(const llg_queue_source_t* source, size_t size,
+                                  size_t* first, size_t* count) {
+    *first = 0;
+    *count = 0;
+    if (!size) return;
+    int64_t left = (int64_t)size - 1;
+    int64_t right = left;
+    if (!source->left_unbounded &&
+        (!sv4_to_index_i64(source->left, &left) || left < INT32_MIN || left > INT32_MAX))
+        return;
+    if (!source->right_unbounded &&
+        (!sv4_to_index_i64(source->right, &right) || right < INT32_MIN || right > INT32_MAX))
+        return;
+    if (left < 0) left = 0;
+    if (right > (int64_t)size - 1) right = (int64_t)size - 1;
+    if (left > right) return;
+    *first = (size_t)left;
+    *count = (size_t)(right - left + 1);
+}
+
 /* Resolve one streaming `with` selector to its requested logical index range.
  * The range is deliberately independent of the container's current size:
  * streaming an out-of-range source element yields that element's default. */

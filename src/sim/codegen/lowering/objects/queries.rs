@@ -48,7 +48,7 @@ impl Codegen<'_> {
                 (
                     IrObjectQuery::StringGetc(
                         self.lower_string(path, base)?,
-                        Box::new(self.object_int_argument(path, index, 32)?),
+                        Box::new(self.lower_container_index(path, index)?),
                     ),
                     8,
                     true,

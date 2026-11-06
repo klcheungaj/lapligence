@@ -1,0 +1,18 @@
+unpacked u[w33]=0 u[w65]=0 u[top]=0 u[u32]=0
+dynamic d[w33]=0 d[w65]=0 d[hi]=0 d[u32]=0
+queue int q[w33]=0 q[w65]=0 q[top]=0 q[hi]=0 q[u32]=0
+queue logic lq[w33]=xxxx lq[w65]=xxxx lq[hi]=xxxx lq[u32]=xxxx
+queue string [] [] []
+string select [0] [0] [0]
+bit select v[w33]=x v[w65]=x v[top]=x
+part select v[w33+:2]=xx v[hi-:2]=xx
+packed element pa[w33]=xx pa[hi]=xx
+after writes u[3]=30 d[3]=4 v=10100101 pa=44332211 s=abcdef
+after writes q=5,6,7,8 lq=0011,0022,0033,0044 sq=abcd
+compound q=5,6,8,8
+slice clipped high size=4 last=8
+slice clipped low size=2 first=5
+slice wide high size=0
+slice wide low size=0
+slice wide single size=0
+queue size 4
