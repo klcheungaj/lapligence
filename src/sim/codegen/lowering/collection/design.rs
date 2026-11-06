@@ -96,7 +96,6 @@ impl<'a> Codegen<'a> {
             if path.is_empty() {
                 return Err("package has no name".to_string());
             }
-            self.reject_shared_scope_redeclarations(*package)?;
             self.collect_instance(*package, &path)?;
             self.collect_funcs(*package, &path)?;
         }
@@ -106,18 +105,17 @@ impl<'a> Codegen<'a> {
         // their owned declaration identity across every importing module.
         for unit in self.compilation_unit_scopes() {
             let path = self.instance_path_of(unit);
-            self.reject_shared_scope_redeclarations(unit)?;
             self.collect_instance(unit, &path)?;
             self.collect_funcs(unit, &path)?;
         }
         Ok(tops)
     }
 
-    /// A name may be declared once per package or compilation-unit scope
-    /// (SV §§3.12.1, 3.13). The frontend reports a merged-unit or package
-    /// redeclaration only as a warning and keeps both declarations, which
-    /// would otherwise alias one shared static storage name.
-    fn reject_shared_scope_redeclarations(&self, scope: NodeId) -> Result<(), String> {
+    /// A name may be declared once per scope (SV §§3.12.1, 3.13, 6.5). The
+    /// frontend reports a redeclaration only as a warning and keeps both
+    /// declarations, which would otherwise alias one static storage name or,
+    /// for a net, leave one declaration without storage.
+    pub(in super::super) fn reject_redeclarations(&self, scope: NodeId) -> Result<(), String> {
         let mut seen: HashMap<&str, NodeId> = HashMap::new();
         for child in &self.node(scope).children {
             if !matches!(
@@ -146,11 +144,13 @@ impl<'a> Codegen<'a> {
                 };
                 let scope_name = if self.is_compilation_unit(scope) {
                     "the compilation-unit scope".to_owned()
-                } else {
+                } else if matches!(self.kind(scope), NodeKind::Package) {
                     format!("package `{}`", self.namespace_path(scope))
+                } else {
+                    format!("scope `{}`", self.node(scope).full_name())
                 };
                 return Err(format!(
-                    "redefinition of `{name}` in {scope_name} at {} (previous declaration at {}); a name is declared once per package or compilation-unit scope",
+                    "redefinition of `{name}` in {scope_name} at {} (previous declaration at {}); a name is declared once per scope",
                     location(*child),
                     location(previous)
                 ));
@@ -198,6 +198,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn collect_instance(&mut self, inst: NodeId, path: &str) -> Result<(), String> {
+        self.reject_redeclarations(inst)?;
         let display_path = self
             .procedural_checker_display_path(inst)
             .unwrap_or_else(|| self.instance_display_path(inst));
@@ -618,6 +619,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn collect_gen_scope(&mut self, gs: NodeId, path: &str) -> Result<(), String> {
+        self.reject_redeclarations(gs)?;
         // An enclosing generate-scope array can hold the iteration name (for
         // example `g[0]`) while the generate scope itself is unnamed;
         // fall back to the array's name so per-iteration paths stay distinct.

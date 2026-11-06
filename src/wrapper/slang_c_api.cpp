@@ -9835,6 +9835,9 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     compilationOptions.minTypMax = MinTypMax::Max;
   if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
     compilationOptions.flags |= CompilationFlags::IgnoreUninstantiatedModules;
+  // An ANSI port redeclared in the module body is one net or variable, the
+  // body's declaration (decision T1-D10); without this Slang keeps two.
+  compilationOptions.flags |= CompilationFlags::AllowMergingAnsiPorts;
   compilationOptions.defaultTimeScale = TimeScale(
       TimeScaleValue(TimeUnit::Nanoseconds, TimeScaleMagnitude::One),
       TimeScaleValue(TimeUnit::Picoseconds, TimeScaleMagnitude::One));

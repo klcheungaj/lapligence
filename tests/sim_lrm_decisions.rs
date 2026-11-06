@@ -45,6 +45,27 @@ fn t1_d9_output_port_delay_merges() {
 }
 
 #[test]
+fn t1_d10_ansi_port_redeclared() {
+    run_decision(
+        "T1-D10_ansi_port_redeclared",
+        include_str!("fixtures/sim/lrm_decisions/T1-D10_ansi_port_redeclared.out"),
+    );
+}
+
+#[test]
+fn t1_d10_net_redeclared_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/T1-D10_net_redeclared_rejected.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "T1-D10_net_redeclared_rejected",
+        "redefinition of `a` in scope `tb`",
+    );
+}
+
+#[test]
 fn t1_d4_port_delay_merges() {
     run_decision(
         "T1-D4_port_delay_merges",

@@ -865,6 +865,37 @@ behaviour follows the format.
 
 `flush_read.sv` with `FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
 
+## Strength-only events a reader does not see
+
+**Status:** open; these forms wake on value changes only (T1-D8).
+
+### Symptom
+
+- `@(v[i])` with a dynamic select does not run on a strength-only change of the
+  selected bit; `@(v[0])` and `@*` reading `v[i]` do.
+- A net read through a port link that converts, such as a widening port, shows
+  and wakes on the strength of the link, not of the net outside.
+- A group whose strength view would pass the packed width limit (eight bits per
+  net bit) wakes on values only, with no diagnostic.
+
+### Cause
+
+An event on a net or constant projection compares the strength view of the bits
+it names, which `alias_expression_bits` resolves statically; a dynamic select
+has no static bits. A converting port stays a continuous assignment, whose
+driver has one strength.
+
+### Intended direction
+
+Evaluate the view of a dynamic select in the process-evaluated event plan. A
+converting port needs strength carried through a link, which only matters for
+a design reading strength across one.
+
+### Reproduce
+
+Two drivers of different strength on `v[0]`, `i = 0`, and `always @(v[i])`; a
+one-bit net with such drivers on a two-bit input port with `always @(i)`.
+
 ## Sibling ports with different net delays
 
 **Status:** open by decision (T1-D4); the form stops code generation with a
