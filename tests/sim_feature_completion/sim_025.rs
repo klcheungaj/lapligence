@@ -84,6 +84,21 @@ fn reports_in_class_methods_keep_their_receiver() {
         include_str!("../fixtures/sim/feature_completion/sim_025/class_method_reports.out");
     sim_cli::run_case(SUITE, "class_method_reports", expected, "", &[]);
     sim_cli::run_case_backend_parity(SUITE, "class_method_reports", expected, &[], &[]);
+    // The objects no variable names survive a collection at every safe point.
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "class_method_reports",
+        &[],
+        &[("LLG_GC_STRESS", "1"), ("LLG_GC_VERIFY", "1")],
+        &|label, output| {
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                expected,
+                "{label}: {}",
+                sim_cli::observed_output(output)
+            );
+        },
+    );
 }
 
 #[test]
