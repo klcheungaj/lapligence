@@ -1818,6 +1818,10 @@ fn s29_d10_search_not_uniform() {
 
 #[test]
 fn s30_d15_array_compare_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S30-D15_array_compare_rejected.out").is_empty()
+    );
     sim_cli::reject_case(
         SUITE,
         "S30-D15_array_compare_rejected",
