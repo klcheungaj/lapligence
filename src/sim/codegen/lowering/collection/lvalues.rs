@@ -412,7 +412,13 @@ impl<'a> Codegen<'a> {
                 self.source_location(lhs)
             ));
         }
-        if self.packed_element_member_select(lhs).is_some() {
+        if let Some(select) = self.packed_element_member_select(lhs) {
+            if self.class_packed_select(select) {
+                return Err(format!(
+                    "{}: writing a member of an element of a class array property is not supported in `{path}`; assign the whole element",
+                    self.source_location(lhs)
+                ));
+            }
             if let Some(target) = self.packed_value_lhs(path, lhs)? {
                 return Ok(target);
             }

@@ -309,11 +309,7 @@ fn multidimensional_arrays_are_solved_by_element() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_030/multidim_arrays.out");
     sim_cli::run_case_checked_matrix(SUITE, "multidim_arrays", &[], &|label, output| {
         assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            expected,
-            "{label}"
-        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         assert!(
             String::from_utf8_lossy(&output.stderr)
                 .contains("select index out of range in a constraint"),
@@ -327,11 +323,7 @@ fn bounded_queues_solve_within_their_bound() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_030/bounded_queue.out");
     sim_cli::run_case_checked_matrix(SUITE, "bounded_queue", &[], &|label, output| {
         assert_eq!(output.status.code(), Some(0), "{label}: {output:?}");
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            expected,
-            "{label}"
-        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("the constraints cannot be satisfied"),
             "{label}: {output:?}"

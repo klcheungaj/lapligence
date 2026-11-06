@@ -17,6 +17,24 @@ const NO_BUDGET: [(&str, &str); 3] = [
 ];
 
 #[test]
+fn enum_elements_and_members_hold_named_values() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "enum_elements",
+        include_str!("../fixtures/sim/feature_completion/sim_029/enum_elements.out"),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "tagged_member",
+        include_str!("../fixtures/sim/feature_completion/sim_029/tagged_member.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn class_constraints_inheritance_and_static_members() {
     sim_cli::run_case_backend_parity(
         SUITE,

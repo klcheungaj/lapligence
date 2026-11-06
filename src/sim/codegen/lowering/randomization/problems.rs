@@ -38,7 +38,7 @@ pub(super) struct CallPlan {
     pub(super) template: IrExpr,
 }
 
-pub(super) struct ProblemBuilder {
+pub(in super::super) struct ProblemBuilder {
     pub(super) problem: IrRandProblem,
     pub(super) leaves: Vec<LeafPlan>,
     pub(super) calls: Vec<CallPlan>,
@@ -151,6 +151,11 @@ impl ProblemBuilder {
         self.templates.insert(name.clone(), node);
         let (_, width, signed) = self.ty(node);
         IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
+    }
+
+    /// The template node placeholder `name` stands for.
+    pub(super) fn template_node(&self, name: &str) -> Option<u32> {
+        self.templates.get(name).copied()
     }
 
     /// Whether `expr` reads a template placeholder.
@@ -281,12 +286,14 @@ impl ProblemBuilder {
     }
 
     /// Restrict variable `var` to `values` while it is active (S29-D2).
-    pub(super) fn set_domain(&mut self, var: u32, values: &[IrConst]) -> Result<(), String> {
-        let (width, signed) = {
-            let v = &self.problem.vars[var as usize];
-            (v.width, v.signed)
-        };
-        let node = self.var_node(var);
+    /// `width` bits of `node` from bit `low`.
+    pub(super) fn slice(&mut self, node: u32, low: u32, width: u32) -> u32 {
+        self.push(IrRandOp::Slice, false, width, node, low, 0)
+    }
+
+    /// Whether `node` equals one of `values`.
+    pub(super) fn one_of(&mut self, node: u32, values: &[IrConst]) -> Result<u32, String> {
+        let (_, width, signed) = self.ty(node);
         let mut any = None;
         for value in values {
             let constant = self.constant(value, width, signed)?;
@@ -296,10 +303,20 @@ impl ProblemBuilder {
                 Some(previous) => self.push(IrRandOp::LogOr, false, 1, previous, equal, 0),
             });
         }
-        let domain = match any {
+        Ok(match any {
             Some(node) => node,
             None => self.constant_u64(0, 1, false),
-        };
+        })
+    }
+
+    /// Make `domain`, a node over variable `var`, the variable's domain.
+    pub(super) fn set_domain_node(&mut self, var: u32, domain: u32) {
+        self.problem.vars[var as usize].domain = Some(domain);
+    }
+
+    pub(super) fn set_domain(&mut self, var: u32, values: &[IrConst]) -> Result<(), String> {
+        let node = self.var_node(var);
+        let domain = self.one_of(node, values)?;
         self.problem.vars[var as usize].domain = Some(domain);
         Ok(())
     }
@@ -467,7 +484,7 @@ impl ProblemBuilder {
         (node, n.width, n.signed)
     }
 
-    fn var_node(&mut self, var: u32) -> u32 {
+    pub(super) fn var_node(&mut self, var: u32) -> u32 {
         if let Some(node) = self.var_nodes[var as usize] {
             return node;
         }

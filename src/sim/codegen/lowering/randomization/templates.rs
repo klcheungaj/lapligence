@@ -30,6 +30,7 @@ use crate::sim::ir::{
 };
 
 /// Which arrays and handles of unit 0 are random (18.11).
+#[derive(Clone)]
 enum RootMode {
     /// Every `rand` property whose `rand_mode` is on.
     Default,
@@ -72,6 +73,8 @@ struct ArrayInfo {
     width: u32,
     signed: bool,
     two_state: bool,
+    /// The element type of a random array with illegal bit patterns.
+    domain: Option<TypeDescriptor>,
 }
 
 /// One class handle property, or handle array, the problem follows.
@@ -545,19 +548,21 @@ impl Codegen<'_> {
         }
     }
 
-    /// Whether the element type of array `decl` has illegal bit patterns
-    /// (an enum, S29-D2), which random elements cannot avoid.
-    fn array_element_needs_domain(&self, decl: NodeId) -> bool {
+    /// The element type of array `decl` when it has illegal bit patterns
+    /// (an enum, S29-D2), which random elements must avoid.
+    fn array_element_domain(&self, decl: NodeId) -> Option<TypeDescriptor> {
         match self
             .db
             .type_descriptor(decl)
             .map(|descriptor| &descriptor.shape)
         {
             Some(TypeShape::Container { element, .. })
-            | Some(TypeShape::FixedArray { element, .. }) => {
-                element.info.kind == "enum" || aggregate_needs_domain(element)
+            | Some(TypeShape::FixedArray { element, .. })
+                if element.info.kind == "enum" || aggregate_needs_domain(element) =>
+            {
+                Some((**element).clone())
             }
-            _ => false,
+            _ => None,
         }
     }
 
@@ -667,10 +672,15 @@ impl Codegen<'_> {
                 return Err(unsupported(self, "associative arrays are not supported"))
             }
         };
-        if random && self.array_element_needs_domain(decl) {
+        let domain = if random {
+            self.array_element_domain(decl)
+        } else {
+            None
+        };
+        if domain.as_ref().is_some_and(aggregate_domain_unsupported) {
             return Err(unsupported(
                 self,
-                "random elements of an enum or tagged-union type are not supported",
+                "random elements of an untagged union with enum members are not supported",
             ));
         }
         let st = state(builder);
@@ -685,6 +695,7 @@ impl Codegen<'_> {
             width,
             signed,
             two_state,
+            domain,
         });
         st.array_of.insert(decl, index);
         Ok(index)
@@ -777,6 +788,7 @@ impl Codegen<'_> {
                     width: 1,
                     signed: false,
                     two_state: true,
+                    domain: None,
                 });
                 (st.arrays.len() - 1) as u32
             });
@@ -860,6 +872,7 @@ impl Codegen<'_> {
                 .collect::<Result<Vec<_>, _>>()?;
             builder.set_domain(index, &values)?;
         }
+        self.aggregate_var_domain(builder, index, decl)?;
         if self.randc_states.contains_key(&decl) {
             builder.set_cyclic(index);
         }
@@ -1514,6 +1527,9 @@ impl Codegen<'_> {
         builder: &mut ProblemBuilder,
         node: NodeId,
     ) -> Result<(), String> {
+        if self.template_element_member(path, builder, node)? {
+            return Ok(());
+        }
         let Some(decls) = self.path_decls(node) else {
             return Ok(());
         };
@@ -1547,6 +1563,75 @@ impl Codegen<'_> {
         let member = builder.template(IrRandOp::HVar, signed, width, [reference, var, 0]);
         self.register_template(builder, node, member);
         Ok(())
+    }
+
+    /// `a[i].m.n`: packed members of a template array element are its bits.
+    fn template_element_member(
+        &mut self,
+        path: &str,
+        builder: &mut ProblemBuilder,
+        node: NodeId,
+    ) -> Result<bool, String> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return Ok(false);
+        };
+        let Some(Some(select)) = refs.first().copied() else {
+            return Ok(false);
+        };
+        let parts = parts.clone();
+        let placeholder = self
+            .rand_lowering
+            .as_ref()
+            .and_then(|lowering| lowering.templates.get(&select));
+        let Some(IrExprKind::LocalRead(name)) = placeholder.map(|expr| &expr.kind) else {
+            return Ok(false);
+        };
+        let name = name.clone();
+        let Some(mut base) = builder.template_node(&name) else {
+            return Ok(false);
+        };
+        let root = self.select_root(select);
+        let array = root.and_then(|root| self.array_expr_decl(root));
+        let shape = array.and_then(|decl| self.db.type_descriptor(decl));
+        let mut descriptor = match shape.map(|descriptor| &descriptor.shape) {
+            Some(TypeShape::Container { element, .. })
+            | Some(TypeShape::FixedArray { element, .. }) => (**element).clone(),
+            _ => return Ok(false),
+        };
+        for part in parts.iter().skip(1) {
+            let TypeShape::Aggregate(layout) = &descriptor.shape else {
+                return Ok(false);
+            };
+            let Some(index) = layout
+                .members
+                .iter()
+                .position(|member| member.name == *part)
+            else {
+                return Ok(false);
+            };
+            let width = |item: &TypeDescriptor| {
+                Self::fixed_descriptor_width(item)
+                    .ok_or_else(|| self.rand_error(node, path, "a member has no packed width"))
+            };
+            let member = layout.members[index].descriptor.clone();
+            // Struct members run from the most significant bit; union
+            // members share the low bits.
+            let low = if layout.kind == AggregateKind::PackedStruct {
+                let mut below = 0;
+                for later in &layout.members[index + 1..] {
+                    below += width(&later.descriptor)?;
+                }
+                below
+            } else {
+                0
+            };
+            let bits = width(&member)?;
+            base = builder.template(IrRandOp::Slice, member.info.signed, bits, [base, low, 0]);
+            descriptor = member;
+        }
+        state(builder).used.insert(name);
+        self.register_template(builder, node, base);
+        Ok(true)
     }
 
     /// `h == null` / `h != null` of a `rand` handle.
@@ -2053,6 +2138,50 @@ impl Codegen<'_> {
         Ok(result)
     }
 
+    /// One block per random array of the current unit whose elements have
+    /// illegal bit patterns: every element holds a legal value. It is
+    /// enabled while the array is random, and returns the enables. Sizes
+    /// stay unconstrained: a loop over an unsolved size is dropped.
+    pub(super) fn array_domain_blocks(
+        &mut self,
+        path: &str,
+        at: NodeId,
+        builder: &mut ProblemBuilder,
+        object: Option<&IrChandleExpr>,
+    ) -> Result<Vec<IrExpr>, String> {
+        let unit = builder.unit as usize;
+        let st = state(builder);
+        let root = st.root.clone();
+        let arrays = st
+            .arrays
+            .iter()
+            .enumerate()
+            .filter(|(_, info)| info.domain.is_some() && st.unit_has_array(unit, info))
+            .map(|(index, info)| (index as u32, info.decl, info.domain.clone()))
+            .collect::<Vec<_>>();
+        let mut enables = Vec::with_capacity(arrays.len());
+        for (array, decl, domain) in arrays {
+            let Some(domain) = domain else {
+                continue;
+            };
+            let loop_index = builder.new_loop();
+            let iter = builder.template(IrRandOp::Iter, true, 32, [loop_index, 0, 0]);
+            let element = self
+                .loop_element(builder, array, RAND_NONE, iter)
+                .and_then(|element| self.value_domain(builder, element, &domain))
+                .map_err(|error| self.rand_error(at, path, &error))?;
+            let Some(legal) = element else {
+                continue;
+            };
+            let args = builder.push_args(&[array, legal, RAND_NONE, loop_index]);
+            let root_node = builder.template(IrRandOp::Foreach, false, 1, [0, args, 0]);
+            let name = format!("{}_legal", self.node(decl).name);
+            builder.add_block(name, root_node);
+            enables.push(self.unit_active(&root, unit, decl, object)?);
+        }
+        Ok(enables)
+    }
+
     /// Build the units of every class an object reached through a `rand`
     /// handle can have, after unit 0's constraints are translated.
     pub(super) fn lower_units(
@@ -2214,7 +2343,8 @@ impl Codegen<'_> {
         for node in bound {
             self.receiver_containers.remove(&node);
         }
-        let blocks = lowered?;
+        let mut blocks = lowered?;
+        blocks.extend(self.array_domain_blocks(path, node, builder, Some(&object))?);
         let pre = self
             .randomize_hook(class, "pre_randomize")
             .map(|hook| self.hook_call(path, node, hook, &object))

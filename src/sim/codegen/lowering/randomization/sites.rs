@@ -421,8 +421,9 @@ impl Codegen<'_> {
         for node in bound {
             self.receiver_containers.remove(&node);
         }
-        let blocks = lowered?;
+        let mut blocks = lowered?;
         if builder.units.is_some() {
+            blocks.extend(self.array_domain_blocks(path, node, &mut builder, Some(object))?);
             self.lower_units(path, node, &mut builder, &mut vars)?;
             // Instance variables of the object are unit 0's; static ones
             // are global.
@@ -638,6 +639,7 @@ impl Codegen<'_> {
                 .collect::<Result<Vec<_>, _>>()?;
             builder.set_domain(index, &values)?;
         }
+        self.aggregate_var_domain(builder, index, child)?;
         Ok(Some((
             VarPlan {
                 index,
@@ -1050,7 +1052,7 @@ impl Codegen<'_> {
                 return Err(self.rand_error(
                     argument,
                     path,
-                    "std::randomize() of a structure with enum or tagged-union members is not supported",
+                    "std::randomize() of an untagged union with enum members is not supported",
                 ));
             }
             let current = self
@@ -1099,6 +1101,7 @@ impl Codegen<'_> {
                     .collect::<Result<Vec<_>, _>>()?;
                 builder.set_domain(index, &values)?;
             }
+            self.aggregate_var_domain(&mut builder, index, target)?;
             placeholders.insert(target, local_read(&placeholder, width, signed));
             vars.push(VarPlan {
                 index,
@@ -1127,6 +1130,7 @@ impl Codegen<'_> {
             blocks.push(packed_const(1, 1, false));
         }
         if builder.units.is_some() {
+            blocks.extend(self.array_domain_blocks(path, node, &mut builder, None)?);
             // std::randomize arguments are global variables.
             self.lower_units(path, node, &mut builder, &mut vars)?;
             self.finish_units(&mut builder, Vec::new());

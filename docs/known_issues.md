@@ -722,7 +722,9 @@ expression (`o.g[i]`). A whole element cannot be read into or
 assigned from an unpacked-array variable or pattern either (`row = da[k]`,
 `da[k] = row`, `aa[k] = '{...}`). The containers work as a whole (copies,
 `%p`, memory file tasks), and so do whole multidimensional class properties
-and their single elements (`o.g[i][j]`).
+and their single elements (`o.g[i][j]`). A member of a packed element of a
+class array property reads (`o.a[i].m`) but rejects as a write target; assign
+the whole element.
 
 ### Cause
 
@@ -2501,15 +2503,14 @@ these forms remain outside them.
   queues, associative arrays, static
   random arrays and static random properties of objects reached through a
   `rand` handle, `randc` arrays and `randc` variables wider than 16 bits,
-  elements of an enum or tagged-union type in a random array, a random array
+  a random untagged union with enum members, a random array
   read other than through element selects, `size()`, the reductions,
   `inside` and `foreach` (for example compared whole), `std::randomize` of a
   fixed-size array of a module or subroutine (dynamic arrays and queues
   work), a constraint function argument that reads an array element, a loop
   index or another object's variable, a function call in a constraint of an
   object reached through a `rand` handle, a `solve...before` primary that is
-  an array element or size, packed structures with enum or tagged members,
-  and an inline `local::` name that also names an object property.
+  an array element or size, and an inline `local::` name that also names an object property.
 - A `randomize()` call used as a value works in assignments, `if` conditions,
   `return`, declarations, system-task arguments, immediate assertions, loop
   headers and short-circuit or conditional operands of those. Elsewhere (a
