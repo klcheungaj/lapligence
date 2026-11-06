@@ -122,6 +122,8 @@ extern "C" {
  * cell remains stable until array destruction. Destroy globals after runtime cleanup.
  * copy snapshots its entire source before publishing any destination. */
 void llg_fixed_array_init(llg_fixed_array_t*, uint64_t, sv4_t, sv4_t*);
+/* Nothing in the model names this array's contents marker: writes skip it. */
+void llg_fixed_array_unobserved(llg_fixed_array_t*);
 void llg_fixed_array_reset(llg_fixed_array_t*, sv4_t);
 void llg_fixed_array_view_init(llg_fixed_array_t*, llg_fixed_array_t*, uint64_t, uint64_t, int);
 void llg_fixed_array_stream_segments(llg_fixed_array_t*, const llg_fixed_array_t* const*, size_t, int, int, uint32_t);

@@ -20,8 +20,13 @@ static _Noreturn void fixed_bad_state(const char* reason) {
 }
 
 #define LLG_FIXED_INDEX_INITIAL_CAPACITY 16u
+/* Arrays of at most this many cells index cells by position: one load instead
+ * of a hash, for at most 32 KiB per written array. */
+#define LLG_FIXED_DIRECT_CELLS 4096u
 static llg_fixed_cell_t** fixed_addresses;
 static size_t fixed_address_capacity, fixed_address_count;
+/* Arrays with a contents marker: with none, a write has no array to tell. */
+static size_t fixed_marked_arrays;
 
 static size_t fixed_hash(uint64_t key) {
     key ^= key >> 30;
@@ -56,7 +61,7 @@ static void fixed_address_reserve(void) {
 }
 
 static void fixed_array_changed(sv4_t* target) {
-    if (!fixed_address_capacity) return;
+    if (!fixed_marked_arrays || !fixed_address_capacity) return;
     size_t slot = fixed_hash((uint64_t)(uintptr_t)target) & (fixed_address_capacity - 1);
     for (llg_fixed_cell_t* cell = fixed_addresses[slot]; cell; cell = cell->address_next) {
         if (&cell->value == target) {
@@ -89,9 +94,18 @@ static llg_fixed_range_t* fixed_ranges_copy(const llg_fixed_array_t*, uint64_t, 
 static void fixed_array_snapshot(llg_fixed_array_t*, const llg_fixed_array_t*, int);
 static void fixed_array_apply(llg_fixed_array_t*, const llg_fixed_array_t*);
 
+static int fixed_direct(const llg_fixed_array_t* array) {
+    return array->total <= LLG_FIXED_DIRECT_CELLS;
+}
+
+static size_t fixed_slot(const llg_fixed_array_t* array, uint64_t index) {
+    return fixed_direct(array) ? (size_t)index : fixed_hash(index) & (array->capacity - 1);
+}
+
 static llg_fixed_cell_t* fixed_find(const llg_fixed_array_t* array, uint64_t index) {
     if (!array->capacity) return NULL;
-    size_t slot = fixed_hash(index) & (array->capacity - 1);
+    if (fixed_direct(array)) return index < array->total ? array->buckets[index] : NULL;
+    size_t slot = fixed_slot(array, index);
     for (llg_fixed_cell_t* cell = array->buckets[slot]; cell; cell = cell->bucket_next)
         if (cell->index == index) return cell;
     return NULL;
@@ -104,6 +118,12 @@ void llg_fixed_array_init(llg_fixed_array_t* array, uint64_t total,
     array->total = total;
     array->initial = initial; /* Consumes the fresh default owner. */
     array->contents = contents;
+    fixed_marked_arrays += contents != NULL;
+}
+
+void llg_fixed_array_unobserved(llg_fixed_array_t* array) {
+    fixed_marked_arrays -= array->contents != NULL;
+    array->contents = NULL;
 }
 
 const sv4_t* llg_fixed_array_peek(const llg_fixed_array_t* array, uint64_t index) {
@@ -125,7 +145,12 @@ sv4_t* llg_fixed_array_cell(llg_fixed_array_t* array, uint64_t index) {
     }
     llg_fixed_cell_t* cell = fixed_find(array, index);
     if (cell) return &cell->value;
-    if (array->count >= array->capacity / 2) {
+    if (fixed_direct(array)) {
+        if (!array->capacity) {
+            array->buckets = llg_checked_calloc((size_t)array->total, sizeof(*array->buckets), "fixed array index");
+            array->capacity = (size_t)array->total;
+        }
+    } else if (array->count >= array->capacity / 2) {
         size_t capacity = fixed_grow(array->capacity);
         llg_fixed_cell_t** buckets = llg_checked_calloc(capacity, sizeof(*buckets), "fixed array index");
         for (cell = array->cells; cell; cell = cell->next) {
@@ -142,7 +167,7 @@ sv4_t* llg_fixed_array_cell(llg_fixed_array_t* array, uint64_t index) {
     cell->index = index;
     cell->array = array;
     cell->value = fixed_read(array, index);
-    size_t slot = fixed_hash(index) & (array->capacity - 1);
+    size_t slot = fixed_slot(array, index);
     cell->bucket_next = array->buckets[slot];
     array->buckets[slot] = cell;
     cell->next = array->cells;
@@ -191,6 +216,7 @@ void llg_fixed_array_destroy(void* object) {
     }
     free(array->buckets);
     sv4_destroy(&array->initial);
+    fixed_marked_arrays -= array->contents != NULL;
     *array = (llg_fixed_array_t){0};
 }
 

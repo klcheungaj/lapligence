@@ -112,14 +112,20 @@ fn stream_leaves<'a>(parts: &'a [(IrLhs, u32)], leaves: &mut Vec<(&'a IrLhs, u32
 impl Frame<'_, '_> {
     fn dense_cell(&self, array: usize, indices: &[IrExpr], selection: &IrElemSel) -> Option<Cell> {
         let info = self.ctx.model.array(array);
-        if !matches!(selection, IrElemSel::Whole)
-            || info.real
-            || info.elem_width == 0
-            || indices.len() != info.dims.len()
-        {
+        if !matches!(selection, IrElemSel::Whole) || info.real || info.elem_width == 0 {
             return None;
         }
-        // The same row-major linearization as `array_cell`.
+        let offset = self.constant_cell_offset(array, indices)?;
+        Some(Cell { array, offset })
+    }
+
+    /// The linear cell constant in-range indices select, with the row-major
+    /// linearization of `array_cell`.
+    pub(super) fn constant_cell_offset(&self, array: usize, indices: &[IrExpr]) -> Option<u64> {
+        let info = self.ctx.model.array(array);
+        if indices.len() != info.dims.len() {
+            return None;
+        }
         let mut offset = 0u64;
         for (index, &(left, right)) in indices.iter().zip(&info.dims) {
             let index = constant_index(index)?;
@@ -130,7 +136,7 @@ impl Frame<'_, '_> {
             let extent = i64::from(left).abs_diff(i64::from(right)) + 1;
             offset = offset.checked_mul(extent)?.checked_add(position)?;
         }
-        Some(Cell { array, offset })
+        Some(offset)
     }
 
     /// The runtime call family for a run starting at `first`, and the

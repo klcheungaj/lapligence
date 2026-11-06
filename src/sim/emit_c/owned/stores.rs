@@ -130,6 +130,27 @@ impl<'a, 'm> Frame<'a, 'm> {
         if indices.len() != array.dims.len() {
             return Err("array index rank mismatch".to_owned());
         }
+        // A constant selection of a descriptor needs no run-time index: its
+        // cost is on every access, and it has nothing to validate.
+        if array.sparse() {
+            if let Some(offset) = self.constant_cell_offset(array_index, indices) {
+                let address =
+                    self.fixed_cell_address(array_index, &format!("{offset}ULL"), writable)?;
+                let pointer =
+                    self.scalar(if writable { "sv4_t*" } else { "const sv4_t*" }, address);
+                return Ok((
+                    Binding {
+                        address: pointer,
+                        width: array.elem_width,
+                        signed: array.signed,
+                        two_state: array.two_state,
+                        shortreal: array.shortreal,
+                        automatic: false,
+                    },
+                    "1".to_owned(),
+                ));
+            }
+        }
         let mut conditions = Vec::new();
         let mut offsets = Vec::new();
         // Capture indices in source order. Invalid arithmetic uses offset zero;
