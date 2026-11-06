@@ -755,6 +755,14 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        if let Some(HoistedValue::Packed(name, width, signed)) = self.hoisted_value(h) {
+            return Ok(IrExpr::new(
+                IrExprKind::LocalRead(name.clone()),
+                *width,
+                *signed,
+                None,
+            ));
+        }
         if self.checker_sampling {
             if let Some(value) = self.checker_formal_read(scope_path, h)? {
                 return Ok(value);

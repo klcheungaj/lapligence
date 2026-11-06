@@ -357,6 +357,22 @@ fn a_task_reference_to_a_nested_queue_is_explicit() {
 }
 
 #[test]
+fn a_called_selector_in_a_skipped_operand_does_not_run() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_lazy_called_selector.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_lazy_called_selector", expected, &[], &[]);
+}
+
+#[test]
+fn an_element_of_a_class_property_takes_no_nonblocking_write() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_class_property_element_nba",
+        "nonblocking assignment to an element of a class property in `tb` is illegal",
+    );
+}
+
+#[test]
 fn nested_associative_selectors_run_once_and_short_circuit() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative_selectors.out");

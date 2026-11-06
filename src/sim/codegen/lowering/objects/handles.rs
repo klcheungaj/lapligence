@@ -348,6 +348,9 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrChandleExpr, String> {
+        if let Some(HoistedValue::Handle(name)) = self.hoisted_value(node) {
+            return Ok(IrChandleExpr::LocalRead(name.clone()));
+        }
         if let Some(operands) = self.enter_call_operands(path, node)? {
             let value = self.lower_chandle(path, node);
             let before = self.leave_call_operands(operands);

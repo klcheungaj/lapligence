@@ -14,6 +14,7 @@ mod arguments;
 mod block_natives;
 mod block_records;
 pub(super) use arguments::{CallWriteback, TargetSelectors};
+pub(in crate::sim::codegen) use native_values::HoistedValue;
 mod call_contracts;
 pub(super) use call_contracts::{EventEvaluation, PostponedEvaluation};
 pub(super) use dynamic_reads::ReportReadPlan;

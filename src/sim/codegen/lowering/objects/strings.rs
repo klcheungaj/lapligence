@@ -8,6 +8,9 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
+        if let Some(HoistedValue::String(name)) = self.hoisted_value(node) {
+            return Ok(IrStringExpr::LocalRead(name.clone()));
+        }
         if let Some(value) = self
             .inline_string_key_read(node)
             .or_else(|| self.inline_string_index_read(node))

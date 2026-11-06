@@ -302,6 +302,7 @@ mod containers;
 mod coverage;
 mod expressions;
 mod objects;
+use collection::HoistedValue;
 use objects::NativeNbaValue;
 mod randomization;
 mod statements;
@@ -1774,6 +1775,23 @@ struct Codegen<'a> {
     /// being lowered, by select node → the lexical container staging each
     /// (`stage_element_members`).
     staged_nested_elements: HashMap<NodeId, usize>,
+    /// Staged-element sets of expressions staged inside a staged statement,
+    /// innermost last.
+    inner_stagings: Vec<Vec<NodeId>>,
+    /// Whether the statement being staged left a called selector to the lazy
+    /// operand holding it.
+    deferred_selectors: std::cell::Cell<bool>,
+    /// Values evaluated before their statement's nested array is bound, by
+    /// source node (`hoist_assignment_source`).
+    hoisted_values: HashMap<NodeId, HoistedValue>,
+    /// The source node of the statement's hoisted value.
+    hoisted_source: Option<NodeId>,
+    /// The record value of a write through a nested array to build before
+    /// the array is bound.
+    hoisted_record_source: Option<NodeId>,
+    /// The statements `record_into_slot` left to run before the array is
+    /// bound.
+    hoisted_record_fill: Vec<IrStmt>,
     /// Whether any container element type holds a record with a queue or
     /// dynamic-array member (or nests a container), so expressions may need
     /// read-only element staging; false keeps the scan off every other
@@ -2414,6 +2432,12 @@ impl<'a> Codegen<'a> {
             mailbox_statement_prelude: None,
             staged_element_members: HashMap::new(),
             staged_nested_elements: HashMap::new(),
+            inner_stagings: Vec::new(),
+            deferred_selectors: std::cell::Cell::new(false),
+            hoisted_values: HashMap::new(),
+            hoisted_source: None,
+            hoisted_record_source: None,
+            hoisted_record_fill: Vec::new(),
             element_staging_possible: false,
             deferred_display_args: false,
             deferred_prelude: Vec::new(),

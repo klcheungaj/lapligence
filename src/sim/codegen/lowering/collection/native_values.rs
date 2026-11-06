@@ -18,6 +18,7 @@ use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrRefCompanion};
 
 mod conditionals;
 mod elements;
+pub(in crate::sim::codegen) use elements::HoistedValue;
 mod member_select;
 mod messages;
 mod nba;

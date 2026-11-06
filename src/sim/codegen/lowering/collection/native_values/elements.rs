@@ -62,6 +62,14 @@ const MUTATING_CONTAINER_METHODS: &[&str] = &[
 /// The statements around staged uses: before and after.
 type StagingStatements = (Vec<IrStmt>, Vec<IrStmt>);
 
+/// A value evaluated before its statement's nested array is bound.
+#[derive(Clone)]
+pub(in crate::sim::codegen) enum HoistedValue {
+    Packed(String, u32, bool),
+    String(String),
+    Handle(String),
+}
+
 /// What a staging walks again once a bound associative array exposes the
 /// level below it.
 #[derive(Clone, Copy)]
@@ -367,11 +375,20 @@ impl Codegen<'_> {
         let fill = self.native_assign_into(path, &endpoint, &descriptor, rhs, false)?;
         let mut statements = vec![IrStmt::NativeValueDeclare(temporary), fill];
         statements.extend(self.companions_to_element_items(temporary)?);
-        statements.push(IrStmt::Container(Box::new(IrContainerStmt::SetValue {
+        let store = IrStmt::Container(Box::new(IrContainerStmt::SetValue {
             container,
             slot,
             value: temporary,
-        })));
+        }));
+        let hoisted = self
+            .hoisted_record_source
+            .is_some_and(|source| self.p30_unwrap_cast(source) == self.p30_unwrap_cast(rhs));
+        if hoisted {
+            self.hoisted_record_source = None;
+            self.hoisted_record_fill = statements;
+            return Ok(store);
+        }
+        statements.push(store);
         Ok(IrStmt::Block(statements))
     }
 
@@ -1279,6 +1296,22 @@ impl Codegen<'_> {
                     self.collect_staged_members(child, child == receiver && changes, out, nested);
                 }
             }
+            // A selector that calls a function in a lazy operand must not run
+            // when the operand is skipped: the operand stages it.
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::LogicalAnd | Operation::LogicalOr | Operation::Conditional,
+                operands,
+                ..
+            }) => {
+                let lazy = operands.get(1..).unwrap_or_default().to_vec();
+                for child in children {
+                    if lazy.contains(&child) && self.names_called_selector(child) {
+                        self.deferred_selectors.set(true);
+                        continue;
+                    }
+                    self.collect_staged_members(child, false, out, nested);
+                }
+            }
             // A member passed to a subroutine may be an output, inout or
             // ref actual, so it is copied back after the call. A nested
             // element passed whole to an input formal is read once.
@@ -1520,14 +1553,26 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<StagingStatements>, String> {
-        if !self.element_staging_possible
-            || !self.staged_element_members.is_empty()
-            || !self.staged_nested_elements.is_empty()
-        {
+        if !self.element_staging_possible {
+            return Ok(None);
+        }
+        // Inside a staged statement only a selector it left to its lazy
+        // operand is staged here.
+        let inner =
+            !self.staged_element_members.is_empty() || !self.staged_nested_elements.is_empty();
+        if inner && !self.deferred_selectors.get() {
             return Ok(None);
         }
         let (mut members, mut nested) = (Vec::new(), Vec::new());
         self.collect_staged_members(node, false, &mut members, &mut nested);
+        if inner {
+            members.clear();
+            nested.retain(|(element, selection, _)| {
+                self.staged_nested_element(*element).is_none()
+                    && self.selects_associative(selection)
+                    && !self.side_effect_free(*element)
+            });
+        }
         if members.is_empty() && nested.is_empty() {
             return Ok(None);
         }
@@ -1542,6 +1587,8 @@ impl Codegen<'_> {
         {
             return Ok(None);
         }
+        let outer: std::collections::HashSet<NodeId> =
+            self.staged_nested_elements.keys().copied().collect();
         let (mut before, mut after) = self.build_element_staging(path, members, nested, None)?;
         self.stage_below_aliases(
             path,
@@ -1550,6 +1597,15 @@ impl Codegen<'_> {
             &mut after,
             StageRoot::Expression(node),
         )?;
+        if inner {
+            let added = self
+                .staged_nested_elements
+                .keys()
+                .copied()
+                .filter(|node| !outer.contains(node))
+                .collect();
+            self.inner_stagings.push(added);
+        }
         Ok(Some((before, after)))
     }
 
@@ -1830,6 +1886,129 @@ impl Codegen<'_> {
         self.nested_element_selection(node).is_some()
     }
 
+    /// Whether `node` holds a nested associative array selected by a call.
+    fn names_called_selector(&self, node: NodeId) -> bool {
+        self.nested_element_selection(node)
+            .is_some_and(|selection| {
+                self.selects_associative(&selection) && !self.side_effect_free(node)
+            })
+            || self
+                .node(node)
+                .children
+                .iter()
+                .any(|child| self.names_called_selector(*child))
+    }
+
+    /// Evaluate the value of a plain blocking write through a nested associative
+    /// array before the array is bound, so that a call in the value that
+    /// deletes the element is seen (the write then creates it again). Returns
+    /// the statements to run first and registers the value; the caller ends
+    /// it with `end_hoisted_source`. Record values are not hoisted.
+    pub(in crate::sim::codegen) fn hoist_assignment_source(
+        &mut self,
+        path: &str,
+        h: NodeId,
+    ) -> Result<Vec<IrStmt>, String> {
+        let NodeKind::Stmt(StmtKind::Assign {
+            blocking: true,
+            op: Operation::Assignment,
+            delay: None,
+        }) = self.kind(h)
+        else {
+            return Ok(Vec::new());
+        };
+        let [lhs, rhs] = self.node(h).children.as_slice() else {
+            return Ok(Vec::new());
+        };
+        let (lhs, rhs) = (*lhs, *rhs);
+        if self.side_effect_free(rhs) {
+            return Ok(Vec::new());
+        }
+        let (mut members, mut nested) = (Vec::new(), Vec::new());
+        self.collect_staged_members(lhs, true, &mut members, &mut nested);
+        if !nested.iter().any(|(_, _, mutated)| *mutated) {
+            return Ok(Vec::new());
+        }
+        let name = format!("_llg_rhs{}", rhs.0);
+        let mut statements = Vec::new();
+        let value = match self
+            .query_descriptor(lhs)
+            .map(|descriptor| &descriptor.shape)
+        {
+            Some(TypeShape::String) => {
+                statements.push(IrStmt::DeclString {
+                    name: name.clone(),
+                    init: Some(self.lower_string(path, rhs)?),
+                });
+                HoistedValue::String(name)
+            }
+            Some(TypeShape::Opaque { .. }) => {
+                let value = self.lower_chandle(path, rhs)?;
+                statements.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                    name.clone(),
+                    Some(value),
+                ))));
+                HoistedValue::Handle(name)
+            }
+            // A whole record is built while its element is written, which
+            // needs the bound array; `record_into_slot` hands the building
+            // statements back unless the value names staged storage itself.
+            Some(TypeShape::Aggregate(_) | TypeShape::FixedArray { .. }) => {
+                let (mut members, mut nested) = (Vec::new(), Vec::new());
+                self.collect_staged_members(rhs, false, &mut members, &mut nested);
+                if members.is_empty() && nested.is_empty() {
+                    self.hoisted_record_source = Some(rhs);
+                }
+                return Ok(Vec::new());
+            }
+            Some(TypeShape::Container { .. }) | None => return Ok(Vec::new()),
+            // A packed member keeps the element it was bound to.
+            Some(_)
+                if matches!(
+                    self.kind(lhs),
+                    NodeKind::Expr(ExprKind::MemberSelect { .. })
+                ) =>
+            {
+                return Ok(Vec::new());
+            }
+            Some(_) => {
+                let value = self.lower_expr(path, rhs)?;
+                let (width, signed) = (value.width, value.signed);
+                statements.push(IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width,
+                    signed,
+                    two_state: false,
+                    init: Some(Box::new(value)),
+                });
+                HoistedValue::Packed(name, width, signed)
+            }
+        };
+        self.hoisted_values.insert(rhs, value.clone());
+        self.hoisted_values.insert(self.p30_unwrap_cast(rhs), value);
+        self.hoisted_source = Some(rhs);
+        Ok(statements)
+    }
+
+    /// The hoisted value of `node`, if any.
+    pub(in crate::sim::codegen) fn hoisted_value(&self, node: NodeId) -> Option<&HoistedValue> {
+        if self.hoisted_values.is_empty() {
+            return None;
+        }
+        self.hoisted_values.get(&node)
+    }
+
+    /// Forget the value `hoist_assignment_source` registered.
+    pub(in crate::sim::codegen) fn end_hoisted_source(&mut self) {
+        self.hoisted_record_source = None;
+        if let Some(rhs) = self.hoisted_source.take() {
+            let inner = self.p30_unwrap_cast(rhs);
+            for node in [rhs, inner] {
+                self.hoisted_values.remove(&node);
+            }
+        }
+    }
+
     /// Whether `selection` names an associative array, which statements use
     /// in place rather than through a copy.
     fn selects_associative(&self, selection: &ElementSelection) -> bool {
@@ -1947,6 +2126,13 @@ impl Codegen<'_> {
 
     /// End the staging that `stage_element_members` opened.
     pub(in crate::sim::codegen) fn end_element_member_staging(&mut self) {
+        if let Some(added) = self.inner_stagings.pop() {
+            for node in added {
+                self.staged_nested_elements.remove(&node);
+            }
+            return;
+        }
+        self.deferred_selectors.set(false);
         self.staged_element_members.clear();
         self.staged_nested_elements.clear();
     }

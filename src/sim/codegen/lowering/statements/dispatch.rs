@@ -55,6 +55,13 @@ impl EmitCtx<'_, '_> {
                 | NodeKind::Expr(ExprKind::Operation { .. })
         ) && self.cg.staged_element_members.is_empty()
             && self.cg.staged_nested_elements.is_empty();
+        // The value of a write through a nested associative array runs
+        // before the array is bound.
+        let hoisted = if staging && self.cg.element_staging_possible {
+            self.cg.hoist_assignment_source(&self.path, h)
+        } else {
+            Ok(Vec::new())
+        };
         let staged = if staging {
             Some(self.cg.stage_element_members(&self.path, h))
         } else {
@@ -69,6 +76,9 @@ impl EmitCtx<'_, '_> {
             }
             None => (self.lower_stmt_operations(h), Default::default()),
         };
+        self.cg.end_hoisted_source();
+        let mut hoisted = hoisted?;
+        hoisted.append(&mut self.cg.hoisted_record_fill);
         let declarations =
             std::mem::replace(&mut self.cg.record_binding_declarations, outer).unwrap_or_default();
         let prelude = std::mem::replace(&mut self.cg.container_call_prelude, saved);
@@ -101,9 +111,14 @@ impl EmitCtx<'_, '_> {
         }
         // Staged members are copied out before the operand prelude and back
         // after the statement, in one lexical scope.
-        if !before.is_empty() || !after.is_empty() {
+        if !hoisted.is_empty() || !before.is_empty() || !after.is_empty() {
             statements = vec![IrStmt::Block(
-                before.into_iter().chain(statements).chain(after).collect(),
+                hoisted
+                    .into_iter()
+                    .chain(before)
+                    .chain(statements)
+                    .chain(after)
+                    .collect(),
             )];
         }
         if !declarations.is_empty() {
