@@ -36,6 +36,17 @@ pub(super) struct LeafPlan {
 /// (18.5.11); `template` still contains placeholders.
 pub(super) struct CallPlan {
     pub(super) template: IrExpr,
+    /// An expanded call (`TCall`): the placeholder of each argument node.
+    pub(super) expanded: Option<Vec<ExpandedArg>>,
+    /// The unit whose objects evaluate it.
+    pub(super) unit: u32,
+}
+
+/// One argument of an expanded call.
+pub(super) struct ExpandedArg {
+    pub(super) placeholder: String,
+    pub(super) width: u32,
+    pub(super) signed: bool,
 }
 
 pub(in super::super) struct ProblemBuilder {
@@ -1033,17 +1044,10 @@ impl ProblemBuilder {
         if expr.width == 0 {
             return Err("a real-valued function is not supported in constraints".into());
         }
-        if self.unit != 0 {
-            return Err(
-                "a function call in a constraint of an object reached through a `rand` handle is not supported"
-                    .into(),
-            );
-        }
-        if self.has_template(expr) {
-            return Err(
-                "a function call argument that reads an array element, array size, loop index or another object's variable is not supported in constraints"
-                    .into(),
-            );
+        // A call that reads a template form, or runs for another object,
+        // is one call per expansion.
+        if self.unit != 0 || self.has_template(expr) {
+            return self.expanded_call(expr);
         }
         let mut args = Vec::new();
         for name in placeholders_in(expr) {
@@ -1056,6 +1060,8 @@ impl ProblemBuilder {
         let index = self.calls.len() as u32;
         self.calls.push(CallPlan {
             template: expr.clone(),
+            expanded: None,
+            unit: 0,
         });
         self.problem.calls.push(IrRandCall {
             name: format!("function call {}", self.item),
@@ -1064,5 +1070,44 @@ impl ProblemBuilder {
             args,
         });
         Ok(self.push(IrRandOp::Call, expr.signed, expr.width, index, 0, 0))
+    }
+
+    /// A `TCall`: each placeholder the call reads is one argument node.
+    fn expanded_call(&mut self, expr: &IrExpr) -> Result<u32, String> {
+        let names = placeholders_in(expr);
+        let mut args = Vec::with_capacity(names.len());
+        let mut plans = Vec::with_capacity(names.len());
+        for name in names {
+            let node = match self.templates.get(&name).copied() {
+                Some(node) => node,
+                None => {
+                    let var = *self
+                        .placeholders
+                        .get(&name)
+                        .ok_or_else(|| "unknown random variable placeholder".to_owned())?;
+                    self.var_node(var)
+                }
+            };
+            let (node, width, signed) = self.ty(node);
+            args.push(node);
+            plans.push(ExpandedArg {
+                placeholder: name,
+                width,
+                signed,
+            });
+        }
+        let index = self.calls.len() as u32;
+        self.calls.push(CallPlan {
+            template: expr.clone(),
+            expanded: Some(plans),
+            unit: self.unit,
+        });
+        self.problem.calls.push(IrRandCall {
+            name: format!("function call {}", self.item),
+            width: expr.width,
+            signed: expr.signed,
+            args,
+        });
+        Ok(self.push(IrRandOp::TCall, expr.signed, expr.width, index, 0, 0))
     }
 }

@@ -221,6 +221,19 @@ int32_t llg_randomize_step(const llg_cr_problem_t* problem, llg_cr_session_t* s,
     return randomize_report(problem, status, &report, site);
 }
 
+void llg_cr_xcall_set_result_sv4(llg_cr_session_t* s, uint32_t x, sv4_t value, uint32_t width) {
+    sv4_t sized = sv4_resize(value, width, 0);
+    uint64_t* words = randomize_scratch(width);
+    int input = randomize_words(sized, words, width);
+    llg_cr_xcall_set_result(s, x, words, input);
+    sv4_destroy(&sized);
+}
+
+sv4_t llg_cr_xcall_arg_sv4(const llg_cr_session_t* s, uint32_t x, uint32_t arg, uint32_t width,
+                           int8_t is_signed) {
+    return sv4_from_limbs(llg_cr_xcall_arg(s, x, arg), NULL, NULL, width, is_signed);
+}
+
 void llg_cr_set_call_result_sv4(llg_cr_session_t* s, uint32_t call, sv4_t value,
                                 uint32_t width) {
     sv4_t sized = sv4_resize(value, width, 0);

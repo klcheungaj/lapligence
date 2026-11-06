@@ -1485,15 +1485,23 @@ impl Validator<'_> {
                     else {
                         return self.fail(path, "instance query of a problem without units");
                     };
-                    let needs_inst = !matches!(query, IrRandQuery::NextInst | IrRandQuery::Count);
+                    let needs_inst = !matches!(
+                        query,
+                        IrRandQuery::NextInst | IrRandQuery::Count | IrRandQuery::CallCount
+                    );
                     let needs_index = matches!(query, IrRandQuery::Elem(_));
                     let ty = match query {
                         IrRandQuery::NextInst
                         | IrRandQuery::Count
                         | IrRandQuery::Visit
                         | IrRandQuery::Unit
-                        | IrRandQuery::ArraySize(_) => Some((32, true)),
+                        | IrRandQuery::ArraySize(_)
+                        | IrRandQuery::CallCount
+                        | IrRandQuery::CallSite
+                        | IrRandQuery::CallInst => Some((32, true)),
+                        IrRandQuery::CallArg(_) => Some((expr.width, expr.signed)),
                         IrRandQuery::Pre
+                        | IrRandQuery::CallReady
                         | IrRandQuery::Random
                         | IrRandQuery::Active(_)
                         | IrRandQuery::ArrayActive(_) => Some((1, false)),

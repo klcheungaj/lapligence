@@ -2507,10 +2507,11 @@ these forms remain outside them.
   read other than through element selects, `size()`, the reductions,
   `inside` and `foreach` (for example compared whole), `std::randomize` of a
   fixed-size array of a module or subroutine (dynamic arrays and queues
-  work), a constraint function argument that reads an array element, a loop
-  index or another object's variable, a function call in a constraint of an
-  object reached through a `rand` handle, a `solve...before` primary that is
-  an array element or size, and an inline `local::` name that also names an object property.
+  work), a `solve...before` that solves a variable before an array size or
+  names a non-constant element, and an inline `local::` name that also names an object property.
+- A constraint function reached for an object of the randomized class other
+  than the randomized object ends the run with a fatal error: its receiver is
+  fixed at the call. Objects of other classes evaluate their own functions.
 - A `randomize()` call used as a value works in assignments, `if` conditions,
   `return`, declarations, system-task arguments, immediate assertions, loop
   headers and short-circuit or conditional operands of those. Elsewhere (a

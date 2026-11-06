@@ -19,14 +19,15 @@
 //! handles), solves, then commits and runs `post_randomize` for every
 //! random instance.
 
-use super::problems::{placeholders_in, LeafPlan, ProblemBuilder};
-use super::sites::{RandSelection, VarPlan};
+use super::problems::{placeholders_in, CallPlan, LeafPlan, ProblemBuilder};
+use super::sites::{OrderSide, RandSelection, VarPlan};
 use super::*;
 use crate::core::db::{ConstraintBlockInfo, RandQualifier, VariableLifetime};
 use crate::sim::ir::{
     IrContainerElement, IrContainerExpr, IrContainerKind, IrContainerStmt, IrInsideItem,
     IrNativeAccessKind, IrRandArray, IrRandArrayKind, IrRandOp, IrRandQuery, IrRandSlot,
-    IrRandStmt, IrRandUnit, IrSysFunc, RAND_NONE, RAND_SLOT_ARRAY,
+    IrRandStmt, IrRandUnit, IrSysFunc, RAND_NONE, RAND_ORDER_ARRAY, RAND_ORDER_ELEM,
+    RAND_SLOT_ARRAY,
 };
 
 /// Which arrays and handles of unit 0 are random (18.11).
@@ -168,6 +169,98 @@ pub(super) struct UnitCode {
     pub(super) commit: Vec<IrStmt>,
     /// The other instances' `post_randomize` calls.
     pub(super) posts: Vec<IrStmt>,
+    /// The handle local of each unit after unit 0.
+    pub(super) handles: HashMap<u32, String>,
+}
+
+/// One round over the calls of `TCall` nodes: every ready one reads its
+/// arguments, names its object and sets its result.
+pub(super) fn expanded_calls(
+    problem: usize,
+    tag: &str,
+    calls: Vec<(u32, CallPlan)>,
+    handles: &HashMap<u32, String>,
+) -> Vec<IrStmt> {
+    let counter = format!("{tag}_x");
+    let site = format!("{tag}_xs");
+    let index = || local_read(&counter, 32, true);
+    let mut cases = Vec::with_capacity(calls.len());
+    for (call, plan) in calls {
+        let mut value = plan.template;
+        let args = plan.expanded.unwrap_or_default();
+        crate::sim::opt::walk_expr_mut(&mut value, &mut |expr: &mut IrExpr| {
+            let IrExprKind::LocalRead(name) = &expr.kind else {
+                return;
+            };
+            let Some(position) = args.iter().position(|arg| arg.placeholder == *name) else {
+                return;
+            };
+            let arg = &args[position];
+            *expr = query(
+                problem,
+                IrRandQuery::CallArg(position as u32),
+                Some(index()),
+                None,
+                arg.width,
+                arg.signed,
+            );
+        });
+        let mut body = Vec::new();
+        if let Some(handle) = handles.get(&plan.unit) {
+            body.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleAssignLocal(
+                handle.clone(),
+                IrChandleExpr::RandInstance {
+                    problem,
+                    inst: Box::new(query(
+                        problem,
+                        IrRandQuery::CallInst,
+                        Some(index()),
+                        None,
+                        32,
+                        true,
+                    )),
+                },
+            ))));
+        }
+        body.push(IrStmt::Randomize(Box::new(IrRandStmt::ISetCallResult {
+            problem,
+            call: index(),
+            site: call,
+            value,
+        })));
+        cases.push((call, body));
+    }
+    let mut ready = vec![assign32(
+        &site,
+        query(
+            problem,
+            IrRandQuery::CallSite,
+            Some(index()),
+            None,
+            32,
+            true,
+        ),
+    )];
+    ready.extend(dispatch(&site, cases));
+    vec![
+        decl32(&counter, int_const(0)),
+        decl32(&site, int_const(0)),
+        counted(
+            &counter,
+            query(problem, IrRandQuery::CallCount, None, None, 32, true),
+            vec![when(
+                query(
+                    problem,
+                    IrRandQuery::CallReady,
+                    Some(index()),
+                    None,
+                    1,
+                    false,
+                ),
+                ready,
+            )],
+        ),
+    ]
 }
 
 fn state(builder: &mut ProblemBuilder) -> &mut UnitState {
@@ -2027,6 +2120,101 @@ impl Codegen<'_> {
         Ok(())
     }
 
+    /// The array form of `solve...before` primary `primary`: a whole array
+    /// (every element), an element at a constant index, or a size.
+    pub(super) fn array_order_side(
+        &mut self,
+        path: &str,
+        builder: &mut ProblemBuilder,
+        primary: NodeId,
+        first: bool,
+    ) -> Result<OrderSide, String> {
+        let size_receiver = match self.kind(primary) {
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                ..
+            } if name == "size" => Some(*receiver),
+            _ => None,
+        };
+        if let Some(receiver) = size_receiver {
+            if self
+                .template_array(path, builder, receiver, false)?
+                .is_none()
+            {
+                return Ok(OrderSide::Variable);
+            }
+            if first {
+                return Ok(OrderSide::Nothing);
+            }
+            return Err(self.rand_error(
+                primary,
+                path,
+                "a `solve...before` order that solves a variable before an array size is not supported: sizes are solved first (S30-D5)",
+            ));
+        }
+        if self.array_expr_decl(primary).is_some() {
+            let Some((array, reference)) = self.template_array(path, builder, primary, false)?
+            else {
+                return Ok(OrderSide::Variable);
+            };
+            if reference != RAND_NONE {
+                return Ok(OrderSide::Variable);
+            }
+            return Ok(OrderSide::Array(RAND_ORDER_ARRAY | array));
+        }
+        let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(primary) else {
+            return Ok(OrderSide::Variable);
+        };
+        let indices = indices.clone();
+        let Some(root) = self.select_root(primary) else {
+            return Ok(OrderSide::Variable);
+        };
+        let Some((array, reference)) = self.template_array(path, builder, root, false)? else {
+            return Ok(OrderSide::Variable);
+        };
+        if reference != RAND_NONE {
+            return Ok(OrderSide::Variable);
+        }
+        let info = &state(builder).arrays[array as usize];
+        let (kind, left, right, container) = (info.kind, info.left, info.right, info.container);
+        let dimensions = match self.fixed_view_dims.get(&container) {
+            Some(dimensions) => dimensions.clone(),
+            None if kind == IrRandArrayKind::Fixed => vec![(left, right)],
+            None => vec![(0, i32::MAX)],
+        };
+        if dimensions.len() != indices.len() {
+            return Ok(OrderSide::Variable);
+        }
+        let mut position = 0i64;
+        for (index, (left, right)) in indices.iter().zip(dimensions) {
+            let value = self.eval_bound_i128(*index).ok().and_then(|value| {
+                let offset = if left <= right {
+                    value - i128::from(left)
+                } else {
+                    i128::from(left) - value
+                };
+                let extent = (i128::from(left) - i128::from(right)).abs() + 1;
+                (0..extent)
+                    .contains(&offset)
+                    .then(|| (offset as i64, extent as i64))
+            });
+            let Some((offset, extent)) = value else {
+                return Err(self.rand_error(
+                    *index,
+                    path,
+                    "a `solve...before` array element needs a constant index inside the array",
+                ));
+            };
+            position = position
+                .checked_mul(extent)
+                .and_then(|scaled| scaled.checked_add(offset))
+                .ok_or_else(|| self.rand_error(*index, path, "array position overflows"))?;
+        }
+        let args = builder.push_args(&[array, position as u32]);
+        Ok(OrderSide::Array(RAND_ORDER_ELEM | args))
+    }
+
     /// `foreach (array[i]) body` (18.5.8.1): the body holds for every
     /// element; `i` is the element's declared index.
     #[allow(clippy::too_many_arguments)]
@@ -2553,6 +2741,16 @@ impl Codegen<'_> {
                 ))));
             }
         }
+        let handles = st
+            .units
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter_map(|(index, unit)| match &unit.object {
+                Some(IrChandleExpr::LocalRead(name)) => Some((index as u32, name.clone())),
+                _ => None,
+            })
+            .collect();
         let mut feeds = Vec::new();
         let mut commits = Vec::new();
         let mut posts = Vec::new();
@@ -2896,6 +3094,7 @@ impl Codegen<'_> {
             walk,
             commit,
             posts: post,
+            handles,
         })
     }
 }

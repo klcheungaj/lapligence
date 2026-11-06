@@ -54,6 +54,13 @@ arrays of enum or packed-structure elements add one block per array per unit
 (`<array>_legal`, enabled while the array is random) holding every element
 to its legal values; it does not name the size, so it leaves sizes alone.
 
+A call that reads a template form or runs for another object is a `TCALL`
+node: each occurrence in the expansion is one flat call past the template's,
+with its arguments as nodes, and generated code walks these (`llg_cr_xcall_*`)
+naming the object from its instance. Sides of a template order can name every
+element of an array or one element; orders over elements no conjunct uses
+vanish.
+
 Generated code registers the objects of one call as instances: instance 0 is
 the randomized object, and `llg_cr_link` registers each object a handle
 names (deduplicated by handle, so an object reached twice, or the root

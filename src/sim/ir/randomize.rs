@@ -81,12 +81,22 @@ pub enum IrRandOp {
     Reduce,
     /// `a` = ref; 1 when it names no object.
     IsNull,
+    /// `a` = call: expanded once per occurrence, with template node
+    /// arguments and the expanding object as receiver.
+    TCall,
 }
 
 /// `LLG_CR_NONE`: an absent operand.
 pub const RAND_NONE: u32 = u32::MAX;
 /// `LLG_CR_SLOT_ARRAY`: marks a handle-array slot in `ASize`/`Foreach`.
 pub const RAND_SLOT_ARRAY: u32 = 0x8000_0000;
+
+/// `LLG_CR_ORDER_ARRAY`: an order side naming every element of an array.
+pub const RAND_ORDER_ARRAY: u32 = 0x8000_0000;
+
+/// `LLG_CR_ORDER_ELEM`: an order side naming one element; the rest indexes
+/// args holding `{array, position}`.
+pub const RAND_ORDER_ELEM: u32 = 0x4000_0000;
 
 /// `LLG_CR_RANGE_LOOP`: marks the array operand of a `Foreach`/`Reduce` as
 /// a declared range; the rest indexes args holding `{left, right}`.
@@ -115,7 +125,8 @@ impl IrRandOp {
             | Self::Iter
             | Self::Foreach
             | Self::Reduce
-            | Self::IsNull => 0,
+            | Self::IsNull
+            | Self::TCall => 0,
             Self::Resize
             | Self::Not
             | Self::Neg
@@ -381,7 +392,8 @@ impl IrRandProblem {
                 | IrRandOp::Iter
                 | IrRandOp::Foreach
                 | IrRandOp::Reduce
-                | IrRandOp::IsNull => {
+                | IrRandOp::IsNull
+                | IrRandOp::TCall => {
                     if self.units.is_empty() {
                         return fail(format!(
                             "template node {index} outside a problem with units"
@@ -444,9 +456,18 @@ impl IrRandProblem {
             }
         }
         for (index, order) in self.orders.iter().enumerate() {
+            let side_ok = |side: u32| {
+                if side & RAND_ORDER_ARRAY != 0 {
+                    ((side & !RAND_ORDER_ARRAY) as usize) < self.arrays.len()
+                } else if side & RAND_ORDER_ELEM != 0 {
+                    ((side & !RAND_ORDER_ELEM) as usize) + 2 <= self.args.len()
+                } else {
+                    side < vars
+                }
+            };
             if order.block as usize >= self.blocks.len()
-                || order.before >= vars
-                || order.after >= vars
+                || !side_ok(order.before)
+                || !side_ok(order.after)
             {
                 return fail(format!("solve-before order {index} is out of range"));
             }
@@ -492,6 +513,10 @@ impl IrRandProblem {
             IrRandOp::ASize => is_array(node.a) && is_ref(node.c) && node.width == 32,
             IrRandOp::Iter => node.width == 32 && node.signed,
             IrRandOp::IsNull => is_ref(node.a) && node.width == 1,
+            IrRandOp::TCall => self
+                .calls
+                .get(node.a as usize)
+                .is_some_and(|call| call.args.iter().all(|arg| *arg < index)),
             IrRandOp::Foreach | IrRandOp::Reduce => {
                 let count = if node.op == IrRandOp::Foreach { 4 } else { 5 };
                 let first = node.b as usize;
@@ -559,6 +584,13 @@ pub enum IrRandStmt {
     SetCallResult {
         problem: usize,
         call: u32,
+        value: IrExpr,
+    },
+    /// The result of expanded call `call` of problem call `site`.
+    ISetCallResult {
+        problem: usize,
+        call: IrExpr,
+        site: u32,
         value: IrExpr,
     },
     /// Problems with units (SIM-030): the randomized object's handle, so
@@ -650,6 +682,7 @@ impl IrRandStmt {
             | Self::SetLeaf { problem, .. }
             | Self::SetCyclic { problem, .. }
             | Self::SetCallResult { problem, .. }
+            | Self::ISetCallResult { problem, .. }
             | Self::InstRoot { problem, .. }
             | Self::ISetVar { problem, .. }
             | Self::ISetBlock { problem, .. }
@@ -674,6 +707,7 @@ impl IrRandStmt {
             | Self::SetLeaf { .. }
             | Self::SetCyclic { .. }
             | Self::SetCallResult { .. }
+            | Self::ISetCallResult { .. }
             | Self::ISetVar { .. }
             | Self::ISetBlock { .. }
             | Self::ISetLeaf { .. }
@@ -695,6 +729,7 @@ impl IrRandStmt {
             | Self::SetLeaf { .. }
             | Self::SetCyclic { .. }
             | Self::SetCallResult { .. }
+            | Self::ISetCallResult { .. }
             | Self::ISetVar { .. }
             | Self::ISetBlock { .. }
             | Self::ISetLeaf { .. }
@@ -715,6 +750,7 @@ impl IrRandStmt {
             Self::SetLeaf { value, .. } => value.iter().collect(),
             Self::SetCyclic { state, .. } => vec![state],
             Self::SetCallResult { value, .. } => vec![value],
+            Self::ISetCallResult { call, value, .. } => vec![call, value],
             Self::InstRoot { .. } => Vec::new(),
             Self::ISetVar {
                 inst,
@@ -753,6 +789,7 @@ impl IrRandStmt {
             Self::SetLeaf { value, .. } => value.iter_mut().collect(),
             Self::SetCyclic { state, .. } => vec![state],
             Self::SetCallResult { value, .. } => vec![value],
+            Self::ISetCallResult { call, value, .. } => vec![call, value],
             Self::InstRoot { .. } => Vec::new(),
             Self::ISetVar {
                 inst,
@@ -813,6 +850,16 @@ pub enum IrRandQuery {
     ArrayActive(u32),
     /// Solved element `index` of array `array` of `inst`.
     Elem(u32),
+    /// Calls of `TCall` nodes in the current expansion (32-bit signed).
+    CallCount,
+    /// The problem call of expanded call `inst` (32-bit signed).
+    CallSite,
+    /// The instance expanding call `inst` (32-bit signed).
+    CallInst,
+    /// 1 when the arguments of expanded call `inst` are known.
+    CallReady,
+    /// Argument `arg` of expanded call `inst`, typed like its node.
+    CallArg(u32),
 }
 
 /// Status values [`super::IrSysFunc::RandStep`] returns.

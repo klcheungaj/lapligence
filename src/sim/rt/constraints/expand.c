@@ -86,6 +86,9 @@ typedef struct {
     llg_cr_leaf_t* leaves;
     size_t leaves_len, leaves_cap;
     llg_cr_call_t* calls;
+    size_t calls_len, calls_cap;
+    /* Calls past the template's (LLG_CR_TCALL expansions). */
+    cr_u32vec_t call_site, call_inst;
     llg_cr_dist_t* dists;
     size_t dists_len, dists_cap;
     llg_cr_dist_item_t* items;
@@ -185,6 +188,11 @@ static void cr_tpl_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t* 
     case LLG_CR_ISNULL:
         if (nd->a != LLG_CR_NONE) cr_u32_push(out, nd->a);
         return;
+    case LLG_CR_TCALL: {
+        const llg_cr_call_t* c = &p->calls[nd->a];
+        for (uint32_t i = 0; i < c->arg_count; ++i) cr_u32_push(out, p->args[c->arg_first + i]);
+        return;
+    }
     case LLG_CR_AELEM:
         cr_u32_push(out, nd->b);
         if (nd->c != LLG_CR_NONE) cr_u32_push(out, nd->c);
@@ -222,6 +230,15 @@ static int cr_tpl_loop_ok(const llg_cr_problem_t* p, uint32_t a) {
         return (size_t)first + 2u <= p->arg_count;
     }
     return cr_tpl_array_ok(p, a);
+}
+
+static int cr_tpl_side_ok(const llg_cr_problem_t* p, uint32_t side) {
+    if (side & LLG_CR_ORDER_ARRAY) return (side & ~LLG_CR_ORDER_ARRAY) < p->array_count;
+    if (side & LLG_CR_ORDER_ELEM) {
+        uint32_t first = side & ~LLG_CR_ORDER_ELEM;
+        return (size_t)first + 2u <= p->arg_count && p->args[first] < p->array_count;
+    }
+    return side < p->var_count;
 }
 
 static void cr_tpl_validate(const llg_cr_problem_t* p) {
@@ -268,6 +285,15 @@ static void cr_tpl_validate(const llg_cr_problem_t* p) {
             break;
         case LLG_CR_ITER:
             break;
+        case LLG_CR_TCALL: {
+            if (nd->a >= p->call_count) cr_fatal("call out of range");
+            const llg_cr_call_t* c = &p->calls[nd->a];
+            if ((uint64_t)c->arg_first + c->arg_count > p->arg_count)
+                cr_fatal("call arguments out of range");
+            for (uint32_t i = 0; i < c->arg_count; ++i)
+                if (p->args[c->arg_first + i] >= n) cr_fatal("call argument out of order");
+            break;
+        }
         case LLG_CR_FOREACH:
         case LLG_CR_REDUCE: {
             uint32_t count = nd->op == LLG_CR_FOREACH ? 4u : 5u;
@@ -318,8 +344,8 @@ static void cr_tpl_validate(const llg_cr_problem_t* p) {
     for (uint32_t b = 0; b < p->block_count; ++b)
         if (p->blocks[b].root >= p->node_count) cr_fatal("block root out of range");
     for (uint32_t o = 0; o < p->order_count; ++o)
-        if (p->orders[o].block >= p->block_count || p->orders[o].before >= p->var_count ||
-            p->orders[o].after >= p->var_count)
+        if (p->orders[o].block >= p->block_count || !cr_tpl_side_ok(p, p->orders[o].before) ||
+            !cr_tpl_side_ok(p, p->orders[o].after))
             cr_fatal("solve-before order out of range");
     for (uint32_t v = 0; v < p->var_count; ++v) {
         if (p->vars[v].bit_width == 0u) cr_fatal("zero-width variable");
@@ -855,6 +881,7 @@ static void cr_flat_free(cr_flat_t* f) {
     free(f->key.data);
     free(f->nodes); free(f->consts.data); free(f->args.data); free(f->vars);
     free(f->blocks); free(f->leaves); free(f->calls); free(f->dists); free(f->items);
+    free(f->call_site.data); free(f->call_inst.data);
     free(f->orders); free(f->tables); free(f->table_items.data);
     free(f->var_kind.data); free(f->var_inst.data); free(f->var_idx.data); free(f->var_elem.data);
     free(f->leaf_inst.data); free(f->leaf_idx.data);
@@ -1669,6 +1696,24 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
         llg_cr_node_t c = *nd;
         return cr_fb_intern(ex, &c);
     }
+    case LLG_CR_TCALL: {
+        /* The thunk reads the root object: it cannot name another object
+         * of the same unit. */
+        if (t->inst[ex->inst].unit == 0u && ex->inst != 0u)
+            cr_fatal("constraint function call of another object of the randomized class");
+        const llg_cr_call_t* tc = &p->calls[nd->a];
+        llg_cr_call_t* fc = CR_VEC_PUSH(f->calls, f->calls_len, f->calls_cap);
+        *fc = *tc;
+        fc->arg_first = (uint32_t)f->args.len;
+        for (uint32_t i = 0; i < tc->arg_count; ++i)
+            cr_u32_push(&f->args, cr_ex_res(ex, p->args[tc->arg_first + i]));
+        cr_u32_push(&f->call_site, nd->a);
+        cr_u32_push(&f->call_inst, ex->inst);
+        llg_cr_node_t c = *nd;
+        c.op = LLG_CR_CALL;
+        c.a = (uint32_t)(f->calls_len - 1u);
+        return cr_fb_intern(ex, &c);
+    }
     case LLG_CR_DIST: {
         const llg_cr_dist_t* td = &p->dists[nd->a];
         llg_cr_dist_t* fd = CR_VEC_PUSH(f->dists, f->dists_len, f->dists_cap);
@@ -1887,6 +1932,32 @@ static void cr_ex_block(cr_ex_t* ex, uint32_t inst, uint32_t block) {
 
 /* Build the expanded problem of the current instances for `phase`.
  * Returns NULL when a budget is exceeded (`*budget` names it). */
+/* The flat variables one side of a template order names in instance `i`:
+ * none when the expansion did not use them. */
+static void cr_fx_order_side(const cr_flat_t* f, const cr_tpl_t* t, uint32_t i, uint32_t side,
+                             cr_u32vec_t* out) {
+    const llg_cr_problem_t* p = t->p;
+    const cr_inst_t* in = &t->inst[i];
+    if (side & (LLG_CR_ORDER_ARRAY | LLG_CR_ORDER_ELEM)) {
+        int whole = (side & LLG_CR_ORDER_ARRAY) != 0u;
+        const uint32_t* x = whole ? NULL : p->args + (side & ~LLG_CR_ORDER_ELEM);
+        uint32_t array = whole ? side & ~LLG_CR_ORDER_ARRAY : x[0];
+        uint32_t pos = t->arr_pos[(size_t)in->unit * t->ac + array];
+        if (pos == LLG_CR_NONE) return;
+        uint32_t k = f->arr_base[i] + pos;
+        if (f->arr_elem[k] == LLG_CR_NONE) return;
+        for (uint32_t e = whole ? 0u : x[1]; e < f->arr_size[k]; ++e) {
+            uint32_t v = f->elem_map.data[f->arr_elem[k] + e];
+            if (v != LLG_CR_NONE) cr_u32_push(out, v);
+            if (!whole) break;
+        }
+        return;
+    }
+    uint32_t v = t->global[side] ? f->global_map[side]
+                                 : f->var_map[f->var_base[i] + cr_inst_var(t, in, side)];
+    if (v != LLG_CR_NONE) cr_u32_push(out, v);
+}
+
 static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
     const llg_cr_problem_t* p = t->p;
     cr_flat_t* f = (cr_flat_t*)cr_alloc(1u, sizeof(*f));
@@ -1938,6 +2009,8 @@ static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
         f->calls[c].arg_first = 0;
         f->calls[c].arg_count = 0;
     }
+    f->calls_len = p->call_count;
+    f->calls_cap = p->call_count ? p->call_count : 1u;
 
     cr_ex_t ex;
     memset(&ex, 0, sizeof(ex));
@@ -1974,6 +2047,7 @@ static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
             cr_ex_block(&ex, i, b);
     }
     /* Template orders, per instance of the block's unit (18.5.9). */
+    cr_u32vec_t sides[2] = {{0, 0, 0}, {0, 0, 0}};
     for (uint32_t o = 0; o < p->order_count && !ex.failed; ++o) {
         const llg_cr_order_t* ord = &p->orders[o];
         uint32_t unit = t->block_unit[ord->block];
@@ -1981,17 +2055,22 @@ static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
             const cr_inst_t* in = &t->inst[i];
             if (!in->random || in->unit != unit) continue;
             uint32_t fb = f->block_map[f->block_base[i] + (ord->block - p->units[unit].block_first)];
-            uint32_t before = t->global[ord->before] ? f->global_map[ord->before]
-                              : f->var_map[f->var_base[i] + cr_inst_var(t, in, ord->before)];
-            uint32_t after = t->global[ord->after] ? f->global_map[ord->after]
-                             : f->var_map[f->var_base[i] + cr_inst_var(t, in, ord->after)];
-            if (fb == LLG_CR_NONE || before == LLG_CR_NONE || after == LLG_CR_NONE) continue;
-            llg_cr_order_t* fo = CR_VEC_PUSH(f->orders, f->orders_len, f->orders_cap);
-            fo->block = fb;
-            fo->before = before;
-            fo->after = after;
+            if (fb == LLG_CR_NONE) continue;
+            sides[0].len = sides[1].len = 0;
+            cr_fx_order_side(f, t, i, ord->before, &sides[0]);
+            cr_fx_order_side(f, t, i, ord->after, &sides[1]);
+            for (size_t x = 0; x < sides[0].len; ++x) {
+                for (size_t y = 0; y < sides[1].len; ++y) {
+                    llg_cr_order_t* fo = CR_VEC_PUSH(f->orders, f->orders_len, f->orders_cap);
+                    fo->block = fb;
+                    fo->before = sides[0].data[x];
+                    fo->after = sides[1].data[y];
+                }
+            }
         }
     }
+    free(sides[0].data);
+    free(sides[1].data);
     /* Domains of the variables, expanded in their instance. */
     for (size_t v = 0; v < f->vars_len && !ex.failed; ++v) {
         uint32_t kind = f->var_kind.data[v];
@@ -2052,7 +2131,7 @@ static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
     fp->leaves = f->leaves;
     fp->leaf_count = (uint32_t)f->leaves_len;
     fp->calls = f->calls;
-    fp->call_count = p->call_count;
+    fp->call_count = (uint32_t)f->calls_len;
     fp->dists = f->dists;
     fp->dist_count = (uint32_t)f->dists_len;
     fp->dist_items = f->items;
@@ -2382,4 +2461,32 @@ static llg_cr_session_t* cr_tpl_session_new(const llg_cr_problem_t* p) {
 static llg_cr_session_t* cr_tpl_flat_session(const llg_cr_session_t* s) {
     const cr_tpl_t* t = s->tpl;
     return t->flat && t->phase != CR_PH_IDLE ? t->flat->session : NULL;
+}
+
+/* ---- calls of expanded call nodes -------------------------------------- */
+
+uint32_t llg_cr_xcall_count(const llg_cr_session_t* s) {
+    const cr_flat_t* f = s->tpl->flat;
+    return f ? (uint32_t)f->call_site.len : 0u;
+}
+
+uint32_t llg_cr_xcall_site(const llg_cr_session_t* s, uint32_t x) {
+    return s->tpl->flat->call_site.data[x];
+}
+
+uint32_t llg_cr_xcall_inst(const llg_cr_session_t* s, uint32_t x) {
+    return s->tpl->flat->call_inst.data[x];
+}
+
+int llg_cr_xcall_ready(const llg_cr_session_t* s, uint32_t x) {
+    return llg_cr_call_ready(s, s->p->call_count + x);
+}
+
+const uint64_t* llg_cr_xcall_arg(const llg_cr_session_t* s, uint32_t x, uint32_t arg) {
+    return llg_cr_call_arg(s, s->p->call_count + x, arg);
+}
+
+void llg_cr_xcall_set_result(llg_cr_session_t* s, uint32_t x, const uint64_t* words,
+                             int input_state) {
+    llg_cr_set_call_result(s, s->p->call_count + x, words, input_state);
 }

@@ -39,6 +39,16 @@ pub(super) struct CyclicPlan {
     pub(super) target: IrLhs,
 }
 
+/// What a `solve...before` primary names.
+pub(super) enum OrderSide {
+    /// An ordinary random variable.
+    Variable,
+    /// Nothing to order: a size, solved first anyway.
+    Nothing,
+    /// An order side naming array elements.
+    Array(u32),
+}
+
 #[derive(PartialEq)]
 pub(super) enum DirectRead {
     Field(usize, usize),
@@ -770,8 +780,8 @@ impl Codegen<'_> {
                 }
             }
             ConstraintKind::SolveBefore { solve, before } => {
-                let solve = self.solve_before_vars(path, builder, &solve)?;
-                let after = self.solve_before_vars(path, builder, &before)?;
+                let solve = self.solve_before_vars(path, builder, &solve, true)?;
+                let after = self.solve_before_vars(path, builder, &before, false)?;
                 for first in &solve {
                     for second in &after {
                         builder.add_order(*first, *second);
@@ -794,15 +804,27 @@ impl Codegen<'_> {
     }
 
     /// The random variables a `solve...before` list names (18.5.9: rand
-    /// variables only, never randc).
+    /// variables only, never randc), as order sides. `first` says it is the
+    /// list solved first: sizes always are (S30-D5), so it may name one.
     fn solve_before_vars(
         &mut self,
         path: &str,
-        builder: &ProblemBuilder,
+        builder: &mut ProblemBuilder,
         primaries: &[NodeId],
+        first: bool,
     ) -> Result<Vec<u32>, String> {
         let mut vars = Vec::with_capacity(primaries.len());
         for primary in primaries {
+            if builder.units.is_some() {
+                match self.array_order_side(path, builder, *primary, first)? {
+                    OrderSide::Variable => {}
+                    OrderSide::Nothing => continue,
+                    OrderSide::Array(side) => {
+                        vars.push(side);
+                        continue;
+                    }
+                }
+            }
             let lowered = self
                 .lower_expr(path, *primary)
                 .map_err(|error| self.rand_error(*primary, path, &error))?;
@@ -1195,6 +1217,7 @@ impl Codegen<'_> {
                 walk: Vec::new(),
                 commit: Vec::new(),
                 posts: Vec::new(),
+                handles: HashMap::new(),
             },
         };
         for var in &vars {
@@ -1260,7 +1283,11 @@ impl Codegen<'_> {
         });
         if !calls.is_empty() {
             let mut body = Vec::new();
-            for (index, call) in calls.into_iter().enumerate() {
+            let (expanded, calls) = calls
+                .into_iter()
+                .enumerate()
+                .partition::<Vec<_>, _>(|(_, call)| call.expanded.is_some());
+            for (index, call) in calls {
                 let mut template = call.template;
                 let mut substitution = |expr: &mut IrExpr| {
                     let IrExprKind::LocalRead(name) = &expr.kind else {
@@ -1313,6 +1340,18 @@ impl Codegen<'_> {
                     els: None,
                     check: IrUniquePriorityCheck::None,
                 });
+            }
+            if !expanded.is_empty() {
+                let expanded = expanded
+                    .into_iter()
+                    .map(|(index, call)| (index as u32, call))
+                    .collect();
+                body.extend(templates::expanded_calls(
+                    problem,
+                    &tag,
+                    expanded,
+                    &code.handles,
+                ));
             }
             body.push(IrStmt::Assign {
                 lhs: status_lhs.clone(),

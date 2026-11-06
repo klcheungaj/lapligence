@@ -107,6 +107,10 @@ enum {
                            identity of ADD, MUL, LAND and LOR, and an
                            evaluation error for AND, OR and XOR (S30-D6) */
     LLG_CR_ISNULL,      /* 1-bit: the object ref a names is null */
+    LLG_CR_TCALL,       /* call a, once per expansion: its arguments are
+                           template nodes (a loop index, an array element,
+                           another object's variable) and the receiver is
+                           the expanding object */
     LLG_CR_OP_LIMIT
 };
 
@@ -162,7 +166,11 @@ typedef struct {
     uint8_t lo_signed;    /* the bounds compare as signed values */
 } llg_cr_dist_item_t;
 
-/* `solve before before after` from constraint block `block` (18.5.9). */
+/* `solve before before after` from constraint block `block` (18.5.9).
+ * In a problem with units a side is a variable, LLG_CR_ORDER_ARRAY | array
+ * (every element) or LLG_CR_ORDER_ELEM | index of args {array, position}. */
+#define LLG_CR_ORDER_ARRAY 0x80000000u
+#define LLG_CR_ORDER_ELEM 0x40000000u
 typedef struct {
     uint32_t block;
     uint32_t before;
@@ -371,6 +379,15 @@ const uint64_t* llg_cr_cyclic(const llg_cr_session_t* s, uint32_t var);
 void llg_cr_begin(llg_cr_session_t* s);
 llg_cr_status_t llg_cr_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
                             llg_cr_report_t* report);
+/* Calls of LLG_CR_TCALL nodes in the current expansion, numbered from 0:
+ * their template call, the instance expanding them, then as above. */
+uint32_t llg_cr_xcall_count(const llg_cr_session_t* s);
+uint32_t llg_cr_xcall_site(const llg_cr_session_t* s, uint32_t x);
+uint32_t llg_cr_xcall_inst(const llg_cr_session_t* s, uint32_t x);
+int llg_cr_xcall_ready(const llg_cr_session_t* s, uint32_t x);
+const uint64_t* llg_cr_xcall_arg(const llg_cr_session_t* s, uint32_t x, uint32_t arg);
+void llg_cr_xcall_set_result(llg_cr_session_t* s, uint32_t x, const uint64_t* words,
+                             int input_state);
 int llg_cr_call_ready(const llg_cr_session_t* s, uint32_t call);
 const uint64_t* llg_cr_call_arg(const llg_cr_session_t* s, uint32_t call, uint32_t arg);
 void llg_cr_set_call_result(llg_cr_session_t* s, uint32_t call, const uint64_t* words,

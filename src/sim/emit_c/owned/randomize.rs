@@ -317,6 +317,18 @@ impl Frame<'_, '_> {
                 ));
                 self.discard(value);
             }
+            IrRandStmt::ISetCallResult {
+                call, site, value, ..
+            } => {
+                let width = self.ctx.model.rand_problems[problem].calls[*site as usize].width;
+                let call = self.rand_index(call)?;
+                let value = self.expression(value)?;
+                self.line(format!(
+                    "llg_cr_xcall_set_result_sv4({s}, {call}, {}, {width}u);",
+                    value.code
+                ));
+                self.discard(value);
+            }
             IrRandStmt::InstRoot { handle, .. } => {
                 let handle = self.chandle(handle)?;
                 self.line(format!("llg_cr_inst_root({s}, {handle});"));
@@ -574,6 +586,21 @@ impl Frame<'_, '_> {
                     IrRandQuery::ArrayActive(array) => {
                         flag(format!("llg_cr_array_active({s}, {inst}, {array}u)"))
                     }
+                    IrRandQuery::CallCount => {
+                        format!("sv4_from_i64((int64_t)llg_cr_xcall_count({s}), 32)")
+                    }
+                    IrRandQuery::CallSite => {
+                        format!("sv4_from_i64((int64_t)llg_cr_xcall_site({s}, {inst}), 32)")
+                    }
+                    IrRandQuery::CallInst => {
+                        format!("sv4_from_i64((int64_t)llg_cr_xcall_inst({s}, {inst}), 32)")
+                    }
+                    IrRandQuery::CallReady => flag(format!("llg_cr_xcall_ready({s}, {inst})")),
+                    IrRandQuery::CallArg(arg) => format!(
+                        "llg_cr_xcall_arg_sv4({s}, {inst}, {arg}u, {}u, {})",
+                        expr.width,
+                        u8::from(expr.signed)
+                    ),
                     IrRandQuery::Elem(array) => {
                         let index = match index {
                             Some(index) => self.rand_index(index)?,
