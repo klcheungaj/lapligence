@@ -875,8 +875,6 @@ behaviour follows the format.
   selected bit; `@(v[0])` and `@*` reading `v[i]` do.
 - A net read through a port link that converts, such as a widening port, shows
   and wakes on the strength of the link, not of the net outside.
-- A group whose strength view would pass the packed width limit (eight bits per
-  net bit) wakes on values only, with no diagnostic.
 
 ### Cause
 
@@ -895,6 +893,35 @@ a design reading strength across one.
 
 Two drivers of different strength on `v[0]`, `i = 0`, and `always @(v[i])`; a
 one-bit net with such drivers on a two-bit input port with `always @(i)`.
+
+## Strength views past the packed width limit
+
+**Status:** open by decision (T1-D8); the form stops code generation with an
+error that names the net and the limit.
+
+### Symptom
+
+A reader of a net's strength-only changes (an event on the net or a select of
+it, `@*`, `always_comb`, `always_latch`, `wait`, a `$monitor` argument) or a `%v`
+of it rejects when the net has more than 131071 bits. The net compiles while
+nothing reads its strength this way.
+
+### Cause
+
+A strength view takes eight bits per net bit and is one packed signal, so the
+packed width limit of 1048575 bits applies to the whole net, even when the
+reader selects a few bits of it. Waking on values alone would lose runs without
+notice.
+
+### Intended direction
+
+Allocate the view as bytes outside packed storage, which only matters for a
+design reading the strength of such a net.
+
+### Reproduce
+
+`tri1 [131071:0] w; always @(w) $display("woke");`
+(`T1-D8_wide_strength_view_rejected`).
 
 ## Sibling ports with different net delays
 

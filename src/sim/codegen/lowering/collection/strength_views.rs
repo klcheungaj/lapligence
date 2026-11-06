@@ -37,22 +37,21 @@ impl Codegen<'_> {
     /// With strong drivers alone each value has one strength. Any other drive
     /// strength can differ from the next driver's, or from the strong value of
     /// a force; a `tri0` or `tri1` net has its pull as a second strength; a
-    /// switch reduces strength or hands a net another net's. A group whose view
-    /// would pass the packed width limit stays out and wakes on values only.
+    /// switch reduces strength or hands a net another net's. A reader of a group
+    /// whose view would pass the packed width limit rejects
+    /// ([`Self::net_strength_view`]); the group costs nothing while none reads it.
     pub(in super::super) fn note_strength_nets(&mut self) {
         let mut groups: Vec<bool> = self
             .model
             .net_groups
             .iter()
             .map(|group| {
-                group.width.saturating_mul(VIEW_BITS) <= LLG_MAX_WIDTH
-                    && (matches!(group.kind, IrNetKind::Tri0 | IrNetKind::Tri1)
-                        || group.driver_strengths.iter().any(|slot| *slot != (6, 6)))
+                matches!(group.kind, IrNetKind::Tri0 | IrNetKind::Tri1)
+                    || group.driver_strengths.iter().any(|slot| *slot != (6, 6))
             })
             .collect();
         for group in self.pending_switch_groups() {
-            let width = self.model.net_groups[group].width;
-            groups[group] = width.saturating_mul(VIEW_BITS) <= LLG_MAX_WIDTH;
+            groups[group] = true;
         }
         let mut signals = HashMap::new();
         if groups.contains(&true) {
@@ -182,12 +181,27 @@ impl Codegen<'_> {
             electrical
                 .iter()
                 .any(|(group, _)| cg.strength_varies(*group))
-                && electrical.len() <= (LLG_MAX_WIDTH / VIEW_BITS) as usize
         };
         self.net_strength_expr(node, varies)
     }
 
-    /// The view signal of one net group, created on first use.
+    /// The hierarchical source name of a net group, or its C name when no
+    /// declared signal names it.
+    fn net_group_name(&self, group: usize) -> String {
+        self.model
+            .signals
+            .iter()
+            .find(|signal| {
+                signal.net_driver.is_some_and(|(owner, _)| owner == group)
+                    || signal.net_alias.iter().any(|bit| bit.group == group)
+            })
+            .and_then(|signal| signal.hdl_name.as_deref())
+            .unwrap_or(&self.model.net_groups[group].c_name)
+            .replace('\u{1f}', ".")
+    }
+
+    /// The view signal of one net group, created on first use. A net too wide
+    /// for a view rejects, so no reader of its strength loses a wake.
     fn net_strength_view(&mut self, group: usize) -> Result<usize, String> {
         let net = &self.model.net_groups[group];
         if let Some(view) = net.strength_view {
@@ -199,8 +213,9 @@ impl Codegen<'_> {
             .filter(|width| *width <= LLG_MAX_WIDTH)
             .ok_or_else(|| {
                 format!(
-                    "`%v` strength view of a {}-bit net exceeds the packed width limit",
-                    net.width
+                    "strength view of the {}-bit net `{}` takes {VIEW_BITS} bits per net bit, past the packed width limit of {LLG_MAX_WIDTH} bits",
+                    net.width,
+                    self.net_group_name(group)
                 )
             })?;
         let c_name = format!("{}__strength", net.c_name);
@@ -342,7 +357,12 @@ impl Codegen<'_> {
             width = width
                 .checked_add(count * VIEW_BITS)
                 .filter(|width| *width <= LLG_MAX_WIDTH)
-                .ok_or("`%v` strength view exceeds the packed width limit")?;
+                .ok_or_else(|| {
+                    format!(
+                        "strength view of `{}` takes {VIEW_BITS} bits per net bit, past the packed width limit of {LLG_MAX_WIDTH} bits",
+                        self.net_group_name(group)
+                    )
+                })?;
         }
         let view = if parts.len() == 1 {
             parts.pop().expect("one strength view run")
