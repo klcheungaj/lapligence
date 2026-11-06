@@ -1133,20 +1133,70 @@ impl Codegen<'_> {
             });
             return Ok(());
         }
-        if !matches!(element.shape, TypeShape::PackedAtom { .. }) {
-            return Err(format!(
-                "record pattern fill of a member array with structured elements is not supported in `{path}`"
-            ));
-        }
         let width =
             Self::fixed_descriptor_width(element).ok_or("record fill element has no width")?;
-        let value = IrExpr::convert_to(self.lower_expr(path, value)?, width, element.info.signed);
+        let value = if matches!(element.shape, TypeShape::PackedAtom { .. }) {
+            IrExpr::convert_to(self.lower_expr(path, value)?, width, element.info.signed)
+        } else {
+            self.record_fill_image(path, element, value, out)?
+        };
         out.push(IrStmt::FixedArrayFill {
             array,
             value,
             nba: false,
         });
         Ok(())
+    }
+
+    /// The cell image of a fill of structured elements: `value` reaches each
+    /// leaf of the element (SV 10.9.2), or is an element itself. Each source
+    /// is evaluated once.
+    fn record_fill_image(
+        &mut self,
+        path: &str,
+        element: &TypeDescriptor,
+        value: NodeId,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<IrExpr, String> {
+        let mut leaves = Vec::new();
+        self.aggregate_descriptor_pattern_values(path, value, element, &[], &mut leaves)?;
+        let mut parts = Vec::with_capacity(leaves.len());
+        let mut sources = HashMap::<NodeId, IrExpr>::new();
+        for (member, source) in leaves {
+            let (leaf, offset) =
+                super::super::super::collection::fixed_path_descriptor(element, &member)
+                    .ok_or("record fill leaf path is invalid")?;
+            let width =
+                Self::fixed_descriptor_width(&leaf).ok_or("record fill leaf has no width")?;
+            let read = match sources.get(&source) {
+                Some(read) => read.clone(),
+                None => {
+                    let item = match self.column_record_storage(source) {
+                        Some(record) => self.record_image(path, &record)?,
+                        None => self.lower_expr(path, source)?,
+                    };
+                    let name = self.new_fn_name(path, "record_item");
+                    let read = IrExpr::new(
+                        IrExprKind::LocalRead(name.clone()),
+                        item.width,
+                        item.signed,
+                        None,
+                    );
+                    out.push(IrStmt::DeclLocal {
+                        name,
+                        width: item.width,
+                        signed: item.signed,
+                        two_state: false,
+                        init: Some(Box::new(item)),
+                    });
+                    sources.insert(source, read.clone());
+                    read
+                }
+            };
+            parts.push((offset, IrExpr::convert_to(read, width, leaf.info.signed)));
+        }
+        parts.sort_by_key(|(offset, _)| std::cmp::Reverse(*offset));
+        Self::join_bitstream_parts(path, parts.into_iter().map(|(_, part)| part).collect())
     }
 
     /// `'{x, y, ...} = rec` with a column-layout record source: the source is

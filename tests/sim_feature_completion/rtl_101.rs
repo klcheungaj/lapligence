@@ -428,3 +428,10 @@ fn ref_formals_bind_one_image_of_a_column_cell() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_cell_ref.out");
     sim_cli::run_case_backend_parity(SUITE, "chosen_cell_ref", expected, &[], &[]);
 }
+
+/// Member arrays as `inside` sets, structured fills and nested records.
+#[test]
+fn nested_records_and_sets_of_the_column_form() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_nested.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_nested", expected, &[], &[]);
+}

@@ -1,0 +1,11 @@
+in 1 0
+in list 1 0
+in rec 1 0
+pat 1 2
+default 3 4 9
+zero 0
+nest 1 6
+nest 0 1
+case in
+case
+foreach 5

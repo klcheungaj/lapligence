@@ -34,6 +34,7 @@ mod fixed_patterns;
 mod fixed_projections;
 mod fixed_transport;
 mod fixed_values;
+pub(super) use fixed_values::fixed_path_descriptor;
 mod function_bodies;
 mod gates;
 mod initialization;
@@ -250,7 +251,7 @@ fn leaf_member(base: &AggregateMember, descriptor: &TypeDescriptor) -> Aggregate
     }
 }
 
-fn port_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
+pub(super) fn port_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
     fn visit(
         dims: &[(i32, i32)],
         dimension: usize,

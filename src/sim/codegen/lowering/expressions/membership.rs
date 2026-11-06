@@ -263,6 +263,13 @@ impl<'a> Codegen<'a> {
                 )
         );
         if storage_array {
+            // A record's column is one array, not a leaf.
+            if self.record_column_array(node).is_some() {
+                if let Some((_, cells)) = self.fixed_array_cells(path, node)? {
+                    out.push(IrInsideItem::Cells(cells));
+                    return Ok(());
+                }
+            }
             if let Some((_, aggregate)) = self.unpacked_aggregate_info(node) {
                 for leaf in aggregate.leaves {
                     let value = self.aggregate_leaf_read(&leaf).map_err(|error| {

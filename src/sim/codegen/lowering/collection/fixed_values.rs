@@ -91,7 +91,7 @@ pub(super) fn two_state(descriptor: &TypeDescriptor) -> bool {
     descriptor.two_state
 }
 
-pub(super) fn fixed_path_descriptor(
+pub(in super::super) fn fixed_path_descriptor(
     root: &TypeDescriptor,
     path: &[AggregatePathPart],
 ) -> Option<(TypeDescriptor, u32)> {

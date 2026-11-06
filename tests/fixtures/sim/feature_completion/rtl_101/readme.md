@@ -133,3 +133,7 @@ column. Expected values are derived by hand below; none were captured from
   column cell or an array of records. One body serves every cell at any index,
   forwarding reaches the same cell, a wait sees the cell's writes. `-D N=8`
   prints the same lines through per-cell storage.
+- `chosen_nested`: a member array as an `inside` set and `case inside` item, an
+  element pattern, a fill of structured elements (`default` reaches each leaf,
+  SV 10.9.2), a record nested in a record, `foreach` on an element member.
+  `-D N=8` prints the same lines per cell.
