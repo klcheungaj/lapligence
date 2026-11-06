@@ -275,7 +275,7 @@ impl<'a> Codegen<'a> {
     ) -> Result<(), String> {
         match self.fixed_view_dims.get(&container) {
             Some(_) if self.model.containers[container].class_field.is_some() => Err(format!(
-                "selecting a row, element or slice of a multidimensional class property in `{path}` is not supported; it is accessed whole or through memory file tasks (SIM-011)"
+                "selecting a row or slice of a multidimensional class property in `{path}` is not supported; it is accessed whole, by element or through memory file tasks (SIM-011)"
             )),
             Some(_) => Err(format!(
                 "this select of a multidimensional fixed array of native elements in `{path}` is not supported; select one element or one row"
@@ -318,12 +318,10 @@ impl<'a> Codegen<'a> {
             return None;
         };
         let container = self.container_of_select(select, *base)?.ir;
-        (self.model.containers[container].class_field.is_none()
-            && self
-                .fixed_view_dims
-                .get(&container)
-                .is_some_and(|dimensions| dimensions.len() == indices.len()))
-        .then_some(container)
+        self.fixed_view_dims
+            .get(&container)
+            .is_some_and(|dimensions| dimensions.len() == indices.len())
+            .then_some(container)
     }
 
     /// The storage position of the first cell selected by `indices` (one
@@ -496,16 +494,16 @@ impl<'a> Codegen<'a> {
             | NodeKind::NamedEvent
             | NodeKind::FuncArg { .. }
             | NodeKind::FuncTask { .. } => self.container_declaration(node),
-            NodeKind::Expr(ExprKind::Ref {
-                target: Some(target),
-            }) => self.container_declaration(*target),
-            NodeKind::Expr(ExprKind::HierPath { .. })
+            NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
                 if self.receiver_containers.contains_key(&node) =>
             {
                 Some(ContainerInfo {
                     ir: self.receiver_containers[&node],
                 })
             }
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => self.container_declaration(*target),
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
                 .first()
                 .copied()
@@ -606,6 +604,32 @@ impl<'a> Codegen<'a> {
     /// The container selected by `select`, whose frontend `base` may be the
     /// record member's declaration (`m.q[i]` selects through field `q`); the
     /// select then carries its owning record and member path.
+    /// The receiver alias bound to the path `select` selects from. A
+    /// flattened select (`h.m[i][j]`) keeps its earlier indices as a nested
+    /// select child, so the path sits below that chain.
+    fn select_receiver_container(&self, select: NodeId) -> Option<usize> {
+        let mut node = select;
+        loop {
+            let children = &self.node(node).children;
+            if let Some(ir) = children
+                .iter()
+                .find_map(|child| self.receiver_containers.get(child))
+            {
+                return Some(*ir);
+            }
+            let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) else {
+                return None;
+            };
+            node = children.iter().copied().find(|child| {
+                !indices.contains(child)
+                    && matches!(
+                        self.kind(*child),
+                        NodeKind::Expr(ExprKind::ArraySelect { .. })
+                    )
+            })?;
+        }
+    }
+
     pub(in super::super) fn container_of_select(
         &self,
         select: NodeId,
@@ -615,13 +639,8 @@ impl<'a> Codegen<'a> {
         // explicit handle: the select's base names only the declaration,
         // its path expression child names the receiver (SIM-011).
         if !self.receiver_containers.is_empty() {
-            if let Some(ir) = self
-                .node(select)
-                .children
-                .iter()
-                .find_map(|child| self.receiver_containers.get(child))
-            {
-                return Some(ContainerInfo { ir: *ir });
+            if let Some(ir) = self.select_receiver_container(select) {
+                return Some(ContainerInfo { ir });
             }
         }
         if let Some(container) = self.container_of(base) {
@@ -1004,9 +1023,8 @@ impl Codegen<'_> {
         }
     }
 
-    /// Rows and elements of multidimensional class properties stay
-    /// rejected (SIM-011): only whole accesses and memory file tasks reach
-    /// them.
+    /// Rows of multidimensional class properties stay rejected (SIM-011):
+    /// whole accesses, single elements and memory file tasks reach them.
     fn reject_class_view_select(&self, path: &str, container: usize) -> Result<(), String> {
         if self.model.containers[container].class_field.is_some() {
             return self.reject_multidimensional_view(path, container);

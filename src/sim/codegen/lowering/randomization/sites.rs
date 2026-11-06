@@ -39,6 +39,16 @@ pub(super) struct CyclicPlan {
     pub(super) target: IrLhs,
 }
 
+/// What a `solve...before` primary names.
+pub(super) enum OrderSide {
+    /// An ordinary random variable.
+    Variable,
+    /// Nothing to order: a size, solved first anyway.
+    Nothing,
+    /// An order side naming array elements.
+    Array(u32),
+}
+
 #[derive(PartialEq)]
 pub(super) enum DirectRead {
     Field(usize, usize),
@@ -119,22 +129,21 @@ impl Codegen<'_> {
         inline: Option<NodeId>,
         result: &str,
     ) -> Result<Vec<IrStmt>, String> {
+        // randomize() is virtual and covers the whole object (18.6.1), so
+        // `super.randomize()` is the call on `this` (S30-D12).
         let receiver = match self.kind(node) {
             NodeKind::MethodCall { receiver, .. } => *receiver,
             _ => None,
-        };
-        if let Some(receiver) = receiver {
-            if matches!(
-                self.kind(receiver),
+        }
+        .filter(|receiver| {
+            !matches!(
+                self.kind(*receiver),
                 NodeKind::Expr(ExprKind::NewClass {
                     is_super_class: true,
                     ..
                 })
-            ) || self.node(receiver).name == "super"
-            {
-                return Err(self.rand_error(node, path, "`super.randomize()` is not supported"));
-            }
-        }
+            ) && self.node(*receiver).name != "super"
+        });
         let caller_receiver = self.method_receiver();
         let (handle, static_class) = match receiver {
             Some(receiver) => (
@@ -195,22 +204,6 @@ impl Codegen<'_> {
                 RandSelection::List(declarations)
             }
         };
-        // Inline constraints of a call on another object of the caller's
-        // own class hierarchy could name the caller's properties through
-        // `local::`, which the captured names do not distinguish.
-        if inline.is_some() && receiver.is_some() && caller_receiver.is_some() {
-            if let Some(caller_class) = self.class_method_owner(node) {
-                let overlap = self.class_chain(caller_class).contains(&static_class)
-                    || self.class_chain(static_class).contains(&caller_class);
-                if overlap {
-                    return Err(self.rand_error(
-                        node,
-                        path,
-                        "inline constraints on another object of the calling method's class hierarchy are not supported (`local::` resolution)",
-                    ));
-                }
-            }
-        }
         self.model.random.threads = true;
         self.model.random.objects = true;
         let local = format!("_llg_rand_{}", node.index());
@@ -226,9 +219,20 @@ impl Codegen<'_> {
         )))];
         let cases = self.class_cases(static_class);
         let mut bodies = Vec::new();
+        // Container properties a constraint reads as state are those of the
+        // randomized object; only `this` is the enclosing method's receiver.
+        let explicit_object = receiver.is_some_and(|receiver| self.node(receiver).name != "this");
         for class in &cases {
             bodies.push(self.class_randomize_case(
-                path, node, *class, &object, &selection, inline, result, &site,
+                path,
+                node,
+                *class,
+                &object,
+                &selection,
+                inline,
+                result,
+                &site,
+                explicit_object,
             )?);
         }
         statements.extend(self.class_case_chain(&local, &object, &cases, bodies));
@@ -298,6 +302,7 @@ impl Codegen<'_> {
         inline: Option<NodeId>,
         result: &str,
         site: &str,
+        explicit_object: bool,
     ) -> Result<Vec<IrStmt>, String> {
         let chain = self.class_chain(class);
         let class_name = self.node(class).name.clone();
@@ -368,7 +373,7 @@ impl Codegen<'_> {
                         return Err(self.rand_error(
                             node,
                             path,
-                            &format!("random property `{name}` of class `{}` is not a packed integral value, a one-dimensional array of packed integral elements or a class handle, or is a structure with enum or tagged-union members", self.node(member).name),
+                            &format!("random property `{name}` of class `{}` is not a packed integral value, an array of packed integral elements or a class handle, or is a structure with enum or tagged-union members", self.node(member).name),
                         ));
                     }
                     continue;
@@ -394,16 +399,31 @@ impl Codegen<'_> {
             .iter()
             .filter_map(|member| self.class_nodes.get(member).copied())
             .collect::<HashSet<_>>();
-        let saved = self.rand_lowering.replace(RandLowering::new(
-            classes,
-            Some(object.clone()),
-            placeholders,
-        ));
+        // An inline constraint's names are the object's; only `local::`
+        // names the caller's, even for a property of the same class.
+        let caller_overlap = inline.is_some()
+            && self.class_method_owner(node).is_some_and(|caller| {
+                self.class_chain(caller).contains(&class)
+                    || self.class_chain(class).contains(&caller)
+            });
+        let mut scoped = RandLowering::new(classes, Some(object.clone()), placeholders);
+        scoped.inline_local = caller_overlap;
+        let saved = self.rand_lowering.replace(scoped);
+        let bound = if explicit_object {
+            self.bind_constraint_containers(&chain, &effective, inline, object)
+        } else {
+            Vec::new()
+        };
         let lowered =
             self.lower_class_blocks(path, &mut builder, &vars, object, &effective, inline);
         self.rand_lowering = saved;
-        let blocks = lowered?;
+        for node in bound {
+            self.receiver_containers.remove(&node);
+        }
+        let mut blocks = lowered?;
         if builder.units.is_some() {
+            blocks.extend(self.array_domain_blocks(path, node, &mut builder, Some(object))?);
+            self.lower_units(path, node, &mut builder, &mut vars)?;
             // Instance variables of the object are unit 0's; static ones
             // are global.
             let own = vars
@@ -411,7 +431,6 @@ impl Codegen<'_> {
                 .filter(|var| !matches!(var.direct, DirectRead::Signal(_)))
                 .map(|var| var.index)
                 .collect::<Vec<_>>();
-            self.lower_units(path, node, &mut builder)?;
             self.finish_units(&mut builder, own);
         }
         let pre = self.randomize_hook(class, "pre_randomize");
@@ -438,6 +457,49 @@ impl Codegen<'_> {
             post.into_iter().collect(),
         )?);
         Ok(statements)
+    }
+
+    /// Resolve the container properties that the constraints of an object
+    /// of class `chain` name through `object`; returns the nodes bound.
+    pub(super) fn bind_constraint_containers(
+        &mut self,
+        chain: &[NodeId],
+        effective: &[(NodeId, crate::core::db::ConstraintBlockInfo)],
+        inline: Option<NodeId>,
+        object: &IrChandleExpr,
+    ) -> Vec<NodeId> {
+        let mut bound = Vec::new();
+        let mut pending = effective
+            .iter()
+            .filter_map(|(_, info)| info.body)
+            .chain(inline)
+            .collect::<Vec<_>>();
+        while let Some(node) = pending.pop() {
+            pending.extend(self.node(node).children.iter().copied());
+            let NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) = self.kind(node)
+            else {
+                continue;
+            };
+            let target = *target;
+            if !self
+                .node(target)
+                .parent
+                .is_some_and(|owner| chain.contains(&owner))
+            {
+                continue;
+            }
+            let Some(container) = self.container_globals.get(&target).map(|info| info.ir) else {
+                continue;
+            };
+            if self.model.containers[container].class_field.is_some() {
+                let alias = self.class_container_alias(container, object.clone());
+                self.receiver_containers.insert(node, alias);
+                bound.push(node);
+            }
+        }
+        bound
     }
 
     /// Effective constraint blocks of an object whose class has `chain`
@@ -576,6 +638,7 @@ impl Codegen<'_> {
                 .collect::<Result<Vec<_>, _>>()?;
             builder.set_domain(index, &values)?;
         }
+        self.aggregate_var_domain(builder, index, child)?;
         Ok(Some((
             VarPlan {
                 index,
@@ -706,8 +769,8 @@ impl Codegen<'_> {
                 }
             }
             ConstraintKind::SolveBefore { solve, before } => {
-                let solve = self.solve_before_vars(path, builder, &solve)?;
-                let after = self.solve_before_vars(path, builder, &before)?;
+                let solve = self.solve_before_vars(path, builder, &solve, true)?;
+                let after = self.solve_before_vars(path, builder, &before, false)?;
                 for first in &solve {
                     for second in &after {
                         builder.add_order(*first, *second);
@@ -730,15 +793,27 @@ impl Codegen<'_> {
     }
 
     /// The random variables a `solve...before` list names (18.5.9: rand
-    /// variables only, never randc).
+    /// variables only, never randc), as order sides. `first` says it is the
+    /// list solved first: sizes always are (S30-D5), so it may name one.
     fn solve_before_vars(
         &mut self,
         path: &str,
-        builder: &ProblemBuilder,
+        builder: &mut ProblemBuilder,
         primaries: &[NodeId],
+        first: bool,
     ) -> Result<Vec<u32>, String> {
         let mut vars = Vec::with_capacity(primaries.len());
         for primary in primaries {
+            if builder.units.is_some() {
+                match self.array_order_side(path, builder, *primary, first)? {
+                    OrderSide::Variable => {}
+                    OrderSide::Nothing => continue,
+                    OrderSide::Array(side) => {
+                        vars.push(side);
+                        continue;
+                    }
+                }
+            }
             let lowered = self
                 .lower_expr(path, *primary)
                 .map_err(|error| self.rand_error(*primary, path, &error))?;
@@ -988,7 +1063,7 @@ impl Codegen<'_> {
                 return Err(self.rand_error(
                     argument,
                     path,
-                    "std::randomize() of a structure with enum or tagged-union members is not supported",
+                    "std::randomize() of an untagged union with enum members is not supported",
                 ));
             }
             let current = self
@@ -1037,6 +1112,7 @@ impl Codegen<'_> {
                     .collect::<Result<Vec<_>, _>>()?;
                 builder.set_domain(index, &values)?;
             }
+            self.aggregate_var_domain(&mut builder, index, target)?;
             placeholders.insert(target, local_read(&placeholder, width, signed));
             vars.push(VarPlan {
                 index,
@@ -1065,8 +1141,9 @@ impl Codegen<'_> {
             blocks.push(packed_const(1, 1, false));
         }
         if builder.units.is_some() {
+            blocks.extend(self.array_domain_blocks(path, node, &mut builder, None)?);
             // std::randomize arguments are global variables.
-            self.lower_units(path, node, &mut builder)?;
+            self.lower_units(path, node, &mut builder, &mut vars)?;
             self.finish_units(&mut builder, Vec::new());
         }
         let plan = ProblemPlan {
@@ -1129,6 +1206,7 @@ impl Codegen<'_> {
                 walk: Vec::new(),
                 commit: Vec::new(),
                 posts: Vec::new(),
+                handles: HashMap::new(),
             },
         };
         for var in &vars {
@@ -1194,7 +1272,11 @@ impl Codegen<'_> {
         });
         if !calls.is_empty() {
             let mut body = Vec::new();
-            for (index, call) in calls.into_iter().enumerate() {
+            let (expanded, calls) = calls
+                .into_iter()
+                .enumerate()
+                .partition::<Vec<_>, _>(|(_, call)| call.expanded.is_some());
+            for (index, call) in calls {
                 let mut template = call.template;
                 let mut substitution = |expr: &mut IrExpr| {
                     let IrExprKind::LocalRead(name) = &expr.kind else {
@@ -1247,6 +1329,18 @@ impl Codegen<'_> {
                     els: None,
                     check: IrUniquePriorityCheck::None,
                 });
+            }
+            if !expanded.is_empty() {
+                let expanded = expanded
+                    .into_iter()
+                    .map(|(index, call)| (index as u32, call))
+                    .collect();
+                body.extend(templates::expanded_calls(
+                    problem,
+                    &tag,
+                    expanded,
+                    &code.handles,
+                ));
             }
             body.push(IrStmt::Assign {
                 lhs: status_lhs.clone(),

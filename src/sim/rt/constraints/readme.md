@@ -32,13 +32,34 @@ their cycle state passed in and out through `llg_cr_set_cyclic` /
 A problem with units (`llg_cr_unit_t`) is a template. Each unit is one class
 layout: it lists its variables, arrays (`llg_cr_array_t`: fixed, dynamic or
 queue, packed elements) and handle properties (`llg_cr_slot_t`, scalar or
-array), and owns a range of blocks and leaves. Variables, arrays and slots
+array), and owns a range of blocks and leaves. A `rand` dynamic array or queue
+of handles also has a size-only array (`LLG_CR_ARRAY_SIZE`): it joins the size
+phase and its loops run over the solved size. Elements a resize dropped stay
+solved; `llg_cr_trim_slot` takes objects only they reached out of the
+`post_randomize` order. State values a handle element index reads are
+constants of the expansion and part of its cache key, since they select
+objects. Variables, arrays and slots
 are problem-wide (one per property), so an inherited property has one index
 in every derived unit; variables listed by no unit are global (static
 properties). Template nodes `REF`, `HVAR`, `AELEM`, `ASIZE`, `ITER`,
 `FOREACH`, `REDUCE` and `ISNULL` name another object's variables, array
 elements and sizes, loop indices and loops; `VAR` and `STATE` name the
-expanding instance's own.
+expanding instance's own. A multidimensional fixed array is one flat
+row-major array: selects compute the flat position (an index outside its own
+dimension makes it invalid), and `foreach` and reductions walk a dimension
+through a loop whose array operand is a declared range
+(`LLG_CR_RANGE_LOOP`). A random bounded queue carries its maximum element
+count in `right`, which bounds the domain of its size variable. Random
+arrays of enum or packed-structure elements add one block per array per unit
+(`<array>_legal`, enabled while the array is random) holding every element
+to its legal values; it does not name the size, so it leaves sizes alone.
+
+A call that reads a template form or runs for another object is a `TCALL`
+node: each occurrence in the expansion is one flat call past the template's,
+with its arguments as nodes, and generated code walks these (`llg_cr_xcall_*`)
+naming the object from its instance. Sides of a template order can name every
+element of an array or one element; orders over elements no conjunct uses
+vanish.
 
 Generated code registers the objects of one call as instances: instance 0 is
 the randomized object, and `llg_cr_link` registers each object a handle

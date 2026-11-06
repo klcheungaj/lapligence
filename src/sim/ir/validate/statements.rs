@@ -1990,6 +1990,7 @@ impl Validator<'_> {
             IrRandStmt::SetBlock { block, .. } => (*block as usize) < problem.blocks.len(),
             IrRandStmt::SetLeaf { leaf, .. } => (*leaf as usize) < problem.leaves.len(),
             IrRandStmt::SetCallResult { call, .. } => (*call as usize) < problem.calls.len(),
+            IrRandStmt::ISetCallResult { site, .. } => (*site as usize) < problem.calls.len(),
             IrRandStmt::SetCyclic { var, .. } | IrRandStmt::ISetCyclic { var, .. } => problem
                 .vars
                 .get(*var as usize)
@@ -2004,6 +2005,10 @@ impl Validator<'_> {
             IrRandStmt::Link { slot, unit, .. } => {
                 (*slot as usize) < problem.slots.len() && (*unit as usize) < problem.units.len()
             }
+            IrRandStmt::SetSlotSize { slot, .. } | IrRandStmt::TrimSlot { slot, .. } => problem
+                .slots
+                .get(*slot as usize)
+                .is_some_and(|slot| slot.is_array),
         };
         if !problem.units.is_empty() || !matches!(operation, IrRandStmt::Begin { .. }) {
             // Instance statements need a problem with units.
@@ -2017,6 +2022,8 @@ impl Validator<'_> {
                     | IrRandStmt::SetArray { .. }
                     | IrRandStmt::SetElem { .. }
                     | IrRandStmt::Link { .. }
+                    | IrRandStmt::SetSlotSize { .. }
+                    | IrRandStmt::TrimSlot { .. }
             );
             if instance && problem.units.is_empty() {
                 return self.fail(path, "instance statement of a problem without units");

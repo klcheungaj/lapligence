@@ -37,3 +37,29 @@ Run-time error fixtures (`rt_*`) exit with status 1:
 | `rt_unguarded_null` | 18.5.12 L30257 "If the guard evaluates to ERROR, then an error is generated and randomize fails" |
 | `rt_circular_order` | 18.5.11 L30193 "Circular dependencies created by the implicit variable ordering shall result in an error" |
 | `rt_resource` | A03: with `LLG_RAND_BDD_NODES=1 LLG_RAND_REJECT_TRIES=0 LLG_RAND_CONFLICTS=0` a satisfiable problem ends with a solver-budget error naming the budget, while an unsatisfiable one only warns (S29-D5) |
+
+`enum_elements` draws random arrays of enum and packed-structure elements and
+packed structures with enum members (18.4, 6.19): only named values appear, all
+of them do, and an array under `rand_mode(0)` keeps an illegal value.
+`tagged_member` holds a tagged union inside a `rand` packed structure (18.4
+keeps the union itself out of `rand`): random bits keep a declared tag and a
+legal member value.
+
+`scope_fixed_arrays` runs `std::randomize` (18.12) over fixed arrays of a module
+and of a subroutine, of one or several dimensions.
+
+`randomize_inherited_list` names inherited properties in `randomize(list)`
+(18.11), which needs `slang-randomize-inherited-property.patch`.
+
+`randomize_value_forms` uses `randomize()` as a value where other operands decide
+whether it runs, and in loop conditions. Its output is the reference run: the
+counters of `pre_randomize` show which calls ran. 11.3.5 L14434-14435: "When short
+circuiting occurs, any side effects or runtime errors that would have occurred
+due to evaluation of the short circuited operand expression shall not occur."
+11.4.7 L14898-14899: "For &&, if the first operand value is logically false then
+the second operand shall not be evaluated." and "For ||, if the first operand
+value is logically true then the second operand shall not be evaluated." 11.4.11:
+"If cond_predicate evaluates to an ambiguous value (x or z), then both the first
+expression and the second expression shall be evaluated". A null receiver in a
+skipped operand is never read. `neg_randomize_in_wait` stays rejected: a wait would
+run the call at every wake.

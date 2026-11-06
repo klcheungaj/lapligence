@@ -206,3 +206,17 @@ triggered state), `S14-D5_class_property_nba` (negative) and
 `S14-D6_wait_order_error_ends_run` (a failing wait_order without a fail
 statement is a run-time error that ends the simulation at once, without
 final procedures).
+
+## Waits on storage with no change marker
+
+`reject_wait_record_property`, `reject_event_record_property`,
+`reject_method_wait_record_property` and `reject_wait_call_result` name storage
+whose changes llg cannot observe: a member of an unpacked structure property
+with a native member, and a property selected through a call result. A wait
+that could never resume rejects with its location. `wait_container_records`
+checks the neighbours that stay legal. 9.4.2 L11837-11838 of
+`SystemVerilog-1800-2009.txt`:
+
+    "Changing the value of object data members, aggregate elements, or the size
+    of a dynamically sized array referenced by a method or function shall cause
+    the event expression to be reevaluated."
