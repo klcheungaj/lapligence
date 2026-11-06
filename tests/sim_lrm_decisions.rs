@@ -1817,6 +1817,14 @@ fn s29_d10_search_not_uniform() {
 }
 
 #[test]
+fn s30_d12_super_randomize() {
+    run_decision(
+        "S30-D12_super_randomize",
+        include_str!("fixtures/sim/lrm_decisions/S30-D12_super_randomize.out"),
+    );
+}
+
+#[test]
 fn s30_d1_dist_density() {
     run_decision(
         "S30-D1_dist_density",

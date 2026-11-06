@@ -1,0 +1,17 @@
+skip && ok=0 pre=0
+run && ok=1 pre=1
+skip || ok=1 pre=1
+run || ok=1 pre=2
+null guarded
+null guarded 2
+v=3 pre=3
+? arm i=1 v=5 pre=4
+? other i=8 v=5 pre=4
+? x i=1 v=1 pre=5
+x && ok=0 pre=6
+-> skip ok=1 pre=6
+while i=3 pre=10
+do i=5 pre=11
+for 0 size ok=1
+for 2 size ok=1
+v=4

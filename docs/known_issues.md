@@ -2507,13 +2507,11 @@ these forms remain outside them.
   index or another object's variable, a function call in a constraint of an
   object reached through a `rand` handle, a `solve...before` primary that is
   an array element or size, packed structures with enum or tagged members,
-  `super.randomize()`, and an inline `local::` name that also names an
-  object property.
-- A `randomize()` call used as a value is supported in assignments, `if`
-  conditions, `return`, declarations, system-task arguments and immediate
-  assertions. Inside a short-circuit or conditional operand, or in a loop
-  condition, it is rejected, because it would have to run a number of times
-  that depends on the other operands.
+  and an inline `local::` name that also names an object property.
+- A `randomize()` call used as a value works in assignments, `if` conditions,
+  `return`, declarations, system-task arguments, immediate assertions, loop
+  headers and short-circuit or conditional operands of those. Elsewhere (a
+  `wait` condition, an event control) it rejects.
 - When the exact model and rejection sampling both exceed their budgets, the
   CDCL search returns a legal solution that is not uniformly distributed
   (S29-D10), against 18.5.9 L30013-30014; the fallbacks also ignore dist

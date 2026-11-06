@@ -119,22 +119,21 @@ impl Codegen<'_> {
         inline: Option<NodeId>,
         result: &str,
     ) -> Result<Vec<IrStmt>, String> {
+        // randomize() is virtual and covers the whole object (18.6.1), so
+        // `super.randomize()` is the call on `this` (S30-D12).
         let receiver = match self.kind(node) {
             NodeKind::MethodCall { receiver, .. } => *receiver,
             _ => None,
-        };
-        if let Some(receiver) = receiver {
-            if matches!(
-                self.kind(receiver),
+        }
+        .filter(|receiver| {
+            !matches!(
+                self.kind(*receiver),
                 NodeKind::Expr(ExprKind::NewClass {
                     is_super_class: true,
                     ..
                 })
-            ) || self.node(receiver).name == "super"
-            {
-                return Err(self.rand_error(node, path, "`super.randomize()` is not supported"));
-            }
-        }
+            ) && self.node(*receiver).name != "super"
+        });
         let caller_receiver = self.method_receiver();
         let (handle, static_class) = match receiver {
             Some(receiver) => (

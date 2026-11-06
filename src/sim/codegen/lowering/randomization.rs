@@ -338,26 +338,45 @@ impl Codegen<'_> {
     }
 
     /// Value-position randomize or mode query; `None` for any other node.
-    /// A randomize call runs in the enclosing statement's prelude.
+    /// A randomize call runs in the enclosing statement's prelude, unless
+    /// its evaluation depends on other operands or repeats: it then stays
+    /// in the expression as a statement sequence, which the emitter evaluates
+    /// in place, so a short-circuited operand never runs (11.3.5) and a loop
+    /// condition runs at every test.
     pub(super) fn lower_random_value(
         &mut self,
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
         if self.db.randomize_call(node).is_some() {
-            let Some(root) = self.rand_prelude.as_ref().map(|(root, _)| *root) else {
-                return Err(self.rand_error(
-                    node,
-                    path,
-                    "a randomize call used as a value is supported only in an assignment, a variable declaration, a return, an if condition, an immediate assertion or a system-task argument",
-                ));
+            let hoisted = match self.rand_prelude.as_ref().map(|(root, _)| *root) {
+                Some(root) => !self.in_conditional_operand(node, root),
+                None if self.in_loop_header(node) => false,
+                None => {
+                    return Err(self.rand_error(
+                        node,
+                        path,
+                        "a randomize call used as a value is supported only in an assignment, a variable declaration, a return, an if condition, a loop condition, an immediate assertion or a system-task argument",
+                    ))
+                }
             };
-            self.check_prelude_order(path, node, root)?;
             let (statements, value) = self.lower_randomize(path, node)?;
-            if let Some((_, prelude)) = self.rand_prelude.as_mut() {
-                prelude.extend(statements);
+            if hoisted {
+                if let Some((_, prelude)) = self.rand_prelude.as_mut() {
+                    prelude.extend(statements);
+                }
+                return Ok(Some(value));
             }
-            return Ok(Some(value));
+            let (width, signed) = (value.width, value.signed);
+            return Ok(Some(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements,
+                    value,
+                })),
+                width,
+                signed,
+                None,
+            )));
         }
         match self.lower_mode_call(path, node)? {
             Some(ModeCall::Value(value)) => Ok(Some(value)),
@@ -370,15 +389,14 @@ impl Codegen<'_> {
         }
     }
 
-    /// A value-form randomize runs before its statement, so it must be
-    /// evaluated exactly once whenever the statement runs: no short-circuit
-    /// or conditional operand may contain it.
-    fn check_prelude_order(&self, path: &str, node: NodeId, root: NodeId) -> Result<(), String> {
+    /// Whether `node` lies in an operand of `root` that some evaluations
+    /// skip: a later operand of `&&`, `||` or `->`, or an arm of `?:`.
+    fn in_conditional_operand(&self, node: NodeId, root: NodeId) -> bool {
         let mut child = node;
         let mut current = self.node(node).parent;
         while let Some(parent) = current {
             if parent == root {
-                return Ok(());
+                return false;
             }
             let conditional = match self.kind(parent) {
                 NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
@@ -387,7 +405,6 @@ impl Codegen<'_> {
                         Operation::LogicalAnd
                             | Operation::LogicalOr
                             | Operation::Imply
-                            | Operation::Implies
                             | Operation::Conditional
                     ) && operands.first() != Some(&child)
                 }
@@ -395,16 +412,30 @@ impl Codegen<'_> {
                 _ => false,
             };
             if conditional {
-                return Err(self.rand_error(
-                    node,
-                    path,
-                    "a randomize call in a short-circuit or conditional operand is not supported; assign its result to a variable first",
-                ));
+                return true;
             }
             child = parent;
             current = self.node(parent).parent;
         }
-        Ok(())
+        false
+    }
+
+    /// Whether the nearest statement around `node` is the header of a loop
+    /// (a `while` or `do...while` condition, a `for` condition or step), or
+    /// an assignment there.
+    fn in_loop_header(&self, node: NodeId) -> bool {
+        let mut current = self.node(node).parent;
+        while let Some(parent) = current {
+            match self.kind(parent) {
+                NodeKind::Stmt(
+                    StmtKind::While { .. } | StmtKind::DoWhile { .. } | StmtKind::For { .. },
+                ) => return true,
+                NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::Expr(_) => {}
+                _ => return false,
+            }
+            current = self.node(parent).parent;
+        }
+        false
     }
 
     /// Display entries of the hidden off bits: they are not class

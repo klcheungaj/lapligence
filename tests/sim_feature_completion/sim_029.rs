@@ -121,16 +121,10 @@ fn unsupported_random_variables_are_located_errors() {
 fn value_randomize_outside_one_evaluation_is_a_located_error() {
     sim_cli::reject_case(
         SUITE,
-        "neg_short_circuit",
-        "a randomize call in a short-circuit or conditional operand is not supported",
-    );
-    names_source_position("neg_short_circuit");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_loop_condition",
+        "neg_randomize_in_wait",
         "a randomize call used as a value is supported only in",
     );
-    names_source_position("neg_loop_condition");
+    names_source_position("neg_randomize_in_wait");
 }
 
 /// A run-time failure: exact stdout, exit status 1 and `diagnostic` on
@@ -644,4 +638,15 @@ mod generated {
         // The same seed draws the same values whatever the optimizer did.
         assert_eq!(outputs[0], outputs[1]);
     }
+}
+
+#[test]
+fn randomize_values_run_when_their_operand_is_evaluated() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "randomize_value_forms",
+        include_str!("../fixtures/sim/feature_completion/sim_029/randomize_value_forms.out"),
+        &[],
+        &[],
+    );
 }
