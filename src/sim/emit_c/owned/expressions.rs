@@ -58,6 +58,22 @@ impl Frame<'_, '_> {
                 case,
                 negate,
             } => {
+                if self.ctx.model.array(*left).real {
+                    let total = self.ctx.model.array(*left).total;
+                    let (left, right) = (
+                        self.real_column_cell(*left, "0")?,
+                        self.real_column_cell(*right, "0")?,
+                    );
+                    return Ok(self.value(
+                        format!(
+                            "llg_real_column_compare({left}, {right}, {total}ULL, {}, {})",
+                            u8::from(*case),
+                            u8::from(*negate)
+                        ),
+                        1,
+                        false,
+                    ));
+                }
                 let left = self.fixed_array_address(*left)?;
                 let right = self.fixed_array_address(*right)?;
                 self.value(

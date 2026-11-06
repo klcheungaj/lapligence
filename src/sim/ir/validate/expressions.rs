@@ -270,8 +270,8 @@ impl Validator<'_> {
                 let right = self.model.arrays.get(*right).ok_or_else(|| {
                     IrValidationError::new(path, "invalid fixed compare right array")
                 })?;
-                if !left.sparse()
-                    || !right.sparse()
+                if left.real != right.real
+                    || (!left.real && (!left.sparse() || !right.sparse()))
                     || left.total != right.total
                     || left.elem_width != right.elem_width
                     || expr.width != 1
@@ -1839,6 +1839,7 @@ fn sequence_statement(statement: &IrStmt) -> bool {
                 | IrContainerStmt::GetValue { .. }
                 | IrContainerStmt::ValueItemToContainer { .. }
                 | IrContainerStmt::FixedToValueItem { .. }
+                | IrContainerStmt::RealColumnAssign { .. }
                 | IrContainerStmt::QueuePushBack { .. }
                 | IrContainerStmt::QueuePushBackString { .. }
                 | IrContainerStmt::Set { .. }

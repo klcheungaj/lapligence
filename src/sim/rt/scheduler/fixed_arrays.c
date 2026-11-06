@@ -527,6 +527,13 @@ void llg_bitstream_append_fixed_array(llg_bitstream_t* stream,
         llg_bitstream_append_value(stream, *llg_fixed_array_peek(array, index));
 }
 
+sv4_t llg_real_column_compare(const double* left, const double* right, uint64_t count, int case_eq, int negate) {
+    int equal = 1;
+    if (case_eq) equal = memcmp(left, right, (size_t)count * sizeof(double)) == 0;
+    else for (uint64_t index = 0; equal && index < count; ++index) equal = left[index] == right[index];
+    return sv4_from_u64((uint64_t)(equal ^ !!negate), 1, 0);
+}
+
 sv4_t llg_fixed_array_compare(const llg_fixed_array_t* left,
                              const llg_fixed_array_t* right, int case_eq, int negate) {
     if (left->total != right->total) fixed_bad_state("fixed comparison shape mismatch");

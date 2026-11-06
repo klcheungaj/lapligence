@@ -343,6 +343,7 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::ValueItemToContainer { .. }
         | IrContainerStmt::ContainerToValueItem { .. }
         | IrContainerStmt::FixedToValueItem { .. }
+        | IrContainerStmt::RealColumnAssign { .. }
         | IrContainerStmt::CopyRange { .. }
         | IrContainerStmt::Merge { .. }
         | IrContainerStmt::Nonblocking { .. }

@@ -156,7 +156,10 @@ above the dense threshold) store each member array and scalar leaf as such an
 array, a scalar leaf as one cell, and a tagged union's tag as one more cell.
 Every whole-value operation lowers to the existing per-column shapes
 (`FixedValueAssign`, `FixedValueCompare`, `IrCallArg::FixedValue` and trailing
-output formals); no IR variant changes meaning. Remaining limits are in
+output formals); no IR variant changes meaning. A member array of a record with
+no packed form is a column too, with one leaf per cell naming the same
+`IrArray`; `real` cells move through `IrContainerStmt::RealColumnAssign` and
+compare through `FixedArrayCompare`, whose arrays are sparse or both real. Remaining limits are in
 [known issues](../../../docs/known_issues.md#remaining-non-flattened-fixed-value-contexts).
 
 RTL-101b adds one expression variant, `IrExprKind::Sequence`

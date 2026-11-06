@@ -1125,8 +1125,40 @@ pub(super) fn render(
                 frame.note_ref_store(*value)?;
             }
             let item = frame.value_item_root(root, items)?;
-            let source = frame.fixed_array_address(*array)?;
-            format!("    llg_fixed_array_items_store({item}, {source});\n")
+            let total = frame.ctx.model.array(*array).total;
+            if frame.ctx.model.array(*array).real {
+                let source = frame.real_column_cell(*array, "_llg_n")?;
+                format!(
+                    "    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) ({item})->value.items[_llg_n].value.real = *{source};\n"
+                )
+            } else {
+                let source = frame.fixed_array_address(*array)?;
+                format!("    llg_fixed_array_items_store({item}, {source});\n")
+            }
+        }
+        IrContainerStmt::RealColumnAssign {
+            array,
+            source,
+            root,
+            items,
+            nba,
+        } => {
+            let target = frame.real_column_cell(*array, "_llg_n")?;
+            let value = match (source, root) {
+                (Some(source), _) => format!("*{}", frame.real_column_cell(*source, "_llg_n")?),
+                (None, Some(root)) => {
+                    let item = frame.value_item_root(root, items)?;
+                    format!("({item})->value.items[_llg_n].value.real")
+                }
+                (None, None) => return Err("real column has no source".to_owned()),
+            };
+            let total = frame.ctx.model.array(*array).total;
+            let store = if *nba {
+                format!("llg_nba_d_after({target}, {value}, 0)")
+            } else {
+                format!("llg_ba_d({target}, {value})")
+            };
+            format!("    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) {store};\n")
         }
         IrContainerStmt::NbaLocateEnd => "    llg_nba_locate_end();\n".to_owned(),
         IrContainerStmt::ContainerNonblocking { target, src, delay } => {
@@ -1235,4 +1267,23 @@ fn dst_start_whole(operation: &IrContainerStmt) -> bool {
             ..
         }
     )
+}
+
+impl Frame<'_, '_> {
+    /// Address of cell `index` of a real column.
+    pub(in crate::sim::emit_c::owned) fn real_column_cell(
+        &mut self,
+        array: usize,
+        index: &str,
+    ) -> Result<String, String> {
+        let info = self.ctx.model.array(array);
+        if info.activation {
+            Ok(format!(
+                "(&({})[{index}])",
+                self.fixed_array_address(array)?
+            ))
+        } else {
+            Ok(format!("({})", info.cell_address(index)))
+        }
+    }
 }

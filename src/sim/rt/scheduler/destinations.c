@@ -5,6 +5,9 @@ void llg_fixed_array_stream_source_to(sv4_t* dst, const llg_fixed_array_t* array
 void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3) {
     sv4_replace(dst, llg_fixed_array_compare(p0, p1, p2, p3));
 }
+void llg_real_column_compare_to(sv4_t* dst, const double* left, const double* right, uint64_t count, int case_eq, int negate) {
+    sv4_replace(dst, llg_real_column_compare(left, right, count, case_eq, negate));
+}
 void llg_dense_cells_image_to(sv4_t* dst, const sv4_t* cells, uint64_t count) {
     sv4_replace(dst, llg_dense_cells_image(cells, count));
 }

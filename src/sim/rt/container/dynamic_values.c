@@ -114,6 +114,26 @@ void llg_dyn_value_new(llg_dyn_value_array_t* dst, sv4_t requested_size,
 void llg_dyn_value_copy(llg_dyn_value_array_t* dst,
                         const llg_dyn_value_array_t* src) {
     if (dst == src) return;
+    /* An array of the same size with no element reference cannot observe its
+     * storage being kept: only the elements that differ change, so a repeated
+     * copy allocates nothing. */
+    if (dst->size == src->size && !dst->references &&
+        llg_value_desc_compatible(dst->element, src->element)) {
+        int changed = 0;
+        int kind = dst->element->kind;
+        int handles = kind == LLG_VALUE_CHANDLE || kind == LLG_VALUE_OPAQUE ||
+                      kind == LLG_VALUE_EVENT || kind == LLG_VALUE_PROCESS;
+        for (size_t i = 0; i < dst->size; ++i) {
+            if (handles ? dst->data[i].value.handle == src->data[i].value.handle
+                        : llg_value_equal(&dst->data[i], &src->data[i]))
+                continue;
+            llg_value_copy(&dst->data[i], dst->element, &src->data[i]);
+            changed = 1;
+        }
+        llg_notify(dst->notify, dst->contents_dependency, dst->shape_dependency,
+                   changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
+        return;
+    }
     size_t size = llg_checked_count((uint64_t)src->size, sizeof(llg_value_t));
     llg_dyn_value_new_count(dst, size, src);
 }

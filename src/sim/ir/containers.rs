@@ -946,12 +946,21 @@ pub enum IrContainerStmt {
         items: Vec<u32>,
         container: usize,
     },
-    /// Store every cell of descriptor `array` in the fixed-array item at
-    /// `items` of `root`, element for element; the source never grows code.
+    /// Store every cell of descriptor or real `array` in the fixed-array item
+    /// at `items` of `root`, element for element; the source never grows code.
     FixedToValueItem {
         array: usize,
         root: IrValueItemRoot,
         items: Vec<u32>,
+    },
+    /// Assign every cell of real `array`, in one statement for any size: from
+    /// another real column, or from the fixed-array item at `items` of `root`.
+    RealColumnAssign {
+        array: usize,
+        source: Option<usize>,
+        root: Option<IrValueItemRoot>,
+        items: Vec<u32>,
+        nba: bool,
     },
     /// Replace the queue or dynamic-array member slot at `items` of `root`
     /// with a deep copy of `container`: before a whole-element write stores
@@ -1903,11 +1912,38 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
+            Self::RealColumnAssign {
+                array,
+                source,
+                root,
+                items,
+                ..
+            } => {
+                let storage = model.arrays.get(*array).filter(|storage| storage.real);
+                let storage = storage.ok_or_else(|| {
+                    IrValidationError::new("container value", "real column has no real array")
+                })?;
+                match (source, root) {
+                    (Some(source), None)
+                        if model
+                            .arrays
+                            .get(*source)
+                            .is_some_and(|other| other.real && other.total == storage.total) =>
+                    {
+                        Ok(())
+                    }
+                    (None, Some(root)) => root.fixed_item(model, items, storage.total),
+                    _ => Err(IrValidationError::new(
+                        "container value",
+                        "real column needs one source of its size",
+                    )),
+                }
+            }
             Self::FixedToValueItem { array, root, items } => {
                 let storage = model.arrays.get(*array).ok_or_else(|| {
                     IrValidationError::new("container value", "array index is out of bounds")
                 })?;
-                if !storage.sparse() {
+                if !storage.sparse() && !storage.real {
                     return Err(IrValidationError::new(
                         "container value",
                         "native fixed-array store needs descriptor storage",
@@ -1942,10 +1978,13 @@ impl IrContainerStmt {
                     // An empty path names a whole native value of container
                     // type, such as a mailbox message (SIM-017), or a whole
                     // nested container element staged by a statement.
-                    Some(IrContainerElement::Container { element, .. })
-                        if !matches!(container.kind, IrContainerKind::Associative { .. })
-                            && element.compatible_with(&container.element)
-                            && container.element.compatible_with(element) =>
+                    // A fixed member array moves as one container of its items.
+                    Some(
+                        IrContainerElement::Container { element, .. }
+                        | IrContainerElement::FixedArray { element, .. },
+                    ) if !matches!(container.kind, IrContainerKind::Associative { .. })
+                        && element.compatible_with(&container.element)
+                        && container.element.compatible_with(element) =>
                     {
                         Ok(())
                     }
@@ -2905,6 +2944,11 @@ impl IrContainerStmt {
             Self::ValueItemToContainer { root, .. }
             | Self::ContainerToValueItem { root, .. }
             | Self::FixedToValueItem { root, .. } => root.expressions(visit),
+            Self::RealColumnAssign { root, .. } => {
+                if let Some(root) = root {
+                    root.expressions(visit);
+                }
+            }
             Self::NbaLocate { root, selects, .. } => {
                 root.expressions(visit);
                 for select in selects {
@@ -3038,6 +3082,11 @@ impl IrContainerStmt {
             Self::ValueItemToContainer { root, .. }
             | Self::ContainerToValueItem { root, .. }
             | Self::FixedToValueItem { root, .. } => root.expressions_mut(visit),
+            Self::RealColumnAssign { root, .. } => {
+                if let Some(root) = root {
+                    root.expressions_mut(visit);
+                }
+            }
             Self::NbaLocate { root, selects, .. } => {
                 root.expressions_mut(visit);
                 for select in selects {

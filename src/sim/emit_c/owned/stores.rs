@@ -146,6 +146,28 @@ impl<'a, 'm> Frame<'a, 'm> {
                 ));
             }
         }
+        if array.real {
+            if let Some(offset) = self.constant_cell_offset(array_index, indices) {
+                let offset = format!("{offset}ULL");
+                let address = if array.activation {
+                    format!("&({})[{offset}]", self.fixed_array_address(array_index)?)
+                } else {
+                    array.cell_address(&offset)
+                };
+                let pointer = self.scalar("double*", address);
+                return Ok((
+                    Binding {
+                        address: pointer,
+                        width: 0,
+                        signed: array.signed,
+                        two_state: array.two_state,
+                        shortreal: array.shortreal,
+                        automatic: false,
+                    },
+                    "1".to_owned(),
+                ));
+            }
+        }
         let mut conditions = Vec::new();
         let mut offsets = Vec::new();
         // Capture indices in source order. Invalid arithmetic uses offset zero;

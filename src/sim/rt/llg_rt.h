@@ -144,6 +144,9 @@ void llg_fixed_array_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int
 void llg_fixed_array_fill(llg_fixed_array_t*, sv4_t, int, int);
 void llg_fixed_array_stream_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int, uint32_t);
 sv4_t llg_fixed_array_compare(const llg_fixed_array_t*, const llg_fixed_array_t*, int, int);
+/* One-bit equality of two columns of `count` doubles, or its negation; case
+ * equality compares the bit patterns. */
+sv4_t llg_real_column_compare(const double* left, const double* right, uint64_t count, int case_eq, int negate);
 /* Pack a runtime `with` selection of a one-dimensional descriptor array in
  * stream order; indices outside the bounds stream `fallback` (borrowed). */
 sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t*, int64_t, int64_t, uint32_t, sv4_t, int, sv4_t, sv4_t);
@@ -3751,6 +3754,7 @@ int llg_rt_command_line(char*** argv);
  * arguments are borrowed by address; string arguments are consumed through
  * their address and left empty, like the returning forms' by-value strings. */
 void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3);
+void llg_real_column_compare_to(sv4_t* dst, const double* left, const double* right, uint64_t count, int case_eq, int negate);
 void llg_dense_cells_image_to(sv4_t* dst, const sv4_t* cells, uint64_t count);
 /* Writes to `dst` the image of a record's `count` columns, whole: the first
  * column is the most significant, each in `llg_fixed_array_cells_image` order.

@@ -474,6 +474,10 @@ impl Validator<'_> {
                     root: IrValueItemRoot::Value(value),
                     ..
                 }
+                | IrContainerStmt::RealColumnAssign {
+                    root: Some(IrValueItemRoot::Value(value)),
+                    ..
+                }
                 | IrContainerStmt::NbaLocate {
                     root: IrValueItemRoot::Value(value),
                     ..
