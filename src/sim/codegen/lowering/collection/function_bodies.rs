@@ -101,7 +101,7 @@ impl<'a> Codegen<'a> {
         function.inline_expanded = false;
         function.bound_native_refs = bound_native_refs;
         for binding in records.iter().filter(|binding| binding.cell) {
-            self.record_ref_cell_formal(&mut function, &formals, binding.formal)?;
+            self.record_ref_cell_formal(&mut function, inst, &formals, binding.formal)?;
         }
         let ir = self.model.funcs.len();
         self.model.funcs.push(function);
@@ -116,12 +116,14 @@ impl<'a> Codegen<'a> {
         Ok(ir)
     }
 
-    /// Turn the column-form formal `formal` of a specialization into a packed
-    /// `ref` of the record image: its own slot takes the reference and its
-    /// other columns and native value leave the signature.
+    /// Turn the column-form formal `formal` of a specialization into a `ref`
+    /// of the record image, or of a native element when the record has no
+    /// image: its own slot takes the reference and its other columns and
+    /// native value leave the signature.
     fn record_ref_cell_formal(
-        &self,
+        &mut self,
         function: &mut crate::sim::ir::IrFunc,
+        inst: NodeId,
         formals: &[(NodeId, bool)],
         formal: NodeId,
     ) -> Result<(), String> {
@@ -141,13 +143,20 @@ impl<'a> Codegen<'a> {
                     .is_some_and(|array| columns.contains(&array))
                     || (entry.native_value.is_some() && entry.native_value == native))
         });
+        let width = self.fixed_value_width(formal);
+        let value = if width.is_none() {
+            Some(self.record_ref_native_value(inst, formal)?)
+        } else {
+            None
+        };
         let slot = &mut function.formals[position];
         slot.fixed_array = None;
-        slot.fixed_shape = self.fixed_formal_shape(formal)?;
-        slot.fixed_default = self.fixed_default_literal(formal);
-        slot.width = self
-            .formal_value_width(formal)
-            .ok_or("record `ref` formal has no packed image")?;
+        slot.native_value = value;
+        slot.width = width.unwrap_or(0);
+        if width.is_some() {
+            slot.fixed_shape = self.fixed_formal_shape(formal)?;
+            slot.fixed_default = self.fixed_default_literal(formal);
+        }
         Ok(())
     }
 
@@ -201,7 +210,7 @@ impl<'a> Codegen<'a> {
         .then_some(ft);
         self.bind_native_function(inst, ft);
         if let Some(specialization) = specialization {
-            self.bind_record_refs(&specialization.records)?;
+            self.bind_record_refs(&specialization.records, inst)?;
         }
         self.bind_container_function(inst, ft);
         let body = self

@@ -425,7 +425,9 @@ impl Codegen<'_> {
         // column storage: each object holds one native value of any record.
         if layout.kind != AggregateKind::UnpackedStruct
             || Self::fixed_descriptor_width_bits(descriptor).is_some()
-            || (self.record_column_layout(descriptor) && !self.instance_property(node))
+            || (self.record_column_layout(descriptor)
+                && !self.instance_property(node)
+                && !self.record_ref_natives.contains(&node))
         {
             return None;
         }
@@ -479,7 +481,7 @@ impl Codegen<'_> {
 
     /// Storage for one native declaration of one instance. Automatic storage
     /// is a lexical activation; static storage persists for the model.
-    fn native_storage_for(
+    pub(in super::super) fn native_storage_for(
         &mut self,
         inst: NodeId,
         node: NodeId,
@@ -2262,14 +2264,17 @@ impl Codegen<'_> {
     /// of its type: a bound record, or storage reached through a reference.
     /// An element's container members live in nested slots, so the call
     /// builds the companions its formal addresses (`IrRefCompanion`).
-    fn native_ref_operand(
+    pub(in super::super) fn native_ref_operand(
         &mut self,
         path: &str,
         formal: NodeId,
         layout: &NativeLayout,
         actual: NodeId,
     ) -> Result<IrCallArg, String> {
-        if self.record_ref_binding(formal, actual).is_some() {
+        if self
+            .record_ref_binding(formal, actual)
+            .is_some_and(|binding| !binding.cell)
+        {
             return Ok(IrCallArg::NativeRefBound);
         }
         if let Some(RecordRefPin::Default(value)) =

@@ -220,6 +220,14 @@ fn records_of_the_column_form_cross_the_design_structure() {
     sim_cli::run_case_backend_parity(SUITE, "chosen_structure", expected, &[], &[]);
 }
 
+/// An element holding native members binds by address.
+#[test]
+fn ref_formals_bind_elements_with_native_members() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_element_ref.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_element_ref", expected, &[], &[]);
+}
+
 #[test]
 fn record_elements_of_a_column_project_and_move_as_values() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_elements.out");

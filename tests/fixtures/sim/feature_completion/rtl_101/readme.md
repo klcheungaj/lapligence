@@ -137,3 +137,6 @@ column. Expected values are derived by hand below; none were captured from
   element pattern, a fill of structured elements (`default` reaches each leaf,
   SV 10.9.2), a record nested in a record, `foreach` on an element member.
   `-D N=8` prints the same lines per cell.
+- `chosen_element_ref`: lrm_decisions S13-D4 with a 16-cell member array: the
+  formal is the column form's, the actuals are elements with native members, and
+  the lines are that fixture's.

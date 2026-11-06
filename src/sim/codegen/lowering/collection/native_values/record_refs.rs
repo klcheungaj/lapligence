@@ -405,17 +405,24 @@ impl Codegen<'_> {
             && !self.record_ref_pins.contains_key(&source)
     }
 
-    /// The packed reference to the image a [`RecordRefBinding::cell`] formal
-    /// takes; `actual` is evaluated once, at the call.
+    /// The reference to the image a [`RecordRefBinding::cell`] formal takes;
+    /// `actual` is evaluated once, at the call. A record with no packed image
+    /// is an element holding native members, reached by its address.
     pub(in crate::sim::codegen::lowering) fn record_ref_cell_argument(
         &mut self,
         path: &str,
         formal: NodeId,
         actual: NodeId,
     ) -> Result<IrCallArg, String> {
-        let width = self
-            .formal_value_width(formal)
-            .ok_or("record `ref` formal has no packed image")?;
+        let Some(width) = self.fixed_value_width(formal) else {
+            let layout = self.record_ref_native(formal)?;
+            if let Ok(Some((value, prefix))) = self.native_path_of(self.p30_unwrap_cast(actual)) {
+                if prefix.is_empty() {
+                    return Ok(IrCallArg::NativeValue(value));
+                }
+            }
+            return self.native_ref_operand(path, formal, &layout, actual);
+        };
         let descriptor = self
             .query_descriptor(formal)
             .ok_or("record `ref` formal has no type")?;
@@ -444,6 +451,44 @@ impl Codegen<'_> {
             const_ref,
             ref_static,
         )
+    }
+
+    /// The native layout of a column-form formal bound to an element holding
+    /// native members.
+    fn record_ref_native(&mut self, formal: NodeId) -> Result<NativeLayout, String> {
+        if let Some(layout) = self.record_ref_native_layouts.get(&formal) {
+            return Ok(layout.clone());
+        }
+        self.record_ref_natives.insert(formal);
+        let layout = self.native_layout(formal);
+        self.record_ref_natives.remove(&formal);
+        self.native_layouts.remove(&formal);
+        let layout = layout?.ok_or_else(|| {
+            format!(
+                "record `ref` formal `{}` has neither a packed image nor a native layout",
+                self.node(formal).name
+            )
+        })?;
+        self.record_ref_native_layouts
+            .insert(formal, layout.clone());
+        Ok(layout)
+    }
+
+    /// The activation value of a native-bound cell formal in one instance.
+    pub(in crate::sim::codegen::lowering) fn record_ref_native_value(
+        &mut self,
+        inst: NodeId,
+        formal: NodeId,
+    ) -> Result<usize, String> {
+        let layout = self.record_ref_native(formal)?;
+        self.native_layouts.insert(formal, layout);
+        self.record_ref_natives.insert(formal);
+        let value = self.native_storage_for(inst, formal, true);
+        self.record_ref_natives.remove(&formal);
+        self.native_layouts.remove(&formal);
+        let value = value?.ok_or("record `ref` formal has no native storage")?;
+        self.native_value_layouts.insert(value, formal);
+        Ok(value)
     }
 
     /// Record bindings of every native record `ref` formal of one call.
@@ -675,12 +720,20 @@ impl Codegen<'_> {
     pub(in crate::sim::codegen::lowering) fn bind_record_refs(
         &mut self,
         records: &[RecordRefBinding],
+        inst: NodeId,
     ) -> Result<(), String> {
         for binding in records {
             if binding.cell {
-                // The body sees an ordinary packed `ref` of the record image.
+                // The body sees an ordinary `ref` of the record image, or of
+                // a native element.
                 if let Some(value) = self.activation_records.remove(&binding.formal) {
                     self.record_ref_cells.insert(binding.formal, value);
+                }
+                if self.fixed_value_width(binding.formal).is_none() {
+                    let value = self.record_ref_native_value(inst, binding.formal)?;
+                    let layout = self.record_ref_native(binding.formal)?;
+                    self.native_layouts.insert(binding.formal, layout);
+                    self.native_roots.insert(binding.formal, value);
                 }
                 continue;
             }
@@ -702,6 +755,7 @@ impl Codegen<'_> {
                 if let Some(value) = self.record_ref_cells.remove(&binding.formal) {
                     self.activation_records.insert(binding.formal, value);
                 }
+                self.native_layouts.remove(&binding.formal);
                 continue;
             }
             self.unpacked_aggregates.remove(&binding.formal);

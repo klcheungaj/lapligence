@@ -1790,8 +1790,14 @@ struct Codegen<'a> {
     /// bound to declaration-owned record storage (SIM-008).
     record_ref_aliases: HashMap<NodeId, RecordRefBinding>,
     /// Column values of the formals the specialization being lowered takes
-    /// as packed references ([`RecordRefBinding::cell`]).
+    /// as references to one image ([`RecordRefBinding::cell`]).
     record_ref_cells: HashMap<NodeId, collection::RecordValue>,
+    /// Column-form `ref` formals that some call binds to an element holding
+    /// native members, each with the layout of that element.
+    record_ref_native_layouts: HashMap<NodeId, NativeLayout>,
+    /// Formals whose native layout is being built or lowered despite their
+    /// column-form type (`record_ref_native_layouts`).
+    record_ref_natives: HashSet<NodeId>,
     /// Actuals whose run-time selection the call being lowered fixes to one
     /// element, and the branches the selections so far multiply to.
     record_ref_pins: HashMap<NodeId, collection::RecordRefPin>,
@@ -2399,6 +2405,8 @@ impl<'a> Codegen<'a> {
             native_roots: HashMap::new(),
             record_ref_aliases: HashMap::new(),
             record_ref_cells: HashMap::new(),
+            record_ref_native_layouts: HashMap::new(),
+            record_ref_natives: HashSet::new(),
             record_ref_pins: HashMap::new(),
             record_ref_pin_span: 1,
             native_leaf_symbols: HashMap::new(),
