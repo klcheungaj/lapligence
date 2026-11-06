@@ -218,6 +218,10 @@ pub(super) struct Frame<'a, 'm> {
     /// Statements publishing stores made in place during the current
     /// statement (see `publish_touches`).
     pending_touches: Vec<String>,
+    /// Null checks of the handles behind property containers named since
+    /// the last line (see `require_container_receivers`). Naming a container
+    /// emits nothing, so its check runs just before the line that uses it.
+    container_receivers: std::cell::RefCell<Vec<String>>,
     /// The next access resolved is a read (see `read_lookup`).
     access_read: bool,
     construction_stack: Vec<usize>,
@@ -498,6 +502,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             static_initialization: false,
             statement_depth: 0,
             pending_touches: Vec::new(),
+            container_receivers: Default::default(),
             access_read: false,
             construction_stack: Vec::new(),
             layout: FrameLayout::with_backend(storage, ctx.value_backend),
@@ -530,7 +535,19 @@ impl<'a, 'm> Frame<'a, 'm> {
             vpi_auto_depth: None,
         }
     }
+    /// Stop before a line that uses a property container of a null handle:
+    /// such a container has no storage to continue on (SV 8.4).
+    fn require_container_receivers(&mut self) {
+        for handle in std::mem::take(self.container_receivers.get_mut()) {
+            let required = self.scalar("void*", handle);
+            self.exit_on_failed_access(&format!("!{required}"));
+        }
+    }
+
     fn line(&mut self, text: impl AsRef<str>) {
+        if !self.container_receivers.get_mut().is_empty() {
+            self.require_container_receivers();
+        }
         let text = text.as_ref();
         if self.resume_probe {
             self.mark_continuation_fields(text);

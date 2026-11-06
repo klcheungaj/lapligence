@@ -266,3 +266,22 @@ fn static_record_properties_are_shared_records() {
     sim_cli::run_case_backend_parity(SUITE, "static_record_property", expected, &[], &[]);
     sim_cli::run_case_after_db_drop(SUITE, "static_record_property", expected);
 }
+
+#[test]
+fn null_property_containers_stop_cleanly() {
+    for (case, site) in [
+        ("null_container_read", "property access at tb:9:9"),
+        ("null_container_write", "property access at tb:9:5"),
+        ("null_container_select", "property access at tb:9:5"),
+        ("null_container_chain", "property access at tb:9:14"),
+    ] {
+        sim_cli::run_case_checked_matrix(SUITE, case, &[], &null_handle_check("before\n", site));
+    }
+}
+
+#[test]
+fn guarded_null_property_containers_make_no_access() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_011/null_container_guarded.out");
+    sim_cli::run_case_backend_parity(SUITE, "null_container_guarded", expected, &[], &[]);
+}

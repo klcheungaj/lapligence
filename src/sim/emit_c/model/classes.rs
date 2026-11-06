@@ -152,6 +152,13 @@ static llg_class_field_t* llg_class_field(void* handle, uint32_t expected, size_
     }
     return &object->fields[index];
 }
+/* A property container of a failed access: statements stop before they use
+ * one, and paths with no exit (read-only callbacks) read it as empty. */
+static uint64_t llg_class_container_invalid[128];
+static void* llg_class_container(void* handle, uint32_t expected, size_t index) {
+    void* storage = llg_class_field(handle, expected, index, 3u)->value.handle;
+    return storage ? storage : (void*)llg_class_container_invalid;
+}
 /* Wait dependencies and their receivers resolve without reporting: arming
  * a wait on a null handle is not an access. */
 static llg_class_field_t* llg_class_field_lookup(void* handle, uint32_t expected, size_t index) {

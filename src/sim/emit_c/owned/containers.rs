@@ -24,10 +24,17 @@ impl Frame<'_, '_> {
             if let Some(receiver) = &container.receiver {
                 // The property selected through an explicit handle (SIM-011),
                 // re-read at each use.
+                let required = matches!(receiver, IrChandleExpr::Required { .. });
                 let receiver = self.plain_handle_code(receiver, 0)?;
+                if required && !self.quiet_receivers {
+                    let mut checks = self.container_receivers.borrow_mut();
+                    if !checks.contains(&receiver) {
+                        checks.push(receiver.clone());
+                    }
+                }
                 let (ty, _, _) = super::super::containers::activation_storage(container, "")?;
                 return Ok(format!(
-                    "(*({ty}*)llg_class_field({receiver}, {class}, {field}, 3)->value.handle)"
+                    "(*({ty}*)llg_class_container({receiver}, {class}, {field}))"
                 ));
             }
             // Per-object storage of an instance property, reached through
