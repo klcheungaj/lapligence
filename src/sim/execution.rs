@@ -2849,6 +2849,7 @@ fn collect_fixed_value_effects(
         }
         IrFixedValue::Array(_)
         | IrFixedValue::Dense(_)
+        | IrFixedValue::ValueItems { .. }
         | IrFixedValue::Packed { .. }
         | IrFixedValue::Selected { .. } => {}
         IrFixedValue::Convert { value, .. } => {

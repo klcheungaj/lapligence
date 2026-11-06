@@ -155,6 +155,10 @@ int llg_fixed_array_stream_value(llg_fixed_array_t*, const llg_fixed_array_t* co
 /* Copy `total` dense cells from `origin` into a zeroed scratch array; an
  * invalid view (`origin` UINT64_MAX) reads the borrowed `fallback`. */
 void llg_fixed_array_dense_source(llg_fixed_array_t*, const sv4_t*, uint64_t, uint64_t, sv4_t);
+/* Transport between a descriptor array and a native fixed-array item, whose
+ * elements are packed values or records of them. */
+void llg_fixed_array_items_source(llg_fixed_array_t*, const llg_value_t*, sv4_t);
+void llg_fixed_array_items_store(llg_value_t*, const llg_fixed_array_t*);
 /* A descriptor stream operand holding the `cell_width`-bit cells of a
  * runtime-sized bit stream, left cell first; returns 0 for an empty stream. */
 int llg_fixed_array_bitstream_source(llg_fixed_array_t*, const llg_bitstream_t*, uint32_t);

@@ -306,6 +306,27 @@ impl Frame<'_, '_> {
         self.value_item(&format!("({})", self.native_value_read(index)?), path)
     }
 
+    /// `llg_value_t*` of the item `path` selects below `root`.
+    pub(super) fn value_item_root(
+        &mut self,
+        root: &IrValueItemRoot,
+        path: &[u32],
+    ) -> Result<String, String> {
+        match root {
+            // The whole value is the container (a mailbox message).
+            IrValueItemRoot::Value(value) if path.is_empty() => self.native_value_read(*value),
+            IrValueItemRoot::Value(value) => self.native_value_item(*value, path),
+            // An empty path names a whole nested container element.
+            IrValueItemRoot::Element(element) if path.is_empty() => {
+                Ok(format!("((llg_value_t*){})", self.chandle(element)?))
+            }
+            IrValueItemRoot::Element(element) => {
+                let element = self.chandle(element)?;
+                self.value_item(&format!("((llg_value_t*){element})"), path)
+            }
+        }
+    }
+
     /// `llg_value_t*` of the item selected by a nonempty `path` below the
     /// `llg_value_t*` expression `root`.
     pub(super) fn value_item(&self, root: &str, path: &[u32]) -> Result<String, String> {

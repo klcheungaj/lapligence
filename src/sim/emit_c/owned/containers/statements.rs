@@ -1112,27 +1112,21 @@ pub(super) fn render(
             {
                 frame.note_ref_store(*value)?;
             }
-            let item = match root {
-                // The whole value is the container (a mailbox message).
-                IrValueItemRoot::Value(value) if items.is_empty() => {
-                    frame.native_value_read(*value)?
-                }
-                IrValueItemRoot::Value(value) => frame.native_value_item(*value, items)?,
-                // An empty path names a whole nested container element.
-                IrValueItemRoot::Element(element) if items.is_empty() => {
-                    format!("((llg_value_t*){})", frame.chandle(element)?)
-                }
-                IrValueItemRoot::Element(element) => {
-                    let element = frame.chandle(element)?;
-                    frame.value_item(&format!("((llg_value_t*){element})"), items)?
-                }
-            };
+            let item = frame.value_item_root(root, items)?;
             let target = name(frame, *container)?;
             if matches!(operation, IrContainerStmt::ValueItemToContainer { .. }) {
                 format!("    llg_value_item_to_{kind}(&{target}, {item});\n")
             } else {
                 format!("    llg_value_item_from_{kind}({item}, &{target});\n")
             }
+        }
+        IrContainerStmt::FixedToValueItem { array, root, items } => {
+            if let IrValueItemRoot::Value(value) = root {
+                frame.note_ref_store(*value)?;
+            }
+            let item = frame.value_item_root(root, items)?;
+            let source = frame.fixed_array_address(*array)?;
+            format!("    llg_fixed_array_items_store({item}, {source});\n")
         }
         IrContainerStmt::NbaLocateEnd => "    llg_nba_locate_end();\n".to_owned(),
         IrContainerStmt::ContainerNonblocking { target, src, delay } => {

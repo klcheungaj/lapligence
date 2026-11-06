@@ -1374,7 +1374,10 @@ impl Codegen<'_> {
     }
 
     /// The function a record-returning call node invokes, if `node` is one.
-    fn record_call_function(&self, node: NodeId) -> Result<Option<NodeId>, String> {
+    pub(in crate::sim::codegen::lowering) fn record_call_function(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<NodeId>, String> {
         let NodeKind::FuncCall { name, callee, .. } = self.kind(node) else {
             return Ok(None);
         };
@@ -1385,7 +1388,7 @@ impl Codegen<'_> {
 
     /// The result of record call `node` in a fresh lexical temporary,
     /// declared and filled by the statements pushed to `out`.
-    fn record_call_result_value(
+    pub(in crate::sim::codegen::lowering) fn record_call_result_value(
         &mut self,
         path: &str,
         function: NodeId,

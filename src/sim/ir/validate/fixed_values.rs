@@ -432,6 +432,16 @@ impl Validator<'_> {
                 }
                 Ok(width)
             }
+            IrFixedValue::ValueItems { root, items, array } => {
+                if let IrValueItemRoot::Value(value) = root {
+                    self.validate_native_value_use(*value, path)?;
+                }
+                let info = &self.model.arrays[*array];
+                root.fixed_item(self.model, items, info.total)?;
+                u64::from(info.elem_width)
+                    .checked_mul(info.total)
+                    .ok_or_else(|| IrValidationError::new(path, "fixed operand width overflow"))
+            }
             IrFixedValue::Dense(view) => {
                 self.validate_memory_view(view, formals, path)?;
                 let array = &self.model.arrays[view.array];

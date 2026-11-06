@@ -94,6 +94,9 @@ column. Expected values are derived by hand below; none were captured from
   L22669-22670: "The $sampled function returns the value of the expression
   sampled in the Preponed region of the simulation time step in which the
   function is called."
+- `chosen_native`: a chosen record with a string member through a queue, a class
+  property, a mailbox and function results, with one runtime copy per column.
+  `N=8` gives the same lines through per-cell leaves.
 - `chosen_whole_values`: whole copies and comparisons of chosen records, which
   read whole operands in place and write only differing cells. A copy that
   changes nothing wakes nothing (`q = p` at time 2). `q.a[7]`, a cell only `q`

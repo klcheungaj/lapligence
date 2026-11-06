@@ -202,6 +202,17 @@ fn sampled_values_of_cells_match_the_leaf_form() {
 }
 
 #[test]
+fn native_values_carry_records_of_the_column_form() {
+    let source = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_native.sv");
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_native.out");
+    sim_cli::run_case(SUITE, "chosen_native", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_native", expected, &["-D", "N=8"], &[]);
+    let model = generated_model(source, &[]);
+    assert!(model.contains("llg_fixed_array_items_store("), "{model}");
+    assert!(model.contains("llg_fixed_array_items_source("), "{model}");
+}
+
+#[test]
 fn only_an_unread_contents_marker_is_cleared() {
     let model = generated_model(
         include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_observers.sv"),

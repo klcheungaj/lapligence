@@ -50,6 +50,13 @@ pub enum IrFixedValue {
         cell_width: u32,
         consume: Option<u64>,
     },
+    /// A fixed-array item of a native value, whose cells become `array`'s
+    /// shape: one runtime copy whatever the extent.
+    ValueItems {
+        root: IrValueItemRoot,
+        items: Vec<u32>,
+        array: usize,
+    },
     /// A view of dense (below-threshold, non-net) integral array storage,
     /// presented to descriptor transport cell for cell; the source code stays
     /// one copy loop whatever the extent.
@@ -89,6 +96,7 @@ impl IrFixedValue {
             Self::Packed { .. }
             | Self::Selected { .. }
             | Self::Dense(_)
+            | Self::ValueItems { .. }
             | Self::BitStream { .. } => {}
         }
     }
@@ -100,6 +108,7 @@ impl IrFixedValue {
                     visit(&selector.value);
                 }
             }
+            Self::ValueItems { root, .. } => root.expressions(visit),
             Self::Call { call, .. } => {
                 for argument in &call.args {
                     argument.expressions(visit);
@@ -148,6 +157,7 @@ impl IrFixedValue {
                     visit(&mut selector.value);
                 }
             }
+            Self::ValueItems { root, .. } => root.expressions_mut(visit),
             Self::Call { call, .. } => {
                 for argument in &mut call.args {
                     argument.expressions_mut(visit);

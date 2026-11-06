@@ -1872,10 +1872,7 @@ The per-cell form stays for:
   never reach it on their own (64 of 64 lowerings of chosen types succeed);
   forcing every eligible record gives 209 of 426. Each cause is a limit of
   column records above the threshold as well:
-  - transport: a `ref` formal of a record with a string member, DPI arguments,
-    class properties and queues of a record with a string member, a string
-    member of a function result, records moved through a native value
-    (`native record transfer has incompatible leaf layouts`);
+  - transport: a `ref` formal of a record with a string member, DPI arguments;
   - hierarchy: a member reached by a hierarchical path, an aggregate port on a
     non-aggregate actual, a member connected to a net;
   - a member initializer with different cell values;

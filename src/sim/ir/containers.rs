@@ -946,6 +946,13 @@ pub enum IrContainerStmt {
         items: Vec<u32>,
         container: usize,
     },
+    /// Store every cell of descriptor `array` in the fixed-array item at
+    /// `items` of `root`, element for element; the source never grows code.
+    FixedToValueItem {
+        array: usize,
+        root: IrValueItemRoot,
+        items: Vec<u32>,
+    },
     /// Replace the queue or dynamic-array member slot at `items` of `root`
     /// with a deep copy of `container`: before a whole-element write stores
     /// a native value, or after a member operation on an element changed
@@ -979,6 +986,40 @@ pub enum IrValueItemRoot {
 }
 
 impl IrValueItemRoot {
+    /// Check that `items` names a fixed array of `total` items.
+    pub(in crate::sim) fn fixed_item(
+        &self,
+        model: &super::IrModel,
+        items: &[u32],
+        total: u64,
+    ) -> Result<(), IrValidationError> {
+        let mut item = Some(self.element(model)?);
+        for step in items {
+            item = match item {
+                Some(IrContainerElement::Aggregate { members, .. }) => members
+                    .get(*step as usize)
+                    .map(|member| member.element.as_ref()),
+                Some(IrContainerElement::FixedArray { element, .. }) => Some(element.as_ref()),
+                _ => None,
+            };
+        }
+        match item {
+            Some(IrContainerElement::FixedArray { dimensions, .. })
+                if dimensions
+                    .iter()
+                    .map(|(left, right)| i64::from(*left).abs_diff(i64::from(*right)) + 1)
+                    .product::<u64>()
+                    == total =>
+            {
+                Ok(())
+            }
+            _ => Err(IrValidationError::new(
+                "container value",
+                "native item path does not name a fixed array of this size",
+            )),
+        }
+    }
+
     /// The record type of the root value.
     fn element<'a>(
         &self,
@@ -1861,6 +1902,18 @@ impl IrContainerStmt {
                     ));
                 }
                 Ok(())
+            }
+            Self::FixedToValueItem { array, root, items } => {
+                let storage = model.arrays.get(*array).ok_or_else(|| {
+                    IrValidationError::new("container value", "array index is out of bounds")
+                })?;
+                if !storage.sparse() {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "native fixed-array store needs descriptor storage",
+                    ));
+                }
+                root.fixed_item(model, items, storage.total)
             }
             Self::ValueItemToContainer {
                 root,
@@ -2849,9 +2902,9 @@ impl IrContainerStmt {
             | Self::Declare(_)
             | Self::SharedDeclare(_) => {}
             Self::NbaLocateEnd => {}
-            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
-                root.expressions(visit)
-            }
+            Self::ValueItemToContainer { root, .. }
+            | Self::ContainerToValueItem { root, .. }
+            | Self::FixedToValueItem { root, .. } => root.expressions(visit),
             Self::NbaLocate { root, selects, .. } => {
                 root.expressions(visit);
                 for select in selects {
@@ -2982,9 +3035,9 @@ impl IrContainerStmt {
             | Self::Declare(_)
             | Self::SharedDeclare(_) => {}
             Self::NbaLocateEnd => {}
-            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
-                root.expressions_mut(visit)
-            }
+            Self::ValueItemToContainer { root, .. }
+            | Self::ContainerToValueItem { root, .. }
+            | Self::FixedToValueItem { root, .. } => root.expressions_mut(visit),
             Self::NbaLocate { root, selects, .. } => {
                 root.expressions_mut(visit);
                 for select in selects {

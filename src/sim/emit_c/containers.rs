@@ -342,6 +342,7 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::GetValue { .. }
         | IrContainerStmt::ValueItemToContainer { .. }
         | IrContainerStmt::ContainerToValueItem { .. }
+        | IrContainerStmt::FixedToValueItem { .. }
         | IrContainerStmt::CopyRange { .. }
         | IrContainerStmt::Merge { .. }
         | IrContainerStmt::Nonblocking { .. }

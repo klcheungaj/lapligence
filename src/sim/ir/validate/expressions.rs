@@ -1826,6 +1826,7 @@ fn sequence_statement(statement: &IrStmt) -> bool {
             IrContainerStmt::Declare(_)
                 | IrContainerStmt::GetValue { .. }
                 | IrContainerStmt::ValueItemToContainer { .. }
+                | IrContainerStmt::FixedToValueItem { .. }
                 | IrContainerStmt::QueuePushBack { .. }
                 | IrContainerStmt::QueuePushBackString { .. }
                 | IrContainerStmt::Set { .. }

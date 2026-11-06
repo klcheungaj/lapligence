@@ -923,6 +923,62 @@ void llg_fixed_array_dense_source(llg_fixed_array_t* result, const sv4_t* cells,
         if (!sv4_same(cells[origin + i], result->initial)) sv4_copy(llg_fixed_array_cell(result, i), &cells[origin + i]);
 }
 
+/* The packed image of a native item: record members run from the most
+ * significant bits, as in a fixed array cell. */
+static sv4_t fixed_item_image(const llg_value_t* item) {
+    const llg_value_desc_t* desc = item->desc;
+    if (desc->kind == LLG_VALUE_PACKED) return sv4_clone(&item->value.packed);
+    if (desc->kind != LLG_VALUE_AGGREGATE && desc->kind != LLG_VALUE_FIXED_ARRAY)
+        fixed_bad_state("native item has no packed image");
+    sv4_t image = fixed_item_image(&item->value.items[0]);
+    for (size_t i = 1; i < desc->item_count; ++i) {
+        sv4_t part = fixed_item_image(&item->value.items[i]);
+        sv4_replace(&image, sv4_concat(image, part));
+        sv4_destroy(&part);
+    }
+    return image;
+}
+
+/* Store the bits of `image` below `*low`, most significant member first. */
+static void fixed_item_store(llg_value_t* item, sv4_t image, uint32_t* low) {
+    const llg_value_desc_t* desc = item->desc;
+    if (desc->kind == LLG_VALUE_PACKED) {
+        uint32_t width = llg_sv4_width(item->value.packed);
+        *low -= width;
+        sv4_t part = sv4_part_select(image, (int64_t)*low + width - 1, *low);
+        llg_sv4_set_signed(&part, llg_sv4_signed(item->value.packed));
+        sv4_move(&item->value.packed, &part);
+        return;
+    }
+    if (desc->kind != LLG_VALUE_AGGREGATE && desc->kind != LLG_VALUE_FIXED_ARRAY)
+        fixed_bad_state("native item has no packed image");
+    for (size_t i = 0; i < desc->item_count; ++i)
+        fixed_item_store(&item->value.items[i], image, low);
+}
+
+void llg_fixed_array_items_source(llg_fixed_array_t* result, const llg_value_t* item,
+                                  sv4_t fallback) {
+    if (!result || result->total || !item || item->desc->kind != LLG_VALUE_FIXED_ARRAY)
+        fixed_bad_state("invalid fixed stream operand");
+    llg_fixed_array_init(result, item->desc->item_count, sv4_clone(&fallback), NULL);
+    for (uint64_t i = 0; i < result->total; ++i) {
+        sv4_t cell = fixed_item_image(&item->value.items[i]);
+        if (!sv4_same(cell, result->initial)) sv4_move(llg_fixed_array_cell(result, i), &cell);
+        sv4_destroy(&cell);
+    }
+}
+
+void llg_fixed_array_items_store(llg_value_t* item, const llg_fixed_array_t* array) {
+    if (!item || !array || item->desc->kind != LLG_VALUE_FIXED_ARRAY ||
+        item->desc->item_count != array->total)
+        fixed_bad_state("invalid native fixed array item");
+    for (uint64_t i = 0; i < array->total; ++i) {
+        const sv4_t* cell = llg_fixed_array_peek(array, i);
+        uint32_t low = llg_sv4_width(*cell);
+        fixed_item_store(&item->value.items[i], *cell, &low);
+    }
+}
+
 int llg_fixed_array_with_source(llg_fixed_array_t* result, const llg_fixed_array_t* array,
                                 int64_t declaration_left, int64_t declaration_right,
                                 sv4_t fallback, int selector_kind, sv4_t first, sv4_t second) {
