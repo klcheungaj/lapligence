@@ -188,6 +188,10 @@ enum { LLG_CR_ARRAY_FIXED = 0, LLG_CR_ARRAY_DYNAMIC = 1, LLG_CR_ARRAY_QUEUE = 2,
 
 /* Bit marking a handle-array slot in LLG_CR_ASIZE / LLG_CR_FOREACH. */
 #define LLG_CR_SLOT_ARRAY 0x80000000u
+/* Bit marking the array operand of a loop as a declared range: the rest
+ * indexes args holding {left, right}. It walks one dimension of a
+ * multidimensional fixed array, whose elements are one flat array. */
+#define LLG_CR_RANGE_LOOP 0x40000000u
 
 /* A random (or state) unpacked array of packed elements of one unit. */
 typedef struct {

@@ -717,11 +717,12 @@ properties of packed words.
 These legal forms reject with a located diagnostic: selecting one cell, or a
 part of it, of an element that is a fixed unpacked array of a dynamic array,
 queue or associative array (`da[k][j]`, `aa[k][j] = v`, `x = q[k][j]`), and a
-row, element or slice select of a multidimensional class property in an
-expression (`o.g[i][j]`, `o.g[i]`). A whole element cannot be read into or
+row or slice select of a multidimensional class property in an
+expression (`o.g[i]`). A whole element cannot be read into or
 assigned from an unpacked-array variable or pattern either (`row = da[k]`,
 `da[k] = row`, `aa[k] = '{...}`). The containers work as a whole (copies,
-`%p`, memory file tasks), and so do whole multidimensional class properties.
+`%p`, memory file tasks), and so do whole multidimensional class properties
+and their single elements (`o.g[i][j]`).
 
 ### Cause
 
@@ -2489,14 +2490,15 @@ cost matters; a `dlltool` import library if MinGW DLLs are needed.
 ## Constrained randomization limits (SIM-029, SIM-030)
 
 **Status:** open. SIM-029 and SIM-030 solve packed integral and enum
-variables, `randc`, `dist`, `solve...before`, one-dimensional random arrays
-of packed elements, array methods and `foreach`, and random object members;
+variables, `randc`, `dist`, `solve...before`, fixed, dynamic and bounded
+random arrays of packed elements (fixed ones of any dimension count), array
+methods and `foreach`, and random object members;
 these forms remain outside them.
 
 ### Symptom
 
-- Rejected with a located `randomization:` error: multidimensional and
-  associative arrays, random bounded queues, static
+- Rejected with a located `randomization:` error: nested dynamic arrays and
+  queues, associative arrays, static
   random arrays and static random properties of objects reached through a
   `rand` handle, `randc` arrays and `randc` variables wider than 16 bits,
   elements of an enum or tagged-union type in a random array, a random array

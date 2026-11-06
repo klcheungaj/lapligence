@@ -244,7 +244,18 @@ fn unsupported_property_layouts_reject_explicitly() {
     sim_cli::reject_case(
         SUITE,
         "neg_multidim_property",
-        "selecting a row, element or slice of a multidimensional class property in `tb` is not supported; it is accessed whole or through memory file tasks (SIM-011)",
+        "selecting a row or slice of a multidimensional class property in `tb` is not supported; it is accessed whole, by element or through memory file tasks (SIM-011)",
+    );
+}
+
+#[test]
+fn multidimensional_property_elements_select_through_handles() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "multidim_property_elements",
+        include_str!("../fixtures/sim/feature_completion/sim_011/multidim_property_elements.out"),
+        &[],
+        &[],
     );
 }
 

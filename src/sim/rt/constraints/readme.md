@@ -44,7 +44,12 @@ in every derived unit; variables listed by no unit are global (static
 properties). Template nodes `REF`, `HVAR`, `AELEM`, `ASIZE`, `ITER`,
 `FOREACH`, `REDUCE` and `ISNULL` name another object's variables, array
 elements and sizes, loop indices and loops; `VAR` and `STATE` name the
-expanding instance's own.
+expanding instance's own. A multidimensional fixed array is one flat
+row-major array: selects compute the flat position (an index outside its own
+dimension makes it invalid), and `foreach` and reductions walk a dimension
+through a loop whose array operand is a declared range
+(`LLG_CR_RANGE_LOOP`). A random bounded queue carries its maximum element
+count in `right`, which bounds the domain of its size variable.
 
 Generated code registers the objects of one call as instances: instance 0 is
 the randomized object, and `llg_cr_link` registers each object a handle

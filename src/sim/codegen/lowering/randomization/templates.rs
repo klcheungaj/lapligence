@@ -98,6 +98,17 @@ struct SlotArray {
     size: Option<u32>,
 }
 
+/// A select of a template multidimensional fixed array.
+struct ViewSelect {
+    /// The expression naming the whole array.
+    root: NodeId,
+    array: u32,
+    reference: u32,
+    dimensions: Vec<(i32, i32)>,
+    /// Translated leading indices.
+    prefix: Vec<u32>,
+}
+
 /// Units, arrays and slots of one problem with units.
 pub(super) struct UnitState {
     /// Prefix of the generated locals.
@@ -573,14 +584,9 @@ impl Codegen<'_> {
                 &format!("array `{name}` is not supported in constraints: {why}"),
             )
         };
-        let meta = self
-            .db
+        self.db
             .array_meta(decl)
             .ok_or_else(|| unsupported(self, "it is not an unpacked array"))?;
-        if matches!(meta.kind(), crate::core::db::ArrayKind::Static) && meta.dimensions().len() != 1
-        {
-            return Err(unsupported(self, "it has more than one unpacked dimension"));
-        }
         let class_owner = self
             .node(decl)
             .parent
@@ -609,9 +615,12 @@ impl Codegen<'_> {
                 "only class properties and dynamic arrays and queues of the calling scope are supported",
             )
         })?;
-        if self.fixed_view_dims.contains_key(&container) {
-            return Err(unsupported(self, "it has more than one unpacked dimension"));
-        }
+        let flat_cells = self.fixed_view_dims.get(&container).map(|dimensions| {
+            dimensions
+                .iter()
+                .map(|(left, right)| (i64::from(*left) - i64::from(*right)).abs() + 1)
+                .product::<i64>()
+        });
         let storage = &self.model.containers[container];
         let IrContainerElement::Packed {
             width,
@@ -631,15 +640,29 @@ impl Codegen<'_> {
         let (width, signed, two_state) = (*width, *signed, *two_state);
         let (kind, left, right) = match &storage.kind {
             IrContainerKind::Queue { maximum_elements } => {
-                if maximum_elements.is_some() && random {
-                    return Err(unsupported(self, "a random bounded queue is not supported"));
-                }
-                (IrRandArrayKind::Queue, 0, 0)
+                // The size variable of a random bounded queue stays within
+                // its bound: `right` holds the maximum element count.
+                let bound = match (maximum_elements, random) {
+                    (Some(maximum), true) => i32::try_from(*maximum)
+                        .map_err(|_| unsupported(self, "its bound is too large"))?,
+                    _ => 0,
+                };
+                (IrRandArrayKind::Queue, 0, bound)
             }
-            IrContainerKind::Dynamic => match self.fixed_view_ranges.get(&container) {
-                Some((left, right)) => (IrRandArrayKind::Fixed, *left, *right),
-                None => (IrRandArrayKind::Dynamic, 0, 0),
-            },
+            IrContainerKind::Dynamic => {
+                match (flat_cells, self.fixed_view_ranges.get(&container)) {
+                    // The elements of a multidimensional array are one flat,
+                    // row-major array; selects compute the flat position.
+                    (Some(cells), _) => (
+                        IrRandArrayKind::Fixed,
+                        0,
+                        i32::try_from(cells - 1)
+                            .map_err(|_| unsupported(self, "it has too many elements"))?,
+                    ),
+                    (None, Some((left, right))) => (IrRandArrayKind::Fixed, *left, *right),
+                    (None, None) => (IrRandArrayKind::Dynamic, 0, 0),
+                }
+            }
             IrContainerKind::Associative { .. } => {
                 return Err(unsupported(self, "associative arrays are not supported"))
             }
@@ -1345,6 +1368,93 @@ impl Codegen<'_> {
         }
     }
 
+    /// The array expression below a chain of selects (`h.m` of `h.m[i][j]`).
+    fn select_root(&self, select: NodeId) -> Option<NodeId> {
+        let mut node = select;
+        while matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::ArraySelect { .. })
+        ) {
+            node = self.select_base(node)?;
+        }
+        Some(node)
+    }
+
+    /// `expr` as a select of a template multidimensional fixed array: the
+    /// array itself or some leading indices of it.
+    fn view_select(
+        &mut self,
+        path: &str,
+        builder: &mut ProblemBuilder,
+        expr: NodeId,
+        create: bool,
+    ) -> Result<Option<ViewSelect>, String> {
+        let (root, indices) = match self.kind(expr) {
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => {
+                let indices = indices.clone();
+                let Some(root) = self.select_root(expr) else {
+                    return Ok(None);
+                };
+                (root, indices)
+            }
+            _ => (expr, Vec::new()),
+        };
+        let Some(decl) = self.array_expr_decl(root) else {
+            return Ok(None);
+        };
+        let multidimensional = self.db.array_meta(decl).is_some_and(|meta| {
+            matches!(meta.kind(), crate::core::db::ArrayKind::Static) && meta.dimensions().len() > 1
+        });
+        if !multidimensional || self.is_handle_array(decl) {
+            return Ok(None);
+        }
+        let Some((array, reference)) = self.template_array(path, builder, root, create)? else {
+            return Ok(None);
+        };
+        let container = state(builder).arrays[array as usize].container;
+        let Some(dimensions) = self.fixed_view_dims.get(&container).cloned() else {
+            return Ok(None);
+        };
+        if indices.len() > dimensions.len() {
+            return Ok(None);
+        }
+        let mut prefix = Vec::with_capacity(indices.len());
+        for index in indices {
+            prefix.push(self.template_operand(path, builder, index)?.0);
+        }
+        Ok(Some(ViewSelect {
+            root,
+            array,
+            reference,
+            dimensions,
+            prefix,
+        }))
+    }
+
+    /// The element of `view` at its leading indices, then `trailing`.
+    fn view_element(
+        &self,
+        node: NodeId,
+        path: &str,
+        builder: &mut ProblemBuilder,
+        view: &ViewSelect,
+        trailing: &[u32],
+    ) -> Result<u32, String> {
+        let indices = [view.prefix.as_slice(), trailing].concat();
+        let position = builder
+            .view_position(&view.dimensions, &indices)
+            .map_err(|error| self.rand_error(node, path, &error))?;
+        let st = builder.units.as_deref().expect("unit state");
+        let info = &st.arrays[view.array as usize];
+        let (width, signed) = (info.width, info.signed);
+        Ok(builder.template(
+            IrRandOp::AElem,
+            signed,
+            width,
+            [view.array, position, view.reference],
+        ))
+    }
+
     /// `a[index]` of a template array (S30-D11 for out-of-range indices).
     fn template_select(
         &mut self,
@@ -1356,6 +1466,16 @@ impl Codegen<'_> {
         let Some(base) = self.select_base(node) else {
             return Ok(());
         };
+        let random = self.template_reads(node);
+        if let Some(view) = self.view_select(path, builder, node, random)? {
+            // A row is read by the method, `foreach` or `inside` around it.
+            if view.prefix.len() == view.dimensions.len() {
+                let element = self.view_element(node, path, builder, &view, &[])?;
+                self.register_template(builder, node, element);
+                state(builder).consumed.insert(view.root);
+            }
+            return Ok(());
+        }
         let [index] = indices else {
             if self.template_array_known(builder, base) {
                 return Err(self.rand_error(
@@ -1580,7 +1700,17 @@ impl Codegen<'_> {
         name: &str,
         receiver: NodeId,
     ) -> Result<bool, String> {
-        if self.array_expr_decl(receiver).is_none() {
+        let is_row = matches!(
+            self.kind(receiver),
+            NodeKind::Expr(ExprKind::ArraySelect { .. })
+        ) && self.select_root(receiver).is_some_and(|root| {
+            self.array_expr_decl(root).is_some_and(|decl| {
+                self.db
+                    .array_meta(decl)
+                    .is_some_and(|meta| meta.dimensions().len() > 1)
+            })
+        });
+        if self.array_expr_decl(receiver).is_none() && !is_row {
             return Ok(false);
         }
         let op = match name {
@@ -1611,14 +1741,48 @@ impl Codegen<'_> {
             None
         };
         let create = with.is_some_and(|with| self.template_reads(with));
-        let Some((array, reference)) = self.template_array(path, builder, receiver, create)? else {
+        let view = self.view_select(path, builder, receiver, create)?;
+        if view.is_none() && is_row {
+            return Ok(false);
+        }
+        let selected = match &view {
+            Some(view) => Some((view.array, view.reference)),
+            None => self.template_array(path, builder, receiver, create)?,
+        };
+        let Some((array, reference)) = selected else {
             return Ok(false);
         };
-        state(builder).consumed.insert(receiver);
+        state(builder)
+            .consumed
+            .insert(view.as_ref().map_or(receiver, |view| view.root));
+        // The dimension a method of a multidimensional array walks.
+        let dimension = view
+            .as_ref()
+            .and_then(|view| view.dimensions.get(view.prefix.len()).copied());
         let Some(op) = op else {
-            let size = builder.template(IrRandOp::ASize, true, 32, [array, 0, reference]);
+            let size = match dimension {
+                Some((left, right)) => {
+                    let extent = (i64::from(left) - i64::from(right)).abs() + 1;
+                    builder.constant_u64(extent as u64, 32, true)
+                }
+                None => builder.template(IrRandOp::ASize, true, 32, [array, 0, reference]),
+            };
             self.register_template(builder, node, size);
             return Ok(true);
+        };
+        if view
+            .as_ref()
+            .is_some_and(|view| view.prefix.len() + 1 != view.dimensions.len())
+        {
+            return Err(self.rand_error(
+                node,
+                path,
+                "a reduction of a multidimensional array in a constraint must walk its last dimension",
+            ));
+        }
+        let loop_array = match dimension {
+            Some((left, right)) => builder.range_loop(left, right),
+            None => array,
         };
         let loop_index = builder.new_loop();
         let iter = builder.template(IrRandOp::Iter, true, 32, [loop_index, 0, 0]);
@@ -1673,9 +1837,12 @@ impl Codegen<'_> {
             self.register_template(builder, node, reduce);
             return Ok(true);
         }
-        let element = self
-            .loop_element(builder, array, reference, iter)
-            .map_err(|error| self.rand_error(node, path, &error))?;
+        let element = match &view {
+            Some(view) => self.view_element(node, path, builder, view, &[iter])?,
+            None => self
+                .loop_element(builder, array, reference, iter)
+                .map_err(|error| self.rand_error(node, path, &error))?,
+        };
         let (body, width, signed) = match with {
             None => {
                 let (width, signed) = builder.node_type(element);
@@ -1711,7 +1878,13 @@ impl Codegen<'_> {
                 (body, lowered.width, lowered.signed)
             }
         };
-        let args = builder.push_args(&[array, body, reference, loop_index, u32::from(op.code())]);
+        let args = builder.push_args(&[
+            loop_array,
+            body,
+            reference,
+            loop_index,
+            u32::from(op.code()),
+        ]);
         let reduce = builder.template(IrRandOp::Reduce, signed, width, [0, args, 0]);
         self.register_template(builder, node, reduce);
         Ok(true)
@@ -1791,6 +1964,11 @@ impl Codegen<'_> {
                 "internal: `foreach` outside a problem with units",
             ));
         }
+        if let Some(view) = self.view_select(path, builder, array, true)? {
+            return self.view_foreach(
+                path, builder, vars, object, item, view, loop_vars, body, guard,
+            );
+        }
         if loop_vars.len() != 1 {
             return Err(self.rand_error(
                 item,
@@ -1820,6 +1998,59 @@ impl Codegen<'_> {
         let body = builder.truth(lowered?);
         let args = builder.push_args(&[array_index, body, reference, loop_index]);
         Ok(builder.template(IrRandOp::Foreach, false, 1, [0, args, 0]))
+    }
+
+    /// `foreach (m[i, j]) body` over the dimensions of a multidimensional
+    /// array below the indices `view` selected; an omitted loop variable
+    /// adds no loop (18.5.8.1).
+    #[allow(clippy::too_many_arguments)]
+    fn view_foreach(
+        &mut self,
+        path: &str,
+        builder: &mut ProblemBuilder,
+        vars: &[VarPlan],
+        object: &IrChandleExpr,
+        item: NodeId,
+        view: ViewSelect,
+        loop_vars: &[Option<NodeId>],
+        body: NodeId,
+        guard: Option<u32>,
+    ) -> Result<u32, String> {
+        let free = &view.dimensions[view.prefix.len()..];
+        if loop_vars.len() > free.len() {
+            return Err(self.rand_error(
+                item,
+                path,
+                "a `foreach` constraint over the packed dimensions of an array is not supported",
+            ));
+        }
+        state(builder).consumed.insert(view.root);
+        let mut loops = Vec::new();
+        for (variable, (left, right)) in loop_vars.iter().zip(free) {
+            let Some(variable) = variable else {
+                continue;
+            };
+            let loop_index = builder.new_loop();
+            let iter = builder.template(IrRandOp::Iter, true, 32, [loop_index, 0, 0]);
+            let binding = builder.template_placeholder(iter);
+            if let Some(lowering) = self.rand_lowering.as_mut() {
+                lowering.bindings.insert(*variable, binding);
+            }
+            loops.push((*variable, loop_index, *left, *right));
+        }
+        let lowered = self.constraint_item(path, builder, vars, object, body, guard);
+        for (variable, ..) in &loops {
+            if let Some(lowering) = self.rand_lowering.as_mut() {
+                lowering.bindings.remove(variable);
+            }
+        }
+        let mut result = builder.truth(lowered?);
+        for (_, loop_index, left, right) in loops.into_iter().rev() {
+            let range = builder.range_loop(left, right);
+            let args = builder.push_args(&[range, result, view.reference, loop_index]);
+            result = builder.template(IrRandOp::Foreach, false, 1, [0, args, 0]);
+        }
+        Ok(result)
     }
 
     /// Build the units of every class an object reached through a `rand`

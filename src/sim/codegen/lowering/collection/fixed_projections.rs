@@ -913,7 +913,11 @@ impl Codegen<'_> {
                     // A member array of a packed class property: the select's
                     // path child names the receiver and the members (SIM-011).
                     let path_child = self.node(node).children.iter().copied().find(|child| {
-                        matches!(self.kind(*child), NodeKind::Expr(ExprKind::HierPath { .. }))
+                        !indices.contains(child)
+                            && matches!(
+                                self.kind(*child),
+                                NodeKind::Expr(ExprKind::HierPath { .. })
+                            )
                             && self
                                 .class_field_target(*child)
                                 .is_some_and(|field| self.class_fields.contains_key(&field))

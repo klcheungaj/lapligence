@@ -216,6 +216,14 @@ static int cr_tpl_array_ok(const llg_cr_problem_t* p, uint32_t a) {
     return a < p->array_count;
 }
 
+static int cr_tpl_loop_ok(const llg_cr_problem_t* p, uint32_t a) {
+    if (!(a & LLG_CR_SLOT_ARRAY) && (a & LLG_CR_RANGE_LOOP)) {
+        uint32_t first = a & ~LLG_CR_RANGE_LOOP;
+        return (size_t)first + 2u <= p->arg_count;
+    }
+    return cr_tpl_array_ok(p, a);
+}
+
 static void cr_tpl_validate(const llg_cr_problem_t* p) {
     if (p->table_count || p->unit_count == 0u) cr_fatal("invalid template problem");
     for (uint32_t u = 0; u < p->unit_count; ++u) {
@@ -265,7 +273,7 @@ static void cr_tpl_validate(const llg_cr_problem_t* p) {
             uint32_t count = nd->op == LLG_CR_FOREACH ? 4u : 5u;
             if ((uint64_t)nd->b + count > p->arg_count) cr_fatal("loop operands out of range");
             const uint32_t* x = p->args + nd->b;
-            if (!cr_tpl_array_ok(p, x[0]) || x[1] >= n || !cr_is_ref(p, x[2], n))
+            if (!cr_tpl_loop_ok(p, x[0]) || x[1] >= n || !cr_is_ref(p, x[2], n))
                 cr_fatal("invalid loop");
             if (nd->op == LLG_CR_REDUCE && x[4] != LLG_CR_ADD && x[4] != LLG_CR_MUL &&
                 x[4] != LLG_CR_AND && x[4] != LLG_CR_OR && x[4] != LLG_CR_XOR &&
@@ -1365,6 +1373,13 @@ static uint32_t cr_fx_size_var(cr_ex_t* ex, uint32_t inst, uint32_t array, uint3
         f->arr_svar[k] = sv;
         uint32_t zero = cr_fb_small(ex, 0, 32u, 1);
         uint32_t ge = cr_fb_node(ex, LLG_CR_GE, 1u, 0, cr_fx_var_node(ex, sv), zero, 0u);
+        const llg_cr_array_t* a = &ex->p->arrays[array];
+        if (a->kind == LLG_CR_ARRAY_QUEUE && a->right > 0) {
+            /* A bounded queue: `right` is its maximum element count. */
+            uint32_t bound = cr_fb_small(ex, a->right, 32u, 1);
+            uint32_t le = cr_fb_node(ex, LLG_CR_LE, 1u, 0, cr_fx_var_node(ex, sv), bound, 0u);
+            ge = cr_fb_node(ex, LLG_CR_LAND, 1u, 0, ge, le, 0u);
+        }
         f->vars[sv].domain_node = ge;
     }
     return f->arr_svar[k];
@@ -1374,6 +1389,11 @@ static uint32_t cr_fx_size_var(cr_ex_t* ex, uint32_t inst, uint32_t array, uint3
 static uint32_t cr_fx_count(cr_ex_t* ex, uint32_t inst, uint32_t array, int* random_size) {
     const cr_tpl_t* t = ex->t;
     *random_size = 0;
+    if (!(array & LLG_CR_SLOT_ARRAY) && (array & LLG_CR_RANGE_LOOP)) {
+        const uint32_t* range = ex->p->args + (array & ~LLG_CR_RANGE_LOOP);
+        int64_t span = (int64_t)(int32_t)range[0] - (int64_t)(int32_t)range[1];
+        return (uint32_t)(span < 0 ? -span : span) + 1u;
+    }
     if (array & LLG_CR_SLOT_ARRAY) {
         uint32_t slot = array & ~LLG_CR_SLOT_ARRAY;
         uint32_t pos = t->slot_pos[(size_t)t->inst[inst].unit * t->sc + slot];
@@ -1392,6 +1412,9 @@ static int64_t cr_fx_declared(const cr_ex_t* ex, uint32_t array, uint32_t pos) {
     if (array & LLG_CR_SLOT_ARRAY) {
         const llg_cr_slot_t* s = &ex->p->slots[array & ~LLG_CR_SLOT_ARRAY];
         kind = s->kind; left = s->left; right = s->right;
+    } else if (array & LLG_CR_RANGE_LOOP) {
+        const uint32_t* range = ex->p->args + (array & ~LLG_CR_RANGE_LOOP);
+        kind = LLG_CR_ARRAY_FIXED; left = (int32_t)range[0]; right = (int32_t)range[1];
     } else {
         const llg_cr_array_t* a = &ex->p->arrays[array];
         kind = a->kind; left = a->left; right = a->right;

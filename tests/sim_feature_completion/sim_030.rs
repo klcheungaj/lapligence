@@ -175,7 +175,7 @@ fn unsupported_array_and_object_forms_are_located_errors() {
     sim_cli::reject_case(
         SUITE,
         "neg_foreach_2d",
-        "array `m` is not supported in constraints: it has more than one unpacked dimension",
+        "array `m` is not supported in constraints: its elements are not packed integral values",
     );
     names_source_position("neg_foreach_2d");
     sim_cli::reject_case(
@@ -302,6 +302,41 @@ fn fallback_that_drops_weights_warns_once_per_call_site() {
         );
     }
     sim_cli::run_case_backend_parity(SUITE, "dist_fallback_warning", expected, &[], &[]);
+}
+
+#[test]
+fn multidimensional_arrays_are_solved_by_element() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_030/multidim_arrays.out");
+    sim_cli::run_case_checked_matrix(SUITE, "multidim_arrays", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "{label}"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("select index out of range in a constraint"),
+            "{label}: {output:?}"
+        );
+    });
+}
+
+#[test]
+fn bounded_queues_solve_within_their_bound() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_030/bounded_queue.out");
+    sim_cli::run_case_checked_matrix(SUITE, "bounded_queue", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(0), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "{label}"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("the constraints cannot be satisfied"),
+            "{label}: {output:?}"
+        );
+    });
 }
 
 #[test]

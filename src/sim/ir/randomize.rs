@@ -88,6 +88,10 @@ pub const RAND_NONE: u32 = u32::MAX;
 /// `LLG_CR_SLOT_ARRAY`: marks a handle-array slot in `ASize`/`Foreach`.
 pub const RAND_SLOT_ARRAY: u32 = 0x8000_0000;
 
+/// `LLG_CR_RANGE_LOOP`: marks the array operand of a `Foreach`/`Reduce` as
+/// a declared range; the rest indexes args holding `{left, right}`.
+pub const RAND_RANGE_LOOP: u32 = 0x4000_0000;
+
 impl IrRandOp {
     pub fn code(self) -> u16 {
         self as u16
@@ -493,7 +497,10 @@ impl IrRandProblem {
                 let first = node.b as usize;
                 first + count <= self.args.len() && {
                     let x = &self.args[first..first + count];
-                    is_array(x[0])
+                    let range = x[0] & RAND_SLOT_ARRAY == 0 && x[0] & RAND_RANGE_LOOP != 0;
+                    let range_ok =
+                        range && ((x[0] & !RAND_RANGE_LOOP) as usize) + 2 <= self.args.len();
+                    (range_ok || (!range && is_array(x[0])))
                         && x[1] < index
                         && is_ref(x[2])
                         && (count == 4

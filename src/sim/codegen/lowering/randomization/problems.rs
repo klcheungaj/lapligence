@@ -14,7 +14,7 @@ use crate::core::db::NodeId;
 use crate::sim::ir::{
     IrBinOp, IrConst, IrExpr, IrExprKind, IrInsideItem, IrRandArrayKind, IrRandCall, IrRandDist,
     IrRandDistItem, IrRandLeaf, IrRandNode, IrRandOp, IrRandOrder, IrRandProblem, IrRandVar,
-    IrUnOp,
+    IrUnOp, RAND_RANGE_LOOP,
 };
 use std::collections::HashMap;
 
@@ -202,6 +202,61 @@ impl ProblemBuilder {
         } else {
             self.push(IrRandOp::Sub, true, 64, base, wide, 0)
         })
+    }
+
+    /// The flat 0-based position of an element of a row-major multidimensional
+    /// fixed array, one index node per dimension of `dimensions`. An index
+    /// outside its own dimension makes the position -1, so it is out of
+    /// range (S30-D11) rather than another row's element.
+    pub(super) fn view_position(
+        &mut self,
+        dimensions: &[(i32, i32)],
+        indices: &[u32],
+    ) -> Result<u32, String> {
+        let mut flat: Option<u32> = None;
+        let mut valid: Option<u32> = None;
+        for (&(left, right), &index) in dimensions.iter().zip(indices) {
+            let (index, w, s) = self.ty(index);
+            if w > 64 {
+                return Err(
+                    "an array index wider than 64 bits is not supported in constraints".into(),
+                );
+            }
+            let wide = self.coerce_own(index, w, s, 64);
+            let base = self.constant_u64(i64::from(left) as u64, 64, true);
+            let position = if left <= right {
+                self.push(IrRandOp::Sub, true, 64, wide, base, 0)
+            } else {
+                self.push(IrRandOp::Sub, true, 64, base, wide, 0)
+            };
+            let extent = (i64::from(left) - i64::from(right)).abs() + 1;
+            let zero = self.constant_u64(0, 64, true);
+            let count = self.constant_u64(extent as u64, 64, true);
+            let low = self.compare(IrRandOp::Ge, position, zero);
+            let high = self.compare(IrRandOp::Lt, position, count);
+            let inside = self.logical(IrRandOp::LogAnd, low, high);
+            valid = Some(match valid {
+                None => inside,
+                Some(previous) => self.logical(IrRandOp::LogAnd, previous, inside),
+            });
+            flat = Some(match flat {
+                None => position,
+                Some(previous) => {
+                    let scaled = self.push(IrRandOp::Mul, true, 64, previous, count, 0);
+                    self.push(IrRandOp::Add, true, 64, scaled, position, 0)
+                }
+            });
+        }
+        let (Some(flat), Some(valid)) = (flat, valid) else {
+            return Err("a select of no dimension".into());
+        };
+        let invalid = self.constant_u64(u64::MAX, 64, true);
+        Ok(self.push(IrRandOp::Cond, true, 64, valid, flat, invalid))
+    }
+
+    /// The array operand of a loop over declared range `left`/`right`.
+    pub(super) fn range_loop(&mut self, left: i32, right: i32) -> u32 {
+        RAND_RANGE_LOOP | self.push_args(&[left as u32, right as u32])
     }
 
     /// `left == right` in their common type (for `inside` an array).
