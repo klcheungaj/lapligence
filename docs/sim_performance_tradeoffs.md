@@ -321,22 +321,20 @@ code at `-O1` instead of 0.13×).
   C changes only in long bodies and in formatting calls with constant
   arguments; `perf/` hot loops keep their C.
 
-### Record storage by selection
+### Record storage by size
 
-- **Trade-off:** a module record below `LLG_DENSE_FIXED_ARRAY_CELLS` keeps one
-  leaf per member cell, each with direct access, and stores one descriptor
-  column per member (`IrArray::descriptor`) only when
-  `collection/record_columns/choice.rs` chooses its type: on any selection of
-  a member array of at least `LLG_RECORD_COLUMN_MIN_CELLS` (16) cells, in a
-  type whose member arrays all have elements of packed width. A column
+- **Trade-off:** a record keeps one leaf per member cell, each with direct
+  access, below `LLG_RECORD_COLUMN_MIN_CELLS` (16) cells; at that size and
+  above a member array is one descriptor column (`IrArray::descriptor`), as
+  `collection/record_columns/choice.rs` decides from the type alone. A column
   replaces the branch per cell (or the whole-record flatten) with one lookup.
   Unwritten cells cost nothing, written ones are lazy heap cells, and the
   site stays about 261 lines at any size.
-- **Why a preference:** column layout does not yet cover every use of a type
-  (see the [known issue](known_issues.md#unpacked-records-with-dense-member-arrays-emit-per-cell-code)),
-  so `lower_model` lowers the chosen types first and keeps the per-cell model
-  if that fails. Chosen columns show the VPI objects, toggle entities and
-  dump names of the leaf form, with the same values.
+- **Why a fixed rule:** nothing else selects the form. A use the column form
+  cannot lower is an error at its source location, never a second lowering in
+  the other form, so a design's speed does not depend on what else it does.
+  Columns show the VPI objects, toggle entities and dump names of the leaf
+  form, with the same values.
 - **What made columns no slower than leaves:**
   - A constant cell index reaches its bucket through a direct table of up to
     4,096 entries, one load instead of a hash probe.

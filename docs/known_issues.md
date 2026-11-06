@@ -451,15 +451,11 @@ about 10 KB of C instead of 79 MB. RTL-101b adds whole-value pattern bindings,
 record call results compared or selected inside an expression, static and
 automatic declaration initializers, uniform member initializers, `real`,
 `string` and `chandle` members (a SIM-003 native value per subroutine record)
-and tag checks on whole member copies. Column records still reject: a member
-initializer that gives a column's cells different values (a column keeps one
-element default); selecting a whole member array, a sub-record, or a
+and tag checks on whole member copies. Column records still reject: selecting
+a whole member array, a sub-record, or a
 `chandle` member of a call result inside an expression, and comparing a
 record pattern, conditional or tagged expression operand (only storage and
-calls compare); an output or inout record argument with `real`, `string` or
-`chandle` members of a function called inside an expression (statement calls
-stage it through a temporary) and a `ref` formal of such a record; and a
-whole-value binding in a continuous assignment. A nonblocking write of a whole
+calls compare); and a whole-value binding in a continuous assignment. A nonblocking write of a whole
 tagged-union member array checks the tag when it is issued; element writes
 recheck at commit. The oversized source of a whole-value `matches` binding that
 is a fixed array rather than a record still rejects (RTL-016).
@@ -1856,44 +1852,38 @@ state but not per-cell generated code; see the remaining steps in
 
 ## Unpacked records with dense member arrays emit per-cell code
 
-**Status:** narrowed; found by codegen-size. A structure whose member array of
-at least `LLG_RECORD_COLUMN_MIN_CELLS` (16) cells the design selects is stored
-as columns ([record storage by selection](sim_performance_tradeoffs.md#record-storage-by-selection)),
-so its selections no longer grow with the array. The cases below keep the
-per-cell form.
+**Status:** narrowed; found by codegen-size. A member array of at least
+`LLG_RECORD_COLUMN_MIN_CELLS` (16) cells is stored as a column
+([record storage by size](sim_performance_tradeoffs.md#record-storage-by-size)),
+so its selections do not grow with the array. Below 16 cells each cell is its
+own leaf, a structural rule: the code is small and a reader needs no lookup.
 
-An unpacked structure or union whose member is a dense unpacked array (for
-example `typedef struct { logic [3:0] a; int m[4096]; } rec_t;`) is otherwise
-stored as one leaf signal per member cell. Every operation on such a variable
-is then linear in the cell count in generated C, including its declaration, a
-whole copy, `==`/`===`, an ambiguous `?:` merge, a continuous assignment, `%p`
-and even a dynamic element access, which builds one reference per cell.
-Measured with `--gen-only` on a quick build, a 4,096-cell member array gives
-5.7 MB (`%p`) to 9.8 MB (continuous assignment) of `model.c`. A member array
-above `LLG_DENSE_FIXED_ARRAY_CELLS` (4,096) cells is one sparse fixed-array
-leaf instead and stays at about 15-20 KB, so the cost peaks just below that
-threshold.
+An unpacked structure or union whose member is a dense unpacked array and has
+no column form (for example `typedef struct { logic [3:0] a; real m[4096]; }
+rec_t;`) is stored as one leaf signal per member cell. Every operation on such
+a variable is then linear in the cell count in generated C, including its
+declaration, a whole copy, `==`/`===`, an ambiguous `?:` merge, a continuous
+assignment, `%p` and even a dynamic element access, which builds one reference
+per cell. Measured with `--gen-only` on a quick build, a 4,096-cell member array
+gives 5.7 MB (`%p`) to 9.8 MB (continuous assignment) of `model.c`.
 
-The per-cell form stays for:
+The per-cell form stays at 16 cells or more only for members that are not
+packed: `real`, `shortreal`, `string` and handle arrays, and arrays of such
+records, have no column form. A run-time index into one still costs one branch
+per cell (a `string a[4095]` selection is 201,877 lines).
 
-- a record below the 16-cell minimum, or one no selection reaches: the code is
-  small or no access pays for it;
-- members that are not packed: `real`, `string` and handle arrays, and arrays
-  of such records, have no column form. A run-time index into one still costs
-  one branch per cell (a `string a[4095]` selection is 201,877 lines);
-- a design that uses a chosen type in a way column layout does not cover: the
-  column lowering fails and the whole design is lowered per cell, with the
-  cost above and no message. This retry awaits a decision. The focused suites
-  never reach it on their own (64 of 64 lowerings of chosen types succeed);
-  forcing every eligible record gives 209 of 426. Each cause is a limit of
-  column records above the threshold as well:
-  - hierarchy: a member reached by a hierarchical path, an aggregate port on a
-    non-aggregate actual, a member connected to a net;
-  - a member initializer with different cell values;
-  - nested members that are records or arrays of records (`aggregate member`
-    errors, a pattern with no destination, `inside` on a member);
-  - different bit ranges of one scalar member written by separate processes
-    or continuous assignments, which a one-cell column sees as one writer.
+A use the column form cannot lower is an error at its source location. These
+limits apply to the form named:
+
+- both forms: a member array selected on a call result (`f().a[1]`); assign the
+  result to a record variable first.
+- per-cell form, below 16 cells: a whole record assigned to or read from an
+  element of a member array at a run-time index (`r.rows[i] = x`), and two
+  continuous assignments to separate bits of one member of an element of an
+  array of records. The column form has neither limit.
+- column form: an event control on a member of a `ref` formal whose actual is an
+  automatic record of a subroutine; a module, static or procedural-block record
+  works, and so does an element of a column.
 
 codegen-size made whole-value reads and writes of unpacked arrays O(1)
 in generated C (`emit_c/owned/dense_cells.rs`), and removed the lowering
@@ -1902,9 +1892,6 @@ stack overflow that whole equality of such records hit from about 256 leaves
 
 Reproduce with the record above, `rec_t a, b; initial b = a;` and
 `--gen-only`, then measure `model.c`.
-
-The intended direction is to close the column gaps above so that the retry
-stops being needed.
 
 ## Gate and UDP array elements emit one process function each
 

@@ -293,9 +293,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   cells, store one descriptor column per member array and scalar leaf and
   move as values the same way (RTL-101), including real, string and chandle
   members, static initializers and call results inside expressions
-  (RTL-101b). So does a structure with a smaller member array that the design
-  selects
-  ([record storage by selection](sim_performance_tradeoffs.md#record-storage-by-selection)). Fixed integral record arrays also
+  (RTL-101b). So does a structure with a member array of 16 cells or more
+  ([record storage by size](sim_performance_tradeoffs.md#record-storage-by-size)). Fixed integral record arrays also
   retain recursive member selections and constant-selected electrical net views.
   V §3.10; SV §§7.4, 7.6 **[1995/SV-2005]**.
 - 🟨 **Initialization and lifetimes** — Scalar, fixed integral composite and
@@ -379,8 +378,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   among at most 4,096 leaves (`NATIVE_MEMBER_SELECT_LIMIT`) through a balanced
   decision tree over the declared indices, because each leaf is its own signal
   or object, unless the record is stored as columns
-  ([record storage by selection](sim_performance_tradeoffs.md#record-storage-by-selection)). A selection of whole records (`r.e[k]`, `r.e[k].inner`) uses that
-  tree in every storage, for at most 256 elements; an index with side effects is evaluated once; packed members of module native records take
+  ([record storage by size](sim_performance_tradeoffs.md#record-storage-by-size)). A selection of whole records (`r.e[k]`, `r.e[k].inner`) below 16 cells uses that
+  tree, for at most 256 elements; in a column it is one cell; an index with side effects is evaluated once; packed members of module native records take
   bit/part selects ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)).
   Patterns that read their own destination see the old string and handle
   members. Queue, dynamic and associative members of records are their own

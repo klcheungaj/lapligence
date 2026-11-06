@@ -9,5 +9,6 @@ net 0 3 b
 dense 1 2 b
 mailbox 9 ab
 queue 4 ab
+queue write cd
 array 9 ab
 matches element

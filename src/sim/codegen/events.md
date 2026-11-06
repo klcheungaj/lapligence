@@ -100,8 +100,8 @@ writers of fixed storage must register cell intervals for the single-writer
 rule; and new net-array driver forms must be added to the `net_cells.rs`
 classification inventory.
 Column-layout records and tagged unions (RTL-101; wider than the packed limit,
-with a member array above the dense threshold, or chosen by the design's
-selections in `collection/record_columns/choice.rs`) are classified in
+or with a member array of 16 cells or more, decided by
+`collection/record_columns/choice.rs`) are classified in
 `collection/record_columns.rs` and lowered in
 `expressions/aggregates/columns.rs`: every integral leaf is an
 `IrArray::descriptor` column (a scalar leaf is one cell, a tag is one more

@@ -72,7 +72,7 @@ impl EmitCtx<'_, '_> {
         let mailbox_prelude =
             std::mem::replace(&mut self.cg.mailbox_statement_prelude, saved_mailbox);
         let rand_prelude = std::mem::replace(&mut self.cg.rand_prelude, saved_rand);
-        let mut statements = lowered?;
+        let mut statements = lowered.map_err(|error| self.cg.record_located_error(h, error))?;
         if let Some((_, mut prelude)) = rand_prelude.filter(|(_, prelude)| !prelude.is_empty()) {
             prelude.append(&mut statements);
             statements = prelude;

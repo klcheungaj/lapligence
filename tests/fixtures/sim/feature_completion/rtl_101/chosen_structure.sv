@@ -102,6 +102,9 @@ module tb;
       $display("mailbox %0d %h", v.a, v.l[2]);
       v = qu[0];
       $display("queue %0d %h", v.a, v.l[2]);
+      i = 1;
+      qu[0].l[i] = 8'hcd;
+      $display("queue write %h", qu[0].l[1]);
       v = arr[1];
       $display("array %0d %h", v.a, v.l[2]);
       if (arr[1] matches '{a: 9, l: .*})

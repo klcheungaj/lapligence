@@ -25,7 +25,7 @@ mod messages;
 mod nba;
 mod record_refs;
 pub(in crate::sim::codegen::lowering) use member_select::{
-    member_select_statement, RecordRefPin, RecordRefSelect, SelectRoot, SelectStep,
+    member_select_statement, RecordRefPin, RecordRefSelect,
 };
 pub(in crate::sim::codegen::lowering) use record_refs::RecordRefDispatch;
 mod tagged;

@@ -18,7 +18,7 @@ mod choice;
 #[cfg(test)]
 mod tests;
 
-pub(in super::super) use choice::has_record_member_array;
+pub(in super::super) use choice::record_column_choice;
 
 /// One stored column of a record value, in declaration order.
 #[derive(Clone)]
@@ -1019,6 +1019,18 @@ impl Codegen<'_> {
             .find(|leaf| leaf.path == path && !record_cell_leaf(leaf))?
             .array
             .as_ref()
+    }
+
+    /// A failed lowering in a design with column records names its source:
+    /// the column form is never retried in another form, so this error is
+    /// what the user sees.
+    pub(in super::super) fn record_located_error(&self, node: NodeId, error: String) -> String {
+        match self.node(node).file.as_deref() {
+            Some(file) if self.record_columns && !error.contains(file) => {
+                format!("{}: {error}", self.source_location(node))
+            }
+            _ => error,
+        }
     }
 
     /// Whether a member path is rooted at a subroutine record value or at a

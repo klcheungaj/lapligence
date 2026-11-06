@@ -299,17 +299,18 @@ fn selections_of_member_arrays_do_not_grow_with_the_array() {
     assert_eq!(lines("byte s;", 64, "2"), lines("byte s;", 4000, "2"));
 }
 
+/// The size of a member array alone selects the form: nothing else does.
 #[test]
-fn selections_choose_columns_above_the_minimum_size() {
+fn member_array_size_selects_the_column_form() {
     let column = "llg_fixed_array_cell(";
     let run_time = selected_record("string s;", 64, "k");
     assert!(generated_model(&run_time, &[]).contains(column));
-    let constant = selected_record("string s;", 64, "2");
+    let constant = selected_record("string s;", 16, "2");
     assert!(generated_model(&constant, &[]).contains(column));
     // A catalog shows the leaves of a column record.
     assert!(generated_model(&run_time, &["--vpi"]).contains(column));
     // Below the minimum a chain of comparisons stays.
-    let small = selected_record("string s;", 8, "k");
+    let small = selected_record("string s;", 15, "k");
     assert!(!generated_model(&small, &[]).contains(column));
 }
 

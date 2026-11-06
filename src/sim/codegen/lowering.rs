@@ -629,15 +629,7 @@ pub fn sdf_targets(
 }
 
 fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String> {
-    // Column layout does not yet cover every use of a chosen type
-    // (docs/known_issues.md lists them): such a design keeps its leaf form.
-    let columns = record_column_choice(db)?;
-    if !columns.is_empty() {
-        if let Ok(lowered) = lower_model_with_ports(db, options, &columns) {
-            return Ok(lowered);
-        }
-    }
-    lower_model_with_ports(db, options, &HashSet::new())
+    lower_model_with_ports(db, options, &collection::record_column_choice(db))
 }
 
 /// Lower with the port sharing the model needs.
@@ -673,18 +665,6 @@ fn lower_model_with_ports(
         return lower_model_retrying(db, options, vpi_sharing, columns);
     }
     Ok(lowered)
-}
-
-/// The record types the design's selections store as columns
-/// (`collection/record_columns/choice.rs`).
-fn record_column_choice(db: &Db) -> Result<HashSet<TypeId>, String> {
-    if !collection::has_record_member_array(db) {
-        return Ok(HashSet::new());
-    }
-    let semantic = checked_semantic(db)?;
-    let mut cg = Codegen::new(&semantic);
-    collect_tops(&mut cg)?;
-    Ok(cg.record_column_choice())
 }
 
 /// Lower with port sharing `sharing`. A collapsed net port whose time-zero

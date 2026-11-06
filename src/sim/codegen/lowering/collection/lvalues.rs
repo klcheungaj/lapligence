@@ -782,7 +782,8 @@ impl<'a> Codegen<'a> {
                         self.nested_associative_select_error(*base, path)
                             .unwrap_or_else(|| {
                                 format!(
-                                    "cannot resolve array base of select `{}` in `{path}`",
+                                    "{}: cannot resolve array base of select `{}` in `{path}`",
+                                    self.source_location(lhs),
                                     self.node(*base).name,
                                 )
                             })
