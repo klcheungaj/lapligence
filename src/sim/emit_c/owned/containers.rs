@@ -380,6 +380,31 @@ impl Frame<'_, '_> {
             self.vpi_auto_bind(VpiAutoKey::Container(*container));
             return Ok(());
         }
+        if let IrContainerStmt::BindElement { root, container } = operation {
+            let IrValueItemRoot::Element(element) = root else {
+                return Err("a nested element alias needs an element locator".to_owned());
+            };
+            let (ty, _, _) = super::super::containers::activation_storage(
+                &self.ctx.model.containers[*container],
+                "",
+            )?;
+            // The alias publishes through `TouchContents` once the change
+            // is complete, not at the locator.
+            let touches = self.pending_touches.len();
+            let element = self.chandle(element)?;
+            self.pending_touches.truncate(touches);
+            let pin = self.scalar(
+                "llg_nested_assoc_t**",
+                "(llg_nested_assoc_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_nested_assoc_t*), llg_nested_assoc_unpin))"
+                    .to_owned(),
+            );
+            let storage = self.scalar(
+                &format!("{ty}*"),
+                format!("({ty}*)llg_nested_assoc_bind((llg_value_t*){element}, {pin})"),
+            );
+            self.containers.insert(*container, format!("(*{storage})"));
+            return Ok(());
+        }
         if let IrContainerStmt::SharedDeclare(container) = operation {
             if !self.ctx.model.containers[*container].activation {
                 return Err("only activation containers are declared lexically".to_owned());

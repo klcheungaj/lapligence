@@ -14,6 +14,7 @@
 #include "container/element_references.c"
 #include "container/associative_values.c"
 #include "container/associative_value_queries.c"
+#include "container/nested_associative.c"
 #include "container/value_elements.c"
 #include "container/native_references.c"
 #include "container/destinations.c"

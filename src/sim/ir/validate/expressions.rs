@@ -45,6 +45,7 @@ impl Validator<'_> {
                     }
                     IrContainerExpr::Size(_)
                     | IrContainerExpr::NestedSize { .. }
+                    | IrContainerExpr::NestedSizeString { .. }
                     | IrContainerExpr::AssocTraverse { .. }
                     | IrContainerExpr::AssocTraverseString { .. }
                     | IrContainerExpr::AssocTraverseStringLocal { .. } => (32, true),

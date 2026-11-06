@@ -347,6 +347,38 @@ impl<'a> Codegen<'a> {
                 None,
             )));
         }
+        // `ra[i]["k"]`: a string key of a staged nested array.
+        if matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) if indices.len() > 1
+        ) {
+            if let Some((container, key)) = self.associative_string_element(node) {
+                let element = self.model.containers[container].element.clone();
+                if element.is_string() || element.is_handle() {
+                    return Ok(None);
+                }
+                let key = self.lower_string(path, key)?;
+                let (operation, width, signed) = if element.is_real() {
+                    (IrContainerExpr::GetStringReal { container, key }, 0, false)
+                } else if element.is_packed() {
+                    (
+                        IrContainerExpr::GetString { container, key },
+                        element.width(),
+                        element.signed(),
+                    )
+                } else {
+                    return Err(format!(
+                        "nested container access in {path} requires a scalar value"
+                    ));
+                };
+                return Ok(Some(IrExpr::new(
+                    IrExprKind::Container(Box::new(operation)),
+                    width,
+                    signed,
+                    None,
+                )));
+            }
+        }
         let operation = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 let Some(container) = self.container_of_select(node, *base) else {

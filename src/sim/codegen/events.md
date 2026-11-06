@@ -195,7 +195,11 @@ temporaries get companions, filled after `GetValue` and copied back before
 an assignment, call or system-task statement naming an element's member
 stages it in a lexical container (`stage_element_members`), copied out before
 the statement and back after it when the statement can change it, so every
-container operation applies unchanged. An expression outside such a
+container operation applies unchanged. An associative array nested in an
+element is staged without a copy: `IrContainerStmt::BindElement` makes the
+lexical container an alias of the element and pins it for the statement, and
+`TouchContents` publishes the change to the owner; deeper levels resolve once
+the level above has its alias (`stage_below_aliases`). An expression outside such a
 statement (a condition, loop bound, `foreach` array, declaration initializer
 or timed assignment value) reads the member from a copy made before each
 evaluation (`stage_expression_members`, an `IrExprKind::Sequence`), gated by

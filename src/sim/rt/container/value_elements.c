@@ -104,6 +104,8 @@ void llg_assoc_value_touch(llg_assoc_value_t* array) {
 }
 
 size_t llg_value_container_size(const llg_value_t* value) {
+    if (value && value->desc && value->desc->kind == LLG_VALUE_ASSOC)
+        return llg_nested_assoc_size(value->value.assoc);
     if (!value || !value->desc || value->desc->kind != LLG_VALUE_CONTAINER ||
         !value->value.container)
         return 0;

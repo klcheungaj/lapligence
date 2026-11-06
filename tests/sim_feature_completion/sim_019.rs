@@ -123,15 +123,6 @@ fn neg_illegal_methods_reductions_and_arguments() {
 }
 
 #[test]
-fn neg_associative_arrays_nested_in_container_elements() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_nested_associative",
-        "elements of `aa` in `tb` are not supported: an associative array nested in a queue, dynamic or associative array element has no element value form",
-    );
-}
-
-#[test]
 fn inside_over_class_handles_compares_identity() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_019/handle_inside.out");
     sim_cli::run_case_backend_parity(SUITE, "handle_inside", expected, &[], &[]);

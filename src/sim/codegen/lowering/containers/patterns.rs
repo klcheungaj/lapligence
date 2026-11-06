@@ -185,6 +185,12 @@ impl<'a> Codegen<'a> {
             )
         });
         if !tagged {
+            if matches!(
+                self.model.containers[container].element,
+                IrContainerElement::Container { key: Some(_), .. }
+            ) {
+                return self.lower_associative_elements_pattern(path, container, operands);
+            }
             return self.lower_container_source_values(path, container, operands);
         }
         if operands.iter().any(|operand| {
@@ -330,6 +336,184 @@ impl<'a> Codegen<'a> {
         self.lower_container_source_values(path, container, values)
     }
 
+    /// A lexical container of the type nested in `container`'s element. A
+    /// queue is built as a dynamic array: element transfer copies either.
+    fn nested_pattern_temporary(&mut self, element: &IrContainerElement) -> usize {
+        let (key, inner) = match element {
+            IrContainerElement::Container { key, element, .. } => (key.clone(), *element.clone()),
+            other => (None, other.clone()),
+        };
+        let temporary = self.model.containers.len();
+        self.model.containers.push(IrContainer {
+            c_name: format!("S_llg_container_{temporary}"),
+            element: inner,
+            kind: key.map_or(IrContainerKind::Dynamic, |key| {
+                IrContainerKind::Associative { key }
+            }),
+            initial_size: None,
+            activation: true,
+            class_field: None,
+            receiver: None,
+        });
+        temporary
+    }
+
+    /// `aa = '{"x": '{1: 2}}`: every element is built in place in a fresh
+    /// container, so sources reading `container` see its old elements.
+    fn lower_associative_nested_pattern(
+        &mut self,
+        path: &str,
+        container: usize,
+        operands: Vec<NodeId>,
+        element: IrContainerElement,
+    ) -> Result<IrStmt, String> {
+        let string_key = matches!(
+            self.model.containers[container].kind,
+            IrContainerKind::Associative {
+                key: IrAssocKey::String
+            }
+        );
+        let building = self.container_temporary_like(container);
+        let mut statements = vec![IrStmt::Container(Box::new(IrContainerStmt::Declare(
+            building,
+        )))];
+        for operand in operands {
+            let NodeKind::Expr(ExprKind::TaggedPattern {
+                key: Some(key),
+                key_type: None,
+                value: Some(value),
+                ..
+            }) = self.kind(operand)
+            else {
+                return Err(format!(
+                    "a pattern key of nested associative array in `{path}` is not a literal key"
+                ));
+            };
+            let (key, value) = (key.clone(), *value);
+            if key == "default" {
+                return Err(format!(
+                    "a `default` key for a nested container element in `{path}` is not supported"
+                ));
+            }
+            let root = if string_key {
+                let bytes = parse_pattern_string_key(&key).ok_or_else(|| {
+                    format!(
+                        "string associative assignment pattern key `{key}` is not a literal in `{path}`"
+                    )
+                })?;
+                IrChandleExpr::ContainerElement {
+                    container: building,
+                    indices: Vec::new(),
+                    key: Some(Box::new(IrStringExpr::Literal(bytes))),
+                    write: true,
+                }
+            } else {
+                let index = self
+                    .assignment_pattern_index_key(path, operand)?
+                    .ok_or_else(|| {
+                        format!(
+                            "integral associative assignment pattern key `{key}` is not a constant in `{path}`"
+                        )
+                    })?;
+                IrChandleExpr::ContainerElement {
+                    container: building,
+                    indices: vec![pattern_key_expr(index, 64, true, false)],
+                    key: None,
+                    write: true,
+                }
+            };
+            let root = crate::sim::ir::IrValueItemRoot::Element(root);
+            let temporary = self.nested_pattern_temporary(&element);
+            let associative = matches!(
+                self.model.containers[temporary].kind,
+                IrContainerKind::Associative { .. }
+            );
+            statements.push(IrStmt::Container(Box::new(if associative {
+                IrContainerStmt::BindElement {
+                    root: root.clone(),
+                    container: temporary,
+                }
+            } else {
+                IrContainerStmt::Declare(temporary)
+            })));
+            statements.push(self.lower_container_into(path, value, temporary, value)?);
+            if !associative {
+                statements.push(IrStmt::Container(Box::new(
+                    IrContainerStmt::ContainerToValueItem {
+                        container: temporary,
+                        root,
+                        items: Vec::new(),
+                    },
+                )));
+            }
+        }
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+            dst: container,
+            src: building,
+        })));
+        Ok(IrStmt::Block(statements))
+    }
+
+    /// `qa = '{'{7: 1}, '{8: 2}}`: associative elements of a queue or dynamic
+    /// array, built in a fresh container like other element patterns.
+    fn lower_associative_elements_pattern(
+        &mut self,
+        path: &str,
+        container: usize,
+        values: Vec<NodeId>,
+    ) -> Result<IrStmt, String> {
+        let element = self.model.containers[container].element.clone();
+        let queue = matches!(
+            self.model.containers[container].kind,
+            IrContainerKind::Queue { .. }
+        );
+        let building = self.container_temporary_like(container);
+        let mut statements = vec![IrStmt::Container(Box::new(IrContainerStmt::Declare(
+            building,
+        )))];
+        if !queue {
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::DynamicNew {
+                container: building,
+                size: pattern_key_expr(values.len() as i128, 64, false, true),
+                initializer: None,
+            })));
+        }
+        for (position, value) in values.into_iter().enumerate() {
+            let temporary = self.nested_pattern_temporary(&element);
+            if queue {
+                statements.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                    temporary,
+                ))));
+            } else {
+                statements.push(IrStmt::Container(Box::new(IrContainerStmt::BindElement {
+                    root: crate::sim::ir::IrValueItemRoot::Element(
+                        IrChandleExpr::ContainerElement {
+                            container: building,
+                            indices: vec![pattern_key_expr(position as i128, 64, false, true)],
+                            key: None,
+                            write: true,
+                        },
+                    ),
+                    container: temporary,
+                })));
+            }
+            statements.push(self.lower_container_into(path, value, temporary, value)?);
+            if queue {
+                statements.push(IrStmt::Container(Box::new(
+                    IrContainerStmt::QueuePushBackContainer {
+                        container: building,
+                        source: temporary,
+                    },
+                )));
+            }
+        }
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+            dst: container,
+            src: building,
+        })));
+        Ok(IrStmt::Block(statements))
+    }
+
     fn lower_associative_pattern(
         &mut self,
         path: &str,
@@ -350,6 +534,9 @@ impl<'a> Codegen<'a> {
         let element = self.model.containers[container].element.clone();
         if element.is_string() || element.is_handle() {
             return self.lower_associative_object_pattern(path, container, operands, element);
+        }
+        if let IrContainerElement::Container { .. } = element {
+            return self.lower_associative_nested_pattern(path, container, operands, element);
         }
         let mut seen_integral = Vec::<i128>::new();
         let mut seen_string = Vec::<Vec<u8>>::new();
@@ -759,6 +946,13 @@ impl<'a> Codegen<'a> {
         prelude: &mut Vec<IrStmt>,
     ) -> Result<usize, String> {
         let source_variable = self.container_of(self.p30_unwrap_cast(value));
+        let nested_key = match self.container_element_type(container, depth) {
+            Some(IrContainerElement::Container { key: Some(key), .. }) => Some(key),
+            _ => None,
+        };
+        if let (Some(_), Some(source)) = (&nested_key, &source_variable) {
+            return Ok(source.ir);
+        }
         if let Some(source) = &source_variable {
             match self.model.containers[source.ir].kind {
                 IrContainerKind::Dynamic => return Ok(source.ir),
@@ -782,7 +976,10 @@ impl<'a> Codegen<'a> {
         self.model.containers.push(IrContainer {
             c_name: format!("S_llg_container_{temporary}"),
             element: *element,
-            kind: IrContainerKind::Dynamic,
+            kind: match nested_key {
+                Some(key) => IrContainerKind::Associative { key },
+                None => IrContainerKind::Dynamic,
+            },
             initial_size: None,
             activation: true,
             class_field: None,

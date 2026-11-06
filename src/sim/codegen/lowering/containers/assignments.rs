@@ -410,6 +410,9 @@ impl<'a> Codegen<'a> {
         if self.assignment_pattern_operands(path, rhs)?.is_some() {
             return self.lower_container_pattern(path, dst.ir, rhs, descriptor.as_ref());
         }
+        if let Some(statement) = self.nested_pop_into(dst.ir, rhs) {
+            return Ok(statement);
+        }
         if let Some(statement) = self.container_method_result(path, dst.ir, rhs)? {
             return Ok(statement);
         }
@@ -773,6 +776,88 @@ impl<'a> Codegen<'a> {
             src_start: start,
             count,
         })))
+    }
+
+    /// `dst = q.pop_front()` over a queue of containers: the end element is
+    /// read into `dst` and then removed, so an empty queue leaves `dst` empty
+    /// (SV 7.10.2.4) and reports the removal. `None` for other sources.
+    fn nested_pop_into(&mut self, dst: usize, rhs: NodeId) -> Option<IrStmt> {
+        let NodeKind::MethodCall {
+            name,
+            receiver: Some(receiver),
+            ..
+        } = self.kind(rhs)
+        else {
+            return None;
+        };
+        let back = match name.as_str() {
+            "pop_front" => false,
+            "pop_back" => true,
+            _ => return None,
+        };
+        let queue = self.container_of(*receiver)?.ir;
+        let Some(IrContainerElement::Container { key, element, .. }) =
+            self.container_element_type(queue, 1)
+        else {
+            return None;
+        };
+        let index = if back {
+            let size = IrExpr::new(
+                IrExprKind::Container(Box::new(IrContainerExpr::Size(queue))),
+                32,
+                true,
+                None,
+            );
+            crate::sim::codegen::lowering::common_bin_expr(
+                IrBinOp::Sub,
+                size,
+                pattern_key_expr(1, 32, true, true),
+            )
+        } else {
+            pattern_key_expr(0, 32, true, true)
+        };
+        let root = |write: bool| {
+            crate::sim::ir::IrValueItemRoot::Element(IrChandleExpr::ContainerElement {
+                container: queue,
+                indices: vec![index.clone()],
+                key: None,
+                write,
+            })
+        };
+        let mut statements = Vec::with_capacity(3);
+        if let Some(key) = key {
+            let alias = self.model.containers.len();
+            self.model.containers.push(IrContainer {
+                c_name: format!("S_llg_container_{alias}"),
+                element: *element,
+                kind: IrContainerKind::Associative { key },
+                initial_size: None,
+                activation: true,
+                class_field: None,
+                receiver: None,
+            });
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::BindElement {
+                root: root(false),
+                container: alias,
+            })));
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+                dst,
+                src: alias,
+            })));
+        } else {
+            statements.push(IrStmt::Container(Box::new(
+                IrContainerStmt::ValueItemToContainer {
+                    root: root(false),
+                    items: Vec::new(),
+                    container: dst,
+                },
+            )));
+        }
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::DeleteIndex {
+            container: queue,
+            index,
+        })));
+        Some(IrStmt::Block(statements))
     }
 
     /// Read-modify-write of one packed or real element selected by a single

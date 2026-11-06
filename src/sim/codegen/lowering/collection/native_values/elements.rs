@@ -1165,6 +1165,16 @@ impl Codegen<'_> {
                 self.collect_staged_members(key, false, out, nested);
                 return;
             }
+            // An associative array has no direct element path either.
+            if self.selects_associative(&selection) {
+                if let ElementSelector::Indices(indices) = &selection.selector {
+                    for index in indices.clone() {
+                        self.collect_staged_members(index, false, out, nested);
+                    }
+                }
+                nested.push((node, selection, mutated));
+                return;
+            }
         }
         if let Some((element, path)) = self.element_member_container_parts(node) {
             if let Some(member) = out
@@ -1260,7 +1270,10 @@ impl Codegen<'_> {
             // A member passed to a subroutine may be an output, inout or
             // ref actual, so it is copied back after the call. A nested
             // element passed whole to an input formal is read once.
-            NodeKind::FuncCall { callee, .. } => {
+            NodeKind::FuncCall {
+                callee, is_task, ..
+            } => {
+                let is_task = *is_task;
                 let directions: Vec<DbDirection> = callee
                     .map(|callee| {
                         self.node(callee)
@@ -1283,7 +1296,13 @@ impl Codegen<'_> {
                     }
                     // A nested element passed whole to an output or inout
                     // formal: a copy goes in and comes back after the call.
-                    if matches!(direction, Some(DbDirection::Output | DbDirection::Inout)) {
+                    // A function cannot suspend, so for a `ref` formal that
+                    // is the same as binding the element; a task's reference
+                    // must stay live, which only an associative alias does.
+                    let by_reference = direction == Some(DbDirection::Ref);
+                    if matches!(direction, Some(DbDirection::Output | DbDirection::Inout))
+                        || by_reference
+                    {
                         // The frontend wraps the actual in an assignment.
                         let actual = match self.kind(child) {
                             NodeKind::Expr(ExprKind::Operation {
@@ -1294,7 +1313,11 @@ impl Codegen<'_> {
                             _ => child,
                         };
                         if let Some(selection) = self.nested_element_selection(actual) {
-                            if let ElementSelector::Indices(indices) = &selection.selector {
+                            let live =
+                                by_reference && is_task && !self.selects_associative(&selection);
+                            if let (ElementSelector::Indices(indices), false) =
+                                (&selection.selector, live)
+                            {
                                 for index in indices.clone() {
                                     self.collect_staged_members(index, false, out, nested);
                                 }
@@ -1344,6 +1367,42 @@ impl Codegen<'_> {
         let mut members = Vec::new();
         let mut nested = Vec::new();
         // The target of a plain blocking `=`, whose old value is not read.
+        let overwritten = self.collect_statement_members(h, &mut members, &mut nested);
+        if matches!(
+            self.kind(h),
+            NodeKind::Stmt(StmtKind::Assign {
+                blocking: false,
+                ..
+            })
+        ) && (members.iter().any(|member| member.mutated)
+            || nested.iter().any(|(_, _, mutated)| *mutated))
+        {
+            return Err(format!(
+                "nonblocking assignment to a queue or dynamic-array member of a container record element in `{path}` is not supported"
+            ));
+        }
+        let (mut before, mut after) =
+            self.build_element_staging(path, members, nested, overwritten)?;
+        self.stage_below_aliases(
+            path,
+            overwritten,
+            &mut before,
+            &mut after,
+            &|this, members, nested| {
+                this.collect_statement_members(h, members, nested);
+            },
+        )?;
+        Ok((before, after))
+    }
+
+    /// Collect what statement `h` stages; returns the target of a plain
+    /// blocking `=`, whose old value is not read.
+    fn collect_statement_members(
+        &self,
+        h: NodeId,
+        members: &mut Vec<StagedMember>,
+        nested: &mut Vec<(NodeId, ElementSelection, bool)>,
+    ) -> Option<NodeId> {
         let mut overwritten = None;
         match self.kind(h) {
             NodeKind::Stmt(StmtKind::Assign { blocking, op, .. }) => {
@@ -1360,23 +1419,46 @@ impl Codegen<'_> {
                     }
                     // A nested element assigned whole (`row = qq[i]`) is read
                     // from a staged copy.
-                    if position == 1 && self.stage_whole_read(child, &mut members, &mut nested) {
+                    if position == 1 && self.stage_whole_read(child, members, nested) {
                         continue;
                     }
-                    self.collect_staged_members(child, position == 0, &mut members, &mut nested);
-                }
-                if !blocking
-                    && (members.iter().any(|member| member.mutated)
-                        || nested.iter().any(|(_, _, mutated)| *mutated))
-                {
-                    return Err(format!(
-                        "nonblocking assignment to a queue or dynamic-array member of a container record element in `{path}` is not supported"
-                    ));
+                    self.collect_staged_members(child, position == 0, members, nested);
                 }
             }
-            _ => self.collect_staged_members(h, false, &mut members, &mut nested),
+            _ => self.collect_staged_members(h, false, members, nested),
         }
-        self.build_element_staging(path, members, nested, overwritten)
+        overwritten
+    }
+
+    /// Stage the nested elements reached through a bound associative array
+    /// (`a3["a"]["b"][1]`, `aq["k"][2].push_back(x)`): each level only
+    /// resolves once the level above it has its alias.
+    fn stage_below_aliases(
+        &mut self,
+        path: &str,
+        overwritten: Option<NodeId>,
+        before: &mut Vec<IrStmt>,
+        after: &mut Vec<IrStmt>,
+        collect: &dyn Fn(&Self, &mut Vec<StagedMember>, &mut Vec<(NodeId, ElementSelection, bool)>),
+    ) -> Result<(), String> {
+        loop {
+            let aliased = self.staged_nested_elements.values().any(|staged| {
+                matches!(
+                    self.model.containers[*staged].kind,
+                    IrContainerKind::Associative { .. }
+                )
+            });
+            if !aliased {
+                return Ok(());
+            }
+            let (mut members, mut nested) = (Vec::new(), Vec::new());
+            collect(self, &mut members, &mut nested);
+            nested.retain(|(node, _, _)| self.staged_nested_element(*node).is_none());
+            if nested.is_empty() {
+                return Ok(());
+            }
+            self.stage_nested_elements(path, nested, overwritten, before, after)?;
+        }
     }
 
     /// Stage the members and nested elements a container initializer reads;
@@ -1391,7 +1473,18 @@ impl Codegen<'_> {
         if !self.stage_whole_read(node, &mut members, &mut nested) {
             self.collect_staged_members(node, false, &mut members, &mut nested);
         }
-        let (before, after) = self.build_element_staging(path, members, nested, None)?;
+        let (mut before, mut after) = self.build_element_staging(path, members, nested, None)?;
+        self.stage_below_aliases(
+            path,
+            None,
+            &mut before,
+            &mut after,
+            &|this, members, nested| {
+                if !this.stage_whole_read(node, members, nested) {
+                    this.collect_staged_members(node, false, members, nested);
+                }
+            },
+        )?;
         debug_assert!(after.is_empty(), "an initializer writes back nothing");
         Ok(before)
     }
@@ -1428,8 +1521,15 @@ impl Codegen<'_> {
         {
             return Ok(None);
         }
-        self.build_element_staging(path, members, nested, None)
-            .map(Some)
+        let (mut before, mut after) = self.build_element_staging(path, members, nested, None)?;
+        self.stage_below_aliases(
+            path,
+            None,
+            &mut before,
+            &mut after,
+            &|this, members, nested| this.collect_staged_members(node, false, members, nested),
+        )?;
+        Ok(Some((before, after)))
     }
 
     fn lazily_evaluated_operands(&self, node: NodeId) -> bool {
@@ -1563,9 +1663,11 @@ impl Codegen<'_> {
         // Two changed copies of possibly one element would lose a change.
         for (position, group) in groups.iter().enumerate() {
             if group.mutated
+                && !self.selects_associative(&group.selection)
                 && groups.iter().enumerate().any(|(other, staged)| {
                     other != position
                         && staged.mutated
+                        && !self.selects_associative(&staged.selection)
                         && staged.selection.container == group.selection.container
                         && !self.distinct_element_selections(&group.selection, &staged.selection)
                 })
@@ -1578,19 +1680,23 @@ impl Codegen<'_> {
         for group in groups {
             let selection = &group.selection;
             let depth = selection.depth();
-            let Some(IrContainerElement::Container { kind, element, .. }) =
-                self.container_element_type(selection.container, depth)
+            let Some(IrContainerElement::Container {
+                kind, key, element, ..
+            }) = self.container_element_type(selection.container, depth)
             else {
                 return Err(format!(
-                    "nested container element in `{path}` does not select a queue or dynamic array"
+                    "nested container element in `{path}` does not select a nested container"
                 ));
             };
+            let associative = key.is_some();
             // The nested type gives a queue's bound and the element type of
             // record operations on the staged copy.
             let descriptor = self
                 .container_element_descriptor(selection.container, depth)
                 .or_else(|| self.query_descriptor(group.nodes[0]).cloned());
-            let kind = if kind == "Queue" {
+            let kind = if let Some(key) = key {
+                IrContainerKind::Associative { key }
+            } else if kind == "Queue" {
                 let Some(TypeShape::Container {
                     array: ArrayKind::Queue { maximum_elements },
                     ..
@@ -1635,6 +1741,20 @@ impl Codegen<'_> {
                     write,
                 }))
             };
+            // An associative array is used in place; a copy would make every
+            // element access linear in the array's size.
+            if associative {
+                before.push(IrStmt::Container(Box::new(IrContainerStmt::BindElement {
+                    root: locator(self, group.mutated)?,
+                    container: ir,
+                })));
+                if group.mutated {
+                    after.push(IrStmt::Container(Box::new(IrContainerStmt::TouchContents(
+                        selection.container,
+                    ))));
+                }
+                continue;
+            }
             before.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(ir))));
             // A changed element is located as a write target throughout, so
             // a missing associative entry is created without a read warning.
@@ -1683,13 +1803,44 @@ impl Codegen<'_> {
         true
     }
 
-    /// A queue or dynamic array nested in an element of container storage
-    /// (`qq[i]`, `qd[i][j]`, `sq[k]`), named whole.
+    /// Whether `node` names a nested container element whole.
+    pub(in crate::sim::codegen) fn is_nested_element(&self, node: NodeId) -> bool {
+        self.nested_element_selection(node).is_some()
+    }
+
+    /// Whether `selection` names an associative array, which statements use
+    /// in place rather than through a copy.
+    fn selects_associative(&self, selection: &ElementSelection) -> bool {
+        matches!(
+            self.container_element_type(selection.container, selection.depth()),
+            Some(IrContainerElement::Container { key: Some(_), .. })
+        )
+    }
+
+    /// A queue, dynamic or associative array nested in an element of
+    /// container storage (`qq[i]`, `qd[i][j]`, `sq[k]`), named whole.
     fn nested_element_selection(&self, node: NodeId) -> Option<ElementSelection> {
         let nested = |element: Option<IrContainerElement>| {
-            matches!(element, Some(IrContainerElement::Container { kind, .. })
-                if !kind.to_ascii_lowercase().contains("assoc"))
+            matches!(element, Some(IrContainerElement::Container { kind, key, .. })
+                if key.is_some() || !kind.to_ascii_lowercase().contains("assoc"))
         };
+        // `a3["a"]["b"]`: a key of a bound nested array.
+        if let Some((staged, tail)) = self.select_below_staged_element(node) {
+            if let (
+                [key],
+                IrContainerKind::Associative {
+                    key: IrAssocKey::String,
+                },
+            ) = (tail.as_slice(), &self.model.containers[staged].kind)
+            {
+                return nested(Some(self.model.containers[staged].element.clone())).then_some(
+                    ElementSelection {
+                        container: staged,
+                        selector: ElementSelector::Key(*key),
+                    },
+                );
+            }
+        }
         // `sq[k][i]` selects inside the element; its child `sq[k]` names it.
         let inside = matches!(
             self.kind(node),

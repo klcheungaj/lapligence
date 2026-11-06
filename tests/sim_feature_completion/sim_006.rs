@@ -270,3 +270,58 @@ fn container_declarations_accept_any_whole_container_initializer() {
         include_str!("../fixtures/sim/feature_completion/sim_006/container_initializers.out");
     sim_cli::run_case_backend_parity(SUITE, "container_initializers", expected, &[], &[]);
 }
+
+#[test]
+fn associative_arrays_nest_in_container_elements() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative", expected, &[], &[]);
+}
+
+#[test]
+fn nested_associative_arrays_cross_boundaries() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative_forms.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative_forms", expected, &[], &[]);
+}
+
+#[test]
+fn associative_arrays_nest_at_any_depth() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative_deep.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative_deep", expected, &[], &[]);
+}
+
+#[test]
+fn foreach_walks_every_nested_dimension_kind() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_006/nested_foreach.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_foreach", expected, &[], &[]);
+}
+
+#[test]
+fn record_element_members_take_compound_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/record_element_compound.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_compound", expected, &[], &[]);
+}
+
+#[test]
+fn record_fields_of_every_storage_take_compound_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/record_field_compound.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_field_compound", expected, &[], &[]);
+}
+
+#[test]
+fn semaphore_try_get_is_a_statement() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/semaphore_try_get_statement.out");
+    sim_cli::run_case_backend_parity(SUITE, "semaphore_try_get_statement", expected, &[], &[]);
+}
+
+#[test]
+fn block_static_locals_wake_fork_events() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/static_block_event.out");
+    sim_cli::run_case_backend_parity(SUITE, "static_block_event", expected, &[], &[]);
+}

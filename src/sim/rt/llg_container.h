@@ -50,6 +50,9 @@ enum {
     LLG_VALUE_OPAQUE = 8,
     /* A `process` handle: an identity whose element owns one reference. */
     LLG_VALUE_PROCESS = 9,
+    /* An associative array nested in a value: `item_count` is 1 for a string
+     * key, and `packed_*` give an integral key. */
+    LLG_VALUE_ASSOC = 10,
 };
 
 typedef struct llg_value_desc_t llg_value_desc_t;
@@ -57,6 +60,7 @@ typedef struct llg_value_member_desc_t llg_value_member_desc_t;
 typedef struct llg_dyn_value_array_t llg_dyn_value_array_t;
 typedef struct llg_queue_value_array_t llg_queue_value_array_t;
 typedef struct llg_assoc_value_t llg_assoc_value_t;
+typedef struct llg_nested_assoc_t llg_nested_assoc_t;
 typedef struct llg_value_t llg_value_t;
 struct llg_queue_source_t;
 
@@ -85,13 +89,14 @@ struct llg_value_t {
         llg_string_t string;
         void* handle;
         llg_dyn_value_array_t* container;
+        llg_nested_assoc_t* assoc;
         llg_value_t* items;
     } value;
 };
 
 /* Descriptor contract (SIM-003). A value descriptor is immutable static data
  * describing one recursive value type. Its storage identity decides copying:
- * DEEP values (packed, real, string, aggregate, fixed array, container) copy
+ * DEEP values (packed, real, string, aggregate, fixed array, containers) copy
  * into independent owners; IDENTITY handles (event, class/semaphore/mailbox/
  * virtual-interface opaque handles and counted process handles) share the
  * referenced object and are reported by llg_value_trace; BORROWED chandles
@@ -1054,6 +1059,42 @@ void llg_assoc_delete(llg_assoc_t* array);
 void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src);
 void llg_assoc_merge(llg_assoc_t* dst, const llg_assoc_t* a,
                      const llg_assoc_t* b);
+
+/* An associative array nested in a value. It keeps the storage a variable of
+ * its type has (`llg_assoc_t` for packed elements, else `llg_assoc_value_t`)
+ * in one stable allocation, so container operations address it in place. The
+ * owning value holds one pin and a lexical alias another: an element deleted
+ * while a statement uses it stays valid until the statement ends. A null
+ * value is the empty array. */
+struct llg_nested_assoc_t {
+    size_t pins;
+    const llg_value_desc_t* desc;
+    union {
+        llg_assoc_t packed;
+        llg_assoc_value_t values;
+    } array;
+};
+
+llg_nested_assoc_t* llg_nested_assoc_new(const llg_value_desc_t* desc);
+llg_nested_assoc_t* llg_nested_assoc_clone(const llg_nested_assoc_t* source);
+void llg_nested_assoc_release(llg_nested_assoc_t* nested);
+size_t llg_nested_assoc_size(const llg_nested_assoc_t* nested);
+/* Whether two arrays hold equal keys and elements; null is empty. */
+int llg_nested_assoc_equal(const llg_nested_assoc_t* a,
+                           const llg_nested_assoc_t* b);
+void llg_nested_assoc_trace(const llg_nested_assoc_t* nested,
+                            llg_value_visit_fn visit, void* context);
+/* Pin the array of the initialized element `value`, allocating a null one,
+ * and return the storage to bind. `*pin` receives the pin the lexical owner
+ * gives back through llg_nested_assoc_unpin (a value-scope destructor taking
+ * the address of the pin). */
+void* llg_nested_assoc_bind(llg_value_t* value, llg_nested_assoc_t** pin);
+void llg_nested_assoc_unpin(void* pin);
+/* Push or insert a copy of `source`, storage of the queue's element type. */
+void llg_queue_value_push_assoc(llg_queue_value_array_t* queue, int back,
+                                const void* source);
+int llg_queue_value_insert_assoc(llg_queue_value_array_t* queue, sv4_t index,
+                                 const void* source);
 /* Retained cells for `ref` actuals that select a dynamic-array element or an
  * associative entry (IEEE 1800-2009 13.5.2). A cell follows its element until
  * an operation outdates it: new[], delete() or whole assignment of the dynamic

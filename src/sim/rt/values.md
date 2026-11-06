@@ -74,6 +74,11 @@ private default cell (`llg_native_ref_detached_string` and its siblings).
 A real element or member binds the same way (`llg_native_ref_real`); `real_write`
 reports each changed cell while such a reference lives, for one counter load
 otherwise, and the formal's waiters follow its `double`.
+An associative array nested in a value (`LLG_VALUE_ASSOC`) keeps the storage a
+variable of its type has, in one counted allocation (`llg_nested_assoc_t`), so
+generated code addresses it in place. A lexical alias holds a pin: a deleted
+element stays valid until the statement ends, and its writes go nowhere.
+
 A record element's queue or dynamic-array member is a nested slot of another
 representation than the formal's companion container, so `llg_native_ref_mirror`
 keeps the two equal: the companion's `notify` replaces the slot and touches the

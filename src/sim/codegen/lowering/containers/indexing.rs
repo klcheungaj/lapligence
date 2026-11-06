@@ -279,19 +279,11 @@ impl<'a> Codegen<'a> {
             return Some((ContainerInfo { ir }, node));
         }
         // `sq[k][i]`: an element of the staged copy of `sq[k]`.
-        if !self.staged_nested_elements.is_empty() {
-            if let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) {
-                if let [_, index] = indices.as_slice() {
-                    if let Some(ir) = self
-                        .node(node)
-                        .children
-                        .iter()
-                        .find_map(|child| self.staged_nested_element(*child))
-                    {
-                        return Some((ContainerInfo { ir }, *index));
-                    }
-                }
-            }
+        if let Some((ir, tail)) = self.select_below_staged_element(node) {
+            return match tail.as_slice() {
+                [index] => Some((ContainerInfo { ir }, *index)),
+                _ => None,
+            };
         }
         let selected = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
@@ -579,21 +571,6 @@ impl<'a> Codegen<'a> {
     ) -> Option<String> {
         let container = self.container_of(base)?;
         let mut element = &self.model.containers[container.ir].element;
-        // Only whole uses of such an element are staged (`sq[k].push_back(x)`,
-        // `sq[k] = src`); a select into it has no element path.
-        if matches!(
-            self.model.containers[container.ir].kind,
-            IrContainerKind::Associative {
-                key: IrAssocKey::String
-            }
-        ) && matches!(element, IrContainerElement::Container { kind, .. }
-            if !kind.to_ascii_lowercase().contains("assoc"))
-        {
-            return Some(format!(
-                "elements of a queue or dynamic array nested in string-keyed associative array `{}` in `{path}` are not supported; copy the element into a queue or dynamic-array variable first",
-                self.node(base).name
-            ));
-        }
         while let IrContainerElement::Container {
             kind,
             element: next,
@@ -602,7 +579,7 @@ impl<'a> Codegen<'a> {
         {
             if kind.to_ascii_lowercase().contains("assoc") {
                 return Some(format!(
-                    "elements of `{}` in `{path}` are not supported: an associative array nested in a queue, dynamic or associative array element has no element value form",
+                    "elements of `{}` in `{path}` are not supported here: a statement reaches one associative array nested in container elements, and this one sits below another or outside a procedural statement",
                     self.node(base).name
                 ));
             }
@@ -900,17 +877,15 @@ impl<'a> Codegen<'a> {
             return None;
         }
         // `sq[k][i]`: `sq[k]` is a staged copy; the rest selects inside it.
-        if !self.staged_nested_elements.is_empty() {
-            if let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) {
-                if let Some(staged) = self
-                    .node(node)
-                    .children
-                    .iter()
-                    .find_map(|child| self.staged_nested_element(*child))
-                {
-                    return Some((staged, indices.get(1..)?.to_vec()));
+        if let Some((staged, tail)) = self.select_below_staged_element(node) {
+            // A string key is no index path (`associative_string_element`).
+            return (!matches!(
+                self.model.containers[staged].kind,
+                IrContainerKind::Associative {
+                    key: IrAssocKey::String
                 }
-            }
+            ))
+            .then_some((staged, tail));
         }
         let (base, indices) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
@@ -954,7 +929,9 @@ impl<'a> Codegen<'a> {
         }
         // The frontend flattens `d[i][b]` into one select; indices beyond the
         // container depth select bits of a packed element.
-        if indices.len() > self.container_index_depth(container.ir) {
+        if indices.len() > self.container_index_depth(container.ir)
+            || self.crosses_associative(container.ir, indices.len())
+        {
             return None;
         }
         match self.model.containers[container.ir].kind {
@@ -988,6 +965,56 @@ impl<'a> Codegen<'a> {
         .then_some((container.ir, key))
     }
 
+    /// The staged nested element a flattened select sits below and the
+    /// indices left inside it: `sq[k][i]` keeps `sq[k]` as a child.
+    pub(in crate::sim::codegen) fn select_below_staged_element(
+        &self,
+        node: NodeId,
+    ) -> Option<(usize, Vec<NodeId>)> {
+        if self.staged_nested_elements.is_empty() {
+            return None;
+        }
+        let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) else {
+            return None;
+        };
+        let (staged, depth) = self.staged_select_below(node)?;
+        let tail = indices.get(depth..)?.to_vec();
+        (!self.crosses_associative(staged, tail.len())).then_some((staged, tail))
+    }
+
+    /// The nearest staged element in the chain of outer selects a flattened
+    /// select keeps as children, and how many indices it covers.
+    fn staged_select_below(&self, node: NodeId) -> Option<(usize, usize)> {
+        let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) else {
+            return None;
+        };
+        self.node(node)
+            .children
+            .iter()
+            .filter(|child| !indices.contains(child))
+            .find_map(|child| {
+                let Some(staged) = self.staged_nested_element(*child) else {
+                    return self.staged_select_below(*child);
+                };
+                let depth = match self.kind(*child) {
+                    NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => indices.len(),
+                    _ => 1,
+                };
+                Some((staged, depth))
+            })
+    }
+
+    /// Whether `depth` indices into `container` select through an associative
+    /// array nested in an element, which has no multi-index element path.
+    fn crosses_associative(&self, container: usize, depth: usize) -> bool {
+        (1..depth).any(|level| {
+            matches!(
+                self.container_element_type(container, level),
+                Some(IrContainerElement::Container { key: Some(_), .. })
+            )
+        })
+    }
+
     pub(in super::super) fn associative_string_element(
         &self,
         node: NodeId,
@@ -997,6 +1024,17 @@ impl<'a> Codegen<'a> {
         }
         if self.staged_nested_element(node).is_some() {
             return None;
+        }
+        if let Some((staged, tail)) = self.select_below_staged_element(node) {
+            return match (tail.as_slice(), &self.model.containers[staged].kind) {
+                (
+                    [key],
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String,
+                    },
+                ) => Some((staged, *key)),
+                _ => None,
+            };
         }
         let (base, key) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),

@@ -1,5 +1,14 @@
 //! Container calls consume only explicitly prepared operand snapshots.
 use super::*;
+
+/// Whether a nested queue element is built from an associative array.
+fn assoc_source(ctx: &RCtx<'_>, source: usize) -> bool {
+    matches!(
+        ctx.model.containers[source].kind,
+        IrContainerKind::Associative { .. }
+    )
+}
+
 pub(super) fn render(
     frame: &mut Frame<'_, '_>,
     operation: &IrContainerStmt,
@@ -8,8 +17,19 @@ pub(super) fn render(
 ) -> Result<String, String> {
     let ctx = frame.ctx;
     Ok(match operation {
-        IrContainerStmt::Declare(_) | IrContainerStmt::SharedDeclare(_) => {
+        IrContainerStmt::Declare(_)
+        | IrContainerStmt::SharedDeclare(_)
+        | IrContainerStmt::BindElement { .. } => {
             return Err("container declarations are emitted by the frame".into())
+        }
+        IrContainerStmt::TouchContents(container) => {
+            let storage = &ctx.model.containers[*container];
+            let touch = match storage.kind {
+                IrContainerKind::Dynamic => "llg_dyn_value_touch",
+                IrContainerKind::Queue { .. } => "llg_queue_value_touch",
+                IrContainerKind::Associative { .. } => "llg_assoc_value_touch",
+            };
+            format!("    {touch}(&{});\n", name(frame, *container)?)
         }
         IrContainerStmt::StreamAssign {
             container,
@@ -911,6 +931,24 @@ pub(super) fn render(
             name(frame, *container)?,
             frame.chandle(value)?
         ),
+        IrContainerStmt::QueuePushFrontContainer { container, source }
+            if assoc_source(ctx, *source) =>
+        {
+            format!(
+                "    llg_queue_value_push_assoc(&{}, 0, &{});\n",
+                name(frame, *container)?,
+                name(frame, *source)?
+            )
+        }
+        IrContainerStmt::QueuePushBackContainer { container, source }
+            if assoc_source(ctx, *source) =>
+        {
+            format!(
+                "    llg_queue_value_push_assoc(&{}, 1, &{});\n",
+                name(frame, *container)?,
+                name(frame, *source)?
+            )
+        }
         IrContainerStmt::QueuePushFrontContainer { container, source } => {
             let function = if ctx.model.containers[*source].element.is_packed() {
                 "llg_queue_value_push_front_container_from_packed"
@@ -976,6 +1014,16 @@ pub(super) fn render(
             name(frame, *container)?,
             operand(frame, owners, index)?.code,
             frame.chandle(value)?
+        ),
+        IrContainerStmt::QueueInsertContainer {
+            container,
+            index,
+            source,
+        } if assoc_source(ctx, *source) => format!(
+            "    (void)llg_queue_value_insert_assoc(&{}, {}, &{});\n",
+            name(frame, *container)?,
+            operand(frame, owners, index)?.code,
+            name(frame, *source)?
         ),
         IrContainerStmt::QueueInsertContainer {
             container,

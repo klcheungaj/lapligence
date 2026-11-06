@@ -273,6 +273,12 @@ impl Codegen<'_> {
     /// of another form is built in a temporary before the call when
     /// `prelude` is available. Outputs require a container variable, or a
     /// row or slice of a fixed view when `after` takes its write-back.
+    fn formal_of_task(&self, formal: NodeId) -> bool {
+        self.node(formal).parent.is_some_and(|parent| {
+            matches!(self.kind(parent), NodeKind::FuncTask { is_task: true, .. })
+        })
+    }
+
     pub(in super::super) fn container_call_argument(
         &mut self,
         path: &str,
@@ -296,6 +302,23 @@ impl Codegen<'_> {
         {
             return Err(format!(
                 "a queue or dynamic-array member of a container record element as the ref actual of `{name}` in `{path}` is not supported"
+            ));
+        }
+        // A task can suspend while its reference is live, so a copy of a
+        // nested queue or dynamic array cannot stand in for the element.
+        if direction == DbDirection::Ref
+            && self
+                .staged_nested_element(self.p30_unwrap_cast(actual))
+                .is_some_and(|staged| {
+                    !matches!(
+                        self.model.containers[staged].kind,
+                        IrContainerKind::Associative { .. }
+                    )
+                })
+            && self.formal_of_task(formal)
+        {
+            return Err(format!(
+                "a queue or dynamic array nested in a container element as the ref actual of task formal `{name}` in `{path}` is not supported; pass a variable"
             ));
         }
         if let Some(source) = self.container_of(self.p30_unwrap_cast(actual)) {
