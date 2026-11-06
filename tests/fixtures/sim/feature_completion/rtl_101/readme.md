@@ -72,3 +72,13 @@ column. Expected values are derived by hand below; none were captured from
   shall perform no operation."
 - `chosen_fallback`: `%p` of the whole record and a copy from a directly
   addressed array are outside column layout, so the record keeps its leaves.
+- `chosen_whole_values`: whole copies and comparisons of chosen records, which
+  read whole operands in place and write only differing cells. A copy that
+  changes nothing wakes nothing (`q = p` at time 2). `q.a[7]`, a cell only `q`
+  holds, returns to `p`'s default 0. `b` starts X, so `==` is `x` and `===` is 1
+  on equal records; a known mismatch gives 0 from both. SV2009 11.4.5 L14795:
+  "the relation is ambiguous, then the result shall be a 1-bit unknown value
+  (x).". `q = q`
+  and `swap_in(f, f)` have one array on both sides. The NBA copy takes `p`
+  before `p.a[3] = 8`, so `q.a[3]` stays 6. Expected lines were derived by hand
+  and equal the per-cell form's output; the reference run is pending.

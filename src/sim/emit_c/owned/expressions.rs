@@ -29,8 +29,19 @@ impl Frame<'_, '_> {
                 negate,
             } => {
                 let (array, total) = self.fixed_value_storage(left)?;
-                let left = self.fixed_value(left, array, total)?;
-                let right = self.fixed_value(right, array, total)?;
+                // A comparison of two whole arrays writes nothing, so it
+                // reads them in place.
+                let (left, right) = match (left.as_ref(), right.as_ref()) {
+                    (IrFixedValue::Array(left), IrFixedValue::Array(right))
+                        if self.whole_fixed_view(left) && self.whole_fixed_view(right) =>
+                    {
+                        (self.fixed_view(left)?, self.fixed_view(right)?)
+                    }
+                    _ => {
+                        let left = self.fixed_value(left, array, total)?;
+                        (left, self.fixed_value(right, array, total)?)
+                    }
+                };
                 self.value(
                     format!(
                         "llg_fixed_array_compare({left}, {right}, {}, {})",

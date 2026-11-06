@@ -166,6 +166,33 @@ fn selected_member_arrays_below_the_dense_threshold_match_the_leaf_form() {
 }
 
 #[test]
+fn whole_values_of_chosen_columns_match_the_leaf_form() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_whole_values.out");
+    sim_cli::run_case(SUITE, "chosen_whole_values", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_whole_values", expected, &[], &[]);
+}
+
+#[test]
+fn whole_operands_of_column_records_need_no_image() {
+    let model = generated_model(
+        "module tb;
+  typedef struct { byte t; int a[5000]; } r_t;
+  r_t r, q;
+  initial begin
+    q = r;
+    $display(\"%b\", q == r);
+    $finish(0);
+  end
+endmodule
+",
+        &[],
+    );
+    let scratch = "llg_value_scope_begin_object(sizeof(llg_fixed_array_t)";
+    assert!(!model.contains(scratch), "{model}");
+}
+
+#[test]
 fn uses_columns_lack_keep_the_leaf_form() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_fallback.out");
     sim_cli::run_case(SUITE, "chosen_fallback", expected, "", &[]);

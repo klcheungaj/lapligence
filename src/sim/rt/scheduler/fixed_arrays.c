@@ -195,6 +195,71 @@ void llg_fixed_array_destroy(void* object) {
 }
 
 
+struct fixed_publication { sv4_t* target; sv4_t old, value, replacement; };
+struct fixed_transaction { size_t count; struct fixed_publication* cells; llg_fixed_range_t* ranges; sv4_t initial; };
+
+static void fixed_transaction_destroy(void* object) {
+    struct fixed_transaction* transaction = object;
+    for (size_t i = 0; i < transaction->count; ++i) {
+        sv4_destroy(&transaction->cells[i].old);
+        sv4_destroy(&transaction->cells[i].value);
+        sv4_destroy(&transaction->cells[i].replacement);
+    }
+    free(transaction->cells);
+    fixed_ranges_destroy(transaction->ranges);
+    sv4_destroy(&transaction->initial);
+}
+
+/* A blocking copy between two arrays of one type whose represented cells
+ * already pair up: only the cells that differ are written, without building
+ * an image of the source. Returns 0, having changed nothing, when it does not
+ * apply; `*unpaired` then says that a source cell has no destination yet,
+ * which the image path does not add for a default-valued cell. Publication
+ * follows `dst->cells`, as on the image path, after every value is committed. */
+static int fixed_array_copy_in_place(llg_fixed_array_t* dst, const llg_fixed_array_t* src,
+                                     int two_state, int* unpaired) {
+    if (dst == src || g.private_evaluation || !sv4_same(dst->initial, src->initial)
+        || llg_sv4_signed(dst->initial) != llg_sv4_signed(src->initial)
+        || (two_state && sv4_is_unknown(src->initial)))
+        return 0;
+    size_t shared = 0, changed = 0;
+    llg_value_scope_t* scope = NULL;
+    struct fixed_transaction* prepared = NULL;
+    uint32_t width = llg_sv4_width(dst->initial);
+    int8_t sign = (int8_t)llg_sv4_signed(dst->initial);
+    for (llg_fixed_cell_t* cell = dst->cells; cell; cell = cell->next) {
+        const llg_fixed_cell_t* source = fixed_find(src, cell->index);
+        shared += source != NULL;
+        const sv4_t* value = source ? &source->value : &src->initial;
+        if (sv4_same(cell->value, *value) && !(two_state && sv4_is_unknown(*value))) continue;
+        if (!prepared) {
+            scope = llg_value_scope_begin_object(sizeof(*prepared), fixed_transaction_destroy);
+            prepared = llg_value_scope_object(scope);
+            prepared->cells = llg_checked_calloc(dst->count, sizeof(*prepared->cells), "fixed publication values");
+        }
+        struct fixed_publication* entry = &prepared->cells[prepared->count++];
+        entry->target = &cell->value;
+        entry->old = sv4_clone(&cell->value);
+        entry->value = sv4_cast(*value, width, sign);
+        if (two_state) sv4_replace(&entry->value, sv4_to_two_state(entry->value));
+        entry->replacement = sv4_clone(&entry->value);
+        ++changed;
+    }
+    if (shared != src->count) {
+        if (scope) llg_value_scope_end(scope);
+        *unpaired = 1;
+        return 0;
+    }
+    for (size_t i = 0; i < changed; ++i)
+        sv4_move(prepared->cells[i].target, &prepared->cells[i].replacement);
+    for (size_t i = 0; i < changed; ++i) {
+        struct fixed_publication* entry = &prepared->cells[i];
+        if (!sv4_same(entry->old, entry->value)) sig_publish_changed(entry->target, entry->old, entry->value);
+    }
+    if (scope) llg_value_scope_end(scope);
+    return 1;
+}
+
 static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fixed_array_t* src,
                           int two_state, int nba, uint32_t slice) {
     if (region_is_read_only_now(g.current_region) && !region_private_store("fixed array write"))
@@ -203,6 +268,11 @@ static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fix
     if (dst->total != src->total) fixed_bad_state("fixed array copy shape mismatch");
     uint32_t width = llg_sv4_width(src->initial);
     if (slice && width % slice && slice % width) fixed_bad_state("unaligned fixed stream slice");
+    int unpaired = 0;
+    if (!slice && !nba && fixed_array_copy_in_place(dst, src, two_state, &unpaired)) {
+        if (target_pin) llg_value_scope_end(target_pin);
+        return;
+    }
     llg_value_scope_t* scope = llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy);
     llg_fixed_array_t* snapshot = llg_value_scope_object(scope);
     sv4_t initial = sv4_cast(src->initial, llg_sv4_width(dst->initial), llg_sv4_signed(dst->initial));
@@ -249,10 +319,17 @@ static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fix
         fixed_array_apply(dst, snapshot);
     }
     llg_value_scope_end(scope);
+    /* Later copies of this pair run in place. */
+    if (unpaired)
+        for (llg_fixed_cell_t* cell = src->cells; cell; cell = cell->next)
+            (void)llg_fixed_array_cell(dst, cell->index);
     if (target_pin) llg_value_scope_end(target_pin);
 }
 
 static int fixed_compare_leaf(const sv4_t* left, const sv4_t* right, int case_eq) {
+    /* Equal cells are the common case of a compare that goes on to the next
+     * cell, and need no result value. */
+    if (sv4_same(*left, *right) && (case_eq || !sv4_is_unknown(*left))) return 1;
     sv4_t result = case_eq ? sv4_case_eq(*left, *right) : sv4_eq(*left, *right);
     int state = llg_sv4_state(result, 0);
     sv4_destroy(&result);
@@ -324,13 +401,16 @@ sv4_t llg_fixed_array_compare(const llg_fixed_array_t* left,
         return result > 1 ? sv4_x(1, 0) : sv4_from_u64((uint64_t)(result ^ !!negate), 1, 0);
     }
     int result = 1;
-    size_t represented = left->count;
+    size_t represented = left->count, shared = 0;
     for (llg_fixed_cell_t* cell = left->cells; cell; cell = cell->next) {
-        int state = fixed_compare_leaf(&cell->value, llg_fixed_array_peek(right, cell->index), case_eq);
+        llg_fixed_cell_t* other = fixed_find(right, cell->index);
+        shared += other != NULL;
+        int state = fixed_compare_leaf(&cell->value, other ? &other->value : &right->initial, case_eq);
         if (!state) return sv4_from_u64((uint64_t)negate, 1, 0);
         if (state > 1) result = 2;
     }
-    for (llg_fixed_cell_t* cell = right->cells; cell; cell = cell->next) {
+    /* Every cell of `right` was met above when all of them are shared. */
+    for (llg_fixed_cell_t* cell = shared == right->count ? NULL : right->cells; cell; cell = cell->next) {
         if (fixed_find(left, cell->index)) continue;
         ++represented;
         int state = fixed_compare_leaf(&left->initial, &cell->value, case_eq);
@@ -540,21 +620,6 @@ static void fixed_array_snapshot(llg_fixed_array_t* result, const llg_fixed_arra
         sv4_t value = fixed_convert(cell->value, llg_sv4_width(initial), llg_sv4_signed(initial), two_state);
         sv4_move(llg_fixed_array_cell(result, cell->index - origin), &value);
     }
-}
-
-struct fixed_publication { sv4_t* target; sv4_t old, value, replacement; };
-struct fixed_transaction { size_t count; struct fixed_publication* cells; llg_fixed_range_t* ranges; sv4_t initial; };
-
-static void fixed_transaction_destroy(void* object) {
-    struct fixed_transaction* transaction = object;
-    for (size_t i = 0; i < transaction->count; ++i) {
-        sv4_destroy(&transaction->cells[i].old);
-        sv4_destroy(&transaction->cells[i].value);
-        sv4_destroy(&transaction->cells[i].replacement);
-    }
-    free(transaction->cells);
-    fixed_ranges_destroy(transaction->ranges);
-    sv4_destroy(&transaction->initial);
 }
 
 static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_array_t* snapshot) {

@@ -3,12 +3,16 @@ use super::*;
 use crate::sim::ir::IrFixedValue;
 
 impl Frame<'_, '_> {
-    pub(super) fn fixed_view(&mut self, view: &IrMemoryView) -> Result<String, String> {
-        let owner = self.fixed_array_address(view.array)?;
-        if view.origin == 0
+    /// Whether `view` is its whole array, which evaluates no selector.
+    pub(super) fn whole_fixed_view(&self, view: &IrMemoryView) -> bool {
+        view.origin == 0
             && view.selectors.is_empty()
             && view.total == self.ctx.model.array(view.array).total
-        {
+    }
+
+    pub(super) fn fixed_view(&mut self, view: &IrMemoryView) -> Result<String, String> {
+        let owner = self.fixed_array_address(view.array)?;
+        if self.whole_fixed_view(view) {
             return Ok(owner);
         }
         let origin = self.fixed_view_origin(view)?;
