@@ -1163,7 +1163,11 @@ impl<'a> Codegen<'a> {
                     ));
                     continue;
                 }
-                let member_equal = self.aggregate_leaf_equality(path, op, left, right)?;
+                let member_equal = match self.member_column_equality(op, left, right) {
+                    Some(Some(equal)) => equal,
+                    Some(None) => continue,
+                    None => self.aggregate_leaf_equality(path, op, left, right)?,
+                };
                 equalities.push((left.path.clone(), member_equal));
             }
             match &tagged {
@@ -1192,6 +1196,46 @@ impl<'a> Codegen<'a> {
                 equality
             },
         ))
+    }
+
+    /// Equality of two whole member columns from one pair of their cell
+    /// leaves: the comparison at the first cell, `Some(None)` at any other,
+    /// and `None` when the leaves are not cells of member columns.
+    fn member_column_equality(
+        &self,
+        op: Operation,
+        left: &AggregateMemberInfo,
+        right: &AggregateMemberInfo,
+    ) -> Option<Option<IrExpr>> {
+        let (left_column, right_column) = (member_cell_column(left)?, member_cell_column(right)?);
+        let first = record_cell_indices(left)
+            .iter()
+            .zip(&left_column.dims)
+            .all(|(index, (bound, _))| *index == i128::from(*bound));
+        if !first {
+            return Some(None);
+        }
+        let (left_array, right_array) = (
+            self.reference_array(left_column.ir),
+            self.reference_array(right_column.ir),
+        );
+        let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
+        let kind = if left_column.real {
+            IrExprKind::FixedArrayCompare {
+                left: left_array,
+                right: right_array,
+                case,
+                negate: false,
+            }
+        } else {
+            IrExprKind::FixedValueCompare {
+                left: Box::new(IrFixedValue::Array(self.record_column_view(left_array))),
+                right: Box::new(IrFixedValue::Array(self.record_column_view(right_array))),
+                case,
+                negate: false,
+            }
+        };
+        Some(Some(IrExpr::new(kind, 1, false, None)))
     }
 
     /// Equality of one pair of corresponding record leaves.
@@ -1422,40 +1466,12 @@ impl<'a> Codegen<'a> {
                 member_cell_column(right_leaf)
                     .filter(|column| whole(right_leaf, right.prefix.len(), column)),
             ) {
-                // A member column compares once, at its first cell.
-                (Some(left_column), Some(right_column)) => {
-                    let first = record_cell_indices(left_leaf)
-                        .iter()
-                        .zip(&left_column.dims)
-                        .all(|(index, (bound, _))| *index == i128::from(*bound));
-                    if !first {
-                        continue;
+                (Some(_), Some(_)) => {
+                    match self.member_column_equality(op, left_leaf, right_leaf) {
+                        Some(Some(equal)) => equal,
+                        Some(None) => continue,
+                        None => self.aggregate_leaf_equality(path, op, left_leaf, right_leaf)?,
                     }
-                    let (left_array, right_array) = (
-                        self.reference_array(left_column.ir),
-                        self.reference_array(right_column.ir),
-                    );
-                    let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
-                    let kind = if left_column.real {
-                        IrExprKind::FixedArrayCompare {
-                            left: left_array,
-                            right: right_array,
-                            case,
-                            negate: false,
-                        }
-                    } else {
-                        IrExprKind::FixedValueCompare {
-                            left: Box::new(IrFixedValue::Array(
-                                self.record_column_view(left_array),
-                            )),
-                            right: Box::new(IrFixedValue::Array(
-                                self.record_column_view(right_array),
-                            )),
-                            case,
-                            negate: false,
-                        }
-                    };
-                    IrExpr::new(kind, 1, false, None)
                 }
                 _ => self.aggregate_leaf_equality(path, op, left_leaf, right_leaf)?,
             };

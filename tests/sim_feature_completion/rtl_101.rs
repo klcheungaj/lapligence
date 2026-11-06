@@ -502,6 +502,33 @@ endmodule
     );
 }
 
+/// A run-time select, a whole copy and a whole compare of member columns
+/// beside native members cost the same code at any size.
+#[test]
+fn a_member_column_stays_flat_beside_native_members() {
+    let model = |cells: usize| {
+        generated_model(
+            &format!(
+                "module tb;
+  typedef struct {{ real a[{cells}]; int b[{cells}]; string t[{cells}]; }} r_t;
+  r_t r, q;
+  int k = 1, y;
+  real x;
+  initial begin
+    x = r.a[k]; y = r.b[k]; r.a[k] = 1.5; r.b[k] = 2;
+    q = r;
+    $display(\"%0d %0d\", q == r, q.a == r.a);
+  end
+endmodule
+"
+            ),
+            &[],
+        )
+    };
+    let (small, large) = (model(16).lines().count(), model(4095).lines().count());
+    assert!(large <= small + 16, "{small} lines become {large}");
+}
+
 /// Member arrays as `inside` sets, structured fills and nested records.
 #[test]
 fn nested_records_and_sets_of_the_column_form() {

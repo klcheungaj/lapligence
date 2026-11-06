@@ -1876,8 +1876,10 @@ Two shapes are not columns at this size:
 Members held in a container (`string`, handles, records with such members) have
 these limits, each an error at its source location unless noted:
 
-- an event-controlled non-blocking assignment to one of their elements.
-- an event control on a `ref` formal bound to one of their elements.
+- an event-controlled non-blocking assignment of the whole record, or of a part
+  of it that holds the member (`m <= @(e) o`). A located element works.
+- a task that waits on a `ref` formal bound to one of their elements at a
+  run-time index.
 - a nested record whose type has the column layout on its own, inside a record
   that holds a native member array: `o.i = x` with `x` declared alone is not
   resolved.
@@ -1887,8 +1889,9 @@ these limits, each an error at its source location unless noted:
 A use the column form cannot lower is an error at its source location. These
 limits apply to the form named:
 
-- both forms: a member array selected on a call result (`f().a[1]`); assign the
-  result to a record variable first.
+- both forms: a member array selected on a call result (`f().a[1]`), and a
+  row of a multidimensional member array of a queue element at a run-time index
+  (`q[0].a[k] = '{1, 2}`); assign through a record variable first.
 - per-cell form, below 16 cells: a whole record assigned to or read from an
   element of a member array at a run-time index (`r.rows[i] = x`), and two
   continuous assignments to separate bits of one member of an element of an

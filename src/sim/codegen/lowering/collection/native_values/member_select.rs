@@ -500,6 +500,10 @@ impl Codegen<'_> {
         if !steps.iter().any(|step| matches!(step, SelectStep::Run(_))) {
             return Ok(None);
         }
+        // A member column is one lookup at any size.
+        if self.record_column_select(leaf_node).is_some() {
+            return Ok(None);
+        }
         let mut indices = Vec::new();
         let (form, inside) = match root {
             SelectRoot::Value(value) => {

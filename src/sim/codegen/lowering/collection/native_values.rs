@@ -918,8 +918,10 @@ impl Codegen<'_> {
                         .ok()
                         .and_then(|index| i32::try_from(index).ok())
                         .ok_or_else(|| {
-                            "runtime index into a native record array member is not supported"
-                                .to_owned()
+                            format!(
+                                "{}: runtime index into a native record array member is not supported",
+                                self.source_location(*index)
+                            )
                         })?;
                     path.push(AggregatePathPart::Index(index));
                 }

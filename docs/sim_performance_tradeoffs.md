@@ -403,6 +403,13 @@ code at `-O1` instead of 0.13×).
   column of `real` is the doubles alone unless something observes it. Above
   4,096 cells a hashed cell costs 58 bytes. Container cells are 40 bytes
   (`llg_value_t`), which holds a whole `string` and its change links per cell.
+
+  Container members trade constant selects for the rest. A constant index
+  builds an `sv4_t` that a runtime call decodes, so a constant `string` read goes
+  from 0.142 to 0.154 s per 1M and a handle write from 0.065 to 0.079, and a whole
+  record element written at a constant index from 0.21 to 0.32. Every run-time
+  index is faster than a leaf (`string` read 0.46 → 0.25), as is every whole copy
+  of `string` or record elements (at 256 cells, 11.6 → 1.49 and 18.3 → 4.17).
 - **Threshold:** 16 cells. Columns already win on accesses at 4 cells, but
   below 16 the tree stays a few hundred lines, so small records keep their
   form.
