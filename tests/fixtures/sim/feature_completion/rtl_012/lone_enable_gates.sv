@@ -32,6 +32,6 @@ module tb;
     #5 d = 1'bx;
     #5 e = 0;
     #5 d = 1'bz; e = 1;
-    #5 $finish;
+    #5 $finish(0);
   end
 endmodule
