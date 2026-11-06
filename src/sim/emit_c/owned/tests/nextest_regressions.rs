@@ -186,6 +186,8 @@ fn typed_strobe_callback_observes_the_nba_value() {
         c_name: "print_current".to_owned(),
         time_unit_fs: 1,
         private_effects: false,
+        prelude: Vec::new(),
+        receiver: None,
         args: vec![IrDisplayArg::Packed(IrExpr::new(
             IrExprKind::SigRead(0),
             65,
@@ -206,6 +208,8 @@ fn typed_strobe_callback_observes_the_nba_value() {
             n_args: 1,
             reads: vec![],
             poll: false,
+            dynamic_reads: None,
+            receiver: None,
             time_args: Default::default(),
             default_radix: IrDisplayRadix::Decimal,
             scope: "regression".to_owned(),

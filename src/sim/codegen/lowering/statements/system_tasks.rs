@@ -1,6 +1,6 @@
 //! System tasks.
 
-use super::super::collection::PostponedEvaluation;
+use super::super::collection::{PostponedEvaluation, ReportReadPlan};
 use super::*;
 use crate::sim::legacy_unsupported::{unsupported_system_task_family, LegacyFamily};
 
@@ -249,18 +249,10 @@ impl EmitCtx<'_, '_> {
                 }
                 DisplayTaskKind::Deferred { strobe, file } => {
                     // A static subroutine's variables are model storage, so a
-                    // deferred report may read them at Postponed. Formals,
-                    // automatics and class receivers die with the activation
-                    // (SV 13.3.2), so naming one rejects at its location.
-                    if let Some(function) = &self.func {
-                        if function.class_receiver.is_some() {
-                            return Err(format!(
-                                "{name} in class method `{}` cannot defer a report: \
-                                 the object may not outlive the activation (`{}`)",
-                                function.name, self.path
-                            ));
-                        }
-                    }
+                    // deferred report may read them at Postponed. Formals and
+                    // automatics die with the activation (SV 13.3.2), so
+                    // naming one rejects at its location. A class method's
+                    // receiver travels with the report.
                     if let Some(local) = args.iter().find_map(|arg| self.activation_bound_ref(*arg))
                     {
                         return Err(format!(
@@ -313,6 +305,7 @@ impl EmitCtx<'_, '_> {
                     let outer = std::mem::replace(&mut self.cg.deferred_display_args, true);
                     let parsed = self.parse_display_call(name, display_args_source, default_radix);
                     self.cg.deferred_display_args = outer;
+                    let prelude = std::mem::take(&mut self.cg.deferred_prelude);
                     let (fmt, mut display_args) = parsed?;
                     if !strobe {
                         // Trailing views no conversion prints: they only join
@@ -323,6 +316,21 @@ impl EmitCtx<'_, '_> {
                             }
                         }
                     }
+                    let receiver = self
+                        .func
+                        .as_ref()
+                        .and_then(|function| function.class_receiver.clone())
+                        .or_else(|| self.cg.method_receiver());
+                    let receiver_local = match &receiver {
+                        None => None,
+                        Some(IrChandleExpr::LocalRead(name)) => Some(name.clone()),
+                        Some(_) => {
+                            return Err(format!(
+                                "{name} in `{}` has a receiver it cannot carry to Postponed",
+                                self.path
+                            ))
+                        }
+                    };
                     let reads = if !strobe {
                         let mut reads = self.collect_monitor_reads(display_args_source)?;
                         for read in self.cg.strength_view_dependencies(&display_args) {
@@ -350,22 +358,38 @@ impl EmitCtx<'_, '_> {
                         c_name: eval_name.clone(),
                         args: display_args.clone(),
                         time_unit_fs: self.cg.timescale_of_node(h).unit_fs,
-                        private_effects,
+                        private_effects: private_effects || !prelude.is_empty(),
+                        prelude,
+                        receiver: receiver_local.clone(),
                     });
-                    // Handle-selected storage and `%p` of class objects change
-                    // without a named write, so those monitors look every slot.
+                    // Calls, virtual-interface members and `%p` of class
+                    // objects select storage no dependency can name, so those
+                    // monitors look every slot; property paths are watched
+                    // exactly (`report_read_plan`).
                     let poll = !strobe
-                        && (display_args_source
-                            .iter()
-                            .any(|argument| self.cg.reads_dynamic_storage(*argument))
-                            || display_args.iter().any(|argument| {
-                                matches!(
-                                    argument,
-                                    crate::sim::ir::IrDisplayArg::Text(
-                                        crate::sim::ir::IrStringExpr::Pattern(pattern)
-                                    ) if pattern.reaches_class(&self.cg.model)
-                                )
-                            }));
+                        && (display_args_source.iter().any(|argument| {
+                            self.cg.report_read_plan(*argument) == ReportReadPlan::EverySlot
+                        }) || display_args.iter().any(|argument| {
+                            matches!(
+                                argument,
+                                crate::sim::ir::IrDisplayArg::Text(
+                                    crate::sim::ir::IrStringExpr::Pattern(pattern)
+                                ) if pattern.reaches_class(&self.cg.model)
+                            )
+                        }));
+                    let (dynamic, reads): (Vec<_>, Vec<_>) = reads.into_iter().partition(|read| {
+                        matches!(read, crate::sim::ir::IrDependency::NativeAccess(_))
+                    });
+                    let dynamic_reads = (!poll && !dynamic.is_empty()).then(|| {
+                        let count = dynamic.len();
+                        let name = self.cg.new_fn_name(&self.path, "reads");
+                        self.pre_fns.push(crate::sim::ir::IrPreFn::MonitorReads {
+                            c_name: name.clone(),
+                            reads: dynamic,
+                            receiver: receiver_local,
+                        });
+                        (name, count)
+                    });
                     let time_args = display_args
                         .iter()
                         .enumerate()
@@ -379,6 +403,8 @@ impl EmitCtx<'_, '_> {
                         n_args: display_args.len(),
                         reads,
                         poll,
+                        dynamic_reads,
+                        receiver: receiver.map(Box::new),
                         time_args,
                         default_radix,
                         scope: self.format_scope(h),

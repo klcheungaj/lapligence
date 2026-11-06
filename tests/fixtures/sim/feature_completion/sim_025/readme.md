@@ -36,8 +36,13 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
   formals, element records and strings, nested calls and an assignment pattern
   all read at the end of the slot (21.2.2). The two pattern lines are derived by
   hand from 21.2.2 because other simulators reject a pattern actual there.
-- `neg_strobe_container_conversion`: a conversion between container kinds has
-  no evaluator form, so it rejects at the call and names the formal.
+- `strobe_built_actuals`: a conversion between container kinds and an unpacked
+  concatenation are built by the evaluator from the end-of-slot values (L36482-36484,
+  S25-D8), and helpers with string or container formals report the same way. Some
+  simulators read the concatenation at the call (6, not 7) and reject the queue
+  and string `$monitor` lines; the file is derived by hand from the clauses.
+- `neg_strobe_container_conversion`: an actual with a side effect cannot be built
+  in the Postponed region, so it rejects at the call and names the formal.
 - `scope_time`: `$time` alone never triggers a report (L36517-36518); two
   `$fmonitor` lists registered by different instances stay active together
   (L36676-36677) and `%m` names each instance.
@@ -47,6 +52,29 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
   virtual-interface member re-evaluates at every settled slot and reports when
   the value differs (a rebound handle included). A process handle prints
   `process` in the Postponed region.
+- `class_property_reports` (decision S25-D9): properties through a handle, a
+  chain, a handle array element, static and parameterized classes, with strings,
+  reals, containers and selects. L18646-18652 bars only variables of automatic
+  subroutines. L36516-36519 sets each report; the lines at 3, 4, 6, 11 and 23 show
+  no report for a write of the same value, an equal value through a new object
+  and a write to an object the path no longer selects. Some simulators print a
+  property read through a module handle as it stood at the `$strobe` call
+  (`30 fs`, `31 st`) and reject the `$monitor` lines, so the file is derived by
+  hand from these clauses.
+- `exact_class_triggers`: L36516-36519 ties a report to a change of the list; the
+  evaluation counter in the printed list shows no evaluation in a slot where
+  nothing on the path changed, which is what keeps a monitor on a path as cheap as
+  one on fixed storage.
+- `class_method_reports` (decision S25-D9): a report in a method, a task, a
+  constructor and a fork branch of a method. The report keeps its object after
+  `c = null`; a monitor keeps it until replaced. The same derivation.
+- `report_receiver_gc`: L36516-36519 keeps the list active, so the object it reads
+  stays reachable; collector statistics show only the replaced `e` freed.
+- `static_handle_formals`: string, chandle, class and process formals and a
+  string local of static subroutines (L18646-18652 bars only automatic ones) read
+  at the end of the slot (L36482-36484): `s=x` before any later call, `l=L
+  s=later` after the stores, `v=2`. The `$monitor` lines are derived by hand
+  because some simulators reject a string in `$monitor`; the others match them.
 - `static_subroutines`: SV 13.3.2 bans only variables of automatic
   subroutines (L18646-18652). Static formals and locals and module variables
   are reported at the end of the slot. Within one slot strobes print before
@@ -106,7 +134,15 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
   table is outside the text, and some simulators stop the run on one, so the
   fixture uses a small number that no `$fopen` here returns (it was
   `32'h8000_007f`).
-- Limits, not LRM rules: `neg_static_string_formal` (a static task keeps a
-  string formal in the call activation) and `neg_class_method_strobe` (a
-  deferred report in a class method) reject with a located diagnostic. They
-  are listed in `docs/known_issues.md`.
+- `null_report`, `null_monitor` (decision S25-D9): L9653-9654: "Accessing
+  nonstatic members (see 8.8) or virtual methods (see 8.19) via a null object
+  handle is illegal. The result of an illegal access via a null object is
+  indeterminate, and implementations may issue an error." A report evaluates at
+  the end of the slot, so only the handle it finds then matters: `null_report`
+  prints the first line, whose handle was null at the call, and stops at the
+  second. A failed evaluation prints nothing.
+- `neg_method_formal_strobe`: a method's formals are automatic (L18646-18652);
+  its properties are not.
+- Limits, not LRM rules: `neg_monitor_record_property` (a member of an unpacked
+  structure property publishes no change) rejects with a located diagnostic. It
+  is listed in `docs/known_issues.md`.

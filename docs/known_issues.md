@@ -1513,44 +1513,28 @@ or `semaphore s = new; initial $display("%p", s);`.
 ## Deferred reports that name class state or activation storage
 
 `$strobe`, `$monitor` and the file variants re-evaluate their arguments in the
-Postponed region, so every value they read must live in model storage. SIM-025
-admits module variables, static formals and locals of static tasks and
-functions, containers, strings and `%p` aggregates there. Three forms still
-reject:
+Postponed region. Class properties, reports in class methods and static string
+and handle variables work ([S25-D9](lrm_decisions.md),
+[sim_025](../tests/fixtures/sim/feature_completion/sim_025/readme.md)). What is
+left:
 
-- **Class properties** (`$monitor("%0d", h.v)`, `this.x`). The frontend raises
-  "automatic variable 'v' cannot be traced" because Slang treats a class
-  property as an automatic variable in its `$monitor`/`$strobe` check (it
-  exempts only struct and union fields). SV §13.3.2 bars variables of
-  automatic subroutines, not properties of an object reached through a
-  module-level handle. Admitting them needs a one-line frontend patch to the
-  check and, in lowering, a handle-property dependency (the `@`/`wait`
-  machinery already has one) plus a null-handle rule for the report.
-  Reading them through a method (`h.get()`), a function with a handle
-  formal, a virtual-interface member or `%p` of the object works; such a
-  `$monitor` re-evaluates at every settled slot instead of watching fixed
-  storage, which costs one evaluation per slot.
-- **A static subroutine's string, chandle or process-handle formal.** The
-  call activation holds it, so a report cannot read it later
-  ([`neg_static_string_formal.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_static_string_formal.sv)).
-  Packed, real and container static variables work.
-- **A deferred report inside a class method**
-  ([`neg_class_method_strobe.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_class_method_strobe.sv)):
-  the evaluator has no receiver, so even arguments naming only module
-  variables reject. Move the report to module code.
+- **`$monitor` of a member of an unpacked structure property**
+  ([`neg_monitor_record_property.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_monitor_record_property.sv)):
+  such a store publishes no change, so the report could never fire; it rejects
+  with its location. `$strobe` reads it.
+- **`$monitor` through a computed handle** (`f().v`) rejects: nothing can name the
+  storage without calling the function again.
+- **Reads through a method, a function with a handle formal, a virtual-interface
+  member or `%p` of an object** are not exact: such a `$monitor` re-evaluates at
+  every settled slot, which costs one evaluation per slot.
 
-An input queue, dynamic or associative formal of a `$strobe` helper reads the
-actual at the end of the slot, as a slice does ([S25-D8](lrm_decisions.md)).
-Four neighbouring forms still reject with a diagnostic at the call:
+A report reads container and string actuals at the end of the slot, and builds
+a conversion or an unpacked concatenation then ([S25-D8](lrm_decisions.md)). A
+neighbouring form still rejects at the call:
 
-- **A `$strobe` actual that needs a container conversion** (a queue for a
-  dynamic-array formal,
-  [`neg_strobe_container_conversion.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_strobe_container_conversion.sv))
-  **or an unpacked concatenation** (`f({1, 2, k})`; `f('{1, 2, k})` works). The
-  evaluator would have to build the temporary itself; about a day.
-- **`$monitor` of a helper with a container formal.** Change detection does not
-  see through the formal yet; about a day. Assign the result to a variable.
-- **A `$strobe` helper with a string formal** (about half a day).
+- **A `$strobe` actual with a side effect that needs building**
+  ([`neg_strobe_container_conversion.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_strobe_container_conversion.sv)):
+  the Postponed region writes nothing.
 - **A `$strobe` helper that prints** (`$display` inside the function): it has
   output effects, which the private evaluator refuses; about a day.
 

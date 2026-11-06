@@ -331,7 +331,12 @@ impl<'a> Codegen<'a> {
                         self.static_formals.insert((inst, *io), info);
                     }
                 }
-                if has_wait {
+                let reported = if dpi.is_none() {
+                    self.deferred_report_targets(*c)
+                } else {
+                    HashSet::new()
+                };
+                if has_wait || !reported.is_empty() {
                     let body = self
                         .func_body(*c)
                         .ok_or_else(|| format!("task `{}` without a body", self.node(*c).name))?;
@@ -348,6 +353,9 @@ impl<'a> Codegen<'a> {
                         "",
                     )?;
                     for local in sorted_node_ids(&chandle_locals) {
+                        if !has_wait && !reported.contains(&local) {
+                            continue;
+                        }
                         match self.db.variable_lifetime(local) {
                             VariableLifetime::Automatic => continue,
                             VariableLifetime::Static => {}
@@ -368,6 +376,9 @@ impl<'a> Codegen<'a> {
                             .insert((inst, local), object);
                     }
                     for local in sorted_node_ids(&locals) {
+                        if !has_wait && !reported.contains(&local) {
+                            continue;
+                        }
                         let (_, width, signed, two_state, shortreal) = locals[&local];
                         match self.db.variable_lifetime(local) {
                             VariableLifetime::Automatic => continue,
@@ -396,6 +407,11 @@ impl<'a> Codegen<'a> {
                                 initial,
                             });
                             self.static_string_task_locals.insert((inst, local), object);
+                            continue;
+                        }
+                        // A report reads packed static locals through their
+                        // persistent cells; only a wait needs them here.
+                        if !has_wait {
                             continue;
                         }
                         let signal = self.model.signals.len();

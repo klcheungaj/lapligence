@@ -1791,6 +1791,9 @@ struct Codegen<'a> {
     /// read again when the report prints, so no operand may be copied into a
     /// statement prelude.
     deferred_display_args: bool,
+    /// Statements the report evaluator runs before reading its arguments:
+    /// the temporaries of container actuals that need building.
+    deferred_prelude: Vec<IrStmt>,
     /// Staging container of a nested element → the nested container type,
     /// which no declaration names.
     staged_container_types: HashMap<usize, TypeDescriptor>,
@@ -2405,6 +2408,7 @@ impl<'a> Codegen<'a> {
             staged_nested_elements: HashMap::new(),
             element_staging_possible: false,
             deferred_display_args: false,
+            deferred_prelude: Vec::new(),
             staged_container_types: HashMap::new(),
             container_types_like: HashMap::new(),
             native_tagged_bypass: HashSet::new(),

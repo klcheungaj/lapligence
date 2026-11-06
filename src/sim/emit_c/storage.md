@@ -202,8 +202,8 @@ object created by `new_container`), and a class property container is
 `llg_class_field(<receiver>, ...)` for a receiver-qualified alias
 (`IrContainer::receiver`, a plain handle read rendered without statements).
 Fixed-array properties allocate their elements when the object is created.
-Activation and per-object containers have no change dependencies, so waits and
-monitors on them reject. An `IrDependency::NativeAccess` renders its receiver
+Activation containers have no change dependencies, so waits and monitors on them
+reject; a monitor leaves out a helper's container formals, whose actuals it reads. An `IrDependency::NativeAccess` renders its receiver
 with `quiet_receivers` (no null report: `llg_class_field_quiet`,
 `llg_vif_member_quiet`) and arms on the field/member storage or, for a handle
 property, on the object's lazily allocated `handle_dependency`, which

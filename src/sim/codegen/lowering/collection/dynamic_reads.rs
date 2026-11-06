@@ -5,7 +5,8 @@
 //! [`IrDependency::NativeAccess`] that the waiting process resolves again
 //! every time it arms.
 //!
-//! Only `wait` conditions and event expressions observe such storage (SV
+//! `wait` conditions, event expressions and `$monitor` observe such storage
+//! (a monitor through `report_dependencies`; SV
 //! 9.4.2: `@(p.status)` follows the object `p` names, and "changing the
 //! value of object data members ... referenced by a method or function
 //! shall cause the event expression to be reevaluated"). The bodies of the
@@ -44,6 +45,19 @@ const MAX_CALLEE_DEPTH: usize = 64;
 struct CalleeReceivers {
     formals: HashMap<NodeId, Option<IrChandleExpr>>,
     this: Option<IrChandleExpr>,
+}
+
+/// How a `$monitor` learns that an argument changed (SV 21.2.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in super::super) enum ReportReadPlan {
+    /// Named storage only: the ordinary read walk finds every trigger.
+    Fixed,
+    /// Property paths: the handles and properties they pass through are
+    /// exact dependencies, resolved again after each evaluation.
+    Exact,
+    /// Calls, virtual-interface members or synchronization objects: storage
+    /// no dependency names, so the monitor evaluates at every settled slot.
+    EverySlot,
 }
 
 impl Codegen<'_> {
@@ -145,6 +159,104 @@ impl Codegen<'_> {
             pending.extend(self.node(node).children.iter().copied());
         }
         false
+    }
+
+    /// Whether `root` calls a function with a string formal, directly or in
+    /// the body of a function it calls.
+    pub(in super::super) fn calls_string_formal_helper(&self, root: NodeId) -> bool {
+        let mut visited = HashSet::new();
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            if let Some(callee) = self.called_subroutine(node) {
+                if self.func_formals(callee).iter().any(|(formal, _)| {
+                    matches!(self.kind(*formal), NodeKind::FuncArg { ty, .. } if ty.kind == "string")
+                }) {
+                    return true;
+                }
+                if visited.insert(callee) {
+                    pending.extend(self.func_body(callee));
+                }
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        false
+    }
+
+    /// How a `$monitor` watches report argument `root`.
+    pub(in super::super) fn report_read_plan(&self, root: NodeId) -> ReportReadPlan {
+        if !self.reads_dynamic_storage(root) {
+            return ReportReadPlan::Fixed;
+        }
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            let dynamic_call = self.called_subroutine(node).is_some_and(|callee| {
+                self.func_body(callee)
+                    .is_some_and(|body| self.reads_dynamic_storage_in(body, &mut HashSet::new()))
+            });
+            if dynamic_call
+                || self.dynamic_interface_member(node)
+                || self.class_method_call(node).is_some()
+                || self.synchronization_method_call(node)
+            {
+                return ReportReadPlan::EverySlot;
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        ReportReadPlan::Exact
+    }
+
+    /// The dependencies of a [`ReportReadPlan::Exact`] report argument. Every
+    /// property it names must resolve to one: a report that could never fire
+    /// is a located rejection, as a wait that could never wake is.
+    pub(in super::super) fn report_dependencies(
+        &mut self,
+        path: &str,
+        root: NodeId,
+    ) -> Result<Vec<IrDependency>, String> {
+        let nodes = {
+            let mut nodes = Vec::new();
+            let mut pending = vec![root];
+            while let Some(node) = pending.pop() {
+                nodes.push(node);
+                pending.extend(self.node(node).children.iter().copied());
+            }
+            nodes
+        };
+        self.with_dynamic_reads(path, root, |cg| {
+            for node in &nodes {
+                let named = cg.class_storage_field(*node).is_some()
+                    || cg.class_container_property(*node).is_some();
+                let watched = cg.dynamic_reads.contains_key(node)
+                    || cg
+                        .node(*node)
+                        .children
+                        .iter()
+                        .any(|child| cg.dynamic_reads.contains_key(child));
+                if named && !watched {
+                    return Err(format!(
+                        "{}: `$monitor` of class storage `{}` in `{}` has no dependency that sees it change",
+                        cg.source_location(*node),
+                        cg.node(*node).name,
+                        cg.source_path(path)
+                    ));
+                }
+            }
+            // A static handle property is an object no read names, and
+            // rebinding it moves everything selected through it.
+            let mut reads = cg.collect_read_signals(path, root)?;
+            for read in reads.clone() {
+                if let IrDependency::NativeAccess(name) = read {
+                    let mut roots = Vec::new();
+                    cg.root_handle_dependency(&name, &mut roots);
+                    for root in roots {
+                        if !reads.contains(&root) {
+                            reads.push(root);
+                        }
+                    }
+                }
+            }
+            Ok(reads)
+        })
     }
 
     /// The last class property `node` names, including container and native

@@ -1,0 +1,11 @@
+method 2
+string 3 abcabc
+concatenation 7
+conversion 6
+1 6 3 6 5
+2 11 3 11 5
+3 11 4 11 5
+4 11 4 11 8
+5 dyn 3
+6 dyn 10
+7 dyn 0

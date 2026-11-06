@@ -95,6 +95,15 @@ static void gc_trace_nbas(llg_gc_tracer_t* tracer) {
             gc_trace_nba_queue(tracer, &bucket->queues[region]);
 }
 
+// A report issued in a class method keeps its receiver until it reports, or
+// for a monitor until it is replaced.
+static void gc_trace_reports(llg_gc_tracer_t* tracer) {
+    for (const llg_monitor_state_t* m = g.monitors; m; m = m->next)
+        llg_gc_visit(tracer, m->context);
+    for (const llg_strobe_t* e = g.strobes; e; e = e->next)
+        llg_gc_visit(tracer, e->context);
+}
+
 static void gc_scheduler_roots(llg_gc_tracer_t* tracer, void* context) {
     (void)context;
     gc_trace_processes(tracer);
@@ -103,6 +112,7 @@ static void gc_scheduler_roots(llg_gc_tracer_t* tracer, void* context) {
     llg_native_roots_trace(gc_value_visit, tracer);
     llg_mailbox_trace(gc_value_visit, tracer);
     gc_trace_nbas(tracer);
+    gc_trace_reports(tracer);
 }
 
 // Called by the scheduler between process turns and region callbacks, the

@@ -119,11 +119,15 @@ impl<'a> Codegen<'a> {
                 "{reason}: `$monitor`/`$strobe` arguments are evaluated in the read-only Postponed region (IEEE 1800-2009 4.4.2.9)"
             ));
         }
-        Ok(if process.is_some() {
-            PostponedEvaluation::PrivateEffects
-        } else {
-            PostponedEvaluation::Callback
-        })
+        // A string formal is copied into the callee's activation, which only an
+        // ordinary call has.
+        Ok(
+            if process.is_some() || self.calls_string_formal_helper(expression) {
+                PostponedEvaluation::PrivateEffects
+            } else {
+                PostponedEvaluation::Callback
+            },
+        )
     }
 
     /// `(process, external)`: why the expression cannot be a read-only
@@ -192,7 +196,15 @@ impl<'a> Codegen<'a> {
         if self.container_of(receiver).is_some() {
             return matches!(name, "size" | "num" | "exists");
         }
-        self.is_string_expr(scope_path, receiver)
+        // A helper's string formal or local is resolved only in its own
+        // context, which this walk of the callee's body does not enter.
+        let helper_string = matches!(self.kind(receiver), NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) if matches!(
+            self.kind(*target),
+            NodeKind::FuncArg { ty, .. } | NodeKind::Var { ty } if ty.kind == "string"
+        ));
+        (helper_string || self.is_string_expr(scope_path, receiver))
             && matches!(
                 name,
                 "len"
@@ -820,6 +832,40 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn task_has_wait(&self, ft: NodeId, inst: NodeId) -> bool {
         let mut seen: HashSet<NodeId> = HashSet::new();
         self.task_has_wait_inner(ft, inst, &mut seen)
+    }
+
+    /// What the `$strobe` and `$monitor` tasks in the body of `ft` name. They
+    /// read the subroutine's static string and handle locals after it
+    /// returns, so such a local needs model storage.
+    pub(in super::super) fn deferred_report_targets(&self, ft: NodeId) -> HashSet<NodeId> {
+        let mut targets = HashSet::new();
+        let mut pending: Vec<(NodeId, bool)> = self
+            .func_body(ft)
+            .map(|body| (body, false))
+            .into_iter()
+            .collect();
+        while let Some((node, in_report)) = pending.pop() {
+            let in_report = in_report
+                || matches!(self.kind(node), NodeKind::SysCall { name, .. } if matches!(
+                    name.trim_end_matches(['b', 'o', 'h']),
+                    "$strobe" | "$fstrobe" | "$monitor" | "$fmonitor"
+                ));
+            if in_report {
+                if let NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) = self.kind(node)
+                {
+                    targets.insert(*target);
+                }
+            }
+            pending.extend(
+                self.node(node)
+                    .children
+                    .iter()
+                    .map(|child| (*child, in_report)),
+            );
+        }
+        targets
     }
 
     /// How calls to a subroutine reach its body.
