@@ -11,9 +11,10 @@ known mismatch 0 0
 copied x xz 1
 5 q.b[4]=xz
 6 g.b[5]=77
-7 g.b[5]=77
+7 g.b[5]=01
+8 g.b[5]=77
 self ref 11 77
 two refs 11 77
 before nba 6
-9 q.b[4]=5a
+10 q.b[4]=5a
 after nba 6 8

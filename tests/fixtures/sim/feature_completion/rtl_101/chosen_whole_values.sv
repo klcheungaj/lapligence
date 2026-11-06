@@ -64,7 +64,7 @@ module tb;
     f.b[5] = 8'h77;
     g = f;
     #1 g.b[5] = 8'h01;
-    g = f;
+    #1 g = f;
     #1 swap_in(f, f);
     $display("self ref %h %h", f.b[1], f.b[5]);
     #1 swap_in(g, f);

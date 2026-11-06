@@ -80,5 +80,9 @@ column. Expected values are derived by hand below; none were captured from
   "the relation is ambiguous, then the result shall be a 1-bit unknown value
   (x).". `q = q`
   and `swap_in(f, f)` have one array on both sides. The NBA copy takes `p`
-  before `p.a[3] = 8`, so `q.a[3]` stays 6. Expected lines were derived by hand
-  and equal the per-cell form's output; the reference run is pending.
+  before `p.a[3] = 8`, so `q.a[3]` stays 6. Writes that change `g.b[5]` are in
+  separate time steps because simulators differ on `@` over a value that returns
+  to its old one within a process; this case is not about that. Expected lines
+  match industry-standard behaviour with `name` packed: an NBA of a record with a
+  `string` member is not portable, so that form is checked by llg's own storage
+  forms only.
