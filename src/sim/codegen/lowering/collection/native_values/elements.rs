@@ -201,7 +201,10 @@ impl Codegen<'_> {
                 descriptor.name
             )
         })?;
-        let mut leaves = NativeLeaves::default();
+        let mut leaves = NativeLeaves {
+            columns: self.record_column_layout(&descriptor),
+            ..NativeLeaves::default()
+        };
         collect_native_root_leaves(&descriptor, &element, &mut leaves)
             .map_err(|error| format!("{error} (container element `{}`)", descriptor.name))?;
         // A container element owns a queue or dynamic-array member as a
@@ -295,6 +298,7 @@ impl Codegen<'_> {
             descriptor,
             leaves: leaves.scalars,
             containers: leaves.containers,
+            fixed: leaves.fixed,
         };
         let companions = self.native_companions(&layout, true);
         self.native_layouts.insert(site, layout);
@@ -496,15 +500,93 @@ impl Codegen<'_> {
         source: NodeId,
         nba: bool,
     ) -> Result<Option<IrStmt>, String> {
-        let Some((temporary, mut statements)) = self.element_copy(path, source)? else {
+        let (element, prefix) = match self.element_subrecord(source) {
+            Some((element, _, prefix, _)) => (element, prefix),
+            None => (source, Vec::new()),
+        };
+        let Some((temporary, mut statements)) = self.element_copy(path, element)? else {
             return Ok(None);
         };
         let endpoint = NativeEndpoint::Value {
             value: temporary,
-            prefix: Vec::new(),
+            prefix,
         };
         statements.push(self.native_transfer(path, target, &endpoint, nba)?);
         Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// The element, selection and member path of `node` when it names a whole
+    /// sub-record or member array inside a record element.
+    fn element_subrecord(
+        &self,
+        node: NodeId,
+    ) -> Option<(
+        NodeId,
+        ElementSelection,
+        Vec<AggregatePathPart>,
+        TypeDescriptor,
+    )> {
+        let (element, selection, member) = self.element_member_parts(node)?;
+        let descriptor = self.query_descriptor(node)?.clone();
+        matches!(
+            &descriptor.shape,
+            TypeShape::FixedArray { .. }
+                | TypeShape::Aggregate(AggregateLayout {
+                    kind: AggregateKind::UnpackedStruct,
+                    ..
+                })
+        )
+        .then_some((element, selection, member, descriptor))
+    }
+
+    /// `q[i].m = v` and `v = q[i].m` for a sub-record: the element moves
+    /// through a temporary, whose member is an ordinary record endpoint. The
+    /// indices of a written element are evaluated once.
+    pub(super) fn element_subrecord_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        if let Some((element, selection, prefix, descriptor)) = self.element_subrecord(lhs) {
+            if nba {
+                return self
+                    .lower_element_member_nba(path, lhs, rhs, None)
+                    .map(Some);
+            }
+            let mut statements = Vec::new();
+            let slot = self.element_nba_slot(path, &selection, &mut statements)?;
+            let (container, depth) = (selection.container, selection.depth());
+            let temporary = self.element_temporary(container, depth, element)?;
+            statements.push(IrStmt::NativeValueDeclare(temporary));
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::GetValue {
+                container,
+                slot: slot.clone(),
+                value: temporary,
+            })));
+            statements.extend(self.element_items_to_companions(temporary)?);
+            let target = NativeEndpoint::Value {
+                value: temporary,
+                prefix,
+            };
+            statements.push(self.native_assign_into(path, &target, &descriptor, rhs, false)?);
+            statements.extend(self.companions_to_element_items(temporary)?);
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::SetValue {
+                container,
+                slot,
+                value: temporary,
+            })));
+            return Ok(Some(IrStmt::Block(statements)));
+        }
+        let source = self.p30_unwrap_cast(rhs);
+        if self.element_subrecord(source).is_none() {
+            return Ok(None);
+        }
+        let Some((target, _)) = self.native_endpoint(lhs)? else {
+            return Ok(None);
+        };
+        self.container_record_into(path, &target, source, nba)
     }
 
     /// Copy a whole record element, or the record removed by a pop, into
@@ -646,14 +728,20 @@ impl Codegen<'_> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
                 let first = (*refs.first()?)?;
-                let selection = self.record_element_of(first)?;
-                let path = parts
+                let members = parts
                     .iter()
                     .skip(1)
                     .filter(|part| !part.is_empty())
-                    .map(|part| AggregatePathPart::Member(part.clone()))
-                    .collect::<Vec<_>>();
-                (!path.is_empty()).then_some((first, selection, path))
+                    .map(|part| AggregatePathPart::Member(part.clone()));
+                // The first step may itself be an element of a member array
+                // of a record element (`q[i].a[1].n`).
+                if let Some(selection) = self.record_element_of(first) {
+                    let path = members.collect::<Vec<_>>();
+                    return (!path.is_empty()).then_some((first, selection, path));
+                }
+                let (element, selection, mut path) = self.element_member_parts(first)?;
+                path.extend(members);
+                Some((element, selection, path))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 // A member array is named by a detached array node; the
@@ -731,6 +819,16 @@ impl Codegen<'_> {
                 return Ok(None);
             }
             return Err(unstaged_member_error(&leaf.path));
+        }
+        if let Some(leaf) = fixed_item_leaf(&leaves.fixed, &path) {
+            return Ok(Some((selection, leaf)));
+        }
+        if leaves
+            .fixed
+            .iter()
+            .any(|leaf| leaf.path.starts_with(&path) || path.starts_with(&leaf.path))
+        {
+            return Ok(None);
         }
         let leaves = leaves.scalars;
         if let Some(leaf) = leaves.iter().find(|leaf| leaf.path == path) {
@@ -826,11 +924,20 @@ impl Codegen<'_> {
         };
         let (selection, prefix) = self.element_member_path(node).ok_or_else(not_supported)?;
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
-        let scalars = leaves
+        let mut scalars = leaves
             .scalars
             .into_iter()
             .filter(|leaf| leaf.path.starts_with(&prefix))
             .collect::<Vec<_>>();
+        for fixed in &leaves.fixed {
+            if fixed.path.starts_with(&prefix) || prefix.starts_with(&fixed.path) {
+                scalars.extend(
+                    fixed_leaf_items(fixed)?
+                        .into_iter()
+                        .filter(|leaf| leaf.path.starts_with(&prefix)),
+                );
+            }
+        }
         let containers = leaves
             .containers
             .into_iter()
@@ -1015,6 +1122,9 @@ impl Codegen<'_> {
             ));
         }
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        if !leaves.fixed.is_empty() {
+            return Ok(None);
+        }
         if let Some(leaf) = leaves.containers.first() {
             return Err(format!(
                 "a container record element with queue or dynamic-array member `{}` cannot be read member by member in `{path}`",
@@ -1044,7 +1154,7 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
-        if leaves.containers.is_empty() {
+        if leaves.containers.is_empty() && leaves.fixed.is_empty() {
             return Ok(None);
         }
         // The copy evaluates the element's locator once.

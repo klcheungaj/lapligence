@@ -27,6 +27,32 @@ fn columns_hold(descriptor: &TypeDescriptor) -> bool {
     }
 }
 
+/// Whether a member array of the minimum size keeps a column in a record whose
+/// storage is otherwise leaves: its packed or real cells stay visible to dumps
+/// and VPI through the column, and each cell stays a leaf of the record for
+/// whole-record operations. Other elements take a container.
+pub(in super::super::super) fn member_column(descriptor: &TypeDescriptor) -> bool {
+    let TypeShape::FixedArray {
+        dimensions,
+        element,
+    } = &descriptor.shape
+    else {
+        return false;
+    };
+    let atom = match &element.shape {
+        TypeShape::PackedAtom { .. } | TypeShape::Real { .. } => true,
+        TypeShape::Aggregate(layout) => {
+            layout.kind != AggregateKind::UnpackedStruct && fixed_width(element).is_some()
+        }
+        _ => false,
+    };
+    // A column expands to one leaf per cell, so the sizes a dense column
+    // does not serve go to a container, which needs no leaf per cell.
+    atom && fixed_array_cell_count(dimensions).is_ok_and(|cells| {
+        (LLG_RECORD_COLUMN_MIN_CELLS..=LLG_DENSE_FIXED_ARRAY_CELLS).contains(&cells)
+    })
+}
+
 /// Add `descriptor` and the structures nested in it: a value of the nested
 /// type must have one form wherever it is declared.
 fn choose_with_nested(descriptor: &TypeDescriptor, chosen: &mut HashSet<TypeId>) {

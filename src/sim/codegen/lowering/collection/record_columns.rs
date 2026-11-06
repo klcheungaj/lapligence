@@ -12,13 +12,13 @@ use super::fixed_values::{
 };
 use super::*;
 use crate::core::db::TypeId;
-use crate::sim::ir::{IrCellNames, IrStreamSelector, LLG_DENSE_FIXED_ARRAY_CELLS};
+use crate::sim::ir::{IrCellNames, IrFixedValue, IrStreamSelector, LLG_DENSE_FIXED_ARRAY_CELLS};
 
 mod choice;
 #[cfg(test)]
 mod tests;
 
-pub(in super::super) use choice::record_column_choice;
+pub(in super::super) use choice::{member_column, record_column_choice};
 
 /// One stored column of a record value, in declaration order.
 #[derive(Clone)]
@@ -54,10 +54,32 @@ fn column_layout_of(descriptor: &TypeDescriptor, chosen: &HashSet<TypeId>) -> bo
     layout.kind == AggregateKind::UnpackedStruct
         && (chosen.contains(&descriptor.id)
             || fixed_width_bits(descriptor).is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
-            || layout
+            || (layout
                 .members
                 .iter()
-                .any(|member| large_member_array(&member.descriptor, chosen)))
+                .any(|member| large_member_array(&member.descriptor, chosen))
+                && !holds_native_array(descriptor)))
+}
+
+/// Whether a record holds, at any depth of nested structures, a member array
+/// whose elements have no packed width: no column of the column layout can
+/// hold it, so the whole record takes the leaf form and its larger member
+/// arrays live in containers.
+fn holds_native_array(descriptor: &TypeDescriptor) -> bool {
+    let TypeShape::Aggregate(layout) = &descriptor.shape else {
+        return false;
+    };
+    layout.kind == AggregateKind::UnpackedStruct
+        && layout
+            .members
+            .iter()
+            .any(|member| match &member.descriptor.shape {
+                TypeShape::FixedArray {
+                    dimensions,
+                    element,
+                } => fixed_width(element).is_none() && fixed_array_cell_count(dimensions).is_ok(),
+                _ => holds_native_array(&member.descriptor),
+            })
 }
 
 /// A finite tagged union whose tag and payload exceed packed capacity: its
@@ -71,8 +93,13 @@ fn large_member_array(descriptor: &TypeDescriptor, chosen: &HashSet<TypeId>) -> 
     match &descriptor.shape {
         // An extent beyond the cell limit is large as well; column
         // collection then reports the limit instead of expanding cells.
-        TypeShape::FixedArray { dimensions, .. } => fixed_array_cell_count(dimensions)
-            .map_or(true, |cells| cells > LLG_DENSE_FIXED_ARRAY_CELLS),
+        // Elements without a packed width live in a container at any size.
+        TypeShape::FixedArray {
+            dimensions,
+            element,
+        } => fixed_array_cell_count(dimensions).map_or(true, |cells| {
+            cells > LLG_DENSE_FIXED_ARRAY_CELLS && fixed_width(element).is_some()
+        }),
         TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct => {
             chosen.contains(&descriptor.id)
                 || layout
@@ -101,6 +128,34 @@ pub(in super::super) fn record_cell_leaf(leaf: &AggregateMemberInfo) -> bool {
     leaf.array.is_some() && !matches!(leaf.member.descriptor.shape, TypeShape::FixedArray { .. })
 }
 
+/// Indices of the cell a cell leaf names: its column is one cell, or a member
+/// array whose cells stay leaves of a record kept in leaves ([`member_column`]).
+pub(in super::super) fn record_cell_indices(leaf: &AggregateMemberInfo) -> Vec<i128> {
+    let dimensions = leaf.array.as_ref().map_or(0, |array| array.dims.len());
+    let trailing = leaf
+        .path
+        .iter()
+        .rev()
+        .take(dimensions)
+        .filter_map(|part| match part {
+            AggregatePathPart::Index(index) => Some(i128::from(*index)),
+            AggregatePathPart::Member(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if trailing.len() == dimensions {
+        trailing.into_iter().rev().collect()
+    } else {
+        vec![0; dimensions]
+    }
+}
+
+/// The column of a cell leaf of a member array of a record kept in leaves.
+pub(in super::super) fn member_cell_column(leaf: &AggregateMemberInfo) -> Option<&ArrayInfo> {
+    leaf.array
+        .as_ref()
+        .filter(|_| matches!(leaf.path.last(), Some(AggregatePathPart::Index(_))))
+}
+
 /// Members along `path` from the record root, outermost first.
 fn path_members<'a>(
     root: &'a TypeDescriptor,
@@ -108,10 +163,26 @@ fn path_members<'a>(
 ) -> Option<Vec<&'a AggregateMember>> {
     let mut descriptor = root;
     let mut members = Vec::with_capacity(path.len());
+    let mut subscripts = 0;
     for part in path {
         let AggregatePathPart::Member(name) = part else {
-            return None;
+            subscripts += 1;
+            continue;
         };
+        if subscripts != 0 {
+            let TypeShape::FixedArray {
+                dimensions,
+                element,
+            } = &descriptor.shape
+            else {
+                return None;
+            };
+            if dimensions.len() != subscripts {
+                return None;
+            }
+            descriptor = element;
+            subscripts = 0;
+        }
         let TypeShape::Aggregate(layout) = &descriptor.shape else {
             return None;
         };
@@ -366,11 +437,18 @@ impl Codegen<'_> {
                 "record column `{object_name}.{suffix}` in `{path}` is not a fixed array"
             ));
         };
-        let elem_width = fixed_width(element).ok_or_else(|| {
-            format!(
-                "record member array `{object_name}.{suffix}` in `{path}` needs integral elements within the packed limit of {LLG_MAX_WIDTH} bits for column layout"
-            )
-        })?;
+        let shortreal = match element.shape {
+            TypeShape::Real { shortreal } => Some(shortreal),
+            _ => None,
+        };
+        let elem_width = match shortreal {
+            Some(_) => 0,
+            None => fixed_width(element).ok_or_else(|| {
+                format!(
+                    "record member array `{object_name}.{suffix}` in `{path}` needs integral elements within the packed limit of {LLG_MAX_WIDTH} bits for column layout"
+                )
+            })?,
+        };
         let total = fixed_array_cell_count(dimensions).map_err(|error| {
             format!("record member array `{object_name}.{suffix}` in `{path}`: {error}")
         })?;
@@ -381,10 +459,16 @@ impl Codegen<'_> {
         let chain = path_members(&root, member_path)
             .ok_or_else(|| format!("record column path `{suffix}` in `{path}` is unresolved"))?;
         let two_state = element.two_state || chain.iter().any(|member| member.two_state);
-        let defaults =
+        let defaults = if shortreal.is_some() {
+            ColumnDefault {
+                element: None,
+                cells: None,
+            }
+        } else {
             record_array_default(&root, member_path, element, two_state).map_err(|error| {
                 format!("record member array `{object_name}.{suffix}` in `{path}`: {error}")
-            })?;
+            })?
+        };
         // A column only the design's selections chose dumps like the leaves
         // it replaces.
         let chosen = !column_layout_of(&root, &HashSet::new());
@@ -405,7 +489,7 @@ impl Codegen<'_> {
         self.model.arrays.push(crate::sim::ir::IrArray {
             cell_names,
             activation: false,
-            descriptor: true,
+            descriptor: shortreal.is_none(),
             net: None,
             net_elements: Vec::new(),
             element_default: defaults.element,
@@ -416,8 +500,8 @@ impl Codegen<'_> {
             elem_width,
             signed: element.info.signed,
             two_state,
-            real: false,
-            shortreal: false,
+            real: shortreal.is_some(),
+            shortreal: shortreal == Some(true),
             dims: dimensions.clone(),
             total,
         });
@@ -430,8 +514,8 @@ impl Codegen<'_> {
                 global: c_name,
                 elem_width,
                 signed: element.info.signed,
-                real: false,
-                shortreal: false,
+                real: shortreal.is_some(),
+                shortreal: shortreal == Some(true),
                 is_net: false,
                 dims: dimensions.clone(),
                 init: None,
@@ -1016,7 +1100,18 @@ impl Codegen<'_> {
             .get(&root)?
             .leaves
             .iter()
-            .find(|leaf| leaf.path == path && !record_cell_leaf(leaf))?
+            .find(|leaf| {
+                leaf.path.starts_with(path)
+                    && leaf.array.as_ref().is_some_and(|array| {
+                        !path.is_empty()
+                            && (!record_cell_leaf(leaf) && leaf.path.len() == path.len()
+                                || record_cell_leaf(leaf)
+                                    && leaf.path.len() == path.len() + array.dims.len()
+                                    && leaf.path[path.len()..]
+                                        .iter()
+                                        .all(|part| matches!(part, AggregatePathPart::Index(_))))
+                    })
+            })?
             .array
             .as_ref()
     }
@@ -1167,6 +1262,45 @@ impl Codegen<'_> {
         self.record_column_at(root, &path)
     }
 
+    /// The whole-column statement for a pair of cell leaves of member columns:
+    /// a copy of a record kept in leaves moves each column once, at its first
+    /// cell, and the other pairs add nothing. `None` for other leaves.
+    pub(in super::super) fn member_column_copy(
+        &self,
+        left: &AggregateMemberInfo,
+        right: &AggregateMemberInfo,
+        nba: bool,
+    ) -> Option<Vec<IrStmt>> {
+        let target = member_cell_column(left)?;
+        let source = member_cell_column(right)?;
+        let first = record_cell_indices(left)
+            .iter()
+            .zip(&target.dims)
+            .all(|(index, (bound, _))| *index == i128::from(*bound));
+        if !first || target.ir == source.ir {
+            return Some(Vec::new());
+        }
+        let (array, other) = (
+            self.reference_array(target.ir),
+            self.reference_array(source.ir),
+        );
+        Some(vec![if target.real {
+            IrStmt::Container(Box::new(IrContainerStmt::RealColumnAssign {
+                array,
+                source: Some(other),
+                root: None,
+                items: Vec::new(),
+                nba,
+            }))
+        } else {
+            IrStmt::FixedValueAssign {
+                dst: self.record_column_view(array),
+                src: Box::new(IrFixedValue::Array(self.record_column_view(other))),
+                nba,
+            }
+        }])
+    }
+
     /// The column and element indices of an element select on a record
     /// member array (`r.a[i]`). Slang flattens successive element indices
     /// into one select whose owned path names the record and its members.
@@ -1189,6 +1323,14 @@ impl Codegen<'_> {
                 .collect::<Vec<_>>();
             if let Some(column) = self.record_column_at(root, &path) {
                 return Some((column, indices.as_slice()));
+            }
+            // The owner is an element select when records nest
+            // (`r.e[1].a[k]`).
+            if let Some((root, mut owner)) = self.unpacked_path_for_expr(root) {
+                owner.extend(path);
+                if let Some(column) = self.record_column_at(root, &owner) {
+                    return Some((column, indices.as_slice()));
+                }
             }
         }
         self.record_column_array(*base)

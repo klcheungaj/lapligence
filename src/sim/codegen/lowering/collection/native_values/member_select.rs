@@ -200,7 +200,7 @@ fn match_leaf_path(path: &[AggregatePathPart], steps: &[SelectStep]) -> Option<V
 
 /// The zero-based flat position of constant `indices` in an array of
 /// `dimensions`, or `None` when one is out of range.
-fn constant_position(indices: &[i32], dimensions: &[(i32, i32)]) -> Option<u32> {
+pub(super) fn constant_position(indices: &[i32], dimensions: &[(i32, i32)]) -> Option<u32> {
     let mut position = 0u64;
     for (index, (left, right)) in indices.iter().zip(dimensions) {
         let (low, high) = (*left.min(right), *left.max(right));
@@ -697,6 +697,17 @@ impl Codegen<'_> {
             }
             (None, _) => self.unpacked_path_for_expr(base),
         };
+        // An element of a member container is selected in place.
+        if let Some((root, prefix)) = &module_root {
+            if self.unpacked_aggregates.get(root).is_some_and(|storage| {
+                storage
+                    .leaves
+                    .iter()
+                    .any(|leaf| leaf.container.is_some() && leaf.path == *prefix)
+            }) {
+                return Ok(None);
+            }
+        }
         let (descriptor, prefix) = if let Some((value, prefix)) = &value_root {
             let layout = self.native_layout_of_value(*value)?;
             (layout.descriptor.clone(), prefix.clone())
@@ -1129,7 +1140,7 @@ impl Codegen<'_> {
                     _ => false,
                 };
                 let default = match values.first().map(|(_, value)| value) {
-                    Some(LeafValue::Container(_)) => {
+                    Some(LeafValue::Container(_) | LeafValue::Slot(..)) => {
                         return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
                     }
                     Some(LeafValue::String(_)) => {
@@ -1221,7 +1232,9 @@ impl Codegen<'_> {
                     .first()
                     .ok_or("member array selection has no elements")?;
                 match first {
-                    NativeEndpointLeaf::Container(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+                    NativeEndpointLeaf::Container(_) | NativeEndpointLeaf::Slot(..) => {
+                        Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
+                    }
                     NativeEndpointLeaf::Value(_, leaf) => Ok(leaf.ty),
                     NativeEndpointLeaf::Module(leaf) => Ok(match leaf.object {
                         Some(object) => {

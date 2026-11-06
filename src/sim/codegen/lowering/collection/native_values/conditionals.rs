@@ -198,16 +198,16 @@ impl Codegen<'_> {
                     None => equal,
                 });
                 keep.push(self.endpoint_leaf_write(path, leaf, left.clone(), nba)?);
-                reset.push(match leaf {
+                match leaf {
                     // An unmatched container member is empty (SV Table 6-7).
                     NativeEndpointLeaf::Container(container) => {
-                        IrStmt::Container(Box::new(IrContainerStmt::Delete(*container)))
+                        reset.extend(self.container_cleared(*container));
                     }
                     _ => {
                         let default = self.native_leaf_default(path, descriptor, leaf_path)?;
-                        self.endpoint_leaf_write(path, leaf, default, nba)?
+                        reset.push(self.endpoint_leaf_write(path, leaf, default, nba)?);
                     }
-                });
+                }
             }
             statements.push(IrStmt::If {
                 cond: matched.ok_or("native record member has no leaves")?,

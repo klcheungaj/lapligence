@@ -161,7 +161,7 @@ impl<'a> Codegen<'a> {
         ))
     }
 
-    pub(super) fn query_integer(value: i128) -> IrExpr {
+    pub(in super::super) fn query_integer(value: i128) -> IrExpr {
         IrExpr::resize_to(lhs_integer_expr(value), 32, true)
     }
 

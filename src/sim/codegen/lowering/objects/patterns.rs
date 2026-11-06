@@ -119,13 +119,10 @@ impl Codegen<'_> {
                 .map_err(unsupported);
         }
         if let TypeShape::Aggregate(_) | TypeShape::FixedArray { .. } = &descriptor.shape {
-            let mut setup = Vec::new();
-            if let Some(reads) = self.record_leaf_reads(path, node, &mut setup)? {
-                if setup.is_empty() {
-                    return self
-                        .record_pattern(path, &descriptor, reads, abbreviated)
-                        .map_err(unsupported);
-                }
+            if let Some(reads) = self.record_leaf_reads_in_place(path, node)? {
+                return self
+                    .record_pattern(path, &descriptor, reads, abbreviated)
+                    .map_err(unsupported);
             }
         }
         Err(unsupported(
@@ -247,6 +244,9 @@ impl Codegen<'_> {
                     } else {
                         typed(self, IrPatternSource::Handle(value))?
                     }
+                }
+                LeafValue::Slot(..) => {
+                    return Err("record pattern reads a fixed member array in place".to_owned())
                 }
                 LeafValue::Container(container) => {
                     typed(self, IrPatternSource::Container(container))?

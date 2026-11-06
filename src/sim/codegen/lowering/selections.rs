@@ -528,6 +528,10 @@ impl<'a> Codegen<'a> {
             .iter()
             .find(|member| member.path == path)
             .cloned()?;
+        // A cell of a member column is selected through the column.
+        if member.array.is_some() && matches!(path.last(), Some(AggregatePathPart::Index(_))) {
+            return None;
+        }
         Some((target, aggregate.kind, member))
     }
 

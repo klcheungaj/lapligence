@@ -470,9 +470,7 @@ impl Codegen<'_> {
                         ));
                     }
                     NativeEndpointLeaf::Container(container) => {
-                        statements.push(IrStmt::Container(Box::new(IrContainerStmt::Delete(
-                            container,
-                        ))));
+                        statements.extend(self.container_cleared(container));
                         if matches!(
                             self.model.containers[container].kind,
                             IrContainerKind::Associative { .. }
@@ -493,7 +491,7 @@ impl Codegen<'_> {
             let lhs = match &tag {
                 NativeEndpointLeaf::Module(leaf) => self.aggregate_leaf_lhs(leaf)?,
                 NativeEndpointLeaf::Value(value, leaf) => self.native_leaf_lhs(*value, leaf),
-                NativeEndpointLeaf::Container(_) => {
+                NativeEndpointLeaf::Container(_) | NativeEndpointLeaf::Slot(..) => {
                     return Err("tagged union tag is not a packed leaf".to_owned())
                 }
             };

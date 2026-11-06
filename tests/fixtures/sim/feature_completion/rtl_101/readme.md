@@ -133,6 +133,18 @@ column. Expected values are derived by hand below; none were captured from
   column cell or an array of records. One body serves every cell at any index,
   forwarding reaches the same cell, a wait sees the cell's writes. `-D N=8`
   prints the same lines through per-cell storage.
+- `chosen_block_records`: the same members in static and automatic block
+  records, a static class property, a fork, above 4,096 cells and beside a
+  member above that size, with
+  whole real columns compared by value and by bit pattern. An automatic record
+  restarts from defaults at the declared size. Expected output is checked by
+  hand against the rules of §§6.8 and 7.2, not against another simulator.
+- `chosen_native_members`: member arrays of 16 cells or more with string, handle,
+  real, shortreal and record elements beside packed arrays, multidimensional
+  arrays and records nested in small arrays: selects, copies, comparisons, calls,
+  `ref` and `output` formals, ports, class properties, queues, patterns, events
+  and nonblocking writes. Its lines were taken from the per-cell form of the
+  previous compiler.
 - `chosen_nested`: a member array as an `inside` set and `case inside` item, an
   element pattern, a fill of structured elements (`default` reaches each leaf,
   SV 10.9.2), a record nested in a record, `foreach` on an element member.

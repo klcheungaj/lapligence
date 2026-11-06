@@ -108,9 +108,12 @@ impl Codegen<'_> {
         if found.records.contains(&declaration) || found.natives.contains(&declaration) {
             return;
         }
+        // Automatic column-layout records are lexical; a static one has one
+        // set of columns, like a module record.
+        let lexical = self.db.variable_lifetime(declaration) == VariableLifetime::Automatic;
         if self
             .query_descriptor(declaration)
-            .is_some_and(|descriptor| self.block_record_type(descriptor))
+            .is_some_and(|descriptor| self.block_record_type(descriptor, lexical))
         {
             found.records.push(declaration);
         } else if self.block_native_type(declaration).is_some() {
@@ -120,13 +123,13 @@ impl Codegen<'_> {
 
     /// Records whose storage is leaf objects, signals and containers: an
     /// unpacked struct or tagged union with a leaf that has no packed
-    /// representation. Fixed records stay one packed local and records
-    /// beyond packed capacity use column layout (RTL-101).
-    fn block_record_type(&self, descriptor: &TypeDescriptor) -> bool {
+    /// representation. Fixed records stay one packed local; `lexical` records
+    /// beyond packed capacity are lexical columns (RTL-101).
+    fn block_record_type(&self, descriptor: &TypeDescriptor, lexical: bool) -> bool {
         matches!(&descriptor.shape, TypeShape::Aggregate(layout)
             if matches!(layout.kind, AggregateKind::UnpackedStruct | AggregateKind::TaggedUnion))
             && Self::fixed_descriptor_width_bits(descriptor).is_none()
-            && !self.record_column_layout(descriptor)
+            && !(lexical && self.record_column_layout(descriptor))
     }
 
     fn collect_block_record(
@@ -355,6 +358,22 @@ impl Codegen<'_> {
         Ok(Some(statements))
     }
 
+    /// Empty a container member. A member array held in a container keeps
+    /// its declared size, with default elements.
+    pub(in super::super) fn container_cleared(&self, container: usize) -> Vec<IrStmt> {
+        let mut statements = vec![IrStmt::Container(Box::new(IrContainerStmt::Delete(
+            container,
+        )))];
+        if let Some(size) = self.model.containers[container].initial_size {
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::DynamicNew {
+                container,
+                size: Self::query_integer(i128::from(size)),
+                initializer: None,
+            })));
+        }
+        statements
+    }
+
     /// Restore every leaf to its default-uninitialized value (SV Table 6-7):
     /// empty strings and containers, null handles, 0.0 reals and X (or 0
     /// for two-state) packed leaves.
@@ -388,7 +407,35 @@ impl Codegen<'_> {
                 Some(descriptor) => Self::record_member_default(descriptor, &leaf.path)?,
                 None => None,
             };
-            if let Some(signal) = &leaf.signal {
+            if let Some(cell) = &leaf.array {
+                let value = if let Some(LeafDefault::Real(value)) = default {
+                    real_literal_expr(value)
+                } else if cell.real {
+                    real_literal_expr(0.0)
+                } else {
+                    let constant = match default {
+                        Some(LeafDefault::Packed(constant)) => constant,
+                        _ => Self::fixed_descriptor_uninitialized(&leaf.member.descriptor)
+                            .ok_or_else(|| {
+                                format!(
+                                    "record member `{}` in `{path}` has no default-uninitialized value",
+                                    aggregate_path_suffix(&leaf.path)
+                                )
+                            })?,
+                    };
+                    IrExpr::new(
+                        IrExprKind::Const(constant),
+                        cell.elem_width,
+                        cell.signed,
+                        None,
+                    )
+                };
+                statements.push(IrStmt::Assign {
+                    lhs: self.aggregate_leaf_lhs(leaf)?,
+                    rhs: value,
+                    nba: false,
+                });
+            } else if let Some(signal) = &leaf.signal {
                 // Untagged union members share one signal.
                 if !signals.insert(signal.ir) {
                     continue;
@@ -447,9 +494,7 @@ impl Codegen<'_> {
                     },
                 )));
             } else if let Some(container) = &leaf.container {
-                statements.push(IrStmt::Container(Box::new(IrContainerStmt::Delete(
-                    container.ir,
-                ))));
+                statements.extend(self.container_cleared(container.ir));
                 if matches!(
                     self.model.containers[container.ir].kind,
                     IrContainerKind::Associative { .. }

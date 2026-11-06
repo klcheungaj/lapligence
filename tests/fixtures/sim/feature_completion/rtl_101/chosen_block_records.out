@@ -1,0 +1,14 @@
+entry 0 [] [] 0
+set [kept] [lost] 40 [s]
+entry 1 [kept] [] 40
+set [kept] [lost] 41 [s]
+[forked] 16
+[last] 5000
+2.500000 1
+0
+7 [z] 1
+3 0.500000
+1 0
+0 1
+5 [c]
+1.500000 1.500000

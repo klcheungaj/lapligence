@@ -116,15 +116,13 @@ fn run_time_record_elements_bind_ref_formals() {
             );
         },
     );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_record_ref_element_select_limit",
-        "run-time selection of a whole record among 257 elements in `tb` is not supported; at most 256 are",
-    );
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/record_ref_element_large.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_ref_element_large", expected, &[], &[]);
     sim_cli::reject_case(
         SUITE,
         "neg_record_ref_element_select_product",
-        "run-time selection among 400 element combinations of record `ref` actuals in `tb` is not supported; at most 256 are",
+        "run-time selection among 3375 element combinations of record `ref` actuals in `tb` is not supported; at most 256 are",
     );
     sim_cli::reject_case(
         SUITE,

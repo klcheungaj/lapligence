@@ -342,7 +342,7 @@ impl EventNbaSplit<'_, '_, '_> {
                 if matches!(*operation, IrContainerStmt::ContainerNonblocking { .. }) =>
             {
                 return Err(format!(
-                    "an event-controlled nonblocking assignment of a queue, dynamic or associative member in `{}` is not supported; use a delay or an event control before the statement",
+                    "an event-controlled nonblocking assignment of a queue, dynamic or associative member or of a member array held in a container in `{}` is not supported; use a delay or an event control before the statement",
                     self.ctx.path
                 ));
             }

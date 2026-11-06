@@ -265,12 +265,9 @@ fn run_time_member_indices_select_native_record_elements() {
     let records =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_records.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_records", records, &[], &[]);
-    sim_cli::reject_case_with_args(
-        SUITE,
-        "bad_member_select_limit",
-        "record member array `w.s` in `tb` needs integral elements within the packed limit",
-        &[],
-    );
+    let large =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_large.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_member_select_large", large, &[], &[]);
 }
 
 #[test]
@@ -560,7 +557,7 @@ fn container_elements_hold_records_with_container_members() {
     sim_cli::reject_case(
         SUITE,
         "bad_record_container_event_nba",
-        "an event-controlled nonblocking assignment of a queue, dynamic or associative member in `tb` is not supported; use a delay or an event control before the statement",
+        "an event-controlled nonblocking assignment of a queue, dynamic or associative member or of a member array held in a container in `tb` is not supported; use a delay or an event control before the statement",
     );
     sim_cli::reject_case(
         SUITE,

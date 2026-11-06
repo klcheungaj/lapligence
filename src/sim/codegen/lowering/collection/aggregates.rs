@@ -38,6 +38,43 @@ fn native_tag_member(tag_bits: u32, union: &TypeDescriptor) -> AggregateMember {
 }
 
 impl<'a> Codegen<'a> {
+    /// One column for a member array of a record kept in leaves, with one
+    /// leaf per cell: a select reaches the column, and a whole-record
+    /// operation, which works leaf by leaf, reaches each cell of it.
+    #[allow(clippy::too_many_arguments)]
+    fn collect_member_column(
+        &mut self,
+        path: &str,
+        object: NodeId,
+        object_name: &str,
+        member: &AggregateMember,
+        descriptor: &TypeDescriptor,
+        member_path: &[AggregatePathPart],
+        leaves: &mut Vec<AggregateMemberInfo>,
+    ) -> Result<(), String> {
+        let column =
+            self.collect_record_column(path, object, object_name, member, descriptor, member_path)?;
+        let TypeShape::FixedArray { element, .. } = &descriptor.shape else {
+            return Err(format!(
+                "record column `{object_name}` in `{path}` is not a fixed array"
+            ));
+        };
+        let array = column.array.ok_or("record column has no array")?;
+        for coordinates in port_array_index_vectors(&array.dims) {
+            let mut cell_path = member_path.to_vec();
+            cell_path.extend(coordinates.into_iter().map(AggregatePathPart::Index));
+            leaves.push(AggregateMemberInfo {
+                member: leaf_member(member, element),
+                signal: None,
+                object: None,
+                array: Some(array.clone()),
+                container: None,
+                path: cell_path,
+            });
+        }
+        Ok(())
+    }
+
     /// Packed width of a struct/union formal. These keep the
     /// existing scalar `sv4_t` ABI, but their member selects must resolve to
     /// the formal's activation storage rather than a module signal.
@@ -639,6 +676,17 @@ impl<'a> Codegen<'a> {
                 return Ok(());
             }
         }
+        if !columns && shared.is_none() && super::record_columns::member_column(descriptor) {
+            return self.collect_member_column(
+                path,
+                object,
+                object_name,
+                member,
+                descriptor,
+                member_path,
+                leaves,
+            );
+        }
         match &descriptor.shape {
             TypeShape::PackedAtom { .. } => {
                 let signal = match shared {
@@ -780,6 +828,51 @@ impl<'a> Codegen<'a> {
                         leaves,
                     )?;
                 }
+            }
+            // A member array of the minimum size whose elements have no cell
+            // of their own is one container, like a declared array of such
+            // elements: a select reaches one element in place.
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } if shared.is_none()
+                && !columns
+                && fixed_values::fixed_array_cell_count(dimensions)
+                    .is_ok_and(|cells| cells >= crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS) =>
+            {
+                let suffix = aggregate_path_suffix(member_path);
+                let ir = self.model.containers.len();
+                let total = fixed_values::fixed_array_cell_count(dimensions)?;
+                let lowered = lower_container_element(element)?;
+                self.element_staging_possible |= element_nests_container(&lowered);
+                if matches!(lowered, IrContainerElement::Aggregate { .. }) {
+                    self.staged_container_types.insert(ir, descriptor.clone());
+                }
+                self.model.containers.push(crate::sim::ir::IrContainer {
+                    c_name: self.c_name("G", path, &[object_name, &suffix]),
+                    element: lowered,
+                    kind: crate::sim::ir::IrContainerKind::Dynamic,
+                    initial_size: Some(total),
+                    activation: false,
+                    class_field: None,
+                    receiver: None,
+                });
+                match dimensions.as_slice() {
+                    [range] => {
+                        self.fixed_view_ranges.insert(ir, *range);
+                    }
+                    dimensions => {
+                        self.fixed_view_dims.insert(ir, dimensions.to_vec());
+                    }
+                }
+                leaves.push(AggregateMemberInfo {
+                    member: leaf_member(member, descriptor),
+                    signal: None,
+                    object: None,
+                    array: None,
+                    container: Some(ContainerInfo { ir }),
+                    path: member_path.to_vec(),
+                });
             }
             TypeShape::FixedArray {
                 dimensions,

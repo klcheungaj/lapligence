@@ -147,6 +147,10 @@ impl Codegen<'_> {
             let Some(default) = default else {
                 continue;
             };
+            // A member column starts from its own default.
+            if leaf.array.is_some() {
+                continue;
+            }
             match (default, &leaf.signal, leaf.object) {
                 (LeafDefault::Packed(value), Some(signal), _) if !signal.real => {
                     self.model.signals[signal.ir].fixed_default = Some(value);

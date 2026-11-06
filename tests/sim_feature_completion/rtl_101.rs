@@ -438,6 +438,70 @@ fn ref_formals_bind_one_image_of_a_column_cell() {
     sim_cli::run_case_backend_parity(SUITE, "chosen_cell_ref", expected, &[], &[]);
 }
 
+/// String, handle, real and record elements beside packed arrays, through
+/// every owner and transfer: no shape keeps a cell per leaf at the minimum size.
+#[test]
+fn member_arrays_without_a_packed_column_are_one_container_or_column() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_native_members.out");
+    sim_cli::run_case(SUITE, "chosen_native_members", expected, "", &[]);
+}
+
+#[test]
+fn member_arrays_without_a_packed_column_work_in_every_declaration() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_block_records.out");
+    sim_cli::run_case(SUITE, "chosen_block_records", expected, "", &[]);
+}
+
+/// A select of a string member array is one lookup, and packed and real cells
+/// beside it keep their dump names.
+#[test]
+fn a_record_with_a_string_array_selects_flat_and_dumps_its_cells() {
+    let directory = sim_harness::TempDir::new("rtl101-native-wave").expect("temporary directory");
+    std::fs::write(
+        directory.path().join("t.sv"),
+        "module tb;
+  typedef struct { int a [16]; real d [16]; string s [16]; int k; } r_t;
+  r_t r;
+  int i = 3;
+  initial begin
+    r.a[i] = 7; r.d[i] = 1.5; r.s[i] = \"x\"; r.k = 3;
+    #1 $display(\"%0d %f %s %0d\", r.a[i], r.d[i], r.s[i], r.k);
+  end
+endmodule
+",
+    )
+    .expect("write source");
+    let output = sim_harness::run_command(
+        Command::new(env!("CARGO_BIN_EXE_llg"))
+            .current_dir(directory.path())
+            .args(["--top", "tb", "--wave", "t.vcd", "--out-dir", "out", "t.sv"]),
+        Duration::from_secs(120),
+    )
+    .expect("run llg");
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("7 1.500000 x 3"),
+        "{output:?}"
+    );
+    let dump = std::fs::read_to_string(directory.path().join("t.vcd")).expect("read dump");
+    let names = dump
+        .lines()
+        .filter(|line| line.starts_with("$var"))
+        .filter_map(|line| line.split_whitespace().nth(4))
+        .collect::<Vec<_>>();
+    for name in ["a__i15", "d__i15", "k"] {
+        assert!(names.contains(&name), "{names:?}");
+    }
+    let model = std::fs::read_to_string(directory.path().join("out/sim/tb/model.c"))
+        .expect("read generated model");
+    assert!(
+        !model.contains("s__i15"),
+        "one container, not a leaf per cell"
+    );
+}
+
 /// Member arrays as `inside` sets, structured fills and nested records.
 #[test]
 fn nested_records_and_sets_of_the_column_form() {

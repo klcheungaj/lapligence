@@ -1301,6 +1301,19 @@ struct NativeContainerLeaf {
     kind: crate::sim::ir::IrContainerKind,
 }
 
+/// A member array of the minimum column size in a native value without
+/// columns: the value's slot holds its items, so it has no companion, and it
+/// moves whole to the one container a module record keeps it in.
+#[derive(Clone)]
+struct NativeFixedLeaf {
+    path: Vec<AggregatePathPart>,
+    /// Item indices of the member's slot in the value.
+    items: Vec<u32>,
+    element: crate::sim::ir::IrContainerElement,
+    descriptor: TypeDescriptor,
+    dimensions: Vec<(i32, i32)>,
+}
+
 /// Interned native record type and its declaration-order leaves.
 #[derive(Clone)]
 struct NativeLayout {
@@ -1310,6 +1323,7 @@ struct NativeLayout {
     /// Container members in declaration order, matching
     /// [`crate::sim::ir::IrNativeValue::companions`] of every value.
     containers: Vec<NativeContainerLeaf>,
+    fixed: Vec<NativeFixedLeaf>,
 }
 
 #[derive(Clone)]
@@ -1616,6 +1630,9 @@ struct Codegen<'a> {
     /// Record types stored as columns by the design's selections, beyond
     /// those their shape puts in column layout.
     record_column_types: HashSet<TypeId>,
+    /// Paths of the container members of the record a pattern is being
+    /// flattened for: a container takes its whole pattern value.
+    pattern_stops: Vec<Vec<AggregatePathPart>>,
     /// Collapsed net ports with a time-zero observer of the sink, and the
     /// root storage whose start the lowered model must show to be all X.
     port_start_checks: Vec<(NodeId, usize)>,
@@ -2342,6 +2359,7 @@ impl<'a> Codegen<'a> {
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),
             record_column_types: HashSet::new(),
+            pattern_stops: Vec::new(),
             port_start_checks: Vec::new(),
             port_alias_sinks: HashSet::new(),
             reference_arrays: HashMap::new(),

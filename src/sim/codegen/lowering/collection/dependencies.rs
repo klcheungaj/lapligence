@@ -105,26 +105,34 @@ impl<'a> Codegen<'a> {
         let descriptor = self.query_descriptor(root)?;
         let selected = super::fixed_values::fixed_path_descriptor(descriptor, &prefix);
         let mut dependencies = Vec::new();
+        let mut member_columns = HashSet::new();
         for leaf in &storage.leaves {
             if !prefix.starts_with(&leaf.path) && !leaf.path.starts_with(&prefix) {
                 continue;
             }
             if let Some(array) = &leaf.array {
+                // The cell leaves of a member column stand for the column.
+                let member_cell = matches!(leaf.path.last(), Some(AggregatePathPart::Index(_)));
+                let base = leaf.path.len() - if member_cell { array.dims.len() } else { 0 };
+                if member_cell && !member_columns.insert(array.ir) {
+                    continue;
+                }
                 // The tag cell of a column-layout tagged union shares its
                 // path with the union, whose members have columns of their own.
-                let cell = super::record_columns::record_cell_leaf(leaf)
+                let cell = !member_cell
+                    && super::record_columns::record_cell_leaf(leaf)
                     && !super::fixed_values::fixed_path_descriptor(descriptor, &leaf.path)
                         .is_some_and(|(owner, _)| {
                             super::record_columns::column_tagged_union(&owner)
                         });
-                let depth = leaf.path.len() + if cell { 0 } else { array.dims.len() };
+                let depth = base + if cell { 0 } else { array.dims.len() };
                 let dependency = if cell {
                     IrDependency::ArrayElement {
                         array: self.reference_array(array.ir),
                         index: 0,
                     }
                 } else {
-                    self.column_dependency(array, &prefix[..], leaf.path.len())
+                    self.column_dependency(array, &prefix[..], base)
                 };
                 // A member inside one cell is that cell's bits, so writers of
                 // different members stay separate (SV 9.2.2.2).
