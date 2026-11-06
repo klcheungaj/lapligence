@@ -7,6 +7,25 @@ pub(super) fn render<'a, 'm>(
     function: Option<&'m IrFunc>,
     names: &'a StorageNames<'m>,
 ) -> Result<String, String> {
+    // A report carrying `this` renders its arguments as its method does.
+    let method_ctx;
+    let ctx = if matches!(
+        pre,
+        IrPreFn::DisplayEval { receiver: Some(receiver), .. }
+            | IrPreFn::MonitorReads { receiver: Some(receiver), .. } if receiver == "_this"
+    ) {
+        method_ctx = RCtx {
+            value_backend: ctx.value_backend,
+            constants: ctx.constants,
+            model: ctx.model,
+            func: function,
+            sampled: false,
+            activation_label: None,
+        };
+        &method_ctx
+    } else {
+        ctx
+    };
     let mut frame = Frame::new(ctx);
     frame.storage_names = Some(names);
     bind_branch_formals(&mut frame, pre, function)?;
@@ -197,6 +216,8 @@ fn render_with_frame(
             args,
             time_unit_fs,
             private_effects,
+            prelude,
+            receiver,
         } => {
             // Lowering proved that a private-effect helper stores only to its
             // own storage. The runtime evaluates display callbacks in a
@@ -205,7 +226,11 @@ fn render_with_frame(
             frame.read_only_callback = !*private_effects;
             frame.postponed_reader = true;
             frame.line("(void)out; (void)context;");
+            bind_receiver(&mut frame, receiver.as_deref());
             frame.line("{");
+            for statement in prelude {
+                frame.statement(statement)?;
+            }
             let values = frame.formatted_arguments(args, *time_unit_fs)?;
             // Arguments have all been evaluated before this ownership transfer;
             // no callback or user expression can abandon a partial out buffer.
@@ -220,6 +245,43 @@ fn render_with_frame(
             Ok((
                 format!(
                     "static void {c_name}(llg_fmt_arg_t* out, void* context) {{\n{}{}\n}}\n",
+                    frame.prologue(),
+                    frame.body()
+                ),
+                None,
+            ))
+        }
+        IrPreFn::MonitorReads {
+            c_name,
+            reads,
+            receiver,
+        } => {
+            frame.read_only_callback = true;
+            frame.postponed_reader = true;
+            frame.line("(void)out; (void)context;");
+            bind_receiver(&mut frame, receiver.as_deref());
+            frame.line("{");
+            for (index, read) in reads.iter().enumerate() {
+                let IrDependency::NativeAccess(name) = read else {
+                    return Err("a monitor resolves only native accesses".to_owned());
+                };
+                let (real, address) = frame.native_access_storage(name)?;
+                let kind = if real {
+                    "LLG_FMT_REAL"
+                } else {
+                    "LLG_FMT_PACKED"
+                };
+                frame.line(format!(
+                    "out[{index}] = (llg_display_read_t){{ {kind}, {address} }};"
+                ));
+            }
+            frame.line("}");
+            frame.line("if (0) goto _llg_return;");
+            frame.line("_llg_return: ;");
+            frame.line("llg_value_scopes_end_since(_llg_frame_base);");
+            Ok((
+                format!(
+                    "static void {c_name}(llg_display_read_t* out, void* context) {{\n{}{}\n}}\n",
                     frame.prologue(),
                     frame.body()
                 ),
@@ -355,6 +417,20 @@ fn render_with_frame(
                 None,
             ))
         }
+    }
+}
+
+/// Bind the class-method receiver a deferred report carries in its context.
+/// A fork branch names the receiver it captured; a method body names `this`.
+fn bind_receiver(frame: &mut Frame<'_, '_>, receiver: Option<&str>) {
+    let Some(receiver) = receiver else {
+        return;
+    };
+    if receiver == "_this" {
+        frame.line("void* _this = context; (void)_this;");
+    } else {
+        let binding = frame.native_local(receiver, NativeKind::Chandle);
+        frame.line(format!("*({}) = context;", binding.address));
     }
 }
 

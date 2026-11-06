@@ -27,6 +27,14 @@ fn strobe_reports_settled_values_last_issued_first() {
 }
 
 #[test]
+fn reports_build_their_actuals_when_they_print() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/strobe_built_actuals.out");
+    sim_cli::run_case(SUITE, "strobe_built_actuals", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "strobe_built_actuals", expected, &[], &[]);
+}
+
+#[test]
 fn time_arguments_print_but_never_trigger() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_025/monitor_time_args.out");
     sim_cli::run_case(SUITE, "monitor_time_args", expected, "", &[]);
@@ -53,6 +61,73 @@ fn monitor_follows_handle_selected_storage() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_025/dynamic_members.out");
     sim_cli::run_case(SUITE, "dynamic_members", expected, "", &[]);
     sim_cli::run_case_backend_parity(SUITE, "dynamic_members", expected, &[], &[]);
+}
+
+#[test]
+fn monitor_follows_handles_and_properties_exactly() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/class_property_reports.out");
+    sim_cli::run_case(SUITE, "class_property_reports", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "class_property_reports", expected, &[], &[]);
+}
+
+#[test]
+fn monitor_over_a_property_path_evaluates_only_on_change() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/exact_class_triggers.out");
+    sim_cli::run_case(SUITE, "exact_class_triggers", expected, "", &[]);
+}
+
+#[test]
+fn reports_in_class_methods_keep_their_receiver() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/class_method_reports.out");
+    sim_cli::run_case(SUITE, "class_method_reports", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "class_method_reports", expected, &[], &[]);
+    // The objects no variable names survive a collection at every safe point.
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "class_method_reports",
+        &[],
+        &[("LLG_GC_STRESS", "1"), ("LLG_GC_VERIFY", "1")],
+        &|label, output| {
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                expected,
+                "{label}: {}",
+                sim_cli::observed_output(output)
+            );
+        },
+    );
+}
+
+#[test]
+fn a_monitor_keeps_its_receiver_through_collections() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/report_receiver_gc.out");
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "report_receiver_gc",
+        &[],
+        &[("LLG_GC_STRESS", "1"), ("LLG_GC_STATS", "1")],
+        &|label, output| {
+            let seen = sim_cli::observed_output(output);
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                expected,
+                "{label}: {seen}"
+            );
+            assert!(seen.contains("freed=1 "), "{label}: {seen}");
+        },
+    );
+}
+
+#[test]
+fn reports_read_static_string_and_handle_variables() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/static_handle_formals.out");
+    sim_cli::run_case(SUITE, "static_handle_formals", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "static_handle_formals", expected, &[], &[]);
 }
 
 // A02: replacement, enable/disable and file outputs.
@@ -127,15 +202,33 @@ fn neg_postponed_helpers_cannot_write_design_state() {
 }
 
 #[test]
-fn neg_activation_storage_limits_are_diagnosed() {
+fn neg_class_storage_limits_are_diagnosed() {
     sim_cli::reject_case(
         SUITE,
-        "neg_static_string_formal",
-        "$strobe in `tb` cannot defer a reference to `s`: the call activation, not model storage, holds it",
+        "neg_monitor_record_property",
+        "has no dependency that sees it change",
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_class_method_strobe",
-        "$strobe in class method `show` cannot defer a report",
+        "neg_method_formal_strobe",
+        "automatic variable 'a' cannot be traced",
+    );
+}
+
+#[test]
+fn null_handle_in_a_report_stops_the_run() {
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "null_report",
+        &[],
+        include_str!("../fixtures/sim/feature_completion/sim_025/null_report.out"),
+        "null class handle access: property access at tb:19:",
+    );
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "null_monitor",
+        &[],
+        include_str!("../fixtures/sim/feature_completion/sim_025/null_monitor.out"),
+        "null class handle access: property access at tb:11:",
     );
 }

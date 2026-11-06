@@ -154,7 +154,20 @@ impl Validator<'_> {
                         &format!("{path}.pre_fns[{idx}].body"),
                     )?;
                 }
-                IrPreFn::DisplayEval { args, .. } => {
+                IrPreFn::MonitorReads { reads, .. } => {
+                    for read in reads {
+                        if !matches!(read, IrDependency::NativeAccess(_)) {
+                            return self
+                                .fail(path, "a monitor resolves only native accesses at run time");
+                        }
+                    }
+                }
+                IrPreFn::DisplayEval { args, prelude, .. } => {
+                    self.validate_stmts(
+                        prelude,
+                        branch_formals,
+                        &format!("{path}.pre_fns[{idx}].prelude"),
+                    )?;
                     for (arg_idx, arg) in args.iter().enumerate() {
                         arg.validate(
                             self.model,

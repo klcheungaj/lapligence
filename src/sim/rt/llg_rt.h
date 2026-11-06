@@ -2582,6 +2582,29 @@ void llg_monitor_with_typed_reads(const char* fmt, int n,
                                   const llg_display_read_t* reads, int n_reads);
 void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
                       const char* scope);
+// Writes the storage each resolved trigger of a monitor selects now, one entry
+// per trigger. Runs after every evaluation, so a rebound handle moves the
+// triggers: the handle's own trigger made the monitor evaluate.
+typedef void (*llg_monitor_reads_fn)(llg_display_read_t* out, void* context);
+// llg_monitor_with_typed_reads with `n_resolved` triggers `resolve` names and
+// the class-method receiver `context`, which the monitor hands to `eval` and
+// `resolve` and keeps reachable until it is replaced. `resolve` may be NULL.
+void llg_monitor_with_dynamic_reads(const char* fmt, int n,
+                                    llg_display_eval_fn eval, const char* scope,
+                                    const llg_display_read_t* reads, int n_reads,
+                                    llg_monitor_reads_fn resolve, int n_resolved,
+                                    void* context);
+void llg_file_monitor_with_dynamic_reads(
+    uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
+    const char* scope, const llg_display_read_t* reads, int n_reads,
+    llg_monitor_reads_fn resolve, int n_resolved, void* context);
+// llg_strobe_typed with the class-method receiver `context`, which the strobe
+// hands to `eval` and keeps reachable until it reports.
+void llg_strobe_with_context(const char* fmt, int n, llg_display_eval_fn eval,
+                             const char* scope, void* context);
+void llg_file_strobe_with_context(uint32_t descriptor, const char* fmt, int n,
+                                  llg_display_eval_fn eval, const char* scope,
+                                  void* context);
 void llg_file_monitor_with_typed_reads(
     uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
     const char* scope, const llg_display_read_t* reads, int n_reads);

@@ -1,0 +1,25 @@
+0 v=1
+1 v=5
+2 v=2
+5 v=3
+7 next=9 s=x r=1.5 n=0 e=0 b=0
+8 next=7 s=x r=1.5 n=0 e=0 b=0
+9 next=8 s=x r=1.5 n=0 e=0 b=0
+10 next=80 s=x r=1.5 n=0 e=0 b=0
+12 next=80 s=yy r=1.5 n=0 e=0 b=0
+13 next=80 s=yy r=2.5 n=0 e=0 b=0
+14 next=80 s=yy r=2.5 n=1 e=0 b=0
+15 next=80 s=yy r=2.5 n=1 e=4 b=0
+16 next=80 s=yy r=2.5 n=1 e=4 b=1
+17 count=1 pv=5 pw=255 pc=1 sel=5
+18 count=2 pv=5 pw=255 pc=1 sel=5
+19 count=2 pv=7 pw=255 pc=1 sel=5
+20 count=2 pv=7 pw=254 pc=1 sel=5
+21 count=2 pv=7 pw=254 pc=3 sel=5
+22 count=2 pv=7 pw=254 pc=3 sel=70
+24 count=2 pv=7 pw=254 pc=3 sel=1000
+27 count=2 pv=7 pw=254 pc=3 sel=6
+28 f=70
+29 f=11
+30 fs=12
+31 st=11 12

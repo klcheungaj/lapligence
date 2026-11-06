@@ -582,6 +582,8 @@ impl Frame<'_, '_> {
             n_args,
             reads,
             poll,
+            dynamic_reads,
+            receiver,
             time_args,
             scope,
             descriptor,
@@ -595,6 +597,10 @@ impl Frame<'_, '_> {
             .map(|value| self.descriptor(value))
             .transpose()?;
         let scope = c_string_literal(scope);
+        let context = receiver
+            .as_ref()
+            .map(|receiver| self.chandle(receiver))
+            .transpose()?;
         let prefix = if descriptor.is_some() {
             "llg_file_"
         } else {
@@ -604,9 +610,14 @@ impl Frame<'_, '_> {
             .map(|value| format!("{value}, "))
             .unwrap_or_default();
         if *strobe {
-            self.line(format!(
-                "{prefix}strobe_typed({descriptor}{fmt}, {n_args}, {eval}, {scope});"
-            ));
+            match context {
+                Some(context) => self.line(format!(
+                    "{prefix}strobe_with_context({descriptor}{fmt}, {n_args}, {eval}, {scope}, {context});"
+                )),
+                None => self.line(format!(
+                    "{prefix}strobe_typed({descriptor}{fmt}, {n_args}, {eval}, {scope});"
+                )),
+            }
         } else {
             let mut pointers = Vec::new();
             for read in reads {
@@ -703,7 +714,15 @@ impl Frame<'_, '_> {
                     &pointers.join(", "),
                 )
             };
-            self.line(format!("{prefix}monitor_with_typed_reads({descriptor}{fmt}, {n_args}, {eval}, {scope}, {pointer}, {});", pointers_len));
+            if dynamic_reads.is_some() || context.is_some() {
+                let (resolve, resolved) = dynamic_reads
+                    .as_ref()
+                    .map_or(("NULL", 0), |(name, count)| (name.as_str(), *count));
+                let context = context.as_deref().unwrap_or("NULL");
+                self.line(format!("{prefix}monitor_with_dynamic_reads({descriptor}{fmt}, {n_args}, {eval}, {scope}, {pointer}, {pointers_len}, {resolve}, {resolved}, {context});"));
+            } else {
+                self.line(format!("{prefix}monitor_with_typed_reads({descriptor}{fmt}, {n_args}, {eval}, {scope}, {pointer}, {});", pointers_len));
+            }
         }
         Ok(())
     }

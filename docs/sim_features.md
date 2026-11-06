@@ -1948,10 +1948,16 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   keeps only its channels that are open (S25-D7). Packed,
   real, string and `%p` container/record arguments, nested expressions, function
   calls, `%m`/`%t`/`$time` work, also in static tasks and functions (module
-  variables, static formals and locals); arguments that read through a class or
-  virtual-interface handle make a `$monitor` re-evaluate every slot. Automatic variables stay illegal
-  (SV 13.3.2); class properties, a static string formal, class methods and
-  `final` blocks reject; pending reports are dropped at `$finish`
+  variables, static formals and locals, string and handle ones included). Class
+  properties work through handles, chains, `this`, static and parameterized
+  classes, also in class methods, where the report keeps its object: a `$monitor`
+  watches the handles and properties on the path exactly and follows a rebinding,
+  and a null handle on the path when the report evaluates stops the run
+  (S25-D9). Arguments that call a method or a function reading class storage,
+  or select a virtual-interface member, make a `$monitor` re-evaluate every
+  slot. Automatic variables stay illegal (SV 13.3.2); `final` blocks and a
+  `$monitor` of a member of an unpacked structure property reject; pending
+  reports are dropped at `$finish`
   ([known issue](known_issues.md#deferred-reports-that-name-class-state-or-activation-storage)).
   Helpers may keep their own static state or take descriptor arrays; visible
   helper writes reject (§9). Hand-derived oracles:

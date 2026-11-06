@@ -211,6 +211,8 @@ fn unused_storage_keeps_registrations_fills_and_runtime_dependencies() {
             n_args: 1,
             reads: vec![IrDependency::scalar("G_s6")],
             poll: false,
+            dynamic_reads: None,
+            receiver: None,
             time_args: Default::default(),
             default_radix: crate::sim::ir::IrDisplayRadix::Decimal,
             scope: "t".to_string(),

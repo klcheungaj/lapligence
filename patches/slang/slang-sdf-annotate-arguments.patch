@@ -1,6 +1,19 @@
 --- a/source/ast/builtins/SystemTasks.cpp
 +++ b/source/ast/builtins/SystemTasks.cpp
-@@ -473,6 +473,8 @@
+@@ -70,8 +70,11 @@ public:
+ 
+ static void checkMonitorArg(const ASTContext& context, const Expression& expr) {
+     expr.visitSymbolReferences([&](const Expression&, const Symbol& sym) {
++        // A class property lives in its object, not in an activation, and `this`
++        // names that object; SV 13.3.2 bars only variables of automatic subroutines.
+         if (auto var = sym.as_if<VariableSymbol>();
+-            var && var->lifetime == VariableLifetime::Automatic && var->kind != SymbolKind::Field) {
++            var && var->lifetime == VariableLifetime::Automatic && var->kind != SymbolKind::Field &&
++            var->kind != SymbolKind::ClassProperty && var->name != "this"sv) {
+             context.addDiag(diag::AutoVarTraced, expr.sourceRange) << sym.name;
+         }
+     });
+@@ -473,6 +476,8 @@ public:
              if (ref.kind == ExpressionKind::ArbitrarySymbol) {
                  auto& sym = *ref.as<ArbitrarySymbolExpression>().symbol;
                  if (sym.kind != SymbolKind::Variable && sym.kind != SymbolKind::Net &&
@@ -9,7 +22,7 @@
                      (sym.kind != SymbolKind::Instance || !sym.as<InstanceSymbol>().isModule())) {
                      if (!context.scope->isUninstantiated())
                          context.addDiag(diag::ExpectedModOrVarName, ref.sourceRange);
-@@ -729,6 +731,9 @@
+@@ -729,6 +734,9 @@ class SdfAnnotateTask : public SystemTaskBase {
  public:
      SdfAnnotateTask() : SystemTaskBase(KnownSystemName::SdfAnnotate) {}
  
@@ -19,7 +32,7 @@
      const Expression& bindArgument(size_t argIndex, const ASTContext& context,
                                     const ExpressionSyntax& syntax, const Args& args) const final {
          if (argIndex == 1) {
-@@ -763,7 +768,8 @@
+@@ -763,7 +771,8 @@ public:
              return comp.getErrorType();
  
          for (size_t i = 0; i < args.size(); i++) {

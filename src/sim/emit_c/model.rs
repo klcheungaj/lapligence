@@ -547,6 +547,7 @@ fn render_coroutine_branches(
             | crate::sim::ir::IrPreFn::MonEval { c_name, .. }
             | crate::sim::ir::IrPreFn::EventAssign { c_name, .. }
             | crate::sim::ir::IrPreFn::DisplayEval { c_name, .. }
+            | crate::sim::ir::IrPreFn::MonitorReads { c_name, .. }
             | crate::sim::ir::IrPreFn::RealEval { c_name, .. }
             | crate::sim::ir::IrPreFn::DeferredAssertion { c_name, .. }
             | crate::sim::ir::IrPreFn::ForceEval { c_name, .. } => c_name,

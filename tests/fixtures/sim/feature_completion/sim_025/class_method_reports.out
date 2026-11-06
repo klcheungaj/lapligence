@@ -1,0 +1,13 @@
+0 show g=3 x=2 this.x=2 count=7
+1 watch x=10 g=3
+2 watch x=11 g=3
+3 watch x=11 g=4
+5 watch x=11 g=5
+7 later x=50
+8 new x=5 base=5
+10 branch x=8
+11 chain nx=20 q=0 s=a
+12 chain nx=21 q=0 s=a
+14 chain nx=22 q=0 s=a
+15 chain nx=22 q=1 s=a
+16 chain nx=22 q=1 s=zz

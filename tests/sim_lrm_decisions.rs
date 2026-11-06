@@ -765,6 +765,14 @@ fn s25_d1_monitor_flag_persists() {
 }
 
 #[test]
+fn s25_d9_class_state_reports() {
+    run_decision(
+        "S25-D9_class_state_reports",
+        include_str!("fixtures/sim/lrm_decisions/S25-D9_class_state_reports.out"),
+    );
+}
+
+#[test]
 fn s25_d2_multiple_fmonitor() {
     run_decision(
         "S25-D2_multiple_fmonitor",

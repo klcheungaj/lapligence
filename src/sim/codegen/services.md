@@ -112,10 +112,19 @@ or handles reject. `%p` lowers to `IrStringExpr::Pattern` (`objects/patterns.rs`
 runtime walker's limits are in `rt/scheduler/patterns.c` docs. Monitors/strobes run after settled Active/Inactive/NBA work; the latest `$monitor`
 (plus any number of `$fmonitor` lists), registration/enabling forces a report,
 time-only arguments do not retrigger. A deferred report in a static subroutine may
-name model storage (static formals and locals included); activation-bound storage
-(`activation_bound_ref`) and class methods reject. A monitor whose arguments read
-handle-selected storage or `%p` a class object sets `IrStmt::MonitorSet::poll`:
-the runtime then re-evaluates it at every settled slot (`LLG_MONITOR_READ_POLL`). An
+name model storage (static formals and locals included, string and handle ones
+as model objects); activation-bound storage (`activation_bound_ref`) rejects. A
+report in a class method carries its receiver (`MonitorSet::receiver`): the
+runtime passes it to the evaluators as their context and keeps it reachable.
+`report_read_plan` chooses how a monitor watches each argument. Property paths are
+exact (`report_dependencies`): `with_dynamic_reads` names the storage, the handle
+markers and the root handle, and the native accesses among them go to an
+`IrPreFn::MonitorReads` resolver the runtime runs after each evaluation, so a
+rebinding moves the triggers. A path no dependency can follow (a member of an
+unpacked structure property) rejects with its location. An argument that calls
+into class storage, selects a virtual-interface member or `%p`s a class object sets
+`IrStmt::MonitorSet::poll`: the runtime then re-evaluates it at every settled slot
+(`LLG_MONITOR_READ_POLL`). An
 argument that computes only from `$time`, `$stime` or `$realtime` is listed in
 `time_args`: it prints but never triggers a report (SV 21.2.3,
 `LLG_MONITOR_TIME_ARG`).

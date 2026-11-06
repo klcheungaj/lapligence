@@ -960,11 +960,13 @@ fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
             }
             walk_stmts_mut(body, f);
         }
-        IrPreFn::DisplayEval { args, .. } => {
+        IrPreFn::DisplayEval { args, prelude, .. } => {
             for arg in args {
                 arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
             }
+            walk_stmts_mut(prelude, f);
         }
+        IrPreFn::MonitorReads { .. } => {}
         IrPreFn::RealEval { value, context, .. } => {
             walk_expr_mut(value, f);
             if let Some(context) = context {

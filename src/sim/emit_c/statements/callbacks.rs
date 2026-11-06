@@ -193,15 +193,21 @@ pub(in super::super) fn render_pre_fn_impl(
             out.push_str("}\n");
             Ok(out)
         }
+        crate::sim::ir::IrPreFn::MonitorReads { .. } => {
+            Err("resolved monitor reads require the owned emitter".to_owned())
+        }
         crate::sim::ir::IrPreFn::DisplayEval {
             c_name,
             args,
             time_unit_fs,
             private_effects,
+            prelude,
+            receiver,
         } => {
-            if *private_effects {
+            if *private_effects || receiver.is_some() || !prelude.is_empty() {
                 return Err(
-                    "private-effect display evaluators require the owned emitter".to_owned(),
+                    "private-effect and receiver display evaluators require the owned emitter"
+                        .to_owned(),
                 );
             }
             let mut out = format!(
