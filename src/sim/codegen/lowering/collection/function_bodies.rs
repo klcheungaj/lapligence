@@ -65,6 +65,13 @@ impl<'a> Codegen<'a> {
             .ok_or_else(|| format!("task `{}` has no model entry", self.node(task).name))?;
         let bound_native_refs = records
             .iter()
+            // A cell formal changes form and a column formal keeps passing
+            // its columns: neither has a null native value.
+            .filter(|binding| {
+                !binding.cell
+                    && (!self.record_declaration(binding.formal)
+                        || self.record_formal_native(binding.formal).is_some())
+            })
             .map(|binding| {
                 // A column formal's native value follows the declared formals.
                 match self.record_formal_native(binding.formal) {
@@ -93,6 +100,9 @@ impl<'a> Codegen<'a> {
         );
         function.inline_expanded = false;
         function.bound_native_refs = bound_native_refs;
+        for binding in records.iter().filter(|binding| binding.cell) {
+            self.record_ref_cell_formal(&mut function, &formals, binding.formal)?;
+        }
         let ir = self.model.funcs.len();
         self.model.funcs.push(function);
         self.task_specializations.insert(key, ir);
@@ -104,6 +114,41 @@ impl<'a> Codegen<'a> {
             records,
         });
         Ok(ir)
+    }
+
+    /// Turn the column-form formal `formal` of a specialization into a packed
+    /// `ref` of the record image: its own slot takes the reference and its
+    /// other columns and native value leave the signature.
+    fn record_ref_cell_formal(
+        &self,
+        function: &mut crate::sim::ir::IrFunc,
+        formals: &[(NodeId, bool)],
+        formal: NodeId,
+    ) -> Result<(), String> {
+        let position = formals
+            .iter()
+            .position(|(declared, _)| *declared == formal)
+            .ok_or("record `ref` formal is not a declared formal")?;
+        let columns = self.record_formal_columns(formal);
+        let native = self.record_formal_native(formal);
+        let mut index = 0;
+        function.formals.retain(|entry| {
+            let declared = index < formals.len();
+            index += 1;
+            declared
+                || !(entry
+                    .fixed_array
+                    .is_some_and(|array| columns.contains(&array))
+                    || (entry.native_value.is_some() && entry.native_value == native))
+        });
+        let slot = &mut function.formals[position];
+        slot.fixed_array = None;
+        slot.fixed_shape = self.fixed_formal_shape(formal)?;
+        slot.fixed_default = self.fixed_default_literal(formal);
+        slot.width = self
+            .formal_value_width(formal)
+            .ok_or("record `ref` formal has no packed image")?;
+        Ok(())
     }
 
     fn emit_func_task_with(

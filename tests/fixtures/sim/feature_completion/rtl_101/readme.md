@@ -129,3 +129,7 @@ column. Expected values are derived by hand below; none were captured from
   blocks write separate bits of one member of a column cell. SV2009 9.2.2.2:
   "multiple assignments made to independent elements of a variable are allowed
   as long as their longest static prefixes do not overlap".
+- `chosen_cell_ref`: a `ref` formal of the column form bound to one image in a
+  column cell or an array of records. One body serves every cell at any index,
+  forwarding reaches the same cell, a wait sees the cell's writes. `-D N=8`
+  prints the same lines through per-cell storage.

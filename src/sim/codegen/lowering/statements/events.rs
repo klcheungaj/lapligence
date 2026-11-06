@@ -1546,7 +1546,8 @@ impl EmitCtx<'_, '_> {
         ) && persistent_subroutine_signal.is_none()
             && self.cg.resolve_signal_id(&self.path, expression).is_err()
             && (self.cg.unpacked_path_for_expr(expression).is_some()
-                || self.cg.selected_member_path(expression));
+                || self.cg.selected_member_path(expression)
+                || self.cg.subroutine_record_member(expression));
         // A whole string, class or process handle waits on its change marker
         // (SIM-007, SIM-015), which toggles on every changed store; none has
         // edges.

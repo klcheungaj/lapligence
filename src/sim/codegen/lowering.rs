@@ -1809,6 +1809,9 @@ struct Codegen<'a> {
     /// Native record `ref` formals of the specialization being lowered, each
     /// bound to declaration-owned record storage (SIM-008).
     record_ref_aliases: HashMap<NodeId, RecordRefBinding>,
+    /// Column values of the formals the specialization being lowered takes
+    /// as packed references ([`RecordRefBinding::cell`]).
+    record_ref_cells: HashMap<NodeId, collection::RecordValue>,
     /// Actuals whose run-time selection the call being lowered fixes to one
     /// element, and the branches the selections so far multiply to.
     record_ref_pins: HashMap<NodeId, collection::RecordRefPin>,
@@ -2415,6 +2418,7 @@ impl<'a> Codegen<'a> {
             native_value_layouts: HashMap::new(),
             native_roots: HashMap::new(),
             record_ref_aliases: HashMap::new(),
+            record_ref_cells: HashMap::new(),
             record_ref_pins: HashMap::new(),
             record_ref_pin_span: 1,
             native_leaf_symbols: HashMap::new(),
@@ -3181,6 +3185,11 @@ struct RecordRefBinding {
     /// Declaration owning the leaves, never another bound formal.
     root: NodeId,
     prefix: Vec<AggregatePathPart>,
+    /// The formal has the column form and its actual is one image inside a
+    /// column cell, which has no columns to hand over. The specialization
+    /// takes the formal as a packed `ref` of that image, whatever selects
+    /// the cell at the call; `root` and `prefix` carry nothing.
+    cell: bool,
 }
 
 /// Identity of one subroutine specialization; see
@@ -3189,7 +3198,7 @@ type SpecializationKey = (NodeId, NodeId, Vec<usize>, Vec<RecordRefBinding>);
 
 /// Identity of one virtual family bound to records; see
 /// [`Codegen::record_ref_families`].
-type RecordRefPositions = Vec<(usize, NodeId, Vec<AggregatePathPart>)>;
+type RecordRefPositions = Vec<(usize, NodeId, Vec<AggregatePathPart>, bool)>;
 type RecordRefFamilyKey = (usize, RecordRefPositions);
 
 /// A task specialization awaiting body lowering. `ir` indexes the model

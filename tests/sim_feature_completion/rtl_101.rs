@@ -421,3 +421,10 @@ fn writers_of_different_bits_of_a_column_cell_do_not_conflict() {
         include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_part_writers.out");
     sim_cli::run_case_backend_parity(SUITE, "chosen_part_writers", expected, &[], &[]);
 }
+
+/// One body serves every cell, and writes reach the cell while it waits.
+#[test]
+fn ref_formals_bind_one_image_of_a_column_cell() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_cell_ref.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_cell_ref", expected, &[], &[]);
+}

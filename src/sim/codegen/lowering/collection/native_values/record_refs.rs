@@ -24,6 +24,12 @@
 //! grows with the elements and calls of each site, bounded by
 //! `NATIVE_RECORD_SELECT_LIMIT`.
 //!
+//! A column-form record formal bound to one image inside a column cell
+//! (`t(m.rows[i])`, for any index and any owner of the column) has no columns
+//! to hand over. Its specialization takes the formal as a packed `ref` of the
+//! image instead ([`RecordRefBinding::cell`]), so one body serves every cell
+//! and every write reaches the cell at once.
+//!
 //! A class method keeps its receiver in a specialization. A virtual call
 //! specializes the whole override family under a fresh virtual slot, so the
 //! ordinary dispatchers serve it and nothing changes for unbound calls. A
@@ -324,9 +330,19 @@ impl Codegen<'_> {
         if !self.is_ref_formal(formal) {
             return None;
         }
+        if self.record_ref_cell(formal, actual) {
+            return Some(RecordRefBinding {
+                formal,
+                root: formal,
+                prefix: Vec::new(),
+                cell: true,
+            });
+        }
         // A column formal with native members has no native layout: its
         // columns would alias through addresses, its native value cannot.
-        let columns = self.record_formal_native(formal).is_some();
+        // Nor can a wait follow an address, so a waited formal binds too.
+        let columns = self.record_formal_native(formal).is_some()
+            || (self.record_declaration(formal) && self.record_ref_waited(formal));
         let descriptor = if columns {
             &self.activation_records.get(&formal)?.descriptor
         } else {
@@ -359,7 +375,75 @@ impl Codegen<'_> {
             formal,
             root,
             prefix,
+            cell: false,
         })
+    }
+
+    /// Whether the task owning column-form `ref` formal `formal` waits on it.
+    fn record_ref_waited(&self, formal: NodeId) -> bool {
+        let Some(task) = self.enclosing_func_task(formal) else {
+            return false;
+        };
+        let inst = self.callable_environment(task).unwrap_or(task);
+        let Some(position) = self
+            .func_formals(task)
+            .iter()
+            .position(|(declared, _)| *declared == formal)
+        else {
+            return false;
+        };
+        self.call_shape(task, inst).static_refs.contains(&position)
+    }
+
+    /// Whether `actual` of a `ref` formal of the column form has no columns
+    /// to hand over: one record image inside a column cell or a fixed array,
+    /// or a formal already holding such an image.
+    fn record_ref_cell(&self, formal: NodeId, actual: NodeId) -> bool {
+        let source = self.p30_unwrap_cast(actual);
+        self.activation_records.contains_key(&formal)
+            && self.column_record_storage(source).is_none()
+            && !self.record_ref_pins.contains_key(&source)
+    }
+
+    /// The packed reference to the image a [`RecordRefBinding::cell`] formal
+    /// takes; `actual` is evaluated once, at the call.
+    pub(in crate::sim::codegen::lowering) fn record_ref_cell_argument(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        actual: NodeId,
+    ) -> Result<IrCallArg, String> {
+        let width = self
+            .formal_value_width(formal)
+            .ok_or("record `ref` formal has no packed image")?;
+        let descriptor = self
+            .query_descriptor(formal)
+            .ok_or("record `ref` formal has no type")?;
+        let (signed, two_state) = (descriptor.info.signed, self.db.is_two_state_type(formal));
+        let (const_ref, ref_static) = match self.kind(formal) {
+            NodeKind::FuncArg {
+                const_ref,
+                ref_static,
+                ..
+            } => (*const_ref, *ref_static),
+            _ => (false, false),
+        };
+        self.lower_ref_arg(
+            path,
+            &BoundArg {
+                width,
+                signed,
+                two_state,
+                real: false,
+                shortreal: false,
+                string: false,
+                expr: actual,
+                is_default: false,
+                is_event: false,
+            },
+            const_ref,
+            ref_static,
+        )
     }
 
     /// Record bindings of every native record `ref` formal of one call.
@@ -509,7 +593,7 @@ impl Codegen<'_> {
                             self.node(function).name
                         )
                     })?;
-                Ok((position, binding.root, binding.prefix.clone()))
+                Ok((position, binding.root, binding.prefix.clone(), binding.cell))
             })
             .collect()
     }
@@ -523,7 +607,7 @@ impl Codegen<'_> {
         let formals = self.func_formals(function);
         positions
             .iter()
-            .map(|(position, root, prefix)| {
+            .map(|(position, root, prefix, cell)| {
                 let (formal, _) = formals.get(*position).ok_or_else(|| {
                     format!(
                         "override `{}` has no formal {position}",
@@ -532,8 +616,9 @@ impl Codegen<'_> {
                 })?;
                 Ok(RecordRefBinding {
                     formal: *formal,
-                    root: *root,
+                    root: if *cell { *formal } else { *root },
                     prefix: prefix.clone(),
+                    cell: *cell,
                 })
             })
             .collect()
@@ -592,6 +677,13 @@ impl Codegen<'_> {
         records: &[RecordRefBinding],
     ) -> Result<(), String> {
         for binding in records {
+            if binding.cell {
+                // The body sees an ordinary packed `ref` of the record image.
+                if let Some(value) = self.activation_records.remove(&binding.formal) {
+                    self.record_ref_cells.insert(binding.formal, value);
+                }
+                continue;
+            }
             let view = self.record_ref_view(binding)?;
             self.native_roots.remove(&binding.formal);
             self.unpacked_aggregates.insert(binding.formal, view);
@@ -606,6 +698,12 @@ impl Codegen<'_> {
         records: &[RecordRefBinding],
     ) {
         for binding in records {
+            if binding.cell {
+                if let Some(value) = self.record_ref_cells.remove(&binding.formal) {
+                    self.activation_records.insert(binding.formal, value);
+                }
+                continue;
+            }
             self.unpacked_aggregates.remove(&binding.formal);
             self.record_ref_aliases.remove(&binding.formal);
         }

@@ -873,7 +873,7 @@ impl<'a> Codegen<'a> {
         self.call_shape_of(ft, inst, &mut Vec::new())
     }
 
-    /// Whether a task waits on a native record `ref` formal. Its body reads
+    /// Whether a task waits on a record `ref` formal. Its body reads
     /// the record's leaves, which only a specialization binding a module,
     /// static or procedural-block record can name (SIM-008), so the retained
     /// definition is a template no call reaches (`IrFunc::inline_expanded`).
@@ -883,9 +883,9 @@ impl<'a> Codegen<'a> {
         }
         let formals = self.func_formals(ft);
         self.call_shape(ft, inst).static_refs.iter().any(|index| {
-            formals
-                .get(*index)
-                .is_some_and(|(formal, _)| self.is_native_declaration(*formal))
+            formals.get(*index).is_some_and(|(formal, _)| {
+                self.is_native_declaration(*formal) || self.record_declaration(*formal)
+            })
         })
     }
 

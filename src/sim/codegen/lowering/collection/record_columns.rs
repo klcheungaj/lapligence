@@ -1021,6 +1021,19 @@ impl Codegen<'_> {
             .as_ref()
     }
 
+    /// Whether a member path is rooted at a subroutine record value or at a
+    /// formal holding a record image. Neither has a signal to wait on.
+    pub(in super::super) fn subroutine_record_member(&self, node: NodeId) -> bool {
+        self.activation_record_path(node).is_some()
+            || matches!(self.kind(node), NodeKind::Expr(ExprKind::HierPath { refs, .. })
+            if refs.iter().flatten().any(|root| {
+                self.record_ref_cells.contains_key(root)
+                    || matches!(self.kind(*root), NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) if self.record_ref_cells.contains_key(target))
+            }))
+    }
+
     /// The declaration and member path of a reference into a subroutine
     /// record value (formal, result or local).
     pub(in super::super) fn activation_record_path(

@@ -2106,6 +2106,12 @@ impl Codegen<'_> {
             .get(&formal)
             .cloned()
             .ok_or("column-layout record formal has no columns")?;
+        if self
+            .record_ref_binding(formal, actual)
+            .is_some_and(|binding| binding.cell)
+        {
+            return Ok(vec![self.record_ref_cell_argument(path, formal, actual)?]);
+        }
         let actual_node = self.p30_unwrap_cast(actual);
         let mut prelude = prelude;
         let value = match (self.column_record_storage(actual_node), prelude.as_mut()) {
