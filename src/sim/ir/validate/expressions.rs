@@ -1830,25 +1830,15 @@ fn sequence_statement(statement: &IrStmt) -> bool {
         // A randomize call used as a value in a skipped operand or a loop
         // condition: the solver primitives never suspend.
         IrStmt::Randomize(_) => true,
-        // Whole-element copies into lexical temporaries (SIM-007), the
-        // key queues of generated array-method loops (SIM-019) and the
-        // element stores of staged file-input destinations (SIM-026).
-        IrStmt::Container(operation) => matches!(
+        // Lexical temporaries built in place of operands no expression can
+        // name: none of these suspends. Only deferred commits are excluded.
+        IrStmt::Container(operation) => !matches!(
             operation.as_ref(),
-            IrContainerStmt::Declare(_)
-                | IrContainerStmt::GetValue { .. }
-                | IrContainerStmt::ValueItemToContainer { .. }
-                | IrContainerStmt::QueuePushBack { .. }
-                | IrContainerStmt::QueuePushBackString { .. }
-                | IrContainerStmt::Set { .. }
-                | IrContainerStmt::SetReal { .. }
-                | IrContainerStmt::SetNested { .. }
-                | IrContainerStmt::SetString { .. }
-                | IrContainerStmt::SetStringReal { .. }
-                | IrContainerStmt::SetStringValue { .. }
-                | IrContainerStmt::SetStringString { .. }
-                | IrContainerStmt::DynamicNew { .. }
-                | IrContainerStmt::Delete(_)
+            IrContainerStmt::SharedDeclare(_)
+                | IrContainerStmt::Nonblocking { .. }
+                | IrContainerStmt::ContainerNonblocking { .. }
+                | IrContainerStmt::NbaLocate { .. }
+                | IrContainerStmt::NbaLocateEnd
         ),
         IrStmt::Block(statements) => statements.iter().all(sequence_statement),
         // Generated array-method loops: lexical locals and bounded loops

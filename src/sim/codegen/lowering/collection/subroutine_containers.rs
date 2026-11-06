@@ -254,7 +254,7 @@ impl Codegen<'_> {
 
     /// Storage type of a container formal or result: every instance of one
     /// declaration shares its elaborated type.
-    fn container_formal_type(&self, formal: NodeId) -> Result<usize, String> {
+    pub(in super::super) fn container_formal_type(&self, formal: NodeId) -> Result<usize, String> {
         self.subroutine_containers
             .iter()
             .filter(|((_, node), _)| *node == formal)
@@ -384,6 +384,20 @@ impl Codegen<'_> {
             prelude.push(build);
             return Ok(IrCallArg::Container(temporary));
         }
+        // Any other expression builds the actual where the call runs.
+        if self.call_operand_prelude.is_some() {
+            let temporary = self.container_temporary_like(like);
+            let build = self.lower_container_into(path, formal, temporary, actual)?;
+            let prelude = self
+                .call_operand_prelude
+                .as_mut()
+                .ok_or("call operand prelude closed while lowering its operand")?;
+            prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                temporary,
+            ))));
+            prelude.push(build);
+            return Ok(IrCallArg::Container(temporary));
+        }
         Err(format!(
             "container argument for `{name}` in `{path}` must be a container variable of the formal's type unless the call is a whole statement; assign it to a variable first"
         ))
@@ -483,6 +497,11 @@ impl Codegen<'_> {
         lowered.receiver = expression.receiver;
         lowered.virtual_dispatch = expression.virtual_dispatch;
         lowered.virtual_call = expression.virtual_call;
+        // `h.get()`: the handle is the receiver; a call in a method has it.
+        if matches!(self.kind(call), NodeKind::MethodCall { .. }) && self.is_class_method_call(call) {
+            lowered.receiver = self.class_method_receiver(path, call)?;
+            lowered.virtual_dispatch = self.class_method_virtual_dispatch(call);
+        }
         Ok(Some(IrStmt::Call(Box::new(lowered))))
     }
 }

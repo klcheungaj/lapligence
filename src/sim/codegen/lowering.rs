@@ -1243,6 +1243,13 @@ struct ArrayInfo {
 
 /// A class property path selected through a computed handle: the property
 /// (and its storage until the first alias exists).
+/// The state `Codegen::enter_call_operands` saved.
+struct CallOperands {
+    scope: Option<NodeId>,
+    prelude: Option<Vec<IrStmt>>,
+    result: Option<NodeId>,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum ReceiverScope {
     /// Evaluated once with the statement.
@@ -2036,6 +2043,14 @@ struct Codegen<'a> {
     /// Declarations of computed handles of operands evaluated lazily or
     /// repeatedly, run at each evaluation of the operand.
     receiver_roots: HashMap<NodeId, Vec<IrStmt>>,
+    /// The call or select whose operands `call_operand_prelude` collects.
+    call_operand_scope: Option<NodeId>,
+    /// Statements that build operands of `call_operand_scope` no expression
+    /// can name, run where that expression is evaluated.
+    call_operand_prelude: Option<Vec<IrStmt>>,
+    /// Lexical containers holding the result of a call a method or select
+    /// applies to, while that expression is lowered.
+    call_result_containers: HashMap<NodeId, usize>,
     /// The operands of `receiver_roots` an expression lowering reached.
     receiver_roots_lowered: HashSet<NodeId>,
     /// Owning module-instance arena node of the current emission context;
@@ -2488,6 +2503,9 @@ impl<'a> Codegen<'a> {
             computed_receiver_aliases: HashMap::new(),
             receiver_prelude: Vec::new(),
             receiver_roots: HashMap::new(),
+            call_operand_scope: None,
+            call_operand_prelude: None,
+            call_result_containers: HashMap::new(),
             receiver_roots_lowered: HashSet::new(),
             inst: NodeId(0),
             design_name: String::new(),

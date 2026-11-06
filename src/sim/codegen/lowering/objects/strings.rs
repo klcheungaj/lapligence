@@ -14,6 +14,19 @@ impl Codegen<'_> {
         {
             return Ok(value);
         }
+        if let Some(operands) = self.enter_call_operands(path, node)? {
+            let value = self.lower_string(path, node);
+            let before = self.leave_call_operands(operands);
+            let value = value?;
+            if before.is_empty() {
+                return Ok(value);
+            }
+            return Ok(IrStringExpr::Conditional {
+                predicate: Box::new(always_after(before)),
+                then: Box::new(value),
+                otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
+            });
+        }
         if let Some(before) = self.enter_receiver_root(node) {
             let value = self.lower_string(path, node);
             self.leave_receiver_root(node, &before);

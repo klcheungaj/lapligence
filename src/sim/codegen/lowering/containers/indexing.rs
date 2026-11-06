@@ -475,11 +475,20 @@ impl<'a> Codegen<'a> {
         if let Some(ir) = self.staged_nested_element(node) {
             return Some(ContainerInfo { ir });
         }
+        if let Some(ir) = self.call_result_containers.get(&node) {
+            return Some(ContainerInfo { ir: *ir });
+        }
         match self.kind(node) {
-            NodeKind::Array { .. }
-            | NodeKind::NamedEvent
-            | NodeKind::FuncArg { .. }
-            | NodeKind::FuncTask { .. } => self.container_declaration(node),
+            // A subroutine's implicit result variable names its result.
+            NodeKind::Array { .. } => self.container_declaration(node).or_else(|| {
+                let parent = self.node(node).parent()?;
+                (matches!(self.kind(parent), NodeKind::FuncTask { .. })
+                    && self.node(parent).name == self.node(node).name)
+                    .then(|| self.container_declaration(parent))?
+            }),
+            NodeKind::NamedEvent | NodeKind::FuncArg { .. } | NodeKind::FuncTask { .. } => {
+                self.container_declaration(node)
+            }
             NodeKind::Expr(
                 ExprKind::Ref { .. } | ExprKind::HierPath { .. } | ExprKind::MemberSelect { .. },
             ) if self.receiver_containers.contains_key(&node) => Some(ContainerInfo {
@@ -621,6 +630,17 @@ impl<'a> Codegen<'a> {
         select: NodeId,
         base: NodeId,
     ) -> Option<ContainerInfo> {
+        // An element of a call's result: the call is a child of the select.
+        if !self.call_result_containers.is_empty() {
+            if let Some(ir) = self
+                .node(select)
+                .children
+                .iter()
+                .find_map(|child| self.call_result_containers.get(child))
+            {
+                return Some(ContainerInfo { ir: *ir });
+            }
+        }
         // An element of a class container property selected through an
         // explicit handle: the select's base names only the declaration,
         // its path expression child names the receiver (SIM-011).
@@ -717,6 +737,110 @@ impl<'a> Codegen<'a> {
         };
         (matches!(self.kind(target), NodeKind::FuncTask { .. }) && self.container_return(target))
             .then(|| self.node(target).name.clone())
+    }
+
+    /// Start lowering expression `node`, a call or select: `true` when the
+    /// caller must lower it again and close with `leave_call_operands`, which
+    /// runs the statements that build its operands where it is evaluated. A
+    /// container result used as a method receiver or select base is one.
+    pub(in super::super) fn enter_call_operands(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<CallOperands>, String> {
+        let operand = match self.kind(node) {
+            NodeKind::FuncCall { .. } => None,
+            NodeKind::MethodCall { receiver, .. } => *receiver,
+            NodeKind::Expr(ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. }) => {
+                // The select's base names the function; its call is a child.
+                let call = self.container_result_base(*base).and_then(|_| {
+                    self.node(node)
+                        .children
+                        .iter()
+                        .copied()
+                        .find(|child| self.select_on_call(*child))
+                });
+                if call.is_none() {
+                    return Ok(None);
+                }
+                call
+            }
+            _ => return Ok(None),
+        };
+        if self.call_operand_scope == Some(node) {
+            return Ok(None);
+        }
+        let saved = CallOperands {
+            scope: self.call_operand_scope.replace(node),
+            prelude: self.call_operand_prelude.replace(Vec::new()),
+            result: None,
+        };
+        let mut saved = saved;
+        if let Some(call) = operand {
+            match self.call_result_temporary(call) {
+                Ok(Some(temporary)) => {
+                    let build = self.lower_container_into(path, call, temporary, call);
+                    let build = match build {
+                        Ok(build) => build,
+                        Err(error) => {
+                            self.leave_call_operands(saved);
+                            return Err(error);
+                        }
+                    };
+                    if let Some(prelude) = self.call_operand_prelude.as_mut() {
+                        prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                            temporary,
+                        ))));
+                        prelude.push(build);
+                    }
+                    self.call_result_containers.insert(call, temporary);
+                    saved.result = Some(call);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.leave_call_operands(saved);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(Some(saved))
+    }
+
+    /// Whether select base `base` is a call, not a variable.
+    fn select_on_call(&self, base: NodeId) -> bool {
+        matches!(
+            self.kind(base),
+            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. }
+        )
+    }
+
+    /// Close `enter_call_operands`, returning the statements to run first.
+    pub(in super::super) fn leave_call_operands(&mut self, saved: CallOperands) -> Vec<IrStmt> {
+        if let Some(call) = saved.result {
+            self.call_result_containers.remove(&call);
+        }
+        self.call_operand_scope = saved.scope;
+        std::mem::replace(&mut self.call_operand_prelude, saved.prelude).unwrap_or_default()
+    }
+
+    /// A lexical container for the result of `call`, when it yields one.
+    fn call_result_temporary(&mut self, call: NodeId) -> Result<Option<usize>, String> {
+        let callee = match self.kind(call) {
+            NodeKind::FuncCall { name, callee, .. } => {
+                let (name, callee) = (name.clone(), *callee);
+                self.resolve_callee_env(self.inst, &name, false, callee)?.0
+            }
+            NodeKind::MethodCall {
+                callee: Some(callee),
+                ..
+            } => *callee,
+            _ => return Ok(None),
+        };
+        if !self.container_return(callee) {
+            return Ok(None);
+        }
+        let result = self.container_formal_type(callee)?;
+        Ok(Some(self.container_temporary_like(result)))
     }
 
     /// The name of a per-object container property selected through an

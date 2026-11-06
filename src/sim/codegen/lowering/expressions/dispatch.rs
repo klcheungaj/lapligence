@@ -767,6 +767,24 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_random_value(scope_path, h)? {
             return Ok(value);
         }
+        if let Some(operands) = self.enter_call_operands(scope_path, h)? {
+            let value = self.lower_expr(scope_path, h);
+            let before = self.leave_call_operands(operands);
+            let value = value?;
+            if before.is_empty() {
+                return Ok(value);
+            }
+            let (width, signed) = (value.width, value.signed);
+            return Ok(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements: before,
+                    value,
+                })),
+                width,
+                signed,
+                None,
+            ));
+        }
         // A skipped or repeated operand evaluates its computed handles itself.
         if let Some(before) = self.enter_receiver_root(h) {
             let value = self.lower_expr(scope_path, h);

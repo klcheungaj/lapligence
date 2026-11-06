@@ -348,6 +348,19 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrChandleExpr, String> {
+        if let Some(operands) = self.enter_call_operands(path, node)? {
+            let value = self.lower_chandle(path, node);
+            let before = self.leave_call_operands(operands);
+            let value = value?;
+            if before.is_empty() {
+                return Ok(value);
+            }
+            return Ok(IrChandleExpr::Conditional {
+                predicate: Box::new(super::strings::always_after(before)),
+                then: Box::new(value),
+                otherwise: Box::new(IrChandleExpr::Null),
+            });
+        }
         if let Some(before) = self.enter_receiver_root(node) {
             let value = self.lower_chandle(path, node);
             self.leave_receiver_root(node, &before);

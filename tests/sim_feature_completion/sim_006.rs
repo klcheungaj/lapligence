@@ -65,6 +65,20 @@ fn class_container_forms_of_method_bodies() {
 }
 
 #[test]
+fn call_results_are_method_receivers_and_select_bases() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/call_result_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "call_result_selects", expected, &[], &[]);
+}
+
+#[test]
+fn container_actuals_are_built_where_the_call_runs() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/call_container_operands.out");
+    sim_cli::run_case_backend_parity(SUITE, "call_container_operands", expected, &[], &[]);
+}
+
+#[test]
 fn computed_handles_with_no_evaluation_point_are_explicit() {
     sim_cli::reject_case(
         SUITE,
@@ -238,11 +252,6 @@ fn unsupported_container_boundaries_are_explicit() {
         SUITE,
         "neg_nested_two_changes",
         "a statement in `tb` changes two nested container elements of one container",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_container_result_select",
-        "container result of `make` in `tb` must be assigned whole to a container variable",
     );
 }
 
