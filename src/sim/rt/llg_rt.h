@@ -60,7 +60,11 @@ typedef struct llg_fixed_range llg_fixed_range_t;
 typedef struct llg_fixed_array {
     uint64_t total;
     size_t count, capacity;
-    llg_fixed_cell_t **buckets, *cells;
+    union {
+        llg_fixed_cell_t** buckets; /* Sparse arrays: hash table. */
+        sv4_t** pages;              /* Up to 4,096 cells: `capacity` pages. */
+    };
+    struct llg_fixed_block* blocks;
     sv4_t initial;
     sv4_t* contents;
     struct llg_fixed_array* owner;
