@@ -86,6 +86,14 @@ column. Expected values are derived by hand below; none were captured from
   of object data members, aggregate elements, or the size of a dynamically sized
   array referenced by a method or function shall cause the event expression to be
   reevaluated."
+- `chosen_sampled`: `$sampled`, `$rose`, `$fell`, `$changed`, `$stable`, `$past`
+  and concurrent assertions on cells of a chosen record, at constant and run-time
+  indices and with bit and part selects, including writes and a whole-array change
+  in the slot of the clock edge. `N=8` gives the same lines through per-cell
+  leaves. Expected lines match industry-standard behaviour. SV2009 16.9.3
+  L22669-22670: "The $sampled function returns the value of the expression
+  sampled in the Preponed region of the simulation time step in which the
+  function is called."
 - `chosen_whole_values`: whole copies and comparisons of chosen records, which
   read whole operands in place and write only differing cells. A copy that
   changes nothing wakes nothing (`q = p` at time 2). `q.a[7]`, a cell only `q`

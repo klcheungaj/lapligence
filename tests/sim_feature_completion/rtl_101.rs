@@ -181,6 +181,27 @@ fn cell_writes_reach_every_reader_of_the_contents_marker() {
 }
 
 #[test]
+fn sampled_values_of_cells_match_the_leaf_form() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_sampled.out");
+    sim_cli::run_case(SUITE, "chosen_sampled", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_sampled", expected, &["-D", "N=8"], &[]);
+    let model = generated_model(
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_sampled.sv"),
+        &[],
+    );
+    for array in ["G_cI_tbZprZpa", "G_cI_tbZpuZpa"] {
+        assert!(
+            model.contains(&format!("llg_fixed_array_sampled(&{array});")),
+            "{model}"
+        );
+    }
+    assert!(
+        !model.contains("llg_fixed_array_sampled(&G_cI_tbZpqZpa);"),
+        "{model}"
+    );
+}
+
+#[test]
 fn only_an_unread_contents_marker_is_cleared() {
     let model = generated_model(
         include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_observers.sv"),

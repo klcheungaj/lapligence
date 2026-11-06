@@ -1027,7 +1027,7 @@ impl Codegen<'_> {
         let result = self.lower_boolean_expr(path, node);
         self.sampled_clock = previous_clock;
         let condition = result?;
-        if condition.is_real() || !sampled_compatible(&condition) {
+        if condition.is_real() || !self.sampled_compatible(&condition) {
             return Err(format!(
                 "accept_on/reject_on condition must be a packed sampled expression in `{path}`"
             ));
@@ -1199,7 +1199,7 @@ impl Codegen<'_> {
                 let mut gate = gate;
                 if let Some(node) = clock.gate {
                     let iff = self.lower_boolean_expr(path, node)?;
-                    if iff.is_real() || !sampled_compatible(&iff) {
+                    if iff.is_real() || !self.sampled_compatible(&iff) {
                         return Err(format!(
                             "sampled clock `iff` condition must be a static packed expression in `{path}`"
                         ));
@@ -1394,7 +1394,7 @@ impl Codegen<'_> {
             return Ok(*signal);
         }
         let condition = self.lower_boolean_expr(path, node)?;
-        if condition.is_real() || !sampled_compatible(&condition) {
+        if condition.is_real() || !self.sampled_compatible(&condition) {
             return Err(format!(
                 "disable iff condition must be a side-effect-free packed expression at {path}"
             ));
@@ -1462,7 +1462,7 @@ impl Codegen<'_> {
             ));
         }
         let expression = self.lower_boolean_expr(path, *expr)?;
-        if expression.is_real() || !sampled_compatible(&expression) {
+        if expression.is_real() || !self.sampled_compatible(&expression) {
             return Err(format!(
                 "unsupported sampled {role} expression in concurrent assertion at {path}"
             ));
@@ -2211,7 +2211,7 @@ impl Codegen<'_> {
             return Ok(result);
         }
         let expression = self.lower_boolean_expr(path, node)?;
-        if expression.is_real() || !sampled_compatible(&expression) {
+        if expression.is_real() || !self.sampled_compatible(&expression) {
             return Err(format!(
                 "unsupported sampled {role} expression in concurrent assertion at {path}"
             ));
@@ -2319,7 +2319,7 @@ impl Codegen<'_> {
                 if condition.is_real()
                     || if_value.is_real()
                     || else_value.is_real()
-                    || !sampled_compatible(&condition)
+                    || !self.sampled_compatible(&condition)
                 {
                     return Err(format!(
                         "conditional property requires packed sampled expressions in {role} at {path}"
@@ -2576,84 +2576,115 @@ fn is_sequence_local_lhs(lhs: &IrLhs) -> bool {
     }
 }
 
-pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
-    match expression.kind() {
-        IrExprKind::Const(_) | IrExprKind::SigRead(_) | IrExprKind::Fill(_) => true,
-        // Sequence-local reads are backed by the private attempt frame and
-        // are sampled atom values just like signal reads. Other evaluator
-        // locals (for example a procedural capture) must not leak into an
-        // assertion's sampled expression.
-        IrExprKind::LocalRead(name) if name.starts_with("llg_sequence_local_read(") => true,
-        // Sequence endpoint status is set in Observed, not sampled (16.14.6);
-        // endpoints are evaluated before the assertions that read them.
-        IrExprKind::RuntimeQuery(
-            crate::sim::ir::IrRuntimeQuery::SequenceTriggered(_)
-            | crate::sim::ir::IrRuntimeQuery::SequenceMatched { .. },
-        ) => true,
-        IrExprKind::Bin { a, b, .. } => sampled_compatible(a) && sampled_compatible(b),
-        IrExprKind::Un { a, .. }
-        | IrExprKind::CastToPacked { a }
-        | IrExprKind::Resize { a }
-        | IrExprKind::Convert { a }
-        | IrExprKind::ToTwoState { a }
-        | IrExprKind::StreamToFixed { a, .. } => sampled_compatible(a),
-        IrExprKind::Mux { sel, a, b }
-        | IrExprKind::ArrayMux { sel, a, b, .. }
-        | IrExprKind::StructMux { sel, a, b, .. } => {
-            sampled_compatible(sel) && sampled_compatible(a) && sampled_compatible(b)
-        }
-        IrExprKind::UdpEval { inputs: parts, .. }
-        | IrExprKind::Predicate { clauses: parts }
-        | IrExprKind::Concat { parts }
-        | IrExprKind::Replicate { parts, .. } => parts.iter().all(sampled_compatible),
-        // Pattern bindings are procedural state updates and are not sampled
-        // assertion expressions. Conditional pattern support is confined to
-        // executable procedural predicates.
-        IrExprKind::Pattern(_) => false,
-        IrExprKind::Stream { value, .. } => sampled_compatible(value),
-        IrExprKind::Inside { value, items } => {
-            sampled_compatible(value)
-                && items.iter().all(|item| match item {
-                    crate::sim::ir::IrInsideItem::Value(value) => sampled_compatible(value),
-                    crate::sim::ir::IrInsideItem::Range { low, high } => {
-                        sampled_compatible(low) && sampled_compatible(high)
-                    }
-                    crate::sim::ir::IrInsideItem::OpenRange { low, high } => {
-                        low.as_ref().is_none_or(sampled_compatible)
-                            && high.as_ref().is_none_or(sampled_compatible)
-                    }
-                    crate::sim::ir::IrInsideItem::Container { .. }
-                    | crate::sim::ir::IrInsideItem::Cells(_) => false,
-                    crate::sim::ir::IrInsideItem::FixedArray { value, .. } => {
-                        sampled_compatible(value)
-                    }
-                })
-        }
-        IrExprKind::BitSel { base, idx } => sampled_compatible(base) && sampled_compatible(idx),
-        IrExprKind::PartSel { base, .. } => sampled_compatible(base),
-        IrExprKind::IdxPartSel {
-            base,
-            base_idx,
-            width_expr,
-            ..
-        } => {
-            sampled_compatible(base)
-                && sampled_compatible(base_idx)
-                && sampled_compatible(width_expr)
-        }
-        IrExprKind::BitStreamCast { a, .. } => sampled_compatible(a),
-        IrExprKind::RealBin { a, b, .. } => sampled_compatible(a) && sampled_compatible(b),
-        IrExprKind::RealUn { a, .. } | IrExprKind::CastToReal { a, .. } => sampled_compatible(a),
-        IrExprKind::SysFunc(function) => match &**function {
-            // A history call reads its domain, whose sample expression was
-            // admitted when the domain was created (including a real
-            // argument's 64-bit image); only `$sampled` evaluates in place.
-            crate::sim::ir::IrSysFunc::Sampled(call) => {
-                call.domain.is_some() || sampled_compatible(&call.argument)
+impl Codegen<'_> {
+    pub(super) fn sampled_compatible(&self, expression: &IrExpr) -> bool {
+        match expression.kind() {
+            IrExprKind::Const(_) | IrExprKind::SigRead(_) | IrExprKind::Fill(_) => true,
+            // Sequence-local reads are backed by the private attempt frame and
+            // are sampled atom values just like signal reads. Other evaluator
+            // locals (for example a procedural capture) must not leak into an
+            // assertion's sampled expression.
+            IrExprKind::LocalRead(name) if name.starts_with("llg_sequence_local_read(") => true,
+            // Sequence endpoint status is set in Observed, not sampled (16.14.6);
+            // endpoints are evaluated before the assertions that read them.
+            IrExprKind::RuntimeQuery(
+                crate::sim::ir::IrRuntimeQuery::SequenceTriggered(_)
+                | crate::sim::ir::IrRuntimeQuery::SequenceMatched { .. },
+            ) => true,
+            IrExprKind::Bin { a, b, .. } => {
+                self.sampled_compatible(a) && self.sampled_compatible(b)
             }
+            IrExprKind::Un { a, .. }
+            | IrExprKind::CastToPacked { a }
+            | IrExprKind::Resize { a }
+            | IrExprKind::Convert { a }
+            | IrExprKind::ToTwoState { a }
+            | IrExprKind::StreamToFixed { a, .. } => self.sampled_compatible(a),
+            IrExprKind::Mux { sel, a, b }
+            | IrExprKind::ArrayMux { sel, a, b, .. }
+            | IrExprKind::StructMux { sel, a, b, .. } => {
+                self.sampled_compatible(sel)
+                    && self.sampled_compatible(a)
+                    && self.sampled_compatible(b)
+            }
+            IrExprKind::UdpEval { inputs: parts, .. }
+            | IrExprKind::Predicate { clauses: parts }
+            | IrExprKind::Concat { parts }
+            | IrExprKind::Replicate { parts, .. } => {
+                parts.iter().all(|part| self.sampled_compatible(part))
+            }
+            // Pattern bindings are procedural state updates and are not sampled
+            // assertion expressions. Conditional pattern support is confined to
+            // executable procedural predicates.
+            IrExprKind::Pattern(_) => false,
+            IrExprKind::Stream { value, .. } => self.sampled_compatible(value),
+            IrExprKind::Inside { value, items } => {
+                self.sampled_compatible(value)
+                    && items.iter().all(|item| match item {
+                        crate::sim::ir::IrInsideItem::Value(value) => {
+                            self.sampled_compatible(value)
+                        }
+                        crate::sim::ir::IrInsideItem::Range { low, high } => {
+                            self.sampled_compatible(low) && self.sampled_compatible(high)
+                        }
+                        crate::sim::ir::IrInsideItem::OpenRange { low, high } => {
+                            low.as_ref()
+                                .is_none_or(|value| self.sampled_compatible(value))
+                                && high
+                                    .as_ref()
+                                    .is_none_or(|value| self.sampled_compatible(value))
+                        }
+                        crate::sim::ir::IrInsideItem::Container { .. }
+                        | crate::sim::ir::IrInsideItem::Cells(_) => false,
+                        crate::sim::ir::IrInsideItem::FixedArray { value, .. } => {
+                            self.sampled_compatible(value)
+                        }
+                    })
+            }
+            IrExprKind::BitSel { base, idx } => {
+                self.sampled_compatible(base) && self.sampled_compatible(idx)
+            }
+            IrExprKind::PartSel { base, .. } => self.sampled_compatible(base),
+            IrExprKind::IdxPartSel {
+                base,
+                base_idx,
+                width_expr,
+                ..
+            } => {
+                self.sampled_compatible(base)
+                    && self.sampled_compatible(base_idx)
+                    && self.sampled_compatible(width_expr)
+            }
+            IrExprKind::BitStreamCast { a, .. } => self.sampled_compatible(a),
+            IrExprKind::RealBin { a, b, .. } => {
+                self.sampled_compatible(a) && self.sampled_compatible(b)
+            }
+            IrExprKind::RealUn { a, .. } | IrExprKind::CastToReal { a, .. } => {
+                self.sampled_compatible(a)
+            }
+            // A descriptor array keeps its cells' Preponed values itself; direct
+            // arrays have no sampled image.
+            IrExprKind::ArrayRead {
+                arr,
+                indices,
+                elem_sel,
+            } => {
+                let mut admitted = self.model.arrays[*arr].sparse()
+                    && indices.iter().all(|index| self.sampled_compatible(index));
+                elem_sel.expressions(&mut |select| admitted &= self.sampled_compatible(select));
+                admitted
+            }
+            IrExprKind::SysFunc(function) => match &**function {
+                // A history call reads its domain, whose sample expression was
+                // admitted when the domain was created (including a real
+                // argument's 64-bit image); only `$sampled` evaluates in place.
+                crate::sim::ir::IrSysFunc::Sampled(call) => {
+                    call.domain.is_some() || self.sampled_compatible(&call.argument)
+                }
+                _ => false,
+            },
             _ => false,
-        },
-        _ => false,
+        }
     }
 }
 
@@ -2760,6 +2791,12 @@ pub(super) fn sampled_signal_reads(
                 width_expr,
                 ..
             } => pending.extend([&**base, &**base_idx, &**width_expr]),
+            IrExprKind::ArrayRead {
+                indices, elem_sel, ..
+            } => {
+                pending.extend(indices.iter());
+                elem_sel.expressions(&mut |select| sampled_signal_reads(select, reads));
+            }
             IrExprKind::SysFunc(function) => {
                 if let crate::sim::ir::IrSysFunc::Sampled(call) = &**function {
                     pending.push(&call.argument);

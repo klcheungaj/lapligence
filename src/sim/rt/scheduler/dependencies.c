@@ -7,7 +7,7 @@
 static void force_dependency_changed(sv4_t* sig, double* real, int is_real);
 static void sig_write(sv4_t* target, sv4_t value);
 static int marker_flip(sv4_t* marker);
-static void fixed_array_changed(sv4_t* target);
+static void fixed_array_changed(sv4_t* target, sv4_t old);
 
 enum { LLG_DEPENDENCY_INITIAL_BUCKETS = 64u };
 
@@ -820,7 +820,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
             binding->kind == LLG_DEPENDENCY_BINDING_PACKED)
             llg_dependency_changed(binding->dependency);
     }
-    fixed_array_changed(target);
+    fixed_array_changed(target, old);
     force_dependency_changed(target, NULL, 0);
     // Timing check terminals only mark their sets; the checks run later in
     // the time step (llg_timing_checks_run).

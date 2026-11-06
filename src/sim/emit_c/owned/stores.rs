@@ -203,11 +203,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 } else if array.sparse() {
                     format!(
                         "{}({}, {linear})",
-                        if writable {
-                            "llg_fixed_array_cell"
-                        } else {
-                            "llg_fixed_array_peek"
-                        },
+                        self.fixed_cell_accessor(writable),
                         self.fixed_array_address(array_index)?
                     )
                 } else {

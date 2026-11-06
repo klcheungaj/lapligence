@@ -1872,8 +1872,6 @@ The per-cell form stays for:
   never reach it on their own (64 of 64 lowerings of chosen types succeed);
   forcing every eligible record gives 209 of 426. Each cause is a limit of
   column records above the threshold as well:
-  - sampled values: `$rose`, `$past`, `$changed` and concurrent assertions on
-    a member cell, which support only scalar signals;
   - transport: a `ref` formal of a record with a string member, DPI arguments,
     class properties and queues of a record with a string member, a string
     member of a function result, records moved through a native value

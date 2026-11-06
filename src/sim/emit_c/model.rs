@@ -1780,7 +1780,13 @@ fn unobserved_contents(model: &IrModel, rendered: &str, start: &str) -> String {
         })
         .map(|array| format!("    llg_fixed_array_unobserved(&{});\n", array.c_name))
         .collect::<String>();
-    format!("static void llg_model_unobserved_contents(void) {{\n{clears}}}\n\n")
+    let sampled = arrays()
+        .filter(|array| {
+            rendered.contains(&format!("llg_fixed_array_sampled_peek(&{},", array.c_name))
+        })
+        .map(|array| format!("    llg_fixed_array_sampled(&{});\n", array.c_name))
+        .collect::<String>();
+    format!("static void llg_model_unobserved_contents(void) {{\n{clears}{sampled}}}\n\n")
 }
 
 /// Declaration, default, `llg_fixed_array_init` argument and destruction.

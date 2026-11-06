@@ -1015,7 +1015,7 @@ impl Codegen<'_> {
     /// `if`/`case` conditions are sampled Booleans of the starting tick.
     fn lower_property_condition(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
         let condition = self.lower_boolean_expr(path, node)?;
-        if condition.is_real() || !sampled_compatible(&condition) {
+        if condition.is_real() || !self.sampled_compatible(&condition) {
             return Err(format!(
                 "property condition must be a packed sampled expression in `{path}`"
             ));
@@ -1050,7 +1050,7 @@ impl Codegen<'_> {
         }
         for expression in std::iter::once(&selector).chain(lowered.iter().flat_map(|item| &item.0))
         {
-            if expression.is_real() || !sampled_compatible(expression) {
+            if expression.is_real() || !self.sampled_compatible(expression) {
                 return Err(format!(
                     "property case expressions must be packed sampled expressions in `{path}`"
                 ));

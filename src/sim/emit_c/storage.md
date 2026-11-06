@@ -91,6 +91,13 @@ is most of what such a write would cost. Any other mention keeps the marker,
 whichever context rendered it. A constant in-range selection of a descriptor
 emits its linear index directly (`Frame::array_cell`).
 
+A sampled expression selects a descriptor cell through
+`llg_fixed_array_sampled_peek`, and `llg_model_unobserved_contents` flags each
+array the rendered model reads that way (`llg_fixed_array_sampled`). A flagged
+array saves a cell's old value on its first change of a time slot, keyed by
+index, and keeps one whole image if the slot replaces its default. Arrays with
+no such read pay nothing, and direct arrays stay outside sampled expressions.
+
 ## Native boundaries
 
 String inputs are copied; reserve return ownership before argument scopes. Check

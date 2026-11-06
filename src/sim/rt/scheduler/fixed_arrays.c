@@ -25,7 +25,8 @@ static _Noreturn void fixed_bad_state(const char* reason) {
 #define LLG_FIXED_DIRECT_CELLS 4096u
 static llg_fixed_cell_t** fixed_addresses;
 static size_t fixed_address_capacity, fixed_address_count;
-/* Arrays with a contents marker: with none, a write has no array to tell. */
+/* Arrays with a contents marker or sampled cells: with none, a write has no
+ * array to tell. */
 static size_t fixed_marked_arrays;
 
 static size_t fixed_hash(uint64_t key) {
@@ -60,11 +61,14 @@ static void fixed_address_reserve(void) {
     fixed_address_capacity = capacity;
 }
 
-static void fixed_array_changed(sv4_t* target) {
+static void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index, sv4_t old);
+
+static void fixed_array_changed(sv4_t* target, sv4_t old) {
     if (!fixed_marked_arrays || !fixed_address_capacity) return;
     size_t slot = fixed_hash((uint64_t)(uintptr_t)target) & (fixed_address_capacity - 1);
     for (llg_fixed_cell_t* cell = fixed_addresses[slot]; cell; cell = cell->address_next) {
         if (&cell->value == target) {
+            if (cell->array->sampled) fixed_sampled_record(cell->array, cell->index, old);
             llg_dependency_changed(cell->array->contents);
             return;
         }
@@ -124,6 +128,111 @@ void llg_fixed_array_init(llg_fixed_array_t* array, uint64_t total,
 void llg_fixed_array_unobserved(llg_fixed_array_t* array) {
     fixed_marked_arrays -= array->contents != NULL;
     array->contents = NULL;
+}
+
+/* Preponed values of an array that a sampled expression selects into. A
+ * registered signal is copied in every time slot; an array saves a cell's old
+ * value on its first change of the slot instead, so unwritten cells stay
+ * unmaterialized and a slot costs only what it writes. Entries are keyed by
+ * index, not by cell address. A change that replaces the default also moves
+ * unmaterialized cells, so the slot's first one keeps a whole image. */
+struct llg_fixed_sampled_entry { uint64_t index; sv4_t old; };
+struct llg_fixed_sampled {
+    uint64_t time;
+    size_t count, capacity;
+    struct llg_fixed_sampled_entry* entries;
+    llg_fixed_array_t whole;
+    int has_whole;
+};
+#define LLG_FIXED_SAMPLED_FREE UINT64_MAX
+
+void llg_fixed_array_sampled(llg_fixed_array_t* array) {
+    if (!array || array->sampled) return;
+    array->sampled = llg_checked_calloc(1, sizeof(*array->sampled), "fixed sampled values");
+    ++fixed_marked_arrays;
+}
+
+static void fixed_sampled_clear(struct llg_fixed_sampled* sampled) {
+    for (size_t i = 0; i < sampled->capacity; ++i) {
+        if (sampled->entries[i].index == LLG_FIXED_SAMPLED_FREE) continue;
+        sampled->entries[i].index = LLG_FIXED_SAMPLED_FREE;
+        sv4_destroy(&sampled->entries[i].old);
+    }
+    sampled->count = 0;
+    if (sampled->has_whole) llg_fixed_array_destroy(&sampled->whole);
+    sampled->has_whole = 0;
+}
+
+/* The saved values of the current slot, or NULL before its Preponed snapshot:
+ * until then a write is itself what the snapshot will see. */
+static struct llg_fixed_sampled* fixed_sampled_slot(llg_fixed_array_t* array) {
+    struct llg_fixed_sampled* sampled = array->sampled;
+    if (!g.sampled_time_valid || g.sampled_time != g.now) return NULL;
+    if (sampled->time != g.now) {
+        fixed_sampled_clear(sampled);
+        sampled->time = g.now;
+    }
+    return sampled;
+}
+
+static struct llg_fixed_sampled_entry* fixed_sampled_slot_of(
+    const struct llg_fixed_sampled* sampled, uint64_t index) {
+    size_t slot = fixed_hash(index) & (sampled->capacity - 1);
+    while (sampled->entries[slot].index != LLG_FIXED_SAMPLED_FREE &&
+           sampled->entries[slot].index != index)
+        slot = (slot + 1) & (sampled->capacity - 1);
+    return &sampled->entries[slot];
+}
+
+static void fixed_sampled_reserve(struct llg_fixed_sampled* sampled) {
+    if (sampled->count < sampled->capacity / 2) return;
+    struct llg_fixed_sampled previous = *sampled;
+    sampled->capacity = fixed_grow(previous.capacity);
+    sampled->entries = llg_checked_calloc(sampled->capacity, sizeof(*sampled->entries),
+                                          "fixed sampled values");
+    for (size_t i = 0; i < sampled->capacity; ++i)
+        sampled->entries[i].index = LLG_FIXED_SAMPLED_FREE;
+    for (size_t i = 0; i < previous.capacity; ++i)
+        if (previous.entries[i].index != LLG_FIXED_SAMPLED_FREE)
+            *fixed_sampled_slot_of(sampled, previous.entries[i].index) = previous.entries[i];
+    free(previous.entries);
+}
+
+static void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index, sv4_t old) {
+    struct llg_fixed_sampled* sampled = fixed_sampled_slot(array);
+    if (!sampled || sampled->has_whole) return;
+    fixed_sampled_reserve(sampled);
+    struct llg_fixed_sampled_entry* entry = fixed_sampled_slot_of(sampled, index);
+    if (entry->index == index) return;
+    entry->index = index;
+    entry->old = sv4_clone(&old);
+    ++sampled->count;
+}
+
+/* Called before a change that replaces the default, while `array` still holds
+ * the slot's values apart from the cells already saved. */
+static void fixed_sampled_whole(llg_fixed_array_t* array) {
+    struct llg_fixed_sampled* sampled = fixed_sampled_slot(array);
+    if (!sampled || sampled->has_whole) return;
+    fixed_array_snapshot(&sampled->whole, array, 0);
+    sampled->has_whole = 1;
+}
+
+const sv4_t* llg_fixed_array_sampled_peek(const llg_fixed_array_t* array, uint64_t index) {
+    if (!array || index >= array->total) fixed_bad_state("invalid fixed array index");
+    if (array->owner) {
+        if (array->origin == UINT64_MAX) return &array->initial;
+        return llg_fixed_array_sampled_peek(array->owner, array->origin + index);
+    }
+    const struct llg_fixed_sampled* sampled = array->sampled;
+    if (sampled && g.sampled_time_valid && g.sampled_time == g.now && sampled->time == g.now) {
+        if (sampled->capacity) {
+            const struct llg_fixed_sampled_entry* entry = fixed_sampled_slot_of(sampled, index);
+            if (entry->index == index) return &entry->old;
+        }
+        if (sampled->has_whole) return llg_fixed_array_peek(&sampled->whole, index);
+    }
+    return llg_fixed_array_peek(array, index);
 }
 
 const sv4_t* llg_fixed_array_peek(const llg_fixed_array_t* array, uint64_t index) {
@@ -217,6 +326,12 @@ void llg_fixed_array_destroy(void* object) {
     free(array->buckets);
     sv4_destroy(&array->initial);
     fixed_marked_arrays -= array->contents != NULL;
+    if (array->sampled) {
+        fixed_sampled_clear(array->sampled);
+        free(array->sampled->entries);
+        free(array->sampled);
+        --fixed_marked_arrays;
+    }
     *array = (llg_fixed_array_t){0};
 }
 
@@ -686,6 +801,7 @@ static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_ar
         entry->replacement = sv4_clone(&entry->value);
     }
     int default_changed = !sv4_same(dst->initial, prepared->initial) || dst->ranges || prepared->ranges;
+    if (dst->sampled && default_changed) fixed_sampled_whole(dst);
     /* Every owner and publication record is prepared before any value becomes visible. */
     sv4_move(&dst->initial, &prepared->initial);
     llg_fixed_range_t* old_ranges = dst->ranges;
