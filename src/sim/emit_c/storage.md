@@ -181,7 +181,9 @@ right after its arm, so a suspended get writes only live storage on resume. Neve
 
 DPI-C export entries, thunks and string lifetimes: `model/dpi_exports.rs`
 module docs; thunks convert with the import layout helpers and call `<fn>` with
-`depth + 1`. When
+`depth + 1`. A column-layout record crosses whole: its columns are extra C
+parameters of `<fn>` (`record_columns` of the import or export) that the thunk
+joins into and splits from one payload, so foreign code sees one structure. When
 a model has any context import or export, every import thunk brackets the
 call with `llg_dpi_import_enter/leave`; every import call site sets
 `llg_dpi_next_site` just before the call (decision S41-D3), and an

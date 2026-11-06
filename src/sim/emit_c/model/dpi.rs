@@ -30,6 +30,82 @@ fn dpi_import(f: &IrFunc) -> Result<&IrDpiImport, String> {
     Ok(dpi)
 }
 
+/// Foreign formals of a subroutine with `formals` IR formals: a column-layout
+/// record's further columns follow the declared formals and are no foreign
+/// parameters. `columns` is `IrDpiImport::record_columns`/`IrDpiExport`'s.
+pub(super) fn foreign_formals<'a>(
+    declared: usize,
+    columns: impl Fn(usize) -> &'a [usize],
+    formals: usize,
+    name: &str,
+) -> Result<usize, String> {
+    let extra = (0..declared)
+        .map(|index| columns(index).len().saturating_sub(1))
+        .sum::<usize>();
+    if declared + extra != formals {
+        return Err(format!(
+            "DPI-C `{name}` has {declared} foreign formals and {extra} further record columns for {formals} formals"
+        ));
+    }
+    Ok(declared)
+}
+
+/// Statements writing the payload of a record formal to `slot` from its
+/// `columns`, named in member order.
+pub(super) fn dpi_columns_image(index: usize, columns: &[String], slot: &str) -> String {
+    format!(
+        "    const llg_fixed_array_t* _dpi_c{index}[] = {{ {} }};\n    llg_fixed_array_columns_image_to({slot}, _dpi_c{index}, {}u);\n",
+        columns.join(", "),
+        columns.len()
+    )
+}
+
+/// Blocking stores of the record payload `slot`, `payload` bits wide, into
+/// the columns at `positions` of `f.formals`, named by `names`.
+pub(super) fn dpi_columns_store(
+    model: &IrModel,
+    f: &IrFunc,
+    positions: &[usize],
+    names: &[String],
+    slot: &str,
+    payload: u64,
+) -> Result<String, String> {
+    let mut out = String::new();
+    let mut left = payload;
+    for (position, name) in positions.iter().zip(names) {
+        let array = f.formals[*position]
+            .fixed_array
+            .ok_or("DPI-C record column without a descriptor")?;
+        let array = model.array(array);
+        let bits = array.total * u64::from(array.elem_width);
+        out.push_str(&format!(
+            "    llg_fixed_array_cells_store({name}, 0, {}ULL, {slot}, {}, {}u, {}, {}, 0);\n",
+            array.total,
+            left - 1,
+            array.elem_width,
+            u8::from(array.signed),
+            u8::from(array.two_state),
+        ));
+        left -= bits;
+    }
+    Ok(out)
+}
+
+/// Payload width of an aggregate formal crossing as a whole record.
+pub(super) fn record_payload(ty: &IrDpiType) -> Result<u64, String> {
+    ty.payload_width()
+        .ok_or_else(|| "DPI-C record formal without a payload width".to_owned())
+}
+
+fn import_formals(dpi: &IrDpiImport, f: &IrFunc) -> Result<usize, String> {
+    foreign_formals(
+        dpi.formals().len(),
+        |index| dpi.record_columns(index),
+        f.formals.len(),
+        dpi.c_name(),
+    )
+}
+
 fn formal_type(dpi: &IrDpiImport, index: usize) -> Result<&IrDpiType, String> {
     dpi.formals().get(index).ok_or_else(|| {
         format!(
@@ -144,7 +220,7 @@ pub(super) fn dpi_param_type(ty: &IrDpiType, form: &IrFormal) -> Result<String, 
 pub(super) fn dpi_external_prototype(f: &IrFunc) -> Result<String, String> {
     let dpi = dpi_import(f)?;
     let mut params = Vec::new();
-    for (idx, form) in f.formals.iter().enumerate() {
+    for (idx, form) in f.formals.iter().take(import_formals(dpi, f)?).enumerate() {
         if form.is_ref() || form.event {
             return Err("DPI-C ref/event formal reached the C emitter".to_owned());
         }
@@ -514,8 +590,20 @@ fn render_thunk(
         count: 0,
         out: String::new(),
     };
-    let mut layouts = Vec::with_capacity(f.formals.len());
-    for index in 0..f.formals.len() {
+    let declared = import_formals(dpi, f)?;
+    let column_names = |index: usize| {
+        let prefix = if f.formals[index].is_address() {
+            "o"
+        } else {
+            "a"
+        };
+        dpi.record_columns(index)
+            .iter()
+            .map(|position| format!("{prefix}{position}"))
+            .collect::<Vec<_>>()
+    };
+    let mut layouts = Vec::with_capacity(declared);
+    for index in 0..declared {
         let ty = formal_type(dpi, index)?;
         layouts.push(if is_aggregate(ty) {
             Some(tables.emit(ty)?)
@@ -548,15 +636,22 @@ fn render_thunk(
     out.push_str("    llg_value_scope_t* _dpi_mark = llg_value_scope_mark();\n");
     // Exact descriptor count, independent of the model's largest packed width.
     out.push_str(&format!("    llg_value_scope_t* _dpi_scope = llg_value_scope_begin({});\n    sv4_t* _dpi_values = llg_value_scope_values(_dpi_scope);\n    (void)_dpi_values;\n", f.formals.len() + 1));
-    let mut arguments = Vec::with_capacity(f.formals.len());
-    for (index, formal) in f.formals.iter().enumerate() {
+    let mut arguments = Vec::with_capacity(declared);
+    for (index, formal) in f.formals.iter().take(declared).enumerate() {
         let ty = formal_type(dpi, index)?;
-        let source = if formal.is_address() {
+        let columns = column_names(index);
+        let copy_in = formal.mode() != IrFormalMode::Output;
+        let source = if !columns.is_empty() {
+            let slot = format!("&_dpi_values[{index}]");
+            if copy_in {
+                out.push_str(&dpi_columns_image(index, &columns, &slot));
+            }
+            slot
+        } else if formal.is_address() {
             format!("o{index}")
         } else {
             format!("a{index}")
         };
-        let copy_in = formal.mode() != IrFormalMode::Output;
         match ty {
             IrDpiType::Vector { width, logic } => {
                 let count = chunks(*width);
@@ -641,7 +736,7 @@ fn render_thunk(
     }
     // Only an open-array handle can reach the fatal svdpi.h access that
     // abandons the foreign code (S40-D6), so other imports pay no setjmp.
-    let guarded = (0..f.formals.len())
+    let guarded = (0..declared)
         .map(|index| formal_type(dpi, index))
         .collect::<Result<Vec<_>, _>>()?
         .iter()
@@ -712,6 +807,7 @@ fn render_thunk(
     for (index, formal) in f
         .formals
         .iter()
+        .take(declared)
         .enumerate()
         .filter(|(_, formal)| formal.is_address())
     {
@@ -733,9 +829,13 @@ fn render_thunk(
                 let (_, table) = layouts[index]
                     .as_ref()
                     .ok_or("DPI aggregate formal without a layout table")?;
+                let width = if dpi.record_columns(index).is_empty() {
+                    u64::from(formal.width)
+                } else {
+                    record_payload(ty)?
+                };
                 out.push_str(&format!(
-                    "    sv4_x_to({slot}, {}, {});\n    llg_dpi_from_c(&{table}, _dpi_b{index}, {slot});\n",
-                    formal.width,
+                    "    sv4_x_to({slot}, {width}, {});\n    llg_dpi_from_c(&{table}, _dpi_b{index}, {slot});\n",
                     u8::from(formal.signed)
                 ));
             }
@@ -770,6 +870,7 @@ fn render_thunk(
     for (index, _) in f
         .formals
         .iter()
+        .take(declared)
         .enumerate()
         .filter(|(_, formal)| formal.is_address())
     {
@@ -785,6 +886,17 @@ fn render_thunk(
             IrDpiType::Chandle => format!("*o{index} = _dpi_o{index};"),
             IrDpiType::Real | IrDpiType::ShortReal => {
                 format!("llg_ba_d(o{index}, (double)_dpi_o{index});")
+            }
+            ty if !dpi.record_columns(index).is_empty() => {
+                out.push_str(&dpi_columns_store(
+                    model,
+                    f,
+                    dpi.record_columns(index),
+                    &column_names(index),
+                    &format!("&_dpi_values[{index}]"),
+                    record_payload(ty)?,
+                )?);
+                continue;
             }
             _ => format!("llg_ba(o{index}, _dpi_values[{index}]);"),
         };

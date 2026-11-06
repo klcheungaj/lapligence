@@ -1081,32 +1081,42 @@ static void fixed_plane_deposit(uint64_t* plane, uint64_t offset, uint64_t value
     if (shift && shift + width > 64u) plane[word + 1] |= value >> (64u - shift);
 }
 
-static sv4_t fixed_run_image(const fixed_cell_run_t* run, uint64_t count) {
+/* Cell width of a run of `count` cells, checked to fit `room` image bits. */
+static uint32_t fixed_run_width(const fixed_cell_run_t* run, uint64_t count, uint64_t room) {
     fixed_run_check(run, count);
     uint32_t width = count ? llg_sv4_width(*fixed_run_peek(run, 0)) : 0;
-    if (!width || count > (uint64_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) / width)
-        fixed_bad_state("invalid cell run image");
-    uint64_t total = count * width;
-    size_t words = (size_t)((total + 63u) / 64u);
-    /* Gather every cell's words into three limb planes and construct the
-     * image once: inserting cell by cell into a wide value renormalizes the
-     * whole value per cell, which is quadratic in the run length. The first
-     * cell is the most significant. A peeked cell is read completely before
-     * the next peek, which may materialize a range cell. */
-    uint64_t* planes = llg_checked_calloc(3u * words, sizeof(uint64_t), "cell run image");
-    uint64_t offset = total;
+    if (!width || count > room / width) fixed_bad_state("invalid cell run image");
+    return width;
+}
+
+/* Gather a run's words into three limb planes of `words` words, below bit
+ * `*offset`: inserting cell by cell into a wide value renormalizes the whole
+ * value per cell, which is quadratic in the run length. The first cell is the
+ * most significant. A peeked cell is read completely before the next peek,
+ * which may materialize a range cell. */
+static void fixed_run_gather(const fixed_cell_run_t* run, uint64_t count, uint32_t width,
+                             uint64_t* planes, size_t words, uint64_t* offset) {
     for (uint64_t i = 0; i < count; ++i) {
         const sv4_t* cell = fixed_run_peek(run, i);
         if (llg_sv4_width(*cell) != width) fixed_bad_state("cell run width mismatch");
-        offset -= width;
+        *offset -= width;
         for (size_t word = 0; word < llg_sv4_words(*cell); ++word) {
             uint32_t bits = width - (uint32_t)(word * 64u);
             if (bits > 64u) bits = 64u;
             for (unsigned plane = 0; plane < 3u; ++plane)
-                fixed_plane_deposit(planes + plane * words, offset + word * 64u,
+                fixed_plane_deposit(planes + plane * words, *offset + word * 64u,
                                     llg_sv4_word(*cell, word, plane), bits);
         }
     }
+}
+
+static sv4_t fixed_run_image(const fixed_cell_run_t* run, uint64_t count) {
+    uint32_t width = fixed_run_width(run, count, (uint64_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u));
+    uint64_t total = count * width;
+    size_t words = (size_t)((total + 63u) / 64u);
+    uint64_t* planes = llg_checked_calloc(3u * words, sizeof(uint64_t), "cell run image");
+    uint64_t offset = total;
+    fixed_run_gather(run, count, width, planes, words, &offset);
     sv4_t image = sv4_from_limbs(planes, planes + words, planes + 2u * words,
                                  (uint32_t)total, 0);
     free(planes);
@@ -1194,6 +1204,29 @@ sv4_t llg_fixed_array_cells_image(const llg_fixed_array_t* array, uint64_t first
     /* Read only: descriptor cells are only peeked. */
     fixed_cell_run_t run = {NULL, (llg_fixed_array_t*)array, first};
     return fixed_run_image(&run, count);
+}
+
+void llg_fixed_array_columns_image_to(sv4_t* dst, const llg_fixed_array_t* const* columns,
+                                      size_t count) {
+    uint64_t total = 0;
+    for (size_t i = 0; i < count; ++i) {
+        fixed_cell_run_t run = {NULL, (llg_fixed_array_t*)columns[i], 0};
+        uint64_t cells = columns[i] ? columns[i]->total : 0;
+        total += cells * fixed_run_width(&run, cells,
+                                         (uint64_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) - total);
+    }
+    size_t words = (size_t)((total + 63u) / 64u);
+    uint64_t* planes = llg_checked_calloc(3u * words, sizeof(uint64_t), "column image");
+    uint64_t offset = total;
+    for (size_t i = 0; i < count; ++i) {
+        fixed_cell_run_t run = {NULL, (llg_fixed_array_t*)columns[i], 0};
+        uint64_t cells = columns[i]->total;
+        fixed_run_gather(&run, cells, llg_sv4_width(*fixed_run_peek(&run, 0)), planes, words,
+                         &offset);
+    }
+    sv4_replace(dst, sv4_from_limbs(planes, planes + words, planes + 2u * words,
+                                    (uint32_t)total, 0));
+    free(planes);
 }
 
 void llg_fixed_array_cells_store(llg_fixed_array_t* array, uint64_t first, uint64_t count,

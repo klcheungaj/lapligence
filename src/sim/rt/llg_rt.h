@@ -3743,6 +3743,11 @@ int llg_rt_command_line(char*** argv);
  * their address and left empty, like the returning forms' by-value strings. */
 void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3);
 void llg_dense_cells_image_to(sv4_t* dst, const sv4_t* cells, uint64_t count);
+/* Writes to `dst` the image of a record's `count` columns, whole: the first
+ * column is the most significant, each in `llg_fixed_array_cells_image` order.
+ * Reads peek. */
+void llg_fixed_array_columns_image_to(sv4_t* dst, const llg_fixed_array_t* const* columns,
+                                      size_t count);
 void llg_fixed_array_cells_image_to(sv4_t* dst, const llg_fixed_array_t* array, uint64_t first,
                                   uint64_t count);
 void llg_fixed_array_stream_source_to(sv4_t* dst, const llg_fixed_array_t* array, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);

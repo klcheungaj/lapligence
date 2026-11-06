@@ -1291,6 +1291,15 @@ pub(super) fn coerce_two_state(code: String, two_state: bool) -> String {
     }
 }
 
+/// C initial cell value of descriptor array `array`.
+pub(super) fn fixed_array_initial(array: &crate::sim::ir::IrArray) -> String {
+    array
+        .element_default
+        .as_ref()
+        .map(super::constants::emit_const)
+        .unwrap_or_else(|| packed_default(array.elem_width, array.signed, array.two_state))
+}
+
 pub(super) fn packed_default(width: u32, signed: bool, two_state: bool) -> String {
     if two_state {
         format!("sv4_from_u64(0, {width}, {})", signed as u8)

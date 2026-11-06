@@ -15,7 +15,8 @@
 //! one model-owned copy per such argument (H.8.10 leaves the lifetime open).
 
 use super::dpi::{
-    chunks, dpi_packed_result, dpi_param_type, int_c_type, is_aggregate, small_c_type, LayoutTables,
+    chunks, dpi_columns_image, dpi_columns_store, dpi_packed_result, dpi_param_type,
+    foreign_formals, int_c_type, is_aggregate, record_payload, small_c_type, LayoutTables,
 };
 use super::*;
 use crate::sim::ir::{IrDpiExport, IrDpiType, IrFormalMode, IrModel};
@@ -50,19 +51,21 @@ fn foreign_return_type(f: &IrFunc, export: &IrDpiExport) -> Result<&'static str,
     export.ret().map_or(Ok("void"), small_c_type)
 }
 
+fn export_formals(f: &IrFunc, export: &IrDpiExport) -> Result<usize, String> {
+    foreign_formals(
+        export.formals().len(),
+        |index| export.record_columns(index),
+        f.formals.len(),
+        export.c_name(),
+    )
+}
+
 /// `(type, name)` of each foreign parameter, as an import of the same
 /// signature would declare them (H.8.2).
 fn foreign_params(f: &IrFunc, export: &IrDpiExport) -> Result<Vec<(String, String)>, String> {
-    let declared = export.formals();
-    if declared.len() != f.formals.len() {
-        return Err(format!(
-            "DPI-C export `{}` has {} foreign formals for {} formals",
-            export.c_name(),
-            declared.len(),
-            f.formals.len()
-        ));
-    }
-    declared
+    export_formals(f, export)?;
+    export
+        .formals()
         .iter()
         .zip(&f.formals)
         .enumerate()
@@ -194,7 +197,7 @@ pub(super) fn render_dpi_export_bodies(
         .filter(|(_, f)| f.dpi_export().is_some())
     {
         let frame = coroutine_frame(index).filter(|_| f.is_task);
-        out.push_str(&render_export_thunk(f, frame.as_deref())?);
+        out.push_str(&render_export_thunk(model, f, frame.as_deref())?);
     }
     for (id, c_name) in ids.iter().enumerate() {
         // Every scope exporting one C identifier has the same signature
@@ -245,7 +248,11 @@ pub(super) fn render_dpi_export_bodies(
 /// it fills the task's coroutine frame on the calling chain's arena and
 /// waits while the scheduler thread runs it (ADV-018); the outputs live in
 /// the thunk's value scopes and C locals until it returns.
-fn render_export_thunk(f: &IrFunc, coroutine_frame: Option<&str>) -> Result<String, String> {
+fn render_export_thunk(
+    model: &IrModel,
+    f: &IrFunc,
+    coroutine_frame: Option<&str>,
+) -> Result<String, String> {
     let export = export_of(f)?;
     let params = foreign_params(f, export)?;
     let ret = foreign_return_type(f, export)?;
@@ -274,6 +281,9 @@ fn render_export_thunk(f: &IrFunc, coroutine_frame: Option<&str>) -> Result<Stri
     ));
     let mut outputs = Vec::new();
     let mut inputs = Vec::new();
+    // Further columns of record formals, which follow the declared formals.
+    let mut column_outputs = Vec::new();
+    let mut column_inputs = Vec::new();
     let mut copy_back = String::new();
     for (index, (ty, formal)) in export.formals().iter().zip(&f.formals).enumerate() {
         let parameter = format!("p{index}");
@@ -378,6 +388,50 @@ fn render_export_thunk(f: &IrFunc, coroutine_frame: Option<&str>) -> Result<Stri
                 };
                 copy_back.push_str(&format!("    *{parameter} = ({c_type}){cell};\n"));
             }
+            record if !export.record_columns(index).is_empty() => {
+                let positions = export.record_columns(index);
+                let columns = positions
+                    .iter()
+                    .map(|position| format!("_dpi_f{position}"))
+                    .collect::<Vec<_>>();
+                for (position, column) in positions.iter().zip(&columns) {
+                    let array = f.formals[*position]
+                        .fixed_array
+                        .ok_or("DPI-C record column without a descriptor")?;
+                    let array = model.array(array);
+                    body.push_str(&format!(
+                        "    llg_fixed_array_t* {column} = (llg_fixed_array_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy));\n    llg_fixed_array_init({column}, {}ULL, {}, NULL);\n",
+                        array.total,
+                        super::super::expressions::fixed_array_initial(array)
+                    ));
+                }
+                let payload = record_payload(record)?;
+                let (_, table) = layouts[index]
+                    .as_ref()
+                    .ok_or("DPI aggregate formal without a layout table")?;
+                if !address || inout {
+                    body.push_str(&format!(
+                        "    sv4_x_to({slot}, {payload}, {});\n    llg_dpi_from_c(&{table}, {parameter}, {slot});\n",
+                        u8::from(formal.signed)
+                    ));
+                    body.push_str(&dpi_columns_store(
+                        model, f, positions, &columns, &slot, payload,
+                    )?);
+                }
+                if address {
+                    copy_back.push_str(&dpi_columns_image(index, &columns, &slot));
+                    copy_back.push_str(&format!(
+                        "    llg_dpi_to_c(&{table}, {slot}, {parameter});\n"
+                    ));
+                }
+                let (own, further) = if address {
+                    (&mut outputs, &mut column_outputs)
+                } else {
+                    (&mut inputs, &mut column_inputs)
+                };
+                own.push(columns[0].clone());
+                further.extend_from_slice(&columns[1..]);
+            }
             _ => {
                 let signed = u8::from(formal.signed);
                 let width = formal.width;
@@ -461,7 +515,9 @@ fn render_export_thunk(f: &IrFunc, coroutine_frame: Option<&str>) -> Result<Stri
         }
     }
     let mut arguments = outputs;
+    arguments.extend(column_outputs);
     arguments.extend(inputs);
+    arguments.extend(column_inputs);
     arguments.push("depth".to_owned());
     let packed = super::functions::packed_result(f);
     if packed {

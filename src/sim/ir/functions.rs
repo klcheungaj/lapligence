@@ -105,6 +105,8 @@ pub struct IrDpiImport {
     /// Index into [`super::IrModel::dpi_scopes`] of the instantiated scope
     /// holding the declaration: a context call runs in it (SV 35.5.3).
     pub(in crate::sim) scope: Option<usize>,
+    /// See [`IrDpiImport::with_record_columns`].
+    pub(in crate::sim) record_columns: Vec<Vec<usize>>,
 }
 
 impl IrDpiImport {
@@ -122,7 +124,22 @@ impl IrDpiImport {
             formals,
             ret,
             scope: None,
+            record_columns: Vec::new(),
         }
+    }
+
+    /// The same import with, for each declared formal of a column-layout
+    /// record, the positions in [`IrFunc::formals`] of its columns in member
+    /// order (empty for any other formal). The foreign value is the record's
+    /// payload, so one foreign parameter stands for all of them.
+    pub fn with_record_columns(mut self, columns: Vec<Vec<usize>>) -> Self {
+        self.record_columns = columns;
+        self
+    }
+
+    /// Column positions of declared formal `index`.
+    pub fn record_columns(&self, index: usize) -> &[usize] {
+        self.record_columns.get(index).map_or(&[], Vec::as_slice)
     }
 
     /// The same import declared in DPI scope `scope`.
@@ -183,6 +200,8 @@ pub struct IrDpiExport {
     /// of its persistent formal storage: such a subroutine reads inouts from
     /// and writes outputs to that storage, which its callers fill and read.
     pub(in crate::sim) storage: Vec<Option<String>>,
+    /// See [`IrDpiImport::with_record_columns`].
+    pub(in crate::sim) record_columns: Vec<Vec<usize>>,
 }
 
 impl IrDpiExport {
@@ -198,7 +217,20 @@ impl IrDpiExport {
             ret,
             scope,
             storage: Vec::new(),
+            record_columns: Vec::new(),
         }
+    }
+
+    /// The same export with the column positions of each declared formal,
+    /// see [`IrDpiImport::with_record_columns`].
+    pub fn with_record_columns(mut self, columns: Vec<Vec<usize>>) -> Self {
+        self.record_columns = columns;
+        self
+    }
+
+    /// Column positions of declared formal `index`.
+    pub fn record_columns(&self, index: usize) -> &[usize] {
+        self.record_columns.get(index).map_or(&[], Vec::as_slice)
     }
 
     /// The same export with the persistent storage of each formal.
