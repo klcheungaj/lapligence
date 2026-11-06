@@ -68,6 +68,9 @@ struct Value {
     fill: Option<u8>,
     slot: Option<usize>,
     borrowed_address: Option<String>,
+    /// `code` is a C truth value of width 0, not a real: it can only be
+    /// tested, and it is never unknown.
+    truth: bool,
 }
 
 impl Value {
@@ -90,7 +93,9 @@ impl Value {
         }
     }
     fn truth(&self) -> String {
-        if self.width == 0 {
+        if self.truth {
+            self.code.clone()
+        } else if self.width == 0 {
             format!("llg_real_to_bool({})", self.code)
         } else {
             format!("sv4_to_bool({})", self.code)
@@ -999,6 +1004,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             fill: None,
             slot: Some(slot),
             borrowed_address: None,
+            truth: false,
         }
     }
     fn value(&mut self, code: String, width: u32, signed: bool) -> Value {
@@ -1010,6 +1016,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 fill: None,
                 slot: None,
                 borrowed_address: None,
+                truth: false,
             };
         }
         let value = self.reserve(width, signed);
@@ -1026,7 +1033,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         if let Some(slot) = value.slot {
             self.line(format!("sv4_destroy(&{});", value.code));
             self.slots[slot] = false;
-        } else if value.width == 0 {
+        } else if value.width == 0 && !value.truth {
             self.line(format!("(void){};", value.code));
         }
     }

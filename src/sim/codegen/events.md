@@ -172,7 +172,9 @@ run-time index below a native value or a record element to an item locator
 (`IrChandleExpr::ItemElement`), constant in code per site and in access cost.
 A module record keeps each element as its own object, so a run-time index
 there is a balanced decision tree over the declared indices, one nested tree
-per run-time index, whose code is linear in the leaves per access site.
+per run-time index, whose code is linear in the leaves per access site. Each
+test is one runtime call (`IrBinOp::IndexEq`, `IrBinOp::IndexLt`, predicates
+only), so a site's C holds no packed comparison per element.
 
 Resizable containers in subroutine, procedural-block and class storage
 (SIM-006) use `collection/subroutine_containers.rs`: storage per (instance,

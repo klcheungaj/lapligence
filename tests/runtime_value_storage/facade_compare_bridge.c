@@ -757,7 +757,7 @@ static void selection_writes(void) {
             uint32_t width = unary_widths[w];
             sv4_t base_value = make(width, pattern & 1, 6, 5);
             for (size_t v = 0; v < COUNT_OF(value_widths); ++v) {
-                sv4_t value = make(value_widths[v], v & 1, (pattern + 3) % PATTERNS, 6);
+                sv4_t value = make(value_widths[v], (int)(v & 1u), (pattern + 3) % PATTERNS, 6);
                 for (size_t r = 0; r < COUNT_OF(ranges); ++r) {
                     sv4_t target = sv4_clone(&base_value);
                     sv4_part_select_set(&target, ranges[r][0], ranges[r][1], value);
@@ -1159,8 +1159,11 @@ static void constants(void) {
     CONSTANT(LLG_SV4_Z);
     CONSTANT(LLG_SUPPORTED_WIDTH_LIMIT);
     CONSTANT(LLG_VALUE_ABI_VERSION);
-    printf("LLG_MASK| %" PRIx64 " %" PRIx64 " %" PRIx64 "\n", (uint64_t)LLG_MASK(1),
-           (uint64_t)LLG_MASK(63), (uint64_t)LLG_MASK(64));
+    /* Run-time widths: a literal 64 reaches `1ULL << 64` in the dead branch of
+     * the legacy macro, which MSVC reports (C4293, and C4127 under /W4). */
+    static const uint32_t mask_widths[3] = {1, 63, 64};
+    printf("LLG_MASK| %" PRIx64 " %" PRIx64 " %" PRIx64 "\n", (uint64_t)LLG_MASK(mask_widths[0]),
+           (uint64_t)LLG_MASK(mask_widths[1]), (uint64_t)LLG_MASK(mask_widths[2]));
 }
 
 int main(void) {

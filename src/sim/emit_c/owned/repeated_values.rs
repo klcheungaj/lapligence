@@ -117,6 +117,11 @@ fn repeatable_operand(expr: &IrExpr) -> bool {
         | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::Stream { value: a, .. }
         | IrExprKind::PartSel { base: a, .. } => repeatable_operand(a),
+        // A member select test is a C truth value, not a packed operand.
+        IrExprKind::Bin {
+            op: IrBinOp::IndexEq | IrBinOp::IndexLt,
+            ..
+        } => false,
         IrExprKind::Bin { a, b, .. } | IrExprKind::BitSel { base: a, idx: b } => {
             repeatable_operand(a) && repeatable_operand(b)
         }

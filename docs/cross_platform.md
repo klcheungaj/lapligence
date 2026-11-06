@@ -195,6 +195,9 @@ MSVC compiler:
   (`tests/support/c_compiler.rs`, `runtime_value_storage` CMake) defines
   `_CRT_SECURE_NO_WARNINGS`; a new `/W4 /WX` build site needs it too. Fixtures
   still prefer bounded calls (`snprintf`).
+- Third-party headers (`gmp.h`) enter strict targets through `SYSTEM` include
+  directories: CMake maps them to `/external:I` with `/external:W0` for MSVC
+  19.29.30036.3 or newer, and the target's own sources keep `/W4 /WX`.
 - C mode lacks `max_align_t` (use `llg_co_max_align_t`). Unnamed enums have an
   `int` underlying type, so brace-initializing a `uint32_t` from an enum ternary
   narrows (C2397); cast. `<chrono>` warning C4530 without `/EHsc` is harmless.

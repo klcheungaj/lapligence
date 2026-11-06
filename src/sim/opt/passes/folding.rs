@@ -267,6 +267,10 @@ fn bin_value(
         Shr => elab::shr(a, b),
         Ashl => elab::arith_shl(a, b),
         Ashr => elab::arith_shr(a, b),
+        IndexEq => elab::case_eq(a, b),
+        // An unknown index is below nothing; it equals no known key either.
+        IndexLt if a.is_unknown() => elab::case_eq(a, b),
+        IndexLt => elab::lt(a, b),
     };
     Some(resize_like_runtime(&v, node_width, node_signed))
 }

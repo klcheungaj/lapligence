@@ -1596,8 +1596,9 @@ seconds; the Clang checks skip without a Clang driver and on Windows.
 - `runtime_strict_sources::runtime_and_companion_c_has_no_narrowing_or_uninitialized_use`:
   Clang `-Werror=implicit-int-conversion,shorten-64-to-32,…` (MSVC C4244/C4267)
   and `-Werror=conditional-uninitialized,…` (C4701/C4703) over the runtime
-  units in the legacy and compact backends, the non-`compact_*` probes and
-  every C file under `tests/fixtures/`, with the bundled zlib headers. It
+  units in the legacy and compact backends, the non-`compact_*` probes, the
+  facade client `facade_compare_bridge.c` in both backends and every C file
+  under `tests/fixtures/`, with the bundled zlib headers. It
   cannot see C4701 on a struct filled by a skippable out-parameter call
   ([rule](../docs/cross_platform.md#windows-msvc)); no Clang or GCC option
   does.
