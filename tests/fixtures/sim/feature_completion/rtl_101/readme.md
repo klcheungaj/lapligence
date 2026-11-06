@@ -60,7 +60,15 @@ column. Expected values are derived by hand below; none were captured from
   1 and 9 (SV 4.7, a nondeterministic order), with `name` declared packed because it
   rejects `n.a` with a `string` member in the NBA and the continuous assignments.
   `always_comb` runs at 0 and for each change of `f.a[3]` or `f.a[4]`, not for
-  `f.a[5]` at time 2 (SV 9.2.2.2.1). `k = 40` and an X index write nothing and
-  read 0 (SV 7.4.6).
+  `f.a[5]` at time 2. SV2009 9.2.2.2.1 L11184-11185: "The implicit sensitivity
+  list of an always_comb includes the expansions of the longest static prefix
+  of each variable or select expression that is read within the block or
+  within any function called within the block with the following exceptions:".
+  `k = 40` and an X index write nothing and read 0. SV2009 7.4.6 L8235-8237:
+  "If an index expression is out of the address bounds or if any bit in the
+  address is X or Z, then the index shall be invalid. The result of reading
+  from an array with an invalid index shall return the default uninitialized
+  value for the array element type. Writing to an array with an invalid index
+  shall perform no operation."
 - `chosen_fallback`: `%p` of the whole record and a copy from a directly
   addressed array are outside column layout, so the record keeps its leaves.
