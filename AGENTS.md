@@ -26,6 +26,8 @@ server (the same frontend → owned analysis → tower-lsp stdio features).
   Python comments or docstrings only when asked.
 - Speed and memory come first, but optimize only with evidence and explained
   trade-offs; no unsolicited micro-optimizations.
+- A new implementation or approach replaces the old one: never keep or add a
+  silent rollback or fallback to the old one without asking the user first.
 - New nontrivial code needs tests ([test guide](tests/AGENTS.md)). Prefer focused
   tests; run the full suite only after broad changes whose impact is unclear,
   and then only once, after all changes are implemented.
