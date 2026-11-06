@@ -110,7 +110,7 @@ if(LLG_STORAGE_TEST_VALUE_BACKEND STREQUAL "compact")
   add_library(selected_value_units OBJECT ${selected_value_units})
   target_include_directories(selected_value_units PRIVATE "${LLG_RT}")
   if(selected_gmp_include)
-    target_include_directories(selected_value_units PRIVATE ${selected_gmp_include})
+    target_include_directories(selected_value_units SYSTEM PRIVATE ${selected_gmp_include})
   endif()
   # Rename the allocator in a forced include, after <stdlib.h>: -Dmalloc=...
   # would also rename the CRT's dllimport declarations under MSVC.

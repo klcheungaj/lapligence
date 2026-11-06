@@ -238,6 +238,15 @@ fn runtime_and_companion_c_has_no_narrowing_or_uninitialized_use() {
             bundled_zlib: true,
         });
     }
+    // The facade client is built against every backend under `/W4 /WX`.
+    units.push(NarrowingUnit {
+        source: probes.join("facade_compare_bridge.c"),
+        includes: std::iter::once(probes.clone())
+            .chain(runtime_includes.iter().cloned())
+            .collect(),
+        defines: &["-DLLG_SV4_USE_GMP=1"],
+        bundled_zlib: false,
+    });
     for source in c_sources_under(&root.join("tests/fixtures")) {
         let own = source.parent().expect("fixture directory").to_path_buf();
         units.push(NarrowingUnit {
