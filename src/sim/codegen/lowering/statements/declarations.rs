@@ -112,17 +112,25 @@ impl EmitCtx<'_, '_> {
                     .and_then(|meta| meta.init)
             });
             if let Some(initializer) = initializer {
-                statements.push(
-                    self.cg
-                        .lower_container_assignment(
-                            &self.path,
-                            declaration,
-                            initializer,
-                            true,
-                            Operation::Assignment,
-                        )?
-                        .ok_or("container local initializer has no container assignment")?,
+                // A member of an element is read from a staged copy.
+                let staging = self.cg.element_staging_possible
+                    && self.cg.staged_element_members.is_empty()
+                    && self.cg.staged_nested_elements.is_empty();
+                if staging {
+                    statements.extend(self.cg.stage_initializer(&self.path, initializer)?);
+                }
+                let assignment = self.cg.lower_container_assignment(
+                    &self.path,
+                    declaration,
+                    initializer,
+                    true,
+                    Operation::Assignment,
                 );
+                if staging {
+                    self.cg.end_element_member_staging();
+                }
+                statements
+                    .push(assignment?.ok_or("container local initializer has no container assignment")?);
             }
             return Ok(statements);
         }

@@ -1154,6 +1154,84 @@ impl EmitCtx<'_, '_> {
         self.lower_foreach_loops(h, None)
     }
 
+    /// `foreach (s[i])` over a string visits each byte index (SV 6.16: a
+    /// string is an ordered collection of characters).
+    fn lower_string_foreach(
+        &mut self,
+        h: NodeId,
+        array: NodeId,
+        vars: &[Option<NodeId>],
+        body: NodeId,
+    ) -> Result<Option<Vec<IrStmt>>, String> {
+        let is_string = matches!(
+            self.cg.kind(array),
+            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } if ty.kind == "string"
+        );
+        let ([Some(variable)], true) = (vars, is_string) else {
+            return Ok(None);
+        };
+        let source = self
+            .cg
+            .node(h)
+            .children
+            .iter()
+            .copied()
+            .find(|child| matches!(self.cg.kind(*child), NodeKind::Expr(_)))
+            .unwrap_or(array);
+        let value = self.cg.lower_string(&self.path, source)?;
+        let local = self.cg.collect_loop_var(&self.path, *variable)?;
+        let (source_body, brk) = self.lower_loop_body(body)?;
+        let read = || {
+            IrExpr::new(
+                IrExprKind::LocalRead(local.c_name.clone()),
+                local.width,
+                local.signed,
+                None,
+            )
+        };
+        let lhs = || IrLhs::WholeRef {
+            addr: format!("&{}", local.c_name),
+            width: local.width,
+            signed: local.signed,
+            two_state: local.two_state,
+            shortreal: false,
+        };
+        let length = crate::sim::codegen::lowering::objects::object_query(
+            crate::sim::ir::IrObjectQuery::StringLen(value),
+            32,
+            true,
+        );
+        let mut statements = vec![
+            IrStmt::DeclLocal {
+                name: local.c_name.clone(),
+                width: local.width,
+                signed: local.signed,
+                two_state: local.two_state,
+                init: default_real_local_initializer(local.width),
+            },
+            IrStmt::For {
+                init: vec![IrStmt::Assign {
+                    lhs: lhs(),
+                    rhs: IrExpr::resize_to(loop_index_expr(0), local.width, local.signed),
+                    nba: false,
+                }],
+                cond: common_bin_expr(IrBinOp::Lt, read(), length),
+                incr: vec![IrStmt::Assign {
+                    lhs: lhs(),
+                    rhs: IrExpr::resize_to(
+                        common_bin_expr(IrBinOp::Add, read(), loop_index_expr(1)),
+                        local.width,
+                        local.signed,
+                    ),
+                    nba: false,
+                }],
+                body: source_body,
+            },
+        ];
+        statements.extend(brk);
+        Ok(Some(vec![IrStmt::Block(statements)]))
+    }
+
     fn lower_foreach_loops(
         &mut self,
         h: NodeId,
@@ -1318,6 +1396,9 @@ impl EmitCtx<'_, '_> {
             .or_else(|| self.cg.container_globals.get(&array).cloned())
             .or_else(|| self.cg.container_of_select(h, array))
         else {
+            if let Some(statements) = self.lower_string_foreach(h, array, &vars, body)? {
+                return Ok(statements);
+            }
             return Err(format!(
                 "`foreach` target `{}` in `{}` is not a supported fixed array or container",
                 self.cg.node(array).name,

@@ -1344,6 +1344,23 @@ impl Codegen<'_> {
         self.build_element_staging(path, members, nested, overwritten)
     }
 
+    /// Stage the members and nested elements a container initializer reads;
+    /// nothing is written back. The caller ends the staging with
+    /// `end_element_member_staging`.
+    pub(in crate::sim::codegen) fn stage_initializer(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Vec<IrStmt>, String> {
+        let (mut members, mut nested) = (Vec::new(), Vec::new());
+        if !self.stage_whole_read(node, &mut members, &mut nested) {
+            self.collect_staged_members(node, false, &mut members, &mut nested);
+        }
+        let (before, after) = self.build_element_staging(path, members, nested, None)?;
+        debug_assert!(after.is_empty(), "an initializer writes back nothing");
+        Ok(before)
+    }
+
     /// Stage the queue and dynamic-array members of container record
     /// elements (and queues or dynamic arrays nested in container elements)
     /// that the expression `node` reads: a condition, loop bound,
