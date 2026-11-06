@@ -1930,6 +1930,10 @@ sv4_t llg_cr_elem_value_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t a
 // A constraint function's result for the solver (X/Z marks the input).
 void llg_cr_set_call_result_sv4(llg_cr_session_t* s, uint32_t call, sv4_t value,
                                 uint32_t width);
+// The same for call `x` of the expansion, and its argument `arg`.
+void llg_cr_xcall_set_result_sv4(llg_cr_session_t* s, uint32_t x, sv4_t value, uint32_t width);
+sv4_t llg_cr_xcall_arg_sv4(const llg_cr_session_t* s, uint32_t x, uint32_t arg, uint32_t width,
+                           int8_t is_signed);
 // One solve step (llg_cr_step) drawing from `stream`, or from the calling
 // thread's stream when NULL (S29-D3). Returns 4 while constraint functions
 // are ready (LLG_CR_NEED_CALLS); otherwise reports the outcome and returns

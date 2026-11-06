@@ -1,0 +1,6 @@
+dynamic bad=0 k0=1 k1=1 k2=1
+fixed 1 up 2 3 4 down 5 4 3
+queue bad=0 1 1
+state bad=0 1 1
+member 1 1 1
+wide 1

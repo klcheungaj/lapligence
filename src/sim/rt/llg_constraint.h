@@ -87,8 +87,8 @@ enum {
      * instance itself). */
     LLG_CR_REF,         /* object: handle slot a of the object ref b names;
                            c = element index node of a handle array slot
-                           (constants and loop indices only), else
-                           LLG_CR_NONE. No value of its own. */
+                           (constants, loop indices and state values),
+                           else LLG_CR_NONE. No value of its own. */
     LLG_CR_HVAR,        /* variable b of the object ref a names */
     LLG_CR_AELEM,       /* element at 0-based position (node b) of array a
                            of the object ref c names */
@@ -107,6 +107,10 @@ enum {
                            identity of ADD, MUL, LAND and LOR, and an
                            evaluation error for AND, OR and XOR (S30-D6) */
     LLG_CR_ISNULL,      /* 1-bit: the object ref a names is null */
+    LLG_CR_TCALL,       /* call a, once per expansion: its arguments are
+                           template nodes (a loop index, an array element,
+                           another object's variable) and the receiver is
+                           the expanding object */
     LLG_CR_OP_LIMIT
 };
 
@@ -162,7 +166,11 @@ typedef struct {
     uint8_t lo_signed;    /* the bounds compare as signed values */
 } llg_cr_dist_item_t;
 
-/* `solve before before after` from constraint block `block` (18.5.9). */
+/* `solve before before after` from constraint block `block` (18.5.9).
+ * In a problem with units a side is a variable, LLG_CR_ORDER_ARRAY | array
+ * (every element) or LLG_CR_ORDER_ELEM | index of args {array, position}. */
+#define LLG_CR_ORDER_ARRAY 0x80000000u
+#define LLG_CR_ORDER_ELEM 0x40000000u
 typedef struct {
     uint32_t block;
     uint32_t before;
@@ -183,10 +191,15 @@ typedef struct {
 
 /* Array kinds. A fixed array's position i has the declared index
  * left + i (left <= right) or left - i (left > right). */
-enum { LLG_CR_ARRAY_FIXED = 0, LLG_CR_ARRAY_DYNAMIC = 1, LLG_CR_ARRAY_QUEUE = 2 };
+enum { LLG_CR_ARRAY_FIXED = 0, LLG_CR_ARRAY_DYNAMIC = 1, LLG_CR_ARRAY_QUEUE = 2,
+       LLG_CR_ARRAY_SIZE = 3 /* only the random size of a handle array */ };
 
 /* Bit marking a handle-array slot in LLG_CR_ASIZE / LLG_CR_FOREACH. */
 #define LLG_CR_SLOT_ARRAY 0x80000000u
+/* Bit marking the array operand of a loop as a declared range: the rest
+ * indexes args holding {left, right}. It walks one dimension of a
+ * multidimensional fixed array, whose elements are one flat array. */
+#define LLG_CR_RANGE_LOOP 0x40000000u
 
 /* A random (or state) unpacked array of packed elements of one unit. */
 typedef struct {
@@ -366,6 +379,15 @@ const uint64_t* llg_cr_cyclic(const llg_cr_session_t* s, uint32_t var);
 void llg_cr_begin(llg_cr_session_t* s);
 llg_cr_status_t llg_cr_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
                             llg_cr_report_t* report);
+/* Calls of LLG_CR_TCALL nodes in the current expansion, numbered from 0:
+ * their template call, the instance expanding them, then as above. */
+uint32_t llg_cr_xcall_count(const llg_cr_session_t* s);
+uint32_t llg_cr_xcall_site(const llg_cr_session_t* s, uint32_t x);
+uint32_t llg_cr_xcall_inst(const llg_cr_session_t* s, uint32_t x);
+int llg_cr_xcall_ready(const llg_cr_session_t* s, uint32_t x);
+const uint64_t* llg_cr_xcall_arg(const llg_cr_session_t* s, uint32_t x, uint32_t arg);
+void llg_cr_xcall_set_result(llg_cr_session_t* s, uint32_t x, const uint64_t* words,
+                             int input_state);
 int llg_cr_call_ready(const llg_cr_session_t* s, uint32_t call);
 const uint64_t* llg_cr_call_arg(const llg_cr_session_t* s, uint32_t call, uint32_t arg);
 void llg_cr_set_call_result(llg_cr_session_t* s, uint32_t call, const uint64_t* words,
@@ -413,6 +435,9 @@ int llg_cr_inst_random(const llg_cr_session_t* s, uint32_t inst);
 uint32_t llg_cr_link(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t index,
                      void* child, uint32_t unit, int random);
 void llg_cr_set_slot_size(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t count);
+/* After a solve: handle array slot `slot` keeps its first `count` elements;
+ * instances no random link reaches any more leave llg_cr_visit (18.4). */
+void llg_cr_trim_slot(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t count);
 void llg_cr_iset_var(llg_cr_session_t* s, uint32_t inst, uint32_t var, const uint64_t* words,
                      int active, int input_state);
 void llg_cr_iset_block(llg_cr_session_t* s, uint32_t inst, uint32_t block, int enabled);

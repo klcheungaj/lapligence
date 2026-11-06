@@ -741,7 +741,7 @@ impl Codegen<'_> {
 
     /// The source text of a node's span (1-based lines and columns, end
     /// column exclusive), if its file was admitted.
-    fn span_text(&self, node: NodeId) -> Option<&str> {
+    pub(in super::super) fn span_text(&self, node: NodeId) -> Option<&str> {
         let node = self.node(node);
         let text = self.db.source_text(node.file.as_deref()?)?;
         let offset = |line: u32, col: u32| -> Option<usize> {

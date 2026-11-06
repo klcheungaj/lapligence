@@ -12,9 +12,10 @@
 //! silently left unconstrained.
 
 use super::*;
-use crate::core::db::{ConstraintKind, RandQualifier, RandomizeForm};
+use crate::core::db::{AggregateMember, ConstraintKind, RandQualifier, RandomizeForm};
 use crate::sim::ir::{
-    IrClassField, IrClassFieldType, IrDynamicCast, IrObjectQuery, IrObjectStmt, IrRandStmt,
+    IrClassField, IrClassFieldType, IrDynamicCast, IrObjectQuery, IrObjectStmt, IrRandOp,
+    IrRandStmt,
 };
 
 mod free_variables;
@@ -49,6 +50,12 @@ pub(super) struct RandLowering {
     templates: HashMap<NodeId, IrExpr>,
     /// Loop variable or `with` iterator declaration -> its placeholder.
     bindings: HashMap<NodeId, IrExpr>,
+    /// `with` iterator of a handle array -> the template object it names.
+    element_refs: HashMap<NodeId, u32>,
+    /// An inline constraint inside the object's class hierarchy: a `local::`
+    /// name resolves to the same declaration as an unqualified one, so its
+    /// source spelling tells them apart.
+    inline_local: bool,
 }
 
 impl RandLowering {
@@ -63,6 +70,8 @@ impl RandLowering {
             placeholders,
             templates: HashMap::new(),
             bindings: HashMap::new(),
+            element_refs: HashMap::new(),
+            inline_local: false,
         }
     }
 }
@@ -114,12 +123,140 @@ fn aggregate_needs_domain(descriptor: &TypeDescriptor) -> bool {
     }
 }
 
+/// Whether the legal values of `descriptor` have no per-member form: every
+/// member of an untagged union shares its bits, so a bit pattern legal for
+/// one member says nothing about an enum member.
+fn aggregate_domain_unsupported(descriptor: &TypeDescriptor) -> bool {
+    match &descriptor.shape {
+        TypeShape::Aggregate(layout) => {
+            (!matches!(
+                layout.kind,
+                AggregateKind::PackedStruct | AggregateKind::TaggedUnion
+            ) && aggregate_needs_domain(descriptor))
+                || layout
+                    .members
+                    .iter()
+                    .any(|member| aggregate_domain_unsupported(&member.descriptor))
+        }
+        TypeShape::FixedArray { .. } => aggregate_needs_domain(descriptor),
+        _ => false,
+    }
+}
+
 impl Codegen<'_> {
     /// Whether declaration `node` has an aggregate type whose members random
-    /// bits could make illegal.
+    /// bits could make illegal, and no form to exclude them.
     pub(super) fn random_aggregate_unsupported(&self, node: NodeId) -> bool {
         self.query_descriptor(node)
-            .is_some_and(aggregate_needs_domain)
+            .is_some_and(aggregate_domain_unsupported)
+    }
+
+    /// Make the aggregate variable `var` of declaration `decl` hold legal
+    /// members only.
+    pub(super) fn aggregate_var_domain(
+        &self,
+        builder: &mut problems::ProblemBuilder,
+        var: u32,
+        decl: NodeId,
+    ) -> Result<(), String> {
+        let Some(descriptor) = self
+            .query_descriptor(decl)
+            .filter(|descriptor| aggregate_needs_domain(descriptor))
+        else {
+            return Ok(());
+        };
+        let node = builder.var_node(var);
+        if let Some(domain) = self.value_domain(builder, node, descriptor)? {
+            builder.set_domain_node(var, domain);
+        }
+        Ok(())
+    }
+
+    /// The 1-bit node saying `node`, a value of `descriptor`, is legal:
+    /// every enum holds a named value and a tagged union a member's tag;
+    /// `None` when every bit pattern is legal.
+    pub(super) fn value_domain(
+        &self,
+        builder: &mut problems::ProblemBuilder,
+        node: u32,
+        descriptor: &TypeDescriptor,
+    ) -> Result<Option<u32>, String> {
+        if descriptor.info.kind == "enum" {
+            let metadata = self
+                .db
+                .enum_type_metadata(descriptor.id)
+                .ok_or("an enum element without metadata in a constraint")?;
+            let values = metadata
+                .members
+                .iter()
+                .map(|member| match &member.value {
+                    Val::Bits(value) => val_to_const(value),
+                    _ => Err("enum member has a non-integral value".to_owned()),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return builder.one_of(node, &values).map(Some);
+        }
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            return Ok(None);
+        };
+        let total = Self::fixed_descriptor_width(descriptor)
+            .ok_or("a random aggregate has no fixed packed width")?;
+        let member_width = |member: &AggregateMember| {
+            Self::fixed_descriptor_width(&member.descriptor)
+                .ok_or("a random aggregate member has no fixed packed width")
+        };
+        if layout.kind == AggregateKind::PackedStruct {
+            // The first member holds the most significant bits.
+            let mut top = total;
+            let mut domain = None;
+            for member in &layout.members {
+                let width = member_width(member)?;
+                top -= width;
+                let part = builder.slice(node, top, width);
+                if let Some(legal) = self.value_domain(builder, part, &member.descriptor)? {
+                    domain = Some(match domain {
+                        None => legal,
+                        Some(all) => builder.logical(IrRandOp::LogAnd, all, legal),
+                    });
+                }
+            }
+            return Ok(domain);
+        }
+        if layout.kind != AggregateKind::TaggedUnion {
+            return Ok(None);
+        }
+        // The tag holds the most significant bits, members the low ones.
+        let tag_width = layout
+            .tag_bits()
+            .ok_or("tagged union tag width overflows")?;
+        let mut domain = None;
+        for (index, member) in layout.members.iter().enumerate() {
+            // A void member has no bits.
+            let width = Self::fixed_descriptor_width(&member.descriptor).unwrap_or(0);
+            let selected = if tag_width == 0 {
+                None
+            } else {
+                let tag = builder.slice(node, total - tag_width, tag_width);
+                let code = builder.constant_u64(index as u64, tag_width, false);
+                Some(builder.equal(tag, code))
+            };
+            let legal = if width == 0 {
+                None
+            } else {
+                let part = builder.slice(node, 0, width);
+                self.value_domain(builder, part, &member.descriptor)?
+            };
+            let clause = match (selected, legal) {
+                (Some(selected), Some(legal)) => builder.logical(IrRandOp::LogAnd, selected, legal),
+                (Some(only), None) | (None, Some(only)) => only,
+                (None, None) => builder.constant_u64(1, 1, false),
+            };
+            domain = Some(match domain {
+                None => clause,
+                Some(any) => builder.logical(IrRandOp::LogOr, any, clause),
+            });
+        }
+        Ok(domain)
     }
 
     /// `message` addressed to `node`'s source position.
@@ -143,9 +280,24 @@ impl Codegen<'_> {
         )
     }
 
+    /// Whether `node` is a `local::` name of the caller while lowering an
+    /// inline constraint whose names could also be the object's.
+    pub(super) fn names_caller(&self, node: NodeId) -> bool {
+        self.rand_lowering
+            .as_ref()
+            .is_some_and(|lowering| lowering.inline_local)
+            && self.span_text(node).is_some_and(|text| {
+                text.strip_prefix("local")
+                    .is_some_and(|rest| rest.trim_start().starts_with("::"))
+            })
+    }
+
     /// The placeholder standing for a random variable that `node` names
     /// through the implicit or explicit `this` of the randomized object.
     pub(super) fn random_placeholder(&self, node: NodeId) -> Option<IrExpr> {
+        if self.names_caller(node) {
+            return None;
+        }
         if let Some(lowering) = self.rand_lowering.as_ref() {
             if let Some(template) = lowering.templates.get(&node) {
                 return Some(template.clone());
@@ -173,6 +325,9 @@ impl Codegen<'_> {
     /// without an object or through the constraint block's `this`; `node`
     /// may select members after it.
     pub(super) fn random_field_placeholder(&self, node: NodeId, field: NodeId) -> Option<IrExpr> {
+        if self.names_caller(node) {
+            return None;
+        }
         let lowering = self.rand_lowering.as_ref()?;
         let placeholder = lowering.placeholders.get(&field)?;
         match self.kind(node) {
@@ -220,7 +375,7 @@ impl Codegen<'_> {
     /// The randomized object for `this` inside a class constraint block.
     pub(super) fn rand_this_receiver(&self, target: NodeId) -> Option<IrChandleExpr> {
         let lowering = self.rand_lowering.as_ref()?;
-        (self.node(target).name == "this" && self.rand_this(target))
+        (self.node(target).name == "this" && (self.rand_this(target) || lowering.inline_local))
             .then(|| lowering.receiver.clone())
             .flatten()
     }
@@ -338,26 +493,45 @@ impl Codegen<'_> {
     }
 
     /// Value-position randomize or mode query; `None` for any other node.
-    /// A randomize call runs in the enclosing statement's prelude.
+    /// A randomize call runs in the enclosing statement's prelude, unless
+    /// its evaluation depends on other operands or repeats: it then stays
+    /// in the expression as a statement sequence, which the emitter evaluates
+    /// in place, so a short-circuited operand never runs (11.3.5) and a loop
+    /// condition runs at every test.
     pub(super) fn lower_random_value(
         &mut self,
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
         if self.db.randomize_call(node).is_some() {
-            let Some(root) = self.rand_prelude.as_ref().map(|(root, _)| *root) else {
-                return Err(self.rand_error(
-                    node,
-                    path,
-                    "a randomize call used as a value is supported only in an assignment, a variable declaration, a return, an if condition, an immediate assertion or a system-task argument",
-                ));
+            let hoisted = match self.rand_prelude.as_ref().map(|(root, _)| *root) {
+                Some(root) => !self.in_conditional_operand(node, root),
+                None if self.in_loop_header(node) => false,
+                None => {
+                    return Err(self.rand_error(
+                        node,
+                        path,
+                        "a randomize call used as a value is supported only in an assignment, a variable declaration, a return, an if condition, a loop condition, an immediate assertion or a system-task argument",
+                    ))
+                }
             };
-            self.check_prelude_order(path, node, root)?;
             let (statements, value) = self.lower_randomize(path, node)?;
-            if let Some((_, prelude)) = self.rand_prelude.as_mut() {
-                prelude.extend(statements);
+            if hoisted {
+                if let Some((_, prelude)) = self.rand_prelude.as_mut() {
+                    prelude.extend(statements);
+                }
+                return Ok(Some(value));
             }
-            return Ok(Some(value));
+            let (width, signed) = (value.width, value.signed);
+            return Ok(Some(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements,
+                    value,
+                })),
+                width,
+                signed,
+                None,
+            )));
         }
         match self.lower_mode_call(path, node)? {
             Some(ModeCall::Value(value)) => Ok(Some(value)),
@@ -370,15 +544,14 @@ impl Codegen<'_> {
         }
     }
 
-    /// A value-form randomize runs before its statement, so it must be
-    /// evaluated exactly once whenever the statement runs: no short-circuit
-    /// or conditional operand may contain it.
-    fn check_prelude_order(&self, path: &str, node: NodeId, root: NodeId) -> Result<(), String> {
+    /// Whether `node` lies in an operand of `root` that some evaluations
+    /// skip: a later operand of `&&`, `||` or `->`, or an arm of `?:`.
+    fn in_conditional_operand(&self, node: NodeId, root: NodeId) -> bool {
         let mut child = node;
         let mut current = self.node(node).parent;
         while let Some(parent) = current {
             if parent == root {
-                return Ok(());
+                return false;
             }
             let conditional = match self.kind(parent) {
                 NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
@@ -387,7 +560,6 @@ impl Codegen<'_> {
                         Operation::LogicalAnd
                             | Operation::LogicalOr
                             | Operation::Imply
-                            | Operation::Implies
                             | Operation::Conditional
                     ) && operands.first() != Some(&child)
                 }
@@ -395,16 +567,30 @@ impl Codegen<'_> {
                 _ => false,
             };
             if conditional {
-                return Err(self.rand_error(
-                    node,
-                    path,
-                    "a randomize call in a short-circuit or conditional operand is not supported; assign its result to a variable first",
-                ));
+                return true;
             }
             child = parent;
             current = self.node(parent).parent;
         }
-        Ok(())
+        false
+    }
+
+    /// Whether the nearest statement around `node` is the header of a loop
+    /// (a `while` or `do...while` condition, a `for` condition or step), or
+    /// an assignment there.
+    fn in_loop_header(&self, node: NodeId) -> bool {
+        let mut current = self.node(node).parent;
+        while let Some(parent) = current {
+            match self.kind(parent) {
+                NodeKind::Stmt(
+                    StmtKind::While { .. } | StmtKind::DoWhile { .. } | StmtKind::For { .. },
+                ) => return true,
+                NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::Expr(_) => {}
+                _ => return false,
+            }
+            current = self.node(parent).parent;
+        }
+        false
     }
 
     /// Display entries of the hidden off bits: they are not class

@@ -14,7 +14,7 @@ use crate::core::db::NodeId;
 use crate::sim::ir::{
     IrBinOp, IrConst, IrExpr, IrExprKind, IrInsideItem, IrRandArrayKind, IrRandCall, IrRandDist,
     IrRandDistItem, IrRandLeaf, IrRandNode, IrRandOp, IrRandOrder, IrRandProblem, IrRandVar,
-    IrUnOp,
+    IrUnOp, RAND_RANGE_LOOP,
 };
 use std::collections::HashMap;
 
@@ -36,9 +36,20 @@ pub(super) struct LeafPlan {
 /// (18.5.11); `template` still contains placeholders.
 pub(super) struct CallPlan {
     pub(super) template: IrExpr,
+    /// An expanded call (`TCall`): the placeholder of each argument node.
+    pub(super) expanded: Option<Vec<ExpandedArg>>,
+    /// The unit whose objects evaluate it.
+    pub(super) unit: u32,
 }
 
-pub(super) struct ProblemBuilder {
+/// One argument of an expanded call.
+pub(super) struct ExpandedArg {
+    pub(super) placeholder: String,
+    pub(super) width: u32,
+    pub(super) signed: bool,
+}
+
+pub(in super::super) struct ProblemBuilder {
     pub(super) problem: IrRandProblem,
     pub(super) leaves: Vec<LeafPlan>,
     pub(super) calls: Vec<CallPlan>,
@@ -153,6 +164,11 @@ impl ProblemBuilder {
         IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
     }
 
+    /// The template node placeholder `name` stands for.
+    pub(super) fn template_node(&self, name: &str) -> Option<u32> {
+        self.templates.get(name).copied()
+    }
+
     /// Whether `expr` reads a template placeholder.
     pub(super) fn has_template(&self, expr: &IrExpr) -> bool {
         placeholders_in(expr)
@@ -204,6 +220,61 @@ impl ProblemBuilder {
         })
     }
 
+    /// The flat 0-based position of an element of a row-major multidimensional
+    /// fixed array, one index node per dimension of `dimensions`. An index
+    /// outside its own dimension makes the position -1, so it is out of
+    /// range (S30-D11) rather than another row's element.
+    pub(super) fn view_position(
+        &mut self,
+        dimensions: &[(i32, i32)],
+        indices: &[u32],
+    ) -> Result<u32, String> {
+        let mut flat: Option<u32> = None;
+        let mut valid: Option<u32> = None;
+        for (&(left, right), &index) in dimensions.iter().zip(indices) {
+            let (index, w, s) = self.ty(index);
+            if w > 64 {
+                return Err(
+                    "an array index wider than 64 bits is not supported in constraints".into(),
+                );
+            }
+            let wide = self.coerce_own(index, w, s, 64);
+            let base = self.constant_u64(i64::from(left) as u64, 64, true);
+            let position = if left <= right {
+                self.push(IrRandOp::Sub, true, 64, wide, base, 0)
+            } else {
+                self.push(IrRandOp::Sub, true, 64, base, wide, 0)
+            };
+            let extent = (i64::from(left) - i64::from(right)).abs() + 1;
+            let zero = self.constant_u64(0, 64, true);
+            let count = self.constant_u64(extent as u64, 64, true);
+            let low = self.compare(IrRandOp::Ge, position, zero);
+            let high = self.compare(IrRandOp::Lt, position, count);
+            let inside = self.logical(IrRandOp::LogAnd, low, high);
+            valid = Some(match valid {
+                None => inside,
+                Some(previous) => self.logical(IrRandOp::LogAnd, previous, inside),
+            });
+            flat = Some(match flat {
+                None => position,
+                Some(previous) => {
+                    let scaled = self.push(IrRandOp::Mul, true, 64, previous, count, 0);
+                    self.push(IrRandOp::Add, true, 64, scaled, position, 0)
+                }
+            });
+        }
+        let (Some(flat), Some(valid)) = (flat, valid) else {
+            return Err("a select of no dimension".into());
+        };
+        let invalid = self.constant_u64(u64::MAX, 64, true);
+        Ok(self.push(IrRandOp::Cond, true, 64, valid, flat, invalid))
+    }
+
+    /// The array operand of a loop over declared range `left`/`right`.
+    pub(super) fn range_loop(&mut self, left: i32, right: i32) -> u32 {
+        RAND_RANGE_LOOP | self.push_args(&[left as u32, right as u32])
+    }
+
     /// `left == right` in their common type (for `inside` an array).
     pub(super) fn equal(&mut self, left: u32, right: u32) -> u32 {
         self.compare(IrRandOp::Eq, left, right)
@@ -226,12 +297,14 @@ impl ProblemBuilder {
     }
 
     /// Restrict variable `var` to `values` while it is active (S29-D2).
-    pub(super) fn set_domain(&mut self, var: u32, values: &[IrConst]) -> Result<(), String> {
-        let (width, signed) = {
-            let v = &self.problem.vars[var as usize];
-            (v.width, v.signed)
-        };
-        let node = self.var_node(var);
+    /// `width` bits of `node` from bit `low`.
+    pub(super) fn slice(&mut self, node: u32, low: u32, width: u32) -> u32 {
+        self.push(IrRandOp::Slice, false, width, node, low, 0)
+    }
+
+    /// Whether `node` equals one of `values`.
+    pub(super) fn one_of(&mut self, node: u32, values: &[IrConst]) -> Result<u32, String> {
+        let (_, width, signed) = self.ty(node);
         let mut any = None;
         for value in values {
             let constant = self.constant(value, width, signed)?;
@@ -241,10 +314,20 @@ impl ProblemBuilder {
                 Some(previous) => self.push(IrRandOp::LogOr, false, 1, previous, equal, 0),
             });
         }
-        let domain = match any {
+        Ok(match any {
             Some(node) => node,
             None => self.constant_u64(0, 1, false),
-        };
+        })
+    }
+
+    /// Make `domain`, a node over variable `var`, the variable's domain.
+    pub(super) fn set_domain_node(&mut self, var: u32, domain: u32) {
+        self.problem.vars[var as usize].domain = Some(domain);
+    }
+
+    pub(super) fn set_domain(&mut self, var: u32, values: &[IrConst]) -> Result<(), String> {
+        let node = self.var_node(var);
+        let domain = self.one_of(node, values)?;
         self.problem.vars[var as usize].domain = Some(domain);
         Ok(())
     }
@@ -412,7 +495,7 @@ impl ProblemBuilder {
         (node, n.width, n.signed)
     }
 
-    fn var_node(&mut self, var: u32) -> u32 {
+    pub(super) fn var_node(&mut self, var: u32) -> u32 {
         if let Some(node) = self.var_nodes[var as usize] {
             return node;
         }
@@ -961,17 +1044,10 @@ impl ProblemBuilder {
         if expr.width == 0 {
             return Err("a real-valued function is not supported in constraints".into());
         }
-        if self.unit != 0 {
-            return Err(
-                "a function call in a constraint of an object reached through a `rand` handle is not supported"
-                    .into(),
-            );
-        }
-        if self.has_template(expr) {
-            return Err(
-                "a function call argument that reads an array element, array size, loop index or another object's variable is not supported in constraints"
-                    .into(),
-            );
+        // A call that reads a template form, or runs for another object,
+        // is one call per expansion.
+        if self.unit != 0 || self.has_template(expr) {
+            return self.expanded_call(expr);
         }
         let mut args = Vec::new();
         for name in placeholders_in(expr) {
@@ -984,6 +1060,8 @@ impl ProblemBuilder {
         let index = self.calls.len() as u32;
         self.calls.push(CallPlan {
             template: expr.clone(),
+            expanded: None,
+            unit: 0,
         });
         self.problem.calls.push(IrRandCall {
             name: format!("function call {}", self.item),
@@ -992,5 +1070,44 @@ impl ProblemBuilder {
             args,
         });
         Ok(self.push(IrRandOp::Call, expr.signed, expr.width, index, 0, 0))
+    }
+
+    /// A `TCall`: each placeholder the call reads is one argument node.
+    fn expanded_call(&mut self, expr: &IrExpr) -> Result<u32, String> {
+        let names = placeholders_in(expr);
+        let mut args = Vec::with_capacity(names.len());
+        let mut plans = Vec::with_capacity(names.len());
+        for name in names {
+            let node = match self.templates.get(&name).copied() {
+                Some(node) => node,
+                None => {
+                    let var = *self
+                        .placeholders
+                        .get(&name)
+                        .ok_or_else(|| "unknown random variable placeholder".to_owned())?;
+                    self.var_node(var)
+                }
+            };
+            let (node, width, signed) = self.ty(node);
+            args.push(node);
+            plans.push(ExpandedArg {
+                placeholder: name,
+                width,
+                signed,
+            });
+        }
+        let index = self.calls.len() as u32;
+        self.calls.push(CallPlan {
+            template: expr.clone(),
+            expanded: Some(plans),
+            unit: self.unit,
+        });
+        self.problem.calls.push(IrRandCall {
+            name: format!("function call {}", self.item),
+            width: expr.width,
+            signed: expr.signed,
+            args,
+        });
+        Ok(self.push(IrRandOp::TCall, expr.signed, expr.width, index, 0, 0))
     }
 }

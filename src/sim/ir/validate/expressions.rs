@@ -1485,15 +1485,23 @@ impl Validator<'_> {
                     else {
                         return self.fail(path, "instance query of a problem without units");
                     };
-                    let needs_inst = !matches!(query, IrRandQuery::NextInst | IrRandQuery::Count);
+                    let needs_inst = !matches!(
+                        query,
+                        IrRandQuery::NextInst | IrRandQuery::Count | IrRandQuery::CallCount
+                    );
                     let needs_index = matches!(query, IrRandQuery::Elem(_));
                     let ty = match query {
                         IrRandQuery::NextInst
                         | IrRandQuery::Count
                         | IrRandQuery::Visit
                         | IrRandQuery::Unit
-                        | IrRandQuery::ArraySize(_) => Some((32, true)),
+                        | IrRandQuery::ArraySize(_)
+                        | IrRandQuery::CallCount
+                        | IrRandQuery::CallSite
+                        | IrRandQuery::CallInst => Some((32, true)),
+                        IrRandQuery::CallArg(_) => Some((expr.width, expr.signed)),
                         IrRandQuery::Pre
+                        | IrRandQuery::CallReady
                         | IrRandQuery::Random
                         | IrRandQuery::Active(_)
                         | IrRandQuery::ArrayActive(_) => Some((1, false)),
@@ -1800,8 +1808,8 @@ impl Validator<'_> {
 }
 
 /// Statements an [`IrExprKind::Sequence`] may run: lexical declarations,
-/// blocking copies and function calls, none of which suspends or leaves the
-/// expression.
+/// blocking copies, function calls and randomize solves, none of which
+/// suspends or leaves the expression.
 fn sequence_statement(statement: &IrStmt) -> bool {
     match statement.unlocated() {
         IrStmt::FixedArrayDeclare(_)
@@ -1817,7 +1825,11 @@ fn sequence_statement(statement: &IrStmt) -> bool {
                 | IrObjectStmt::ChandleAssign(..)
                 | IrObjectStmt::StringAssignLocal(..)
                 | IrObjectStmt::ChandleAssignLocal(..)
+                | IrObjectStmt::ChandleDeclareLocal(..)
         ),
+        // A randomize call used as a value in a skipped operand or a loop
+        // condition: the solver primitives never suspend.
+        IrStmt::Randomize(_) => true,
         // Whole-element copies into lexical temporaries (SIM-007), the
         // key queues of generated array-method loops (SIM-019) and the
         // element stores of staged file-input destinations (SIM-026).
@@ -1836,6 +1848,8 @@ fn sequence_statement(statement: &IrStmt) -> bool {
                 | IrContainerStmt::SetStringReal { .. }
                 | IrContainerStmt::SetStringValue { .. }
                 | IrContainerStmt::SetStringString { .. }
+                | IrContainerStmt::DynamicNew { .. }
+                | IrContainerStmt::Delete(_)
         ),
         IrStmt::Block(statements) => statements.iter().all(sequence_statement),
         // Generated array-method loops: lexical locals and bounded loops
@@ -1850,6 +1864,7 @@ fn sequence_statement(statement: &IrStmt) -> bool {
         IrStmt::For {
             init, incr, body, ..
         } => init.iter().chain(incr).chain(body).all(sequence_statement),
+        IrStmt::While { body, .. } => body.iter().all(sequence_statement),
         _ => false,
     }
 }

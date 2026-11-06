@@ -17,6 +17,49 @@ const NO_BUDGET: [(&str, &str); 3] = [
 ];
 
 #[test]
+fn std_randomize_writes_fixed_arrays_of_any_scope() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_029/scope_fixed_arrays.out");
+    sim_cli::run_case_checked_matrix(SUITE, "scope_fixed_arrays", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(0), "{label}: {output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("the constraints cannot be satisfied"),
+            "{label}: {output:?}"
+        );
+    });
+}
+
+#[test]
+fn randomize_lists_name_inherited_properties() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "randomize_inherited_list",
+        include_str!("../fixtures/sim/feature_completion/sim_029/randomize_inherited_list.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn enum_elements_and_members_hold_named_values() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "enum_elements",
+        include_str!("../fixtures/sim/feature_completion/sim_029/enum_elements.out"),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "tagged_member",
+        include_str!("../fixtures/sim/feature_completion/sim_029/tagged_member.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn class_constraints_inheritance_and_static_members() {
     sim_cli::run_case_backend_parity(
         SUITE,
@@ -121,16 +164,10 @@ fn unsupported_random_variables_are_located_errors() {
 fn value_randomize_outside_one_evaluation_is_a_located_error() {
     sim_cli::reject_case(
         SUITE,
-        "neg_short_circuit",
-        "a randomize call in a short-circuit or conditional operand is not supported",
-    );
-    names_source_position("neg_short_circuit");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_loop_condition",
+        "neg_randomize_in_wait",
         "a randomize call used as a value is supported only in",
     );
-    names_source_position("neg_loop_condition");
+    names_source_position("neg_randomize_in_wait");
 }
 
 /// A run-time failure: exact stdout, exit status 1 and `diagnostic` on
@@ -644,4 +681,15 @@ mod generated {
         // The same seed draws the same values whatever the optimizer did.
         assert_eq!(outputs[0], outputs[1]);
     }
+}
+
+#[test]
+fn randomize_values_run_when_their_operand_is_evaluated() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "randomize_value_forms",
+        include_str!("../fixtures/sim/feature_completion/sim_029/randomize_value_forms.out"),
+        &[],
+        &[],
+    );
 }

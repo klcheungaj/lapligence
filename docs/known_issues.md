@@ -717,11 +717,14 @@ properties of packed words.
 These legal forms reject with a located diagnostic: selecting one cell, or a
 part of it, of an element that is a fixed unpacked array of a dynamic array,
 queue or associative array (`da[k][j]`, `aa[k][j] = v`, `x = q[k][j]`), and a
-row, element or slice select of a multidimensional class property in an
-expression (`o.g[i][j]`, `o.g[i]`). A whole element cannot be read into or
+row or slice select of a multidimensional class property in an
+expression (`o.g[i]`). A whole element cannot be read into or
 assigned from an unpacked-array variable or pattern either (`row = da[k]`,
 `da[k] = row`, `aa[k] = '{...}`). The containers work as a whole (copies,
-`%p`, memory file tasks), and so do whole multidimensional class properties.
+`%p`, memory file tasks), and so do whole multidimensional class properties
+and their single elements (`o.g[i][j]`). A member of a packed element of a
+class array property reads (`o.a[i].m`) but rejects as a write target; assign
+the whole element.
 
 ### Cause
 
@@ -1753,6 +1756,18 @@ rejects these in `wait` conditions as well). Direction: bind callee locals
 to every handle they can hold (a dependency set instead of one receiver).
 Reproduce: `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`.
 
+The same rejection applies to a member of an unpacked structure property that
+holds a native member (a string, a handle, a container): `wait (h.r.a == 1)`,
+`@(h.r.a)`, also through a chain of handles or `this`; and to a property selected
+through a call result, `wait (f().x == 1)`. Such a store publishes no change. A
+structure of packed members only and a structure in a queue or array property
+wait normally. `always_comb` and `@*` are not affected: they add no class storage
+(9.2.2.2.1). The real fix is a change marker for native record stores (see
+"Native record values outside by-value subroutine storage"). Reproduce:
+`tests/fixtures/sim/feature_completion/sim_014/reject_wait_record_property.sv`,
+`reject_event_record_property.sv`, `reject_method_wait_record_property.sv`,
+`reject_wait_call_result.sv`.
+
 ## Native stack frames grow with a statement's format-argument count
 
 **Status:** open; the host-stack bound is measured, not proven.
@@ -2498,31 +2513,27 @@ cost matters; a `dlltool` import library if MinGW DLLs are needed.
 ## Constrained randomization limits (SIM-029, SIM-030)
 
 **Status:** open. SIM-029 and SIM-030 solve packed integral and enum
-variables, `randc`, `dist`, `solve...before`, one-dimensional random arrays
-of packed elements, array methods and `foreach`, and random object members;
+variables, `randc`, `dist`, `solve...before`, fixed, dynamic and bounded
+random arrays of packed elements (fixed ones of any dimension count), array
+methods and `foreach`, and random object members;
 these forms remain outside them.
 
 ### Symptom
 
-- Rejected with a located `randomization:` error: arrays of class handles,
-  multidimensional and associative arrays, random bounded queues, static
-  random arrays and static random properties of objects reached through a
-  `rand` handle, `randc` arrays and `randc` variables wider than 16 bits,
-  elements of an enum or tagged-union type in a random array, a random array
-  read other than through element selects, `size()`, the reductions,
-  `inside` and `foreach` (for example compared whole), `std::randomize` of a
-  fixed-size array of a module or subroutine (dynamic arrays and queues
-  work), a constraint function argument that reads an array element, a loop
-  index or another object's variable, a function call in a constraint of an
-  object reached through a `rand` handle, a `solve...before` primary that is
-  an array element or size, packed structures with enum or tagged members,
-  `super.randomize()`, and an inline `local::` name that also names an
-  object property.
-- A `randomize()` call used as a value is supported in assignments, `if`
-  conditions, `return`, declarations, system-task arguments and immediate
-  assertions. Inside a short-circuit or conditional operand, or in a loop
-  condition, it is rejected, because it would have to run a number of times
-  that depends on the other operands.
+- Rejected with a located `randomization:` error: nested dynamic arrays and
+  queues, associative arrays, `randc` arrays and `randc` variables wider than
+  16 bits (18.4.2 lets an implementation limit them), a random untagged union
+  with enum members, a `solve...before` that solves a variable before an
+  array size (S30-D5 solves sizes first) or names an element at a non-constant
+  index, and a row of a multidimensional array in `inside`. A whole array in
+  a constraint is also rejected, as 18.3 requires (S30-D15).
+- A constraint function reached for an object of the randomized class other
+  than the randomized object ends the run with a fatal error: its receiver is
+  fixed at the call. Objects of other classes evaluate their own functions.
+- A `randomize()` call used as a value works in assignments, `if` conditions,
+  `return`, declarations, system-task arguments, immediate assertions, loop
+  headers and short-circuit or conditional operands of those. Elsewhere (a
+  `wait` condition, an event control) it rejects.
 - When the exact model and rejection sampling both exceed their budgets, the
   CDCL search returns a legal solution that is not uniformly distributed
   (S29-D10), against 18.5.9 L30013-30014; the fallbacks also ignore dist
@@ -2553,14 +2564,12 @@ these forms remain outside them.
 
 The exact engine counts models over the whole component, which a product of
 wide variables can exceed; the CDCL fallback finds one solution without
-counting. Arrays of handles need per-element object links in the lowering
-(the solver already has them); the other rejected forms need storage or
-expansion paths the lowering does not have.
+counting. The other rejected forms need storage or expansion paths the
+lowering does not have.
 
 ### Intended direction
 
-Arrays of `rand` handles and multidimensional arrays if a workload needs
-them; near-uniform sampling for the search fallback (hashing-based).
+Multidimensional arrays if a workload needs them; near-uniform sampling for the search fallback (hashing-based).
 
 ### Reproduce
 

@@ -773,6 +773,14 @@ fn s25_d9_class_state_reports() {
 }
 
 #[test]
+fn s25_d10_strobe_every_call() {
+    run_decision(
+        "S25-D10_strobe_every_call",
+        include_str!("fixtures/sim/lrm_decisions/S25-D10_strobe_every_call.out"),
+    );
+}
+
+#[test]
 fn s25_d2_multiple_fmonitor() {
     run_decision(
         "S25-D2_multiple_fmonitor",
@@ -1805,6 +1813,43 @@ fn s29_d10_search_not_uniform() {
     run_decision(
         "S29-D10_search_not_uniform",
         include_str!("fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.out"),
+    );
+}
+
+#[test]
+fn s30_d15_array_compare_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S30-D15_array_compare_rejected.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S30-D15_array_compare_rejected",
+        "a random array may be used in a constraint only through element selects",
+    );
+}
+
+#[test]
+fn s30_d14_inline_names_of_same_class() {
+    run_decision(
+        "S30-D14_inline_names_of_same_class",
+        include_str!("fixtures/sim/lrm_decisions/S30-D14_inline_names_of_same_class.out"),
+    );
+}
+
+#[test]
+fn s30_d13_handle_array_grows_null() {
+    run_decision(
+        "S30-D13_handle_array_grows_null",
+        include_str!("fixtures/sim/lrm_decisions/S30-D13_handle_array_grows_null.out"),
+    );
+}
+
+#[test]
+fn s30_d12_super_randomize() {
+    run_decision(
+        "S30-D12_super_randomize",
+        include_str!("fixtures/sim/lrm_decisions/S30-D12_super_randomize.out"),
     );
 }
 

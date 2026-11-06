@@ -120,6 +120,7 @@ impl<'a> Codegen<'a> {
     fn packed_value_selectors(&self, node: NodeId) -> Option<(NodeId, Vec<(NodeId, Select)>)> {
         let mut current = node;
         let mut selectors = Vec::new();
+        let mut element_root = false;
         loop {
             // A packed element of a member array of a container record
             // element (`recs[i].a[1]`) is one leaf, whatever selects follow.
@@ -151,6 +152,18 @@ impl<'a> Codegen<'a> {
                 _ => break,
             };
             if self.array_of(base).is_some() || self.container_of_select(current, base).is_some() {
+                // A member of a packed element of a class array property
+                // reads the element, then selects its bits.
+                if !selectors.is_empty() && self.class_packed_element(current, base) {
+                    element_root = true;
+                    break;
+                }
+                if matches!(select, Select::Member(_)) && self.class_packed_select(base) {
+                    selectors.push((base, select));
+                    current = base;
+                    element_root = true;
+                    break;
+                }
                 return None;
             }
             selectors.push((base, select));
@@ -158,17 +171,18 @@ impl<'a> Codegen<'a> {
         }
         let root = current;
         let admitted = !selectors.is_empty()
-            && (matches!(
-                self.kind(root),
-                NodeKind::Net { .. }
-                    | NodeKind::Var { .. }
-                    | NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
-            ) || self.element_packed_leaf(root))
-            && self.packed_member_info(root).is_none()
-            && self.packed_parameter_member_info(root).is_none()
-            && self.unpacked_member_info(root).is_none()
-            && self.unpacked_aggregate_info(root).is_none()
-            && !self.is_modport_select_root(root);
+            && (element_root
+                || ((matches!(
+                    self.kind(root),
+                    NodeKind::Net { .. }
+                        | NodeKind::Var { .. }
+                        | NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
+                ) || self.element_packed_leaf(root))
+                    && self.packed_member_info(root).is_none()
+                    && self.packed_parameter_member_info(root).is_none()
+                    && self.unpacked_member_info(root).is_none()
+                    && self.unpacked_aggregate_info(root).is_none()
+                    && !self.is_modport_select_root(root)));
         admitted.then(|| {
             selectors.reverse();
             (root, selectors)
@@ -259,13 +273,18 @@ impl<'a> Codegen<'a> {
         selectors: Vec<(NodeId, Select)>,
         root_width: u32,
     ) -> Result<Option<Vec<IrPackedSelect>>, String> {
-        let Some(ranges) = self.packed_ranges_for_base(root) else {
-            return Ok(None);
+        // An element of a class array property has no declared packed
+        // range of its own; only its members are selected.
+        let ranges = match self.packed_ranges_for_base(root) {
+            Some(ranges) => ranges,
+            None if self.class_packed_select(root) => Vec::new(),
+            None => return Ok(None),
         };
-        let Some(outer) = ranges.first().copied() else {
+        let outer = ranges.first().copied();
+        if outer.is_none() && !self.class_packed_select(root) {
             return Ok(None);
-        };
-        let Ok(dim) = PackedSelectDim::new(root_width, Some(outer)) else {
+        }
+        let Ok(dim) = PackedSelectDim::new(root_width, outer) else {
             return Ok(None);
         };
         let through_member = selectors
@@ -465,10 +484,32 @@ impl<'a> Codegen<'a> {
                 _ => return Some(select),
             };
             if self.array_of(base).is_some() || self.container_of_select(current, base).is_some() {
-                return None;
+                return (current == select && self.class_packed_element(current, base))
+                    .then_some(select);
             }
             current = base;
         }
+    }
+
+    /// Whether node `select` is a select of a class array property of packed
+    /// elements.
+    pub(in super::super) fn class_packed_select(&self, select: NodeId) -> bool {
+        match self.kind(select) {
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. } | ExprKind::ArraySelect { base, .. },
+            ) => self.class_packed_element(select, *base),
+            _ => false,
+        }
+    }
+
+    /// Whether `select` selects an element of a class array property of
+    /// packed elements.
+    fn class_packed_element(&self, select: NodeId, base: NodeId) -> bool {
+        self.container_of_select(select, base).is_some_and(|info| {
+            let container = &self.model.containers[info.ir];
+            container.class_field.is_some()
+                && matches!(container.element, IrContainerElement::Packed { .. })
+        })
     }
 
     /// The selected element and the member's place inside it. Tagged-union

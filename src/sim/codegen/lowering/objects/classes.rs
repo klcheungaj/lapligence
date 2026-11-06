@@ -197,7 +197,10 @@ impl Codegen<'_> {
         let owner = self
             .class_method_owner(callee)
             .and_then(|class| self.class_nodes.get(&class).copied());
-        if let Some(receiver) = self.rand_receiver_for(owner) {
+        if let Some(receiver) = self
+            .rand_receiver_for(owner)
+            .filter(|_| !self.names_caller(node))
+        {
             return Ok(Some(receiver));
         }
         self.class_init_receiver
@@ -284,8 +287,9 @@ impl Codegen<'_> {
             return Ok(receiver);
         }
         // A property of the randomized object inside its constraints.
-        if let Some(receiver) =
-            self.rand_receiver_for(self.class_fields.get(&field).map(|(class, _)| *class))
+        if let Some(receiver) = self
+            .rand_receiver_for(self.class_fields.get(&field).map(|(class, _)| *class))
+            .filter(|_| !self.names_caller(node))
         {
             return Ok(receiver);
         }

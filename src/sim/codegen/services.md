@@ -21,14 +21,18 @@ root's bit; static members use a static signal), invisible to `%p`. The
 dynamic class is resolved through `DynamicCast` cases, most derived first; the
 most-derived user `pre_randomize`/`post_randomize` (declared line != 0) runs
 before modes and state are read and after the commit. A value-form randomize
-is hoisted into `rand_prelude` only where it runs exactly once per statement
-evaluation; short-circuit/conditional operands and loop conditions reject.
+is hoisted into `rand_prelude` where it runs exactly once per statement
+evaluation; in a short-circuit or conditional operand or a loop header it stays
+in the expression as an `IrExprKind::Sequence`, evaluated in place. Other
+contexts (a wait, an event control) reject.
 Commit-after-solve (18.6.3): `randomization.rs` module docs.
 
 Arrays, `foreach` and `rand` object members make a problem a template with
-units (`templates.rs`, decisions S30-D5..D11): unit 0 is the randomized object
+units (`templates.rs`, decisions S30-D5..D13): unit 0 is the randomized object
 or `std::randomize` scope, each other unit a class an object reached through a
-`rand` handle can have; variables, arrays and handle slots are problem-wide,
+`rand` handle can have, or a handle array (a slot with `llg_cr_link` per
+element; non-random properties read through its elements are inactive
+variables); variables, arrays and handle slots are problem-wide,
 one per property declaration. `template_forms` runs before a constraint
 expression is lowered and registers array selects, `size()`, reductions
 (`item`, `item.index`), `inside` an array, members and null tests through

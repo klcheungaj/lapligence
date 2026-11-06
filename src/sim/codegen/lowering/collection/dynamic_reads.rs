@@ -222,7 +222,7 @@ impl Codegen<'_> {
             }
             nodes
         };
-        self.with_dynamic_reads(path, root, |cg| {
+        self.with_prepared_reads(path, root, |cg| {
             for node in &nodes {
                 let named = cg.class_storage_field(*node).is_some()
                     || cg.class_container_property(*node).is_some();
@@ -372,6 +372,17 @@ impl Codegen<'_> {
             return Err(self.unobservable_read(path, node, "a mailbox or semaphore method call"));
         }
         self.reject_event_comparison(path, node)?;
+        // `f().v`: only the call can name this storage, and the walk over
+        // `f` sees what it reads, not what the returned handle selects.
+        if let NodeKind::Expr(ExprKind::MemberSelect { base, .. }) = self.kind(node) {
+            if self.class_field_target(node).is_some() && self.called_subroutine(*base).is_some() {
+                return Err(self.unobservable_read(
+                    path,
+                    node,
+                    "a class property selected through a call result",
+                ));
+            }
+        }
         // An event array property publishes no change of its handles.
         if self.container_of(node).is_some_and(|container| {
             self.model
@@ -1148,22 +1159,39 @@ impl Codegen<'_> {
                     .map(|read| read.kind().clone()),
                 None => None,
             };
-            let Some(IrExprKind::LocalRead(name)) = read else {
+            // Only accesses a waiting process can resolve again qualify; a
+            // property no such access names would leave the wait blocked.
+            let resolved = match read {
+                Some(IrExprKind::LocalRead(name))
+                    if self.model.native_accesses.iter().any(|access| {
+                        access.name == name
+                            && matches!(
+                                access.kind,
+                                IrNativeAccessKind::ClassField { .. }
+                                    | IrNativeAccessKind::InterfaceMember { .. }
+                            )
+                    }) =>
+                {
+                    Some(name)
+                }
+                _ => None,
+            };
+            let Some(name) = resolved else {
+                if self.dynamic_class_property(node).is_some() {
+                    return Err(self.unobservable_read(
+                        path,
+                        node,
+                        &format!(
+                            "class property `{}` selected through a handle the wait cannot evaluate again",
+                            self.node(node).name
+                        ),
+                    ));
+                }
                 continue;
             };
-            // Only accesses a waiting process can resolve again qualify.
-            if self.model.native_accesses.iter().any(|access| {
-                access.name == name
-                    && matches!(
-                        access.kind,
-                        IrNativeAccessKind::ClassField { .. }
-                            | IrNativeAccessKind::InterfaceMember { .. }
-                    )
-            }) {
-                let mut dependencies = vec![IrDependency::NativeAccess(name.clone())];
-                self.handle_property_receivers(&name, &mut dependencies);
-                self.dynamic_reads.insert(node, dependencies);
-            }
+            let mut dependencies = vec![IrDependency::NativeAccess(name.clone())];
+            self.handle_property_receivers(&name, &mut dependencies);
+            self.dynamic_reads.insert(node, dependencies);
         }
         Ok(())
     }
@@ -1210,6 +1238,37 @@ impl Codegen<'_> {
     /// dependencies. Use it only where the consumer arms its wait again
     /// after every wake.
     pub(in super::super) fn with_dynamic_reads<T>(
+        &mut self,
+        path: &str,
+        root: NodeId,
+        collect: impl FnOnce(&Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.reject_record_property_reads(path, root)?;
+        self.with_prepared_reads(path, root, collect)
+    }
+
+    /// A store to a record property publishes no change (it has no marker
+    /// to resolve), so a wait on it would never resume: reject it where the
+    /// wait is written. A report rejects the same read with its own words.
+    fn reject_record_property_reads(&self, path: &str, root: NodeId) -> Result<(), String> {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            pending.extend(self.node(node).children.iter().copied());
+            let Some(field) = self.class_storage_field(node) else {
+                continue;
+            };
+            if self.class_native_fields.contains_key(&field) {
+                return Err(self.unobservable_read(
+                    path,
+                    node,
+                    &format!("record class property `{}`", self.node(field).name),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn with_prepared_reads<T>(
         &mut self,
         path: &str,
         root: NodeId,

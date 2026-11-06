@@ -342,3 +342,19 @@ fn event_variable_comparisons_in_waits_reject() {
     sim_cli::reject_case(SUITE, "reject_event_ref_wait_compare", reason);
     sim_cli::reject_case(SUITE, "reject_event_control_compare", reason);
 }
+
+#[test]
+fn storage_with_no_change_marker_rejects_in_waits() {
+    let reason = "cannot be observed by a wait or event expression";
+    sim_cli::reject_case(SUITE, "reject_wait_record_property", reason);
+    sim_cli::reject_case(SUITE, "reject_event_record_property", reason);
+    sim_cli::reject_case(SUITE, "reject_method_wait_record_property", reason);
+    sim_cli::reject_case(SUITE, "reject_wait_call_result", reason);
+}
+
+#[test]
+fn waits_on_records_in_containers_resume() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_014/wait_container_records.out");
+    sim_cli::run_case(SUITE, "wait_container_records", expected, "", &[]);
+}
