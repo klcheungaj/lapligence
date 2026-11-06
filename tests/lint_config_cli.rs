@@ -86,6 +86,18 @@ const CARELESS_CONTROL_SV: &str = r#"module careless_control (
 endmodule
 "#;
 
+const WIDE_INDEX_SV: &str = r#"module wide_index;
+    logic [7:0] mem [0:15];
+    logic [63:0] addr;
+    initial begin
+        mem[3] = 8'h5a;
+        addr = 64'd3;
+        $display("%h", mem[addr]);
+        $finish;
+    end
+endmodule
+"#;
+
 struct TempDir {
     path: std::path::PathBuf,
 }
@@ -677,3 +689,43 @@ const FSM_STATES_SV: &str = "module fsm_states(input logic clk);
   always_ff @(posedge clk) cs <= cs + 2'd1;
 endmodule
 ";
+
+/// `wide-index` warns on a 64-bit index into a memory without stopping the
+/// run, `-Werror` stops it, and the rule can be disabled in `llg.toml`.
+#[test]
+fn wide_index_warns_and_honors_config_and_werror() {
+    let dir = TempDir::new("wide_index");
+    dir.write("design.sv", WIDE_INDEX_SV);
+
+    let out = run_llg(&dir.path, &["--top", "wide_index", "design.sv"]);
+    let err = stderr(&out);
+    assert!(
+        out.status.success(),
+        "a warning must not stop the run: {err}"
+    );
+    assert!(
+        err.contains("[WARNING] wide-index: index of an unpacked array is 64 bits wide"),
+        "{err}"
+    );
+
+    let out = run_llg(&dir.path, &["-Werror", "--top", "wide_index", "design.sv"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "stderr: {err}");
+    assert!(err.contains("[ERROR] wide-index"), "{err}");
+
+    let cfg = dir.lint_config("[lint.rules.wide-index]\nenabled = false\n");
+    let out = run_llg(
+        &dir.path,
+        &[
+            "-Werror",
+            "--config",
+            cfg.to_str().unwrap(),
+            "--top",
+            "wide_index",
+            "design.sv",
+        ],
+    );
+    let err = stderr(&out);
+    assert!(out.status.success(), "stderr: {err}");
+    assert!(!err.contains("wide-index"), "{err}");
+}

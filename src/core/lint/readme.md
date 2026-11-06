@@ -1,6 +1,6 @@
 # Shared linter
 
-The simulator and LSP share 24 default-enabled rules over owned `Db`/`DesignModel`,
+The simulator and LSP share 25 default-enabled rules over owned `Db`/`DesignModel`,
 without native AST or LSP dependencies. Stable rule IDs cover usage, widths,
 drivers, control flow and assignment style. See the [registry](rules/mod.rs)
 and [rule modules](rules/readme.md).

@@ -27,6 +27,7 @@ pub mod unconnected_port;
 pub mod undriven;
 pub mod unused;
 pub mod unused_param;
+pub mod wide_index;
 pub mod width;
 pub mod xz_comparison;
 
@@ -52,6 +53,7 @@ pub use unconnected_port::UnconnectedPortRule;
 pub use undriven::UndrivenSignalRule;
 pub use unused::UnusedSignalRule;
 pub use unused_param::UnusedParameterRule;
+pub use wide_index::WideIndexRule;
 pub use width::WidthMismatchRule;
 pub use xz_comparison::XzLogicalEqualityRule;
 
@@ -86,6 +88,7 @@ pub fn default_rules() -> Vec<Box<dyn crate::core::lint::LintRule>> {
         Box::new(EmptyImplicitSensitivityRule),
         Box::new(AssignmentInConditionRule),
         Box::new(CasexStatementRule),
+        Box::new(WideIndexRule),
     ]
 }
 

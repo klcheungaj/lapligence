@@ -66,3 +66,11 @@ See [shared lint](../readme.md).
   outside the rule.
 - `casex-statement` (`casex_statement.rs`): every `casex` in a process or
   function/task body; cloned instances are source-deduplicated.
+- `wide-index` (`wide_index.rs`): the index of an unpacked array, queue,
+  dynamic array, string or packed select, a queue slice bound and the base of
+  an indexed part select, when its self-determined width exceeds 32 bits.
+  Associative-array keys, constants that fit in 32 bits, unknown widths and
+  method arguments (`insert`, `getc`, ...) are skipped. A constant outside a
+  fixed array or packed vector is left to `out-of-range-select`; the rule
+  reports only the constants nothing else can (negative, or beyond 32 bits, on
+  a queue, dynamic array or string). Decision S07-D7.

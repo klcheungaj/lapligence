@@ -347,6 +347,7 @@ Default rules (enabled; find `[lint.rules.<id>]` snippets below):
 | `empty-implicit-sensitivity` | `always @*` blocks that write but have no resolved body reads |
 | `assignment-in-condition` | assignment expressions used as truth predicates |
 | `casex-statement` | `casex` statements, which can hide X/Z selector mistakes |
+| `wide-index` | element, bit and part-select indices wider than 32 bits (never truncated; an out-of-range one is invalid), and constant indices no queue, dynamic array or string accepts |
 
 ```toml
 schema_version = 1
