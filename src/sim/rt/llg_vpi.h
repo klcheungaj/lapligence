@@ -39,6 +39,9 @@ extern "C" {
  * `port_index` in row-major order. The elements of an array follow its row
  * in that order; `parent` stays the declaring scope. */
 #define LLG_VPI_OBJ_ELEMENT 0x800000u
+/* `packed` names a one-cell descriptor array (a scalar member of a column
+ * record) until the rows are decoded, then its cell, which never moves. */
+#define LLG_VPI_OBJ_FIXED_CELL 0x1000000u
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),

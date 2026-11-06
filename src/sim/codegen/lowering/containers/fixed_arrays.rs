@@ -2000,6 +2000,19 @@ impl<'a> Codegen<'a> {
             {
                 return Ok(Some(statement));
             }
+            // A call that returns its array packed enters transport as cells.
+            if matches!(
+                self.kind(self.p30_unwrap_cast(rhs)),
+                NodeKind::FuncCall { .. }
+            ) {
+                let dst = self.fixed_memory_view(path, lhs)?;
+                let src = self.lower_fixed_value(path, rhs)?;
+                return Ok(Some(IrStmt::FixedValueAssign {
+                    dst,
+                    src: Box::new(src),
+                    nba: !blocking,
+                }));
+            }
             return Err(format!("fixed-array value in `{path}` requires a non-flattened whole copy, supported stream, call or default pattern"));
         }
         let mut captures = Vec::new();

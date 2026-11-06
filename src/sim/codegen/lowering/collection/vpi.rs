@@ -729,19 +729,24 @@ impl Codegen<'_> {
                 }
                 continue;
             }
-            let Some(signal) = leaves
-                .iter()
-                .find(|leaf| leaf.path == member_path)
-                .and_then(|leaf| leaf.signal.as_ref())
-            else {
+            let Some(leaf) = leaves.iter().find(|leaf| leaf.path == member_path) else {
                 continue;
             };
+            let cell = leaf
+                .array
+                .as_ref()
+                .filter(|_| record_cell_leaf(leaf))
+                .map(|cell| (cell.ir, cell.elem_width));
+            let (real, storage_width) = match (&leaf.signal, cell) {
+                (Some(signal), _) => (signal.real, signal.width),
+                (None, Some((_, width))) => (false, width),
+                (None, None) => continue,
+            };
             let typespec = self.vpi_typespec(table, &member.descriptor, member_naming, depth + 1);
-            let real = signal.real;
             let width = if real {
                 0
             } else {
-                Self::fixed_descriptor_width(&member.descriptor).unwrap_or(signal.width)
+                Self::fixed_descriptor_width(&member.descriptor).unwrap_or(storage_width)
             };
             let kind = typespec.map(|typespec| table.entries[typespec].kind);
             let ranges = typespec.map_or(0, |typespec| table.entries[typespec].ranges.len());
@@ -754,7 +759,9 @@ impl Codegen<'_> {
                 width,
                 signed: member.descriptor.info.signed,
                 real,
-                signal: Some(signal.ir),
+                signal: leaf.signal.as_ref().map(|signal| signal.ir),
+                array: cell.map(|(array, _)| array),
+                fixed_cell: cell.is_some(),
                 var_kind: kind.map_or_else(
                     || IrVpiVarKind::from_type_kind(&member.ty.kind, member.packed_ranges.len()),
                     |kind| typespec_var_kind(kind, ranges),
@@ -775,7 +782,7 @@ impl Codegen<'_> {
                     .flatten(),
                 two_state: member.two_state,
                 typespec,
-                slice: !real && width < signal.width,
+                slice: !real && width < storage_width,
                 ..row
             });
         }
@@ -1667,7 +1674,7 @@ impl Codegen<'_> {
                     if self
                         .unpacked_aggregates
                         .get(&id)
-                        .is_some_and(|info| !info.columns)
+                        .is_some_and(|info| !info.columns || self.chosen_record_column(id))
                         && !self.block_records.contains_key(&id) =>
                 {
                     let Some(descriptor) = self.db.type_descriptor(id) else {

@@ -54,6 +54,7 @@ struct Entry {
     typespec: Option<usize>,
     member: bool,
     slice: bool,
+    fixed_cell: bool,
     record: bool,
     detail: &'static str,
     event: String,
@@ -105,6 +106,7 @@ impl Entry {
             typespec: None,
             member: false,
             slice: false,
+            fixed_cell: false,
             record: false,
             detail: "0",
             event: "NULL".to_owned(),
@@ -195,21 +197,27 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 continue;
             };
             // Sparse arrays live in a keyed container, not flat element
-            // cells; they are not VPI-visible (documented limit).
-            if array.sparse() || array.activation || array.descriptor {
+            // cells; they are not VPI-visible (documented limit), except
+            // the one cell of a scalar record member.
+            if object.fixed_cell {
+                (
+                    format!("&{}", array.c_name),
+                    "NULL".to_owned(),
+                    "NULL".to_owned(),
+                    Vec::new(),
+                )
+            } else if array.sparse() || array.activation || array.descriptor {
                 continue;
-            }
-            let base = format!("&{}[0]", array.c_name);
-            if array.real {
+            } else if array.real {
                 (
                     "NULL".to_owned(),
-                    base,
+                    format!("&{}[0]", array.c_name),
                     "NULL".to_owned(),
                     array.dims.clone(),
                 )
             } else {
                 (
-                    base,
+                    format!("&{}[0]", array.c_name),
                     "NULL".to_owned(),
                     "NULL".to_owned(),
                     array.dims.clone(),
@@ -318,6 +326,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             typespec: object.typespec,
             member: object.member,
             slice: object.slice,
+            fixed_cell: object.fixed_cell,
             record: object.kind == IrVpiObjectKind::Record,
             detail: object.detail.unwrap_or("0"),
             event,
@@ -756,6 +765,9 @@ fn pack_objects(
         }
         if entry.slice {
             flags.push("LLG_VPI_OBJ_SLICE");
+        }
+        if entry.fixed_cell {
+            flags.push("LLG_VPI_OBJ_FIXED_CELL");
         }
         if entry.record {
             flags.push("LLG_VPI_OBJ_RECORD");

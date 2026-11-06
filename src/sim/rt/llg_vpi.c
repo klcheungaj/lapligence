@@ -5807,7 +5807,10 @@ static void pack_objects(pack_reader_t* r) {
             object->strength = strength0 | strength1 << 8;
         }
         uint64_t refs = pack_uint(r);
-        if (refs & PACK_REF_PACKED) object->packed = (sv4_t*)pack_ref(r);
+        if (refs & PACK_REF_PACKED)
+            object->packed = object->flags & LLG_VPI_OBJ_FIXED_CELL
+                                 ? llg_fixed_array_cell((llg_fixed_array_t*)pack_ref(r), 0)
+                                 : (sv4_t*)pack_ref(r);
         if (refs & PACK_REF_REAL) object->real = (double*)pack_ref(r);
         if (refs & PACK_REF_NET) object->net = (llg_net_t*)pack_ref(r);
         if (refs & PACK_REF_EVENT) object->event = (llg_event_t*)pack_ref(r);

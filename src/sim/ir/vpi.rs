@@ -290,6 +290,9 @@ pub struct IrVpiObject {
     pub(in crate::sim) net: bool,
     pub(in crate::sim) signal: Option<usize>,
     pub(in crate::sim) array: Option<usize>,
+    /// `array` is the one-cell column of a scalar record member: the object
+    /// is that cell, not an array.
+    pub(in crate::sim) fixed_cell: bool,
     /// Variable/element data type (variables, arrays and parameters).
     pub(in crate::sim) var_kind: IrVpiVarKind,
     /// Declared `[left:right]` of the outermost packed dimension; `None`

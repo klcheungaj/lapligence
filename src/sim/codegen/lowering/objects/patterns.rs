@@ -99,6 +99,13 @@ impl Codegen<'_> {
             }
         }
         let width = self.model.pattern_types[ty].width();
+        if let Some(image) = self
+            .record_column_array(node)
+            .map(|column| column.ir)
+            .and_then(|column| self.column_image(column))
+        {
+            return Ok(pattern(IrPatternSource::Packed(image)));
+        }
         if width != 0 {
             if let Ok(value) = self.lower_expr(path, node) {
                 if !value.is_real() && value.width == width {

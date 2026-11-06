@@ -4,35 +4,18 @@
 //! own leaf, which costs per access site, not per declaration: a run-time
 //! index compares against every cell, and a selection of a record that fits
 //! the packed limit reads or writes the whole flattened record. One column
-//! makes both one cell lookup. The cost is a hash lookup in place of a direct
-//! access, so the choice is made per type from the design's own selections:
-//! a record that fits the packed limit on any selection of a member array
-//! of at least [`LLG_RECORD_COLUMN_MIN_CELLS`] cells, and any other record
-//! only on a run-time index into one. Constant selections of leaf objects are
-//! direct and stay as they are.
-//!
-//! Column layout does not cover every use of a type, so this is a preference:
-//! the caller lowers the chosen types and keeps the per-cell model when that
-//! lowering fails ([`crate::sim::codegen::lowering`]).
+//! makes both one cell lookup and keeps generated code flat, so the choice is
+//! made per type from the design's own selections: any selection of a member
+//! array of at least [`LLG_RECORD_COLUMN_MIN_CELLS`] cells.
 use super::super::native_values::{SelectRoot, SelectStep};
 use super::*;
 use crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS;
 
-/// What one selection does to a member array.
-struct MemberArraySelect {
-    cells: u64,
-    run_time: bool,
-}
-
-/// The member array `steps` index in `descriptor`, if any; a select inside a
-/// packed leaf is not one.
-fn member_array_select(
-    descriptor: &TypeDescriptor,
-    steps: &[SelectStep],
-) -> Option<MemberArraySelect> {
+/// The cell count of the member array `steps` index in `descriptor`, if any;
+/// a select inside a packed leaf is not one.
+fn selected_member_cells(descriptor: &TypeDescriptor, steps: &[SelectStep]) -> Option<u64> {
     let mut descriptor = descriptor;
-    let mut steps = steps.iter();
-    while let Some(step) = steps.next() {
+    for step in steps {
         match (step, &descriptor.shape) {
             (SelectStep::Member(name), TypeShape::Aggregate(layout))
                 if layout.kind == AggregateKind::UnpackedStruct =>
@@ -43,11 +26,7 @@ fn member_array_select(
                 SelectStep::Constant(_) | SelectStep::Run(_),
                 TypeShape::FixedArray { dimensions, .. },
             ) => {
-                let cells = fixed_array_cell_count(dimensions).ok()?;
-                let run_time = std::iter::once(step)
-                    .chain(steps.by_ref().take(dimensions.len() - 1))
-                    .any(|step| matches!(step, SelectStep::Run(_)));
-                return Some(MemberArraySelect { cells, run_time });
+                return fixed_array_cell_count(dimensions).ok();
             }
             _ => return None,
         }
@@ -122,12 +101,10 @@ impl Codegen<'_> {
             if chosen.contains(&descriptor.id) || self.record_column_layout(descriptor) {
                 continue;
             }
-            let Some(select) = member_array_select(descriptor, &steps) else {
+            let Some(cells) = selected_member_cells(descriptor, &steps) else {
                 continue;
             };
-            if select.cells >= LLG_RECORD_COLUMN_MIN_CELLS
-                && select.cells <= LLG_DENSE_FIXED_ARRAY_CELLS
-                && (select.run_time || fixed_width_bits(descriptor).is_some())
+            if (LLG_RECORD_COLUMN_MIN_CELLS..=LLG_DENSE_FIXED_ARRAY_CELLS).contains(&cells)
                 && columns_hold(descriptor)
             {
                 choose_with_nested(descriptor, &mut chosen);

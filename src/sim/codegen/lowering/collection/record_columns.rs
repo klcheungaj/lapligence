@@ -12,7 +12,7 @@ use super::fixed_values::{
 };
 use super::*;
 use crate::core::db::TypeId;
-use crate::sim::ir::{IrCellNames, LLG_DENSE_FIXED_ARRAY_CELLS};
+use crate::sim::ir::{IrCellNames, IrStreamSelector, LLG_DENSE_FIXED_ARRAY_CELLS};
 
 mod choice;
 #[cfg(test)]
@@ -1023,6 +1023,46 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.activation_record_path(*operand),
             _ => root(node).map(|target| (target, Vec::new())),
         }
+    }
+
+    /// Whether only the design's selections put `root` in column layout: it
+    /// shows applications and dumps the objects of its leaf form.
+    pub(in super::super) fn chosen_record_column(&self, root: NodeId) -> bool {
+        self.db
+            .type_descriptor(root)
+            .is_some_and(|descriptor| !column_layout_of(descriptor, &HashSet::new()))
+    }
+
+    /// The packed image of a member-array leaf, one runtime read of the
+    /// column in declaration order, when it fits packed capacity.
+    pub(in super::super) fn column_leaf_image(&self, leaf: &AggregateMemberInfo) -> Option<IrExpr> {
+        let array = leaf.array.as_ref().filter(|_| !record_cell_leaf(leaf))?;
+        self.column_image(array.ir)
+    }
+
+    /// The packed image of a whole one-dimensional column.
+    pub(in super::super) fn column_image(&self, array: usize) -> Option<IrExpr> {
+        let array = self.reference_array(array);
+        let info = &self.model.arrays[array];
+        let [(left, right)] = info.dims[..] else {
+            return None;
+        };
+        let width = u32::try_from(info.total.checked_mul(u64::from(info.elem_width))?)
+            .ok()
+            .filter(|width| *width <= LLG_MAX_WIDTH)?;
+        let image = IrExpr::new(
+            IrExprKind::FixedStream {
+                array,
+                selector: Box::new(IrStreamSelector::Range {
+                    left: lhs_integer_expr(i128::from(left)),
+                    right: lhs_integer_expr(i128::from(right)),
+                }),
+            },
+            LLG_MAX_WIDTH,
+            false,
+            None,
+        );
+        Some(IrExpr::resize_to(image, width, false))
     }
 
     /// The column a whole member reference (`r.a`, `r.s.a`) names.

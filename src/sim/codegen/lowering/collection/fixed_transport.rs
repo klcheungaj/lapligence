@@ -718,7 +718,13 @@ impl Codegen<'_> {
                 selected || !aligned
             }
             NodeKind::FuncCall { .. } => selected || !blocking,
-            _ => selected || self.array_of(source).is_none(),
+            // A directly addressed source has no descriptor to copy from.
+            _ => {
+                selected
+                    || self
+                        .array_of(source)
+                        .is_none_or(|source| !self.model.arrays[source.ir].sparse())
+            }
         })
     }
 }

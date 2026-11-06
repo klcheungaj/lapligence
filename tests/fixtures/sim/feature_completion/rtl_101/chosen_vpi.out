@@ -1,0 +1,17 @@
+tb.r vpiStructVar
+  size 5
+  member tb.r.tag vpiReg size 8
+  member tb.r.n vpiIntVar size 32
+  member tb.r.w vpiRealVar size 64
+tb.r.tag vpiReg
+  size 8
+tb.r.n vpiIntVar
+  size 32
+tb.r.w vpiRealVar
+  size 64
+tb.r.s NULL
+tb.r.a NULL
+tb.r.a[3] NULL
+tag=5a
+cb tb.r.tag=a5
+a5 42 9

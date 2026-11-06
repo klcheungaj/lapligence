@@ -174,6 +174,33 @@ fn whole_values_of_chosen_columns_match_the_leaf_form() {
 }
 
 #[test]
+fn cell_writes_reach_every_reader_of_the_contents_marker() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_observers.out");
+    sim_cli::run_case(SUITE, "chosen_observers", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_observers", expected, &[], &[]);
+}
+
+#[test]
+fn only_an_unread_contents_marker_is_cleared() {
+    let model = generated_model(
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_observers.sv"),
+        &[],
+    );
+    let cleared = |name: &str| model.contains(&format!("llg_fixed_array_unobserved(&{name});"));
+    for quiet in ["G_cI_tbZpu1ZpquietZpa", "G_cI_tbZpu2ZpquietZpa"] {
+        assert!(cleared(quiet), "{model}");
+    }
+    for read in [
+        "G_cI_tbZptZpa",
+        "G_cI_tbZpwZpa",
+        "G_cI_tbZpu1ZprZpa",
+        "G_cI_tbZpu2ZprZpa",
+    ] {
+        assert!(model.contains(read) && !cleared(read), "{model}");
+    }
+}
+
+#[test]
 fn whole_operands_of_column_records_need_no_image() {
     let model = generated_model(
         "module tb;
@@ -193,10 +220,16 @@ endmodule
 }
 
 #[test]
-fn uses_columns_lack_keep_the_leaf_form() {
-    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_fallback.out");
-    sim_cli::run_case(SUITE, "chosen_fallback", expected, "", &[]);
-    sim_cli::run_case_backend_parity(SUITE, "chosen_fallback", expected, &[], &[]);
+fn dense_copies_and_patterns_keep_the_column_form() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_dense_source.out");
+    sim_cli::run_case(SUITE, "chosen_dense_source", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_dense_source", expected, &[], &[]);
+    let model = generated_model(
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_dense_source.sv"),
+        &[],
+    );
+    assert!(model.contains("llg_fixed_array_cell("), "{model}");
 }
 
 #[test]
@@ -214,18 +247,51 @@ fn selections_of_member_arrays_do_not_grow_with_the_array() {
 }
 
 #[test]
-fn leaf_storage_stays_where_columns_do_not_pay_or_observers_need_it() {
+fn selections_choose_columns_above_the_minimum_size() {
     let column = "llg_fixed_array_cell(";
     let run_time = selected_record("string s;", 64, "k");
     assert!(generated_model(&run_time, &[]).contains(column));
-    // Constant selects of a native record are direct.
     let constant = selected_record("string s;", 64, "2");
-    assert!(!generated_model(&constant, &[]).contains(column));
+    assert!(generated_model(&constant, &[]).contains(column));
+    // A catalog shows the leaves of a column record.
+    assert!(generated_model(&run_time, &["--vpi"]).contains(column));
     // Below the minimum a chain of comparisons stays.
     let small = selected_record("string s;", 8, "k");
     assert!(!generated_model(&small, &[]).contains(column));
-    // A catalog exposes each member leaf (`tb.r`, `tb.r.x`).
-    assert!(!generated_model(&run_time, &["--vpi"]).contains(column));
+}
+
+#[test]
+fn a_vpi_application_sees_the_objects_of_the_leaf_form() {
+    let directory = sim_harness::TempDir::new("rtl101-vpi").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "chosen_vpi", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "chosen_vpi",
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_vpi.out"),
+        &[
+            "--define-system-task",
+            "task $chosen_vpi()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+    let model = generated_model(
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_vpi.sv"),
+        &["--vpi", "--define-system-task", "task $chosen_vpi()"],
+    );
+    assert!(model.contains("LLG_VPI_OBJ_FIXED_CELL"), "{model}");
+}
+
+#[test]
+fn toggle_coverage_counts_the_same_entities() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_toggle.out");
+    sim_cli::run_case(SUITE, "chosen_toggle", expected, "", &[]);
+    let model = generated_model(
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_toggle.sv"),
+        &[],
+    );
+    assert!(model.contains("llg_fixed_array_cell("), "{model}");
 }
 
 #[test]

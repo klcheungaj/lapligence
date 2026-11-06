@@ -70,8 +70,22 @@ column. Expected values are derived by hand below; none were captured from
   from an array with an invalid index shall return the default uninitialized
   value for the array element type. Writing to an array with an invalid index
   shall perform no operation."
-- `chosen_fallback`: `%p` of the whole record and a copy from a directly
-  addressed array are outside column layout, so the record keeps its leaves.
+- `chosen_dense_source`: a whole member takes a copy from a directly addressed
+  array and gives one back; `%p` prints a whole record and a whole member array
+  in one image each, in the form of the record's leaves.
+- `chosen_vpi`: an application reads, watches and writes the scalar members of a
+  chosen record and walks its members. Expected lines are the per-cell form's
+  output, compared line by line: `tb.r.s`, `tb.r.a` and `tb.r.a[3]` have no object
+  in either form.
+- `chosen_toggle`: toggle coverage entities are packed variables (S46-D14), so a
+  chosen record changes neither count.
+- `chosen_observers`: writes to cells of a chosen record reach run-time index
+  readers (`always_comb`, `wait`, `@`, `$monitor`) in both instances of a shared
+  body, while `quiet`, which nothing reads, gives up its contents marker. Expected
+  lines match industry-standard behaviour. SV2009 9.4.2 L11836-11837: "Changing the value
+  of object data members, aggregate elements, or the size of a dynamically sized
+  array referenced by a method or function shall cause the event expression to be
+  reevaluated."
 - `chosen_whole_values`: whole copies and comparisons of chosen records, which
   read whole operands in place and write only differing cells. A copy that
   changes nothing wakes nothing (`q = p` at time 2). `q.a[7]`, a cell only `q`

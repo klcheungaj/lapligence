@@ -1196,6 +1196,9 @@ impl Codegen<'_> {
                         }
                     });
                 }
+                if let Some(image) = self.column_leaf_image(leaf) {
+                    return Ok(LeafValue::Packed(image));
+                }
                 let value = self.aggregate_leaf_read(leaf)?;
                 Ok(if value.is_real() {
                     LeafValue::Real(value)

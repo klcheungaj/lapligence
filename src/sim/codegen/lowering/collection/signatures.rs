@@ -513,7 +513,9 @@ impl<'a> Codegen<'a> {
                 let ir = self.model.funcs.len();
                 self.model.funcs.push(crate::sim::ir::IrFunc {
                     origin: self.origin(*c),
-                    return_default: self.fixed_default_literal(*c),
+                    // A column-layout result is trailing outputs: no value
+                    // returns, so there is no default for one.
+                    return_default: self.fixed_default_literal(*c).filter(|_| ret.is_some()),
                     return_signal: None,
                     c_name,
                     diagnostic_name: self.func_labels.get(c).cloned(),

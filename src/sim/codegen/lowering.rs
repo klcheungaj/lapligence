@@ -629,6 +629,23 @@ pub fn sdf_targets(
 }
 
 fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String> {
+    // Column layout does not yet cover every use of a chosen type
+    // (docs/known_issues.md lists them): such a design keeps its leaf form.
+    let columns = record_column_choice(db)?;
+    if !columns.is_empty() {
+        if let Ok(lowered) = lower_model_with_ports(db, options, &columns) {
+            return Ok(lowered);
+        }
+    }
+    lower_model_with_ports(db, options, &HashSet::new())
+}
+
+/// Lower with the port sharing the model needs.
+fn lower_model_with_ports(
+    db: &Db,
+    options: &CodegenOptions,
+    columns: &HashSet<TypeId>,
+) -> Result<LoweredModel, String> {
     // A VPI application may write either side of a port, so a model that
     // keeps the VPI catalog keeps every port whose sink would share a
     // variable's storage as a link (a put on the sink must not reach the
@@ -637,9 +654,6 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     // the application needs port delays (`--vpi-port-delays`). User system
     // calls are known only once the bodies are lowered: a design that has
     // them is lowered again as a VPI model.
-    if let Some(lowered) = lower_record_columns(db, options) {
-        return Ok(lowered);
-    }
     let vpi_sharing = if options.vpi_port_delays {
         PortSharing::Separate
     } else {
@@ -650,45 +664,27 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     } else {
         PortSharing::All
     };
-    let no_columns = HashSet::new();
-    let lowered = lower_model_retrying(db, options, first, &no_columns)?;
+    let lowered = lower_model_retrying(db, options, first, columns)?;
     if first == PortSharing::All
         && !lowered.model.vpi_compile_calls.is_empty()
         && (lowered.shared_variable_ports || vpi_sharing == PortSharing::Separate)
     {
         drop(lowered);
-        return lower_model_retrying(db, options, vpi_sharing, &no_columns);
+        return lower_model_retrying(db, options, vpi_sharing, columns);
     }
     Ok(lowered)
 }
 
-/// The model with the record columns the design's selections choose
-/// (`collection/record_columns/choice.rs`), or `None` to lower it with leaf
-/// storage: nothing is chosen, a catalog or toggle coverage observes each
-/// member leaf, or lowering fails because column layout does not cover some
-/// use of a chosen type. A real design error then surfaces from the leaf
-/// lowering with its usual diagnostic.
-fn lower_record_columns(db: &Db, options: &CodegenOptions) -> Option<LoweredModel> {
-    if options.vpi || !collection::has_record_member_array(db) {
-        return None;
+/// The record types the design's selections store as columns
+/// (`collection/record_columns/choice.rs`).
+fn record_column_choice(db: &Db) -> Result<HashSet<TypeId>, String> {
+    if !collection::has_record_member_array(db) {
+        return Ok(HashSet::new());
     }
-    let chosen = {
-        let semantic = checked_semantic(db).ok()?;
-        let mut cg = Codegen::new(&semantic);
-        collect_tops(&mut cg).ok()?;
-        cg.plan_code_coverage(false);
-        if cg.code_coverage.toggle {
-            return None;
-        }
-        cg.record_column_choice()
-    };
-    if chosen.is_empty() {
-        return None;
-    }
-    lower_model_retrying(db, options, PortSharing::All, &chosen)
-        .ok()
-        // User system calls make it a VPI model after all.
-        .filter(|lowered| lowered.model.vpi_compile_calls.is_empty())
+    let semantic = checked_semantic(db)?;
+    let mut cg = Codegen::new(&semantic);
+    collect_tops(&mut cg)?;
+    Ok(cg.record_column_choice())
 }
 
 /// Lower with port sharing `sharing`. A collapsed net port whose time-zero
