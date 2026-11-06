@@ -64,7 +64,9 @@ waiting: intra-assignment NBA and `->>` controls arm at issue and wait in a
 hidden per-site source signal, re-evaluated by a guard process gated by
 `IrRuntimeQuery::ForceSourceActive`. `$monitor`/`$strobe` helpers
 (`classify_postponed_expression`) may store only to storage they own
-(`DisplayEval.private_effects`); other writes reject (SV 4.4.2.9); an argument calling a user system function
+(`DisplayEval.private_effects`); other writes reject (SV 4.4.2.9). A helper with a
+string formal or an actual the evaluator builds (`DisplayEval.prelude`) runs the
+same way; an argument calling a user system function
 keeps the callback form. Callee
 activation arrays never enter dependency sets. Writes inside functions called by a continuous
 assignment are procedural writers in the SV 6.5 conflict check; only its LHS
