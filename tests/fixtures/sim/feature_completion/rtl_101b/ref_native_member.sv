@@ -1,5 +1,5 @@
-// RTL-101b limit: a ref formal aliases its actual, but the string member
-// of a column-layout record travels in a native value copy.
+// RTL-101b: a ref formal aliases its actual, so the subroutine is specialized
+// for the record it binds and writes the string member in place.
 module tb;
   typedef struct { bit [7:0] a [0:65536]; string s; } rec_t;
   rec_t r;

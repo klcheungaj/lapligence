@@ -86,16 +86,16 @@ fn pattern_variables_bind_whole_values_beyond_packed_capacity() {
 }
 
 #[test]
+fn ref_formals_reach_the_string_member_of_a_column_record() {
+    sim_cli::run_case_backend_parity(SUITE, "ref_native_member", "y\n", &[], &[]);
+}
+
+#[test]
 fn neg_column_record_follow_up_limits() {
     sim_cli::reject_case(
         SUITE,
         "neg_nonuniform_member_initializer",
         "member initializer of `a` gives the column's cells different values; column layout keeps one element default",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_native_ref_formal",
-        "ref formal `v` of a column-layout record with real, string or chandle members is not supported",
     );
     sim_cli::reject_case(
         SUITE,

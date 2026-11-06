@@ -1762,6 +1762,10 @@ impl Codegen<'_> {
         let Some(native) = self.record_formal_native(formal) else {
             return Ok(arguments);
         };
+        if self.record_ref_binding(formal, actual).is_some() {
+            arguments.push(IrCallArg::NativeRefBound);
+            return Ok(arguments);
+        }
         let ty = self.model.native_values[native].ty;
         if let Some(group) = self
             .record_native_group(&value)
@@ -1769,6 +1773,12 @@ impl Codegen<'_> {
         {
             arguments.push(IrCallArg::NativeValue(group));
             return Ok(arguments);
+        }
+        if self.is_ref_formal(formal) {
+            return Err(format!(
+                "ref argument for `{}` in `{path}` must be a record variable or formal",
+                self.node(formal).name
+            ));
         }
         let pairs = shape
             .columns

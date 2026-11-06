@@ -324,15 +324,22 @@ impl Codegen<'_> {
         if !self.is_ref_formal(formal) {
             return None;
         }
-        let layout = self.native_layouts.get(&formal)?;
+        // A column formal with native members has no native layout: its
+        // columns would alias through addresses, its native value cannot.
+        let columns = self.record_formal_native(formal).is_some();
+        let descriptor = if columns {
+            &self.activation_records.get(&formal)?.descriptor
+        } else {
+            &self.native_layouts.get(&formal)?.descriptor
+        };
         let source = self.p30_unwrap_cast(actual);
         let (root, prefix) = match self.record_ref_pins.get(&source) {
             Some(RecordRefPin::Element { root, prefix }) => (*root, prefix.clone()),
             Some(RecordRefPin::Default(_)) => return None,
             None if matches!(self.native_path_of(source), Ok(None)) => {
                 let selection = self.resolve_unpacked_aggregate(source)?;
-                if selection.storage.columns
-                    || !same_record_type(&layout.descriptor, &selection.descriptor)
+                if selection.storage.columns != columns
+                    || !same_record_type(descriptor, &selection.descriptor)
                 {
                     return None;
                 }

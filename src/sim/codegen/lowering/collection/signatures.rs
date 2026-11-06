@@ -151,12 +151,6 @@ impl<'a> Codegen<'a> {
                     // Real, string and chandle members travel in one native
                     // value after the columns (SIM-003 transport).
                     if let Some(value) = self.record_formal_native(*io) {
-                        if formal.is_ref() {
-                            return Err(format!(
-                                "ref formal `{}` of a column-layout record with real, string or chandle members is not supported",
-                                self.node(*io).name
-                            ));
-                        }
                         let mut column = formal.clone();
                         column.fixed_array = None;
                         column.native_value = Some(value);

@@ -213,6 +213,13 @@ fn native_values_carry_records_of_the_column_form() {
 }
 
 #[test]
+fn ref_formals_alias_records_of_the_column_form() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_ref.out");
+    sim_cli::run_case(SUITE, "chosen_ref", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_ref", expected, &["-D", "N=8"], &[]);
+}
+
+#[test]
 fn only_an_unread_contents_marker_is_cleared() {
     let model = generated_model(
         include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_observers.sv"),

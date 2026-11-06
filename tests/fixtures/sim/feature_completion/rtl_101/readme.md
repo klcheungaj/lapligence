@@ -97,6 +97,9 @@ column. Expected values are derived by hand below; none were captured from
 - `chosen_native`: a chosen record with a string member through a queue, a class
   property, a mailbox and function results, with one runtime copy per column.
   `N=8` gives the same lines through per-cell leaves.
+- `chosen_ref`: `ref` formals of a chosen record with a string member are bound
+  by specializing the subroutine for the actual, so a reader sees the writes of
+  a suspended task; a subroutine local passes its native value by address.
 - `chosen_whole_values`: whole copies and comparisons of chosen records, which
   read whole operands in place and write only differing cells. A copy that
   changes nothing wakes nothing (`q = p` at time 2). `q.a[7]`, a cell only `q`

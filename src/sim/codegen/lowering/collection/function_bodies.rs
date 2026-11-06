@@ -58,26 +58,33 @@ impl<'a> Codegen<'a> {
             return Ok(*index);
         }
         let formals = self.func_formals(task);
-        let bound_native_refs = records
-            .iter()
-            .map(|binding| {
-                formals
-                    .iter()
-                    .position(|(formal, _)| *formal == binding.formal)
-                    .ok_or_else(|| {
-                        format!(
-                            "record `ref` formal `{}` is not a formal of `{}`",
-                            self.node(binding.formal).name,
-                            self.node(task).name
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
         let template = self
             .func_meta
             .get(&task)
             .map(|meta| meta.ir)
             .ok_or_else(|| format!("task `{}` has no model entry", self.node(task).name))?;
+        let bound_native_refs = records
+            .iter()
+            .map(|binding| {
+                // A column formal's native value follows the declared formals.
+                match self.record_formal_native(binding.formal) {
+                    Some(native) => self.model.funcs[template]
+                        .formals
+                        .iter()
+                        .position(|formal| formal.native_value == Some(native)),
+                    None => formals
+                        .iter()
+                        .position(|(formal, _)| *formal == binding.formal),
+                }
+                .ok_or_else(|| {
+                    format!(
+                        "record `ref` formal `{}` is not a formal of `{}`",
+                        self.node(binding.formal).name,
+                        self.node(task).name
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let mut function = self.model.funcs[template].clone();
         function.c_name = format!(
             "{}__spec{}",

@@ -565,7 +565,11 @@ impl Codegen<'_> {
     }
 
     fn record_value_of_root(&self, root: NodeId) -> Option<RecordValue> {
-        if let Some(value) = self.activation_records.get(&root) {
+        if let Some(value) = self
+            .activation_records
+            .get(&root)
+            .filter(|_| !self.record_ref_aliases.contains_key(&root))
+        {
             return Some(value.clone());
         }
         let aggregate = self

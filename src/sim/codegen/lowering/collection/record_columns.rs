@@ -970,7 +970,11 @@ impl Codegen<'_> {
         root: NodeId,
         path: &[AggregatePathPart],
     ) -> Option<&ArrayInfo> {
-        if let Some(value) = self.activation_records.get(&root) {
+        if let Some(value) = self
+            .activation_records
+            .get(&root)
+            .filter(|_| !self.record_ref_aliases.contains_key(&root))
+        {
             return value
                 .columns
                 .iter()
@@ -999,9 +1003,12 @@ impl Codegen<'_> {
         if self.activation_records.is_empty() {
             return None;
         }
+        // A `ref` formal of a specialization reads its bound record's view.
         let root = |node: NodeId| {
             let node = self.canonical_func_target(node).unwrap_or(node);
-            self.activation_records.contains_key(&node).then_some(node)
+            (self.activation_records.contains_key(&node)
+                && !self.record_ref_aliases.contains_key(&node))
+            .then_some(node)
         };
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref {
