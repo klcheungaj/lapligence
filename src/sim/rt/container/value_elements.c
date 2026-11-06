@@ -138,6 +138,53 @@ static int llg_value_element_store(llg_value_t* target, const llg_value_t* value
     return 1;
 }
 
+llg_value_t* llg_dyn_value_element_at(llg_dyn_value_array_t* array,
+                                      uint64_t position) {
+    return dyn_value_position(array, position);
+}
+
+/* A record element written in place: each store reports whether the leaf
+ * changed, so the element publishes once and only when some leaf differs. */
+int llg_value_item_set_packed(llg_value_t* item, sv4_t value) {
+    if (sv4_same(item->value.packed, value)) return 0;
+    sv4_copy(&item->value.packed, &value);
+    return 1;
+}
+
+int llg_value_item_set_real(llg_value_t* item, double value) {
+    if (llg_value_real_same(item->value.real, value)) return 0;
+    item->value.real = value;
+    return 1;
+}
+
+static int value_item_same_string(const llg_value_t* item, const llg_string_t* value) {
+    return item->value.string.len == value->len &&
+           (!value->len ||
+            memcmp(item->value.string.data, value->data, value->len) == 0);
+}
+
+int llg_value_item_set_string(llg_value_t* item, const llg_string_t* value) {
+    if (value_item_same_string(item, value)) return 0;
+    llg_string_t copy = llg_string_clone(value);
+    llg_string_destroy(&item->value.string);
+    item->value.string = copy;
+    return 1;
+}
+
+int llg_value_item_take_string(llg_value_t* item, llg_string_t value) {
+    if (value_item_same_string(item, &value)) {
+        llg_string_destroy(&value);
+        return 0;
+    }
+    llg_string_destroy(&item->value.string);
+    item->value.string = value;
+    return 1;
+}
+
+int llg_value_item_set_handle(llg_value_t* item, void* value) {
+    return llg_value_store_handle(item, value);
+}
+
 int llg_dyn_value_set_element(llg_dyn_value_array_t* array,
                               const sv4_t* indices, size_t count,
                               const llg_value_t* value) {

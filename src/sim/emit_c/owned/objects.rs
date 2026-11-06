@@ -123,6 +123,17 @@ impl Frame<'_, '_> {
                 let container_name = self.container_name(*container)?;
                 let mut container = self.ctx.model.containers[*container].clone();
                 container.c_name = container_name;
+                if let (IrContainerKind::Dynamic, Some(position)) =
+                    (&container.kind, dyn_position(index))
+                {
+                    return Ok(self.scalar(
+                        "void*",
+                        format!(
+                            "llg_dyn_value_chandle_at(&{}, {position}ULL)",
+                            container.c_name
+                        ),
+                    ));
+                }
                 let index = self.expression(index)?;
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_chandle",

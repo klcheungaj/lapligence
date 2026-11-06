@@ -41,6 +41,12 @@ struct Store<'a> {
     source: StoreSource<'a>,
 }
 
+/// The element position a constant dynamic-array index names. A negative or
+/// unknown index keeps the decoding access.
+pub(super) fn dyn_position(index: &IrExpr) -> Option<u64> {
+    constant_index(index).and_then(|position| u64::try_from(position).ok())
+}
+
 /// The index an `sv4_to_index_i64` of this constant yields, if it is known.
 fn constant_index(index: &IrExpr) -> Option<i64> {
     let IrExprKind::Const(constant) = &index.kind else {

@@ -53,6 +53,7 @@ mod repeated_values;
 mod runtime_tasks;
 mod statements;
 mod storage_names;
+use dense_cells::dyn_position;
 pub(super) use storage_names::StorageNames;
 mod stores;
 mod streaming;

@@ -3,6 +3,23 @@ use super::native::{NativeKind, NativeValue};
 use super::*;
 
 impl Frame<'_, '_> {
+    /// Address of the storage a plain string read names, for a use that only
+    /// borrows it; `None` for any other string expression.
+    pub(super) fn string_address(
+        &mut self,
+        expression: &IrStringExpr,
+    ) -> Result<Option<String>, String> {
+        Ok(match expression {
+            IrStringExpr::Read(index) => {
+                Some(format!("&{}", self.ctx.model.objects[*index].c_name))
+            }
+            IrStringExpr::LocalRead(name) => {
+                Some(self.native_read(name, NativeKind::String)?.address)
+            }
+            _ => None,
+        })
+    }
+
     pub(super) fn string(&mut self, expression: &IrStringExpr) -> Result<NativeValue, String> {
         use IrStringExpr::*;
         Ok(match expression {
@@ -253,6 +270,17 @@ impl Frame<'_, '_> {
                 let container_name = self.container_name(*container)?;
                 let mut container = self.ctx.model.containers[*container].clone();
                 container.c_name = container_name;
+                if let (IrContainerKind::Dynamic, Some(position)) =
+                    (&container.kind, dyn_position(index))
+                {
+                    return Ok(self.native_value(
+                        NativeKind::String,
+                        format!(
+                            "llg_dyn_value_string_at(&{}, {position}ULL)",
+                            container.c_name
+                        ),
+                    ));
+                }
                 let index = self.expression(index)?;
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_string",

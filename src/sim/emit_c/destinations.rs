@@ -317,6 +317,11 @@ const STRING_OPERATIONS: &[(&str, &str, &[Param])] = &[
         &[S, P],
     ),
     (
+        "llg_dyn_value_string_at",
+        "llg_dyn_value_string_at_to",
+        &[S, S],
+    ),
+    (
         "llg_dyn_value_get_nested_string",
         "llg_dyn_value_get_nested_string_to",
         &[S, S, S],

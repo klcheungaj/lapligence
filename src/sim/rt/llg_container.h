@@ -253,6 +253,15 @@ llg_string_t llg_dyn_value_get_string(const llg_dyn_value_array_t* array,
                                       sv4_t index);
 void* llg_dyn_value_get_chandle(const llg_dyn_value_array_t* array,
                                 sv4_t index);
+/* Element access at a position known not to be negative, X or Z. */
+llg_string_t llg_dyn_value_string_at(const llg_dyn_value_array_t* array,
+                                     uint64_t position);
+void* llg_dyn_value_chandle_at(const llg_dyn_value_array_t* array,
+                               uint64_t position);
+int llg_dyn_value_set_string_at(llg_dyn_value_array_t* array, uint64_t position,
+                                llg_string_t value);
+int llg_dyn_value_set_chandle_at(llg_dyn_value_array_t* array, uint64_t position,
+                                 void* value);
 sv4_t llg_dyn_value_get_nested(const llg_dyn_value_array_t* array,
                                const sv4_t* indices, size_t count);
 double llg_dyn_value_get_nested_real(const llg_dyn_value_array_t* array,
@@ -667,6 +676,16 @@ void llg_value_item_from_queue_value(llg_value_t* item,
                                      const llg_queue_value_array_t* src);
 /* Whole-element writes borrow `value` and copy it with conversion; they
  * return 0 without writing for an invalid index (a queue accepts `$+1`). */
+/* In-place stores into one leaf of a record element from a source of the
+ * leaf's own type; each returns whether the leaf changed, and the writer
+ * publishes through llg_dyn_value_touch once. take_string consumes `value`. */
+llg_value_t* llg_dyn_value_element_at(llg_dyn_value_array_t* array,
+                                      uint64_t position);
+int llg_value_item_set_packed(llg_value_t* item, sv4_t value);
+int llg_value_item_set_real(llg_value_t* item, double value);
+int llg_value_item_set_string(llg_value_t* item, const llg_string_t* value);
+int llg_value_item_take_string(llg_value_t* item, llg_string_t value);
+int llg_value_item_set_handle(llg_value_t* item, void* value);
 int llg_dyn_value_set_element(llg_dyn_value_array_t* array,
                               const sv4_t* indices, size_t count,
                               const llg_value_t* value);
@@ -1148,6 +1167,7 @@ void llg_assoc_get_string_to(sv4_t* dst, const llg_assoc_t* array, const void* k
 /* String destination forms: `X_to(dst, ...)` replaces the expression owner at
  * dst (destroyed first; it must carry no change callback) with the string
  * `X(...)` would return. Argument conventions match the packed forms above. */
+void llg_dyn_value_string_at_to(llg_string_t* dst, const llg_dyn_value_array_t* array, uint64_t position);
 void llg_dyn_value_get_string_to(llg_string_t* dst, const llg_dyn_value_array_t* array, const sv4_t* index);
 void llg_dyn_value_get_nested_string_to(llg_string_t* dst, const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count);
 void llg_queue_value_get_string_to(llg_string_t* dst, const llg_queue_value_array_t* queue, const sv4_t* index);

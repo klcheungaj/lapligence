@@ -1,5 +1,17 @@
 //! Container calls consume only explicitly prepared operand snapshots.
 use super::*;
+/// The item a path names below `_llg_element`.
+fn element_item(path: &[u32]) -> String {
+    let mut item = "_llg_element->value".to_owned();
+    for (depth, step) in path.iter().enumerate() {
+        if depth > 0 {
+            item.push_str(".value");
+        }
+        item.push_str(&format!(".items[{step}]"));
+    }
+    item
+}
+
 pub(super) fn render(
     frame: &mut Frame<'_, '_>,
     operation: &IrContainerStmt,
@@ -628,6 +640,15 @@ pub(super) fn render(
             index,
             value,
         } => {
+            if let (IrContainerKind::Dynamic, Some(position)) =
+                (&ctx.model.containers[*container].kind, dyn_position(index))
+            {
+                return Ok(format!(
+                    "    (void)llg_dyn_value_set_string_at(&{}, {position}ULL, {});\n",
+                    name(frame, *container)?,
+                    text_operand(frame, strings, value)?
+                ));
+            }
             let function = match ctx.model.containers[*container].kind {
                 IrContainerKind::Dynamic => "llg_dyn_value_set_string",
                 IrContainerKind::Queue { .. } => "llg_queue_value_set_string",
@@ -645,6 +666,15 @@ pub(super) fn render(
             index,
             value,
         } => {
+            if let (IrContainerKind::Dynamic, Some(position)) =
+                (&ctx.model.containers[*container].kind, dyn_position(index))
+            {
+                return Ok(format!(
+                    "    (void)llg_dyn_value_set_chandle_at(&{}, {position}ULL, {});\n",
+                    name(frame, *container)?,
+                    frame.chandle(value)?
+                ));
+            }
             let function = match ctx.model.containers[*container].kind {
                 IrContainerKind::Dynamic => "llg_dyn_value_set_chandle",
                 IrContainerKind::Queue { .. } => "llg_queue_value_set_chandle",
@@ -992,6 +1022,66 @@ pub(super) fn render(
                 name(frame, *container)?,
                 operand(frame, owners, index)?.code,
                 name(frame, *source)?
+            )
+        }
+        IrContainerStmt::SetElementItems {
+            container,
+            slot,
+            items,
+        } => {
+            let IrValueSlot::Element { indices, .. } = slot else {
+                return Err("in-place element items need an element slot".to_owned());
+            };
+            let target = name(frame, *container)?;
+            let position = match indices.as_slice() {
+                [index] => dyn_position(index),
+                _ => None,
+            };
+            let element = match position {
+                Some(position) => format!("llg_dyn_value_element_at(&{target}, {position}ULL)"),
+                None => {
+                    let list = super::indices(frame, owners, indices)?;
+                    format!(
+                        "llg_dyn_value_element(&{target}, {list}, {})",
+                        indices.len()
+                    )
+                }
+            };
+            let mut stores = String::new();
+            for item in items {
+                let leaf = element_item(&item.path);
+                let store = match &item.value {
+                    IrElementItemValue::Packed(value) => {
+                        let value = operand(frame, owners, value)?.code;
+                        format!("llg_value_item_set_packed(&{leaf}, {value})")
+                    }
+                    IrElementItemValue::Real(value) => {
+                        let rendered = operand(frame, owners, value)?;
+                        let value = if rendered.width == 0 {
+                            rendered.code
+                        } else {
+                            format!("sv4_to_real({})", rendered.code)
+                        };
+                        format!("llg_value_item_set_real(&{leaf}, {value})")
+                    }
+                    IrElementItemValue::String(text) => match frame.string_address(text)? {
+                        Some(address) => {
+                            format!("llg_value_item_set_string(&{leaf}, {address})")
+                        }
+                        None => {
+                            let code = text_operand(frame, strings, text)?;
+                            format!("llg_value_item_take_string(&{leaf}, {code})")
+                        }
+                    },
+                    IrElementItemValue::Chandle(value) => {
+                        let value = frame.chandle(value)?;
+                        format!("llg_value_item_set_handle(&{leaf}, {value})")
+                    }
+                };
+                stores.push_str(&format!("            changed |= {store};\n"));
+            }
+            format!(
+                "    {{\n        llg_value_t* _llg_element = {element};\n        if (_llg_element) {{\n            int changed = 0;\n{stores}            if (changed) llg_dyn_value_touch(&{target});\n        }}\n    }}\n"
             )
         }
         IrContainerStmt::SetValue {

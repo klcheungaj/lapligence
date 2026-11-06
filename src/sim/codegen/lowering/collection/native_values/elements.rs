@@ -7,7 +7,7 @@
 //! module records, native roots, patterns and calls share the SIM-003
 //! transfers. Copies are deep except for handles (SV 7.5-7.10, 8.4).
 use super::*;
-use crate::sim::ir::{IrValueItemRoot, IrValueSlot};
+use crate::sim::ir::{IrElementItem, IrElementItemValue, IrValueItemRoot, IrValueSlot};
 
 /// How one whole element of a container is selected.
 #[derive(Clone)]
@@ -100,6 +100,22 @@ pub(super) fn element_leaf_value(name: String, ty: IrClassFieldType) -> LeafValu
         IrClassFieldType::Real { .. } => {
             LeafValue::Real(IrExpr::new(IrExprKind::LocalRead(name), 0, false, None))
         }
+    }
+}
+
+/// Whether each scalar leaf of a record stands alone: no union shares storage
+/// or carries a tag above it.
+fn leaf_record(descriptor: &TypeDescriptor) -> bool {
+    let TypeShape::Aggregate(layout) = &descriptor.shape else {
+        return true;
+    };
+    match layout.kind {
+        AggregateKind::UnpackedStruct => layout
+            .members
+            .iter()
+            .all(|member| leaf_record(&member.descriptor)),
+        AggregateKind::PackedStruct | AggregateKind::PackedUnion => true,
+        AggregateKind::UnpackedUnion | AggregateKind::TaggedUnion => false,
     }
 }
 
@@ -475,9 +491,81 @@ impl Codegen<'_> {
         let Some(selection) = self.record_element_of(lhs) else {
             return Ok(None);
         };
+        if let Some(statement) = self.element_items_assignment(path, &selection, rhs)? {
+            return Ok(Some(statement));
+        }
         let slot = self.lower_element_slot(path, &selection)?;
         self.record_into_slot(path, selection.container, selection.depth(), slot, lhs, rhs)
             .map(Some)
+    }
+
+    /// `a[i] = v` from a record variable of the element's own type, leaf by
+    /// leaf in place: no temporary and no string copy. `None` when a leaf
+    /// needs more than a store: a dynamic array is the one kind whose element
+    /// write creates nothing (`q[$+1]` appends, a missing key inserts), and
+    /// members that are containers, fixed arrays or unions move as a whole.
+    fn element_items_assignment(
+        &mut self,
+        path: &str,
+        selection: &ElementSelection,
+        rhs: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let container = selection.container;
+        if self.element_nba_target.is_some()
+            || self.model.containers[container].kind != IrContainerKind::Dynamic
+            || !selection.side_effect_free(self)
+        {
+            return Ok(None);
+        }
+        let (_, descriptor, leaves) = self.element_leaves(container, selection.depth())?;
+        if leaves.columns
+            || !leaves.containers.is_empty()
+            || !leaves.fixed.is_empty()
+            || !leaf_record(&descriptor)
+        {
+            return Ok(None);
+        }
+        let Ok(Some((source, source_type))) = self.native_endpoint(rhs) else {
+            return Ok(None);
+        };
+        if source_type != descriptor {
+            return Ok(None);
+        }
+        let sources = self.endpoint_leaves(&source)?;
+        let paired = leaves
+            .scalars
+            .iter()
+            .map(|leaf| sources.iter().find(|(path, _)| *path == leaf.path))
+            .collect::<Option<Vec<_>>>();
+        let Some(paired) = paired.filter(|paired| paired.len() == sources.len()) else {
+            return Ok(None);
+        };
+        let slot = self.lower_element_slot(path, selection)?;
+        let mut items = Vec::with_capacity(paired.len());
+        for (leaf, (_, source)) in leaves.scalars.iter().zip(paired) {
+            let value = match self.endpoint_leaf_read(source)? {
+                LeafValue::Packed(value) => IrElementItemValue::Packed(value),
+                LeafValue::Real(value) => IrElementItemValue::Real(value),
+                LeafValue::String(value) => IrElementItemValue::String(value),
+                LeafValue::Chandle(value) => IrElementItemValue::Chandle(value),
+                _ => {
+                    return Err(format!(
+                        "record element leaf has no scalar source in `{path}`"
+                    ))
+                }
+            };
+            items.push(IrElementItem {
+                path: leaf.items.clone(),
+                value,
+            });
+        }
+        Ok(Some(IrStmt::Container(Box::new(
+            IrContainerStmt::SetElementItems {
+                container,
+                slot,
+                items,
+            },
+        ))))
     }
 
     /// `push_front`, `push_back` or `insert` of a record into a queue.

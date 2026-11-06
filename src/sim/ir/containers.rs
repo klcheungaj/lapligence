@@ -928,6 +928,14 @@ pub enum IrContainerStmt {
         slot: IrValueSlot,
         value: usize,
     },
+    /// Write the leaves of one record element of a dynamic array in place
+    /// from sources of the element's type: only a leaf that differs changes,
+    /// and the element publishes once when any did. Items name every leaf.
+    SetElementItems {
+        container: usize,
+        slot: IrValueSlot,
+        items: Vec<IrElementItem>,
+    },
     /// Copy an element (or the Table 7-1 default for a missing one) into a
     /// native value root; pop slots also remove it.
     GetValue {
@@ -1076,6 +1084,23 @@ impl IrValueItemRoot {
             element.expressions_mut(visit);
         }
     }
+}
+
+/// One leaf of `IrContainerStmt::SetElementItems`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrElementItem {
+    /// Item positions from the element down to the leaf.
+    pub path: Vec<u32>,
+    pub value: IrElementItemValue,
+}
+
+/// The source of one written leaf, of the leaf's own type.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrElementItemValue {
+    Packed(IrExpr),
+    Real(IrExpr),
+    String(IrStringExpr),
+    Chandle(IrChandleExpr),
 }
 
 /// Where a whole-element value transfer reads or writes.
@@ -2694,6 +2719,29 @@ impl IrContainerStmt {
                 string_container(model, *container)?;
                 key.validate(model, string_return)
             }
+            Self::SetElementItems {
+                container,
+                slot,
+                items,
+            } => {
+                let container = container_kind(model, *container, None)?;
+                if !matches!(container.kind, IrContainerKind::Dynamic)
+                    || !matches!(slot, IrValueSlot::Element { key: None, .. })
+                    || items.is_empty()
+                {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "in-place element items require an integral dynamic array element",
+                    ));
+                }
+                slot.element(container, true, string_return, model)?;
+                for item in items {
+                    if let IrElementItemValue::String(value) = &item.value {
+                        value.validate(model, string_return)?;
+                    }
+                }
+                Ok(())
+            }
             Self::SetValue {
                 container,
                 slot,
@@ -2882,6 +2930,18 @@ impl IrContainerStmt {
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions(visit),
             Self::SetValue { slot, .. } | Self::GetValue { slot, .. } => slot.expressions(visit),
+            Self::SetElementItems { slot, items, .. } => {
+                slot.expressions(visit);
+                for item in items {
+                    match &item.value {
+                        IrElementItemValue::Packed(value) | IrElementItemValue::Real(value) => {
+                            visit(value)
+                        }
+                        IrElementItemValue::String(value) => value.expressions(visit),
+                        IrElementItemValue::Chandle(_) => {}
+                    }
+                }
+            }
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter().for_each(visit)
             }
@@ -3019,6 +3079,18 @@ impl IrContainerStmt {
             Self::DeleteString { key, .. } => key.expressions_mut(visit),
             Self::SetValue { slot, .. } | Self::GetValue { slot, .. } => {
                 slot.expressions_mut(visit)
+            }
+            Self::SetElementItems { slot, items, .. } => {
+                slot.expressions_mut(visit);
+                for item in items {
+                    match &mut item.value {
+                        IrElementItemValue::Packed(value) | IrElementItemValue::Real(value) => {
+                            visit(value)
+                        }
+                        IrElementItemValue::String(value) => value.expressions_mut(visit),
+                        IrElementItemValue::Chandle(_) => {}
+                    }
+                }
             }
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter_mut().for_each(visit)
