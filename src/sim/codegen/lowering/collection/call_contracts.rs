@@ -822,6 +822,40 @@ impl<'a> Codegen<'a> {
         self.task_has_wait_inner(ft, inst, &mut seen)
     }
 
+    /// What the `$strobe` and `$monitor` tasks in the body of `ft` name. They
+    /// read the subroutine's static string and handle locals after it
+    /// returns, so such a local needs model storage.
+    pub(in super::super) fn deferred_report_targets(&self, ft: NodeId) -> HashSet<NodeId> {
+        let mut targets = HashSet::new();
+        let mut pending: Vec<(NodeId, bool)> = self
+            .func_body(ft)
+            .map(|body| (body, false))
+            .into_iter()
+            .collect();
+        while let Some((node, in_report)) = pending.pop() {
+            let in_report = in_report
+                || matches!(self.kind(node), NodeKind::SysCall { name, .. } if matches!(
+                    name.trim_end_matches(['b', 'o', 'h']),
+                    "$strobe" | "$fstrobe" | "$monitor" | "$fmonitor"
+                ));
+            if in_report {
+                if let NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) = self.kind(node)
+                {
+                    targets.insert(*target);
+                }
+            }
+            pending.extend(
+                self.node(node)
+                    .children
+                    .iter()
+                    .map(|child| (*child, in_report)),
+            );
+        }
+        targets
+    }
+
     /// How calls to a subroutine reach its body.
     pub(in super::super) fn call_shape(&self, ft: NodeId, inst: NodeId) -> CallShape {
         self.call_shape_of(ft, inst, &mut Vec::new())

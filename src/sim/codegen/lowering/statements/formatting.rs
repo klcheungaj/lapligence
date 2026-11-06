@@ -1,5 +1,6 @@
 //! Formatting.
 
+use super::super::collection::ReportReadPlan;
 use super::*;
 use crate::sim::codegen::lowering::objects::c_format_literal;
 
@@ -8,7 +9,7 @@ impl EmitCtx<'_, '_> {
     /// string is display metadata, and symbolic time queries have no signal
     /// reads, so only value arguments contribute to this list.
     pub(super) fn collect_monitor_reads(
-        &self,
+        &mut self,
         args: &[NodeId],
     ) -> Result<Vec<crate::sim::ir::IrDependency>, String> {
         let mut fmt_seen = false;
@@ -26,6 +27,16 @@ impl EmitCtx<'_, '_> {
                 fmt_seen = true;
                 continue;
             }
+            self.static_object_reads(*arg, &mut seen, &mut reads);
+            if self.cg.report_read_plan(*arg) == ReportReadPlan::Exact {
+                let path = self.path.clone();
+                for read in self.cg.report_dependencies(&path, *arg)? {
+                    if seen.insert(read.clone()) {
+                        reads.push(read);
+                    }
+                }
+                continue;
+            }
             // Native strings publish a stable dependency marker rather than
             // an sv4 value.  Keep that marker in a monitor's trigger set so
             // changing a string argument causes the deferred formatter to
@@ -37,9 +48,6 @@ impl EmitCtx<'_, '_> {
                 }
                 continue;
             }
-            if self.cg.is_string_expr(&self.path, *arg) {
-                continue;
-            }
             for read in self.cg.collect_read_signals(&self.path, *arg)? {
                 if seen.insert(read.clone()) {
                     reads.push(read);
@@ -47,6 +55,42 @@ impl EmitCtx<'_, '_> {
             }
         }
         Ok(reads)
+    }
+
+    /// The static string and handle variables of the enclosing subroutine
+    /// `node` reads: model objects the read walk cannot name, because only
+    /// the subroutine's context maps them.
+    fn static_object_reads(
+        &self,
+        node: NodeId,
+        seen: &mut HashSet<crate::sim::ir::IrDependency>,
+        reads: &mut Vec<crate::sim::ir::IrDependency>,
+    ) {
+        let Some(function) = &self.func else {
+            return;
+        };
+        let mut pending = vec![node];
+        while let Some(node) = pending.pop() {
+            pending.extend(self.cg.node(node).children.iter().copied());
+            let NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) = self.cg.kind(node)
+            else {
+                continue;
+            };
+            let object = match (
+                function.string_read.get(target),
+                function.chandle_read.get(target),
+            ) {
+                (Some(crate::sim::ir::IrStringExpr::Read(object)), _)
+                | (_, Some(IrChandleExpr::Read(object))) => *object,
+                _ => continue,
+            };
+            let dependency = crate::sim::ir::IrDependency::Object(object);
+            if seen.insert(dependency.clone()) {
+                reads.push(dependency);
+            }
+        }
     }
 
     /// A formal, local or return variable of the subroutine being lowered
@@ -72,7 +116,16 @@ impl EmitCtx<'_, '_> {
                 || function.process_read.contains_key(&target)
                 || function.locals.contains_key(&target)
                 || function.ret_node == Some(target);
-            if bound && !function.persistent.contains_key(&target) {
+            // A static subroutine's string and handle variables are model
+            // objects, which the report reads like any other storage.
+            let model_object = matches!(
+                function.string_read.get(&target),
+                Some(crate::sim::ir::IrStringExpr::Read(_))
+            ) || matches!(
+                function.chandle_read.get(&target),
+                Some(IrChandleExpr::Read(_))
+            );
+            if bound && !model_object && !function.persistent.contains_key(&target) {
                 return Some(target);
             }
         }

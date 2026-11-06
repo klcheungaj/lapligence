@@ -174,6 +174,7 @@ void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
     e->typed = 0;
     e->typed_eval = NULL;
     e->typed_work = NULL;
+    e->context = NULL;
     e->scope = NULL;
     e->region = LLG_REGION_POSTPONED;
     int alloc = n > 0 ? n : 1;
@@ -186,7 +187,8 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
                                    const char* fmt, int n,
                                    llg_display_eval_fn eval, const char* scope,
                                    const llg_display_read_t* reads,
-                                   int n_reads) {
+                                   int n_reads, llg_monitor_reads_fn resolve,
+                                   int n_resolved, void* context) {
     if (!region_can_mutate("monitor scheduling")) return;
     // An invalid or closed descriptor registers nothing, and a multichannel
     // monitor keeps only its open channels (S25-D7), so a channel reopened
@@ -207,9 +209,13 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
         (size_t)alloc, sizeof(llg_fmt_arg_t), "monitor previous values");
     m->typed_work = (llg_fmt_arg_t*)llg_checked_calloc(
         (size_t)alloc, sizeof(llg_fmt_arg_t), "monitor working values");
-    if (n_reads > 0) {
-        m->typed_reads = (llg_display_read_t*)llg_checked_malloc(
-            (size_t)n_reads, sizeof(llg_display_read_t), "monitor trigger set");
+    m->context = context;
+    m->resolve = resolve;
+    m->n_resolved = n_resolved;
+    if (n_reads + n_resolved > 0) {
+        m->typed_reads = (llg_display_read_t*)llg_checked_calloc(
+            (size_t)n_reads + (size_t)n_resolved, sizeof(llg_display_read_t),
+            "monitor trigger set");
         for (int i = 0; i < n_reads; i++) {
             if (reads[i].kind == LLG_MONITOR_READ_POLL) {
                 m->poll = 1;
@@ -223,18 +229,40 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
             }
         }
     }
+    // Resolved entries start empty: registration already forces a report,
+    // and evaluating that report fills them.
+    m->n_typed_reads += n_resolved;
 }
 
 void llg_monitor_with_typed_reads(const char* fmt, int n,
                                   llg_display_eval_fn eval, const char* scope,
                                   const llg_display_read_t* reads, int n_reads) {
-    monitor_register_typed(1, 1u, fmt, n, eval, scope, reads, n_reads);
+    monitor_register_typed(1, 1u, fmt, n, eval, scope, reads, n_reads, NULL, 0,
+                           NULL);
 }
 
 void llg_file_monitor_with_typed_reads(
     uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
     const char* scope, const llg_display_read_t* reads, int n_reads) {
-    monitor_register_typed(0, descriptor, fmt, n, eval, scope, reads, n_reads);
+    monitor_register_typed(0, descriptor, fmt, n, eval, scope, reads, n_reads,
+                           NULL, 0, NULL);
+}
+
+void llg_monitor_with_dynamic_reads(const char* fmt, int n,
+                                    llg_display_eval_fn eval, const char* scope,
+                                    const llg_display_read_t* reads, int n_reads,
+                                    llg_monitor_reads_fn resolve, int n_resolved,
+                                    void* context) {
+    monitor_register_typed(1, 1u, fmt, n, eval, scope, reads, n_reads, resolve,
+                           n_resolved, context);
+}
+
+void llg_file_monitor_with_dynamic_reads(
+    uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
+    const char* scope, const llg_display_read_t* reads, int n_reads,
+    llg_monitor_reads_fn resolve, int n_resolved, void* context) {
+    monitor_register_typed(0, descriptor, fmt, n, eval, scope, reads, n_reads,
+                           resolve, n_resolved, context);
 }
 
 void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
@@ -244,6 +272,17 @@ void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
 
 void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
                            llg_display_eval_fn eval, const char* scope) {
+    llg_file_strobe_with_context(descriptor, fmt, n, eval, scope, NULL);
+}
+
+void llg_strobe_with_context(const char* fmt, int n, llg_display_eval_fn eval,
+                             const char* scope, void* context) {
+    llg_file_strobe_with_context(1u, fmt, n, eval, scope, context);
+}
+
+void llg_file_strobe_with_context(uint32_t descriptor, const char* fmt, int n,
+                                  llg_display_eval_fn eval, const char* scope,
+                                  void* context) {
     if (!region_can_mutate("strobe scheduling")) return;
     llg_strobe_t* e = (llg_strobe_t*)llg_checked_malloc(
         1, sizeof(llg_strobe_t), "typed strobe");
@@ -254,6 +293,7 @@ void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
     e->typed = 1;
     e->descriptor = descriptor;
     e->typed_eval = eval;
+    e->context = context;
     e->scope = (char*)llg_checked_malloc(strlen(scope ? scope : "") + 1, 1,
                                          "strobe scope");
     strcpy(e->scope, scope ? scope : "");
@@ -265,6 +305,10 @@ void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
     strobe_push(e);
 }
 
+// A null handle access in a report's evaluator ended the run (SV 8.4): the
+// report prints nothing, as the access stops any other statement at once.
+static int report_failed(void) { return g.finish && llg_rt_failed(); }
+
 // Re-print one dirty monitor at the settled observation point. The
 // registration and enable paths set force_report so equal values still print.
 static void check_monitor(llg_monitor_state_t* m) {
@@ -272,7 +316,11 @@ static void check_monitor(llg_monitor_state_t* m) {
     if (m->primary && g.monitor_off) return;
     if (m->typed) {
         llg_fmt_args_destroy(m->typed_work, m->n);
-        m->typed_eval(m->typed_work, NULL);
+        m->typed_eval(m->typed_work, m->context);
+        if (report_failed()) return;
+        if (m->resolve)
+            m->resolve(m->typed_reads + (m->n_typed_reads - m->n_resolved),
+                       m->context);
         int changed = m->force_report;
         if (!changed) {
             for (int i = 0; i < m->n; i++) {
@@ -336,9 +384,10 @@ static void flush_strobes(void) {
         g.strobes = e->next;
         if (e->typed) {
             if (e->descriptor) {
-                e->typed_eval(e->typed_work, NULL);
-                llg_print_typed_to(e->descriptor, e->fmt, e->typed_work, e->n,
-                               e->scope, 1);
+                e->typed_eval(e->typed_work, e->context);
+                if (!report_failed())
+                    llg_print_typed_to(e->descriptor, e->fmt, e->typed_work,
+                                       e->n, e->scope, 1);
             }
             llg_fmt_args_destroy(e->typed_work, e->n);
             free(e->typed_work);

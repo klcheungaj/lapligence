@@ -518,6 +518,11 @@ fn collect_pre_fns_rw(pre_fns: &[IrPreFn], model: &IrModel, rw: &mut Rw) {
                     arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
+            IrPreFn::MonitorReads { reads, .. } => {
+                for dependency in reads {
+                    mark_dependency_read(dependency, model, rw);
+                }
+            }
             IrPreFn::RealEval { value, context, .. } => {
                 collect_expr_reads(value, model, rw);
                 if let Some(context) = context {

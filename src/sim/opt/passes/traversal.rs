@@ -965,6 +965,7 @@ fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
                 arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
             }
         }
+        IrPreFn::MonitorReads { .. } => {}
         IrPreFn::RealEval { value, context, .. } => {
             walk_expr_mut(value, f);
             if let Some(context) = context {

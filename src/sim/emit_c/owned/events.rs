@@ -251,10 +251,21 @@ impl Frame<'_, '_> {
         })
     }
 
-    /// The storage a native access selects when the wait arms. The receiver
-    /// renders quietly: a null handle at any step selects never-changing
-    /// storage instead of reporting an access error.
+    /// The storage a native access selects when the wait arms.
     fn native_access_dependency(&mut self, name: &str) -> Result<String, String> {
+        let (real, address) = self.native_access_storage(name)?;
+        Ok(if real {
+            format!("{{ .real = {address} }}")
+        } else {
+            format!("{{ .sig = {address} }}")
+        })
+    }
+
+    /// The change marker or storage native access `name` selects now, and
+    /// whether it is real. The receiver renders quietly: a null handle at
+    /// any step selects never-changing storage instead of reporting an
+    /// access error.
+    pub(super) fn native_access_storage(&mut self, name: &str) -> Result<(bool, String), String> {
         let access = self
             .ctx
             .model
@@ -273,38 +284,47 @@ impl Frame<'_, '_> {
                     // A handle property: the marker its object toggles when
                     // one of its handle properties is rebound.
                     IrClassFieldType::Chandle => {
-                        format!("{{ .sig = llg_class_handle_dependency({receiver}) }}")
+                        (false, format!("llg_class_handle_dependency({receiver})"))
                     }
-                    IrClassFieldType::Real { .. } => format!(
-                        "{{ .real = llg_class_real_dependency({receiver}, {class}, {field}) }}"
+                    IrClassFieldType::Real { .. } => (
+                        true,
+                        format!("llg_class_real_dependency({receiver}, {class}, {field})"),
                     ),
                     // A string property: its own marker, allocated on the
                     // first wait that observes it.
-                    IrClassFieldType::String => format!(
-                        "{{ .sig = llg_class_string_dependency({receiver}, {class}, {field}) }}"
+                    IrClassFieldType::String => (
+                        false,
+                        format!("llg_class_string_dependency({receiver}, {class}, {field})"),
                     ),
-                    _ => format!(
-                        "{{ .sig = llg_class_packed_dependency({receiver}, {class}, {field}) }}"
+                    _ => (
+                        false,
+                        format!("llg_class_packed_dependency({receiver}, {class}, {field})"),
                     ),
                 }
             }
             IrNativeAccessKind::InterfaceMember { interface, member }
                 if self.ctx.model.virtual_interfaces[interface].members[member].real =>
             {
-                format!(
-                    "{{ .real = llg_vif_real_member_quiet({receiver}, {interface}, {member}) }}"
+                (
+                    true,
+                    format!("llg_vif_real_member_quiet({receiver}, {interface}, {member})"),
                 )
             }
-            IrNativeAccessKind::InterfaceMember { interface, member } => format!(
-                "{{ .sig = llg_dependency_or_never(llg_vif_member_dependency({receiver}, {interface}, {member})) }}"
+            IrNativeAccessKind::InterfaceMember { interface, member } => (
+                false,
+                format!(
+                    "llg_dependency_or_never(llg_vif_member_dependency({receiver}, {interface}, {member}))"
+                ),
             ),
             // Construction installs the object's handle marker as the
             // container's contents marker (`render_class_decls`).
-            IrNativeAccessKind::ClassContainer { class, field } => format!(
-                "{{ .sig = llg_class_container_dependency({receiver}, {class}, {field}) }}"
+            IrNativeAccessKind::ClassContainer { class, field } => (
+                false,
+                format!("llg_class_container_dependency({receiver}, {class}, {field})"),
             ),
-            IrNativeAccessKind::MailboxCount => format!(
-                "{{ .sig = llg_mailbox_dependency((llg_mailbox_t*){receiver}) }}"
+            IrNativeAccessKind::MailboxCount => (
+                false,
+                format!("llg_mailbox_dependency((llg_mailbox_t*){receiver})"),
             ),
             IrNativeAccessKind::ValueItem { .. } | IrNativeAccessKind::ElementItem { .. } => {
                 return Err(pending("native value item wait dependencies"))

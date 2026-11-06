@@ -22,8 +22,11 @@ typedef struct llg_monitor_state {
     llg_display_eval_fn typed_eval;
     llg_fmt_arg_t* typed_last;
     llg_fmt_arg_t* typed_work;
-    llg_display_read_t* typed_reads;
+    llg_display_read_t* typed_reads;  // fixed entries, then resolved ones
     int n_typed_reads;
+    llg_monitor_reads_fn resolve;     // refills the last n_resolved entries
+    int n_resolved;
+    void* context;       // class-method receiver of `typed_eval`; a GC root
     unsigned char* time_args;  // per argument: only reads time; NULL when none
     char* scope;
     int typed;
@@ -44,6 +47,7 @@ typedef struct llg_strobe {
     sv4_t* work;         // scratch buffer the eval fn fills (n)
     llg_display_eval_fn typed_eval;
     llg_fmt_arg_t* typed_work;
+    void* context;       // class-method receiver of `typed_eval`; a GC root
     char* scope;
     int typed;
     uint32_t descriptor;

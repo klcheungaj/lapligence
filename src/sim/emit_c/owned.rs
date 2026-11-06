@@ -408,6 +408,12 @@ impl<'a, 'm> Frame<'a, 'm> {
     /// Checking the failed value keeps the success path to one register
     /// compare.
     fn exit_on_failed_access(&mut self, failed: &str) {
+        // A failed access in a report evaluator already ended the run (SV
+        // 8.4): the evaluator stops and the report prints nothing.
+        if self.postponed_reader && !self.quiet_receivers {
+            self.line(format!("if (LLG_CO_UNLIKELY({failed})) goto _llg_return;"));
+            return;
+        }
         if self.statement_depth == 0 || self.read_only_callback || self.quiet_receivers {
             return;
         }

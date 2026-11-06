@@ -990,6 +990,14 @@ pub enum IrStmt {
         /// virtual-interface handle (or a synchronization object), which no
         /// fixed `reads` entry can name: the monitor re-evaluates every slot.
         poll: bool,
+        /// C name of the [`IrPreFn::MonitorReads`] that names the storage a
+        /// handle selects: its property reads have no fixed address, so the
+        /// runtime resolves them again after every evaluation.
+        dynamic_reads: Option<(String, usize)>,
+        /// The object a report issued in a class method reads through
+        /// `this`. The runtime hands it to the evaluators as their context
+        /// and keeps it reachable while the report is pending.
+        receiver: Option<Box<IrChandleExpr>>,
         /// Arguments that only read `$time`, `$stime` or `$realtime`: they
         /// print but do not trigger a report (SV 21.2.3).
         time_args: Box<[u32]>,

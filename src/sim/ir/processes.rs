@@ -56,6 +56,19 @@ pub enum IrPreFn {
         /// ordinary calls inside a runtime private-evaluation bracket, which
         /// applies those Postponed-region stores without publication.
         private_effects: bool,
+        /// The local that names the report's class-method receiver, which the
+        /// evaluator binds to its context.
+        receiver: Option<String>,
+    },
+    /// `static void c_name(llg_display_read_t* out, void* context)`: writes
+    /// the storage each of `reads` selects now, one entry per dependency.
+    /// Called after a monitor evaluates, so a report follows a rebound
+    /// handle. Every entry is an [`IrDependency::NativeAccess`].
+    MonitorReads {
+        c_name: String,
+        reads: Vec<IrDependency>,
+        /// As in [`IrPreFn::DisplayEval`].
+        receiver: Option<String>,
     },
     /// `static void c_name(double* out, void* context) { *out = value; }` for
     /// real event expressions. The callback is side-effect free and
