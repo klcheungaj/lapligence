@@ -355,3 +355,10 @@ fn a_task_reference_to_a_nested_queue_is_explicit() {
         "ref actual of container formal `t` in `tb` must be a container variable of the same type",
     );
 }
+
+#[test]
+fn nested_associative_selectors_run_once_and_short_circuit() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative_selectors.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative_selectors", expected, &[], &[]);
+}

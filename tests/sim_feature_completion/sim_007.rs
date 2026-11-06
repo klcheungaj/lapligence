@@ -554,11 +554,6 @@ fn container_elements_hold_records_with_container_members() {
     sim_cli::run_case_after_db_drop(SUITE, "record_container_elements", expected);
     sim_cli::reject_case(
         SUITE,
-        "bad_record_element_member_context",
-        "an expression that changes a queue or dynamic-array member of a container record element in `tb` is only supported as an assignment, call or system-task statement",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "bad_record_container_event_nba",
         "an event-controlled nonblocking assignment of a queue, dynamic or associative member in `tb` is not supported; use a delay or an event control before the statement",
     );
@@ -638,4 +633,11 @@ fn delayed_nonblocking_writes_reach_fixed_native_arrays() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_delayed_nba.out");
     sim_cli::run_case_backend_parity(SUITE, "native_delayed_nba", expected, &[], &[]);
+}
+
+#[test]
+fn a_condition_changes_a_record_element_member() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_element_member_change.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_member_change", expected, &[], &[]);
 }

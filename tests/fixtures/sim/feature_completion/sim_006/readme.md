@@ -51,6 +51,7 @@ handle only, never the designated object.
 | `neg_nested_task_ref` | Legal by §13.5.2; a task can suspend while its reference is live, so a staged copy of a nested queue cannot stand in for the element: rejected explicitly. |
 | `subroutine_container_waits` | §§9.4.2, 9.4.3. `wait` and `@` on containers of formals, automatic locals and class properties wake when the element, size or property changes. Output recorded from the reference. |
 | `nested_associative_handles` | §7.8; §8.5. Handles held in a nested associative array stay reachable through overwrites and shared elements; a subroutine called by the value of an element write sees the array it writes (`put`). Output recorded from the reference. |
+| `nested_associative_selectors` | §11.3.5 L14434-14435 (quoted under `call_container_operands`). A selector that calls a function runs once per evaluation of the select, and not at all in a skipped operand: `aa.exists("z") && aa[nm()].exists(1)` leaves `n` at 0. Output recorded from the reference. |
 
 ### Clause quotes for `nested_element_methods`
 

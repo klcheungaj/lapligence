@@ -1532,9 +1532,12 @@ impl Codegen<'_> {
             return Ok(None);
         }
         // A skipped operand must not write its element back (that would
-        // create a missing associative entry): each operand stages its own.
+        // create a missing associative entry), locate a missing array or
+        // call a selector: each operand stages its own.
         if (members.iter().any(|member| member.mutated)
-            || nested.iter().any(|(_, _, mutated)| *mutated))
+            || nested.iter().any(|(element, selection, mutated)| {
+                *mutated || self.selects_associative(selection) || !self.side_effect_free(*element)
+            }))
             && self.lazily_evaluated_operands(node)
         {
             return Ok(None);
@@ -1656,7 +1659,8 @@ impl Codegen<'_> {
     ) -> Result<(), String> {
         let mut groups: Vec<StagedNested> = Vec::new();
         for (node, selection, mutated) in nested {
-            if !self.side_effect_free(node) {
+            // A copy is located again to write it back; an alias only once.
+            if !self.selects_associative(&selection) && !self.side_effect_free(node) {
                 return Err(format!(
                     "a nested container element used whole in `{path}` must be selected without side effects"
                 ));

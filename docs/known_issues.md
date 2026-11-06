@@ -666,8 +666,9 @@ These legal forms reject with explicit diagnostics:
   (`sq[a].push_back(sq[b].pop_front())`); constants and associative elements
   work;
 - a `default:` key in a pattern for a nested container element;
-- a nested element selected with side effects (`qq[f()].push_back(1)`) when it
-  is staged, and a `ref` formal named in a plain `fork`/`join`.
+- a nested queue or dynamic array selected with side effects
+  (`qq[f()].push_back(1)`), which is located twice,
+  and a `ref` formal named in a plain `fork`/`join`.
 
 ### Cause
 
