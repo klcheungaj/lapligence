@@ -1,6 +1,8 @@
-// IEEE 1800-2009 5.7.2 and 6.16: string method arguments use their declared
-// integer/byte types, real-to-integer ties round away from zero, integral casts
-// to string remove NUL bytes, and packed string casts right-justify and pad.
+// IEEE 1800-2009 5.7.2 and 6.16: the character argument of a string method
+// uses its declared byte type, an index argument beyond 32 bits is out of range
+// and not reduced to its low 32 bits (decision S07-D7: putc leaves the string
+// unchanged), real-to-integer ties round away from zero, integral casts to
+// string remove NUL bytes, and packed string casts right-justify and pad.
 module tb;
     typedef logic [127:0] packed128_t;
     typedef logic [135:0] packed136_t;
@@ -24,6 +26,11 @@ module tb;
         wide_index = 64'h0000_0001_0000_0001;
         wide_character = 64'h1234_5678_9abc_de5a;
         chars.putc(wide_index, wide_character);
+        if (chars.getc(1) !== 8'h62) begin
+            $display("FAIL string_conversions wide_index_putc");
+            $finish;
+        end
+        chars.putc(1, wide_character);
         chars.putc(2, '1);
         if (chars.len() !== 4 || chars.getc(0) !== 8'h61 ||
             chars.getc(1) !== 8'h5a || chars.getc(2) !== 8'hff ||

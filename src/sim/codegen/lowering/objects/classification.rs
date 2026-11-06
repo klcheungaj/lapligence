@@ -43,6 +43,18 @@ impl Codegen<'_> {
         ir_to_storage(value, width, true, true)
     }
 
+    /// The index argument of a string method (`getc`, `putc`, `substr`): kept
+    /// at its own width and X/Z bits so a wide or unknown index is out of range
+    /// (SV 6.16.2, 6.16.3, 6.16.8) instead of being converted to the `int`
+    /// formal's low 32 bits.
+    pub(super) fn object_index_argument(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrExpr, String> {
+        self.lower_container_index(path, node)
+    }
+
     pub(super) fn semaphore_key_argument(
         &mut self,
         path: &str,

@@ -86,3 +86,61 @@ fn compound_assignment_to_container_element_select_is_rejected() {
         "compound assignment to resizable container element in `tb` is not supported",
     );
 }
+
+#[test]
+fn queue_indices_beyond_32_bits_are_invalid_not_truncated() {
+    parity(
+        "wide_index_queue",
+        concat!(
+            "int  0 0 0 0 0 0 0\n",
+            "logic xxxx xxxx xxxx xxxx\n",
+            "string [] [] []\n",
+            "real 0.0 0.0\n",
+            "record 0 []\n",
+            "struct 0 class 0\n",
+            "valid 8 5 8\n",
+            "q='{5, 6, 7, 8}\n",
+            "lq='{17, 34, 51, 68} sq='{\"a\", \"b\", \"c\", \"d\"}\n",
+            "rq='{1.500000, 2.500000, 3.500000, 4.500000}\n",
+            "rr='{'{a:1, s:\"x\"}, '{a:2, s:\"y\"}, '{a:3, s:\"z\"}, '{a:4, s:\"w\"}}\n",
+            "h='{10, 20, 30, 40} dq='{50, 60, 70, 80}\n",
+            "after q='{5, 106, 7, 8}\n",
+            "not appended: size=4\n",
+            "appended: '{5, 106, 7, 8, 201, 202}\n",
+            "last=202 before=201\n",
+            "'{5, 106, 7, 8, 203, 202}\n",
+            "wide offset from $: 0\n",
+            "methods ignored '{5, 106, 7, 8, 203, 202}\n",
+            "methods valid '{5, 58, 106, 7, 8, 203}\n",
+            "slice '{106, 7}\n",
+            "clipped high 6\n",
+            "clipped low '{5, 106}\n",
+            "wide high 6\n",
+            "wide high 65 6\n",
+            "unsigned high '{106, 7, 8, 203, 202}\n",
+            "wide low 64 '{5, 106}\n",
+            "wide low 65 '{5, 106}\n",
+            "wide left beyond $ 0\n",
+            "wide both 0\n",
+            "wide both ends 6\n",
+            "x bound 0\n",
+            "x bound right 0\n",
+        ),
+    );
+}
+
+#[test]
+fn string_indices_beyond_32_bits_are_invalid_not_truncated() {
+    parity(
+        "wide_index_strings",
+        concat!(
+            "read 100 0 0 0 0\n",
+            "ignored [abcdef]\n",
+            "valid [abcZef]\n",
+            "getc 90 0 0 0\n",
+            "putc ignored [abcZef]\n",
+            "putc valid [abcWef]\n",
+            "substr [bc] [] [] [] []\n",
+        ),
+    );
+}

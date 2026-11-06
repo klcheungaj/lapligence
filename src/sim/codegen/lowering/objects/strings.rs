@@ -496,7 +496,7 @@ impl Codegen<'_> {
                 match (name.as_str(),args.as_slice()) {
                     ("toupper",[]) => Ok(IrStringExpr::Case(value,true)),
                     ("tolower",[]) => Ok(IrStringExpr::Case(value,false)),
-                    ("substr",[first,last]) => Ok(IrStringExpr::Substr(value,Box::new(self.object_int_argument(path,*first,32)?),Box::new(self.object_int_argument(path,*last,32)?))),
+                    ("substr",[first,last]) => Ok(IrStringExpr::Substr(value,Box::new(self.object_index_argument(path,*first)?),Box::new(self.object_index_argument(path,*last)?))),
                     _ => Err(format!("unsupported string method or argument count: {name}")),
                 }
             }

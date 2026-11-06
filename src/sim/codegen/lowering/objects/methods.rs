@@ -305,12 +305,12 @@ impl Codegen<'_> {
             ("putc", [position, value]) => match index {
                 Some(index) => IrObjectStmt::StringPutc(
                     index,
-                    self.object_int_argument(path, *position, 32)?,
+                    self.object_index_argument(path, *position)?,
                     self.object_int_argument(path, *value, 8)?,
                 ),
                 None => IrObjectStmt::StringPutcLocal(
                     local.clone().unwrap(),
-                    self.object_int_argument(path, *position, 32)?,
+                    self.object_index_argument(path, *position)?,
                     self.object_int_argument(path, *value, 8)?,
                 ),
             },

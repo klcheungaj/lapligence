@@ -3,9 +3,12 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    /// The index argument of `insert` or `delete`. Like a select index it keeps
+    /// its width, signedness and X/Z bits instead of converting to the `int`
+    /// formal, so an unknown, negative or beyond-32-bit value is an invalid
+    /// index and the call changes nothing (SV 7.10.1).
     fn lower_queue_method_index(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
-        let value = self.lower_expr(path, node)?;
-        ir_to_storage(value, 32, true, true)
+        self.lower_container_index(path, node)
     }
 
     pub(in super::super) fn is_unbounded_node(&self, node: NodeId) -> bool {
@@ -50,13 +53,24 @@ impl<'a> Codegen<'a> {
         self.lower_queue_method_index(path, node)
     }
 
+    /// The index of a queue element select. The value keeps its width,
+    /// signedness and X/Z bits so the runtime can reject an unknown, negative
+    /// or beyond-32-bit index as invalid (SV 7.10.1); narrowing it to `int`
+    /// would read or write another element. `$` inside the expression is the
+    /// queue's last index (SV 7.10).
     pub(in super::super) fn lower_queue_index(
         &mut self,
         path: &str,
         container: usize,
         node: NodeId,
     ) -> Result<IrExpr, String> {
-        self.lower_queue_method_index_with_end(path, container, node, false)
+        if self.is_unbounded_node(node) {
+            return self.lower_queue_method_index_with_end(path, container, node, false);
+        }
+        let previous = self.queue_end.replace(container);
+        let index = self.lower_container_index(path, node);
+        self.queue_end = previous;
+        index
     }
 
     fn lower_queue_bound(&mut self, path: &str, node: NodeId) -> Result<IrQueueBound, String> {

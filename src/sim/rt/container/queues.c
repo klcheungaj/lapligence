@@ -269,34 +269,7 @@ static int llg_queue_source_range(const llg_queue_source_t* source,
     const llg_queue_t* queue = source->queue;
     if (!queue || !first || !count)
         llg_container_fatal("malformed queue assignment source");
-    if (!queue->size) {
-        *first = 0;
-        *count = 0;
-        return 1;
-    }
-    size_t left;
-    size_t right;
-    if (source->left_unbounded) {
-        left = queue->size - 1;
-    } else if (!llg_index(source->left, queue->size, 0, &left)) {
-        *first = 0;
-        *count = 0;
-        return 1;
-    }
-    if (source->right_unbounded) {
-        right = queue->size - 1;
-    } else if (!llg_index(source->right, queue->size, 0, &right)) {
-        *first = 0;
-        *count = 0;
-        return 1;
-    }
-    if (left > right) {
-        *first = 0;
-        *count = 0;
-        return 1;
-    }
-    *first = left;
-    *count = right - left + 1;
+    llg_queue_slice_range(source, queue->size, first, count);
     return 1;
 }
 
