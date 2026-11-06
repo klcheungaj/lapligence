@@ -22,9 +22,10 @@
 //! of a queue, dynamic array or string (always invalid) and a constant beyond
 //! 32 bits there.
 //!
-//! Method arguments (`q.insert(i, v)`, `s.getc(i)`) are not selects: their
-//! formal is an `int`, so the frontend's own implicit-conversion warning
-//! covers a wider actual.
+//! Index arguments of the built-in methods that take one are checked too:
+//! `insert` and `delete` of a queue, `getc`, `putc` and `substr` of a string.
+//! Their formal is an `int`, but a wider actual is not converted: the call is
+//! invalid (it changes nothing or returns the default), like the select form.
 
 use std::collections::HashSet;
 
@@ -103,24 +104,49 @@ impl LintRule for WideIndexRule {
             match db.node_kind(id) {
                 NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                     for (index, target) in array_select_targets(db, *base, indices) {
-                        check_index(db, index, target, &mut report);
+                        check_index(db, index, target, None, &mut report);
                     }
                 }
                 NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                     if let Some(target) = select_target(db, *base) {
-                        check_index(db, *index, target, &mut report);
+                        check_index(db, *index, target, None, &mut report);
                     }
                 }
                 NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
                     // Packed ranges are constant expressions; only a queue
                     // slice has run-time bounds.
                     if select_target(db, *base) == Some(Target::Queue) {
-                        check_index(db, *left, Target::Queue, &mut report);
-                        check_index(db, *right, Target::Queue, &mut report);
+                        check_index(db, *left, Target::Queue, None, &mut report);
+                        check_index(db, *right, Target::Queue, None, &mut report);
                     }
                 }
                 NodeKind::Expr(ExprKind::IndexedPartSelect { base_expr, .. }) => {
-                    check_index(db, *base_expr, Target::PartBase, &mut report);
+                    check_index(db, *base_expr, Target::PartBase, None, &mut report);
+                }
+                NodeKind::MethodCall {
+                    name,
+                    receiver: Some(receiver),
+                    ..
+                } => {
+                    let Some(target) = select_target(db, *receiver) else {
+                        continue;
+                    };
+                    let args: Vec<NodeId> = db
+                        .node(id)
+                        .children
+                        .iter()
+                        .copied()
+                        .filter(|child| child != receiver)
+                        .collect();
+                    let indices: &[NodeId] = match (name.as_str(), target, args.len()) {
+                        ("insert", Target::Queue, 2) | ("delete", Target::Queue, 1) => &args[..1],
+                        ("getc", Target::Str, 1) | ("putc", Target::Str, 2) => &args[..1],
+                        ("substr", Target::Str, 2) => &args[..2],
+                        _ => &[],
+                    };
+                    for index in indices {
+                        check_index(db, *index, target, Some(name), &mut report);
+                    }
                 }
                 _ => {}
             }
@@ -131,7 +157,13 @@ impl LintRule for WideIndexRule {
 
 /// Report `index` when it is wider than 32 bits or a constant no container
 /// accepts. `report` receives the node to position at and the message.
-fn check_index(db: &Db, index: NodeId, target: Target, report: &mut impl FnMut(NodeId, String)) {
+fn check_index(
+    db: &Db,
+    index: NodeId,
+    target: Target,
+    method: Option<&str>,
+    report: &mut impl FnMut(NodeId, String),
+) {
     let index = strip_implicit_conversions(db, index);
     if let Some(value) = eval_integer(db, index) {
         if !target.constant_unreported() || (0..=i128::from(u32::MAX)).contains(&value) {
@@ -144,11 +176,18 @@ fn check_index(db: &Db, index: NodeId, target: Target, report: &mut impl FnMut(N
         };
         report(
             index,
-            format!(
-                "constant index {value} of {} {why}: the access is always invalid \
-                 (a read returns X or the element default, a write is ignored)",
-                target.noun()
-            ),
+            match method {
+                Some(method) => format!(
+                    "constant index argument {value} of `{method}` on {} {why}: the call is \
+                     always invalid (it changes nothing or returns the default)",
+                    target.noun()
+                ),
+                None => format!(
+                    "constant index {value} of {} {why}: the access is always invalid \
+                     (a read returns X or the element default, a write is ignored)",
+                    target.noun()
+                ),
+            },
         );
         return;
     }
@@ -156,6 +195,18 @@ fn check_index(db: &Db, index: NodeId, target: Target, report: &mut impl FnMut(N
         return;
     };
     if width <= INDEX_BITS {
+        return;
+    }
+    if let Some(method) = method {
+        report(
+            index,
+            format!(
+                "index argument of `{method}` on {} is {width} bits wide: a value beyond 32 \
+                 bits is not truncated, and an out-of-range index makes the call invalid (it \
+                 changes nothing or returns the default)",
+                target.noun()
+            ),
+        );
         return;
     }
     let subject = if target == Target::PartBase {
@@ -431,13 +482,53 @@ mod tests {
     }
 
     #[test]
-    fn method_arguments_and_unknown_widths_are_quiet() {
+    fn index_arguments_of_queue_and_string_methods_warn() {
+        let got = findings(&format!(
+            "{DECLS}  initial begin\n    q.insert(w33, 1);\n    q.delete(a64);\n    x = s.getc(w33);\n    \
+             s.putc(a64, 8'h41);\n    s = s.substr(0, w65);\n    s = s.substr(a64, 3);\n  end"
+        ));
+        assert_eq!(got.len(), 6, "{got:?}");
+        for needle in [
+            "index argument of `insert` on a queue is 33 bits wide",
+            "index argument of `delete` on a queue is 64 bits wide",
+            "index argument of `getc` on a string is 33 bits wide",
+            "index argument of `putc` on a string is 64 bits wide",
+            "index argument of `substr` on a string is 65 bits wide",
+            "index argument of `substr` on a string is 64 bits wide",
+        ] {
+            assert!(got.iter().any(|m| m.contains(needle)), "{needle}: {got:?}");
+        }
+        assert!(
+            got.iter().all(|m| m.contains("makes the call invalid")),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn method_arguments_that_fit_other_methods_and_unknown_widths_are_quiet() {
         let got = findings(&format!(
             "{DECLS}  function automatic longint wide_fn(); return 64'd1; endfunction\n  \
-             initial begin\n    q.insert(w33, 1);\n    q.delete(w33);\n    x = s.getc(w33);\n    \
-             x = mem[wide_fn()];\n    x = mem['1];\n  end"
+             int aa [bit [63:0]];\n  \
+             initial begin\n    q.insert(i, 1);\n    q.delete(u);\n    x = s.getc(i);\n    \
+             s = s.substr(0, 3);\n    q.delete();\n    aa.delete(a64);\n    x = aa.exists(a64);\n    \
+             q.push_back(a64);\n    q.insert(64'd1, 1);\n    x = mem[wide_fn()];\n    x = mem['1];\n  end"
         ));
         assert!(got.is_empty(), "{got:?}");
+    }
+
+    #[test]
+    fn constant_method_index_arguments_no_container_accepts_warn() {
+        let got = findings(&format!(
+            "{DECLS}  initial begin\n    q.delete(-1);\n    x = s.getc(-2);\n    \
+             q.insert(40'h1_0000_0003, 1);\n  end"
+        ));
+        assert_eq!(got.len(), 3, "{got:?}");
+        assert!(
+            got.iter().any(
+                |m| m.contains("constant index argument -1 of `delete` on a queue is negative")
+            ),
+            "{got:?}"
+        );
     }
 
     #[test]

@@ -220,7 +220,7 @@ impl Codegen<'_> {
                 return Ok(Some(IrStmt::Object(Box::new(
                     IrObjectStmt::StringPutcLocal(
                         target,
-                        self.lower_container_index(path, position)?,
+                        self.object_index_argument(path, position)?,
                         self.object_int_argument(path, rhs, 8)?,
                     ),
                 ))));
@@ -240,7 +240,7 @@ impl Codegen<'_> {
             IrObjectType::String => match indexed {
                 Some((_, position)) => IrObjectStmt::StringPutc(
                     index,
-                    self.lower_container_index(path, position)?,
+                    self.object_index_argument(path, position)?,
                     self.object_int_argument(path, rhs, 8)?,
                 ),
                 None => IrObjectStmt::StringAssign(

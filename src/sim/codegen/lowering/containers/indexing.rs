@@ -3,9 +3,12 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    /// The index argument of `insert` or `delete`. Like a select index it keeps
+    /// its width, signedness and X/Z bits instead of converting to the `int`
+    /// formal, so an unknown, negative or beyond-32-bit value is an invalid
+    /// index and the call changes nothing (SV 7.10.1).
     fn lower_queue_method_index(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
-        let value = self.lower_expr(path, node)?;
-        ir_to_storage(value, 32, true, true)
+        self.lower_container_index(path, node)
     }
 
     pub(in super::super) fn is_unbounded_node(&self, node: NodeId) -> bool {

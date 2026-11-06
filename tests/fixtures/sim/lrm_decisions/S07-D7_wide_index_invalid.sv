@@ -4,9 +4,13 @@
 // default of the element type (X for a 4-state element, 0 for `int` and a
 // string byte, the empty string for `string`), a write does nothing, and the
 // run continues. This holds for fixed and dynamic arrays, queues, strings,
-// bit-selects and indexed part-selects alike. A queue slice whose bound needs
-// more than 32 bits is the empty queue; a bound that fits is clipped to the
-// queue (`Q[a:b]` with `a < 0` or `b > $`).
+// bit-selects and indexed part-selects alike, and for the index arguments of
+// `insert`, `delete`, `getc`, `putc` and `substr`: the `int` formal does not
+// reduce a wider actual to its low 32 bits, so the call is invalid (`getc`
+// returns 0, `putc` leaves the string unchanged, `substr` returns the empty
+// string, `insert` and `delete` change nothing). A queue slice bound is
+// clipped whatever its width (`Q[a:b]` with `a < 0` reads as 0, `b > $` as
+// `$`); an X or Z bound gives the empty queue.
 //
 // IEEE 1800-2009 7.4.6 (SystemVerilog-1800-2009.txt L8235-8238): "If an index
 // expression is out of the address bounds or if any bit in the address is X
@@ -33,11 +37,20 @@
 //
 // A value such as 33'h1_0000_0003 lies outside every array, so reading it
 // must not return element 3. Some simulators reduce an index to 32 bits and
-// select element 3 for most of these forms; llg follows the clause text
-// because the value of the index expression, not its low 32 bits, is
-// compared with the bounds. The method arguments of `insert`, `delete`,
-// `getc`, `putc` and `substr` are `int` formals, so a wider actual is
-// converted to `int` there and is not covered by this decision.
+// select element 3 for most of these forms, and clip a slice bound wider than
+// 32 bits as empty or by its low bits; llg follows the clause text because the
+// value of the index expression, not its low 32 bits, is compared with the
+// bounds.
+//
+// IEEE 1800-2009 6.16.2 (L5799-5803): "function void putc(int i, byte c);" /
+// "putc does not change the size of str: If i < 0 or i >= str.len(), then str
+// is unchanged." 6.16.3 (L5809-5812): "str.getc(i) returns the ASCII code of
+// the ith character in str." / "If i < 0 or i >= str.len(), then str.getc(i)
+// returns 0." 6.16.8 (L5859-5863): "If i < 0, j < i, or j >= str.len(), substr()
+// returns " " (the empty string)." 7.10.2.2 (L9088-9090) and 7.10.2.3
+// (L9094-9099) give `insert(input int index, ...)` and `delete([int index])`
+// and say only that they act "at the specified index position"; the invalid
+// index rule of 7.10.1 above applies: no operation and a warning.
 module tb;
   logic [7:0] v;
   logic [3:0][7:0] pa;
@@ -48,6 +61,9 @@ module tb;
   string sq[$];
   string s;
   int s1[$];
+  longint lneg;
+  logic signed [64:0] m65;
+  logic [3:0] ux;
   logic [64:0] w65;
   logic [32:0] w33;
   logic [63:0] top;
@@ -69,6 +85,9 @@ module tb;
     top = '1;
     hi = 64'hFFFF_FFFF_0000_0001;
     u32 = 32'hffff_ffff;
+    lneg = -3;
+    m65 = -5;
+    ux = 4'bx001;
 
     $display("unpacked u[w33]=%0d u[w65]=%0d u[top]=%0d u[u32]=%0d", u[w33], u[w65], u[top], u[u32]);
     $display("dynamic d[w33]=%0d d[w65]=%0d d[hi]=%0d d[u32]=%0d", d[w33], d[w65], d[hi], d[u32]);
@@ -102,9 +121,20 @@ module tb;
 
     s1 = q[0:100];   $display("slice clipped high size=%0d last=%0d", s1.size(), s1[s1.size() - 1]);
     s1 = q[-3:1];    $display("slice clipped low size=%0d first=%0d", s1.size(), s1[0]);
-    s1 = q[0:w33];   $display("slice wide high size=%0d", s1.size());
-    s1 = q[hi:3];    $display("slice wide low size=%0d", s1.size());
+    s1 = q[0:w33];   $display("slice wide high size=%0d last=%0d", s1.size(), s1[s1.size() - 1]);
+    s1 = q[lneg:1];  $display("slice wide low 64 size=%0d first=%0d", s1.size(), s1[0]);
+    s1 = q[m65:1];   $display("slice wide low 65 size=%0d first=%0d", s1.size(), s1[0]);
+    s1 = q[hi:3];    $display("slice left beyond last size=%0d", s1.size());
     s1 = q[w33:w33]; $display("slice wide single size=%0d", s1.size());
+    s1 = q[ux:2];    $display("slice x bound size=%0d", s1.size());
+
+    $display("getc %0d %0d %0d %0d", s.getc(3), s.getc(w33), s.getc(hi), s.getc(ux));
+    s.putc(w33, "P"); s.putc(hi, "P"); s.putc(ux, "P");
+    $display("putc [%s]", s);
+    $display("substr [%s] [%s] [%s] [%s]", s.substr(1, 2), s.substr(0, w33), s.substr(hi, 4), s.substr(ux, 2));
+    q.insert(w33, 55); q.insert(hi, 56); q.insert(ux, 57);
+    q.delete(w33); q.delete(w65); q.delete(u32);
+    $display("insert and delete size=%0d q=%0d,%0d,%0d,%0d", q.size(), q[0], q[1], q[2], q[3]);
     $display("queue size %0d", q.size());
     $finish;
   end

@@ -3,7 +3,7 @@
 // L9042-9047). A value that needs more than 32 bits, or an unsigned value
 // above 2**31-1, is outside 0...$ and so is an X or Z index: a read returns
 // the element default and a write is ignored with a warning, while a write at
-// $+1 still appends.
+// $+1 still appends. Bounds of a slice clip whatever their width.
 module tb;
   int q[$];
   logic [15:0] lq[$];
@@ -23,6 +23,7 @@ module tb;
   logic [64:0] w65;
   int unsigned u32;
   longint lneg;
+  logic signed [64:0] m65;
   logic [3:0] ux;
   int x;
 
@@ -38,6 +39,7 @@ module tb;
     w65 = 65'h1_0000_0000_0000_0003;
     u32 = 32'hFFFF_FFFF;
     lneg = -2;
+    m65 = -5;
     ux = 4'bx001;
     q = {5, 6, 7, 8};
     lq = {16'h11, 16'h22, 16'h33, 16'h44};
@@ -92,14 +94,34 @@ module tb;
     x = q[$-w33];
     $display("wide offset from $: %0d", x);
 
-    // Slices clip bounds that fit and are empty for a bound beyond 32 bits.
+    // insert and delete take the same index: a wide or unknown one changes nothing.
+    out = q;
+    q.insert(w33, 55);
+    q.insert(hi, 56);
+    q.insert(ux, 57);
+    q.delete(w33);
+    q.delete(w65);
+    q.delete(u32);
+    $display("methods ignored %p", q);
+    q.insert(1, 58);
+    q.delete(q.size() - 1);
+    $display("methods valid %p", q);
+    q = out;
+
+    // Slices clip a bound of any width: a < 0 reads as 0 and b > $ as $.
     out = q[1:2];       $display("slice %p", out);
     out = q[0:100];     $display("clipped high %0d", out.size());
     out = q[-3:1];      $display("clipped low %p", out);
     out = q[0:w33];     $display("wide high %0d", out.size());
-    out = q[hi:3];      $display("wide low %0d", out.size());
+    out = q[0:w65];     $display("wide high 65 %0d", out.size());
+    out = q[1:u32];     $display("unsigned high %p", out);
+    out = q[lneg:1];    $display("wide low 64 %p", out);
+    out = q[m65:1];     $display("wide low 65 %p", out);
+    out = q[hi:3];      $display("wide left beyond $ %0d", out.size());
     out = q[w33:w33];   $display("wide both %0d", out.size());
+    out = q[m65:w65];   $display("wide both ends %0d", out.size());
     out = q[ux:2];      $display("x bound %0d", out.size());
+    out = q[2:ux];      $display("x bound right %0d", out.size());
     $finish;
   end
 endmodule
