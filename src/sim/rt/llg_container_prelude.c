@@ -193,6 +193,39 @@ static int llg_index(sv4_t value, size_t upper_exclusive, int allow_end,
     return 1;
 }
 
+/* A slice bound as a saturated 64-bit position. Returns 0 for an X or Z bound.
+ * A known value that does not fit 64 bits saturates by its sign, which clips
+ * the same way as any other value beyond the queue (it is never truncated). */
+static int llg_slice_bound(sv4_t value, int64_t* out) {
+    if (sv4_is_unknown(value)) return 0;
+    if (sv4_to_index_i64(value, out)) return 1;
+    uint32_t width = llg_sv4_width(value);
+    int negative = llg_sv4_signed(value) && width &&
+        ((llg_sv4_word(value, (width - 1) / 64, LLG_SV4_BITS) >> ((width - 1) % 64)) & 1u);
+    *out = negative ? INT64_MIN : INT64_MAX;
+    return 1;
+}
+
+/* The elements Q[a:b] selects from a queue of `size` elements (SV 7.10.1):
+ * a < 0 reads as 0 and b > $ as $, so a slice partly outside the queue is
+ * clipped, whatever the width of the bound; a > b, a slice wholly outside the
+ * queue and a bound that is X or Z give the empty queue. */
+static void llg_queue_slice_range(const llg_queue_source_t* source, size_t size,
+                                  size_t* first, size_t* count) {
+    *first = 0;
+    *count = 0;
+    if (!size) return;
+    int64_t left = (int64_t)size - 1;
+    int64_t right = left;
+    if (!source->left_unbounded && !llg_slice_bound(source->left, &left)) return;
+    if (!source->right_unbounded && !llg_slice_bound(source->right, &right)) return;
+    if (left < 0) left = 0;
+    if (right > (int64_t)size - 1) right = (int64_t)size - 1;
+    if (left > right) return;
+    *first = (size_t)left;
+    *count = (size_t)(right - left + 1);
+}
+
 /* Resolve one streaming `with` selector to its requested logical index range.
  * The range is deliberately independent of the container's current size:
  * streaming an out-of-range source element yields that element's default. */

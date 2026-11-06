@@ -400,6 +400,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   (nested patterns, rows and slices too; S07-D2), invalid indices per
   dimension (S07-D1) and nonblocking writes work (row equality and rows as
   `ref` actuals reject).
+  An index is never truncated (S07-D7): a value beyond 32 bits, an unsigned
+  value above 2**31-1 or an X/Z index into an array, queue, string, bit-select
+  or indexed part-select is invalid, so a read returns the element default and
+  a write does nothing. The same holds for the index arguments of `insert`,
+  `delete`, `getc`, `putc` and `substr` (no `int` conversion), and queue slice
+  bounds clip whatever their width. `$` may appear in an index expression
+  (`q[$-1]`). The `wide-index` lint rule warns at such an index.
   Associative members of element records, class-property storage of
   container record members, record ports with built-in
   semaphore/mailbox/process members, the `ref` actuals the

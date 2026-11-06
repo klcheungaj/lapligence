@@ -5273,6 +5273,14 @@ fn s07_d2_multidim_native_pattern_format() {
 }
 
 #[test]
+fn s07_d7_wide_index_invalid() {
+    run_decision(
+        "S07-D7_wide_index_invalid",
+        include_str!("fixtures/sim/lrm_decisions/S07-D7_wide_index_invalid.out"),
+    );
+}
+
+#[test]
 fn s07_d5_whole_container_nba() {
     run_decision(
         "S07-D5_whole_container_nba",

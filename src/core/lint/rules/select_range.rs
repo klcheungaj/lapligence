@@ -430,7 +430,7 @@ fn within(value: i128, left: i128, right: i128) -> bool {
 /// Small, deliberately conservative integer evaluator for selector bounds.
 /// It accepts only literal values, transparent casts, unary +/- and refs to
 /// parameters whose values were resolved into the owned db.
-fn eval_integer(db: &Db, id: NodeId) -> Option<i128> {
+pub(super) fn eval_integer(db: &Db, id: NodeId) -> Option<i128> {
     match db.node_kind(id) {
         NodeKind::Expr(ExprKind::Constant { value, size, .. }) if *size > 0 => value_to_i128(value),
         NodeKind::Expr(ExprKind::Cast { operand, .. }) => eval_integer(db, *operand),
