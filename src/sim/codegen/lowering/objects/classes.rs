@@ -529,14 +529,11 @@ impl Codegen<'_> {
                     )
                 })
                 .collect(),
-            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                if matches!(
-                    op,
-                    Operation::LogicalAnd | Operation::LogicalOr | Operation::Conditional
-                ) =>
-            {
-                operands.get(1..).unwrap_or_default().to_vec()
-            }
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::LogicalAnd | Operation::LogicalOr | Operation::Conditional,
+                operands,
+                ..
+            }) => operands.get(1..).unwrap_or_default().to_vec(),
             // An array method's `with` expression runs per element.
             NodeKind::MethodCall { receiver, .. } if self.db.method_call_has_with_clause(node) => {
                 self.node(node)

@@ -59,6 +59,18 @@ const MUTATING_CONTAINER_METHODS: &[&str] = &[
     "shuffle",
 ];
 
+/// The statements around staged uses: before and after.
+type StagingStatements = (Vec<IrStmt>, Vec<IrStmt>);
+
+/// What a staging walks again once a bound associative array exposes the
+/// level below it.
+#[derive(Clone, Copy)]
+enum StageRoot {
+    Statement(NodeId),
+    Expression(NodeId),
+    Initializer(NodeId),
+}
+
 /// One queue or dynamic-array member of a container record element that a
 /// statement names, and whether the statement can change it.
 struct StagedMember {
@@ -1388,9 +1400,7 @@ impl Codegen<'_> {
             overwritten,
             &mut before,
             &mut after,
-            &|this, members, nested| {
-                this.collect_statement_members(h, members, nested);
-            },
+            StageRoot::Statement(h),
         )?;
         Ok((before, after))
     }
@@ -1439,7 +1449,7 @@ impl Codegen<'_> {
         overwritten: Option<NodeId>,
         before: &mut Vec<IrStmt>,
         after: &mut Vec<IrStmt>,
-        collect: &dyn Fn(&Self, &mut Vec<StagedMember>, &mut Vec<(NodeId, ElementSelection, bool)>),
+        root: StageRoot,
     ) -> Result<(), String> {
         loop {
             let aliased = self.staged_nested_elements.values().any(|staged| {
@@ -1452,7 +1462,19 @@ impl Codegen<'_> {
                 return Ok(());
             }
             let (mut members, mut nested) = (Vec::new(), Vec::new());
-            collect(self, &mut members, &mut nested);
+            match root {
+                StageRoot::Statement(h) => {
+                    self.collect_statement_members(h, &mut members, &mut nested);
+                }
+                StageRoot::Expression(node) => {
+                    self.collect_staged_members(node, false, &mut members, &mut nested)
+                }
+                StageRoot::Initializer(node) => {
+                    if !self.stage_whole_read(node, &mut members, &mut nested) {
+                        self.collect_staged_members(node, false, &mut members, &mut nested);
+                    }
+                }
+            }
             nested.retain(|(node, _, _)| self.staged_nested_element(*node).is_none());
             if nested.is_empty() {
                 return Ok(());
@@ -1479,11 +1501,7 @@ impl Codegen<'_> {
             None,
             &mut before,
             &mut after,
-            &|this, members, nested| {
-                if !this.stage_whole_read(node, members, nested) {
-                    this.collect_staged_members(node, false, members, nested);
-                }
-            },
+            StageRoot::Initializer(node),
         )?;
         debug_assert!(after.is_empty(), "an initializer writes back nothing");
         Ok(before)
@@ -1501,7 +1519,7 @@ impl Codegen<'_> {
         &mut self,
         path: &str,
         node: NodeId,
-    ) -> Result<Option<(Vec<IrStmt>, Vec<IrStmt>)>, String> {
+    ) -> Result<Option<StagingStatements>, String> {
         if !self.element_staging_possible
             || !self.staged_element_members.is_empty()
             || !self.staged_nested_elements.is_empty()
@@ -1527,7 +1545,7 @@ impl Codegen<'_> {
             None,
             &mut before,
             &mut after,
-            &|this, members, nested| this.collect_staged_members(node, false, members, nested),
+            StageRoot::Expression(node),
         )?;
         Ok(Some((before, after)))
     }
