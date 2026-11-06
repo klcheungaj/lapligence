@@ -2449,7 +2449,7 @@ impl Codegen<'_> {
                 let extent = (i128::from(left) - i128::from(right)).abs() + 1;
                 (0..extent)
                     .contains(&offset)
-                    .then(|| (offset as i64, extent as i64))
+                    .then_some((offset as i64, extent as i64))
             });
             let Some((offset, extent)) = value else {
                 return Err(self.rand_error(
