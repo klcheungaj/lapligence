@@ -1,4 +1,4 @@
-// S07-D7: the value of a plain blocking write through a nested associative
+// S07-D8: the value of a plain blocking write through a nested associative
 // array runs before the array is selected, so a call in the value that deletes
 // the outer entry does not lose the write: the entry is created again. A
 // compound write reads the element first and keeps the array it read.

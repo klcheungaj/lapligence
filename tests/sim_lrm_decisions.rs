@@ -5313,10 +5313,10 @@ fn s07_d6_record_event_nba() {
 }
 
 #[test]
-fn s07_d7_nested_write_value_first() {
+fn s07_d8_nested_write_value_first() {
     run_decision(
-        "S07-D7_nested_write_value_first",
-        include_str!("fixtures/sim/lrm_decisions/S07-D7_nested_write_value_first.out"),
+        "S07-D8_nested_write_value_first",
+        include_str!("fixtures/sim/lrm_decisions/S07-D8_nested_write_value_first.out"),
     );
 }
 
