@@ -40,12 +40,23 @@ impl Codegen<'_> {
         // copied out first; the copies run as the predicate of a conditional
         // that always selects the value.
         if self.element_staging_possible {
-            if let Some(before) = self.stage_expression_members(path, node)? {
+            if let Some((mut before, after)) = self.stage_expression_members(path, node)? {
                 let value = self.lower_string(path, node);
                 self.end_element_member_staging();
+                let mut value = value?;
+                // The value is read before the changed element is stored.
+                if !after.is_empty() {
+                    let name = format!("_llg_ss{}", node.0);
+                    before.push(IrStmt::DeclString {
+                        name: name.clone(),
+                        init: Some(value),
+                    });
+                    before.extend(after);
+                    value = IrStringExpr::LocalRead(name);
+                }
                 return Ok(IrStringExpr::Conditional {
                     predicate: Box::new(always_after(before)),
-                    then: Box::new(value?),
+                    then: Box::new(value),
                     otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
                 });
             }

@@ -1203,8 +1203,20 @@ impl Codegen<'_> {
                 | ExprKind::IndexedPartSelect { base, .. },
             ) if mutated => {
                 let base = *base;
+                let indices = match self.kind(node) {
+                    NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => indices.clone(),
+                    _ => Vec::new(),
+                };
                 for child in children {
-                    self.collect_staged_members(child, child == base, out, nested);
+                    // A flattened select keeps its outer select as a child.
+                    let chain = !indices.contains(&child)
+                        && matches!(
+                            self.kind(child),
+                            NodeKind::Expr(
+                                ExprKind::ArraySelect { .. } | ExprKind::BitSelect { .. }
+                            )
+                        );
+                    self.collect_staged_members(child, child == base || chain, out, nested);
                 }
             }
             // A member of an element of the staged container (`a[1].q[0].s`).
@@ -1249,24 +1261,47 @@ impl Codegen<'_> {
             // ref actual, so it is copied back after the call. A nested
             // element passed whole to an input formal is read once.
             NodeKind::FuncCall { callee, .. } => {
-                let inputs: Vec<bool> = callee
+                let directions: Vec<DbDirection> = callee
                     .map(|callee| {
                         self.node(callee)
                             .children
                             .iter()
                             .filter_map(|formal| match self.kind(*formal) {
-                                NodeKind::FuncArg { direction, .. } => {
-                                    Some(*direction == DbDirection::Input)
-                                }
+                                NodeKind::FuncArg { direction, .. } => Some(*direction),
                                 _ => None,
                             })
                             .collect()
                     })
                     .unwrap_or_default();
-                let positional = inputs.len() == children.len();
+                let positional = directions.len() == children.len();
                 for (position, child) in children.into_iter().enumerate() {
-                    if positional && inputs[position] && self.stage_whole_read(child, out, nested) {
+                    let direction = positional.then(|| directions[position]);
+                    if direction == Some(DbDirection::Input)
+                        && self.stage_whole_read(child, out, nested)
+                    {
                         continue;
+                    }
+                    // A nested element passed whole to an output or inout
+                    // formal: a copy goes in and comes back after the call.
+                    if matches!(direction, Some(DbDirection::Output | DbDirection::Inout)) {
+                        // The frontend wraps the actual in an assignment.
+                        let actual = match self.kind(child) {
+                            NodeKind::Expr(ExprKind::Operation {
+                                op: Operation::Assignment,
+                                operands,
+                                ..
+                            }) => operands.first().copied().unwrap_or(child),
+                            _ => child,
+                        };
+                        if let Some(selection) = self.nested_element_selection(actual) {
+                            if let ElementSelector::Indices(indices) = &selection.selector {
+                                for index in indices.clone() {
+                                    self.collect_staged_members(index, false, out, nested);
+                                }
+                                nested.push((actual, selection, true));
+                                continue;
+                            }
+                        }
                     }
                     self.collect_staged_members(child, true, out, nested);
                 }
@@ -1365,15 +1400,15 @@ impl Codegen<'_> {
     /// elements (and queues or dynamic arrays nested in container elements)
     /// that the expression `node` reads: a condition, loop bound,
     /// declaration initializer or the value of a timed assignment. Each is
-    /// copied out before every evaluation and never written back. `None`
-    /// when `node` names none; an expression that changes one is rejected.
-    /// The caller lowers `node` and then ends the staging with
-    /// `end_element_member_staging`.
+    /// copied out before every evaluation and, when the expression changes
+    /// it, copied back after it. Returns those statements, or `None` when
+    /// `node` names none. The caller lowers `node` and then ends the staging
+    /// with `end_element_member_staging`.
     pub(in crate::sim::codegen) fn stage_expression_members(
         &mut self,
         path: &str,
         node: NodeId,
-    ) -> Result<Option<Vec<IrStmt>>, String> {
+    ) -> Result<Option<(Vec<IrStmt>, Vec<IrStmt>)>, String> {
         if !self.element_staging_possible
             || !self.staged_element_members.is_empty()
             || !self.staged_nested_elements.is_empty()
@@ -1385,18 +1420,26 @@ impl Codegen<'_> {
         if members.is_empty() && nested.is_empty() {
             return Ok(None);
         }
-        // A changed nested element keeps the nested-element diagnostics.
-        if nested.iter().any(|(_, _, mutated)| *mutated) {
+        // A skipped operand must not write its element back (that would
+        // create a missing associative entry): each operand stages its own.
+        if (members.iter().any(|member| member.mutated)
+            || nested.iter().any(|(_, _, mutated)| *mutated))
+            && self.lazily_evaluated_operands(node)
+        {
             return Ok(None);
         }
-        if members.iter().any(|member| member.mutated) {
-            return Err(format!(
-                "an expression that changes a queue or dynamic-array member of a container record element in `{path}` is only supported as an assignment, call or system-task statement"
-            ));
-        }
-        let (before, after) = self.build_element_staging(path, members, nested, None)?;
-        debug_assert!(after.is_empty(), "read-only staging writes nothing back");
-        Ok(Some(before))
+        self.build_element_staging(path, members, nested, None)
+            .map(Some)
+    }
+
+    fn lazily_evaluated_operands(&self, node: NodeId) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::LogicalAnd | Operation::LogicalOr | Operation::Conditional,
+                ..
+            })
+        )
     }
 
     /// The copy-out statements of `members` and `nested` and the write-back
@@ -1524,6 +1567,7 @@ impl Codegen<'_> {
                     other != position
                         && staged.mutated
                         && staged.selection.container == group.selection.container
+                        && !self.distinct_element_selections(&group.selection, &staged.selection)
                 })
             {
                 return Err(format!(
@@ -1646,7 +1690,12 @@ impl Codegen<'_> {
             matches!(element, Some(IrContainerElement::Container { kind, .. })
                 if !kind.to_ascii_lowercase().contains("assoc"))
         };
-        if let Some((container, key)) = self.associative_string_element(node) {
+        // `sq[k][i]` selects inside the element; its child `sq[k]` names it.
+        let inside = matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) if indices.len() > 1
+        );
+        if let Some((container, key)) = self.associative_string_element(node).filter(|_| !inside) {
             return nested(Some(self.model.containers[container].element.clone())).then_some(
                 ElementSelection {
                     container,
@@ -1689,6 +1738,30 @@ impl Codegen<'_> {
                 }
                 _ => false,
             }
+    }
+
+    /// Whether two selections can never name one element: at some level
+    /// both are constants of different values.
+    fn distinct_element_selections(&self, a: &ElementSelection, b: &ElementSelection) -> bool {
+        let differ = |x: NodeId, y: NodeId| {
+            matches!(
+                (
+                    self.kind(self.p30_unwrap_cast(x)),
+                    self.kind(self.p30_unwrap_cast(y))
+                ),
+                (
+                    NodeKind::Expr(ExprKind::Constant { value: left, .. }),
+                    NodeKind::Expr(ExprKind::Constant { value: right, .. }),
+                ) if left != right
+            )
+        };
+        match (&a.selector, &b.selector) {
+            (ElementSelector::Key(x), ElementSelector::Key(y)) => differ(*x, *y),
+            (ElementSelector::Indices(x), ElementSelector::Indices(y)) => {
+                x.iter().zip(y).any(|(x, y)| differ(*x, *y))
+            }
+            _ => false,
+        }
     }
 
     /// The lexical container staging the nested element `node` names.

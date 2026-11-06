@@ -93,6 +93,13 @@ fn computed_handles_with_no_evaluation_point_are_explicit() {
 }
 
 #[test]
+fn nested_elements_change_in_any_expression() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_element_expressions.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_element_expressions", expected, &[], &[]);
+}
+
+#[test]
 fn nested_elements_pass_whole_to_input_formals() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/nested_element_arguments.out");
@@ -238,16 +245,6 @@ fn wildcard_index_traversal_is_rejected_by_the_frontend() {
 
 #[test]
 fn unsupported_container_boundaries_are_explicit() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_nested_element_method",
-        "method `pop_front` of a nested container element in `tb` is not supported; only `size()` is",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_string_nested_select",
-        "elements of a queue or dynamic array nested in string-keyed associative array `sq` in `tb` are not supported",
-    );
     sim_cli::reject_case(
         SUITE,
         "neg_nested_two_changes",

@@ -1137,7 +1137,7 @@ impl EmitCtx<'_, '_> {
                 .filter(|child| matches!(self.cg.kind(*child), NodeKind::Expr(_)))
                 .collect::<Vec<_>>();
             for expression in expressions {
-                if let Some(mut before) =
+                if let Some((mut before, _)) =
                     self.cg.stage_expression_members(&self.path, expression)?
                 {
                     let staged = self.cg.staged_element_member(expression);

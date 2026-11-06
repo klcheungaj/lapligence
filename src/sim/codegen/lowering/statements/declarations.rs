@@ -129,8 +129,9 @@ impl EmitCtx<'_, '_> {
                 if staging {
                     self.cg.end_element_member_staging();
                 }
-                statements
-                    .push(assignment?.ok_or("container local initializer has no container assignment")?);
+                statements.push(
+                    assignment?.ok_or("container local initializer has no container assignment")?,
+                );
             }
             return Ok(statements);
         }

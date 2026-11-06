@@ -278,6 +278,21 @@ impl<'a> Codegen<'a> {
         if let Some(ir) = self.multidimensional_element(node) {
             return Some((ContainerInfo { ir }, node));
         }
+        // `sq[k][i]`: an element of the staged copy of `sq[k]`.
+        if !self.staged_nested_elements.is_empty() {
+            if let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) {
+                if let [_, index] = indices.as_slice() {
+                    if let Some(ir) = self
+                        .node(node)
+                        .children
+                        .iter()
+                        .find_map(|child| self.staged_nested_element(*child))
+                    {
+                        return Some((ContainerInfo { ir }, *index));
+                    }
+                }
+            }
+        }
         let selected = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
                 .container_of_select(node, *base)
@@ -751,7 +766,9 @@ impl<'a> Codegen<'a> {
         let operand = match self.kind(node) {
             NodeKind::FuncCall { .. } => None,
             NodeKind::MethodCall { receiver, .. } => *receiver,
-            NodeKind::Expr(ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. }) => {
+            NodeKind::Expr(
+                ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. },
+            ) => {
                 // The select's base names the function; its call is a child.
                 let call = self.container_result_base(*base).and_then(|_| {
                     self.node(node)
@@ -881,6 +898,19 @@ impl<'a> Codegen<'a> {
         // A staged nested element is a whole container of its own.
         if self.staged_nested_element(node).is_some() {
             return None;
+        }
+        // `sq[k][i]`: `sq[k]` is a staged copy; the rest selects inside it.
+        if !self.staged_nested_elements.is_empty() {
+            if let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) {
+                if let Some(staged) = self
+                    .node(node)
+                    .children
+                    .iter()
+                    .find_map(|child| self.staged_nested_element(*child))
+                {
+                    return Some((staged, indices.get(1..)?.to_vec()));
+                }
+            }
         }
         let (base, indices) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
