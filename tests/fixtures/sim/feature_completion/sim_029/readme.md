@@ -45,6 +45,9 @@ of them do, and an array under `rand_mode(0)` keeps an illegal value.
 keeps the union itself out of `rand`): random bits keep a declared tag and a
 legal member value.
 
+`scope_fixed_arrays` runs `std::randomize` (18.12) over fixed arrays of a module
+and of a subroutine, of one or several dimensions.
+
 `randomize_value_forms` uses `randomize()` as a value where other operands decide
 whether it runs, and in loop conditions. Its output is the reference run: the
 counters of `pre_randomize` show which calls ran. 11.3.5 L14434-14435: "When short

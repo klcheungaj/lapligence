@@ -24,9 +24,9 @@ use super::sites::{OrderSide, RandSelection, VarPlan};
 use super::*;
 use crate::core::db::{ConstraintBlockInfo, RandQualifier, VariableLifetime};
 use crate::sim::ir::{
-    IrContainerElement, IrContainerExpr, IrContainerKind, IrContainerStmt, IrInsideItem,
-    IrNativeAccessKind, IrRandArray, IrRandArrayKind, IrRandOp, IrRandQuery, IrRandSlot,
-    IrRandStmt, IrRandUnit, IrSysFunc, RAND_NONE, RAND_ORDER_ARRAY, RAND_ORDER_ELEM,
+    IrContainerElement, IrContainerExpr, IrContainerKind, IrContainerStmt, IrElemSel, IrInsideItem,
+    IrNativeAccessKind, IrPackedSelect, IrRandArray, IrRandArrayKind, IrRandOp, IrRandQuery,
+    IrRandSlot, IrRandStmt, IrRandUnit, IrSysFunc, RAND_NONE, RAND_ORDER_ARRAY, RAND_ORDER_ELEM,
     RAND_SLOT_ARRAY,
 };
 
@@ -76,6 +76,85 @@ struct ArrayInfo {
     two_state: bool,
     /// The element type of a random array with illegal bit patterns.
     domain: Option<TypeDescriptor>,
+    /// A fixed array of the call's scope outside the container runtime:
+    /// its storage and declared dimensions (`container` is unused).
+    model: Option<(ScopeArray, Vec<(i32, i32)>)>,
+}
+
+/// Where a fixed array of the call's scope lives.
+#[derive(Clone)]
+enum ScopeArray {
+    /// A model array, read and written by declared indices.
+    Model(usize),
+    /// An automatic local: one packed value, first element highest.
+    Packed { read: IrExpr, target: IrLhs },
+}
+
+impl ScopeArray {
+    fn read(
+        &self,
+        dimensions: &[(i32, i32)],
+        cells: i64,
+        at: &IrExpr,
+        width: u32,
+        signed: bool,
+    ) -> IrExpr {
+        match self {
+            Self::Model(arr) => IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: *arr,
+                    indices: model_array_indices(dimensions, at),
+                    elem_sel: IrElemSel::Whole,
+                },
+                width,
+                signed,
+                None,
+            ),
+            Self::Packed { read, .. } => IrExpr::new(
+                IrExprKind::IdxPartSel {
+                    base: Box::new(read.clone()),
+                    base_idx: Box::new(packed_cell_lsb(cells, at, width)),
+                    width_expr: Box::new(int_const(i64::from(width))),
+                    neg: false,
+                },
+                width,
+                false,
+                None,
+            ),
+        }
+    }
+
+    fn target(
+        &self,
+        dimensions: &[(i32, i32)],
+        cells: i64,
+        at: &IrExpr,
+        width: u32,
+        two_state: bool,
+    ) -> IrLhs {
+        match self {
+            Self::Model(arr) => IrLhs::ArrayElem {
+                arr: *arr,
+                indices: model_array_indices(dimensions, at),
+                elem_sel: IrElemSel::Whole,
+            },
+            Self::Packed { target, .. } => IrLhs::PackedSelect {
+                target: Box::new(target.clone()),
+                steps: vec![IrPackedSelect {
+                    base: packed_cell_lsb(cells, at, width),
+                    width,
+                }],
+                signed: false,
+                two_state,
+            },
+        }
+    }
+}
+
+/// The low bit of cell `at` of a packed value of `cells` cells.
+fn packed_cell_lsb(cells: i64, at: &IrExpr, width: u32) -> IrExpr {
+    let position = bin32(IrBinOp::Sub, int_const(cells - 1), at.clone());
+    bin32(IrBinOp::Mul, position, int_const(i64::from(width)))
 }
 
 /// One class handle property, or handle array, the problem follows.
@@ -171,6 +250,30 @@ pub(super) struct UnitCode {
     pub(super) posts: Vec<IrStmt>,
     /// The handle local of each unit after unit 0.
     pub(super) handles: HashMap<u32, String>,
+}
+
+/// The declared indices of row-major position `at` of a model array.
+fn model_array_indices(dimensions: &[(i32, i32)], at: &IrExpr) -> Vec<IrExpr> {
+    let extent = |(left, right): (i32, i32)| (i64::from(left) - i64::from(right)).abs() + 1;
+    let mut stride: i64 = dimensions
+        .iter()
+        .map(|dimension| extent(*dimension))
+        .product();
+    dimensions
+        .iter()
+        .map(|dimension| {
+            let size = extent(*dimension);
+            stride /= size;
+            let quotient = bin32(IrBinOp::Div, at.clone(), int_const(stride));
+            let position = bin32(IrBinOp::Mod, quotient, int_const(size));
+            let left = int_const(i64::from(dimension.0));
+            if dimension.0 <= dimension.1 {
+                bin32(IrBinOp::Add, left, position)
+            } else {
+                bin32(IrBinOp::Sub, left, position)
+            }
+        })
+        .collect()
 }
 
 /// One round over the calls of `TCall` nodes: every ready one reads its
@@ -707,10 +810,15 @@ impl Codegen<'_> {
                 )
             }
         };
+        if container.is_none() {
+            if let Some(index) = self.scope_model_array(path, at, builder, decl, expr, random)? {
+                return Ok(index);
+            }
+        }
         let container = container.ok_or_else(|| {
             unsupported(
                 self,
-                "only class properties and dynamic arrays and queues of the calling scope are supported",
+                "only class properties and arrays of the calling scope are supported",
             )
         })?;
         let flat_cells = self.fixed_view_dims.get(&container).map(|dimensions| {
@@ -789,9 +897,115 @@ impl Codegen<'_> {
             signed,
             two_state,
             domain,
+            model: None,
         });
         st.array_of.insert(decl, index);
         Ok(index)
+    }
+
+    /// Register a fixed array of packed elements of the call's scope that
+    /// lives in a model array.
+    fn scope_model_array(
+        &mut self,
+        path: &str,
+        at: NodeId,
+        builder: &mut ProblemBuilder,
+        decl: NodeId,
+        expr: Option<NodeId>,
+        random: bool,
+    ) -> Result<Option<u32>, String> {
+        let Some(expr) = expr else {
+            return Ok(None);
+        };
+        let (storage, dims, width, signed, two_state) = match self.array_of(expr).cloned() {
+            Some(info) => {
+                if info.real || info.shortreal || info.is_net {
+                    return Ok(None);
+                }
+                let two_state = self.model.arrays[info.ir].two_state;
+                (
+                    ScopeArray::Model(info.ir),
+                    info.dims,
+                    info.elem_width,
+                    info.signed,
+                    two_state,
+                )
+            }
+            None => {
+                let Some(target) = self.fixed_activation_lhs(path, expr)? else {
+                    return Ok(None);
+                };
+                let shape = self.db.type_descriptor(decl);
+                let Some((dimensions, element)) =
+                    shape.and_then(|descriptor| match &descriptor.shape {
+                        TypeShape::FixedArray {
+                            dimensions,
+                            element,
+                        } => Some((dimensions.clone(), element.clone())),
+                        _ => None,
+                    })
+                else {
+                    return Ok(None);
+                };
+                let Some(width) = Self::fixed_descriptor_width(&element)
+                    .filter(|_| !is_real_kind(&element.info.kind))
+                else {
+                    return Ok(None);
+                };
+                let read = self.lower_expr(path, expr)?;
+                (
+                    ScopeArray::Packed { read, target },
+                    dimensions,
+                    width,
+                    element.info.signed,
+                    element.two_state,
+                )
+            }
+        };
+        let domain = if random {
+            self.array_element_domain(decl)
+        } else {
+            None
+        };
+        if domain.as_ref().is_some_and(aggregate_domain_unsupported) {
+            return Err(self.rand_error(
+                at,
+                path,
+                "random elements of an untagged union with enum members are not supported",
+            ));
+        }
+        let cells = dims
+            .iter()
+            .map(|(left, right)| (i64::from(*left) - i64::from(*right)).abs() + 1)
+            .product::<i64>();
+        // One dimension keeps its declared bounds; several are one flat
+        // array, as in `unit_array`.
+        let (left, right) = match dims.as_slice() {
+            [only] => *only,
+            _ => (
+                0,
+                i32::try_from(cells - 1).map_err(|_| {
+                    self.rand_error(at, path, "a random array has too many elements")
+                })?,
+            ),
+        };
+        let st = state(builder);
+        let index = st.arrays.len() as u32;
+        st.arrays.push(ArrayInfo {
+            decl,
+            owner: None,
+            container: usize::MAX,
+            kind: IrRandArrayKind::Fixed,
+            left,
+            right,
+            width,
+            signed,
+            two_state,
+            domain,
+            model: Some((storage, dims)),
+        });
+        st.array_of.insert(decl, index);
+        Ok(Some(index))
     }
 
     /// The problem-wide slot of handle property or handle array `decl`;
@@ -882,6 +1096,7 @@ impl Codegen<'_> {
                     signed: false,
                     two_state: true,
                     domain: None,
+                    model: None,
                 });
                 (st.arrays.len() - 1) as u32
             });
@@ -1486,6 +1701,15 @@ impl Codegen<'_> {
         Some(node)
     }
 
+    /// The dimensions of a multidimensional array.
+    fn array_dimensions(&self, info: &ArrayInfo) -> Option<Vec<(i32, i32)>> {
+        match &info.model {
+            Some((_, dimensions)) if dimensions.len() > 1 => Some(dimensions.clone()),
+            Some(_) => None,
+            None => self.fixed_view_dims.get(&info.container).cloned(),
+        }
+    }
+
     /// `expr` as a select of a template multidimensional fixed array: the
     /// array itself or some leading indices of it.
     fn view_select(
@@ -1517,8 +1741,7 @@ impl Codegen<'_> {
         let Some((array, reference)) = self.template_array(path, builder, root, create)? else {
             return Ok(None);
         };
-        let container = state(builder).arrays[array as usize].container;
-        let Some(dimensions) = self.fixed_view_dims.get(&container).cloned() else {
+        let Some(dimensions) = self.array_dimensions(&state(builder).arrays[array as usize]) else {
             return Ok(None);
         };
         if indices.len() > dimensions.len() {
@@ -2177,11 +2400,12 @@ impl Codegen<'_> {
             return Ok(OrderSide::Variable);
         }
         let info = &state(builder).arrays[array as usize];
-        let (kind, left, right, container) = (info.kind, info.left, info.right, info.container);
-        let dimensions = match self.fixed_view_dims.get(&container) {
-            Some(dimensions) => dimensions.clone(),
-            None if kind == IrRandArrayKind::Fixed => vec![(left, right)],
-            None => vec![(0, i32::MAX)],
+        let (kind, left, right) = (info.kind, info.left, info.right);
+        let dimensions = match (self.array_dimensions(info), &info.model) {
+            (Some(dimensions), _) => dimensions,
+            (None, Some((_, dimensions))) => dimensions.clone(),
+            (None, None) if kind == IrRandArrayKind::Fixed => vec![(left, right)],
+            (None, None) => vec![(0, i32::MAX)],
         };
         if dimensions.len() != indices.len() {
             return Ok(OrderSide::Variable);
@@ -2864,6 +3088,63 @@ impl Codegen<'_> {
                 }
                 let array_index = array_index as u32;
                 let active = self.unit_active(&st.root, index, array.decl, object)?;
+                if let Some((storage, dimensions)) = &array.model {
+                    let at = local_read(&counter, 32, true);
+                    let cells = (i64::from(array.left) - i64::from(array.right)).abs() + 1;
+                    let size = int_const(cells);
+                    feed.push(rand(IrRandStmt::SetArray {
+                        problem,
+                        inst: inst(),
+                        array: array_index,
+                        size: size.clone(),
+                        active,
+                    }));
+                    feed.push(counted(
+                        &counter,
+                        size.clone(),
+                        vec![rand(IrRandStmt::SetElem {
+                            problem,
+                            inst: inst(),
+                            array: array_index,
+                            index: at.clone(),
+                            value: storage.read(dimensions, cells, &at, array.width, array.signed),
+                        })],
+                    ));
+                    let lhs = storage.target(dimensions, cells, &at, array.width, array.two_state);
+                    let element = query(
+                        problem,
+                        IrRandQuery::Elem(array_index),
+                        Some(committed()),
+                        Some(at),
+                        array.width,
+                        array.signed,
+                    );
+                    let element = if array.two_state {
+                        IrExpr::to_two_state(element)
+                    } else {
+                        element
+                    };
+                    commit.push(when(
+                        query(
+                            problem,
+                            IrRandQuery::ArrayActive(array_index),
+                            Some(committed()),
+                            None,
+                            1,
+                            false,
+                        ),
+                        vec![counted(
+                            &counter,
+                            size,
+                            vec![IrStmt::Assign {
+                                lhs,
+                                rhs: element,
+                                nba: false,
+                            }],
+                        )],
+                    ));
+                    continue;
+                }
                 let container = self.unit_container(array, object);
                 let size = container_read(IrContainerExpr::Size(container), 32, true);
                 feed.push(rand(IrRandStmt::SetArray {

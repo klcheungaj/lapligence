@@ -17,6 +17,20 @@ const NO_BUDGET: [(&str, &str); 3] = [
 ];
 
 #[test]
+fn std_randomize_writes_fixed_arrays_of_any_scope() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_029/scope_fixed_arrays.out");
+    sim_cli::run_case_checked_matrix(SUITE, "scope_fixed_arrays", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(0), "{label}: {output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("the constraints cannot be satisfied"),
+            "{label}: {output:?}"
+        );
+    });
+}
+
+#[test]
 fn enum_elements_and_members_hold_named_values() {
     sim_cli::run_case_backend_parity(
         SUITE,

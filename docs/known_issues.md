@@ -2505,9 +2505,7 @@ these forms remain outside them.
   `rand` handle, `randc` arrays and `randc` variables wider than 16 bits,
   a random untagged union with enum members, a random array
   read other than through element selects, `size()`, the reductions,
-  `inside` and `foreach` (for example compared whole), `std::randomize` of a
-  fixed-size array of a module or subroutine (dynamic arrays and queues
-  work), a `solve...before` that solves a variable before an array size or
+  `inside` and `foreach` (for example compared whole), a `solve...before` that solves a variable before an array size or
   names a non-constant element, and an inline `local::` name that also names an object property.
 - A constraint function reached for an object of the randomized class other
   than the randomized object ends the run with a fatal error: its receiver is
