@@ -328,8 +328,8 @@ code at `-O1` instead of 0.13×).
   above a member array is one descriptor column (`IrArray::descriptor`), as
   `collection/record_columns/choice.rs` decides from the type alone. A column
   replaces the branch per cell (or the whole-record flatten) with one lookup.
-  Unwritten cells cost nothing, written ones are lazy heap cells, and the
-  site stays about 261 lines at any size. Elements without a packed form
+  Untouched pages of cells cost one table entry, and the site stays about 261
+  lines at any size. Elements without a packed form
   follow the same rule: `real` cells are a column of doubles, and `string`,
   handle and record elements are one container.
 - **Why a fixed rule:** nothing else selects the form. A use the column form
@@ -338,8 +338,8 @@ code at `-O1` instead of 0.13×).
   Columns show the VPI objects, toggle entities and dump names of the leaf
   form, with the same values.
 - **What made columns no slower than leaves:**
-  - A constant cell index reaches its bucket through a direct table of up to
-    4,096 entries, one load instead of a hash probe.
+  - A cell of an array of up to 4,096 cells is two loads away, a page and a
+    position, instead of a hash probe.
   - The contents marker that lets `@(r)` and `$changed` see a cell write used
     to be republished through the full signal path on every cell change. It
     was the main cost of a write (0.169 → 0.110 s per 1M at 64 cells) and of a
@@ -380,11 +380,29 @@ code at `-O1` instead of 0.13×).
   figures above per cell, `string` scalar member at 16 cells and read at 256,
   are 1.1% and 1.0% off, inside it.
 
-  Memory per cell: a written column cell is about 104 bytes (112 before), a
-  leaf 45-83 bytes in a record with a `string` member and 145-346 in a packed
-  record. The direct table adds 8-15 bytes per declared cell to an array with
-  any written cell (up to 32 KiB at 4,096), where a leaf record with a
-  `string` member costs nothing until a cell is written.
+  Memory per cell, in heap peak and static data over a one-cell record, per
+  cell → column. "Written" fills the array and "one write" touches one cell of
+  it; a leaf nothing reads has no storage, hence the zeros.
+
+  | Member | 16 | 256 | 4,095 |
+  | --- | --- | --- | --- |
+  | `int`, packed record, written | 147 → 25.6 | 347 → 24.7 | no build → 24.9 |
+  | `int`, packed record, one write | 147 → 25.6 | 317 → 6.1 | 332 → 0.5 |
+  | `int` beside a `string`, written | 42.7 → 37.3 | 40.2 → 25.4 | no build → 24.9 |
+  | `int` beside a `string`, one write | 0 → 37.3 | 0 → 6.8 | 0 → 0.5 |
+  | `real`, written | 8.5 → 10.7 | 16.1 → 8.2 | no build → 8.0 |
+  | `string` of 12 characters, written | 96 → 80 | 96 → 72.5 | no build → 72 |
+  | `string`, empty | 64 → 48 | 64 → 40.5 | no build → 40 |
+  | handle | 32 → 50 | 32 → 40.6 | no build → 40 |
+  | record of `string` and `int`, written | 136 → 184 | 136 → 169 | no build → 168 |
+
+  A column of packed cells is 24 bytes per written cell (`sv4_t`) plus a page's
+  share of 48 bytes of header and an 8-byte table entry. Pages are 64 cells, so
+  a sparse write costs at most 1,584 bytes and 0.125 per declared cell, and the
+  worst spread (one write per page) reaches the cost of writing every cell. A
+  column of `real` is the doubles alone unless something observes it. Above
+  4,096 cells a hashed cell costs 58 bytes. Container cells are 40 bytes
+  (`llg_value_t`), which holds a whole `string` and its change links per cell.
 - **Threshold:** 16 cells. Columns already win on accesses at 4 cells, but
   below 16 the tree stays a few hundred lines, so small records keep their
   form.

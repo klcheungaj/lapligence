@@ -23,7 +23,7 @@ contents dependency. Reads borrow defaults without allocating cells. Whole copie
 capture only exceptions plus the default; an NBA owns one descriptor snapshot.
 Selected observers materialize stable cells. Cells live in blocks, with no
 allocation or links of their own: up to 4,096 cells an array is paged, so a
-cell is two loads away and a page holds 32 positions, and a larger array fills
+cell is two loads away and a page holds 64 positions, and a larger array fills
 blocks of hashed cells in order. Only blocks of arrays with a contents marker or
 sampled cells are filed by address, and a side table holds inertial sites.
 Model arrays are destroyed after

@@ -29,12 +29,12 @@ static _Noreturn void fixed_bad_state(const char* reason) {
 /* Arrays of at most this many cells reach a cell by position: two loads and no
  * hash, and a page's table entry costs far less than a link in every cell. */
 #define LLG_FIXED_DIRECT_CELLS 4096u
-#define LLG_FIXED_PAGE_SHIFT 5u
+#define LLG_FIXED_PAGE_SHIFT 6u
 #define LLG_FIXED_PAGE_CELLS (1u << LLG_FIXED_PAGE_SHIFT)
 #define LLG_FIXED_SPARSE_BLOCK_CELLS 32u
-/* The address table files a block under the 2 KiB granule of its start. No
+/* The address table files a block under the 4 KiB granule of its start. No
  * block is larger, so a cell's block starts in its granule or the one before. */
-#define LLG_FIXED_ADDRESS_SHIFT 11u
+#define LLG_FIXED_ADDRESS_SHIFT 12u
 _Static_assert(sizeof(struct llg_fixed_block) + LLG_FIXED_PAGE_CELLS * sizeof(sv4_t) <= 1u << LLG_FIXED_ADDRESS_SHIFT,
                "a page fits an address granule");
 _Static_assert(sizeof(struct llg_fixed_block) + LLG_FIXED_SPARSE_BLOCK_CELLS * sizeof(struct llg_fixed_cell)
@@ -43,6 +43,8 @@ _Static_assert(sizeof(struct llg_fixed_block) + LLG_FIXED_SPARSE_BLOCK_CELLS * s
 /* Only blocks of marked arrays are filed: nothing else asks. */
 static struct llg_fixed_block** fixed_addresses;
 static size_t fixed_address_capacity, fixed_address_count;
+/* Bounds of the filed blocks: most writes are to signals outside them. */
+static uintptr_t fixed_address_low = UINTPTR_MAX, fixed_address_high;
 /* Arrays with a contents marker or sampled cells: with none, a write has no
  * array to tell. */
 static size_t fixed_marked_arrays;
@@ -87,17 +89,19 @@ static llg_fixed_cell_t* fixed_block_sparse(struct llg_fixed_block* block) {
 struct fixed_cursor {
     struct llg_fixed_block* block;
     uint32_t slot;
+    int paged;
     uint64_t index;
     sv4_t* value;
+    const struct llg_fixed_block* peer_block;
+    const sv4_t* peer;
 };
 
-static inline int fixed_next(const llg_fixed_array_t* array, struct fixed_cursor* cursor) {
-    int direct = fixed_direct(array);
+static inline int fixed_next(struct fixed_cursor* cursor) {
     for (; cursor->block; cursor->block = cursor->block->next, cursor->slot = 0) {
         struct llg_fixed_block* block = cursor->block;
         while (cursor->slot < block->used) {
             uint32_t slot = cursor->slot++;
-            if (!direct) {
+            if (!cursor->paged) {
                 cursor->index = fixed_block_sparse(block)[slot].index;
                 cursor->value = &fixed_block_sparse(block)[slot].value;
                 return 1;
@@ -113,7 +117,7 @@ static inline int fixed_next(const llg_fixed_array_t* array, struct fixed_cursor
 }
 
 #define FIXED_EACH(cursor, array) \
-    for (struct fixed_cursor cursor = {.block = (array)->blocks}; fixed_next((array), &cursor);)
+    for (struct fixed_cursor cursor = {.block = (array)->blocks, .paged = fixed_direct(array)}; fixed_next(&cursor);)
 
 static void fixed_address_reserve(void) {
     if (fixed_address_count < fixed_address_capacity / 2) return;
@@ -134,6 +138,10 @@ static void fixed_address_reserve(void) {
     fixed_address_capacity = capacity;
 }
 
+static size_t fixed_block_bytes(const struct llg_fixed_block* block) {
+    return sizeof(*block) + block->cells * (fixed_direct(block->array) ? sizeof(sv4_t) : sizeof(llg_fixed_cell_t));
+}
+
 static void fixed_block_file(struct llg_fixed_block* block) {
     if (block->registered) return;
     fixed_address_reserve();
@@ -142,6 +150,9 @@ static void fixed_block_file(struct llg_fixed_block* block) {
     fixed_addresses[slot] = block;
     block->registered = 1;
     ++fixed_address_count;
+    uintptr_t start = (uintptr_t)block;
+    if (start < fixed_address_low) fixed_address_low = start;
+    if (start + fixed_block_bytes(block) > fixed_address_high) fixed_address_high = start + fixed_block_bytes(block);
 }
 
 static void fixed_block_unfile(struct llg_fixed_block* block) {
@@ -154,15 +165,14 @@ static void fixed_block_unfile(struct llg_fixed_block* block) {
         free(fixed_addresses);
         fixed_addresses = NULL;
         fixed_address_capacity = 0;
+        fixed_address_low = UINTPTR_MAX;
+        fixed_address_high = 0;
     }
-}
-
-static size_t fixed_block_bytes(const struct llg_fixed_block* block) {
-    return sizeof(*block) + block->cells * (fixed_direct(block->array) ? sizeof(sv4_t) : sizeof(llg_fixed_cell_t));
 }
 
 static struct llg_fixed_block* fixed_block_of(const sv4_t* target) {
     uintptr_t address = (uintptr_t)target, granule = address >> LLG_FIXED_ADDRESS_SHIFT;
+    if (address < fixed_address_low || address >= fixed_address_high) return NULL;
     for (int before = 0; before < 2; ++before, --granule) {
         size_t slot = fixed_hash((uint64_t)granule) & (fixed_address_capacity - 1);
         for (struct llg_fixed_block* block = fixed_addresses[slot]; block; block = block->address_next) {
@@ -273,6 +283,19 @@ static sv4_t* fixed_find(const llg_fixed_array_t* array, uint64_t index) {
     for (llg_fixed_cell_t* cell = array->buckets[slot]; cell; cell = cell->bucket_next)
         if (cell->index == index) return &cell->value;
     return NULL;
+}
+
+/* The cell of `array` at the position of `cursor` in an array of its total:
+ * two paged arrays pair up page by page, with no lookup per cell. */
+static inline const sv4_t* fixed_peer(const llg_fixed_array_t* array, struct fixed_cursor* cursor) {
+    if (!cursor->paged) return fixed_find(array, cursor->index);
+    if (cursor->peer_block != cursor->block) {
+        cursor->peer_block = cursor->block;
+        cursor->peer = array->capacity ? array->pages[cursor->block->first >> LLG_FIXED_PAGE_SHIFT] : NULL;
+    }
+    if (!cursor->peer) return NULL;
+    const sv4_t* cell = &cursor->peer[cursor->slot - 1];
+    return llg_sv4_width(*cell) ? cell : NULL;
 }
 
 void llg_fixed_array_init(llg_fixed_array_t* array, uint64_t total,
@@ -531,7 +554,7 @@ static int fixed_array_copy_in_place(llg_fixed_array_t* dst, const llg_fixed_arr
     uint32_t width = llg_sv4_width(dst->initial);
     int8_t sign = (int8_t)llg_sv4_signed(dst->initial);
     FIXED_EACH(cell, dst) {
-        const sv4_t* source = fixed_find(src, cell.index);
+        const sv4_t* source = fixed_peer(src, &cell);
         shared += source != NULL;
         const sv4_t* value = source ? source : &src->initial;
         if (sv4_same(*cell.value, *value) && !(two_state && sv4_is_unknown(*value))) continue;
@@ -710,7 +733,7 @@ sv4_t llg_fixed_array_compare(const llg_fixed_array_t* left,
     int result = 1;
     size_t represented = left->count, shared = 0;
     FIXED_EACH(cell, left) {
-        sv4_t* other = fixed_find(right, cell.index);
+        const sv4_t* other = fixed_peer(right, &cell);
         shared += other != NULL;
         int state = fixed_compare_leaf(cell.value, other ? other : &right->initial, case_eq);
         if (!state) return sv4_from_u64((uint64_t)negate, 1, 0);
