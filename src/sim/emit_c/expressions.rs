@@ -312,6 +312,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 }
                 IrBinOp::Eq => cmp_expr(&ra, &rb, "=="),
                 IrBinOp::Neq => cmp_expr(&ra, &rb, "!="),
+                IrBinOp::IndexEq | IrBinOp::IndexLt => {
+                    return Err("legacy fragment emission has no member select test".to_owned())
+                }
                 IrBinOp::Lt => cmp_expr(&ra, &rb, "<"),
                 IrBinOp::Le => cmp_expr(&ra, &rb, "<="),
                 IrBinOp::Gt => cmp_expr(&ra, &rb, ">"),

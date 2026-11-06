@@ -1599,7 +1599,10 @@ fn member_select_nest<V: Clone>(
 
 /// Select one of `entries`, sorted by declared index, or `otherwise`: a chain
 /// of equality tests for few entries, else a balanced tree. An X or Z index
-/// fails every known test and reaches `otherwise`.
+/// fails every test and reaches `otherwise`. Each test is one runtime call
+/// ([`IrBinOp::IndexEq`], [`IrBinOp::IndexLt`]): a site holds a test per
+/// element, and packed comparisons there dominate the C compile time of a
+/// design with wide selects.
 fn member_select_tree<V: Clone>(
     entries: &[(i32, V)],
     index: &IrExpr,
@@ -1618,21 +1621,16 @@ fn member_select_tree<V: Clone>(
     if entries.len() <= NATIVE_MEMBER_SELECT_LINEAR {
         let mut result = otherwise.clone();
         for (value, entry) in entries.iter().rev() {
-            let test = cmp_expr_ir(IrBinOp::CaseEq, index.clone(), declared(*value));
+            let test = cmp_expr_ir(IrBinOp::IndexEq, index.clone(), declared(*value));
             result = join(test, entry.clone(), result)?;
         }
         return Ok(result);
     }
     let (low, high) = entries.split_at(entries.len() / 2);
-    let below = cmp_expr_ir(IrBinOp::Lt, index.clone(), declared(high[0].0));
-    let known = cmp_expr_ir(
-        IrBinOp::CaseEq,
-        below,
-        crate::sim::codegen::lowering::containers::pattern_key_expr(1, 1, false, false),
-    );
+    let below = cmp_expr_ir(IrBinOp::IndexLt, index.clone(), declared(high[0].0));
     let then = member_select_tree(low, index, width, otherwise, join)?;
     let els = member_select_tree(high, index, width, otherwise, join)?;
-    join(known, then, els)
+    join(below, then, els)
 }
 
 /// The statement that runs the branch selected by `index`, or `otherwise`.

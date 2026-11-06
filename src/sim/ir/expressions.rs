@@ -686,6 +686,14 @@ pub enum IrBinOp {
     LogImpl,
     /// Four-state logical equivalence (`<->`).
     LogEquiv,
+    /// Whether the index `a` is known and equals the declared index `b`, a
+    /// constant. Only the decision tree of a run-time member select uses it:
+    /// the emitter renders one runtime call that yields a C truth value, so
+    /// it may only appear as a predicate, and an index with an X or Z bit is
+    /// false.
+    IndexEq,
+    /// [`IrBinOp::IndexEq`] for "known and below `b`".
+    IndexLt,
 }
 
 /// One unary operation (reductions included; result widths were decided at

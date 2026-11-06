@@ -425,6 +425,27 @@ fn fold_case_equality_is_literal_over_x_z() {
 }
 
 #[test]
+fn fold_member_select_tests_are_false_for_an_unknown_index() {
+    let cases = [
+        (IrBinOp::IndexEq, konst(5, 8), konst(5, 8), 1),
+        (IrBinOp::IndexEq, konst(4, 8), konst(5, 8), 0),
+        (IrBinOp::IndexEq, xkonst(8), konst(5, 8), 0),
+        (IrBinOp::IndexLt, konst(4, 8), konst(5, 8), 1),
+        (IrBinOp::IndexLt, konst(5, 8), konst(5, 8), 0),
+        (IrBinOp::IndexLt, xkonst(8), konst(5, 8), 0),
+        (IrBinOp::IndexLt, zkonst(8), konst(5, 8), 0),
+    ];
+    for (op, index, key, expected) in cases {
+        let mut m = model_with(
+            vec![assign(IrLhs::Whole(0), bin(op, index, key, 1))],
+            sigs(1),
+        );
+        run(&mut m, &fold_only());
+        assert_eq!(const_payload(first_assign_rhs(&m)), Some((expected, 1)));
+    }
+}
+
+#[test]
 fn fold_logical_equality_honors_known_mismatch_before_unknown_bits() {
     // bit 3 differs while bit 1 is X in both operands, so == is known 0.
     let mut m = model_with(

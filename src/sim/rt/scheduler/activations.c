@@ -235,6 +235,16 @@ static void budget_abort(llg_proc_t* p, const char* location) {
     if (p) p->chain.exiting = LLG_EXIT_ABANDON;
 }
 
+int llg_index_eq(sv4_t index, int64_t key) {
+    int64_t value;
+    return sv4_to_index_i64(index, &value) && value == key;
+}
+
+int llg_index_lt(sv4_t index, int64_t key) {
+    int64_t value;
+    return sv4_to_index_i64(index, &value) && value < key;
+}
+
 int llg_budget_point(const char* location) {
     llg_proc_t* p = llg_current();
     llg_runtime_service_enter(p, "budget point");

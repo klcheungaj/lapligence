@@ -255,6 +255,10 @@ fn run_time_member_indices_select_native_record_elements() {
     let wide =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_wide.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_wide", wide, &[], &[]);
+    let forms = include_str!(
+        "../fixtures/sim/feature_completion/sim_007/native_member_select_index_forms.out"
+    );
+    sim_cli::run_case_backend_parity(SUITE, "native_member_select_index_forms", forms, &[], &[]);
     let nested =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_nested.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_nested", nested, &[], &[]);
