@@ -125,3 +125,7 @@ column. Expected values are derived by hand below; none were captured from
   dense array through one pattern, an initializer whose cells differ, a mailbox,
   a queue, an array of records and `matches` on an element. Rebuilt with
   `-D N=8` it takes the per-cell paths and prints the same lines.
+- `chosen_part_writers`: separate continuous assignments and `always_comb`
+  blocks write separate bits of one member of a column cell. SV2009 9.2.2.2:
+  "multiple assignments made to independent elements of a variable are allowed
+  as long as their longest static prefixes do not overlap".

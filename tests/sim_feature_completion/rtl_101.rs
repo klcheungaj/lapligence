@@ -413,3 +413,11 @@ endmodule
         "{waits:?}"
     );
 }
+
+/// Writers of different bits of one member do not conflict.
+#[test]
+fn writers_of_different_bits_of_a_column_cell_do_not_conflict() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_part_writers.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_part_writers", expected, &[], &[]);
+}

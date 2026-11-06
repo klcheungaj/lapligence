@@ -110,7 +110,43 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             if let Some(array) = &leaf.array {
-                dependencies.push(self.column_dependency(array, &prefix[..], leaf.path.len()));
+                // The tag cell of a column-layout tagged union shares its
+                // path with the union, whose members have columns of their own.
+                let cell = super::record_columns::record_cell_leaf(leaf)
+                    && !super::fixed_values::fixed_path_descriptor(descriptor, &leaf.path)
+                        .is_some_and(|(owner, _)| {
+                            super::record_columns::column_tagged_union(&owner)
+                        });
+                let depth = leaf.path.len() + if cell { 0 } else { array.dims.len() };
+                let dependency = if cell {
+                    IrDependency::ArrayElement {
+                        array: self.reference_array(array.ir),
+                        index: 0,
+                    }
+                } else {
+                    self.column_dependency(array, &prefix[..], leaf.path.len())
+                };
+                // A member inside one cell is that cell's bits, so writers of
+                // different members stay separate (SV 9.2.2.2).
+                let member = (prefix.len() > depth).then(|| {
+                    let (selected, offset) = selected.as_ref()?;
+                    let (_, base) = super::fixed_values::fixed_path_descriptor(
+                        descriptor,
+                        prefix.get(..depth)?,
+                    )?;
+                    Some((
+                        Self::fixed_descriptor_width(selected)?,
+                        offset.checked_sub(base)?,
+                    ))
+                });
+                dependencies.push(match (member.flatten(), &dependency) {
+                    (Some((width, offset)), IrDependency::ArrayElement { .. })
+                        if offset + width <= array.elem_width =>
+                    {
+                        self.slice_dependency(dependency, offset, width)
+                    }
+                    _ => dependency,
+                });
                 continue;
             }
             // A queue, dynamic or associative member (SIM-007) is read whole.
