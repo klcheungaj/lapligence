@@ -68,6 +68,8 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
 - `class_method_reports` (decision S25-D9): a report in a method, a task, a
   constructor and a fork branch of a method. The report keeps its object after
   `c = null`; a monitor keeps it until replaced. The same derivation.
+- `report_receiver_gc`: L36516-36519 keeps the list active, so the object it reads
+  stays reachable; collector statistics show only the replaced `e` freed.
 - `static_handle_formals`: string, chandle, class and process formals and a
   string local of static subroutines (L18646-18652 bars only automatic ones) read
   at the end of the slot (L36482-36484): `s=x` before any later call, `l=L

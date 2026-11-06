@@ -102,6 +102,27 @@ fn reports_in_class_methods_keep_their_receiver() {
 }
 
 #[test]
+fn a_monitor_keeps_its_receiver_through_collections() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/report_receiver_gc.out");
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "report_receiver_gc",
+        &[],
+        &[("LLG_GC_STRESS", "1"), ("LLG_GC_STATS", "1")],
+        &|label, output| {
+            let seen = sim_cli::observed_output(output);
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                expected,
+                "{label}: {seen}"
+            );
+            assert!(seen.contains("freed=1 "), "{label}: {seen}");
+        },
+    );
+}
+
+#[test]
 fn reports_read_static_string_and_handle_variables() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_025/static_handle_formals.out");
