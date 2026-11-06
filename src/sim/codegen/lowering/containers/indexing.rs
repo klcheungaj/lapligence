@@ -492,6 +492,8 @@ impl<'a> Codegen<'a> {
                 .first()
                 .copied()
                 .flatten()
+                // `this.q`: the enclosing method's property.
+                .filter(|target| self.node(*target).name != "this")
                 .or_else(|| refs.last().copied().flatten())
                 .and_then(|target| self.container_declaration(target))
                 .or_else(|| self.static_property_container(refs))

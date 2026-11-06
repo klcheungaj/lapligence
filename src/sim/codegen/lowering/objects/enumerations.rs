@@ -97,10 +97,11 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
         let (name, receiver) = match self.kind(node) {
+            // A class may declare methods with these names.
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
-                ..
+                callee: None,
             } => (name.as_str(), *receiver),
             _ => return Ok(None),
         };

@@ -58,6 +58,13 @@ fn class_containers_are_reached_through_computed_handles() {
 }
 
 #[test]
+fn class_container_forms_of_method_bodies() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/class_container_forms.out");
+    sim_cli::run_case_backend_parity(SUITE, "class_container_forms", expected, &[], &[]);
+}
+
+#[test]
 fn computed_handles_with_no_evaluation_point_are_explicit() {
     sim_cli::reject_case(
         SUITE,
