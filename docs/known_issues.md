@@ -1753,6 +1753,18 @@ rejects these in `wait` conditions as well). Direction: bind callee locals
 to every handle they can hold (a dependency set instead of one receiver).
 Reproduce: `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`.
 
+The same rejection applies to a member of an unpacked structure property that
+holds a native member (a string, a handle, a container): `wait (h.r.a == 1)`,
+`@(h.r.a)`, also through a chain of handles or `this`; and to a property selected
+through a call result, `wait (f().x == 1)`. Such a store publishes no change. A
+structure of packed members only and a structure in a queue or array property
+wait normally. `always_comb` and `@*` are not affected: they add no class storage
+(9.2.2.2.1). The real fix is a change marker for native record stores (see
+"Native record values outside by-value subroutine storage"). Reproduce:
+`tests/fixtures/sim/feature_completion/sim_014/reject_wait_record_property.sv`,
+`reject_event_record_property.sv`, `reject_method_wait_record_property.sv`,
+`reject_wait_call_result.sv`.
+
 ## Native stack frames grow with a statement's format-argument count
 
 **Status:** open; the host-stack bound is measured, not proven.

@@ -773,6 +773,14 @@ fn s25_d9_class_state_reports() {
 }
 
 #[test]
+fn s25_d10_strobe_every_call() {
+    run_decision(
+        "S25-D10_strobe_every_call",
+        include_str!("fixtures/sim/lrm_decisions/S25-D10_strobe_every_call.out"),
+    );
+}
+
+#[test]
 fn s25_d2_multiple_fmonitor() {
     run_decision(
         "S25-D2_multiple_fmonitor",
