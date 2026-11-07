@@ -533,9 +533,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   element, pinned for the statement, so element access costs one lookup per
   level; it takes every method, whole reads and writes, patterns, `foreach`,
   `pop_front`/`pop_back` into a variable and `input` and `ref` actuals, at any
-  depth. A `ref` actual that is a nested queue or dynamic array binds the staged
-  copy for a function; for a task it rejects, as do two changed nested queues
-  of one container with selectors that are not provably distinct
+  depth. A `ref` actual that is a nested queue or dynamic array rejects at the actual,
+  for a task or a function, as do two changed nested queues of one container
+  with selectors that are not provably distinct
   ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
   `ref` formals of queue, dynamic and associative type alias the caller's
   container variable, including from timed tasks and fork branches

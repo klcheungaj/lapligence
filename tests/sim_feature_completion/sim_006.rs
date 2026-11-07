@@ -327,7 +327,7 @@ fn block_static_locals_wake_fork_events() {
 }
 
 #[test]
-fn nested_elements_bind_ref_formals_of_functions() {
+fn containers_bind_ref_formals_directly() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/nested_ref_actuals.out");
     sim_cli::run_case_backend_parity(SUITE, "nested_ref_actuals", expected, &[], &[]);
@@ -352,7 +352,21 @@ fn a_task_reference_to_a_nested_queue_is_explicit() {
     sim_cli::reject_case(
         SUITE,
         "neg_nested_task_ref",
-        "ref actual of container formal `t` in `tb` must be a container variable of the same type",
+        "a queue or dynamic array nested in a container element as the ref actual of `t` is not supported; pass a variable at tb:11:10",
+    );
+}
+
+#[test]
+fn a_function_reference_to_a_nested_queue_or_dynamic_array_is_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_nested_function_ref",
+        "a queue or dynamic array nested in a container element as the ref actual of `t` is not supported; pass a variable at tb:11:9",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_nested_keyed_function_ref",
+        "a queue or dynamic array nested in a container element as the ref actual of `t` is not supported; pass a variable at tb:11:13",
     );
 }
 
@@ -370,6 +384,13 @@ fn an_element_of_a_class_property_takes_no_nonblocking_write() {
         "neg_class_property_element_nba",
         "nonblocking assignment to an element of a class property in `tb` is illegal",
     );
+}
+
+#[test]
+fn nested_writes_keep_values_that_delete_their_entry() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_write_lost_entry.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_write_lost_entry", expected, &[], &[]);
 }
 
 #[test]

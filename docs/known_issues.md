@@ -658,9 +658,10 @@ These legal forms reject with explicit diagnostics:
 - `foreach` with a dynamic level below a string key and a queue or dynamic
   array (`foreach (s[k, i, j])` over `int s[string][$][$]`);
 - a `ref` actual that is a queue or dynamic array nested in a container
-  element, for a task formal (a function formal works, since a function
-  cannot suspend), and a `ref` actual that is a queue or dynamic-array member
-  of a container record element;
+  element, for a task or function formal, `const` or not, reported at the
+  actual (a staged copy would miss a change made through another path), and a
+  `ref` actual that is a queue or dynamic-array member of a container record
+  element;
 - one statement that changes two nested queues or dynamic arrays of one
   container selected by selectors that are not provably distinct
   (`sq[a].push_back(sq[b].pop_front())`); constants and associative elements
@@ -678,7 +679,8 @@ each use (SIM-011). A nested queue or dynamic array is a dynamic-array value,
 so a statement stages it whole in a lexical container, copied in before and
 out after. A nested associative array is bound in place to a lexical alias
 that pins it for the statement. A queue or dynamic array therefore has no
-reference a suspended task could keep.
+reference a task or function could hold; nested associative arrays stay true
+references.
 
 ### Intended direction
 

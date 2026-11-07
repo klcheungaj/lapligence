@@ -273,12 +273,6 @@ impl Codegen<'_> {
     /// of another form is built in a temporary before the call when
     /// `prelude` is available. Outputs require a container variable, or a
     /// row or slice of a fixed view when `after` takes its write-back.
-    fn formal_of_task(&self, formal: NodeId) -> bool {
-        self.node(formal).parent.is_some_and(|parent| {
-            matches!(self.kind(parent), NodeKind::FuncTask { is_task: true, .. })
-        })
-    }
-
     pub(in super::super) fn container_call_argument(
         &mut self,
         path: &str,
@@ -304,22 +298,15 @@ impl Codegen<'_> {
                 "a queue or dynamic-array member of a container record element as the ref actual of `{name}` in `{path}` is not supported"
             ));
         }
-        // A task can suspend while its reference is live, so a copy of a
-        // nested queue or dynamic array cannot stand in for the element.
-        if direction == DbDirection::Ref
-            && self
-                .staged_nested_element(self.p30_unwrap_cast(actual))
-                .is_some_and(|staged| {
-                    !matches!(
-                        self.model.containers[staged].kind,
-                        IrContainerKind::Associative { .. }
-                    )
-                })
-            && self.formal_of_task(formal)
-        {
-            return Err(format!(
-                "a queue or dynamic array nested in a container element as the ref actual of task formal `{name}` in `{path}` is not supported; pass a variable"
-            ));
+        // A nested queue or dynamic array has only staged copies, which a
+        // reference must not alias: another path to the element would miss
+        // the change, and a task could suspend on the copy. An associative
+        // array is bound in place, so it stays a true reference.
+        if direction == DbDirection::Ref && self.names_nested_copy(self.p30_unwrap_cast(actual)) {
+            let what = format!(
+                "a queue or dynamic array nested in a container element as the ref actual of `{name}` is not supported; pass a variable"
+            );
+            return Err(self.source_site(&what, path, actual));
         }
         if let Some(source) = self.container_of(self.p30_unwrap_cast(actual)) {
             if self.model.containers[source.ir].same_storage_type(&self.model.containers[like]) {

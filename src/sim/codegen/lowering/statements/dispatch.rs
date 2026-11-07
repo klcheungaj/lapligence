@@ -77,8 +77,7 @@ impl EmitCtx<'_, '_> {
             None => (self.lower_stmt_operations(h), Default::default()),
         };
         self.cg.end_hoisted_source();
-        let mut hoisted = hoisted?;
-        hoisted.append(&mut self.cg.hoisted_record_fill);
+        let hoisted = hoisted?;
         let declarations =
             std::mem::replace(&mut self.cg.record_binding_declarations, outer).unwrap_or_default();
         let prelude = std::mem::replace(&mut self.cg.container_call_prelude, saved);

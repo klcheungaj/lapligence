@@ -1786,12 +1786,6 @@ struct Codegen<'a> {
     hoisted_values: HashMap<NodeId, HoistedValue>,
     /// The source node of the statement's hoisted value.
     hoisted_source: Option<NodeId>,
-    /// The record value of a write through a nested array to build before
-    /// the array is bound.
-    hoisted_record_source: Option<NodeId>,
-    /// The statements `record_into_slot` left to run before the array is
-    /// bound.
-    hoisted_record_fill: Vec<IrStmt>,
     /// Whether any container element type holds a record with a queue or
     /// dynamic-array member (or nests a container), so expressions may need
     /// read-only element staging; false keeps the scan off every other
@@ -2436,8 +2430,6 @@ impl<'a> Codegen<'a> {
             deferred_selectors: std::cell::Cell::new(false),
             hoisted_values: HashMap::new(),
             hoisted_source: None,
-            hoisted_record_source: None,
-            hoisted_record_fill: Vec::new(),
             element_staging_possible: false,
             deferred_display_args: false,
             deferred_prelude: Vec::new(),
