@@ -238,7 +238,7 @@ fn run(options: DriverOptions) -> i32 {
     reporter.finish(lint_only);
     match next {
         Next::Exit(code) => code,
-        Next::Run(command, exe) => run_model(command, &exe),
+        Next::Run(command, exe) => run_model(*command, &exe),
     }
 }
 
@@ -246,7 +246,7 @@ fn run(options: DriverOptions) -> i32 {
 enum Next {
     Exit(i32),
     /// Run the built model.
-    Run(Command, std::path::PathBuf),
+    Run(Box<Command>, std::path::PathBuf),
 }
 
 fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
@@ -545,7 +545,7 @@ fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
     if let Some(path) = dll_search_path {
         command.env("PATH", path);
     }
-    Next::Run(command, exe)
+    Next::Run(Box::new(command), exe)
 }
 
 /// Run the built model and return the driver's exit status.

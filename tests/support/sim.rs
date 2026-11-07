@@ -342,13 +342,13 @@ pub(crate) fn sim_time(ticks: u64, precision_fs: u64) -> String {
     let mut unit = 0;
     if value == 0 {
         let mut precision = precision_fs.max(1);
-        while unit < 5 && precision % 1000 == 0 {
+        while unit < 5 && precision.is_multiple_of(1000) {
             precision /= 1000;
             unit += 1;
         }
         return format!("0 {}", UNITS[unit]);
     }
-    while unit < 5 && value % 1000 == 0 {
+    while unit < 5 && value.is_multiple_of(1000) {
         value /= 1000;
         unit += 1;
     }
