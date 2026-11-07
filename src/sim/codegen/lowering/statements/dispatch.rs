@@ -480,7 +480,15 @@ impl EmitCtx<'_, '_> {
                         self.path
                     )
                 })?;
-                let event = self.cg.bound_event_ref_of(&target, &self.path)?;
+                // A nonblocking trigger resolves its event at issue, but only
+                // a blocking one creates a missing associative entry: `->>`
+                // on a missing entry creates nothing and triggers nothing
+                // (decision S07-D14, the text is silent).
+                let event = if *blocking {
+                    self.cg.bound_event_ref_of(&target, &self.path)?
+                } else {
+                    self.cg.event_ref_of(&target, &self.path)?
+                };
                 if *blocking {
                     if let Some(timing) = timing {
                         return Err(self.unsupported_event_trigger_timing(

@@ -5433,6 +5433,14 @@ fn s07_d13_min_max_unknown_elements() {
 }
 
 #[test]
+fn s07_d14_nonblocking_trigger_missing_entry() {
+    run_decision(
+        "S07-D14_nonblocking_trigger_missing_entry",
+        include_str!("fixtures/sim/lrm_decisions/S07-D14_nonblocking_trigger_missing_entry.out"),
+    );
+}
+
+#[test]
 fn s14_d7_event_nba_order() {
     run_decision(
         "S14-D7_event_nba_order",
