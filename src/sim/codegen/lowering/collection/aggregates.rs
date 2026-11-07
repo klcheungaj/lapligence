@@ -1242,6 +1242,7 @@ pub(super) fn ir_container_kind(
                     two_state: *two_state,
                 },
                 AssociativeIndex::String => IrAssocKey::String,
+                AssociativeIndex::Class => IrAssocKey::Class,
                 AssociativeIndex::Unsupported(kind) => {
                     return Err(format!(
                         "associative array `{name}` in `{path}` has unsupported index type `{kind}`"

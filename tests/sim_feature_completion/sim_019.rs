@@ -13,6 +13,12 @@ fn locators_over_native_elements_and_sizes() {
 }
 
 #[test]
+fn class_keys_with_every_method_and_foreach() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_019/class_keys.out");
+    sim_cli::run_case_backend_parity(SUITE, "class_keys", expected, &[], &[]);
+}
+
+#[test]
 fn methods_on_selected_fixed_rows() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_019/fixed_rows.out");
     sim_cli::run_case_backend_parity(SUITE, "fixed_rows", expected, &[], &[]);

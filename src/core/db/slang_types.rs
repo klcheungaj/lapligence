@@ -604,6 +604,9 @@ impl<'a> SlangTypeProjector<'a> {
                                 two_state: !index.is_four_state,
                             },
                             TypeKind::String => AssociativeIndex::String,
+                            TypeKind::Class if !is_builtin_class(&index.display_name) => {
+                                AssociativeIndex::Class
+                            }
                             _ => AssociativeIndex::Unsupported(if index.display_name.is_empty() {
                                 format!("{:?}", index.kind)
                             } else {
@@ -659,6 +662,14 @@ impl<'a> SlangTypeProjector<'a> {
             right: 0,
         }])
     }
+}
+
+/// Whether a class type is one of the `std` classes, whose objects the
+/// runtime owns outside the class heap.
+fn is_builtin_class(display_name: &str) -> bool {
+    let name = display_name.trim();
+    let name = name.strip_prefix("std::").unwrap_or(name);
+    matches!(name, "process" | "semaphore") || name.starts_with("mailbox")
 }
 
 fn nominal_identity(display_name: &str) -> Option<String> {

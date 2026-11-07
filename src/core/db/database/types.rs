@@ -450,6 +450,9 @@ pub enum AssociativeIndex {
         two_state: bool,
     },
     String,
+    /// A class handle of a user class (7.8.3). The built-in classes keep
+    /// their own storage and stay `Unsupported`.
+    Class,
     Unsupported(String),
 }
 

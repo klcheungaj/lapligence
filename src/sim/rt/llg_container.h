@@ -51,9 +51,20 @@ enum {
     /* A `process` handle: an identity whose element owns one reference. */
     LLG_VALUE_PROCESS = 9,
     /* An associative array nested in a value: `item_count` is 1 for a string
-     * key, and `packed_*` give an integral key. */
+     * key, 2 for a class key, and `packed_*` give an integral key. */
     LLG_VALUE_ASSOC = 10,
 };
+
+/* First member of every collected object; owned by the collector. `serial`
+ * numbers objects in creation order from 1, and orders class keys of
+ * associative arrays. */
+typedef struct llg_gc_type llg_gc_type_t;
+typedef struct llg_gc_header {
+    const llg_gc_type_t* type;
+    uint32_t mark;
+    uint32_t pins;
+    uint64_t serial;
+} llg_gc_header_t;
 
 typedef struct llg_value_desc_t llg_value_desc_t;
 typedef struct llg_value_member_desc_t llg_value_member_desc_t;
@@ -898,6 +909,8 @@ struct llg_assoc_value_t {
     size_t capacity;
     const llg_value_desc_t* element;
     uint8_t key_kind;
+    /* See llg_assoc_t.key_class. */
+    uint8_t key_class;
     uint32_t key_width;
     int8_t key_signed;
     uint8_t key_two_state;
@@ -916,6 +929,8 @@ void llg_assoc_value_init_integral(llg_assoc_value_t* array,
                                    int key_two_state);
 void llg_assoc_value_init_string(llg_assoc_value_t* array,
                                  const llg_value_desc_t* element);
+void llg_assoc_value_init_class(llg_assoc_value_t* array,
+                                const llg_value_desc_t* element);
 void llg_assoc_value_destroy(llg_assoc_value_t* array);
 void llg_assoc_value_delete(llg_assoc_value_t* array);
 void llg_assoc_value_copy(llg_assoc_value_t* dst,
@@ -1030,6 +1045,11 @@ typedef struct llg_assoc_t {
     int8_t element_signed;
     uint8_t element_two_state;
     uint8_t key_kind;
+    // A class index (7.8.3): an integral key of 64 bits holding the object's
+    // address, ordered by the object's creation serial so the order does not
+    // depend on addresses. The object a key names stays reachable as long as
+    // the entry does (llg_gc_trace_assoc and friends); null has serial 0.
+    uint8_t key_class;
     // Zero denotes the wildcard integral index type. Wildcard keys are
     // canonicalized to minimal significant width; traversal is rejected because IEEE
     // 1800-2009 7.8.1 forbids it.
@@ -1054,6 +1074,8 @@ void llg_assoc_init_integral(llg_assoc_t* array, uint32_t element_width,
                              int key_two_state);
 void llg_assoc_init_string(llg_assoc_t* array, uint32_t element_width,
                            int8_t element_signed, int element_two_state);
+void llg_assoc_init_class(llg_assoc_t* array, uint32_t element_width,
+                          int8_t element_signed, int element_two_state);
 void llg_assoc_destroy(llg_assoc_t* array);
 void llg_assoc_delete(llg_assoc_t* array);
 void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src);

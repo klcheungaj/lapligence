@@ -3,7 +3,7 @@
 use super::*;
 use crate::sim::ir::{
     IrChandleExpr, IrContainerElement, IrContainerMethod, IrContainerReduction, IrObjectType,
-    IrQueueBound, IrQueueSource, IrStringExpr,
+    IrQueueBound, IrQueueSource, IrStringExpr, CLASS_KEY_WIDTH,
 };
 
 mod assignments;
@@ -23,6 +23,7 @@ mod methods;
 mod nonblocking;
 mod patterns;
 mod queries;
+pub(in crate::sim::codegen) use queries::{class_key_expr, class_key_traversal};
 mod real_array_values;
 mod selects;
 mod streaming;

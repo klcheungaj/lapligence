@@ -14,6 +14,12 @@ objects sampled by a static coverage event are pinned by `llg_cov_register`;
 a per-instance event waiter holds its object in its captured frame. Addresses that may point into object storage
 are reported with `llg_gc_visit_interior`.
 
+An associative array with class keys holds its keys as roots: global ones
+through `render_gc_roots`, the rest through the traced storage that holds them
+(`llg_gc_trace_assoc`, `llg_gc_trace_assoc_values`, `llg_nested_assoc_trace`).
+Every object takes a creation serial from `llg_gc.next_serial`, 8 bytes per
+header, which orders those keys.
+
 Finalizers release fields only and never follow handles, so cycles and order
 do not matter. One reclaim hook (`llg_gc_reclaim_hook`, installed by the VPI layer once
 an application observes a class object or registers an object callback) sees

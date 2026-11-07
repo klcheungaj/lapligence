@@ -466,7 +466,13 @@ impl Codegen<'_> {
                 match array {
                     ArrayKind::Queue { .. } => IrPatternType::Queue { element },
                     ArrayKind::Dynamic => IrPatternType::Dynamic { element },
-                    ArrayKind::Associative(_) => IrPatternType::Associative { element },
+                    ArrayKind::Associative(index) => {
+                        // A class key prints as a handle does.
+                        if matches!(index, crate::core::db::AssociativeIndex::Class) {
+                            self.ensure_pattern_classes()?;
+                        }
+                        IrPatternType::Associative { element }
+                    }
                     ArrayKind::Static => {
                         return Err("static container metadata has no pattern form".to_owned())
                     }

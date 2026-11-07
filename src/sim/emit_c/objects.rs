@@ -284,6 +284,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::ItemElement { .. }
         | IrChandleExpr::RandInstance { .. }
         | IrChandleExpr::Required { .. }
+        | IrChandleExpr::ClassFromKey(_)
         | IrChandleExpr::InterfaceInstance { .. } => {
             return Err("typed native operations require whole-model ownership emission".to_owned())
         }
@@ -607,6 +608,10 @@ pub(super) fn query(
             chandle(ctx, a)?,
             chandle(ctx, b)?
         ),
+        IrObjectQuery::ClassKey(handle) => format!(
+            "sv4_from_u64((uint64_t)(uintptr_t){}, 64, 0)",
+            chandle(ctx, handle)?
+        ),
         IrObjectQuery::Coverage(_) => {
             return Err("functional coverage requires the ownership-aware emitter".to_owned())
         }
@@ -772,9 +777,9 @@ fn dynamic_query_code(
                     }
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::String | IrAssocKey::Wildcard,
+                    key: IrAssocKey::String | IrAssocKey::Wildcard | IrAssocKey::Class,
                 } => return Err(
-                    "array query on a string-keyed or wildcard associative array is unsupported"
+                    "array query on a string-keyed, wildcard or class-keyed associative array is unsupported"
                         .to_owned(),
                 ),
             }

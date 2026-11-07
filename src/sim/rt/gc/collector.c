@@ -61,6 +61,7 @@ static struct {
     size_t frame_count;
     uint32_t epoch;
     uint64_t since_last;
+    uint64_t next_serial; // creation serial of the last allocated object
     uint64_t threshold;
     uint64_t base_threshold;
     uint64_t growth_percent;
@@ -159,6 +160,7 @@ void* llg_gc_alloc(size_t size, const llg_gc_type_t* type) {
     llg_gc_header_t* object =
         (llg_gc_header_t*)llg_checked_calloc(1, size, "collected object");
     object->type = type;
+    object->serial = ++llg_gc.next_serial;
     gc_index_insert(object);
     ++llg_gc.stats.allocated;
     gc_update_live_stats();
@@ -588,9 +590,21 @@ void llg_gc_trace_queue_values(const void* payload, llg_gc_tracer_t* tracer) {
 void llg_gc_trace_assoc_values(const void* payload, llg_gc_tracer_t* tracer) {
     const llg_assoc_value_t* assoc = (const llg_assoc_value_t*)payload;
     if (!assoc) return;
-    for (size_t i = 0; i < assoc->size; ++i)
+    for (size_t i = 0; i < assoc->size; ++i) {
+        if (assoc->key_class)
+            llg_gc_visit(tracer, (const void*)(uintptr_t)sv4_to_u64(
+                                     assoc->entries[i].integral_key));
         llg_gc_visit_value(tracer, &assoc->entries[i].value);
+    }
     if (assoc->has_default_value) llg_gc_visit_value(tracer, &assoc->default_value);
+}
+
+void llg_gc_trace_assoc(const void* payload, llg_gc_tracer_t* tracer) {
+    const llg_assoc_t* assoc = (const llg_assoc_t*)payload;
+    if (!assoc || !assoc->key_class) return;
+    for (size_t i = 0; i < assoc->size; ++i)
+        llg_gc_visit(tracer,
+                     (const void*)(uintptr_t)sv4_to_u64(assoc->entries[i].integral_key));
 }
 
 static void gc_trace_native_value(const void* payload, llg_gc_tracer_t* tracer) {

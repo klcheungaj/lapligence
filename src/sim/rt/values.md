@@ -45,7 +45,7 @@ finite-double round trips in realtoa. Register every owner spanning callbacks;
 multi-event contexts adopt each field before any evaluation, even shared pointers.
 
 Containers require paired init/destroy. Preserve resize prefixes/default growth,
-queue bounds/discard rules, ordered integral/byte-string associative keys, and
+queue bounds/discard rules, ordered integral/byte-string/class associative keys, and
 invalid-index default-read/no-op-write semantics. X/Z integral keys: `container/associative_arrays.c`. Allocation overflow/exhaustion is fatal. Descriptor-backed dynamic
 array elements use type operations; do not apply packed-only queue/associative
 paths to other types. Packed `sort`/`rsort` evaluate each `with` key once, merge-sort
@@ -78,6 +78,13 @@ An associative array nested in a value (`LLG_VALUE_ASSOC`) keeps the storage a
 variable of its type has, in one counted allocation (`llg_nested_assoc_t`), so
 generated code addresses it in place. A lexical alias holds a pin: a deleted
 element stays valid until the statement ends, and its writes go nowhere.
+
+A class key is an integral key holding the object's address with the array's
+`key_class` flag set: entries sort by the creation serial in the object's
+`llg_gc_header_t`, with null first, so traversal never depends on an address
+(S07-D9). Finding a key derefs headers, which only class-keyed arrays pay;
+equal keys are equal addresses. A nested array's descriptor gives the key form
+in `item_count`: 0 integral, 1 string, 2 class.
 
 A record element's queue or dynamic-array member is a nested slot of another
 representation than the formal's companion container, so `llg_native_ref_mirror`

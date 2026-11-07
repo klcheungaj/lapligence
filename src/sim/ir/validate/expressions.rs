@@ -95,6 +95,7 @@ impl Validator<'_> {
                     self.string_return.get(),
                 )?;
                 let expected = match query.as_ref() {
+                    IrObjectQuery::ClassKey(..) => Some((super::super::CLASS_KEY_WIDTH, false)),
                     IrObjectQuery::ChandleEq(..)
                     | IrObjectQuery::HandleCapture(..)
                     | IrObjectQuery::StringCapture(..)

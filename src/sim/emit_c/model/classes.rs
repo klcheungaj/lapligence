@@ -548,11 +548,25 @@ pub(super) fn render_virtual_dispatch_bodies(
     }
 }
 
+/// Whether a container keeps class handles in its keys.
+fn has_class_key(kind: &crate::sim::ir::IrContainerKind) -> bool {
+    matches!(
+        kind,
+        crate::sim::ir::IrContainerKind::Associative {
+            key: crate::sim::ir::IrAssocKey::Class
+        }
+    )
+}
+
 /// Whether container elements of this type can hold a class handle.
 fn element_may_hold_object(element: &crate::sim::ir::IrContainerElement) -> bool {
     use crate::sim::ir::IrContainerElement as E;
     match element {
         E::Opaque { kind, .. } => kind != crate::sim::ir::PROCESS_ELEMENT_KIND,
+        E::Container {
+            key: Some(crate::sim::ir::IrAssocKey::Class),
+            ..
+        } => true,
         E::Aggregate { members, .. } | E::Union { members, .. } => members
             .iter()
             .any(|member| element_may_hold_object(&member.element)),
@@ -583,11 +597,18 @@ pub(super) fn render_gc_roots(model: &IrModel, out: &mut String) {
         .containers
         .iter()
         .filter(|container| container.is_global_storage())
-        .filter(|container| element_may_hold_object(&container.element))
+        .filter(|container| {
+            element_may_hold_object(&container.element) || has_class_key(&container.kind)
+        })
     {
         let function = match container.kind {
             crate::sim::ir::IrContainerKind::Dynamic => "llg_gc_trace_dyn_values",
             crate::sim::ir::IrContainerKind::Queue { .. } => "llg_gc_trace_queue_values",
+            crate::sim::ir::IrContainerKind::Associative { .. }
+                if container.element.is_packed() =>
+            {
+                "llg_gc_trace_assoc"
+            }
             crate::sim::ir::IrContainerKind::Associative { .. } => "llg_gc_trace_assoc_values",
         };
         out.push_str(&format!("    {function}(&{}, tracer);\n", container.c_name));
@@ -609,6 +630,13 @@ pub(super) fn render_gc_register(model: &IrModel, frame_maps: &str, out: &mut St
             "llg_dyn_value_array_t" => "llg_gc_trace_dyn_values",
             "llg_queue_value_array_t" => "llg_gc_trace_queue_values",
             "llg_assoc_value_t" => "llg_gc_trace_assoc_values",
+            "llg_assoc_t"
+                if model.containers.iter().any(|container| {
+                    container.element.is_packed() && has_class_key(&container.kind)
+                }) =>
+            {
+                "llg_gc_trace_assoc"
+            }
             _ => continue,
         };
         out.push_str(&format!(

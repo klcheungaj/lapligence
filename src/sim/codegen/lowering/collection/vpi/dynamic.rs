@@ -221,12 +221,16 @@ impl Codegen<'_> {
             IrContainerKind::Associative { key } => match key {
                 crate::sim::ir::IrAssocKey::Integral { .. } => IrVpiKey::Integral,
                 crate::sim::ir::IrAssocKey::String => IrVpiKey::String,
-                crate::sim::ir::IrAssocKey::Wildcard => IrVpiKey::Other,
+                crate::sim::ir::IrAssocKey::Wildcard | crate::sim::ir::IrAssocKey::Class => {
+                    IrVpiKey::Other
+                }
             },
             _ if array_type == IrVpiArrayType::Assoc => IrVpiKey::Other,
             _ => IrVpiKey::None,
         };
-        if let ArrayKind::Associative(AssociativeIndex::Unsupported(_)) = array {
+        if let ArrayKind::Associative(AssociativeIndex::Class | AssociativeIndex::Unsupported(_)) =
+            array
+        {
             return None;
         }
         let element = self.vpi_element_shape(typespecs, element_type, &container.element, depth);

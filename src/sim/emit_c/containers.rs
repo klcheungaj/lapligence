@@ -147,12 +147,12 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
                 }
                 IrContainerKind::Queue { .. } => "llg_queue_value_get",
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
+                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
                 } if ctx.model.containers[*container].element.is_packed() => {
                     "llg_assoc_get_integral"
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
+                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
                 } => "llg_assoc_value_get_integral",
                 IrContainerKind::Associative {
                     key: IrAssocKey::String,
@@ -669,13 +669,13 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                     "llg_queue_set"
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
+                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
                 } if ctx.model.containers[*container].element.is_packed() => {
                     "llg_assoc_set_integral"
                 }
                 IrContainerKind::Queue { .. } => "llg_queue_value_set",
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
+                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
                 } => "llg_assoc_value_set_integral",
                 IrContainerKind::Dynamic => {
                     return Err(
@@ -1363,15 +1363,17 @@ pub(super) fn value_descriptor_tables(
                 key: Some(key),
                 ..
             } => {
-                // The descriptor's packed fields give the integral key.
-                let (width, signed, two_state, string) = match key {
-                    IrAssocKey::Wildcard => (0, false, false, false),
+                // The descriptor's packed fields give the integral key;
+                // `item_count` names the other kinds of key.
+                let (width, signed, two_state, kind) = match key {
+                    IrAssocKey::Wildcard => (0, false, false, 0),
                     IrAssocKey::Integral {
                         width,
                         signed,
                         two_state,
-                    } => (*width, *signed, *two_state, false),
-                    IrAssocKey::String => (0, false, false, true),
+                    } => (*width, *signed, *two_state, 0),
+                    IrAssocKey::String => (0, false, false, 1),
+                    IrAssocKey::Class => (0, false, false, 2),
                 };
                 (
                     "LLG_VALUE_ASSOC",
@@ -1380,7 +1382,7 @@ pub(super) fn value_descriptor_tables(
                     u8::from(signed),
                     u8::from(two_state),
                     0,
-                    usize::from(string),
+                    kind,
                 )
             }
             IrContainerElement::Container { type_id, .. } => (
@@ -1473,6 +1475,9 @@ fn storage_parts(
                     IrAssocKey::String => {
                         format!("    llg_assoc_value_init_string(&{target}, &{root});\n")
                     }
+                    IrAssocKey::Class => {
+                        format!("    llg_assoc_value_init_class(&{target}, &{root});\n")
+                    }
                 },
             ),
         };
@@ -1511,6 +1516,10 @@ fn storage_parts(
             ),
             IrAssocKey::String => format!(
                 "    llg_assoc_init_string(&{target}, {width}, {}, {});\n",
+                signed as u8, two_state as u8
+            ),
+            IrAssocKey::Class => format!(
+                "    llg_assoc_init_class(&{target}, {width}, {}, {});\n",
                 signed as u8, two_state as u8
             ),
         },

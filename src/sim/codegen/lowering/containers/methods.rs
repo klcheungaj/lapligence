@@ -116,6 +116,24 @@ impl<'a> Codegen<'a> {
                 .lower_inline_order(path, node, receiver, container.ir, name == "rsort", &name)
                 .map(Some);
         }
+        // A traversal whose status is discarded still moves its key.
+        if matches!(
+            (name.as_str(), &self.model.containers[container.ir].kind),
+            (
+                "first" | "last" | "next" | "prev",
+                IrContainerKind::Associative { .. }
+            )
+        ) {
+            if let Some(status) = self.lower_container_query(path, node)? {
+                return Ok(Some(IrStmt::DeclLocal {
+                    name: format!("_llg_discard{}", node.0),
+                    width: status.width,
+                    signed: status.signed,
+                    init: Some(Box::new(status)),
+                    two_state: true,
+                }));
+            }
+        }
         let operation = match (name.as_str(), args.as_slice()) {
             ("delete", []) => IrContainerStmt::Delete(container.ir),
             ("delete", [index]) => match self.model.containers[container.ir].kind {

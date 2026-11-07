@@ -332,7 +332,10 @@ impl Codegen<'_> {
         })
     }
 
-    fn inline_declaration(&self, node: NodeId) -> Option<&InlineIterator> {
+    pub(in crate::sim::codegen) fn inline_declaration(
+        &self,
+        node: NodeId,
+    ) -> Option<&InlineIterator> {
         self.inline_iterators
             .iter()
             .rev()
@@ -663,6 +666,24 @@ impl Codegen<'_> {
                     signed,
                 }
             }
+            // The traversal of the values; `item.index` has no packed form.
+            IrContainerKind::Associative {
+                key: IrAssocKey::Class,
+            } => {
+                let name = self.inline_name("key");
+                statements.push(IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width: CLASS_KEY_WIDTH,
+                    signed: false,
+                    init: None,
+                    two_state: true,
+                });
+                InlineKey::Integral {
+                    name,
+                    width: CLASS_KEY_WIDTH,
+                    signed: false,
+                }
+            }
             IrContainerKind::Associative {
                 key: IrAssocKey::String,
             } => {
@@ -762,7 +783,7 @@ impl Codegen<'_> {
                                     key: IrAssocKey::Integral {
                                         two_state: true,
                                         ..
-                                    }
+                                    } | IrAssocKey::Class
                                 }
                             ),
                         },

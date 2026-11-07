@@ -6,9 +6,14 @@ llg_nested_assoc_t* llg_nested_assoc_new(const llg_value_desc_t* desc) {
     nested->pins = 1;
     nested->desc = desc;
     const llg_value_desc_t* element = desc->element;
-    int string_key = desc->item_count != 0;
+    int string_key = desc->item_count == 1;
+    int class_key = desc->item_count == 2;
     if (element->kind == LLG_VALUE_PACKED) {
-        if (string_key)
+        if (class_key)
+            llg_assoc_init_class(&nested->array.packed, element->packed_width,
+                                 element->packed_signed,
+                                 element->packed_two_state);
+        else if (string_key)
             llg_assoc_init_string(&nested->array.packed, element->packed_width,
                                   element->packed_signed,
                                   element->packed_two_state);
@@ -19,6 +24,8 @@ llg_nested_assoc_t* llg_nested_assoc_new(const llg_value_desc_t* desc) {
                                     element->packed_two_state,
                                     desc->packed_width, desc->packed_signed,
                                     desc->packed_two_state);
+    } else if (class_key) {
+        llg_assoc_value_init_class(&nested->array.values, element);
     } else if (string_key) {
         llg_assoc_value_init_string(&nested->array.values, element);
     } else {
@@ -101,7 +108,17 @@ int llg_nested_assoc_equal(const llg_nested_assoc_t* a,
 
 void llg_nested_assoc_trace(const llg_nested_assoc_t* nested,
                             llg_value_visit_fn visit, void* context) {
-    if (nested->desc->element->kind == LLG_VALUE_PACKED) return;
+    int packed = nested->desc->element->kind == LLG_VALUE_PACKED;
+    if (nested->desc->item_count == 2) {
+        size_t size = llg_nested_assoc_size(nested);
+        for (size_t i = 0; i < size; ++i) {
+            void* key = (void*)(uintptr_t)sv4_to_u64(
+                packed ? nested->array.packed.entries[i].integral_key
+                       : nested->array.values.entries[i].integral_key);
+            if (key) visit((void* const*)&key, NULL, context);
+        }
+    }
+    if (packed) return;
     for (size_t i = 0; i < nested->array.values.size; ++i)
         llg_value_trace_at(&nested->array.values.entries[i].value, visit,
                            context);

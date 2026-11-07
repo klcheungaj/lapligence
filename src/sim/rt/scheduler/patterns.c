@@ -149,6 +149,7 @@ static uint64_t llg_pattern_extent(int32_t left, int32_t right) {
 static void llg_pattern_value(llg_pattern_out_t* out,
                               const llg_pattern_type_t* type,
                               const llg_value_t* value);
+static void llg_pattern_object(llg_pattern_out_t* out, void* handle);
 static void llg_pattern_handle(llg_pattern_out_t* out,
                                const llg_pattern_type_t* type, void* handle);
 static void llg_pattern_container(llg_pattern_out_t* out,
@@ -401,10 +402,16 @@ static void llg_pattern_value(llg_pattern_out_t* out,
 }
 
 static void llg_pattern_assoc_key(llg_pattern_out_t* out, uint8_t key_kind,
-                                  const sv4_t* integral, const unsigned char* text,
-                                  size_t length) {
+                                  uint8_t key_class, const sv4_t* integral,
+                                  const unsigned char* text, size_t length) {
     if (key_kind == LLG_ASSOC_STRING)
         llg_pattern_string(out, (const char*)text, length);
+    else if (key_class) {
+        // A key prints as a handle of that class would: never its address.
+        void* handle = (void*)(uintptr_t)sv4_to_u64(*integral);
+        if (handle) llg_pattern_object(out, handle);
+        else llg_pattern_text(out, "null");
+    }
     else
         llg_pattern_scalar(out, *integral);
 }
@@ -444,7 +451,7 @@ static void llg_pattern_container(llg_pattern_out_t* out,
             for (size_t i = 0; i < array->size && !out->truncated; ++i) {
                 const llg_assoc_entry_t* entry = &array->entries[i];
                 if (i) llg_pattern_separator(out);
-                llg_pattern_assoc_key(out, array->key_kind, &entry->integral_key,
+                llg_pattern_assoc_key(out, array->key_kind, array->key_class, &entry->integral_key,
                                       entry->string_key, entry->string_length);
                 llg_pattern_put(out, ":", 1);
                 llg_pattern_flat(out, element, entry->value, 0);
@@ -464,7 +471,7 @@ static void llg_pattern_container(llg_pattern_out_t* out,
         for (size_t i = 0; i < array->size && !out->truncated; ++i) {
             const llg_assoc_value_entry_t* entry = &array->entries[i];
             if (i) llg_pattern_separator(out);
-            llg_pattern_assoc_key(out, array->key_kind, &entry->integral_key,
+            llg_pattern_assoc_key(out, array->key_kind, array->key_class, &entry->integral_key,
                                   entry->string_key, entry->string_length);
             llg_pattern_put(out, ":", 1);
             llg_pattern_value(out, element, &entry->value);

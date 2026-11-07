@@ -78,3 +78,11 @@ pins these choices so a change to them is deliberate; it is not a
 conformance oracle. The portable fixtures above also print `find` and
 `find_index` results in index order, which is llg's traversal order under
 L9267.
+
+## Class keys
+
+`class_keys`: expected output checked against an independent simulator, keys
+of one class only (S07-D9 fixes the order llg uses for the rest). 7.9.4 L8837-8838:
+"The first() method assigns to the given index variable the value of the first
+(smallest) index in the associative array." Every method of 7.9, `foreach`,
+copies, formals of each direction, nested levels and element types.

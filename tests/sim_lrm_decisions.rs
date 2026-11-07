@@ -5329,6 +5329,22 @@ fn s07_d8_nested_write_value_first() {
 }
 
 #[test]
+fn s07_d9_class_key_order() {
+    run_decision(
+        "S07-D9_class_key_order",
+        include_str!("fixtures/sim/lrm_decisions/S07-D9_class_key_order.out"),
+    );
+}
+
+#[test]
+fn s07_d10_class_key_pattern() {
+    run_decision(
+        "S07-D10_class_key_pattern",
+        include_str!("fixtures/sim/lrm_decisions/S07-D10_class_key_pattern.out"),
+    );
+}
+
+#[test]
 fn s14_d7_event_nba_order() {
     run_decision(
         "S14-D7_event_nba_order",

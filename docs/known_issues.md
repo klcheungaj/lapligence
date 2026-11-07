@@ -607,8 +607,7 @@ are fixed-size views of the container runtime; a row of a multidimensional
 one is a run of cells, not a view of its own. A record member that is itself a
 resizable container is a companion container of a native value, but a nested
 dynamic array inside a container element's value: no container operation
-addresses that nested slot in place, so a statement stages a copy, and the
-runtime has no nested associative form. A record, string or handle declared in a procedural block reuses
+addresses that nested slot in place, so a statement stages a copy. A record, string or handle declared in a procedural block reuses
 module storage, one copy per declaration and instance: an automatic one is
 reset at each block entry, so a second live activation has no storage of its
 own. The Db captures member defaults as constants, and an unpacked record
@@ -1399,6 +1398,33 @@ module tb;
   end
 endmodule
 ```
+
+## Class-keyed associative arrays have explicit gaps
+
+**Status:** open. The forms below reject with a located diagnostic, except the
+event case, which is silent and applies to every key type.
+
+### Symptom
+
+- An index of a built-in class (`semaphore`, `mailbox`, `process`), or a nested
+  key of a type with no runtime form, rejects at the declaration.
+- `find_index`, `find_first_index`, `find_last_index` and `unique_index` of a
+  class-keyed array, and `item.index` in a `with` clause over one.
+- A VPI dynamic-array view of a class-keyed array.
+- `a[f()] += 1`, a compound write whose key calls a function, as for any key.
+- `@(ev[k])` and `-> ev[k]` on a missing key of an associative array of events
+  do not create the entry, so a later wait on the same key misses the trigger.
+
+### Cause
+
+The locator index forms need a queue of handles as their result, which the
+packed locator path does not produce. Key order reads
+`llg_gc_header_t.serial`, which only collected class objects carry.
+
+### Intended direction
+
+Give locator results a handle queue form, and create the event entry at the
+first event control.
 
 ## Selects of properties of computed class handles
 

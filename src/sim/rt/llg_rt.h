@@ -264,13 +264,8 @@ void llg_rt_co_cache_get_stats(llg_rt_co_cache_stats_t* stats);
 #endif
 
 typedef struct llg_gc_tracer llg_gc_tracer_t;
-typedef struct llg_gc_type llg_gc_type_t;
-// First member of every collected object; owned by the collector.
-typedef struct llg_gc_header {
-    const llg_gc_type_t* type;
-    uint32_t mark;
-    uint32_t pins;
-} llg_gc_header_t;
+// llg_gc_header_t, the first member of every collected object, is in
+// llg_container.h: the order of class keys reads it.
 struct llg_gc_type {
     const char* name;
     // Visit every outgoing handle (llg_gc_visit and friends).
@@ -342,6 +337,8 @@ void llg_gc_handle_cell_drop(void* cell);
 void llg_gc_trace_dyn_values(const void* payload, llg_gc_tracer_t* tracer);
 void llg_gc_trace_queue_values(const void* payload, llg_gc_tracer_t* tracer);
 void llg_gc_trace_assoc_values(const void* payload, llg_gc_tracer_t* tracer);
+// The keys of a class-keyed associative array of packed elements.
+void llg_gc_trace_assoc(const void* payload, llg_gc_tracer_t* tracer);
 // Foreign retention: a pinned object is a root. Pin/unpin of a non-object
 // returns 0 and changes nothing; an unbalanced unpin is fatal.
 int llg_gc_pin(void* handle);

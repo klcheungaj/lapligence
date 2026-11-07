@@ -581,6 +581,7 @@ static void* nba_container_clone(int kind, const void* src) {
         else
             llg_assoc_init_string(copy, from->element_width, from->element_signed,
                                   from->element_two_state);
+        copy->key_class = from->key_class;
         llg_assoc_copy(copy, from);
         return copy;
     }
@@ -606,6 +607,7 @@ static void* nba_container_clone(int kind, const void* src) {
                                           from->key_signed, from->key_two_state);
         else
             llg_assoc_value_init_string(copy, from->element);
+        copy->key_class = from->key_class;
         llg_assoc_value_copy(copy, from);
         return copy;
     }

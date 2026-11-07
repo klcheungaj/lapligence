@@ -556,6 +556,7 @@ impl EmitCtx<'_, '_> {
         let index = match key {
             IrAssocKey::Wildcard => "a wildcard `[*]` index",
             IrAssocKey::String => "a string index",
+            IrAssocKey::Class => "a class index",
             IrAssocKey::Integral { .. } => unreachable!("integral indices are accepted"),
         };
         format!(

@@ -1,5 +1,6 @@
 //! Control flow.
 
+use super::super::containers::{class_key_expr, class_key_traversal};
 use super::*;
 
 impl<'c, 'a> EmitCtx<'c, 'a> {
@@ -159,6 +160,8 @@ enum AssocKeyStorage {
     Integral(ProcLocalInfo, u32, bool, bool),
     StringObject(usize),
     StringLocal(String),
+    /// The handle variable: its write target and its read.
+    Class(ChandleTarget, IrChandleExpr),
 }
 
 fn foreach_local_decl(info: &ProcLocalInfo) -> IrStmt {
@@ -1150,6 +1153,7 @@ impl EmitCtx<'_, '_> {
                 let storage_key = self.foreach_key_storage(*variable, &kind, &mut declarations)?;
                 match &storage_key {
                     AssocKeyStorage::Integral(local, ..) => indices.push(foreach_local_read(local)),
+                    AssocKeyStorage::Class(_, read) => indices.push(class_key_expr(read.clone())),
                     AssocKeyStorage::StringObject(object) => {
                         key = Some(IrStringExpr::Read(*object))
                     }
@@ -1313,6 +1317,19 @@ impl EmitCtx<'_, '_> {
                 AssocKeyStorage::Integral(local, *width, *signed, *two_state)
             }
             IrContainerKind::Associative {
+                key: IrAssocKey::Class,
+            } => {
+                // The iterator is a handle variable of the block, or of the
+                // subroutine whose locals include it.
+                if self.func.is_none() {
+                    self.cg
+                        .collect_block_native(&self.path.clone(), variable, variable)?;
+                }
+                declarations.extend(self.lower_variable_decl(variable)?);
+                let (target, read) = self.cg.lower_chandle_lvalue(&self.path, variable)?;
+                AssocKeyStorage::Class(target, read)
+            }
+            IrContainerKind::Associative {
                 key: IrAssocKey::String,
             } => {
                 if let Some(object) = self.cg.object_of(&self.path, variable) {
@@ -1368,6 +1385,7 @@ impl EmitCtx<'_, '_> {
             two_state: true,
             static_signal: None,
         };
+        let tag = first_name.clone();
         let mut statements = vec![IrStmt::DeclLocal {
             name: first_name,
             width: 1,
@@ -1377,6 +1395,15 @@ impl EmitCtx<'_, '_> {
         }];
         let traverse = |direction: IrAssocTraversal| {
             let operation = match key_storage {
+                AssocKeyStorage::Class(target, read) => {
+                    return class_key_traversal(
+                        container,
+                        direction,
+                        read.clone(),
+                        target.clone(),
+                        format!("{tag}_{direction:?}"),
+                    )
+                }
                 AssocKeyStorage::Integral(local, key_width, key_signed, key_two_state) => {
                     IrContainerExpr::AssocTraverse {
                         container,

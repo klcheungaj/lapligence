@@ -2137,8 +2137,7 @@ impl Codegen<'_> {
     /// container storage (`qq[i]`, `qd[i][j]`, `sq[k]`), named whole.
     fn nested_element_selection(&self, node: NodeId) -> Option<ElementSelection> {
         let nested = |element: Option<IrContainerElement>| {
-            matches!(element, Some(IrContainerElement::Container { kind, key, .. })
-                if key.is_some() || !kind.to_ascii_lowercase().contains("assoc"))
+            matches!(element, Some(IrContainerElement::Container { .. }))
         };
         // `a3["a"]["b"]`: a key of a bound nested array.
         if let Some((staged, tail)) = self.select_below_staged_element(node) {

@@ -347,6 +347,77 @@ fn nested_associative_handles_survive_rewrites() {
     sim_cli::run_case_backend_parity(SUITE, "nested_associative_handles", expected, &[], &[]);
 }
 
+#[test]
+fn class_keys_in_records_nested_arrays_and_every_element_type() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/class_keys_storage.out");
+    sim_cli::run_case_backend_parity(SUITE, "class_keys_storage", expected, &[], &[]);
+}
+
+#[test]
+fn class_keys_at_nested_levels_and_through_a_base_handle() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_006/class_keys_nested.out");
+    sim_cli::run_case_backend_parity(SUITE, "class_keys_nested", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "class_keys_nested", expected);
+}
+
+#[test]
+fn class_key_elements_as_references_and_in_tasks() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_006/class_keys_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "class_keys_refs", expected, &[], &[]);
+}
+
+#[test]
+fn class_key_patterns_and_conditional_merges() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/class_keys_patterns.out");
+    sim_cli::run_case_backend_parity(SUITE, "class_keys_patterns", expected, &[], &[]);
+}
+
+/// A key is a root: an object only a key names survives every collection.
+#[test]
+fn class_keys_keep_their_objects_across_collections() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_006/class_keys_gc.out");
+    sim_cli::run_case_backend_parity(SUITE, "class_keys_gc", expected, &[], &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_keys_gc",
+        expected,
+        &[],
+        &[("LLG_GC_STRESS", "1"), ("LLG_GC_VERIFY", "1")],
+    );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_keys_gc",
+        expected,
+        &[],
+        &[("LLG_GC_THRESHOLD", "1")],
+    );
+}
+
+#[test]
+fn a_builtin_class_key_is_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_class_key_builtin",
+        "associative array `a` in `tb` has unsupported index type `semaphore`",
+    );
+}
+
+#[test]
+fn an_unsupported_nested_key_is_explicit() {
+    sim_cli::reject_case(SUITE, "neg_nested_key_type", "has unsupported index type");
+}
+
+#[test]
+fn a_class_key_has_no_integral_index_in_a_with_clause() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_class_key_item_index",
+        "array-method iterator index in `tb` is not representable for this receiver",
+    );
+}
+
 /// A call in the value sees the array as the call left it: an input actual
 /// is read, never written back; a conditional arm stages what it reads.
 #[test]

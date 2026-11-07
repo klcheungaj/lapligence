@@ -1,0 +1,8 @@
+key -1 = 99
+key 1 = 10
+key 3 = 30
+key 4 = 40
+last 4
+next from deleted 3
+prev from deleted -1
+next from absent 3
