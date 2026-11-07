@@ -1498,6 +1498,21 @@ static void sig_write_as(sv4_t* target, sv4_t value, int deferred) {
         return;
     }
     if (llg_sv4_width(*target) == llg_sv4_width(value) && sv4_same(*target, value)) return;
+#if LLG_SV4_USE_GMP
+    // On the compact backend a value of at most 64 bits lives in its
+    // descriptor: a copy owns no allocation, so a callback that abandons the
+    // writer leaves nothing behind and no registered snapshot is needed.
+    if (llg_sv4_width(*target) <= 64 && llg_sv4_width(value) <= 64) {
+        llg_value_scope_t* target_pin = value_target_pin(target);
+        sv4_t old = SV4_EMPTY;
+        sv4_copy(&old, target);
+        sv4_copy(target, &value);
+        llg_wait_source_t* source = deferred ? change_begin(target, &old, 0) : NULL;
+        sig_publish(target, old, value, source, deferred, &old, NULL);
+        if (target_pin) llg_value_scope_end(target_pin);
+        return;
+    }
+#endif
     // Callbacks can finish/disable the writer without returning through here.
     // Heap-backed registered owners survive both suspension and stack discard.
     llg_value_scope_t* target_pin = value_target_pin(target);
