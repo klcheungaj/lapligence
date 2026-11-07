@@ -79,6 +79,9 @@ column. Expected values are derived by hand below; none were captured from
   constant select beyond a dynamic-data record's member with an out-of-bound
   error, against 7.4.6, and it does not wake on such a record's members at all
   (9.4.2); without those lines and with the plain record `w`, lines agree.
+- `chosen_element_compare`: whole elements of records with `string` and `real`
+  member arrays compare from fixed, dynamic, queue and associative containers;
+  the lines match `-D N=8`, `-D N=5000` and the reference.
 - `chosen_real_copy`: a whole `real` column copy writes only the cells whose
   bits differ, so an observer wakes once per change; `-0.0` against `0.0` is a
   change and a repeated NaN is not. Identical to the reference.

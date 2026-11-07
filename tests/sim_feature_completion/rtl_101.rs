@@ -463,6 +463,14 @@ fn constant_cells_of_strings_handles_and_records_keep_the_invalid_index_rules() 
 }
 
 #[test]
+fn whole_elements_with_member_arrays_compare_in_every_container() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_element_compare.out");
+    sim_cli::run_case(SUITE, "chosen_element_compare", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_element_compare", expected, &[], &[]);
+}
+
+#[test]
 fn a_real_column_copy_writes_what_differs() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_real_copy.out");
     sim_cli::run_case(SUITE, "chosen_real_copy", expected, "", &[]);

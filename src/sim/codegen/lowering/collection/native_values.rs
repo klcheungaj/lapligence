@@ -3011,11 +3011,14 @@ impl Codegen<'_> {
         mut setup: Option<&mut Vec<IrStmt>>,
     ) -> Result<Option<LeafReads>, String> {
         let mut staged = Vec::new();
-        if let Some(reads) = self.container_record_staged_reads(path, node, &mut staged)? {
-            if let Some(setup) = setup {
-                setup.append(&mut staged);
-            } else if !staged.is_empty() {
-                return Ok(None);
+        if let Some(read) = self.container_record_staged_reads(path, node, &mut staged)? {
+            let Some(setup) = setup else {
+                return Ok(staged.is_empty().then_some(read));
+            };
+            setup.append(&mut staged);
+            let mut reads = Vec::with_capacity(read.len());
+            for (leaf_path, value) in read {
+                self.settled_leaf_read(leaf_path, value, Some(&mut *setup), &mut reads)?;
             }
             return Ok(Some(reads));
         }
@@ -3027,38 +3030,52 @@ impl Codegen<'_> {
         };
         let mut reads = Vec::new();
         for (leaf_path, leaf) in self.endpoint_leaves(&endpoint)? {
-            let read = match (self.endpoint_leaf_read(&leaf)?, setup.as_deref_mut()) {
-                (LeafValue::Slot(value, slot), None) => {
-                    for item in fixed_leaf_items(&slot)? {
-                        let below = leaf_path
-                            .iter()
-                            .cloned()
-                            .chain(item.path[slot.path.len()..].iter().cloned())
-                            .collect();
-                        reads.push((below, self.native_leaf_read(value, &item)));
-                    }
-                    continue;
-                }
-                // A fixed member array reads as one container.
-                (LeafValue::Slot(value, slot), Some(setup)) => {
-                    let temporary = self.fixed_leaf_temporary(&slot);
-                    setup.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
-                        temporary,
-                    ))));
-                    setup.push(IrStmt::Container(Box::new(
-                        IrContainerStmt::ValueItemToContainer {
-                            root: IrValueItemRoot::Value(value),
-                            items: slot.items,
-                            container: temporary,
-                        },
-                    )));
-                    LeafValue::Container(temporary)
-                }
-                (read, _) => read,
-            };
-            reads.push((leaf_path, read));
+            let read = self.endpoint_leaf_read(&leaf)?;
+            self.settled_leaf_read(leaf_path, read, setup.as_deref_mut(), &mut reads)?;
         }
         Ok(Some(reads))
+    }
+
+    /// Add one leaf read to `reads`; a fixed member array has no value of its
+    /// own, so it reads as one container, or item by item with no statement
+    /// to set up in.
+    fn settled_leaf_read(
+        &mut self,
+        leaf_path: Vec<AggregatePathPart>,
+        read: LeafValue,
+        setup: Option<&mut Vec<IrStmt>>,
+        reads: &mut LeafReads,
+    ) -> Result<(), String> {
+        let read = match (read, setup) {
+            (LeafValue::Slot(value, slot), None) => {
+                for item in fixed_leaf_items(&slot)? {
+                    let below = leaf_path
+                        .iter()
+                        .cloned()
+                        .chain(item.path[slot.path.len()..].iter().cloned())
+                        .collect();
+                    reads.push((below, self.native_leaf_read(value, &item)));
+                }
+                return Ok(());
+            }
+            (LeafValue::Slot(value, slot), Some(setup)) => {
+                let temporary = self.fixed_leaf_temporary(&slot);
+                setup.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                    temporary,
+                ))));
+                setup.push(IrStmt::Container(Box::new(
+                    IrContainerStmt::ValueItemToContainer {
+                        root: IrValueItemRoot::Value(value),
+                        items: slot.items,
+                        container: temporary,
+                    },
+                )));
+                LeafValue::Container(temporary)
+            }
+            (read, _) => read,
+        };
+        reads.push((leaf_path, read));
+        Ok(())
     }
 
     /// Member-wise `==`/`!=`/`===`/`!==` when either record operand is
