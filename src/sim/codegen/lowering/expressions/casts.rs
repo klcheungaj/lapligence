@@ -1210,15 +1210,24 @@ impl<'a> Codegen<'a> {
         captured: &mut Vec<NodeId>,
     ) -> Result<(), String> {
         let source_is_free = self.side_effect_free(source);
+        let nested = self.nested_cast_path(destination);
         let mut selectors = Vec::new();
+        // The queue a `$` in each selector names, when it is known here.
+        let mut queue_of = HashMap::new();
         let mut node = destination;
         loop {
             match self.kind(node) {
                 NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                    if let Some((container, index)) = self.element_select(node) {
+                        queue_of.insert(index, container.ir);
+                    }
                     selectors.extend(indices.iter().copied());
                     node = *base;
                 }
                 NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                    if let Some((container, index)) = self.element_select(node) {
+                        queue_of.insert(index, container.ir);
+                    }
                     selectors.push(*index);
                     node = *base;
                 }
@@ -1234,21 +1243,47 @@ impl<'a> Codegen<'a> {
                 _ => break,
             }
         }
-        // Outermost selector first, as written. `$` has meaning only as a
-        // queue selector, so that selector stays in place.
+        if let Some((container, indices)) = &nested {
+            queue_of.insert(indices[0], *container);
+        }
+        // Outermost selector first, as written. A selector naming `$` takes
+        // the size of its queue now, before the source can change it
+        // (decision S11-D5): `$` is the last element when the selectors run.
         for selector in selectors.into_iter().rev() {
             let constant = matches!(
                 self.kind(selector),
                 NodeKind::Expr(ExprKind::Constant { .. })
             );
-            if constant
-                || (source_is_free && self.side_effect_free(selector))
-                || self.names_queue_end(selector)
-            {
+            if constant || (source_is_free && self.side_effect_free(selector)) {
                 continue;
             }
             let name = format!("_llg_cast_sel{}", selector.0);
-            let (statement, hoisted) = self.declare_cast_copy(path, selector, name)?;
+            let (statement, hoisted) = if self.names_queue_end(selector) {
+                let Some(container) = queue_of.get(&selector).copied().filter(|container| {
+                    matches!(
+                        self.model.containers[*container].kind,
+                        IrContainerKind::Queue { .. }
+                    )
+                }) else {
+                    return Err(format!(
+                        "$cast destination in `{path}` selects with `$` below an element of a nested container; bind it to a variable first"
+                    ));
+                };
+                let value = self.lower_container_top_index(path, container, selector)?;
+                let (width, signed) = (value.width, value.signed);
+                (
+                    IrStmt::DeclLocal {
+                        name: name.clone(),
+                        width,
+                        signed,
+                        two_state: false,
+                        init: Some(Box::new(value)),
+                    },
+                    HoistedValue::Packed(name, width, signed),
+                )
+            } else {
+                self.declare_cast_copy(path, selector, name)?
+            };
             statements.push(statement);
             for node in [selector, self.p30_unwrap_cast(selector)] {
                 self.hoisted_values.insert(node, hoisted.clone());

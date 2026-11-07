@@ -267,3 +267,14 @@ fn nested_destination_stop() {
         "$cast failed to assign an incompatible value at tb:13:15: the destination element does not exist",
     );
 }
+
+#[test]
+fn queue_end_selectors() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "queue_end_selectors",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/queue_end_selectors.out"),
+        &[],
+        &[],
+    );
+}
