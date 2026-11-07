@@ -651,6 +651,7 @@ fn native_access_dependencies_name_rearmed_class_or_interface_storage() {
             native_value: None,
             event: false,
         }],
+        rank: 0,
     });
     model.native_accesses.push(IrNativeAccess {
         name: "_llg_access_0".into(),

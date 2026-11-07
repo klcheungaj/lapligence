@@ -253,6 +253,100 @@ impl<'a> Codegen<'a> {
         self.class_fields.insert(child, (class_index, field_index));
     }
 
+    /// Number the classes for keys of class-indexed arrays (S07-D9): classes
+    /// of compilation-unit scope, then of packages, then of instances, each
+    /// in declaration order; instances in post-order of the hierarchy. All
+    /// specializations of a generic class share its position. Nothing here
+    /// depends on a run, so neither does the order of keys.
+    pub(in crate::sim::codegen) fn rank_class_keys(&mut self) {
+        fn holds(element: &IrContainerElement) -> bool {
+            match element {
+                IrContainerElement::Container { key, element, .. } => {
+                    matches!(key, Some(IrAssocKey::Class)) || holds(element)
+                }
+                IrContainerElement::FixedArray { element, .. } => holds(element),
+                IrContainerElement::Aggregate { members, .. }
+                | IrContainerElement::Union { members, .. } => {
+                    members.iter().any(|member| holds(&member.element))
+                }
+                _ => false,
+            }
+        }
+        let used = self.model.containers.iter().any(|container| {
+            matches!(
+                container.kind,
+                IrContainerKind::Associative {
+                    key: IrAssocKey::Class
+                }
+            ) || holds(&container.element)
+        });
+        if !used {
+            return;
+        }
+        fn post_order(db: &Db, node: NodeId, order: &mut HashMap<NodeId, usize>) {
+            for child in &db.node(node).children {
+                if !matches!(db.node(*child).kind, NodeKind::ClassDef) {
+                    post_order(db, *child, order);
+                }
+            }
+            if matches!(db.node(node).kind, NodeKind::ModuleInst { .. }) {
+                let next = order.len();
+                order.insert(node, next);
+            }
+        }
+        let mut instances = HashMap::new();
+        for top in self.db.tops() {
+            post_order(self.db, *top, &mut instances);
+        }
+        let mut files: HashMap<std::sync::Arc<str>, usize> = HashMap::new();
+        let packages: HashMap<NodeId, usize> = self
+            .db
+            .packages()
+            .iter()
+            .enumerate()
+            .map(|(index, package)| (*package, index))
+            .collect();
+        let mut keyed: Vec<_> = self
+            .db
+            .classes()
+            .iter()
+            .map(|class| {
+                let scope = self
+                    .db
+                    .class_metadata(*class)
+                    .and_then(|metadata| metadata.scope);
+                let owner = match scope {
+                    Some(scope) => match packages.get(&scope) {
+                        Some(position) => (1, *position),
+                        None => (2, instances.get(&scope).copied().unwrap_or(usize::MAX)),
+                    },
+                    None => (0, 0),
+                };
+                let node = self.node(*class);
+                let next = files.len();
+                let file = node
+                    .file
+                    .as_ref()
+                    .map(|file| *files.entry(file.clone()).or_insert(next));
+                ((owner, file, node.line, node.col), self.class_nodes[class])
+            })
+            .collect();
+        keyed.sort_by_key(|entry| entry.0);
+        for (rank, (_, class)) in keyed.into_iter().enumerate() {
+            self.model.classes[class].rank = rank as u32 + 1;
+        }
+        // Covergroup objects never meet a key; they only need a rank.
+        let last = self.model.classes.len() as u32;
+        for class in self
+            .model
+            .classes
+            .iter_mut()
+            .filter(|class| class.rank == 0)
+        {
+            class.rank = last;
+        }
+    }
+
     pub(super) fn collect_classes(&mut self) -> Result<(), String> {
         let classes = self.db.classes().to_vec();
         // Allocate every nominal index before resolving bases.  Generic
@@ -446,6 +540,7 @@ impl<'a> Codegen<'a> {
                     .and_then(|metadata| metadata.base)
                     .and_then(|base| self.class_nodes.get(&base).copied()),
                 fields,
+                rank: 0,
             });
         }
         self.share_constraint_modes();

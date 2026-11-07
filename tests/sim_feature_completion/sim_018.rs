@@ -172,6 +172,24 @@ fn a_stale_mark_never_passes_for_the_current_epoch() {
 }
 
 #[test]
+fn running_out_of_serials_is_a_fatal_with_class_keys() {
+    sim_cli::run_case_backend_parity(SUITE, "serial_limit", "kept 3\n", &[], &[]);
+    let controls = [
+        ("LLG_CFLAGS", "-DLLG_GC_SERIAL_BITS=6"),
+        ("LLG_GC_STATS", "1"),
+        ("LLG_DEV_VALUE_BACKEND", "legacy"),
+        ("LLG_DEV_COMPACT_KERNELS", "portable"),
+    ];
+    let output = sim_cli::invoke_with_env(SUITE, "serial_limit", false, &[], &controls, &[]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("more than 63 collected objects were created"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn serials_wrap_quietly_without_class_keys() {
     let output = run_narrow("cycle_plateau", "-DLLG_GC_SERIAL_BITS=6", &[]);
     let stderr = String::from_utf8_lossy(&output.stderr);

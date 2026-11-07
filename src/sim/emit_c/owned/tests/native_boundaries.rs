@@ -26,6 +26,7 @@ fn class_model() -> IrModel {
                 event: false,
             },
         ],
+        rank: 0,
     });
     model.objects.push(IrObject {
         c_name: "G_handle".to_owned(),

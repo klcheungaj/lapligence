@@ -80,9 +80,10 @@ generated code addresses it in place. A lexical alias holds a pin: a deleted
 element stays valid until the statement ends, and its writes go nowhere.
 
 A class key is an integral key holding the object's address with the array's
-`key_class` flag set: entries sort by the creation serial in the object's
-`llg_gc_header_t`, with null first, so traversal never depends on an address
-(S07-D9). Finding a key derefs headers, which only class-keyed arrays pay;
+`key_class` flag set: entries sort by the rank of the object's class, read
+through its `llg_gc_type_t`, then its creation serial, with null first, so
+traversal never depends on an address (S07-D9). Finding a key derefs headers,
+which only class-keyed arrays pay;
 equal keys are equal addresses. A nested array's descriptor gives the key form
 in `item_count`: 0 integral, 1 string, 2 class.
 

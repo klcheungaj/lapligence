@@ -798,6 +798,7 @@ fn lower_model_with(
     }
     cg.emit_clocking_processes()?;
     cg.check_coverage_block_events()?;
+    cg.rank_class_keys();
     // Every process call site that requests a task specialization has been
     // lowered; their bodies may register initializers flushed below, and an
     // initializer may call a subroutine bound to a record (SIM-008), so drain

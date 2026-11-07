@@ -110,15 +110,26 @@ static void llg_class_gc_finalize(void* handle) {
 static void llg_class_gc_condemn(void* handle) {
     ((llg_class_object_t*)handle)->class_id = LLG_CLASS_RECLAIMED;
 }
-static const llg_gc_type_t llg_class_gc_type = {
-    "class", llg_class_gc_trace, llg_class_gc_interior, llg_class_gc_finalize, llg_class_gc_condemn
-};
+LLG_CLASS_GC_TYPE
 /* Model close: every object, including unreachable cycles and objects kept
  * by LLG_GC_VERIFY, after runtime cleanup. */
 static void llg_class_storage_destroy(void) {
     llg_gc_teardown();
 }
 "#;
+    // A model with class keys has one type per class, below.
+    let keyed = model.classes.iter().any(|class| class.rank != 0);
+    let declarations = declarations.replace(
+        "LLG_CLASS_GC_TYPE\n",
+        if keyed {
+            ""
+        } else {
+            r#"static const llg_gc_type_t llg_class_gc_type = {
+    "class", llg_class_gc_trace, llg_class_gc_interior, llg_class_gc_finalize, llg_class_gc_condemn
+};
+"#
+        },
+    );
     // Objects keep their own random stream only when the model seeds or
     // inspects one (SV 18.13-18.14); other models pay no per-object state.
     if model.random.objects {
@@ -241,13 +252,29 @@ static sv4_t* llg_class_container_dependency(void* handle, uint32_t expected, si
 "#,
         );
     }
+    // The rank of a class key's object is its class's, through its type.
+    if keyed {
+        out.push_str("static const llg_gc_type_t llg_class_gc_types[] = {\n");
+        for class in &model.classes {
+            out.push_str(&format!(
+                "    {{ \"class\", llg_class_gc_trace, llg_class_gc_interior, llg_class_gc_finalize, llg_class_gc_condemn, {} }},\n",
+                class.rank
+            ));
+        }
+        out.push_str("};\n");
+    }
     for (index, class) in model.classes.iter().enumerate() {
         let allocate = if model.random.objects || model.random.threads {
             "alloc"
         } else {
             "new"
         };
-        out.push_str(&format!("static void* llg_class_{allocate}_{index}(void) {{\n    llg_class_object_t* object = (llg_class_object_t*)llg_gc_alloc(sizeof(*object), &llg_class_gc_type);\n    object->class_id = {index};\n    object->count = {};\n", class.fields.len()));
+        let gc_type = if keyed {
+            format!("&llg_class_gc_types[{index}]")
+        } else {
+            "&llg_class_gc_type".to_owned()
+        };
+        out.push_str(&format!("static void* llg_class_{allocate}_{index}(void) {{\n    llg_class_object_t* object = (llg_class_object_t*)llg_gc_alloc(sizeof(*object), {gc_type});\n    object->class_id = {index};\n    object->count = {};\n", class.fields.len()));
         if !class.fields.is_empty() {
             out.push_str("    object->fields = (llg_class_field_t*)calloc(object->count, sizeof(*object->fields));\n    if (!object->fields) { free(object); abort(); }\n");
         }
@@ -625,6 +652,9 @@ pub(super) fn render_gc_register(model: &IrModel, frame_maps: &str, out: &mut St
     }
     out.push_str(frame_maps);
     out.push_str("static int llg_model_gc_register(void) {\n    if (!llg_gc_register_roots(llg_model_gc_roots, NULL)) return 0;\n");
+    if model.classes.iter().any(|class| class.rank != 0) {
+        out.push_str("    llg_gc_order_objects();\n");
+    }
     for ty in super::super::containers::activation_drop_types(model) {
         let trace = match ty {
             "llg_dyn_value_array_t" => "llg_gc_trace_dyn_values",

@@ -1573,9 +1573,23 @@ impl Db {
             .filter(|node| node.kind == SemanticKind::Class)
             .map(|node| -> Result<(NodeId, ClassMetadata), DbError> {
                 let id = NodeId::from_index(node.id as usize);
+                let mut scope = None;
+                let mut enclosing = node.parent_id().and_then(|parent| ids.get(&parent));
+                while let Some(parent) = enclosing {
+                    let semantic = &snapshot.semantic_nodes[parent.index()];
+                    if matches!(
+                        semantic.kind,
+                        SemanticKind::Instance | SemanticKind::Package
+                    ) {
+                        scope = Some(parent);
+                        break;
+                    }
+                    enclosing = semantic.parent_id().and_then(|parent| ids.get(&parent));
+                }
                 Ok((
                     id,
                     ClassMetadata {
+                        scope,
                         type_id: node.type_id().map(TypeId),
                         base: node.target_id().and_then(|target| ids.get(&target)),
                         base_constructor: edge_target(

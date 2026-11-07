@@ -542,8 +542,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   every method, `foreach`, `%p`, patterns with `null` and `default` keys,
   conditional merges and subroutine formals. A derived object is a key of its
   base class's array and `null` is a valid key (7.8.3). The null key comes
-  first, then the keys in object creation order, so traversal does not depend
-  on addresses (S07-D9). A key is a collection root
+  first, then keys by class declaration, then by creation, so traversal
+  depends on neither time nor addresses (S07-D9). A key is a collection root
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md),
   [known issue](known_issues.md#class-keyed-associative-arrays-have-explicit-gaps)).
   `ref` formals of queue, dynamic and associative type alias the caller's

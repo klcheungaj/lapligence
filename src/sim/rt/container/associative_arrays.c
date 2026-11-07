@@ -186,30 +186,32 @@ static int llg_integral_compare(sv4_t a, sv4_t b) {
     return 0;
 }
 
-/* Creation serial of the object a class key names; null precedes them all. */
-static uint64_t llg_class_key_serial(sv4_t key) {
+/* Sort position of the object a class key names: its class's rank, then its
+ * creation serial (S07-D9); null precedes them all. */
+static uint64_t llg_class_key_order(sv4_t key) {
     const llg_gc_header_t* object =
         (const llg_gc_header_t*)(uintptr_t)sv4_to_u64(key);
-    return object ? llg_gc_serial(object) : 0;
+    if (!object) return 0;
+    return ((uint64_t)object->type->rank << LLG_GC_SERIAL_BITS) | llg_gc_serial(object);
 }
 
-/* Lookup of class key `key` in `size` entries of `stride` bytes sorted by
- * serial. Both entry types start with their integral key. */
+/* Lookup of class key `key` in `size` entries of `stride` bytes in key
+ * order. Both entry types start with their integral key. */
 static size_t llg_class_key_position(const void* entries, size_t stride,
                                      size_t size, sv4_t key, int* found) {
-    uint64_t serial = llg_class_key_serial(key);
+    uint64_t order = llg_class_key_order(key);
     size_t low = 0, high = size;
     while (low < high) {
         size_t mid = low + (high - low) / 2;
-        if (llg_class_key_serial(*(const sv4_t*)((const char*)entries +
-                                                 mid * stride)) < serial)
+        if (llg_class_key_order(*(const sv4_t*)((const char*)entries +
+                                                 mid * stride)) < order)
             low = mid + 1;
         else
             high = mid;
     }
     *found = low < size &&
-             llg_class_key_serial(*(const sv4_t*)((const char*)entries +
-                                                  low * stride)) == serial;
+             llg_class_key_order(*(const sv4_t*)((const char*)entries +
+                                                  low * stride)) == order;
     return low;
 }
 
@@ -614,8 +616,8 @@ static int llg_assoc_entry_compare(uint8_t key_kind, uint8_t key_class,
                                    const unsigned char* b_string,
                                    size_t b_length) {
     if (key_class) {
-        uint64_t a = llg_class_key_serial(a_integral);
-        uint64_t b = llg_class_key_serial(b_integral);
+        uint64_t a = llg_class_key_order(a_integral);
+        uint64_t b = llg_class_key_order(b_integral);
         return a < b ? -1 : a > b;
     }
     return key_kind == LLG_ASSOC_INTEGRAL

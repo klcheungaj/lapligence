@@ -26,6 +26,10 @@ pub struct IrClass {
     /// base prefix in declaration order; no unrelated C struct alias is used.
     pub(in crate::sim) base: Option<usize>,
     pub(in crate::sim) fields: Vec<IrClassField>,
+    /// Position of the class among keys of a class-indexed array (S07-D9),
+    /// from 1. 0 in a model with no such array, whose C keeps its one
+    /// `llg_gc_type_t`.
+    pub(in crate::sim) rank: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
