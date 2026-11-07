@@ -228,10 +228,13 @@ typedef struct {
     llg_wait_dependency_t* dependencies;
     sv4_t* last;
     double* real_last;
+    // Qualifier latched at the last matching write of each entry of a
+    // gate-at-write wait (llg_wait_gate_at_write), else NULL.
+    uint8_t* gate_open;
     int n;
+    int n_evs;
     llg_event_object_t** evs;
     int* event_slots; // positions in named-event waiter tables
-    int n_evs;
 } llg_wait_expression_payload_t;
 
 typedef struct {
@@ -306,6 +309,7 @@ typedef union {
 } llg_wait_rare_t;
 
 typedef struct llg_wait_source llg_wait_source_t;
+enum { LLG_WAIT_GATE_NEXT = 1u, LLG_WAIT_GATE_ARMED = 2u };
 // One timing check terminal on a watched storage address
 // (scheduler/timing_checks.c).
 typedef struct llg_timing_watch {
@@ -332,16 +336,55 @@ typedef struct llg_wait_subscription {
     struct llg_wait* wait; // NULL for a publication cursor
 } llg_wait_subscription_t;
 
+// A change waiting for its check (T1-D11, scheduler/dependencies.c), at most
+// one per row: the value before the first write, and a cursor at the head of
+// the subscribers that keeps the row alive and leaves out waiters armed after
+// that write. A marker's record toggles the marker at the check if a cell
+// bound to it changed (`fire`) or the handle in `slot` is not `before_handle`.
+// A storage only clocking history can observe gets a history record instead:
+// no row or cursor, found through its clocking history entry (`edge`).
+typedef enum {
+    LLG_CHANGE_PACKED,
+    LLG_CHANGE_REAL,
+    LLG_CHANGE_MARKER,
+    LLG_CHANGE_HISTORY,
+} llg_change_kind_t;
+
+typedef struct llg_change {
+    llg_wait_subscription_t cursor;
+    struct llg_clocking_edge* edge;
+    sv4_t before;
+    double before_real;
+    void* const* slot;
+    void* before_handle;
+    size_t index;      // In g.changes.
+    // Whether markers are bound to the storage, as of binding epoch
+    // `bind_epoch` (dependencies.c, change_bound).
+    uint64_t bind_epoch;
+    // Contents marker of the array holding a packed storage, once
+    // `contents_known` (set by the write that publishes it).
+    sv4_t* contents;
+    llg_change_kind_t kind;
+    uint8_t fire;
+    uint8_t bound;
+    uint8_t contents_known;
+} llg_change_t;
+
 struct llg_wait_source {
     const void* key;
     llg_wait_subscription_t* head;
     llg_wait_source_t* next;
     llg_wait_source_t** prev_link;
+    llg_change_t* change;
     // Value-change watch (VPI cbValueChange): a waiter-less subscription that
     // keeps the row alive, and the number of watches sharing it. Publication
     // already looks this row up, so unwatched storage pays nothing extra.
     llg_wait_subscription_t* watch;
     uint32_t watchers;
+    // Subscribers that see each write as well as the check: retained
+    // memberships of ordered dependency waits, which log each write (S3-D5),
+    // and expression waits whose qualifiers are read at the write (AA-D6).
+    uint32_t write_walkers;
     // Timing check terminals on this address and the waiter-less
     // subscription that keeps the row alive while they exist.
     llg_timing_watch_t* timing;
@@ -604,6 +647,10 @@ struct llg_proc {
     uint8_t next_wait_event;
     uint8_t next_wait_refresh;
     uint8_t wait_refreshed;
+    // The next (LLG_WAIT_GATE_NEXT) and the registered (LLG_WAIT_GATE_ARMED)
+    // expression wait read their qualifiers at the write that produced the
+    // event (llg_wait_gate_at_write).
+    uint8_t wait_gate;
     // A disable ended the named block that is this fork branch's whole body
     // (llg_activation_exit_terminal): the process ends KILLED (SV 9.7).
     uint8_t disabled_whole;

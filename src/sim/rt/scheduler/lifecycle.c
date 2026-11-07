@@ -371,6 +371,7 @@ static void llg_fcov_release(void); // coverage/fsm.c
 static void llg_tcov_finish(void);  // coverage/code.c
 
 void llg_rt_cleanup(void) {
+    changes_release();
     gc_release_registrations();
     llg_cr_session_release_all();
     // Final procedures may still query or sample coverage: the end-of-run

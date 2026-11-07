@@ -1953,6 +1953,11 @@ void llg_dependency_bind_real(double* target, sv4_t* dependency);
 // marker's own storage.
 void llg_dependency_marker_destroy(void* marker);
 void llg_dependency_changed(sv4_t* dependency);
+// A handle stored in `*slot` changed from `previous`; `dependency` is its
+// change marker. In a process turn or an NBA region the toggle waits for the
+// check and is dropped if the slot holds `previous` again (T1-D11); the marker
+// and the slot must live until then. Otherwise this is llg_dependency_changed.
+void llg_handle_changed(sv4_t* dependency, void* const* slot, void* previous);
 // `dependency`, or a marker that is never written when it is NULL (an
 // activation container no other process can change).
 sv4_t* llg_dependency_or_never(sv4_t* dependency);
@@ -3066,6 +3071,10 @@ llg_wait_changes_t llg_wait_changes(llg_proc_t* self);
 // llg_wait_refreshed() true so it takes its armed values again instead of
 // comparing against values from before the suspension.
 void llg_wait_refresh_on_resume(llg_proc_t* self);
+// The next expression wait reads each `iff` qualifier at the write that
+// produced its event, not at the check that publishes the change (T1-D11,
+// AA-D6): an event-list sampled-value clock's gate.
+void llg_wait_gate_at_write(llg_proc_t* self);
 int llg_wait_refreshed(const llg_proc_t* self);
 llg_co_arm_t llg_arm_level(llg_proc_t* self, sv4_t* sig, sv4_t value);
 

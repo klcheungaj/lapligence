@@ -49,6 +49,7 @@ fn event_list_wait_passes_a_compound_literal() {
             .map(|event| (IrWaitSrc::Event(event), IrEdge::Any))
             .collect(),
         refresh: false,
+        gate_at_write: false,
     }]);
     let line = arm_line(&source, "llg_arm_events(");
     assert!(
@@ -67,6 +68,7 @@ fn edge_list_wait_passes_a_compound_literal() {
             signal("G_other", IrEdge::Negedge),
         ],
         refresh: false,
+        gate_at_write: false,
     }]);
     let line = arm_line(&source, "llg_arm_any_events(");
     assert!(
@@ -85,6 +87,7 @@ fn mixed_wait_passes_a_compound_literal() {
             (IrWaitSrc::Event(IrEventRef::Static(0)), IrEdge::Any),
         ],
         refresh: false,
+        gate_at_write: false,
     }]);
     let line = arm_line(&source, "llg_arm_mixed(");
     assert!(line.contains("llg_arm_mixed(self, (llg_wait_src_t[]){ { .sig = &G_value,"));

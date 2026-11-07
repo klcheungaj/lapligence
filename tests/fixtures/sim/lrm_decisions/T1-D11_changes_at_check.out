@@ -1,0 +1,25 @@
+-- 10
+-- 20
+20 posedge x=1
+-- 30
+30 posedge q
+-- 40
+41 posedge gclk
+42 negedge gclk
+43 posedge gclk
+44 negedge gclk
+-- 50
+50 any b=0
+-- 60
+  mid
+60 any c=0
+-- 70
+70 any c=0
+-- 80
+80 posedge k iff en
+-- 90 comb_runs=0
+   comb_runs=0
+-- 100
+-- 110
+115 any e=0
+-- 120

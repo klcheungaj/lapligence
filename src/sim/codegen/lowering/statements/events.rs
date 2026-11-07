@@ -294,6 +294,7 @@ impl EmitCtx<'_, '_> {
             vec![IrStmt::WaitEvents {
                 specs: self.lower_event_specs(specs)?,
                 refresh: false,
+                gate_at_write: false,
             }]
         };
         self.saw_wait = true;
@@ -344,6 +345,7 @@ impl EmitCtx<'_, '_> {
                 IrStmt::WaitEvents {
                     specs: vec![(IrWaitSrc::Event(IrEventRef::Static(event)), IrEdge::Any)],
                     refresh: false,
+                    gate_at_write: false,
                 }
             } else {
                 IrStmt::WaitAny {
@@ -355,6 +357,7 @@ impl EmitCtx<'_, '_> {
             IrStmt::WaitEvents {
                 specs: spec_pairs,
                 refresh: false,
+                gate_at_write: false,
             }
         })
     }
@@ -879,6 +882,7 @@ impl EmitCtx<'_, '_> {
             IrStmt::WaitEvents {
                 specs,
                 refresh: true,
+                gate_at_write: false,
             }
         };
         // SV 9.7: after resume() resensitized the control, the values armed
@@ -1029,6 +1033,7 @@ impl EmitCtx<'_, '_> {
             body: vec![IrStmt::WaitEvents {
                 specs: sources,
                 refresh: false,
+                gate_at_write: false,
             }],
         }];
         out.extend(self.wait_body(h)?);

@@ -2712,6 +2712,7 @@ impl<'a> Codegen<'a> {
                     IrStmt::WaitEvents {
                         specs: wait,
                         refresh: false,
+                        gate_at_write: false,
                     },
                     IrStmt::Coverage(Box::new(IrCoverageStmt::SampleRegistered {
                         group: lowering.ir,

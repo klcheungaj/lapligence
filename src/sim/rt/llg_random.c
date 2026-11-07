@@ -14,10 +14,6 @@ _Static_assert(sizeof(float) == sizeof(uint32_t),
 _Static_assert(FLT_RADIX == 2 && FLT_MANT_DIG == 24 && FLT_MAX_EXP == 128,
                "legacy random algorithm requires IEEE binary32 float");
 
-enum {
-    LLG_RANDOM_DEFAULT_SEED = 259341593,
-};
-
 static int32_t bits_to_i32(uint32_t bits) {
     int32_t value;
     memcpy(&value, &bits, sizeof(value));
@@ -228,9 +224,4 @@ int32_t llg_dist_erlang(int32_t *seed, int32_t k_stage, int32_t mean) {
 
 int32_t llg_random_next(int32_t *seed) {
     return llg_dist_uniform(seed, INT32_MIN, INT32_MAX);
-}
-
-int32_t llg_random_default(void) {
-    static int32_t seed = LLG_RANDOM_DEFAULT_SEED;
-    return llg_random_next(&seed);
 }

@@ -374,6 +374,10 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
         (size_t)n, sizeof(sv4_t), "expression event snapshots");
     expression->real_last = (double*)llg_checked_malloc(
         (size_t)n, sizeof(double), "real expression event snapshots");
+    expression->gate_open = NULL;
+    if (self->wait_gate & LLG_WAIT_GATE_NEXT)
+        expression->gate_open = (uint8_t*)llg_checked_calloc(
+            (size_t)n, sizeof(uint8_t), "expression event gate latches");
     expression->evs = event_wait_list_new(n, &expression->event_slots);
     for (int i = 0; i < n; i++) {
         if (specs[i].n_reads < 0 || specs[i].n_dependencies < 0) abort();

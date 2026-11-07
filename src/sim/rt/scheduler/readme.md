@@ -132,6 +132,35 @@ keep the run alive. A pending carrier sits on `g.delayed_calls` until its
 callback starts; cancellation and cleanup discard it from there, and a
 started one retires through `proc_retire_completed`.
 
+Waiters see a change at a check, not at each write (T1-D11, `dependencies.c`
+"Checks"). During a process turn and an NBA commit (`change_defer_active`) the
+first write of a storage something waits on opens one change record
+(`llg_change_t`) on its wait-source row: the value before, and a cursor at
+the head of the subscriber list, so waiters armed later are not in its range.
+A waited marker bound to the storage, or the contents marker of its array,
+gets a marker record, and the storage a record of its own that fires it
+(`change_route_markers`, one pass over the bindings). A storage only clocking
+history or a sequence clock observes gets a history record kept on its
+clocking history entry, with no row. Later writes find the record and pay
+nothing more. `change_check` settles every record, in opening order, at the
+end of the turn, after the NBA batch, before prints and random calls, and
+after `force`/`release`, whose target publishes at once: a record whose value
+equals its before value is dropped; otherwise clocking history, sampled
+clocks, assertion clocks, waiters and bound markers run as one publication
+(`sig_settle`). A marker's check runs the marker's whole publication
+(`sig_publish` with the record's cursor). Storage nothing observes opens no
+record. Per-write consumers stay in `sig_publish`: VPI value change,
+waveforms, monitors, `disable iff` and abort conditions, force expressions,
+switches and timing checks, and the AA-D6 gate, which a gate-at-write wait
+latches at each write (`llg_wait_gate_at_write`, `payload.expression.gate_open`,
+walked through `write_walkers`); moving one to the check means calling it
+from `sig_settle` and `history_settle` and counting what it observes in
+`change_begin`. Ordered change logs (`llg_wait_changes`) also log per write.
+Strings, container cells and reference markers publish per write, and so do
+markers bound to an unwaited marker. NBAs that mature from an earlier slot
+commit and check before the NBAs issued in this slot (`g.nba_slot_sequence`).
+Writes outside a turn publish at once.
+
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.
 Tagged-member NBAs own a copy of their tag checks and re-check the target's tags

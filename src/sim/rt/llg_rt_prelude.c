@@ -8,6 +8,7 @@
 
 #include "llg_platform.h"
 #include "llg_rt.h"
+#include "llg_random.h"
 #include "llg_container.h"
 #ifdef LLG_WAVEFORM
 #include "llg_wave.h"

@@ -948,6 +948,8 @@ int llg_assertion_register_control(
     assertion->disable = disable;
     assertion->antecedent = antecedent;
     assertion->consequent = consequent;
+    // The entry marks the clock for changes in a turn (dependencies.c).
+    clocking_edge_get(clock)->keep_ticks = 1;
     assertion->abort_condition = abort_condition;
     assertion->pass_desc = pass_desc;
     assertion->fail_desc = fail_desc;
@@ -1188,8 +1190,9 @@ void llg_assertion_clock_pulse(sv4_t* signal) {
     if (edge && edge->time == g.now && (edge->occurred & CLOCKING_POSEDGE)) return;
     sv4_t one = sv4_from_u64(1, 1, 0);
     sv4_t zero = sv4_from_u64(0, 1, 0);
-    sig_write(signal, one);
-    sig_write(signal, zero);
+    // The pulse itself is the clock: both writes publish.
+    sig_write_now(signal, one);
+    sig_write_now(signal, zero);
     sv4_destroy(&one);
     sv4_destroy(&zero);
 }

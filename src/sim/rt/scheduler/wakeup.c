@@ -94,6 +94,8 @@ static void register_wait(void) {
     p->wait_missed = 0;
     p->next_wait_event = 0;
     p->next_wait_refresh = 0;
+    p->wait_gate = (uint8_t)(w->kind == W_EXPR && (p->wait_gate & LLG_WAIT_GATE_NEXT)
+                                 ? LLG_WAIT_GATE_ARMED : 0u);
     p->next_wait_ordered = 0;
     p->wait_ordered = 0;
     p->wait_refreshed = 0;

@@ -899,7 +899,7 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
             let name = &object.c_name;
             if object.ty == crate::sim::ir::IrObjectType::Chandle {
                 format!(
-                    "    {{ void *_llg_handle = {}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}\n",
+                    "    {{ void *_llg_handle = {}; if (_llg_handle != {name}) {{ void *_llg_previous = {name}; {name} = _llg_handle; llg_handle_changed(&{name}_llg_dep, (void* const*)&{name}, _llg_previous); }} }}\n",
                     chandle(ctx, value)?
                 )
             } else {

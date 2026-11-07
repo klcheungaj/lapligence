@@ -196,9 +196,20 @@ static struct llg_fixed_block* fixed_block_new(llg_fixed_array_t* array, uint64_
 
 static void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index, sv4_t old);
 
-static void fixed_array_changed(sv4_t* target, sv4_t old) {
-    if (!fixed_marked_arrays || !fixed_address_capacity) return;
-    struct llg_fixed_block* block = fixed_block_of(target);
+// The block holding `target` when it is a cell of a marked fixed array, else
+// NULL. A publication looks it up once for its sampled history and its
+// contents marker.
+static struct llg_fixed_block* fixed_array_block(const sv4_t* target) {
+    if (!fixed_marked_arrays || !fixed_address_capacity) return NULL;
+    return fixed_block_of(target);
+}
+
+static sv4_t* fixed_block_contents(const struct llg_fixed_block* block) {
+    return block ? block->array->contents : NULL;
+}
+
+static void fixed_block_sampled_changed(struct llg_fixed_block* block,
+                                        sv4_t* target, sv4_t old) {
     if (!block) return;
     llg_fixed_array_t* array = block->array;
     if (array->sampled) {
@@ -210,7 +221,18 @@ static void fixed_array_changed(sv4_t* target, sv4_t old) {
         }
         fixed_sampled_record(array, index, old);
     }
-    llg_dependency_changed(array->contents);
+}
+
+// The contents marker of the array holding `target`, or NULL.
+static sv4_t* fixed_array_contents_marker(const sv4_t* target) {
+    return fixed_block_contents(fixed_array_block(target));
+}
+
+static int fixed_array_contents_waited(const sv4_t* target) {
+    if (!fixed_marked_arrays || !fixed_address_capacity) return 0;
+    struct llg_fixed_block* block = fixed_block_of(target);
+    return block && block->array->contents &&
+           wait_source_armed(wait_source_find(block->array->contents));
 }
 
 static size_t fixed_inertial_slot(const sv4_t* target) {

@@ -988,7 +988,7 @@ impl Frame<'_, '_> {
         }
         for (name, previous) in handle_publishes {
             self.line(format!(
-                "if ((void*){name} != {previous}) llg_dependency_changed(&{name}_llg_dep);"
+                "if ((void*){name} != {previous}) llg_handle_changed(&{name}_llg_dep, (void* const*)&{name}, {previous});"
             ));
         }
         for publish in property_publishes {

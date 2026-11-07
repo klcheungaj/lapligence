@@ -18,7 +18,10 @@ extern "C" {
 int32_t llg_random_next(int32_t *seed);
 
 // Generate the next legacy random value using the model's implicit stream.
+// Defined by the scheduler runtime (llg_rt.c), since a random call is a check
+// point for waiters (T1-D11); the seed starts at LLG_RANDOM_DEFAULT_SEED.
 int32_t llg_random_default(void);
+enum { LLG_RANDOM_DEFAULT_SEED = 259341593 };
 
 int32_t llg_dist_uniform(int32_t *seed, int32_t start, int32_t end);
 int32_t llg_dist_normal(int32_t *seed, int32_t mean, int32_t deviation);
