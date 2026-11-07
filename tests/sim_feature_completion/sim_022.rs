@@ -199,91 +199,137 @@ fn let_names_bind_at_declaration_and_actuals_at_use() {
 // run. The error names the statement, its subroutine, the initializer and both
 // locations (SV 13.4.4, S13-D5).
 
-fn stops_in_static_initializer(
+fn static_initializer_stop_messages(
     fixture: &str,
     (what, location, subroutine): (&str, &str, &str),
     (variable, declared): (&str, &str),
-) {
-    let cause = format!(
-        "{fixture}.sv:{location}: {what} in function '{subroutine}' schedules work after the call returns, during the static initializer of '{variable}' at "
-    );
-    let rule = format!(
-        "{fixture}.sv:{declared}; a function may do this only when its calling thread was created by an initial or always procedure or a fork of one (SV 13.4.4)"
-    );
-    sim_cli::run_case_failing_at_runtime(SUITE, fixture, &[], "", &cause);
-    sim_cli::run_case_failing_at_runtime(SUITE, fixture, &[], "", &rule);
+) -> [String; 2] {
+    [
+        format!(
+            "{fixture}.sv:{location}: {what} in function '{subroutine}' schedules work after the call returns, during the static initializer of '{variable}' at "
+        ),
+        format!(
+            "{fixture}.sv:{declared}; a function may do this only when its calling thread was created by an initial or always procedure or a fork of one (SV 13.4.4)"
+        ),
+    ]
 }
 
 #[test]
 fn fork_under_a_static_initializer_stops_the_run() {
-    stops_in_static_initializer(
+    for message in static_initializer_stop_messages(
         "neg_initializer_fork",
         ("fork", "6:7", "watch"),
         ("started", "10:7"),
-    );
+    ) {
+        sim_cli::run_case_failing_at_runtime(SUITE, "neg_initializer_fork", &[], "", &message);
+    }
 }
 
 #[test]
 fn nonblocking_assignment_under_a_static_local_initializer_stops_the_run() {
-    stops_in_static_initializer(
+    for message in static_initializer_stop_messages(
         "neg_initializer_nba",
         ("nonblocking assignment", "7:5", "mark"),
         ("value", "14:16"),
-    );
+    ) {
+        sim_cli::run_case_failing_at_runtime(SUITE, "neg_initializer_nba", &[], "", &message);
+    }
 }
 
 #[test]
 fn fork_in_a_constructor_under_a_static_initializer_stops_the_run() {
-    stops_in_static_initializer(
+    for message in static_initializer_stop_messages(
         "neg_initializer_constructor",
         ("fork", "7:9", "new"),
         ("watcher", "11:11"),
-    );
+    ) {
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "neg_initializer_constructor",
+            &[],
+            "",
+            &message,
+        );
+    }
 }
 
 #[test]
 fn true_guard_under_a_static_initializer_stops_the_run() {
-    stops_in_static_initializer(
+    for message in static_initializer_stop_messages(
         "static_effect_guard_true",
         ("fork", "7:9", "watch"),
         ("started", "12:7"),
-    );
+    ) {
+        sim_cli::run_case_failing_at_runtime(SUITE, "static_effect_guard_true", &[], "", &message);
+    }
 }
 
 #[test]
 fn nested_nonblocking_trigger_names_the_outer_initializer() {
-    stops_in_static_initializer(
+    for message in static_initializer_stop_messages(
         "static_effect_event_trigger",
         ("nonblocking event trigger", "5:5", "fire"),
         ("started", "11:7"),
-    );
+    ) {
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "static_effect_event_trigger",
+            &[],
+            "",
+            &message,
+        );
+    }
 }
 
 #[test]
 fn virtual_override_under_a_static_initializer_stops_the_run() {
-    stops_in_static_initializer(
+    for message in static_initializer_stop_messages(
         "static_effect_virtual_override",
         ("fork", "11:7", "attach"),
         ("attached", "24:14"),
-    );
+    ) {
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "static_effect_virtual_override",
+            &[],
+            "",
+            &message,
+        );
+    }
 }
 
 #[test]
 fn package_variable_through_an_implicit_constructor_stops_the_run() {
-    stops_in_static_initializer(
+    for message in static_initializer_stop_messages(
         "static_effect_package_variable",
         ("nonblocking assignment", "6:5", "mark"),
         ("shared", "14:11"),
-    );
+    ) {
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "static_effect_package_variable",
+            &[],
+            "",
+            &message,
+        );
+    }
 }
 
 #[test]
 fn static_local_initializer_stops_the_run() {
-    stops_in_static_initializer(
+    for message in static_initializer_stop_messages(
         "static_effect_static_local",
         ("fork", "5:7", "watch"),
         ("first", "10:16"),
-    );
+    ) {
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "static_effect_static_local",
+            &[],
+            "",
+            &message,
+        );
+    }
 }
 
 #[test]
