@@ -1,0 +1,7 @@
+copy 1.500000 2.500000 1
+change 3.500000 2
+same 2
+zero 4
+nan 5
+nan again 5 1
+last 4.500000

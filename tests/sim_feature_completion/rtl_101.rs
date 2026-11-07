@@ -454,6 +454,21 @@ fn member_arrays_without_a_packed_column_work_in_every_declaration() {
     sim_cli::run_case(SUITE, "chosen_block_records", expected, "", &[]);
 }
 
+#[test]
+fn constant_cells_of_strings_handles_and_records_keep_the_invalid_index_rules() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_constant_cells.out");
+    sim_cli::run_case(SUITE, "chosen_constant_cells", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_constant_cells", expected, &[], &[]);
+}
+
+#[test]
+fn a_real_column_copy_writes_what_differs() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_real_copy.out");
+    sim_cli::run_case(SUITE, "chosen_real_copy", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_real_copy", expected, &[], &[]);
+}
+
 /// A select of a string member array is one lookup, and packed and real cells
 /// beside it keep their dump names.
 #[test]

@@ -70,6 +70,18 @@ column. Expected values are derived by hand below; none were captured from
   from an array with an invalid index shall return the default uninitialized
   value for the array element type. Writing to an array with an invalid index
   shall perform no operation."
+- `chosen_constant_cells`: constant selects of `string`, handle and record
+  cells go through their position, and a record element written whole from a
+  record of its type stores leaf by leaf; the invalid-index rule quoted above
+  holds at any constant, and an unknown index keeps the decoding path. Whole
+  writes change only the leaves that differ, and `-0.0` differs from `0.0` by
+  bits as a change of a variable does. Reference (2026-11-06): it stops at a
+  constant select beyond a dynamic-data record's member with an out-of-bound
+  error, against 7.4.6, and it does not wake on such a record's members at all
+  (9.4.2); without those lines and with the plain record `w`, lines agree.
+- `chosen_real_copy`: a whole `real` column copy writes only the cells whose
+  bits differ, so an observer wakes once per change; `-0.0` against `0.0` is a
+  change and a repeated NaN is not. Identical to the reference.
 - `chosen_dense_source`: a whole member takes a copy from a directly addressed
   array and gives one back; `%p` prints a whole record and a whole member array
   in one image each, in the form of the record's leaves.
