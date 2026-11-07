@@ -406,6 +406,14 @@ impl EmitCtx<'_, '_> {
                             .and_then(|array| array.init)
                     });
                     let (initializer, element) = self.split_record_element(initializer);
+                    // A record's two-state flag describes its type for `ref`
+                    // binding. Its value is two-state member by member, so
+                    // whole stores convert nothing.
+                    let store_two_state = two_state
+                        && matches!(
+                            self.cg.kind(declaration),
+                            NodeKind::Var { ty } if is_two_state_kind(&ty.kind)
+                        );
                     let init = initializer
                         .map(|initializer| {
                             let expression = self.cg.lower_expr(&self.path, initializer)?;
@@ -420,7 +428,7 @@ impl EmitCtx<'_, '_> {
                                     None,
                                 ))
                             } else {
-                                ir_to_storage(expression, width, signed, two_state)
+                                ir_to_storage(expression, width, signed, store_two_state)
                             }
                             .map(Box::new)
                         })
@@ -438,8 +446,14 @@ impl EmitCtx<'_, '_> {
                         .and_then(|function| function.locals.get(&declaration))
                         .map(|(name, ..)| name.clone())
                         .expect("automatic local storage checked above");
-                    let declare =
-                        self.automatic_local(declaration, name, width, signed, two_state, init);
+                    let declare = self.automatic_local(
+                        declaration,
+                        name,
+                        width,
+                        signed,
+                        store_two_state,
+                        init,
+                    );
                     self.with_record_element(declaration, declare, element)
                 }
                 VariableLifetime::Unavailable => Err(format!(

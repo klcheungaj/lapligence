@@ -60,6 +60,15 @@ class m;
       $display("%0d %h %0d %h %0d %h", r.kind, r.addr, r.n, r.be, t.n, t.b);
     end
   endfunction
+  function void t4();
+    two_t r;
+    two_t c;
+    c = r;
+    $display("%0d %h", c.n, c.b);
+    ad.inc(r);
+    c = r;
+    $display("%0d %h", c.n, c.b);
+  endfunction
 endclass
 module tb;
   m o = new;
@@ -69,6 +78,7 @@ module tb;
     o.t1();
     o.t2();
     o.t3();
+    o.t4();
     acc.push_back('{A, 64'h20, 5, 8'h2});
     foreach (acc[i]) begin
       automatic op_t r = acc[i];
