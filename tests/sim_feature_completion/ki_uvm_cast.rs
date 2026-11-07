@@ -195,3 +195,14 @@ fn nested_string_keys() {
         &[],
     );
 }
+
+#[test]
+fn function_fork_record() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "function_fork_record",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/function_fork_record.out"),
+        &[],
+        &[],
+    );
+}

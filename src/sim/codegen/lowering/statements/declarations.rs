@@ -146,14 +146,10 @@ impl EmitCtx<'_, '_> {
             }
             return Ok(statements);
         }
-        if let Some(value) = self
-            .func
-            .is_some()
-            .then(|| self.cg.native_roots.get(&declaration).copied())
-            .flatten()
-        {
-            // Native record locals: automatic storage is a lexical value
-            // initialized at each entry; static storage persists.
+        if let Some(value) = self.cg.native_roots.get(&declaration).copied() {
+            // Native record locals, also those of a detached function branch:
+            // automatic storage is a lexical value initialized at each entry;
+            // static storage persists.
             if !self.cg.model.native_values[value].activation {
                 // Static storage initializes once in the static schedule
                 // (SV 6.21, 10.5), never at the declaration statement.

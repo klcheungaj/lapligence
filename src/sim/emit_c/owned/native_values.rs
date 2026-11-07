@@ -215,16 +215,9 @@ impl Frame<'_, '_> {
             // the explicit handle, or through the enclosing method's `this`.
             let receiver = match &value.receiver {
                 Some(receiver) => self.plain_handle_code(receiver, 0)?,
-                None if self
-                    .ctx
-                    .func
-                    .is_some_and(|function| function.receiver_class.is_some()) =>
-                {
-                    "_this".to_owned()
-                }
-                None => {
-                    return Err("class record property used outside its class methods".to_owned())
-                }
+                None => self
+                    .implicit_receiver()
+                    .map_err(|_| "class record property used outside its class methods")?,
             };
             return Ok(format!(
                 "(&((llg_native_root_t*)llg_class_field({receiver}, {class}, {field}, 3)->value.handle)->value)"
