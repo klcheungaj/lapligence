@@ -13,7 +13,7 @@ fn output_concatenations_drive_nets_and_variables() {
         "concat_output",
         "1 pm=101 pv=101 a=1 b=01 nm=101\n\
          6 pm=010 pv=010 a=0 b=10 nm=010\n",
-        "llg: $finish at time 6000 at tb:30:5\n",
+        "INFO: concat_output.sv:30:5: [SIM-001] (tb @ 6 ns) $finish called\n",
         &[],
     );
 }
@@ -25,7 +25,7 @@ fn input_concatenations_split_the_actual() {
         "concat_input",
         "1 net a=1 b=01 var a=0 b=10\n\
          2 net a=0 b=10 var a=1 b=01\n",
-        "llg: $finish at time 2000 at tb:22:5\n",
+        "INFO: concat_input.sv:22:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }
@@ -38,7 +38,7 @@ fn inout_concatenations_connect_both_ways() {
         "1 w=100 a=1 b=00\n\
          3 w=zzz a=z b=zz\n\
          4 w=011 a=0 b=11\n",
-        "llg: $finish at time 4000 at tb:23:5\n",
+        "INFO: concat_inout.sv:23:5: [SIM-001] (tb @ 4 ns) $finish called\n",
         &[],
     );
 }
@@ -52,7 +52,7 @@ fn bit_and_part_select_port_references() {
          1 si a=1010 b=z1\n\
          3 w=1001 v=1001 pv=01 pw=z011\n\
          5 pv=01 pw=z011 r=0101\n",
-        "llg: $finish at time 5000 at tb:53:5\n",
+        "INFO: selects.sv:53:5: [SIM-001] (tb @ 5 ns) $finish called\n",
         &[],
     );
 }
@@ -65,7 +65,7 @@ fn inout_select_port_references() {
         "1 w=01 v=01 a=1001 b=0 y=01 da=1101\n\
          3 w=zz v=zz a=zzzz b=z\n\
          4 w=10 v=zz a=zz10 b=z\n",
-        "llg: $finish at time 4000 at tb:32:5\n",
+        "INFO: inout_selects.sv:32:5: [SIM-001] (tb @ 4 ns) $finish called\n",
         &[],
     );
 }
@@ -76,7 +76,7 @@ fn indexed_part_select_port_references() {
         SUITE,
         "indexed",
         "w1=01 w2=10 n=1001\n",
-        "llg: $finish at time 1000 at tb:18:5\n",
+        "INFO: indexed.sv:18:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }
@@ -87,7 +87,7 @@ fn mixed_direction_concatenation() {
         SUITE,
         "mixed_direction",
         "1 w=01\n2 w=10\n",
-        "llg: $finish at time 2000 at tb:20:5\n",
+        "INFO: mixed_direction.sv:20:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }
@@ -98,7 +98,7 @@ fn explicit_ansi_port_expressions() {
         SUITE,
         "ansi_explicit",
         "1 lo=0101 hi=0101\n2 lo=1101 hi=1101\n",
-        "llg: $finish at time 2000 at tb:20:5\n",
+        "INFO: ansi_explicit.sv:20:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }
@@ -120,7 +120,7 @@ fn verilog_2001_port_expressions() {
         SUITE,
         "nonansi.v",
         "pm=101 pn=101 cm=10 e1=z1zz e2=z0zz\n",
-        "llg: $finish at time 2000 at tb:22:5\n",
+        "INFO: nonansi.v:22:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
         &["--edition", "v2001"],
     );
@@ -134,7 +134,7 @@ fn outside_lvalue_forms_and_shared_inner_nets() {
         "1 va=10 vb=10 na=10 nb=10 vw=xx1010xx nw=10101010 tw=11000011 x6=1100\n\
          1 s1=1 x=0 y=0 n=z010 v=1xxx\n\
          3 va=01 vb=01 na=01 nb=01 vw=xx0101xx nw=01010101 tw=zzzzzzzz\n",
-        "llg: $finish at time 3000 at tb:61:5\n",
+        "INFO: outside_forms.sv:61:5: [SIM-001] (tb @ 3 ns) $finish called\n",
         &[],
     );
 }
@@ -145,7 +145,7 @@ fn generate_and_instance_array_port_expressions() {
         SUITE,
         "instance_arrays",
         "w0=10 w1=10 x=1010 y=1010\n",
-        "llg: $finish at time 1000 at tb:27:5\n",
+        "INFO: instance_arrays.sv:27:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }
@@ -156,7 +156,7 @@ fn output_port_expression_width_differences() {
         SUITE,
         "widths",
         "narrow=10 wide=zz110\n",
-        "llg: $finish at time 1000 at tb:18:5\n",
+        "INFO: widths.sv:18:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }

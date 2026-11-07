@@ -42,10 +42,7 @@ fn queue_element_selects_follow_queue_write_index_rules() {
         "container_selects",
         "queue_selects",
         expected,
-        concat!(
-            "llg container warning: invalid queue write index\n",
-            "llg: $finish at time 0 at tb:26:9\n",
-        ),
+        "WARNING: [SIM-012] invalid queue write index\nINFO: queue_selects.sv:26:9: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &[],
     );
 }

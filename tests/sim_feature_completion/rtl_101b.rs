@@ -7,7 +7,7 @@ fn fixture_location(fixture: &str) -> String {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
         "tests/fixtures/sim/feature_completion/rtl_101b/{fixture}.sv"
     ));
-    sim_harness::source_display(&source)
+    sim_harness::file_name(&source)
 }
 
 #[test]
@@ -26,10 +26,11 @@ fn whole_tagged_union_members_are_checked_against_the_tag() {
         .iter()
         .map(|(line, column, member)| {
             format!(
-                "llg: runtime error: access to inactive tagged-union member {member} at {location}:{line}:{column}\n"
+                "ERROR: {location}:{line}:{column}: [SIM-009] access to inactive tagged-union member {member}\n"
             )
         })
-        .collect::<String>();
+        .collect::<String>()
+        + "INFO: [SIM-000] 5 error(s), 0 warning(s)\n";
     sim_cli::run_case_checked_matrix(SUITE, "tagged_member_guards", &[], &|label, output| {
         assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
         // An inactive read yields the member's uninitialized value and an
@@ -59,9 +60,8 @@ fn record_calls_compare_and_select_inside_expressions() {
 #[test]
 fn inactive_members_of_record_call_results_report_runtime_errors() {
     let location = fixture_location("call_result_guard");
-    let expected_stderr = format!(
-        "llg: runtime error: access to inactive tagged-union member w at {location}:12:23\n"
-    );
+    let expected_stderr =
+        format!("ERROR: {location}:12:23: [SIM-009] access to inactive tagged-union member w\nINFO: [SIM-000] 1 error(s), 0 warning(s)\n");
     sim_cli::run_case_checked_matrix(SUITE, "call_result_guard", &[], &|label, output| {
         assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
         assert_eq!(

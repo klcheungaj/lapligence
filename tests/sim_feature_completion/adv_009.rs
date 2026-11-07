@@ -31,11 +31,12 @@ fn source_path(fixture: &str) -> String {
     )
 }
 
-/// The `llg: warning: timing violation` lines of a run, in order.
+/// The timing violation reports of a run (`SIM-015`), in order, after
+/// `timing violation at `.
 fn violations(output: &Output) -> Vec<String> {
-    String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter_map(|line| line.strip_prefix("llg: warning: timing violation at "))
+    super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
+        .iter()
+        .filter_map(|text| text.strip_prefix("timing violation at "))
         .map(str::to_owned)
         .collect()
 }
@@ -318,10 +319,13 @@ fn duplicate_checks_keep_the_larger_limit_with_a_warning() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         for (dropped, kept, scope) in [("34:42", "34:11", "tb.k"), ("37:11", "37:40", "tb.r")] {
             let warning = format!(
-                "llg: warning: duplicate timing check `$setup` at {path}:{dropped} in `{scope}` \
+                "duplicate timing check `$setup` at {path}:{dropped} in `{scope}` \
                  is disabled; the one at {path}:{kept} with the larger limit is simulated"
             );
-            assert!(stderr.contains(&warning), "{label}: {warning}\n{stderr}");
+            assert!(
+                super::sim_harness::listed_warnings(&stderr).contains(&warning),
+                "{label}: {warning}\n{stderr}"
+            );
         }
     });
 }
@@ -351,7 +355,7 @@ fn nochange_runs_after_the_database_is_dropped() {
             ..Default::default()
         },
         fixture!("nochange.out"),
-        "llg: $finish at time 132 at tb:27:9\n",
+        "INFO: nochange.v:27:9: [SIM-001] (tb @ 132 ns) $finish called\nINFO: [SIM-000] 0 error(s), 3 warning(s), 1 info(s)\n",
         &[&first, &second, &third],
     );
 }

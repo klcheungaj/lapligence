@@ -43,8 +43,8 @@ fn task_form_cast_failure_reports_and_preserves_destination() {
     sim_cli::reject_case_with_exact_stderr(
         SUITE,
         "cast_task_failure",
-        "A 5\nllg: runtime error: $cast failed to assign an incompatible value at tb:14:5\n\
-         llg: severity fatal: tb:14:5: $cast failed to assign an incompatible value\n",
+        "A 5\nFATAL: cast_task_failure.sv:14:5: [SIM-009] (tb @ 0 ps) $cast failed to assign an \
+         incompatible value\nINFO: [SIM-000] 1 fatal, 0 error(s), 0 warning(s)\n",
         &[],
     );
 }
@@ -97,7 +97,7 @@ fn z_conditional_policy_witness() {
         SUITE,
         "z_conditional.v",
         "x\n",
-        "llg: $finish at time 0 at tb:7:1\n",
+        "INFO: z_conditional.v:7:1: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "v2001"],
     );

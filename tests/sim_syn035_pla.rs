@@ -8,7 +8,7 @@ fn unselected_pla_task_reports_an_explicit_diagnostic_in_both_editions() {
         sim_cli::reject_case_with_args(
             "syn035_pla",
             "pla_unselected",
-            ": unsupported: system task `$async$and$array` (legacy PLA tasks) is not supported by llg",
+            "system task `$async$and$array` (legacy PLA tasks) is not supported by llg",
             &["--edition", edition],
         );
     }

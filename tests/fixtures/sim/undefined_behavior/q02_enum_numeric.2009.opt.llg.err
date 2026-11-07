@@ -1,2 +1,3 @@
-llg: error: memory file `q02_enum.mem`: memory word has more digits than the element holds; load terminated
-llg: simulation ended without $finish (no processes remain) at time 0
+ERROR: [SIM-014] memory file `q02_enum.mem`: memory word has more digits than the element holds; load terminated
+INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0
+INFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)

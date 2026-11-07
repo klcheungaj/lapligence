@@ -128,10 +128,7 @@ fn event_containers_keep_trigger_identity() {
         SUITE,
         "event_containers",
         expected,
-        concat!(
-            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
-            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
-        ),
+        "WARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nWARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nINFO: [SIM-000] 0 error(s), 2 warning(s)\n",
         &[],
     );
 }
@@ -144,15 +141,7 @@ fn associative_defaults_and_invalid_indices_follow_7_8_6() {
         SUITE,
         "assoc_defaults",
         expected,
-        concat!(
-            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
-            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
-            "llg container warning: invalid associative-array key read\n",
-            "llg container warning: invalid associative-array integral key write\n",
-            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
-            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
-            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
-        ),
+        "WARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nWARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nWARNING: [SIM-012] invalid associative-array key read\nWARNING: [SIM-012] invalid associative-array integral key write\nWARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nWARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nWARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nINFO: [SIM-000] 0 error(s), 7 warning(s)\n",
         &[],
     );
 }

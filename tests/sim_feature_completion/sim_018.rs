@@ -21,7 +21,7 @@ const COLLECTOR_ENV: [&str; 6] = [
 const STRESS: [(&str, &str); 2] = [("LLG_GC_STRESS", "1"), ("LLG_GC_VERIFY", "1")];
 
 /// Run `fixture` on the legacy backend with `envs` and statistics enabled,
-/// returning stdout and the single `llg: gc:` statistics line.
+/// returning stdout and the single `gc:` statistics line (`SIM-021`).
 fn run_with_stats(fixture: &str, optimized: bool, envs: &[(&str, &str)]) -> (String, String) {
     let mut controls = envs.to_vec();
     controls.extend([
@@ -40,7 +40,7 @@ fn run_with_stats(fixture: &str, optimized: bool, envs: &[(&str, &str)]) -> (Str
     assert!(output.status.success(), "{fixture}: {stderr}");
     let stats = stderr
         .lines()
-        .filter(|line| line.starts_with("llg: gc: "))
+        .filter(|line| line.starts_with("INFO: [SIM-021] gc: "))
         .collect::<Vec<_>>();
     assert_eq!(stats.len(), 1, "{fixture}: {stderr}");
     (
@@ -61,19 +61,19 @@ fn unreachable_cycles_reach_a_bounded_plateau() {
         assert_eq!(stdout, expected);
         assert_eq!(
             stats,
-            "llg: gc: collections=400 failed=0 allocated=40001 freed=39998 condemned=0 live=3 peak=103 pinned=0 mark_clears=1"
+            "INFO: [SIM-021] gc: collections=400 failed=0 allocated=40001 freed=39998 condemned=0 live=3 peak=103 pinned=0 mark_clears=1"
         );
         // Default policy (4096, growth 100%): nine collections, bounded peak.
         let (_, stats) = run_with_stats("cycle_plateau", optimized, &[]);
         assert_eq!(
             stats,
-            "llg: gc: collections=9 failed=0 allocated=40001 freed=36862 condemned=0 live=3139 peak=4099 pinned=0 mark_clears=0"
+            "INFO: [SIM-021] gc: collections=9 failed=0 allocated=40001 freed=36862 condemned=0 live=3139 peak=4099 pinned=0 mark_clears=0"
         );
         // Without collection every object stays until model close.
         let (_, stats) = run_with_stats("cycle_plateau", optimized, &[("LLG_GC", "0")]);
         assert_eq!(
             stats,
-            "llg: gc: collections=0 failed=0 allocated=40001 freed=0 condemned=0 live=40001 peak=40001 pinned=0 mark_clears=0"
+            "INFO: [SIM-021] gc: collections=0 failed=0 allocated=40001 freed=0 condemned=0 live=40001 peak=40001 pinned=0 mark_clears=0"
         );
     }
     // A collection at every safe point wraps the mark epoch many times; each
@@ -275,18 +275,22 @@ fn invalid_collector_settings_are_configuration_errors() {
         (
             "LLG_GC_THRESHOLD",
             "0",
-            "llg: invalid LLG_GC_THRESHOLD (must be a positive decimal uint64)",
+            "ERROR: [SIM-010] invalid LLG_GC_THRESHOLD (must be a positive decimal uint64)",
         ),
         (
             "LLG_GC_GROWTH_PERCENT",
             "x",
-            "llg: invalid LLG_GC_GROWTH_PERCENT (must be a positive decimal uint64)",
+            "ERROR: [SIM-010] invalid LLG_GC_GROWTH_PERCENT (must be a positive decimal uint64)",
         ),
-        ("LLG_GC", "2", "llg: invalid LLG_GC `2` (expected 0 or 1)"),
+        (
+            "LLG_GC",
+            "2",
+            "ERROR: [SIM-010] invalid LLG_GC `2` (expected 0 or 1)",
+        ),
         (
             "LLG_GC_STRESS",
             "yes",
-            "llg: invalid LLG_GC_STRESS `yes` (expected 0 or 1)",
+            "ERROR: [SIM-010] invalid LLG_GC_STRESS `yes` (expected 0 or 1)",
         ),
     ] {
         let removed = COLLECTOR_ENV

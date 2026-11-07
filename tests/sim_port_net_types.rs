@@ -117,9 +117,12 @@ fn assert_collapse_warnings(output: std::process::Output, expected: &str, count:
         expected,
         "{stderr}"
     );
+    let lowering_warning = llg::core::report::catalog::CODEGEN_WARNING.id();
     let warnings = stderr
         .lines()
-        .filter_map(|line| line.strip_prefix("llg: warning: "))
+        .filter_map(llg::core::report::parse)
+        .filter(|message| message.id == lowering_warning)
+        .map(|message| message.text)
         .collect::<Vec<_>>();
     assert_eq!(warnings.len(), count, "{stderr}");
     for warning in warnings {
@@ -132,7 +135,8 @@ fn assert_collapse_warnings(output: std::process::Output, expected: &str, count:
     }
     for line in stderr.lines() {
         assert!(
-            line.starts_with("llg: warning: ") || crate::sim_harness::is_compile_report_line(line),
+            llg::core::report::parse(line).is_some_and(|message| message.id == lowering_warning)
+                || crate::sim_harness::is_compile_report_line(line),
             "{stderr}"
         );
     }
@@ -205,7 +209,7 @@ fn port_net_type_trireg_remains_explicitly_unsupported() {
     sim_cli::reject_case_with_args(
         "port_net_types",
         "bad_trireg",
-        "unsupported: `trireg` net `",
+        "`trireg` net `",
         &["--edition", "v2001"],
     );
 }

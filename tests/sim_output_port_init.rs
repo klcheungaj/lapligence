@@ -24,7 +24,7 @@ fn ansi_output_port_initializers_of_every_variable_type() {
         SUITE,
         "ansi_types",
         "r=2.500000 e=C s=34 k=111111 str=hi i=-3 ua=1,2\n",
-        "llg: $finish at time 1000 at tb:24:5\n",
+        "INFO: ansi_types.sv:24:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }
@@ -35,7 +35,7 @@ fn non_ansi_output_port_initializers() {
         SUITE,
         "nonansi",
         "po=1 pq=9 pr=6\n",
-        "llg: $finish at time 1000 at tb:15:5\n",
+        "INFO: nonansi.sv:15:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }
@@ -46,7 +46,7 @@ fn verilog_2001_output_reg_port_initializers() {
         SUITE,
         "nonansi.v",
         "child o=1 q=9\ntb po=1 pq=9\n",
-        "llg: $finish at time 3000 at tb:13:14\n",
+        "INFO: nonansi.v:13:14: [SIM-001] (tb @ 3 ns) $finish called\n",
         &[],
         &["--edition", "v2001"],
     );

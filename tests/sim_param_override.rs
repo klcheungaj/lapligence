@@ -8,7 +8,8 @@ use std::path::Path;
 use crate::sim_cli;
 
 const SUITE: &str = "param_override";
-const NO_FINISH: &str = "llg: simulation ended without $finish (no processes remain) at time 0\n";
+const NO_FINISH: &str =
+    "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n";
 
 fn config_path() -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))

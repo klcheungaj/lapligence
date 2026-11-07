@@ -155,7 +155,7 @@ fn foreign_random_state_is_a_runtime_error() {
     sim_cli::reject_case(
         SUITE,
         "neg_randstate_invalid",
-        "llg: random runtime: invalid randstate string",
+        "ERROR: [SIM-010] random runtime: invalid randstate string",
     );
 }
 

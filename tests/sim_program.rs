@@ -13,7 +13,7 @@ fn program_reactive_nba_and_zero_delay_ordering_match_module_active() {
         "program_blocks",
         "program_basic",
         "module inactive in=0 out=x\nprogram start in=1 out=x\nprogram inactive in=1 out=x\nmodule saw program nba out=1\nmodule settled in=1 out=1\n",
-        "llg: $finish at time 1000 at tb:23:9\n",
+        "INFO: program_basic.sv:23:9: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }

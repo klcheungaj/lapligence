@@ -68,13 +68,14 @@ fn queued_fixed_streams_keep_issue_time_selectors_and_sources() {
 #[test]
 fn out_of_bounds_with_targets_write_the_valid_part_and_report() {
     let report =
-        "llg: fixed streaming target selector is unknown, empty, or outside declared bounds\n";
+        "ERROR: [SIM-009] fixed streaming target selector is unknown, empty, or outside declared bounds\n";
     assert_runtime_errors(
         "target_bounds",
         &format!(
             "{report}static 00 00 aa bb\n\
              {report}queued 22 00 aa bb\n\
-             {report}unknown 00 00\n"
+             {report}unknown 00 00\n\
+             INFO: [SIM-000] 3 error(s), 0 warning(s)\n"
         ),
     );
     sim_cli::reject_case(SUITE, "target_bounds", "outside declared bounds");

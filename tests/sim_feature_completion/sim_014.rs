@@ -55,7 +55,7 @@ fn blocking_destinations_resolve_at_update_and_nba_destinations_at_issue() {
     after_db_drop(
         "destinations",
         expected,
-        "llg: $finish at time 81 at tb:116:5\n",
+        "INFO: destinations.sv:116:5: [SIM-001] (tb @ 81 ns) $finish called\n",
     );
 }
 
@@ -88,7 +88,7 @@ fn nonblocking_triggers_keep_the_event_named_at_issue() {
     after_db_drop(
         "nb_triggers",
         expected,
-        "llg: $finish at time 37 at tb:60:8\n",
+        "INFO: nb_triggers.sv:60:8: [SIM-001] (tb @ 37 ns) $finish called\n",
     );
 }
 
@@ -171,8 +171,12 @@ fn failed_wait_order_without_else_ends_the_run() {
         assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         assert!(
-            stderr
-                .contains("llg: severity fatal: tb:9:9: wait_order: events triggered out of order"),
+            crate::sim_harness::has_message(
+                &stderr,
+                "SIM-009",
+                ":9:9",
+                "wait_order: events triggered out of order"
+            ),
             "{label}: {stderr}"
         );
     });

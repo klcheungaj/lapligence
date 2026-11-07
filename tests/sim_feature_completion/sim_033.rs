@@ -32,7 +32,7 @@ fn input_skews_sample_preponed_observed_and_history_values() {
     after_db_drop(
         "skew_timeline",
         expected,
-        "llg: $finish at time 41 at tb:38:8\n",
+        "INFO: skew_timeline.sv:38:8: [SIM-001] (tb @ 41 ns) $finish called\n",
     );
 }
 
@@ -43,7 +43,7 @@ fn select_concatenation_computed_and_real_inputs_sample_their_expression() {
     after_db_drop(
         "expressions",
         expected,
-        "llg: $finish at time 10 at tb:64:5\n",
+        "INFO: expressions.sv:64:5: [SIM-001] (tb @ 10 ns) $finish called\n",
     );
 }
 

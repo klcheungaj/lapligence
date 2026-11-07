@@ -36,7 +36,7 @@ fn nets_resolve_on_release_and_variables_keep_or_reestablish() {
     after_db_drop(
         "nets_and_variables.sv",
         expected,
-        "llg: $finish at time 5000 at tb:69:5\n",
+        "INFO: nets_and_variables.sv:69:5: [SIM-001] (tb @ 5 ns) $finish called\n",
     );
 }
 
@@ -104,7 +104,7 @@ fn hierarchical_alias_and_interface_targets_follow_live_inputs() {
     after_db_drop(
         "hier_live.sv",
         expected,
-        "llg: $finish at time 5000 at tb:83:5\n",
+        "INFO: hier_live.sv:83:5: [SIM-001] (tb @ 5 ns) $finish called\n",
     );
 }
 
@@ -145,7 +145,7 @@ fn forces_outlive_killed_and_disabled_processes() {
     after_db_drop(
         "lifetime.sv",
         expected,
-        "llg: $finish at time 8000 at tb:49:5\n",
+        "INFO: lifetime.sv:49:5: [SIM-001] (tb @ 8 ns) $finish called\n",
     );
 }
 

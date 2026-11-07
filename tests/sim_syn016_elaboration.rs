@@ -15,7 +15,8 @@ const EXPECTED: &str = concat!(
 
 #[test]
 fn elaboration_matrix_matches_both_compilation_unit_policies_and_optimizers() {
-    let expected_stderr = "llg: $finish at time 1000 at tb:84:5\n";
+    let expected_stderr =
+        "INFO: elaboration_matrix.sv:84:5: [SIM-001] (tb @ 1 ns) $finish called\n";
     for policy in ["separate", "merged"] {
         sim_cli::run_case_with_args(
             SUITE,

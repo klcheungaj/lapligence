@@ -13,7 +13,7 @@ fn semaphore_zero_key_and_try_get_results_are_exact() {
         "semaphore",
         "basic",
         "zero=0 ztry=1\nfirst=1\nempty=0\nafter_put=1\nzero_put=1\n",
-        "llg: $finish at time 0 at tb:22:9\n",
+        "INFO: basic.sv:22:9: [SIM-001] (tb @ 0 ns) $finish called\n",
         &[],
     );
 }
@@ -24,7 +24,7 @@ fn semaphore_contention_serves_fitting_requests_in_arrival_order() {
         "semaphore",
         "fifo",
         "zero_try=1\nnarrow\nwide\n",
-        "llg: $finish at time 0 at tb:30:9\n",
+        "INFO: fifo.sv:30:9: [SIM-001] (tb @ 0 ns) $finish called\n",
         &[],
     );
 }
@@ -35,7 +35,7 @@ fn killing_a_blocked_semaphore_waiter_does_not_consume_a_later_put() {
         "semaphore",
         "kill",
         "recovered=1\n",
-        "llg: $finish at time 0 at tb:24:9\n",
+        "INFO: kill.sv:24:9: [SIM-001] (tb @ 0 ns) $finish called\n",
         &[],
     );
 }
@@ -46,7 +46,7 @@ fn semaphore_task_arguments_survive_a_blocking_get() {
         "semaphore",
         "task_arg",
         "task_arg=1\n",
-        "llg: $finish at time 0 at tb:25:9\n",
+        "INFO: task_arg.sv:25:9: [SIM-001] (tb @ 0 ns) $finish called\n",
         &[],
     );
 }
@@ -57,7 +57,7 @@ fn semaphore_automatic_locals_survive_a_captured_blocking_get() {
         "semaphore",
         "local",
         "local=1\n",
-        "llg: $finish at time 0 at tb:23:9\n",
+        "INFO: local.sv:23:9: [SIM-001] (tb @ 0 ns) $finish called\n",
         &[],
     );
 }
@@ -68,7 +68,7 @@ fn semaphore_static_procedural_initializers_run_once() {
         "semaphore",
         "static",
         "static_try=0\n",
-        "llg: $finish at time 1 at tb:18:13\n",
+        "INFO: static.sv:18:13: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }

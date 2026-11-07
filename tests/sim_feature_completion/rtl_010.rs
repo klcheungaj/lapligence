@@ -30,7 +30,7 @@ fn nested_fixed_targets_publish_every_leaf() {
         SUITE,
         "net_pattern_driver",
         witness,
-        "llg: $finish at time 1000 at tb:6:1\n",
+        "INFO: net_pattern_driver.sv:6:1: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }

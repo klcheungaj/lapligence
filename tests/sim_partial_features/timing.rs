@@ -5,7 +5,7 @@ fn future_nba_advances_time_without_live_processes() {
     super::run_case_with_stderr(
         "nba_only_future",
         "final 7000 42\n",
-        "llg: simulation ended without $finish (no processes remain) at time 7000\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 7000\n",
     );
 }
 

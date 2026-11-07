@@ -640,7 +640,12 @@ fn s26_d2_invalid_descriptor_input() {
 fn s26_d2_fread_ends_run() {
     let expected = include_str!("fixtures/sim/lrm_decisions/S26-D2_fread_ends_run.out");
     sim_cli::run_case_checked_matrix(SUITE, "S26-D2_fread_ends_run", &[], &|label, output| {
-        runtime_error(label, output, expected, "$fread: invalid file descriptor");
+        runtime_error(
+            label,
+            output,
+            expected,
+            "($fread @ 0 ps) invalid file descriptor",
+        );
     });
 }
 
@@ -1215,7 +1220,7 @@ fn s40_d6_wrong_index_count_ends_run() {
     run_dpi_fatal_decision(
         "S40-D6_wrong_index_count_ends_run",
         include_str!("fixtures/sim/lrm_decisions/S40-D6_wrong_index_count_ends_run.out"),
-        "llg: DPI-C open array element access with 1 index(es) to an array with 2 unpacked \
+        "ERROR: [SIM-017] DPI-C open array element access with 1 index(es) to an array with 2 unpacked \
          dimension(s)",
     );
 }
@@ -1233,7 +1238,7 @@ fn s40_d5_task_disable_protocol() {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(
-                "llg: DPI-C import task `d5_task` returned nonzero, but nothing disabled it"
+                "ERROR: [SIM-017] DPI-C import task `d5_task` returned nonzero, but nothing disabled it"
             ),
             "{label}: {output:?}"
         );
@@ -1302,7 +1307,7 @@ fn s41_d6_noncontext_export_call() {
     run_dpi_fatal_decision(
         "S41-D6_noncontext_export_call",
         include_str!("fixtures/sim/lrm_decisions/S41-D6_noncontext_export_call.out"),
-        "llg: DPI-C export `d6_inc` was called from a noncontext import",
+        "ERROR: [SIM-017] DPI-C export `d6_inc` was called from a noncontext import",
     );
 }
 
@@ -1311,7 +1316,7 @@ fn s41_d7_export_outside_scope() {
     run_dpi_fatal_decision(
         "S41-D7_export_outside_scope",
         include_str!("fixtures/sim/lrm_decisions/S41-D7_export_outside_scope.out"),
-        "llg: DPI-C export `d7_inc` is not exported from the current scope `tb.u`",
+        "ERROR: [SIM-017] DPI-C export `d7_inc` is not exported from the current scope `tb.u`",
     );
 }
 
@@ -1344,7 +1349,7 @@ fn a18_d3_waiting_task_from_import_function() {
     run_dpi_fatal_decision(
         "A18-D3_waiting_task_from_import_function",
         include_str!("fixtures/sim/lrm_decisions/A18-D3_waiting_task_from_import_function.out"),
-        "llg: DPI-C exported task `a3_wait` can consume time, but its foreign caller cannot \
+        "ERROR: [SIM-017] DPI-C exported task `a3_wait` can consume time, but its foreign caller cannot \
          suspend",
     );
 }
@@ -1730,7 +1735,29 @@ fn runtime_error(label: &str, output: &std::process::Output, expected: &str, dia
     assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+        crate::sim_harness::mentions(&String::from_utf8_lossy(&output.stderr), diagnostic),
+        "{label}: {output:?}"
+    );
+}
+
+/// [`runtime_error`] for the run-time failure (`SIM-009`) at `at`
+/// (`:line:col`) whose text contains `text`.
+fn runtime_failure(
+    label: &str,
+    output: &std::process::Output,
+    expected: &str,
+    at: &str,
+    text: &str,
+) {
+    assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+    assert!(
+        crate::sim_harness::has_message(
+            &String::from_utf8_lossy(&output.stderr),
+            "SIM-009",
+            at,
+            text
+        ),
         "{label}: {output:?}"
     );
 }
@@ -3568,7 +3595,7 @@ fn s47_d11_dump_open_error() {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         let reports = String::from_utf8_lossy(&output.stderr)
             .lines()
-            .filter(|line| line.starts_with("llg: waveform: "))
+            .filter(|line| line.starts_with("ERROR: [SIM-018] "))
             .count();
         assert_eq!(
             reports,
@@ -3578,7 +3605,7 @@ fn s47_d11_dump_open_error() {
         );
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .contains("llg: waveform: cannot open `S47-D11-missing/dump.vcd`: "),
+                .contains("[SIM-018] cannot open `S47-D11-missing/dump.vcd`: "),
             "{label}"
         );
     });
@@ -3656,7 +3683,7 @@ fn s45_d3_illegal_bin_ends_run() {
             );
             assert!(
                 String::from_utf8_lossy(&output.stderr)
-                    .contains("llg: runtime error: covergroup `g` coverpoint `cp` sampled 7"),
+                    .contains("[SIM-010] covergroup `g` coverpoint `cp` sampled 7"),
                 "{label}: {output:?}"
             );
         },
@@ -3688,7 +3715,7 @@ fn s45_d5_bins_count_not_positive() {
             );
             assert!(
                 String::from_utf8_lossy(&output.stderr).contains(
-                    "llg: runtime error: bins `b` at tb:19:12: the number of bins is not a positive value"
+                    "ERROR: [SIM-010] bins `b` at tb:19:12: the number of bins is not a positive value"
                 ),
                 "{label}: {output:?}"
             );
@@ -3740,7 +3767,7 @@ fn s45_d10_default_sequence() {
         );
         let errors: Vec<String> = String::from_utf8_lossy(&output.stderr)
             .lines()
-            .filter(|line| line.starts_with("llg: runtime error:"))
+            .filter(|line| line.starts_with("ERROR: [SIM-010]"))
             .map(|line| {
                 let sampled = line.split(" sampled ").nth(1).unwrap_or_default();
                 let point = line.split(" coverpoint `").nth(1).unwrap_or_default();
@@ -3828,15 +3855,15 @@ fn s45_d17_detect_overlap() {
         );
         let warnings: Vec<_> = String::from_utf8_lossy(&output.stderr)
             .lines()
-            .filter(|line| line.starts_with("llg: warning: covergroup"))
+            .filter(|line| line.starts_with("WARNING: [SIM-011] covergroup"))
             .map(str::to_owned)
             .collect();
         assert_eq!(
             warnings,
             [
-                "llg: warning: covergroup `g` coverpoint `c1`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
-                "llg: warning: covergroup `g` coverpoint `c2`: bins `r` and `r2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
-                "llg: warning: covergroup `g` coverpoint `c3`: bins `v` and `w` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: [SIM-011] covergroup `g` coverpoint `c1`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: [SIM-011] covergroup `g` coverpoint `c2`: bins `r` and `r2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: [SIM-011] covergroup `g` coverpoint `c3`: bins `v` and `w` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
             ],
             "{label}"
         );
@@ -3914,7 +3941,7 @@ fn s46_d3_failed_load_changes_nothing() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 stderr.contains(
-                    "llg: runtime error: $load_coverage_db at tb:21:5: coverage database `s46_d3_no_such_coverage_database` was not loaded: "
+                    "ERROR: [SIM-010] $load_coverage_db at tb:21:5: coverage database `s46_d3_no_such_coverage_database` was not loaded: "
                 ),
                 "{label}: {stderr}"
             );
@@ -3980,7 +4007,7 @@ fn s46_d11_failed_merge() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains(
-                "llg: runtime error: $coverage_merge at tb:18:27: coverage database `s46_d11_no_such_database` was not merged: "
+                "ERROR: [SIM-010] $coverage_merge at tb:18:27: coverage database `s46_d11_no_such_database` was not merged: "
             ),
             "{label}: {stderr}"
         );
@@ -4333,11 +4360,12 @@ fn s11_d1_task_cast_class_failure() {
         "S11-D1_task_cast_class_failure",
         &[],
         &|label, output| {
-            runtime_error(
+            runtime_failure(
                 label,
                 output,
                 expected,
-                "$cast failed to assign an incompatible value at tb:36:5",
+                ":36:5",
+                "$cast failed to assign an incompatible value",
             );
         },
     );
@@ -4359,11 +4387,12 @@ fn s11_d6_cast_element_out_of_range() {
         "S11-D6_cast_element_out_of_range",
         &[],
         &|label, output| {
-            runtime_error(
+            runtime_failure(
                 label,
                 output,
                 expected,
-                "$cast failed to assign an incompatible value at tb:28:27: the destination element does not exist",
+                ":28:27",
+                "$cast failed to assign an incompatible value: the destination element does not exist",
             );
         },
     );
@@ -4445,11 +4474,12 @@ fn s11_d2_task_cast_enum_failure() {
         "S11-D2_task_cast_enum_failure",
         &[],
         &|label, output| {
-            runtime_error(
+            runtime_failure(
                 label,
                 output,
                 expected,
-                "$cast failed to assign an incompatible value at tb:22:5",
+                ":22:5",
+                "$cast failed to assign an incompatible value",
             );
         },
     );

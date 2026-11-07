@@ -25,8 +25,9 @@ fn arrays_containers_and_aggregates_preserve_state_domains() {
         "state-storage",
         "PASS state storage\n",
         concat!(
-            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
-            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
+            "WARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\n",
+            "WARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\n",
+            "INFO: [SIM-000] 0 error(s), 2 warning(s)\n",
         ),
     );
 }

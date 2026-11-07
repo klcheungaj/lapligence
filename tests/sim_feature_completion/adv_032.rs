@@ -42,7 +42,10 @@ fn frontend_rejects(fixture: &str, edition: &str, diagnostic: &str) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
     assert!(output.stdout.is_empty(), "{fixture}: {output:?}");
-    assert!(stderr.contains(diagnostic), "{fixture}: {stderr}");
+    assert!(
+        crate::sim_harness::mentions(&stderr, diagnostic),
+        "{fixture}: {stderr}"
+    );
 }
 
 #[test]
@@ -150,7 +153,7 @@ fn directives_in_inactive_conditional_branches_are_not_reported() {
             SUITE,
             "directive_inactive.v",
             expected,
-            "llg: $finish at time 0 at tb:8:5\n",
+            "INFO: directive_inactive.v:8:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &["--edition", edition],
         );
@@ -477,7 +480,7 @@ fn a_continuously_assigned_child_variable_admits_no_other_driver() {
     sim_cli::reject_case_with_args(
         SUITE,
         "hier_continuous_assign_mixed.sv",
-        "has both a continuous assignment at",
+        "has both a continuous assignment and a procedural assignment by",
         &["--edition", "sv2009"],
     );
     assert_not_unsupported(
@@ -534,7 +537,7 @@ fn supported_stochastic_queue_subset_keeps_executing() {
             SUITE,
             "queue_supported.v",
             expected,
-            "llg: $finish at time 0 at tb:17:5\n",
+            "INFO: queue_supported.v:17:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &["--edition", edition],
         );
@@ -654,7 +657,7 @@ fn cli_refuses_a_linked_object_that_uses_pli_1_0() {
         SUITE,
         "pli_host.v",
         "host ran\n",
-        "llg: $finish at time 0 at tb:4:5\n",
+        "INFO: pli_host.v:4:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
     let directory = sim_harness::TempDir::new("adv032-cli").expect("library directory");

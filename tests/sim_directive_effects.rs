@@ -25,7 +25,7 @@ fn macro_include_and_conditional_state_reaches_execution() {
             SUITE,
             "macros_include",
             &expected,
-            "llg: $finish at time 0 at tb:19:5\n",
+            "INFO: macros_include.sv:19:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &args,
         );
@@ -40,7 +40,7 @@ fn resetall_restores_default_nettype() {
             SUITE,
             "default_resetall",
             "implicit=z\n",
-            "llg: $finish at time 0 at tb:12:5\n",
+            "INFO: default_resetall.sv:12:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &args,
         );
@@ -66,7 +66,7 @@ fn line_directive_reaches_predefined_macros() {
         SUITE,
         "line_mapping",
         "file=syn017_mapped.sv line=125\n",
-        "llg: $finish at time 0 at tb:9:5\n",
+        "INFO: line_mapping.sv:9:5 (`line syn017_mapped.sv:126): [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -93,7 +93,7 @@ fn unconnected_drive_values_are_lowered_after_elaboration() {
             SUITE,
             "unconnected_matrix",
             "p0=0 p1=f pz=z\n",
-            "llg: $finish at time 0 at tb:24:5\n",
+            "INFO: unconnected_matrix.sv:24:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &args,
         );
@@ -108,7 +108,7 @@ fn vectored_and_scalared_values_are_simulation_neutral() {
             SUITE,
             "vectored_scalared",
             "v=a s=5\n",
-            "llg: $finish at time 0 at tb:12:5\n",
+            "INFO: vectored_scalared.sv:12:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &args,
         );
@@ -121,7 +121,7 @@ fn macro_generated_systemverilog_keyword_observes_edition() {
         SUITE,
         "later_macro",
         "x=1\n",
-        "llg: $finish at time 0 at tb:13:5\n",
+        "INFO: later_macro.sv:13:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &["combinational always process in `tb` reads no signals; evaluating once at time 0"],
         &["--edition", "sv2009"],
     );
@@ -158,7 +158,7 @@ fn compilation_unit_mode_preserves_source_order() {
                 "unit_use",
                 &["unit_def"],
                 expected,
-                "llg: $finish at time 0 at tb:11:5\n",
+                "INFO: unit_use.sv:11:5: [SIM-001] (tb @ 0 ps) $finish called\n",
                 &[],
                 &args,
             );

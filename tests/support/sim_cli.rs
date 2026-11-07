@@ -489,10 +489,11 @@ fn invoke_with_runtime_args(
 /// after a `$fatal` report, which ends the run "with an error code"
 /// (IEEE 1800-2009 20.9, L34909 of the text extraction), else 0.
 fn status_after(expected_stderr: &str) -> i32 {
+    let fatal_task = format!("[{}]", llg::core::report::id("SIM", 6));
     i32::from(
         expected_stderr
             .lines()
-            .any(|line| line.starts_with("llg: severity fatal:")),
+            .any(|line| line.contains(&fatal_task)),
     )
 }
 
@@ -528,16 +529,22 @@ fn assert_case_output(
     let mut warnings = Vec::new();
     let mut runtime_stderr = String::new();
     for line in stderr.lines() {
-        if let Some(warning) = line.strip_prefix("llg: warning: ") {
-            warnings.push(warning);
-        } else if !crate::sim_harness::is_compile_report_line(line) {
-            // Legal conformance probes intentionally provoke frontend
-            // width/sign/range warnings; lowering warnings remain exact.
-            runtime_stderr.push_str(line);
-            runtime_stderr.push('\n');
+        match llg::core::report::parse(line) {
+            Some(message) if sim_harness::is_listed_warning(&message) => {
+                warnings.push(message.text)
+            }
+            _ if crate::sim_harness::is_compile_report_line(line) => {
+                // Legal conformance probes intentionally provoke frontend
+                // width/sign/range warnings; lowering warnings remain exact.
+            }
+            _ => {
+                runtime_stderr.push_str(&crate::sim_harness::canonical_message(line));
+                runtime_stderr.push('\n');
+            }
         }
     }
     warnings.sort_unstable();
+    let warnings: Vec<&str> = warnings.iter().map(String::as_str).collect();
     let mut expected_warnings = expected_warnings.to_vec();
     expected_warnings.sort_unstable();
     assert_eq!(warnings, expected_warnings, "{label}");
@@ -861,7 +868,10 @@ pub(crate) fn reject_case_with_args(suite: &str, fixture: &str, diagnostic: &str
         let seen = observed_output(&output);
         assert_eq!(output.status.code(), Some(1), "{fixture}: {seen}");
         assert!(output.stdout.is_empty(), "{fixture}: {seen}");
-        assert!(stderr.contains(diagnostic), "{fixture}: {seen}");
+        assert!(
+            sim_harness::mentions(&stderr, diagnostic),
+            "{fixture}: {seen}"
+        );
     }
 }
 
@@ -873,7 +883,7 @@ pub(crate) fn reject_case_with_exact_stderr(
 ) {
     for optimized in [false, true] {
         let output = invoke_with_args(suite, fixture, optimized, args);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = sim_harness::strip_lint_reports(&output.stderr);
         let seen = observed_output(&output);
         assert_eq!(output.status.code(), Some(1), "{fixture}: {seen}");
         assert!(output.stdout.is_empty(), "{fixture}: {seen}");
@@ -919,13 +929,29 @@ pub(crate) fn reject_case_with_error_lines(
         let label = format!("{suite}/{fixture}, optimized={optimized}, args={args:?}");
         assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
         assert!(output.stdout.is_empty(), "{label}: ran: {output:?}");
-        let errors: Vec<&str> = stderr
+        // By-design rejections (`ELAB` family ids) in the stable
+        // `error: <location>: unsupported: <text>` form the callers list.
+        let errors: Vec<String> = stderr
             .lines()
-            .filter(|line| line.starts_with("error: "))
+            .filter_map(llg::core::report::parse)
+            .filter(|message| {
+                message.tool() == "ELAB" && message.severity == llg::core::report::Severity::Error
+            })
+            .map(|message| {
+                format!(
+                    "error: {}: unsupported: {}",
+                    message.location.unwrap_or_default(),
+                    message.text
+                )
+            })
             .collect();
         assert_eq!(errors, expected, "{label}: {stderr}");
+        let generic = stderr
+            .lines()
+            .filter_map(llg::core::report::parse)
+            .any(|message| message.tool() == "CODEGEN");
         assert!(
-            !stderr.contains("codegen error") && !stderr.contains("panicked"),
+            !generic && !stderr.contains("panicked"),
             "{label}: generic failure: {stderr}"
         );
         assert!(
@@ -956,7 +982,7 @@ pub(crate) fn run_case_failing_at_runtime(
             "{label}: {seen}"
         );
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+            sim_harness::mentions(&String::from_utf8_lossy(&output.stderr), diagnostic),
             "{label}: {seen}"
         );
     }
@@ -973,7 +999,10 @@ pub(crate) fn reject_case_with_runtime_args(
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
         assert!(output.stdout.is_empty(), "{fixture}: {output:?}");
-        assert!(stderr.contains(diagnostic), "{fixture}: {stderr}");
+        assert!(
+            sim_harness::mentions(&stderr, diagnostic),
+            "{fixture}: {stderr}"
+        );
     }
 }
 
@@ -1057,8 +1086,20 @@ impl ExpectedLint {
         let mut actual: Vec<String> = stderr
             .lines()
             .filter_map(|line| {
-                let (location, finding) = line.split_once(": [ERROR] ")?;
-                let rule = finding.split_once(": ")?.0;
+                let message = llg::core::report::parse(line)?;
+                if message.tool() != "LINT"
+                    || message.severity != llg::core::report::Severity::Error
+                {
+                    return None;
+                }
+                let rule = llg::core::report::catalog::LINT_RULES
+                    .iter()
+                    .find(|entry| entry.def().id() == message.id)?
+                    .rule;
+                let location = message.location?;
+                let location = location
+                    .split_once(" (`line ")
+                    .map_or(location.as_str(), |(physical, _)| physical);
                 let mut parts = location.rsplitn(3, ':');
                 let col = parts.next()?;
                 let line_number = parts.next()?;
@@ -1084,9 +1125,11 @@ impl ExpectedLint {
 
 /// Whether `output` reports a lint error finding.
 fn has_lint_error(output: &Output) -> bool {
-    String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .any(|line| line.contains(": [ERROR] "))
+    String::from_utf8_lossy(&output.stderr).lines().any(|line| {
+        llg::core::report::parse(line).is_some_and(|message| {
+            message.tool() == "LINT" && message.severity == llg::core::report::Severity::Error
+        })
+    })
 }
 
 /// Run the `llg` command `build(lint_args)` for the fixture `source`. A

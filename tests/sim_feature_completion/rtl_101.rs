@@ -41,10 +41,11 @@ fn column_records_match_structure_patterns() {
 fn inactive_column_union_members_report_runtime_errors() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/feature_completion/rtl_101/tagged_inactive.sv");
-    let location = sim_harness::source_display(&source);
+    let location = sim_harness::file_name(&source);
     let expected_stderr = format!(
-        "llg: runtime error: access to inactive tagged-union member w at {location}:10:23\n\
-         llg: runtime error: access to inactive tagged-union member w at {location}:11:5\n"
+        "ERROR: {location}:10:23: [SIM-009] access to inactive tagged-union member w\n\
+         ERROR: {location}:11:5: [SIM-009] access to inactive tagged-union member w\n\
+         INFO: [SIM-000] 2 error(s), 0 warning(s)\n"
     );
     sim_cli::run_case_checked_matrix(SUITE, "tagged_inactive", &[], &|label, output| {
         assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
@@ -56,7 +57,7 @@ fn inactive_column_union_members_report_runtime_errors() {
             "{label}"
         );
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            sim_harness::strip_lint_reports(&output.stderr),
             expected_stderr,
             "{label}"
         );

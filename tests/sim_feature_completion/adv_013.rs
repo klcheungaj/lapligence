@@ -76,7 +76,7 @@ fn multiclocked_subsequence_with_an_empty_last_element() {
         SUITE,
         "mc_segment",
         fixture!("mc_segment.out"),
-        "llg: $finish at time 102000 at tb:16:5\n",
+        "INFO: mc_segment.sv:16:5: [SIM-001] (tb @ 102 ns) $finish called\n",
         &[],
     );
 }
@@ -89,7 +89,7 @@ fn restrict_property_is_not_simulated() {
         SUITE,
         "restrict",
         fixture!("restrict.out"),
-        "llg: $finish at time 22000 at tb:21:5\n",
+        "INFO: restrict.sv:21:5: [SIM-001] (tb @ 22 ns) $finish called\n",
         &[],
     );
 }

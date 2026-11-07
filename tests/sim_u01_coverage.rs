@@ -7,7 +7,7 @@ fn reachable_unsupported_primitive_fails_with_source_span() {
     sim_cli::reject_case(
         "u01_coverage",
         "reachable_switch",
-        "reachable_switch.sv:7:10: unsupported: `nmos` primitive",
+        "reachable_switch.sv:7:10 `nmos` primitive",
     );
 }
 
@@ -24,7 +24,7 @@ fn elaborated_away_unsupported_branch_does_not_fail() {
 
 #[test]
 fn invalid_source_is_rejected_before_simulation_coverage() {
-    sim_cli::reject_case("u01_coverage", "invalid_source", "Slang reported errors");
+    sim_cli::reject_case("u01_coverage", "invalid_source", "SLANG-000");
 }
 
 #[test]

@@ -4,6 +4,10 @@
 //! (`gen_record_shapes.py`, [readme](../fixtures/sim/feature_completion/ki_record_shapes/readme.md)).
 //! The full grid is the ignored `sim_record_shape_grid` test.
 //!
+//! The default tier runs the optimized mode only (user decision 2026-11-07,
+//! an exception to the both-modes rule in `tests/AGENTS.md`): the oracle is
+//! the other storage form within the same mode, not the unoptimized run.
+//!
 //! The oracle is the other form: the same checked-in file builds with `-D N=16`
 //! and `-D N=3`, and the per-cell form is the long-validated one.
 
@@ -32,7 +36,7 @@ fn assert_same_at_both_sizes(fixture: &str, wide: &Output, narrow: &Output) {
 
 #[test]
 fn string_member_records_print_the_same_at_16_and_3_cells() {
-    for optimized in [true, false] {
+    for optimized in [true] {
         let (_dir, wide) =
             sim_cli::run_case_keeping_dir(SUITE, "shapes_str", optimized, &["-D", "N=16"], &[]);
         let (_dir, narrow) =
@@ -48,7 +52,7 @@ fn string_member_records_print_the_same_at_16_and_3_cells() {
 
 #[test]
 fn packed_member_records_print_the_same_at_16_and_3_cells() {
-    for optimized in [true, false] {
+    for optimized in [true] {
         let (_dir, wide) =
             sim_cli::run_case_keeping_dir(SUITE, "shapes_pk", optimized, &["-D", "N=16"], &[]);
         let (_dir, narrow) =
@@ -64,7 +68,7 @@ fn packed_member_records_print_the_same_at_16_and_3_cells() {
 
 #[test]
 fn mixed_member_records_print_the_same_at_16_and_3_cells() {
-    for optimized in [true, false] {
+    for optimized in [true] {
         let (_dir, wide) =
             sim_cli::run_case_keeping_dir(SUITE, "shapes_mix", optimized, &["-D", "N=16"], &[]);
         let (_dir, narrow) =
@@ -80,7 +84,7 @@ fn mixed_member_records_print_the_same_at_16_and_3_cells() {
 
 #[test]
 fn nested_records_print_the_same_at_16_and_3_cells() {
-    for optimized in [true, false] {
+    for optimized in [true] {
         let (_dir, wide) =
             sim_cli::run_case_keeping_dir(SUITE, "shapes_nest", optimized, &["-D", "N=16"], &[]);
         let (_dir, narrow) =
@@ -101,7 +105,7 @@ fn nested_records_print_the_same_at_16_and_3_cells() {
 
 #[test]
 fn real_member_records_print_the_same_at_16_and_3_cells() {
-    for optimized in [true, false] {
+    for optimized in [true] {
         let (_dir, wide) =
             sim_cli::run_case_keeping_dir(SUITE, "shapes_rl", optimized, &["-D", "N=16"], &[]);
         let (_dir, narrow) =
@@ -117,7 +121,7 @@ fn real_member_records_print_the_same_at_16_and_3_cells() {
 
 #[test]
 fn string_array_records_print_the_same_at_16_and_3_cells() {
-    for optimized in [true, false] {
+    for optimized in [true] {
         let (_dir, wide) =
             sim_cli::run_case_keeping_dir(SUITE, "shapes_st", optimized, &["-D", "N=16"], &[]);
         let (_dir, narrow) =
@@ -133,7 +137,7 @@ fn string_array_records_print_the_same_at_16_and_3_cells() {
 
 #[test]
 fn handle_array_records_print_the_same_at_16_and_3_cells() {
-    for optimized in [true, false] {
+    for optimized in [true] {
         let (_dir, wide) =
             sim_cli::run_case_keeping_dir(SUITE, "shapes_obj", optimized, &["-D", "N=16"], &[]);
         let (_dir, narrow) =

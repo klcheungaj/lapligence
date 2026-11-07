@@ -21,7 +21,7 @@ fn assert_inactive_access(
     member: &str,
     expected_stdout: &str,
     source_location: &str,
-    finish: &str,
+    finish: (&str, &str),
     optimized: bool,
 ) {
     let output = run(fixture, optimized);
@@ -39,12 +39,16 @@ fn assert_inactive_access(
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/review_bundle")
         .join(format!("{fixture}.sv"));
+    let name = sim_harness::file_name(&source);
+    let (finish_at, finish_time) = finish;
     let expected_stderr = format!(
-        "llg: runtime error: access to inactive tagged-union member {member} at {}:{source_location}\nllg: $finish at {finish}\n",
-        sim_harness::source_display(&source)
+        "ERROR: {name}:{source_location}: [SIM-009] access to inactive tagged-union member {member}\n\
+         INFO: {name}:{finish_at}: [SIM-001] (tb @ {finish_time}) $finish called\n\
+         INFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n"
     );
     assert_eq!(
-        stderr, expected_stderr,
+        sim_harness::strip_lint_reports(&output.stderr),
+        expected_stderr,
         "{fixture}: unexpected runtime diagnostic or source location"
     );
 }
@@ -57,7 +61,7 @@ fn inactive_tagged_member_reads_and_writes_report_runtime_errors() {
             "B",
             "AFTER_INACTIVE_READ got=xx\n",
             "8:11",
-            "time 0 at tb:10:5",
+            ("10:5", "0 ps"),
             optimized,
         );
         assert_inactive_access(
@@ -65,7 +69,7 @@ fn inactive_tagged_member_reads_and_writes_report_runtime_errors() {
             "B",
             "AFTER_INACTIVE_WRITE active_A=11\n",
             "7:5",
-            "time 0 at tb:9:5",
+            ("9:5", "0 ps"),
             optimized,
         );
         assert_inactive_access(
@@ -73,7 +77,7 @@ fn inactive_tagged_member_reads_and_writes_report_runtime_errors() {
             "A",
             "AFTER_INACTIVE_SELECTED_NBA calls=1 active_B=55\n",
             "14:5",
-            "time 1000 at tb:19:5",
+            ("19:5", "1 ns"),
             optimized,
         );
         assert_inactive_access(
@@ -81,7 +85,7 @@ fn inactive_tagged_member_reads_and_writes_report_runtime_errors() {
             "A",
             "AFTER_INACTIVE_REF_WRITE active_B=55\n",
             "6:5",
-            "time 0 at tb:12:5",
+            ("12:5", "0 ps"),
             optimized,
         );
     }

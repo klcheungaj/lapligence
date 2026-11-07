@@ -146,7 +146,7 @@ fn null_handle_method_ends_the_simulation() {
         );
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .starts_with("llg: null process handle access: process::await\n"),
+                .starts_with("ERROR: [SIM-010] null process handle access: process::await\n"),
             "{label}: {output:?}"
         );
     });
@@ -163,7 +163,7 @@ fn null_handle_status_ends_the_statement() {
         );
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .starts_with("llg: null process handle access: process::status\n"),
+                .starts_with("ERROR: [SIM-010] null process handle access: process::status\n"),
             "{label}: {output:?}"
         );
     });
@@ -180,7 +180,7 @@ fn self_await_is_an_error() {
         );
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .starts_with("llg: process::await called on the current process\n"),
+                .starts_with("ERROR: [SIM-010] process::await called on the current process\n"),
             "{label}: {output:?}"
         );
     });
@@ -196,8 +196,9 @@ fn random_state_of_a_terminated_process_is_reported() {
             "{label}"
         );
         assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .starts_with("llg: random runtime: process::srandom on a terminated process\n"),
+            String::from_utf8_lossy(&output.stderr).starts_with(
+                "ERROR: [SIM-010] random runtime: process::srandom on a terminated process\n"
+            ),
             "{label}: {output:?}"
         );
     });

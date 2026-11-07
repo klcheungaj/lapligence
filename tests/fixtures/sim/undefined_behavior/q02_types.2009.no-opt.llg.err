@@ -1,2 +1,3 @@
-llg: warning: memory file `q02_hex.mem`: X/Z memory data converted to a two-state element
-llg: simulation ended without $finish (no processes remain) at time 0
+WARNING: [SIM-013] memory file `q02_hex.mem`: X/Z memory data converted to a two-state element
+INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0
+INFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)

@@ -7,7 +7,7 @@ foreach(boundary IN ITEMS concat repeat-overflow repeat-limit part-limit stream-
     plan-zero plan-indexed-zero plan-step-zero plan-invalid plan-storage plan-source plan-set array-shape)
   add_test(NAME compact_${mode}_selection_reject_${boundary} COMMAND "${CMAKE_COMMAND}"
     "-DPROBE=$<TARGET_FILE:compact_${mode}_selection_probe>" "-DMODE=${boundary}"
-    "-DEXPECTED=compact value fatal" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
+    "-DEXPECTED=compact value: " -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
 endforeach()
 if(UNIX AND NOT APPLE)
   add_executable(compact_${mode}_selection_allocations compact_selection_allocations.c)

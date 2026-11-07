@@ -177,7 +177,10 @@ fn runtime_failure<'a>(stdout: &'a str, diagnostic: &'a str) -> impl Fn(&str, &O
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
-        assert!(stderr.contains(diagnostic), "{label}: {stderr}");
+        assert!(
+            crate::sim_harness::mentions(&stderr, diagnostic),
+            "{label}: {stderr}"
+        );
     }
 }
 
@@ -202,7 +205,7 @@ fn unguarded_null_reference_fails_randomize() {
         &[],
         &runtime_failure(
             "ok=0 v=5\n",
-            "llg: error: randomize() at tb:14:10: null object handle in a constraint",
+            "ERROR: [SIM-010] randomize() at tb:14:10: null object handle in a constraint",
         ),
     );
 }
@@ -215,7 +218,7 @@ fn circular_function_ordering_fails_randomize() {
         &[],
         &runtime_failure(
             "ok=0\n",
-            "llg: error: randomize() at tb:12:10: circular function-argument order (`x`)",
+            "ERROR: [SIM-010] randomize() at tb:12:10: circular function-argument order (`x`)",
         ),
     );
 }
@@ -226,7 +229,7 @@ fn circular_function_ordering_fails_randomize() {
 fn exhausted_budget_is_distinct_from_unsat() {
     let failure = runtime_failure(
         "unsat ok=0\nresource ok=0 x=0 y=0\n",
-        "llg: error: randomize() at tb:18:10: solver budget",
+        "ERROR: [SIM-010] randomize() at tb:18:10: solver budget",
     );
     sim_cli::run_case_checked_matrix_with_env(
         SUITE,
@@ -238,7 +241,7 @@ fn exhausted_budget_is_distinct_from_unsat() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 stderr.contains(
-                    "llg: warning: randomize() at tb:16:10: the constraints cannot be satisfied; randomize returns 0"
+                    "WARNING: [SIM-011] randomize() at tb:16:10: the constraints cannot be satisfied; randomize returns 0"
                 ),
                 "{label}: {stderr}"
             );

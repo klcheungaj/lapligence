@@ -18,7 +18,7 @@ fn long_bodies_run_in_source_order_across_outlined_runs() {
         SUITE,
         "long_bodies",
         include_str!("fixtures/sim/outline_bodies/long_bodies.out"),
-        "llg: severity info: tb:2399:5: acc ff6abae8\n",
+        "INFO: long_bodies.sv:2399:5: [SIM-003] (tb @ 3 ns) acc ff6abae8\n",
         &[],
     );
 }

@@ -142,19 +142,31 @@ fn null_handle_check(stdout: &'static str, site: &'static str) -> impl Fn(&str, 
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
-        // Frontend lint warnings precede the run-time report.
-        let runtime = stderr
+        // The run-time error, then the run-time failure framed by the site
+        // and the time, then the end-of-run summary.
+        let runtime: Vec<_> = stderr
             .lines()
-            .filter(|line| !crate::sim_harness::is_compile_report_line(line))
-            .map(|line| format!("{line}\n"))
-            .collect::<String>();
+            .filter_map(llg::core::report::parse)
+            .filter(|message| message.tool() == "SIM")
+            .collect();
+        assert_eq!(runtime.len(), 3, "{label}: {stderr}");
+        assert_eq!(runtime[0].id, "SIM-010", "{label}: {stderr}");
         assert_eq!(
-            runtime,
-            format!(
-                "llg: null class handle access: {site}\nllg: severity fatal: {site}: null class handle access\n"
-            ),
+            runtime[0].text,
+            format!("null class handle access: {site}"),
             "{label}"
         );
+        assert_eq!(runtime[1].id, "SIM-009", "{label}: {stderr}");
+        assert_eq!(runtime[1].severity, llg::core::report::Severity::Fatal);
+        assert!(
+            runtime[1]
+                .context
+                .as_deref()
+                .is_some_and(|context| context.starts_with(&format!("{site} @ "))),
+            "{label}: {stderr}"
+        );
+        assert_eq!(runtime[1].text, "null class handle access", "{label}");
+        assert_eq!(runtime[2].id, "SIM-000", "{label}: {stderr}");
     }
 }
 
@@ -202,8 +214,11 @@ fn invalid_downcasts_return_zero_or_report() {
             "{label}"
         );
         assert!(
-            stderr.contains(
-                "llg: runtime error: $cast failed to assign an incompatible value at tb:25:9\n"
+            crate::sim_harness::has_message(
+                &stderr,
+                "SIM-009",
+                ":25:9",
+                "$cast failed to assign an incompatible value"
             ),
             "{label}: {stderr}"
         );

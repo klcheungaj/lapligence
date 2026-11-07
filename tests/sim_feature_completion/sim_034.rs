@@ -34,7 +34,7 @@ fn drives_and_cycle_delays_follow_the_region_and_time_oracle() {
     after_db_drop(
         "drive_timeline",
         expected,
-        "llg: $finish at time 53 at tb:77:8\n",
+        "INFO: drive_timeline.sv:77:8: [SIM-001] (tb @ 53 ns) $finish called\n",
     );
 }
 
@@ -47,7 +47,7 @@ fn virtual_interface_drives_stay_on_the_instance_named_at_issue() {
     after_db_drop(
         "vif_drives",
         expected,
-        "llg: $finish at time 35 at tb:82:9\n",
+        "INFO: vif_drives.sv:82:9: [SIM-001] (tb @ 35 ns) $finish called\n",
     );
 }
 

@@ -215,7 +215,7 @@ fn invalid_pulse_controls_are_rejected() {
     sim_cli::reject_case_with_args(
         SUITE,
         "options.v",
-        "llg: the pulse error limit (40%) is below the pulse reject limit (80%)",
+        "the pulse error limit (40%) is below the pulse reject limit (80%)",
         &["--pulse-reject", "80", "--pulse-error", "40"],
     );
 }

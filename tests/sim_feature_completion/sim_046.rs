@@ -18,13 +18,9 @@ fn assert_stdout(label: &str, output: &Output, expected: &str) {
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
 }
 
-/// The `llg:` lines of a run's stderr other than the `$finish` report.
+/// The run-time messages of a run's stderr ([`super::sim_harness::runtime_messages`]).
 fn llg_messages(output: &Output) -> Vec<String> {
-    String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter(|line| line.starts_with("llg: ") && !line.starts_with("llg: $finish"))
-        .map(str::to_owned)
-        .collect()
+    super::sim_harness::runtime_messages(&String::from_utf8_lossy(&output.stderr))
 }
 
 #[test]
@@ -195,7 +191,7 @@ fn functional_payload(records: &[&[u8]]) -> Vec<u8> {
 fn corrupt_and_foreign_databases_change_nothing() {
     let error = |reason: &str| {
         format!(
-            "llg: runtime error: $load_coverage_db at tb:21:40: coverage database `bad.db` was not loaded: {reason}; no coverage changed"
+            "ERROR: [SIM-010] $load_coverage_db at tb:21:40: coverage database `bad.db` was not loaded: {reason}; no coverage changed"
         )
     };
     for optimized in [false, true] {
@@ -343,13 +339,13 @@ fn corrupt_and_foreign_databases_change_nothing() {
         assert_eq!(messages.len(), 2, "{label}: {messages:?}");
         assert!(
             messages[0].starts_with(
-                "llg: runtime error: $load_coverage_db at tb:21:40: coverage database `missing.db` was not loaded: "
+                "ERROR: [SIM-010] $load_coverage_db at tb:21:40: coverage database `missing.db` was not loaded: "
             ),
             "{label}: {messages:?}"
         );
         assert!(
             messages[1].starts_with(
-                "llg: runtime error: end of simulation: coverage database `nodir/x.db` was not saved: "
+                "ERROR: [SIM-010] end of simulation: coverage database `nodir/x.db` was not saved: "
             ),
             "{label}: {messages:?}"
         );
@@ -492,7 +488,7 @@ fn coverage_control_status_values_follow_table_40_1() {
 fn failed_assertion_merges_change_no_counter() {
     let error = |name: &str, reason: &str| {
         format!(
-            "llg: runtime error: $coverage_merge at tb:15:29: coverage database `{name}` was not merged: {reason}; no coverage changed"
+            "ERROR: [SIM-010] $coverage_merge at tb:15:29: coverage database `{name}` was not merged: {reason}; no coverage changed"
         )
     };
     let one = vec![[1, 1, 0, 0, 0, 0]; 2];
@@ -633,7 +629,7 @@ fn failed_assertion_merges_change_no_counter() {
         for (message, site) in messages.iter().zip(["tb:15:29", "tb:17:30"]) {
             assert!(
                 message.starts_with(&format!(
-                    "llg: runtime error: $coverage_merge at {site}: coverage database `missing.db` was not merged: "
+                    "ERROR: [SIM-010] $coverage_merge at {site}: coverage database `missing.db` was not merged: "
                 )),
                 "{label}: {message}"
             );
@@ -731,7 +727,7 @@ fn statement_counters_keep_the_shape_of_the_counted_code() {
         let messages = llg_messages(output);
         assert_eq!(messages.len(), 1, "{label}: {messages:?}");
         assert!(
-            messages[0].starts_with("llg: warning: unique violation at ")
+            messages[0].starts_with("WARNING: [SIM-011] unique violation at ")
                 && messages[0].ends_with("statement_shapes.sv:25:5: multiple matching items"),
             "{label}: {messages:?}"
         );
@@ -827,7 +823,7 @@ fn statement_and_toggle_sections_save_and_merge_across_runs() {
         assert_eq!(outputs[2].status.code(), Some(1), "{label}");
         assert_eq!(
             llg_messages(&outputs[2]),
-            ["llg: runtime error: $coverage_merge at tb:17:16: coverage database `a.t.db` was not merged: it was saved by a model with different signals; no coverage changed"],
+            ["ERROR: [SIM-010] $coverage_merge at tb:17:16: coverage database `a.t.db` was not merged: it was saved by a model with different signals; no coverage changed"],
             "{label}"
         );
         let read = |name: &str| std::fs::read(directory.path().join(name)).expect(name);

@@ -11,7 +11,7 @@ use crate::sim_harness;
 const SUITE: &str = "syn032_library_configs";
 const EXPECTED: &str = "cell=22 value=3\ncell=11 value=4\ndefault=11\n";
 const EXPECTED_STDERR: &str =
-    "llg: simulation ended without $finish (no processes remain) at time 0\n";
+    "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n";
 
 fn fixture(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -67,7 +67,7 @@ fn macro_generated_maps_select_runtime_designs_in_both_editions() {
             SUITE,
             "incdir_top",
             "incdir=17,23\n",
-            "llg: $finish at time 1000 at incdir_top:10:5\n",
+            "INFO: incdir_top.sv:10:5: [SIM-001] (incdir_top @ 1 ns) $finish called\n",
             &[],
             &[
                 "--edition",
@@ -1004,7 +1004,7 @@ fn library_map_incdirs_select_scoped_headers_in_both_editions() {
                     SUITE,
                     "incdir_top",
                     expected,
-                    "llg: $finish at time 1000 at incdir_top:10:5\n",
+                    "INFO: incdir_top.sv:10:5: [SIM-001] (incdir_top @ 1 ns) $finish called\n",
                     &[],
                     &args,
                 );

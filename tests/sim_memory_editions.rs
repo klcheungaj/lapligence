@@ -23,7 +23,12 @@ fn signed_address_spellings_and_hex_boundaries_select_the_same_cells() {
             "memory_editions",
             "signed_address",
             expected,
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
+            if edition == "v2001" {
+                "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n\
+                 INFO: [SIM-000] 0 error(s), 2 warning(s), 1 info(s)\n"
+            } else {
+                "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n"
+            },
             warnings,
             &["--edition", edition],
             &[("signed.mem", words)],
@@ -62,7 +67,7 @@ fn signed_address_overflow_and_out_of_range_stop_before_writing() {
         ] {
             let contents = format!("@-9 aa {word} bb\n");
             let stderr = format!(
-                "llg: error: memory file `signed.mem`: {diagnostic}\nllg: error: memory file `signed.mem`: {diagnostic}\nllg: simulation ended without $finish (no processes remain) at time 0\n"
+                "ERROR: [SIM-014] memory file `signed.mem`: {diagnostic}\nERROR: [SIM-014] memory file `signed.mem`: {diagnostic}\nINFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\nINFO: [SIM-000] 2 error(s), 0 warning(s), 1 info(s)\n"
             );
             sim_cli::run_case_with_files(
                 "memory_editions",
@@ -126,7 +131,7 @@ fn omitted_memory_range_keeps_the_selected_edition_order() {
         "memory_editions",
         "default_order",
         "m1=11 m0=22\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
         &[],
         &["--edition", "v2001"],
         &[("words.mem", "11\n22\n")],
@@ -135,7 +140,7 @@ fn omitted_memory_range_keeps_the_selected_edition_order() {
         "memory_editions",
         "default_order",
         "m1=22 m0=11\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
         &[],
         &["--edition", "sv2009"],
         &[("words.mem", "11\n22\n")],
@@ -148,7 +153,8 @@ fn start_only_memory_range_uses_the_edition_default_finish() {
         "memory_editions",
         "start_only",
         "m3=00 m2=aa m1=bb m0=00\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n\
+         INFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &["memory file `words.mem`: memory file contains too few words for the selected range"],
         &["--edition", "v2001"],
         &[("words.mem", "aa\nbb\n")],
@@ -157,7 +163,7 @@ fn start_only_memory_range_uses_the_edition_default_finish() {
         "memory_editions",
         "start_only",
         "m3=bb m2=aa m1=00 m0=00\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
         &[],
         &["--edition", "sv2009"],
         &[("words.mem", "aa\nbb\n")],
@@ -170,7 +176,7 @@ fn explicit_descending_range_and_address_jumps_preserve_source_direction() {
         "memory_editions",
         "explicit_descending",
         "m0=00 m1=33 m2=22 m3=11\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
         &[],
         &["--edition", "sv2009"],
         &[("words.mem", "11\n22\n33\n")],
@@ -179,7 +185,7 @@ fn explicit_descending_range_and_address_jumps_preserve_source_direction() {
         "memory_editions",
         "address_jump",
         "m0=c3 m1=b2 m2=d4 m3=a1\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
         &[],
         &["--edition", "sv2009"],
         &[("jumps.mem", "@3\na1\n@1\nb2\nc3\n@2\nd4\n")],
@@ -192,7 +198,7 @@ fn truncated_data_and_two_state_conversion_keep_prior_values_and_diagnose() {
         "memory_editions",
         "truncated",
         "m0=7f m1=b1\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &["memory file `short.mem`: memory file contains too few words for the selected range"],
         &["--edition", "sv2009"],
         &[("short.mem", "7f\n")],
@@ -201,7 +207,8 @@ fn truncated_data_and_two_state_conversion_keep_prior_values_and_diagnose() {
         "memory_editions",
         "two_state",
         "m0=1000 m1=1010\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n\
+         INFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &["memory file `unknown.mem`: X/Z memory data converted to a two-state element"],
         &["--edition", "sv2009"],
         &[("unknown.mem", "1x0z\n1010\n")],
@@ -214,10 +221,7 @@ fn invalid_address_terminates_after_already_loaded_values() {
         "memory_editions",
         "invalid_address",
         "m0=00 m1=aa m2=02 m3=03\n",
-        concat!(
-            "llg: error: memory file `bad.mem`: address jump is outside the destination memory or selected range; load terminated\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
+        "ERROR: [SIM-014] memory file `bad.mem`: address jump is outside the destination memory or selected range; load terminated\nINFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\nINFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n",
         &[],
         &["--edition", "sv2009"],
         &[("bad.mem", "@1\naa\n@3\nbb\n")],
@@ -232,7 +236,7 @@ fn enum_memory_data_takes_non_members_and_stops_at_a_word_too_long() {
         "memory_editions",
         "enum_invalid",
         "m0=00 m1=10\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
         &[],
         &["--edition", "sv2009"],
         &[("enum.mem", "0\n2\n")],
@@ -241,10 +245,7 @@ fn enum_memory_data_takes_non_members_and_stops_at_a_word_too_long() {
         "memory_editions",
         "enum_invalid",
         "m0=00 m1=01\n",
-        concat!(
-            "llg: error: memory file `enum.mem`: memory word has more digits than the element holds; load terminated\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
+        "ERROR: [SIM-014] memory file `enum.mem`: memory word has more digits than the element holds; load terminated\nINFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\nINFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n",
         &[],
         &["--edition", "sv2009"],
         &[("enum.mem", "00\n02\n")],
@@ -271,7 +272,7 @@ fn enum_memory_word_of_one_digit_is_truncated_to_the_base() {
             .expect("read enum overflow input after a valid word"),
             "AFTER_ENUM_LOAD 0 0\n",
             // The third word has no cell and ends the load (S27-D8).
-            "llg: error: memory file `enum_overflow.hex`: memory word address is outside the destination memory; load terminated\n",
+            "ERROR: [SIM-014] memory file `enum_overflow.hex`: memory word address is outside the destination memory; load terminated\n",
         ),
     ];
     // `4` has one digit, which a two-bit base holds: it is truncated to 0
@@ -281,7 +282,14 @@ fn enum_memory_word_of_one_digit_is_truncated_to_the_base() {
             "review_bundle",
             "r08_enum_readmem_overflow",
             expected,
-            &format!("{error}llg: $finish at time 0 at tb:10:5\n"),
+            &format!(
+                "{error}INFO: r08_enum_readmem_overflow.sv:10:5: [SIM-001] (tb @ 0 ps) $finish called\n{}",
+                if error.is_empty() {
+                    ""
+                } else {
+                    "INFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n"
+                }
+            ),
             &[],
             &["--edition", "sv2009"],
             &[("enum_overflow.hex", words.as_str())],
@@ -324,8 +332,9 @@ fn enum_memory_range_check_preserves_packed_truncation_and_signed_values() {
             // `3` fits the two-bit signed base and loads as -1 (S27-D4); `1x`
             // has a digit more than the base holds, so the load stops with the
             // memory unchanged (S27-D2).
-            "llg: error: memory file `enum_unknown.hex`: memory word has more digits than the element holds; load terminated\n",
-            "llg: $finish at time 0 at tb:17:5\n",
+            "ERROR: [SIM-014] memory file `enum_unknown.hex`: memory word has more digits than the element holds; load terminated\n",
+            "INFO: r08_memory_readmem_controls.sv:17:5: [SIM-001] (tb @ 0 ps) $finish called\n",
+            "INFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n",
         ),
         &[],
         &["--edition", "sv2009"],
@@ -347,7 +356,7 @@ fn wide_enum_memory_loads_without_a_member_table() {
         "memory_editions",
         "enum_wide",
         "PASS wide enum memory\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
         &[],
         &[],
         &[("enum_wide.mem", "1\n2\n3\n4\n")],
@@ -371,7 +380,7 @@ fn memory_file_tasks_accept_multidimensional_arrays() {
         "memory_editions",
         "multidim_2009",
         "",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
         &[],
         &["--edition", "sv2009"],
         &[("bad.mem", "11\n22\n33\n44\n")],

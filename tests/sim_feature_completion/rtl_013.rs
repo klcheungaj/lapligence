@@ -122,7 +122,7 @@ fn strings_wake_implicit_sensitivity() {
         SUITE,
         "native_comb",
         witness,
-        "llg: $finish at time 1000 at tb:7:1\n",
+        "INFO: native_comb.sv:7:1: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }
@@ -177,7 +177,7 @@ fn neg_timing_forks_and_event_controls() {
     sim_cli::reject_case(
         SUITE,
         "neg_ff_wait",
-        "always_ff process `tb` cannot contain a timing control at",
+        "always_ff process `tb` cannot contain a timing control",
     );
 }
 

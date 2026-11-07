@@ -401,7 +401,7 @@ fn region_wait_edge_nba_commit() {
 /// 7. An infinite zero-delay loop (`always begin #0; end`) must be stopped by
 ///    the runtime's zero-loop guard (LLG_ZERO_LOOP_LIMIT region passes within
 ///    one time step), not hang the simulation.  The runtime prints
-///    "llg: zero-delay loop detected at time 0" to stderr, breaks out of the
+///    "ERROR: [SIM-010] zero-delay loop detected at time 0" to stderr, breaks out of the
 ///    region loop and main returns a controlled nonzero status.
 const ZERO_DELAY_LOOP_GUARD_SV: &str = r#"`timescale 1ns/1ns
 module tb;
@@ -419,7 +419,7 @@ endmodule
 //        the guard message and breaks.
 //
 // Expected stdout: (empty)
-// Expected stderr contains: "llg: zero-delay loop detected at time 0"
+// Expected stderr contains: "ERROR: [SIM-010] zero-delay loop detected at time 0"
 // Expected exit: failure (1), because the simulation did not converge.
 
 #[test]
@@ -436,7 +436,7 @@ fn region_zero_delay_loop_guard() {
     assert!(run.stdout.is_empty());
     let stderr = run.stderr;
     assert!(
-        stderr.contains("llg: zero-delay loop detected at time 0"),
+        stderr.contains("ERROR: [SIM-010] zero-delay loop detected at time 0"),
         "stderr did not contain the zero-delay loop guard message: {stderr}"
     );
 }

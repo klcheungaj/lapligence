@@ -540,7 +540,9 @@ fn hierarchical_driver_preserves_r05_inout_compatibility() {
         );
         let warnings = stderr
             .lines()
-            .filter_map(|line| line.strip_prefix("llg: warning: "))
+            .filter_map(llg::core::report::parse)
+            .filter(|message| message.id == llg::core::report::catalog::CODEGEN_WARNING.id())
+            .map(|message| message.text)
             .collect::<Vec<_>>();
         assert_eq!(warnings.len(), 1, "optimized={optimized}: {stderr}");
         assert!(

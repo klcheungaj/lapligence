@@ -28,7 +28,8 @@ commands live in [readme.md](readme.md); CI rules in [ci.md](ci.md).
   withholds blocking-error snapshots.
 - Serialize parent CWD changes with a fresh temp directory and unwind-safe
   restoration; isolate child CWDs.
-- Run public fixtures with default optimization and `--no-opt`. Missing tools
+- Run public fixtures with default optimization and `--no-opt` (user-approved
+  exception: the `ki_record_shapes` default tier, see its module docs). Missing tools
   block acceptance; they are never a skip or a pass, except the documented
   `sim_cmake` and native-DPI skips ([suite contracts](readme.md#suite-contracts)).
 - Expected-output changes need a feature/clause justification; never bless them

@@ -47,7 +47,7 @@ fn declaration_initialization_keeps_edition_specific_scheduling() {
         "partial_features",
         "declaration_init_edition",
         "PASS declaration_init_edition\n",
-        "llg: $finish at time 0 at tb:15:9\n",
+        "INFO: declaration_init_edition.sv:15:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "v2001"],
     );
@@ -55,7 +55,7 @@ fn declaration_initialization_keeps_edition_specific_scheduling() {
         "partial_features",
         "declaration_init_edition",
         "PASS declaration_init_edition\n",
-        "llg: $finish at time 0 at tb:15:9\n",
+        "INFO: declaration_init_edition.sv:15:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -70,7 +70,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "partial_features",
         "edition_legacy_forms",
         "legacy=1 ansi=1 comb=1 signed=-1 init=x\n",
-        "llg: $finish at time 0 at tb:31:9\n",
+        "INFO: edition_legacy_forms.sv:31:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "v2001"],
     );
@@ -78,7 +78,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "partial_features",
         "edition_legacy_forms",
         "legacy=1 ansi=1 comb=1 signed=-1 init=x\n",
-        "llg: $finish at time 0 at tb:31:9\n",
+        "INFO: edition_legacy_forms.sv:31:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -86,7 +86,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "partial_features",
         "edition_2009_sv_types",
         "sv_types=0b width=4\n",
-        "llg: $finish at time 0 at tb:25:9\n",
+        "INFO: edition_2009_sv_types.sv:25:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -94,7 +94,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "partial_features",
         "edition_2009_whole_arrays",
         "whole=12 34 equal=1\n",
-        "llg: $finish at time 0 at tb:27:9\n",
+        "INFO: edition_2009_whole_arrays.sv:27:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -102,7 +102,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "partial_features",
         "edition_begin_keywords_legacy_identifier",
         "legacy_name=1\n",
-        "llg: $finish at time 0 at tb:10:9\n",
+        "INFO: edition_begin_keywords_legacy_identifier.sv:10:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -320,8 +320,8 @@ fn edition_later_forms_cli_contrast() {
         "deferred_assertions",
         "sampled=0 reference=1\n",
         concat!(
-            "llg: $finish at time 1000 at tb:14:5\n",
-            "llg: simulation statistics: processes=1\n",
+            "INFO: deferred_assertions.sv:14:5: [SIM-001] (tb @ 1 ns) $finish called\n",
+            "INFO: [SIM-008] simulation statistics: processes=1\n",
         ),
         &[],
         &["--edition", "sv2009"],

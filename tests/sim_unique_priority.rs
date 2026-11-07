@@ -15,7 +15,7 @@ fn unique_case_reports_overlapping_items_but_keeps_first_branch() {
         "unique_priority",
         "overlap",
         "first\n",
-        "llg: $finish at time 0 at tb:10:9\n",
+        "INFO: overlap.sv:10:9: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &[warning.as_str()],
     );
 }
@@ -32,7 +32,7 @@ fn unique0_case_reports_overlapping_items_without_no_match_warning() {
         "unique_priority",
         "unique0_overlap",
         "unique0-first\n",
-        "llg: $finish at time 0 at tb:10:9\n",
+        "INFO: unique0_overlap.sv:10:9: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &[warning.as_str()],
     );
 }
@@ -61,7 +61,7 @@ fn qualifiers_distinguish_no_match_and_default_or_else_suppression() {
         "unique_priority",
         "no_match",
         "case-default\nif-else\n",
-        "llg: $finish at time 0 at tb:31:9\n",
+        "INFO: no_match.sv:31:9: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 4 warning(s), 1 info(s)\n",
         &[
             unique_case.as_str(),
             priority_case.as_str(),
@@ -83,7 +83,7 @@ fn case_flavors_keep_four_state_matching_for_qualifier_checks() {
         "unique_priority",
         "wildcards",
         "casez\ncasex\n",
-        "llg: $finish at time 0 at tb:17:9\n",
+        "INFO: wildcards.sv:17:9: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &[exact.as_str()],
     );
 }
@@ -100,7 +100,7 @@ fn qualified_if_ladder_reports_when_every_condition_is_false_or_unknown() {
         "unique_priority",
         "ladder",
         "",
-        "llg: $finish at time 0 at tb:12:9\n",
+        "INFO: ladder.sv:12:9: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &[warning.as_str()],
     );
 }
@@ -117,7 +117,7 @@ fn qualified_if_ladder_reports_multiple_true_conditions() {
         "unique_priority",
         "if_overlap",
         "first\n",
-        "llg: $finish at time 0 at tb:12:9\n",
+        "INFO: if_overlap.sv:12:9: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &[warning.as_str()],
     );
 }
@@ -134,7 +134,7 @@ fn qualified_real_case_reports_overlaps_after_capturing_selector() {
         "unique_priority",
         "real_case",
         "real-first\n",
-        "llg: $finish at time 0 at tb:10:9\n",
+        "INFO: real_case.sv:10:9: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &[warning.as_str()],
     );
 }
@@ -151,7 +151,7 @@ fn qualified_case_inside_counts_overlapping_membership_groups() {
         "unique_priority",
         "inside",
         "inside-first\n",
-        "llg: $finish at time 0 at tb:11:9\n",
+        "INFO: inside.sv:11:9: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &[warning.as_str()],
     );
 }

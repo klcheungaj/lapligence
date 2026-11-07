@@ -101,6 +101,9 @@ fn random_runtime_vectors_and_boundaries_are_stable_at_both_optimization_levels(
         let dir = sim_harness::TempDir::new(&format!("runtime-random-{optimization}"))
             .expect("create random runtime directory");
         std::fs::write(dir.path().join("llg_random.h"), header).expect("write random header");
+        for (name, contents) in llg::sim::rt::message_headers() {
+            std::fs::write(dir.path().join(name), contents).expect("write message header");
+        }
         std::fs::write(dir.path().join("llg_random.c"), implementation)
             .expect("write random implementation");
         std::fs::write(dir.path().join("random_probe.c"), RANDOM_PROBE)

@@ -18,13 +18,12 @@ fn assert_stdout(label: &str, output: &Output, expected: &str) {
 
 /// The lowering warnings of a run, without the source path prefix.
 fn lowering_warnings(output: &Output) -> Vec<String> {
-    String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter_map(|line| line.strip_prefix("llg: warning: "))
+    super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
+        .iter()
         .map(|warning| {
             warning
                 .split_once(".sv:")
-                .map_or(warning, |(_, rest)| rest)
+                .map_or(warning.as_str(), |(_, rest)| rest)
                 .to_owned()
         })
         .collect()

@@ -9,7 +9,8 @@ fn hierarchical_static_function_return_slot_binds_to_task_ref_formal() {
         "CLI tests require CMake"
     );
 
-    let expected_stderr = "llg: $finish at time 0 at tb:18:9\n";
+    let expected_stderr =
+        "INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\n";
     for optimized in [false, true] {
         let output = sim_cli::invoke_with_env(
             "syn038_pairwise",

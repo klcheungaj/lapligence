@@ -30,17 +30,18 @@ fn stdout_text(label: &str, output: &Output) -> String {
         .unwrap_or_else(|error| panic!("{label}: stdout is not UTF-8: {error}"))
 }
 
-/// The memory-file diagnostics on stderr, in order, without the `llg: `
-/// prefix: `warning: memory file ...` or `error: memory file ...`.
+/// The memory-file diagnostics on stderr (`SIM-013`, `SIM-014`), in order,
+/// as `warning: memory file ...` or `error: memory file ...`.
 fn memory_diagnostics(output: &Output) -> Vec<String> {
     let stderr = llg::ffi::platform::native_text_to_lf(output.stderr.clone());
     String::from_utf8_lossy(&stderr)
         .lines()
-        .filter_map(|line| line.strip_prefix("llg: "))
-        .filter(|line| {
-            line.starts_with("warning: memory file ") || line.starts_with("error: memory file ")
+        .filter_map(llg::core::report::parse)
+        .filter_map(|message| match message.id.as_str() {
+            "SIM-013" => Some(format!("warning: {}", message.text)),
+            "SIM-014" => Some(format!("error: {}", message.text)),
+            _ => None,
         })
-        .map(str::to_owned)
         .collect()
 }
 
@@ -579,7 +580,7 @@ fn null_class_handles_stop_before_the_memory_file_task() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 stderr.contains(&format!(
-                    "llg: null class handle access: property access at {location}"
+                    "ERROR: [SIM-010] null class handle access: property access at {location}"
                 )),
                 "{label}: {stderr}"
             );

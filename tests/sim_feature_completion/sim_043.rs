@@ -112,11 +112,11 @@ late cbEndOfSimulation: handle none\n";
             assert!(output.status.success(), "{label}: {stderr}");
             assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
             assert_eq!(
-                stderr.matches("$stop at time 3").count(),
+                stderr.matches("(3 ns) $stop called").count(),
                 1,
                 "{label}: {stderr}"
             );
-            assert!(!stderr.contains("$finish"), "{label}: {stderr}");
+            assert!(!stderr.contains("$finish called"), "{label}: {stderr}");
         },
     );
 }
@@ -149,7 +149,7 @@ fn start_of_simulation_stop_resumes_under_the_default_policy() {
         &[("LLG_VPI_PLUGIN", &library), ("SIM043_START_CONTROL", "stop")],
         &start_control_check(
             "vpiStop -> 1 none\nstart returns\n[0] hdl: initial\n[2] hdl: later\n[2] final\n[2] end\n",
-            "$stop at time 0",
+            "(0 ns) $stop called",
         ),
     );
 }
@@ -172,7 +172,7 @@ fn start_of_simulation_stop_suspends_before_the_run_under_exit_policy() {
         ],
         &start_control_check(
             "vpiStop -> 1 none\nstart returns\n[0] end\n",
-            "$stop at time 0",
+            "(0 ns) $stop called",
         ),
     );
 }
@@ -195,7 +195,7 @@ fn start_of_simulation_finish_ends_before_the_run() {
         ],
         &start_control_check(
             "vpiFinish level 7 -> 1 none\nstart returns\n[0] final\n[0] end\n",
-            "$finish at time 0",
+            "(0 ns) $finish called",
         ),
     );
 }

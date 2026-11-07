@@ -40,7 +40,7 @@ fn qualified_string_case_inside_keeps_first_match_and_qualifiers() {
         "feature_completion/g1_21",
         "qualified_string_inside",
         "a o=1\nb o=2\nc o=2\nd o=2\n",
-        "",
+        "INFO: [SIM-000] 0 error(s), 1 warning(s)\n",
         &[warning.as_str()],
     );
 }

@@ -165,7 +165,7 @@ fn foreach_omissions_containers_and_real_locals_follow_source_order() {
         "loops",
         "foreach_extended",
         "first=345 count=3 last=21 omitted=17 dynamic=15 queue=24 assoc=159 string_assoc=123 remaining=0 real=3.000000 shadow=221.000000 control=2.000000 fn=3 capture=3.000000\n",
-        "llg: $finish at time 0 at tb:124:9\n",
+        "INFO: foreach_extended.sv:124:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }

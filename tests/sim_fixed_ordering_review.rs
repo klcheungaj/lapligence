@@ -7,7 +7,7 @@ fn unpacked_record_reverse_preserves_fields() {
         "review_bundle",
         "r07_unpacked_record_reverse",
         "PASS r07_unpacked_record_reverse\n",
-        "llg: $finish at time 0 at tb:13:5\n",
+        "INFO: r07_unpacked_record_reverse.sv:13:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -19,7 +19,7 @@ fn unpacked_record_sort_uses_integral_map_key() {
         "review_bundle",
         "r07_unpacked_record_sort",
         "PASS r07_unpacked_record_sort\n",
-        "llg: $finish at time 0 at tb:13:5\n",
+        "INFO: r07_unpacked_record_sort.sv:13:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -31,7 +31,7 @@ fn fixed_rows_are_reversed_and_sorted_as_owned_elements() {
         "review_bundle",
         "r07_fixed_rows",
         "PASS r07_fixed_rows\n",
-        "llg: $finish at time 0 at tb:35:5\n",
+        "INFO: r07_fixed_rows.sv:35:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );

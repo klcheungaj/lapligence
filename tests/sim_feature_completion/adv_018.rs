@@ -123,7 +123,7 @@ fn suspension_protocol_violations_are_fatal_errors() {
         &args,
         &fatal_after(
             "start\nc_func enter\nc_func status=0\n",
-            "llg: DPI-C exported task `sv_wait_e` can consume time, but its foreign caller cannot suspend: only a context imported task may call it (SV 35.8)",
+            "ERROR: [SIM-017] DPI-C exported task `sv_wait_e` can consume time, but its foreign caller cannot suspend: only a context imported task may call it (SV 35.8)",
         ),
     );
     sim_cli::run_case_checked_matrix(
@@ -132,7 +132,7 @@ fn suspension_protocol_violations_are_fatal_errors() {
         &args,
         &fatal_after(
             "start\nc_no_ack enter\nc_no_ack status=1 returns 0\n",
-            "llg: DPI-C import task `c_no_ack` returned 0 although a disable cancelled it (SV 35.9 item b)",
+            "ERROR: [SIM-017] DPI-C import task `c_no_ack` returned 0 although a disable cancelled it (SV 35.9 item b)",
         ),
     );
     sim_cli::run_case_checked_matrix(
@@ -141,7 +141,7 @@ fn suspension_protocol_violations_are_fatal_errors() {
         &args,
         &fatal_after(
             "start\nc_again enter\nc_again status=1 disabled=1\n",
-            "llg: DPI-C export `sv_wait_e` was called after a disable cancelled the calling import (SV 35.9 item d)",
+            "ERROR: [SIM-017] DPI-C export `sv_wait_e` was called after a disable cancelled the calling import (SV 35.9 item d)",
         ),
     );
 }

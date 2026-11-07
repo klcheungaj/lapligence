@@ -51,7 +51,7 @@ fn legal_2001_composition_executes_in_both_editions() {
                 "legal_2001.v",
                 &[],
                 include_str!("../fixtures/sim/feature_completion/rtl_106/legal_2001.out"),
-                "llg: $finish at time 10 at tb:120:5\n",
+                "INFO: legal_2001.v:120:5: [SIM-001] (tb @ 10 ns) $finish called\n",
                 &["--edition", edition],
                 &envs,
             );
@@ -284,7 +284,7 @@ fn frontend_diagnostics_append_the_line_mapped_position() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("line_macro_error.sv:3:9 variable 'a'"),
+        super::sim_harness::mentions(&stderr, "line_macro_error.sv:3:9 variable 'a'"),
         "{stderr}"
     );
 }
@@ -293,27 +293,15 @@ fn frontend_diagnostics_append_the_line_mapped_position() {
 /// do not change the simulated result.
 #[test]
 fn lint_findings_append_the_line_mapped_position() {
-    // One component per join: llg prints the path with native separators.
-    let fixture = ["tests", "fixtures", "sim"]
-        .into_iter()
-        .chain(SUITE.split('/'))
-        .chain(["line_lint.v"])
-        .fold(
-            Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf(),
-            |path, part| path.join(part),
-        );
-    let lint = format!(
-        "{}:7:5 (`line orig_lint.v:31): [WARNING] incomplete-case: case without default in combinational process may infer a latch\n\
-         lint: 0 error(s), 1 warning(s)\n",
-        fixture.display()
-    );
+    let lint = "WARNING: line_lint.v:7:5 (`line orig_lint.v:31): [LINT-003] case without default in combinational process may infer a latch (incomplete-case)\n\
+                INFO: [LINT-000] 0 error(s), 1 warning(s)\n";
     for edition in ["v2001", "sv2009"] {
         // The simulation is unchanged by the warning...
         sim_cli::run_case_with_args(
             SUITE,
             "line_lint.v",
             "y=1\n",
-            "llg: $finish at time 1 at tb:15:5\n",
+            "INFO: line_lint.v:15:5 (`line orig_lint.v:39): [SIM-001] (tb @ 1 ns) $finish called\n",
             &[],
             &["--edition", edition],
         );
@@ -332,7 +320,11 @@ fn lint_findings_append_the_line_mapped_position() {
             .split_inclusive('\n')
             .filter(|line| super::sim_harness::is_lint_report_line(line.trim_end()))
             .collect();
-        assert_eq!(report, lint, "{edition}");
+        assert_eq!(
+            super::sim_harness::canonical_messages(&report),
+            lint,
+            "{edition}"
+        );
     }
     // `--lint-json` takes a following operand as its output path.
     let output = sim_cli::invoke_with_env(

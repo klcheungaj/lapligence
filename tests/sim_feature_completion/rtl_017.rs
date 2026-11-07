@@ -5,7 +5,8 @@ use super::{sim_cli, sim_harness};
 use std::path::Path;
 
 const SUITE: &str = "feature_completion/rtl_017";
-const NO_FINISH: &str = "llg: simulation ended without $finish (no processes remain) at time 0\n";
+const NO_FINISH: &str =
+    "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n";
 
 #[test]
 fn saturating_records_overload_every_operator_form() {
@@ -19,7 +20,7 @@ fn saturating_records_overload_every_operator_form() {
 #[test]
 fn result_types_are_selected_by_context_or_cast() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_017/result_casts.out");
-    let stderr = "llg: $finish at time 2000 at tb:63:8\n";
+    let stderr = "INFO: result_casts.sv:63:8: [SIM-001] (tb @ 2 ns) $finish called\n";
     sim_cli::run_case(SUITE, "result_casts", expected, stderr, &[]);
     sim_cli::run_case_backend_parity(SUITE, "result_casts", expected, &[], &[]);
 }
@@ -36,7 +37,7 @@ fn declarations_follow_scope_order_and_shadowing() {
 fn fixed_point_records_compose_with_ports_and_processes() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/rtl_017/fixed_point_pipeline.out");
-    let stderr = "llg: $finish at time 5000 at tb:66:5\n";
+    let stderr = "INFO: fixed_point_pipeline.sv:66:5: [SIM-001] (tb @ 5 ns) $finish called\n";
     sim_cli::run_case(SUITE, "fixed_point_pipeline", expected, stderr, &[]);
     sim_cli::run_case_backend_parity(SUITE, "fixed_point_pipeline", expected, &[], &[]);
 }
@@ -45,7 +46,7 @@ fn fixed_point_records_compose_with_ports_and_processes() {
 fn oversized_array_operands_cross_overloads_as_descriptors() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/rtl_017/descriptor_operands.out");
-    let stderr = "llg: $finish at time 0 at tb:46:5\n";
+    let stderr = "INFO: descriptor_operands.sv:46:5: [SIM-001] (tb @ 0 ps) $finish called\n";
     sim_cli::run_case(SUITE, "descriptor_operands", expected, stderr, &[]);
     sim_cli::run_case_backend_parity(SUITE, "descriptor_operands", expected, &[], &[]);
 }
@@ -62,7 +63,7 @@ fn operator_overload_witness() {
     // Adopted FND-002 witness for L-F07-17-01 (SV2009 11.11, A.2.8).
     let expected =
         include_str!("../fixtures/sim/feature_completion/rtl_017/operator_overload_witness.out");
-    let stderr = "llg: $finish at time 0 at tb:7:1\n";
+    let stderr = "INFO: operator_overload_witness.sv:7:1: [SIM-001] (tb @ 0 ps) $finish called\n";
     sim_cli::run_case(SUITE, "operator_overload_witness", expected, stderr, &[]);
     sim_cli::run_case_backend_parity(SUITE, "operator_overload_witness", expected, &[], &[]);
 }

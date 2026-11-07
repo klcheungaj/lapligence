@@ -29,7 +29,7 @@ fn implication_and_equivalence_match_four_state_oracles() {
             "precedence=1 chain=1\n",
             "real=1x decl=11\n",
         ),
-        "llg: $finish at time 0 at tb:79:9\n",
+        "INFO: implication_equivalence.sv:79:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }

@@ -14,9 +14,9 @@ fn storage_write_remainder_cells_run_in_both_optimizer_modes() {
         .join("tests/fixtures/sim/syn038_pairwise/storage_write_remainders.sv");
     let expected_stdout = b"storage_write_remainders=passed\n";
     let expected_stderr = format!(
-        "Warning: {}:101:33 non-void function 'hier_result' does not return a value\n\
-         llg: $finish at time 4000 at tb:153:9\n",
-        sim_harness::source_display(&source)
+        "WARNING: {}:101:33: [SLANG-MissingReturn] non-void function 'hier_result' does not return a value (-Wmissing-return)\n\
+         INFO: storage_write_remainders.sv:153:9: [SIM-001] (tb @ 4 ns) $finish called\n",
+        sim_harness::file_name(&source)
     );
 
     for optimized in [false, true] {

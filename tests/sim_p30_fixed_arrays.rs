@@ -161,7 +161,7 @@ fn replicated_assignment_patterns_public_cli() {
         "p30_fixed_arrays",
         "replicated_assignment_patterns",
         "PASS replicated_assignment_patterns\n",
-        "llg: $finish at time 1000 at tb:83:9\n",
+        "INFO: replicated_assignment_patterns.sv:83:9: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );

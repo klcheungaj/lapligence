@@ -14,13 +14,13 @@ use crate::sim_cli;
 
 const SUITE: &str = "end_of_run";
 const NORMAL_END: &str =
-    "llg: simulation ended without $finish (no processes remain) at time 1000\n";
+    "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 1000\n";
 const NORMAL_END_5: &str =
-    "llg: simulation ended without $finish (no processes remain) at time 5000\n";
+    "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 5000\n";
 const DEADLOCK_0: &str =
-    "llg: simulation deadlock at time 0 (waiters never woken, no future events)\n";
+    "WARNING: [SIM-019] simulation deadlock at time 0 (waiters never woken, no future events)\nINFO: [SIM-000] 0 error(s), 1 warning(s)\n";
 const DEADLOCK_1: &str =
-    "llg: simulation deadlock at time 1000 (waiters never woken, no future events)\n";
+    "WARNING: [SIM-019] simulation deadlock at time 1000 (waiters never woken, no future events)\nINFO: [SIM-000] 0 error(s), 1 warning(s)\n";
 
 macro_rules! end_case {
     ($test:ident, $fixture:literal, $stderr:expr) => {

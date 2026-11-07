@@ -57,14 +57,20 @@ fn assert_runtime_success(label: &str, output: &Output, stdout: &str, diagnostic
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{label}: {stderr}");
     assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
-    assert!(stderr.contains(diagnostic), "{label}: {stderr}");
+    assert!(
+        crate::sim_harness::mentions(&stderr, diagnostic),
+        "{label}: {stderr}"
+    );
 }
 
 fn assert_runtime_failure(label: &str, output: &Output, stdout: &str, diagnostic: &str) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "{label}: unexpected success");
     assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
-    assert!(stderr.contains(diagnostic), "{label}: {stderr}");
+    assert!(
+        crate::sim_harness::mentions(&stderr, diagnostic),
+        "{label}: {stderr}"
+    );
 }
 
 #[test]
@@ -188,7 +194,7 @@ fn tick_range_failures_precede_queue_insertion() {
             label,
             output,
             negative,
-            "llg: warning: real delay -1 exceeds the 64-bit tick range; using 1 tick",
+            "WARNING: [SIM-011] real delay -1 exceeds the 64-bit tick range; using 1 tick",
         );
     });
 }
@@ -201,7 +207,7 @@ fn nonfinite_delays_wait_one_tick_and_illegal_delays_reject() {
             label,
             output,
             stdout,
-            "llg: warning: real delay is infinite; using 1 tick",
+            "WARNING: [SIM-011] real delay is infinite; using 1 tick",
         );
     });
     sim_cli::reject_case(

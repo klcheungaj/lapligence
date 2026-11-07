@@ -48,13 +48,14 @@ fn size_error<'a>(
         assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+            crate::sim_harness::mentions(&String::from_utf8_lossy(&output.stderr), diagnostic),
             "{label}: {output:?}"
         );
     }
 }
 
-const SHORT_SOURCE: &str = "llg container fatal: streaming unpack source has insufficient bits";
+const SHORT_SOURCE: &str =
+    "FATAL: [SIM-030] container: streaming unpack source has insufficient bits";
 
 #[test]
 fn dynamic_size_mismatches_fail_at_run_time() {
@@ -70,7 +71,7 @@ fn dynamic_size_mismatches_fail_at_run_time() {
         &[],
         &size_error(
             "before 3\n",
-            "llg container fatal: bit stream size does not match a whole number of destination elements",
+            "FATAL: [SIM-030] container: bit stream size does not match a whole number of destination elements",
         ),
     );
     sim_cli::run_case_checked_matrix(
@@ -79,7 +80,7 @@ fn dynamic_size_mismatches_fail_at_run_time() {
         &[],
         &size_error(
             "before 7\n",
-            "llg container fatal: bit-stream cast source size does not match its fixed-size target",
+            "FATAL: [SIM-030] container: bit-stream cast source size does not match its fixed-size target",
         ),
     );
     sim_cli::run_case_checked_matrix(

@@ -20,7 +20,7 @@ fn expression_mutations_preserve_target_capture_and_value_conversions() {
             "prefix=3/3 dec=2/2 selected=12/13 array=9\n",
             "assigned=90 real=1.5/2.5\n",
         ),
-        "llg: $finish at time 0 at tb:115:9\n",
+        "INFO: expression_mutations.sv:115:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }

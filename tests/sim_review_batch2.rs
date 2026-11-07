@@ -85,7 +85,7 @@ fn blocking_mailbox_mismatch_fails_instead_of_hanging_or_skipping_fifo() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(!output.status.success(), "{fixture}: {stderr}");
             assert!(
-                stderr.contains("llg: mailbox retrieval type mismatch"),
+                stderr.contains("ERROR: [SIM-010] mailbox retrieval type mismatch"),
                 "{fixture}: expected runtime type error, got {stderr}"
             );
             assert!(output.stdout.is_empty(), "{fixture}: {:?}", output.stdout);
@@ -107,11 +107,7 @@ fn concurrent_failures_do_not_duplicate_explicit_actions() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(output.status.success(), "{stderr}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "handled\n");
-        assert_eq!(
-            stderr.matches("llg: assertion assert failed:").count(),
-            1,
-            "{stderr}"
-        );
+        assert_eq!(stderr.matches("[SIM-007] ").count(), 1, "{stderr}");
         assert_eq!(stderr.matches("EXPLICIT_ERROR").count(), 1, "{stderr}");
         assert!(
             stderr.contains("severity counts: info=0 warning=0 error=2 fatal=0"),

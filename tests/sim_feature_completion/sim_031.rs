@@ -14,7 +14,7 @@ const SUITE: &str = "feature_completion/sim_031";
 fn randcase_warnings<'a>(stderr: &'a str, fixture: &str, what: &str) -> Vec<&'a str> {
     stderr
         .lines()
-        .filter(|line| line.starts_with("llg: warning: randcase at ") && line.contains(what))
+        .filter(|line| line.starts_with("WARNING: [SIM-011] randcase at ") && line.contains(what))
         .inspect(|line| {
             assert!(
                 line.contains(&format!("{fixture}.sv:")),

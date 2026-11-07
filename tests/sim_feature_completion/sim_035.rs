@@ -37,7 +37,7 @@ fn complex_clocking_events_sample_on_every_tick() {
             ..Default::default()
         },
         expected,
-        "llg: $finish at time 17000 at tb:85:8\n",
+        "INFO: complex_clocks.sv:85:8: [SIM-001] (tb @ 17 ns) $finish called\n",
     );
 }
 

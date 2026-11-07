@@ -237,7 +237,10 @@ fn runtime_failure<'a>(stdout: &'a str, diagnostic: &'a str) -> impl Fn(&str, &O
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
-        assert!(stderr.contains(diagnostic), "{label}: {stderr}");
+        assert!(
+            crate::sim_harness::mentions(&stderr, diagnostic),
+            "{label}: {stderr}"
+        );
     }
 }
 
@@ -260,7 +263,7 @@ fn circular_solve_before_fails_only_while_both_blocks_are_enabled() {
         &[],
         &runtime_failure(
             "ok=0\nok=1\n",
-            "llg: error: randomize() at tb:11:10: circular solve-before order",
+            "ERROR: [SIM-010] randomize() at tb:11:10: circular solve-before order",
         ),
     );
 }
@@ -273,7 +276,7 @@ fn foreach_index_outside_the_array_fails_randomize() {
         &[],
         &runtime_failure(
             "ok=0 size=0\nok=1 size=3\n",
-            "llg: error: randomize() at tb:13:10: select index out of range in a constraint",
+            "ERROR: [SIM-010] randomize() at tb:13:10: select index out of range in a constraint",
         ),
     );
 }
@@ -300,7 +303,7 @@ fn fallback_that_drops_weights_warns_once_per_call_site() {
                     .collect();
                 assert_eq!(warnings.len(), 2, "{label}: {stderr}");
                 for (site, class) in [("tb:23:", "(Weighted)"), ("tb:29:", "(Sized)")] {
-                    let text = format!("llg: warning: randomize() at {site}");
+                    let text = format!("WARNING: [SIM-011] randomize() at {site}");
                     assert!(
                         warnings
                             .iter()

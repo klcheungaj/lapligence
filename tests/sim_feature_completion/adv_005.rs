@@ -202,7 +202,7 @@ fn a_self_controlled_network_reports_a_zero_delay_loop() {
             assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
-                stderr.contains("llg: zero-delay loop detected at time 1 "),
+                stderr.contains("ERROR: [SIM-010] zero-delay loop detected at time 1 "),
                 "{label}: {stderr}"
             );
         },
@@ -228,7 +228,7 @@ fn unsupported_switch_forms_are_located_errors() {
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_mos",
-            "neg_mos.sv:5:8: unsupported: `nmos` primitive (MOS and resistive switch \
+            "neg_mos.sv:5:8 `nmos` primitive (MOS and resistive switch \
              primitives) is not supported by llg",
             &["--edition", edition],
         );

@@ -67,7 +67,7 @@ fn run_time_formats_report_missing_arguments_once() {
         SUITE,
         "dynamic_missing",
         expected,
-        "",
+        "INFO: [SIM-000] 0 error(s), 1 warning(s)\n",
         &["format specification `%0d` has no argument; printed as written"],
     );
     sim_cli::run_case_backend_parity(SUITE, "dynamic_missing", expected, &[], &[]);

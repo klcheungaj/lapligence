@@ -23,7 +23,7 @@ fn qualifier_counts_filtered_items_and_preserves_first_body() {
         "syn025_pattern_cases",
         "qualifiers",
         "qualifiers=pass result=0 calls=1\n",
-        "",
+        "INFO: [SIM-000] 0 error(s), 5 warning(s)\n",
         &warnings.iter().map(String::as_str).collect::<Vec<_>>(),
         &["--edition", "sv2009"],
     );

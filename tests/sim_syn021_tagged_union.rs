@@ -10,7 +10,7 @@ fn struct_payload_construction_ref_and_nba_work_in_both_modes() {
         "syn021_tagged_union",
         "struct_contexts",
         "PASS syn021_struct_contexts\n",
-        "llg: $finish at time 1000 at tb:126:9\n",
+        "INFO: struct_contexts.sv:126:9: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -53,7 +53,7 @@ fn reject_fixture_tagged_access(
     member: &str,
     expected_stdout: &str,
     location: &str,
-    finish: &str,
+    finish: (&str, &str),
     optimized: bool,
 ) {
     let fixture = fixture_file.strip_suffix(".sv").expect("SV fixture");
@@ -68,9 +68,12 @@ fn reject_fixture_tagged_access(
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/syn021_tagged_union")
         .join(fixture_file);
+    let name = sim_harness::file_name(&source);
+    let (finish_at, finish_time) = finish;
     let expected_stderr = format!(
-        "llg: runtime error: access to inactive tagged-union member {member} at {}:{location}\nllg: $finish at {finish}\n",
-        sim_harness::source_display(&source)
+        "ERROR: {name}:{location}: [SIM-009] access to inactive tagged-union member {member}\n\
+         INFO: {name}:{finish_at}: [SIM-001] (tb @ {finish_time}) $finish called\n\
+         INFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n"
     );
     assert_eq!(
         output.status.code(),
@@ -83,7 +86,7 @@ fn reject_fixture_tagged_access(
         "{fixture}, optimized={optimized}"
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
+        sim_harness::strip_lint_reports(&output.stderr),
         expected_stderr,
         "{fixture}, optimized={optimized}"
     );
@@ -97,7 +100,7 @@ fn nested_wrong_tags_report_exact_read_and_write_locations() {
             "A",
             "AFTER_NESTED_READ calls=1 got=xx active_B=5a\n",
             "16:15",
-            "time 0 at tb:18:9",
+            ("18:9", "0 ps"),
             optimized,
         );
         reject_fixture_tagged_access(
@@ -105,7 +108,7 @@ fn nested_wrong_tags_report_exact_read_and_write_locations() {
             "Data",
             "AFTER_NESTED_WRITE calls=1 active_Other=155\n",
             "15:9",
-            "time 0 at tb:17:9",
+            ("17:9", "0 ps"),
             optimized,
         );
     }
@@ -119,7 +122,7 @@ fn wrong_tag_at_nba_issue_stays_invalid_after_retagging() {
             "A",
             "AFTER_WRONG_ISSUE active_A=11\n",
             "7:9",
-            "time 1000 at tb:13:9",
+            ("13:9", "1 ns"),
             optimized,
         );
     }

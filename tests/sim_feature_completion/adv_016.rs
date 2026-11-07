@@ -12,14 +12,23 @@ use super::sim_cli;
 const SUITE: &str = "feature_completion/adv_016";
 
 /// Exit status 1 after exactly `expected` on stdout, with every diagnostic
-/// present the given number of times.
+/// present the given number of times, matched against each message read as
+/// `file.sv:l:c text` ([`super::sim_harness::located_text`]).
 fn runtime_failure(label: &str, output: &Output, expected: &str, diagnostics: &[(&str, usize)]) {
     assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let views: Vec<String> = stderr
+        .lines()
+        .filter_map(llg::core::report::parse)
+        .map(|message| super::sim_harness::located_text(&message))
+        .collect();
     for (diagnostic, count) in diagnostics {
         assert_eq!(
-            stderr.matches(diagnostic).count(),
+            views
+                .iter()
+                .filter(|view| view.contains(diagnostic))
+                .count(),
             *count,
             "{label}: {diagnostic}\n{stderr}"
         );
@@ -185,7 +194,7 @@ fn unbounded_recursion_stops_at_the_depth_limit() {
             output,
             expected,
             &[(
-                "depth_limit.sv:10:47: randsequence recursion exceeds the depth limit of 10000 \
+                "depth_limit.sv:10:47 randsequence recursion exceeds the depth limit of 10000 \
                  active generations",
                 1,
             )],
@@ -207,11 +216,11 @@ fn invalid_counts_and_ratios_are_located_runtime_errors() {
                     2,
                 ),
                 (
-                    "invalid_runtime.sv:14:29: randsequence repeat count is negative or unknown",
+                    "invalid_runtime.sv:14:29 randsequence repeat count is negative or unknown",
                     1,
                 ),
                 (
-                    "invalid_runtime.sv:16:16: rand join expression is not a real number in 0.0 \
+                    "invalid_runtime.sv:16:16 rand join expression is not a real number in 0.0 \
                      to 1.0; 0.5 is used",
                     1,
                 ),
@@ -397,7 +406,7 @@ fn implicit_result_variables_of_many_types() {
         SUITE,
         "implicit_order",
         include_str!("../fixtures/sim/feature_completion/adv_016/implicit_order.out"),
-        "llg: $finish at time 0 at tb:19:5\n",
+        "INFO: implicit_order.sv:19:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }

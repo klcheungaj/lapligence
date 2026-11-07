@@ -14,7 +14,7 @@ fn gate_terminal_forms_match_with_and_without_optimization() {
 buf=00 not=00 hierarchy=00 many=1\n\
 wake=000\n\
 hierwake=11 xz=xx\n",
-        "llg: $finish at time 3000 at tb:62:9\n",
+        "INFO: p40_forms.sv:62:9: [SIM-001] (tb @ 3 ns) $finish called\n",
         &[],
     );
 }

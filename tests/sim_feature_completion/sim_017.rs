@@ -151,7 +151,7 @@ fn blocking_get_type_mismatch_ends_the_simulation() {
         );
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .contains("llg: mailbox retrieval type mismatch\n"),
+                .contains("ERROR: [SIM-010] mailbox retrieval type mismatch\n"),
             "{label}: {output:?}"
         );
     });

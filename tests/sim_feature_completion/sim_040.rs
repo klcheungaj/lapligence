@@ -317,7 +317,7 @@ fn a_wrong_element_index_count_ends_the_run() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert_eq!(
                 stderr
-                    .matches("llg: DPI-C open array element access")
+                    .matches("ERROR: [SIM-017] DPI-C open array element access")
                     .count(),
                 1,
                 "{label}: {stderr}"

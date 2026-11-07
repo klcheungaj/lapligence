@@ -9,6 +9,35 @@
 use std::path::Path;
 use std::process::Command;
 
+use llg::core::report::{self, Severity};
+
+/// Whether `err` reports a lint finding of `severity` for `rule` (any rule
+/// when `None`) whose text starts with `text`; lines are parsed with the
+/// message layout (`llg::core::report`).
+fn lint_finding(err: &str, severity: Severity, rule: Option<&str>, text: &str) -> bool {
+    err.lines().any(|line| {
+        report::parse(line).is_some_and(|message| {
+            message.tool() == "LINT"
+                && message.severity == severity
+                && message.id != report::id("LINT", 0)
+                && rule.is_none_or(|rule| message.id == report::catalog::lint_id(rule))
+                && message.text.starts_with(text)
+        })
+    })
+}
+
+fn has_lint(err: &str, severity: Severity, rule: Option<&str>) -> bool {
+    lint_finding(err, severity, rule, "")
+}
+
+/// The text of the lint summary (`LINT-000`), if one was printed.
+fn lint_summary(err: &str) -> Option<String> {
+    err.lines()
+        .filter_map(report::parse)
+        .find(|message| message.id == report::id("LINT", 0))
+        .map(|message| message.text)
+}
+
 const SIM_BIN: &str = env!("CARGO_BIN_EXE_llg");
 
 /// Design with one `unused-signal` finding (`b` is never used; `a` is
@@ -171,7 +200,7 @@ fn cli_disabled_rule_suppresses_finding() {
     assert!(out.status.success(), "stderr: {err}");
     assert!(!err.contains("unused-signal"), "finding suppressed: {err}");
     assert!(
-        !err.contains("lint:"),
+        lint_summary(&err).is_none(),
         "a clean run prints no lint summary: {err}"
     );
 }
@@ -229,7 +258,7 @@ fn cli_severity_override_promotes_finding_to_error() {
     );
     let err = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "stderr: {err}");
-    assert!(err.contains("[ERROR]"), "stderr: {err}");
+    assert!(has_lint(&err, Severity::Error, None), "stderr: {err}");
     assert!(err.contains("unused-signal"), "stderr: {err}");
     assert!(err.contains("1 error(s)"), "stderr: {err}");
 }
@@ -298,11 +327,11 @@ fn cli_lint_json_stdout_emits_json() {
     assert!(stdout.contains("\"warnings\": 1"), "stdout: {stdout}");
     assert!(stdout.contains("\"total\": 1"), "stdout: {stdout}");
     assert!(
-        !err.contains("[WARNING]"),
+        !has_lint(&err, Severity::Warning, None),
         "human lint lines suppressed: {err}"
     );
     assert!(
-        !err.contains("lint:"),
+        lint_summary(&err).is_none(),
         "human lint summary suppressed: {err}"
     );
 }
@@ -336,7 +365,7 @@ fn cli_lint_json_severity_override_exits_1() {
     assert!(stdout.contains("\"warnings\": 0"), "stdout: {stdout}");
     assert!(stdout.contains("\"total\": 1"), "stdout: {stdout}");
     assert!(
-        !err.contains("[ERROR]"),
+        !has_lint(&err, Severity::Error, None),
         "human lint lines suppressed: {err}"
     );
 }
@@ -532,10 +561,13 @@ fn lint_runs_without_an_option_and_warnings_do_not_stop_the_run() {
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");
     assert!(
-        err.contains("[WARNING] unused-signal"),
+        has_lint(&err, Severity::Warning, Some("unused-signal")),
         "lint ran without an option: {err}"
     );
-    assert!(err.contains("lint: 0 error(s), 1 warning(s)"), "{err}");
+    assert!(
+        lint_summary(&err).as_deref() == Some("0 error(s), 1 warning(s)"),
+        "{err}"
+    );
     assert!(err.contains("$finish"), "the model ran: {err}");
 }
 
@@ -548,8 +580,14 @@ fn werror_turns_lint_warnings_into_errors() {
     let out = run_llg(&dir.path, &["-Werror", "--top", "unused", "design.sv"]);
     let err = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "stderr: {err}");
-    assert!(err.contains("[ERROR] unused-signal"), "{err}");
-    assert!(err.contains("lint: 1 error(s), 0 warning(s)"), "{err}");
+    assert!(
+        has_lint(&err, Severity::Error, Some("unused-signal")),
+        "{err}"
+    );
+    assert!(
+        lint_summary(&err).as_deref() == Some("1 error(s), 0 warning(s)"),
+        "{err}"
+    );
     assert!(!err.contains("$finish"), "no model ran: {err}");
     assert!(
         !dir.path.join("build/sim").exists(),
@@ -589,7 +627,7 @@ fn werror_turns_lint_warnings_into_errors() {
 }
 
 /// `--lint-only` reports findings and exits without emitting C: 0 when only
-/// warnings remain, 1 on errors, and `lint: clean` for a clean design.
+/// warnings remain, 1 on errors, and a zero lint summary for a clean design.
 #[test]
 fn lint_only_stops_before_code_generation() {
     let dir = TempDir::new("lint_only");
@@ -597,7 +635,10 @@ fn lint_only_stops_before_code_generation() {
     let out = run_llg(&dir.path, &["--lint-only", "--top", "unused", "design.sv"]);
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");
-    assert!(err.contains("[WARNING] unused-signal"), "{err}");
+    assert!(
+        has_lint(&err, Severity::Warning, Some("unused-signal")),
+        "{err}"
+    );
     assert!(out.stdout.is_empty(), "nothing ran: {err}");
     assert!(!dir.path.join("build").exists(), "no model was generated");
 
@@ -611,7 +652,13 @@ fn lint_only_stops_before_code_generation() {
     let out = run_llg(&dir.path, &["--lint-only", "--top", "delayed", "clean.sv"]);
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");
-    assert_eq!(err, "lint: clean\n");
+    assert_eq!(
+        err,
+        format!(
+            "{}\n",
+            report::summary("LINT", &report::Counts::default()).render()
+        )
+    );
 
     let cfg = dir.write("llg.toml", "schema_version = 1\n[lint]\nonly = true\n");
     let config = cfg.to_str().unwrap();
@@ -656,7 +703,10 @@ endmodule
     let out = run_llg(&dir.path, &["--top", "mixed", "design.sv"]);
     let err = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "stderr: {err}");
-    assert!(err.contains("[ERROR] mixed-assignments"), "{err}");
+    assert!(
+        has_lint(&err, Severity::Error, Some("mixed-assignments")),
+        "{err}"
+    );
     assert!(out.stdout.is_empty(), "the model must not run");
 }
 
@@ -704,14 +754,19 @@ fn wide_index_warns_and_honors_config_and_werror() {
         "a warning must not stop the run: {err}"
     );
     assert!(
-        err.contains("[WARNING] wide-index: index of an unpacked array is 64 bits wide"),
+        lint_finding(
+            &err,
+            Severity::Warning,
+            Some("wide-index"),
+            "index of an unpacked array is 64 bits wide"
+        ),
         "{err}"
     );
 
     let out = run_llg(&dir.path, &["-Werror", "--top", "wide_index", "design.sv"]);
     let err = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "stderr: {err}");
-    assert!(err.contains("[ERROR] wide-index"), "{err}");
+    assert!(has_lint(&err, Severity::Error, Some("wide-index")), "{err}");
 
     let cfg = dir.lint_config("[lint.rules.wide-index]\nenabled = false\n");
     let out = run_llg(

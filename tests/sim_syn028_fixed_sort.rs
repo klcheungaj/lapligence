@@ -8,7 +8,7 @@ fn signed_unsigned_enum_and_packed_record_ordering() {
         "data_types_completion",
         "syn_028_fixed_sort",
         "PASS syn_028_fixed_sort\n",
-        "llg: $finish at time 0 at tb:134:9\n",
+        "INFO: syn_028_fixed_sort.sv:134:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );

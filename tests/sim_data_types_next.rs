@@ -167,7 +167,7 @@ fn packed_nominal_type_key_mismatch_falls_through_to_typed_default() {
         "data_types_next",
         "packed_nominal_type_key_default",
         "PASS packed_nominal_type_key_default\n",
-        "llg: $finish at time 0 at tb:19:9\n",
+        "INFO: packed_nominal_type_key_default.sv:19:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );

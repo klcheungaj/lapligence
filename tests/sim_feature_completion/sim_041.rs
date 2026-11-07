@@ -192,7 +192,7 @@ fn protocol_violations_are_fatal_errors() {
         &args,
         &fatal_after(
             "start\n",
-            "llg: DPI-C export `err_inc` was called from a noncontext import; only a context import call chain may call exported subroutines (SV 35.5.3)",
+            "ERROR: [SIM-017] DPI-C export `err_inc` was called from a noncontext import; only a context import call chain may call exported subroutines (SV 35.5.3)",
         ),
     );
     sim_cli::run_case_checked_matrix(
@@ -201,7 +201,7 @@ fn protocol_violations_are_fatal_errors() {
         &args,
         &fatal_after(
             "start\nc err_scope kept=held!\n",
-            "llg: DPI-C export `err_inc` is not exported from the current scope `tb.uq`; call svSetScope with a scope that exports it (SV 35.5.3)",
+            "ERROR: [SIM-017] DPI-C export `err_inc` is not exported from the current scope `tb.uq`; call svSetScope with a scope that exports it (SV 35.5.3)",
         ),
     );
     // Decision S41-D8: the exported task runs inside the imported function.
@@ -220,7 +220,7 @@ fn protocol_violations_are_fatal_errors() {
         &args,
         &fatal_after(
             "start\n",
-            "llg: DPI-C import function `err_no_ack` returned from a disable without calling svAckDisabledState (SV 35.9 item c)",
+            "ERROR: [SIM-017] DPI-C import function `err_no_ack` returned from a disable without calling svAckDisabledState (SV 35.9 item c)",
         ),
     );
     sim_cli::run_case_checked_matrix(
@@ -229,7 +229,7 @@ fn protocol_violations_are_fatal_errors() {
         &args,
         &fatal_after(
             "start\n",
-            "llg: DPI-C export `err_inc` was called after a disable cancelled the calling import (SV 35.9 item d)",
+            "ERROR: [SIM-017] DPI-C export `err_inc` was called after a disable cancelled the calling import (SV 35.9 item d)",
         ),
     );
 }

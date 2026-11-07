@@ -14,7 +14,7 @@ fn module_and_instance_bind_execute_in_both_optimizer_modes() {
         SUITE,
         "syn_033_structural_bind",
         "bind=1/0 selected=x/0\nbind=0/1 selected=x/1\n",
-        "llg: $finish at time 2000 at tb:38:5\n",
+        "INFO: syn_033_structural_bind.sv:38:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -26,7 +26,7 @@ fn interface_bind_executes_in_both_optimizer_modes() {
         SUITE,
         "syn_033_interface_bind",
         "interface_bind=1\ninterface_bind=0\n",
-        "llg: $finish at time 2000 at tb:28:5\n",
+        "INFO: syn_033_interface_bind.sv:28:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -38,7 +38,7 @@ fn generated_instance_binds_execute_in_both_optimizer_modes() {
         SUITE,
         "syn_033_generated_bind",
         "generated=100\ngenerated=011\n",
-        "llg: $finish at time 2000 at tb:36:5\n",
+        "INFO: syn_033_generated_bind.sv:36:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );

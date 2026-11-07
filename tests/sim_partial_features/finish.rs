@@ -37,7 +37,7 @@ fn finish_level_zero_is_quiet_and_default_reports_level_one() {
     run_case_with_stderr(
         "finish_verbose_default",
         "CHECK: default\n",
-        "llg: $finish at time 0 at tb:4:5\n",
+        "INFO: finish_verbose_default.sv:4:5: [SIM-001] (tb @ 0 ps) $finish called\n",
     );
 }
 
@@ -46,12 +46,12 @@ fn finish_levels_report_time_and_statistics_without_changing_exit_status() {
     run_case_with_stderr(
         "finish_verbose_1",
         "CHECK: level 1\n",
-        "llg: $finish at time 0 at tb:4:5\n",
+        "INFO: finish_verbose_1.sv:4:5: [SIM-001] (tb @ 0 ps) $finish called\n",
     );
     run_case_with_stderr(
         "finish_verbose_2",
         "CHECK: level 2\n",
-        "llg: $finish at time 0 at tb:4:5\nllg: simulation statistics: processes=1\n",
+        "INFO: finish_verbose_2.sv:4:5: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-008] simulation statistics: processes=1\n",
     );
 }
 

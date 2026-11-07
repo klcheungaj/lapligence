@@ -68,8 +68,8 @@ fn joined_task_forks_share_persistent_events_and_automatic_outputs() {
                 .iter()
                 .map(|(line, column)| {
                     format!(
-                        "Warning: {}:{line}:{column} 'tb' is an upward hierarchical name reference\n",
-                        sim_harness::source_display(&fixture)
+                        "WARNING: {}:{line}:{column}: [SLANG-UpwardHierarchicalName] 'tb' is an upward hierarchical name reference (-Wupward-name)\n",
+                        sim_harness::file_name(&fixture)
                     )
                 })
                 .collect::<String>();

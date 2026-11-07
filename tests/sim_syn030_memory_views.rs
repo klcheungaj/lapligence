@@ -2,7 +2,8 @@
 
 use crate::sim_cli;
 
-const DONE: &str = "llg: simulation ended without $finish (no processes remain) at time 0\n";
+const DONE: &str =
+    "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n";
 
 #[test]
 fn signed_jumps_in_selected_multidimensional_view_preserve_other_cells() {
@@ -21,10 +22,7 @@ fn signed_jumps_in_selected_multidimensional_view_preserve_other_cells() {
     sim_cli::run_case_with_files(
         "syn030_memory_views", "signed_selected",
         "selected=aa,ee,ee,ee retained=ee,ee\n",
-        concat!(
-            "llg: error: memory file `selected.mem`: address jump is outside the destination memory or selected range; load terminated\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
+        "ERROR: [SIM-014] memory file `selected.mem`: address jump is outside the destination memory or selected range; load terminated\nINFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\nINFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n",
         &[], &["--edition", "sv2009"],
         &[("selected.mem", "@-9 aa @-b bb\n")],
     );
@@ -62,10 +60,7 @@ fn invalid_selected_slice_range_leaves_all_cells_unchanged() {
         "syn030_memory_views",
         "selected_bad_bounds",
         "selected=ee,ee retained=ee\n",
-        concat!(
-            "llg: error: memory file `bounds.mem`: memory word address is outside the destination memory; load terminated\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
+        "ERROR: [SIM-014] memory file `bounds.mem`: memory word address is outside the destination memory; load terminated\nINFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\nINFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n",
         &[],
         &["--edition", "sv2009"],
         &[("bounds.mem", "11\n22\n")],
@@ -78,10 +73,7 @@ fn invalid_jump_in_selected_row_retains_the_loaded_prefix() {
         "syn030_memory_views",
         "selected_bad_jump",
         "selected=ee,11,ee other=ee\n",
-        concat!(
-            "llg: error: memory file `jump.mem`: address jump is outside the destination memory or selected range; load terminated\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
+        "ERROR: [SIM-014] memory file `jump.mem`: address jump is outside the destination memory or selected range; load terminated\nINFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\nINFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n",
         &[],
         &["--edition", "sv2009"],
         &[("jump.mem", "@1\n11\n@3\n22\n")],
@@ -94,7 +86,7 @@ fn selected_load_notifies_changed_leaf_readers_after_settling() {
         "syn030_memory_views",
         "leaf_notification",
         "values=55,22,33 wakes=1,0,0\n",
-        "llg: $finish at time 3000 at tb:19:5\n",
+        "INFO: leaf_notification.sv:19:5: [SIM-001] (tb @ 3 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
         &[("notify.mem", "55\n22\n")],
@@ -108,8 +100,9 @@ fn selected_enum_load_stops_before_non_fitting_word() {
         "enum_selected_stop",
         "selected=1,0 other=0\n",
         concat!(
-            "llg: error: memory file `enum.mem`: memory word has more digits than the element holds; load terminated\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
+            "ERROR: [SIM-014] memory file `enum.mem`: memory word has more digits than the element holds; load terminated\n",
+            "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
+            "INFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n",
         ),
         &[],
         &["--edition", "sv2009"],
@@ -123,7 +116,7 @@ fn selected_packed_struct_and_two_state_binary_elements_convert_per_leaf() {
         "syn030_memory_views",
         "selected_element_types",
         "struct=12,34,ee bits=1000,1010,1111\n",
-        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &["memory file `bits.mem`: X/Z memory data converted to a two-state element"],
         &["--edition", "sv2009"],
         &[("struct.mem", "12\n34\n"), ("bits.mem", "1x0z\n1010\n")],

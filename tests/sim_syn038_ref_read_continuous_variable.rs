@@ -259,13 +259,13 @@ fn assert_public_cli_output(optimized: bool) {
     );
     assert_eq!(output.stdout, EXPECTED_STDOUT.as_bytes());
     let expected_stderr = format!(
-        "Warning: {}:{}:21 {WARNING}\n",
-        sim_harness::source_display(&source),
+        "WARNING: {}:{}:21: [SLANG-MixedVarAssigns] {WARNING} (-Wmixed-var-assigns)\n",
+        sim_harness::file_name(&source),
         source_line("capture_ref(source);")
     );
     assert_eq!(
-        output.stderr,
-        expected_stderr.as_bytes(),
+        sim_harness::strip_lint_reports(&output.stderr),
+        expected_stderr,
         "exact conservative ref warning, optimized={optimized}"
     );
 }

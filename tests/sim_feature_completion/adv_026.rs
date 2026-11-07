@@ -39,21 +39,18 @@ fn stdout_text(label: &str, output: &Output) -> String {
         .unwrap_or_else(|error| panic!("{label}: stdout is not UTF-8: {error}"))
 }
 
-/// The memory-load diagnostics on stderr, in order, without the `llg: `
-/// prefix.
+/// The memory-load diagnostics on stderr (`SIM-013`, `SIM-014`), in order,
+/// as `warning: memory ...` or `error: memory ...`.
 fn memory_diagnostics(output: &Output) -> Vec<String> {
     let stderr = llg::ffi::platform::native_text_to_lf(output.stderr.clone());
     String::from_utf8_lossy(&stderr)
         .lines()
-        .filter_map(|line| line.strip_prefix("llg: "))
-        .filter(|line| {
-            ["warning: ", "error: "].iter().any(|severity| {
-                line.strip_prefix(severity).is_some_and(|rest| {
-                    rest.starts_with("memory file ") || rest.starts_with("memory string ")
-                })
-            })
+        .filter_map(llg::core::report::parse)
+        .filter_map(|message| match message.id.as_str() {
+            "SIM-013" => Some(format!("warning: {}", message.text)),
+            "SIM-014" => Some(format!("error: {}", message.text)),
+            _ => None,
         })
-        .map(str::to_owned)
         .collect()
 }
 
@@ -597,7 +594,7 @@ fn registrations_of_sreadmem_follow_the_builtin_override_policy() {
     )
     .expect("resolve the fixture");
     let diagnostic = format!(
-        "llg: VPI error: a VPI application registers `$sreadmemh`, which llg implements as a \
+        "ERROR: [SIM-016] VPI error: a VPI application registers `$sreadmemh`, which llg implements as a \
          built-in (called at {}:7); llg does not support overriding built-in system tasks and \
          functions (IEEE 1800-2009 36.3.2)",
         source.display()

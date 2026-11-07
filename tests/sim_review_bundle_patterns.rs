@@ -23,7 +23,8 @@ fn fixed_array_type_keys_obey_last_match_recursion_and_default_coverage() {
             12,
         ),
     ] {
-        let expected_stderr = format!("llg: $finish at time 0 at tb:{finish_line}:5\n");
+        let expected_stderr =
+            format!("INFO: {fixture}.sv:{finish_line}:5: [SIM-001] (tb @ 0 ps) $finish called\n");
         sim_cli::run_case_with_args(SUITE, fixture, pass_line, &expected_stderr, &[], EDITION);
     }
 }
@@ -34,7 +35,7 @@ fn constant_expression_array_index_keys_are_evaluated_semantically() {
         SUITE,
         "r05_constant_expression_index",
         "PASS r05_constant_expression_index\n",
-        "llg: $finish at time 0 at tb:21:5\n",
+        "INFO: r05_constant_expression_index.sv:21:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         EDITION,
     );
@@ -59,7 +60,8 @@ fn typed_struct_and_packed_array_pattern_lvalues_deconstruct_positions() {
             12,
         ),
     ] {
-        let expected_stderr = format!("llg: $finish at time 0 at tb:{finish_line}:5\n");
+        let expected_stderr =
+            format!("INFO: {fixture}.sv:{finish_line}:5: [SIM-001] (tb @ 0 ps) $finish called\n");
         sim_cli::run_case_with_args(SUITE, fixture, pass_line, &expected_stderr, &[], EDITION);
     }
 }

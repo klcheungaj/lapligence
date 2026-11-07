@@ -32,12 +32,12 @@ fn stop_default_and_level_two_report_diagnostics_without_affecting_exit_status()
     run_case_with_stderr(
         "stop_verbose_default",
         "",
-        "llg: $stop at time 0 at tb:5:9\n",
+        "INFO: stop_verbose_default.sv:5:9: [SIM-002] (tb @ 0 ps) $stop called\n",
     );
     run_case_with_stderr(
         "stop_verbose_2",
         "",
-        "llg: $stop at time 0 at tb:5:9\nllg: simulation statistics: processes=1\n",
+        "INFO: stop_verbose_2.sv:5:9: [SIM-002] (tb @ 0 ps) $stop called\nINFO: [SIM-008] simulation statistics: processes=1\n",
     );
 }
 

@@ -15,7 +15,7 @@ fn indirectly_referenced_storage_survives_the_optimizer() {
          method call on item 7\n\
          handle argument item 7\n\
          woke at 1 2 3; late fired 0; never = 0\n",
-        "llg: $finish at time 4 at tb:64:5\n",
+        "INFO: indirect_references.sv:64:5: [SIM-001] (tb @ 4 ns) $finish called\n",
         &[],
     );
 }

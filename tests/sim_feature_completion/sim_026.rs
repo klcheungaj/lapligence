@@ -125,7 +125,15 @@ fn fread_from_invalid_descriptor_ends_the_run() {
             "{label}"
         );
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains("$fread: invalid file descriptor"),
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .filter_map(llg::core::report::parse)
+                .any(|message| message.id == "SIM-009"
+                    && message
+                        .context
+                        .as_deref()
+                        .is_some_and(|c| c.starts_with("$fread @ "))
+                    && message.text == "invalid file descriptor"),
             "{label}: {output:?}"
         );
     });

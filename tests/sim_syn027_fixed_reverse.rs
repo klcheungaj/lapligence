@@ -8,7 +8,7 @@ fn fixed_lengths_bounds_and_local_reverse_run_through_cli() {
         "data_types_completion",
         "syn_027_fixed_reverse",
         "PASS syn_027_fixed_reverse\n",
-        "llg: $finish at time 0 at tb:122:9\n",
+        "INFO: syn_027_fixed_reverse.sv:122:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -20,7 +20,7 @@ fn selected_rows_and_records_publish_reversed_values() {
         "syn027_fixed_reverse",
         "notifications",
         "PASS syn027_reverse_notifications\n",
-        "llg: $finish at time 3 at tb:47:5\n",
+        "INFO: notifications.sv:47:5: [SIM-001] (tb @ 3 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -32,7 +32,7 @@ fn automatic_formals_keep_selection_and_copy_semantics() {
         "syn027_fixed_reverse",
         "formal_publication",
         "PASS syn027_reverse_formals\n",
-        "llg: $finish at time 2 at tb:56:5\n",
+        "INFO: formal_publication.sv:56:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -44,7 +44,7 @@ fn reverse_is_available_in_systemverilog_2009() {
         "syn027_fixed_reverse",
         "edition_boundary",
         "PASS syn027_reverse_edition\n",
-        "llg: $finish at time 0 at tb:13:5\n",
+        "INFO: edition_boundary.sv:13:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -66,7 +66,7 @@ fn real_elements_reverse_numerically() {
         "syn027_fixed_reverse",
         "real_elements",
         "-2.25 -0.00 1.50 8000000000000000\n",
-        "llg: $finish at time 0 at tb:12:5\n",
+        "INFO: real_elements.sv:12:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );

@@ -1344,7 +1344,7 @@ wakes=4 v=1000 u.a=0 u.p=10 u.q=01 w=z1z1 u.o=1\n";
 /// bits in the same update as the actual (the copy showed it one later).
 #[test]
 fn plain_selected_ports_show_their_bits_without_a_lag() {
-    let finish = "llg: $finish at time 7 at tb:31:5\n";
+    let finish = "INFO: plain_selects.sv:31:5: [SIM-001] (tb @ 7 ns) $finish called\n";
     sim_cli::run_case("port_collapse", "plain_selects", PLAIN_SELECTS, finish, &[]);
     sim_cli::run_case_with_args(
         "port_collapse",

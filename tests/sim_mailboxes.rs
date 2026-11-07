@@ -26,7 +26,7 @@ fn typed_and_untyped_mailboxes_preserve_fifo_values_and_handle_identity() {
             "mismatch=-1 n=1\n",
             "preserved=99 n=0\n",
         ),
-        "llg: $finish at time 0 at tb:48:9\n",
+        "INFO: basic.sv:48:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }
@@ -47,7 +47,7 @@ fn blocking_mailbox_waiters_handoff_in_fifo_order_and_peek_is_nonconsuming() {
             "get=8 n=0\n",
             "observed_final=0\n",
         ),
-        "llg: $finish at time 4000 at tb:53:9\n",
+        "INFO: blocking.sv:53:9: [SIM-001] (tb @ 4 ns) $finish called\n",
         &[],
     );
 }
@@ -63,7 +63,7 @@ fn killed_mailbox_waiters_release_pending_storage_and_keep_queue_state() {
             "put_killed n=1 try=0\n",
             "retained=5 n=0\n",
         ),
-        "llg: $finish at time 2000 at tb:30:9\n",
+        "INFO: cancellation.sv:30:9: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }
@@ -81,7 +81,7 @@ fn mailbox_element_descriptors_preserve_four_state_real_and_typedef_values() {
             "real=1.250000 n=1\n",
             "short=1.234568 n=0\n",
         ),
-        "llg: $finish at time 0 at tb:34:9\n",
+        "INFO: typed_values.sv:34:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }
@@ -92,7 +92,7 @@ fn nested_and_automatic_mailbox_locals_have_fresh_storage() {
         "mailboxes",
         "locals",
         concat!("nested=12 n=0\n", "task=21 n=0\n", "task=34 n=0\n",),
-        "llg: $finish at time 0 at tb:23:9\n",
+        "INFO: locals.sv:23:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }
@@ -125,7 +125,7 @@ fn woken_get_writes_whole_storage_and_handles_at_the_put_and_selected_targets_on
             "after resume arr=4,0,0 h1.x=5 h2.x=0 got_h=1\n",
             "local at put v=8\n",
         ),
-        "llg: $finish at time 2 at tb:75:9\n",
+        "INFO: delivery.sv:75:9: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }
@@ -137,7 +137,7 @@ fn receivers_killed_after_the_put_keep_what_it_wrote() {
         "killed_receiver",
         "killed: h=1 st.a=11 obj.x=12 sv.a=0 whole=15 arr1=0\n\
          handle events=1 left: 0 0 0 0 0 0\n",
-        "llg: $finish at time 2000 at tb:44:5\n",
+        "INFO: killed_receiver.sv:44:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }
@@ -156,8 +156,9 @@ fn container_record_elements_read_into_block_local_records() {
          pop a=-5 l=10x1z0x1 size=1\n\
          missing a=0 l=xxxxxxxx p=0000 exists=0\n\
          auto a=0 l=xxxxxxxx\n",
-        "llg container warning: associative-array read of a nonexistent entry returns the default\n\
-         llg: $finish at time 0 at tb:37:5\n",
+        "WARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\n\
+         INFO: block_record_reads.sv:37:5: [SIM-001] (tb @ 0 ps) $finish called\n\
+         INFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
         &[],
     );
 }
@@ -177,7 +178,7 @@ fn block_local_records_travel_through_mailboxes_and_containers() {
          aa a=-5 n=1x0z\n\
          back a=-5 l=10x1z0x1 n=1x0z s=-3\n\
          got a=-5 l=10x1z0x1\n",
-        "llg: $finish at time 0 at tb:44:5\n",
+        "INFO: block_records.sv:44:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }

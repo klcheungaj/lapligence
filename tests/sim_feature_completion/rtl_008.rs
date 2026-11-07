@@ -206,7 +206,7 @@ fn package_string_call_witness() {
         SUITE,
         "package_string_call_witness",
         "ok\n",
-        "llg: $finish at time 0 at tb:4:49\n",
+        "INFO: package_string_call_witness.sv:4:49: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );

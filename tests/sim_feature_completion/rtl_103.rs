@@ -3,7 +3,7 @@ use super::sim_cli;
 const SUITE: &str = "feature_completion/rtl_103";
 
 const BOUNDS_REPORT: &str =
-    "llg: fixed streaming target selector is unknown, empty, or outside declared bounds\n";
+    "ERROR: [SIM-009] fixed streaming target selector is unknown, empty, or outside declared bounds\n";
 
 /// Run a fixture whose run-time streaming errors make it exit 1. Its results
 /// are on stderr, interleaved with the reports; compare that stream exactly
@@ -37,7 +37,8 @@ fn copy_out_ranges_outside_the_target_write_the_valid_part_and_report() {
         &format!(
             "{BOUNDS_REPORT}partial 00 11 22\n\
              {BOUNDS_REPORT}low 22 33\n\
-             {BOUNDS_REPORT}unknown 22 33\n"
+             {BOUNDS_REPORT}unknown 22 33\n\
+             INFO: [SIM-000] 3 error(s), 0 warning(s)\n"
         ),
     );
     sim_cli::reject_case(SUITE, "copyout_bounds", "outside declared bounds");
@@ -54,7 +55,8 @@ fn mixed_state_with_targets_convert_member_wise() {
              queued 1 2 | 0 1 | 0 2\n\
              reversed 0 1 | 0 z | 0 2\n\
              copyout 0 1 | 0 9 | 0 3\n\
-             local 10 010 x 11 | z0 100 z 01 | 00 000 0 00\n"
+             local 10 010 x 11 | z0 100 z 01 | 00 000 0 00\n\
+             INFO: [SIM-000] 1 error(s), 0 warning(s)\n"
         ),
     );
     sim_cli::reject_case(SUITE, "mixed_state", "outside declared bounds");
@@ -127,6 +129,6 @@ fn neg_descriptor_stream_forms() {
     sim_cli::reject_case(
         SUITE,
         "neg_stream_exceeds",
-        "llg runtime fatal: fixed stream exceeds destination",
+        "FATAL: [SIM-030] fixed stream exceeds destination",
     );
 }

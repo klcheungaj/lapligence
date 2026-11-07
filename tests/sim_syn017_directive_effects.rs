@@ -13,7 +13,7 @@ fn legacy_parameter_macros_conditionals_and_generated_ranges_execute() {
             SUITE,
             "legacy_macro",
             "value=0000101\n",
-            "llg: $finish at time 0 at tb:18:5\n",
+            "INFO: legacy_macro.sv:18:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &["--edition", edition],
         );
@@ -36,7 +36,7 @@ fn legacy_ifdef_elsif_else_selects_each_executable_branch() {
                 SUITE,
                 "legacy_conditions",
                 expected,
-                "llg: $finish at time 0 at tb:12:5\n",
+                "INFO: legacy_conditions.sv:12:5: [SIM-001] (tb @ 0 ps) $finish called\n",
                 &[],
                 &args,
             );
@@ -50,7 +50,7 @@ fn modern_macro_operators_execute_only_in_2009() {
         SUITE,
         "modern_macro",
         "name=value_field value=37\n",
-        "llg: $finish at time 0 at tb:11:5\n",
+        "INFO: modern_macro.sv:11:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -75,7 +75,7 @@ fn implicit_net_policy_follows_compilation_unit_boundary() {
                 "nettype_use",
                 &[prefix],
                 "implicit=z\n",
-                "llg: $finish at time 0 at tb:7:5\n",
+                "INFO: nettype_use.sv:7:5: [SIM-001] (tb @ 0 ps) $finish called\n",
                 &[],
                 &["--edition", edition, "--compilation-units", mode],
             );
@@ -117,7 +117,7 @@ fn later_directives_and_predefined_macros_are_edition_gated() {
             SUITE,
             fixture,
             expected,
-            &format!("llg: $finish at time 0 at tb:{finish_line}:5\n"),
+            &format!("INFO: {fixture}.sv:{finish_line}:5: [SIM-001] (tb @ 0 ps) $finish called\n"),
             &[],
             &["--edition", "sv2009"],
         );
@@ -144,7 +144,7 @@ fn later_forms_in_untaken_ifdef_are_ignored() {
             SUITE,
             "inactive_later_forms",
             "ok\n",
-            "llg: $finish at time 0 at tb:10:5\n",
+            "INFO: inactive_later_forms.sv:10:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &["--edition", edition],
         );
@@ -157,7 +157,7 @@ fn later_directive_in_else_follows_selected_branch() {
         SUITE,
         "else_directive_activity",
         "if\n",
-        "llg: $finish at time 0 at tb:6:5\n",
+        "INFO: else_directive_activity.sv:6:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "v2001", "--define", "TAKE_IF"],
     );
@@ -171,7 +171,7 @@ fn later_directive_in_else_follows_selected_branch() {
         SUITE,
         "else_directive_activity",
         "else\n",
-        "llg: $finish at time 0 at tb:14:5\n",
+        "INFO: else_directive_activity.sv:14:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -187,7 +187,7 @@ fn caller_header_precedes_later_include_directory() {
             SUITE,
             "include_order",
             "choice=3\n",
-            "llg: $finish at time 0 at tb:6:5\n",
+            "INFO: include_order.sv:6:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &["--edition", edition, "--include-dir", later],
         );
@@ -201,7 +201,7 @@ fn escaped_identifier_with_macro_range_executes() {
             SUITE,
             "escaped_range",
             "escaped=1000001\n",
-            "llg: $finish at time 0 at tb:9:5\n",
+            "INFO: escaped_range.sv:9:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &["--edition", edition],
         );
@@ -215,7 +215,7 @@ fn standard_attribute_is_simulation_neutral() {
             SUITE,
             "attribute_neutral",
             "attribute=a\n",
-            "llg: $finish at time 0 at tb:8:5\n",
+            "INFO: attribute_neutral.sv:8:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &["--edition", edition],
         );

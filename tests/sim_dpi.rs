@@ -108,7 +108,8 @@ fn dpi_scalar_imports_roundtrip_in_both_optimizer_modes() {
         assert!(
             !stderr
                 .lines()
-                .any(|line| line.starts_with("llg: warning: ")),
+                .filter_map(llg::core::report::parse)
+                .any(|message| message.id == llg::core::report::catalog::CODEGEN_WARNING.id()),
             "unexpected lowering warning: {stderr}"
         );
     }
@@ -282,7 +283,7 @@ fn dpi_missing_symbol_fails_during_model_link() {
             && stderr.contains("is not defined by any --dpi-lib library"),
         "stderr: {stderr}"
     );
-    assert!(!stderr.contains("llg: $finish"), "simulation ran: {stderr}");
+    assert!(!stderr.contains("[SIM-001]"), "simulation ran: {stderr}");
 }
 
 /// A model that ends by a signal makes `llg` exit 1 and name the signal on
@@ -313,7 +314,7 @@ fn model_ended_by_a_signal_is_named_on_stderr() {
         let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
         assert_eq!(
-            stderr, "llg: the model was terminated by signal 6 (SIGABRT)\n",
+            stderr, "ERROR: [RUN-002] the model was terminated by signal 6 (SIGABRT)\n",
             "no_opt={no_opt}"
         );
     }

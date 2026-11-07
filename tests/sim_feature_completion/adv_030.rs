@@ -127,7 +127,7 @@ fn protect_keywords_outside_an_envelope_simulate() {
         SUITE,
         "no_envelope.sv",
         expected,
-        "llg: $finish at time 1000 at tb:13:5\n",
+        "INFO: no_envelope.sv:13:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
         &[],
     );

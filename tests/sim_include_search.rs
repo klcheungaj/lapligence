@@ -21,7 +21,7 @@ fn top_file_with_include_dirs_finds_package_child_and_leaf() {
         "include_search",
         "top",
         "y=42 width=8\n",
-        "llg: $finish at time 1000 at tb:10:5\n",
+        "INFO: top.sv:10:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
         &["-I", &rtl, "--include-dir", &lib],
     );

@@ -118,7 +118,7 @@ fn recursive_calls_reach_the_guard_only_above_256_activations_in_both_editions()
             SUITE,
             "recursion_guard",
             "",
-            "llg: recursion limit exceeded\n",
+            "ERROR: [SIM-010] recursion limit exceeded\nINFO: [SIM-000] 1 error(s), 0 warning(s)\n",
             &[],
             &["--edition", edition],
         );

@@ -1302,6 +1302,9 @@ fn build_c_probe(name: &str, probe: &str) -> Option<(sim_harness::TempDir, std::
     let dir = sim_harness::TempDir::new(name).expect("create constraint probe directory");
     let (header, source) = constraint_sources();
     std::fs::write(dir.path().join("llg_constraint.h"), header).unwrap();
+    for (name, contents) in llg::sim::rt::message_headers() {
+        std::fs::write(dir.path().join(name), contents).unwrap();
+    }
     std::fs::write(dir.path().join("llg_constraint.c"), source).unwrap();
     std::fs::write(dir.path().join("probe.c"), probe).unwrap();
     let (mut command, executable) = c_compiler::strict_c11_executable(

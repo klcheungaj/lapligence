@@ -42,7 +42,7 @@ fn static_block_local_hierarchical_port_actual_runs_in_both_optimizer_modes() {
         "syn038_pairwise",
         "static_hierarchical_block_port_actual",
         "static_hierarchical_block_port_actual=passed\n",
-        "llg: $finish at time 1000 at tb:32:9\n",
+        "INFO: static_hierarchical_block_port_actual.sv:32:9: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -105,12 +105,11 @@ fn unqualified_static_block_local_port_actual_is_rejected_by_frontend_and_cli() 
     );
 
     let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(UNQUALIFIED_FIXTURE);
-    let path = sim_harness::source_display(&fixture_path);
+    let path = sim_harness::file_name(&fixture_path);
     let expected_stderr = format!(
-        "Error: {path}:7:19 use of undeclared identifier 'static_value'\n\
-Warning: {path}:3:31 unused port signal 'value'\n\
-Warning: {path}:10:28 variable 'static_value' is assigned but its value is never used\n\
-llg: Slang reported errors; aborting\n"
+        "ERROR: {path}:7:19: [SLANG-UndeclaredIdentifier] use of undeclared identifier 'static_value'\n\
+WARNING: {path}:3:31: [SLANG-UnusedPort] unused port signal 'value' (-Wunused-port)\n\
+WARNING: {path}:10:28: [SLANG-UnusedButSetVariable] variable 'static_value' is assigned but its value is never used (-Wunused-but-set-variable)\n"
     );
     sim_cli::reject_case_with_exact_stderr(
         "syn038_pairwise",

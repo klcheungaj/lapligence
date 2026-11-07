@@ -564,7 +564,11 @@ fn vpi_printf_stays_ordered_with_runtime_notes_in_a_file() {
             "{combined}"
         );
         assert!(
-            position("vpi_printf 2") < position("llg: $finish"),
+            position("vpi_printf 2")
+                < lines
+                    .iter()
+                    .position(|line| line.contains("[SIM-001]"))
+                    .unwrap_or_else(|| panic!("`$finish` report missing from:\n{combined}")),
             "{combined}"
         );
         Ok(())

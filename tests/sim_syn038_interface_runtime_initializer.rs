@@ -74,10 +74,10 @@ fn module_initializer_reads_bound_interface_storage_in_both_modes() {
         .expect("initializer contains its bound interface member")
         + 1;
     let expected_stderr = format!(
-        "Warning: {}:{}:{} initializer for static variable 'same_scope_copy' refers to 'local_seed' which will not have a value at initialization time\n\
-Warning: {}:{}:{} initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time\n",
-        sim_harness::source_display(&fixture_path), control_line.0, control_column,
-        sim_harness::source_display(&fixture_path), warning_line.0, warning_column
+        "WARNING: {}:{}:{}: [SLANG-StaticInitValue] initializer for static variable 'same_scope_copy' refers to 'local_seed' which will not have a value at initialization time (-Wstatic-init-value)\n\
+WARNING: {}:{}:{}: [SLANG-StaticInitValue] initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time (-Wstatic-init-value)\n",
+        sim_harness::file_name(&fixture_path), control_line.0, control_column,
+        sim_harness::file_name(&fixture_path), warning_line.0, warning_column
     );
 
     for optimized in [false, true] {

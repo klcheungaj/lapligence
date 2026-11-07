@@ -42,7 +42,8 @@ fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
     ]
 }
 
-const LINE_MAP_STDERR: &str = "llg: $finish at time 0 at tb:14:5\n";
+const LINE_MAP_STDERR: &str =
+    "INFO: line_map.sv:14:5 (`line mapped_top.sv:303): [SIM-001] (tb @ 0 ps) $finish called\n";
 
 /// A01: `__FILE__`/`__LINE__` through nested includes, their restoration
 /// after each include, `` `line`` in the top file and in headers, and a macro
@@ -93,7 +94,7 @@ fn line_state_stays_in_its_file_in_both_unit_modes() {
             "line_units",
             &["line_units_peer.sv"],
             include_str!("../fixtures/sim/feature_completion/rtl_019/line_units.out"),
-            "llg: $finish at time 0 at tb:9:5\n",
+            "INFO: line_units.sv:9:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &["--compilation-units", mode, "line_units_peer.sv"],
             &[],
         );
@@ -108,17 +109,15 @@ fn line_state_stays_in_its_file_in_both_unit_modes() {
 }
 
 fn line_locations_stderr() -> String {
-    // Physical line 18 follows `line 40 at line 13, so it is logical 44.
-    // Scope-based runtime locations stay physical (tb.u0:4:3 is line 4 of
-    // line_task.svh; tb:16:5 is physical although it is logical 42).
-    format!(
-        "llg: assertion assert failed: {}:18:3 (`line orig_tb.sv:44) (a_never)\n\
-         llg: severity error: tb.u0:4:3: late 1\n\
-         llg: severity error: tb.u1:4:3: late 2\n\
-         llg: severity error: tb:16:5: resumed 3\n\
-         llg: $finish at time 6000 at tb:22:8\n",
-        super::sim_harness::source_display(Path::new(&fixture("line_locations.sv")))
-    )
+    // Physical line 18 follows `line 40 at line 13, so it is logical 44. The
+    // severity tasks of the included task carry its header's position.
+    "ERROR: line_locations.sv:18:3 (`line orig_tb.sv:44): [SIM-007] (1 ns) assert failed (a_never)\n\
+     ERROR: line_task.svh:4:3: [SIM-005] (tb.u0 @ 2 ns) late 1\n\
+     ERROR: line_task.svh:4:3: [SIM-005] (tb.u1 @ 3 ns) late 2\n\
+     ERROR: line_locations.sv:16:5 (`line orig_tb.sv:42): [SIM-005] (tb @ 4 ns) resumed 3\n\
+     INFO: line_locations.sv:22:8 (`line orig_tb.sv:48): [SIM-001] (tb @ 6 ns) $finish called\n\
+     INFO: [SIM-000] 4 error(s), 0 warning(s), 1 info(s)\n"
+        .to_owned()
 }
 
 /// A01: errors from tasks resumed after a delay (two instances of an
@@ -269,7 +268,7 @@ fn later_forms_execute_in_2009_and_reject_in_2001() {
             "sv_forms_2009",
             &[],
             include_str!("../fixtures/sim/feature_completion/rtl_019/sv_forms_2009.out"),
-            "llg: $finish at time 3000 at tb:53:5\n",
+            "INFO: sv_forms_2009.sv:53:5: [SIM-001] (tb @ 3 ns) $finish called\n",
             &[],
             &envs,
         );
@@ -292,7 +291,7 @@ fn legacy_neighbours_and_memory_storage_arguments_stay_admitted() {
             SUITE,
             "legacy_forms_2001.v",
             include_str!("../fixtures/sim/feature_completion/rtl_019/legacy_forms_2001.out"),
-            "llg: $finish at time 1000 at tb:57:5\n",
+            "INFO: legacy_forms_2001.v:57:5 (`line legacy_mapped.v:53): [SIM-001] (tb @ 1 ns) $finish called\n",
             &[],
             &["--edition", edition],
         );
@@ -505,7 +504,7 @@ fn post_2009_bins_forms_reject_and_2009_bins_execute() {
         SUITE,
         "cover_bins_2009",
         "bins admitted\n",
-        "llg: $finish at time 0 at tb:20:5\n",
+        "INFO: cover_bins_2009.sv:20:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
     sim_cli::reject_case_with_args(

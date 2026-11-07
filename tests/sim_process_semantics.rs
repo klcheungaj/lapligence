@@ -12,7 +12,7 @@ fn always_comb_time_zero_and_written_local_exclusion() {
         "process_semantics",
         "always_comb_time_zero",
         "zero y=0\none y=1\n",
-        "llg: $finish at time 0 at tb:24:9\n",
+        "INFO: always_comb_time_zero.sv:24:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }
@@ -23,7 +23,7 @@ fn at_star_does_not_follow_called_function_reads() {
         "process_semantics",
         "at_star_distinct",
         "t=1000 at=x comb=0\nt=2000 at=x comb=1\n",
-        "llg: $finish at time 2000 at tb:21:9\n",
+        "INFO: at_star_distinct.sv:21:9: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }
@@ -34,7 +34,7 @@ fn legal_latch_and_edge_flip_flop_run_without_false_errors() {
         "process_semantics",
         "legal_latch_ff",
         "start latched=x q=x\nhold latched=x q=x\nopen latched=1 q=x\nedge latched=1 q=1\ndata latched=0 q=1\n",
-        "llg: $finish at time 5000 at tb:27:9\n",
+        "INFO: legal_latch_ff.sv:27:9: [SIM-001] (tb @ 5 ns) $finish called\n",
         &[],
     );
 }
@@ -45,7 +45,7 @@ fn legal_function_side_effect_is_not_rejected() {
         "process_semantics",
         "function_side_effect",
         "t=1000 helper=0 y=0\nt=2000 helper=1 y=1\n",
-        "llg: $finish at time 2000 at tb:21:9\n",
+        "INFO: function_side_effect.sv:21:9: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }
@@ -75,7 +75,7 @@ fn legal_level_flip_flop_event_does_not_false_error() {
         "process_semantics",
         "ff_level_event",
         "q=1\n",
-        "llg: $finish at time 2000 at tb:14:9\n",
+        "INFO: ff_level_event.sv:14:9: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }

@@ -51,7 +51,7 @@ fn concurrent_assertions_account_for_vacuous_successes() {
         "concurrent_assertions",
         "vacuity",
         "VACUOUS_PASS\n",
-        "llg: $finish at time 2000 at tb:15:12\nllg: simulation statistics: processes=2\nllg: assertion vacuous=1\n",
+        "INFO: vacuity.sv:15:12: [SIM-001] (tb @ 2 ns) $finish called\nINFO: [SIM-008] simulation statistics: processes=2\nINFO: [SIM-008] assertion vacuous=1\n",
         &[],
     );
 }
@@ -63,9 +63,12 @@ fn action_retention_processes(cycles: u64) -> std::collections::BTreeMap<String,
     // Hand-derived: the sampled count at posedge k is k-1, so every attempt
     // passes (three vacuously) and `$rose(count[0])` matches at even k.
     let stdout = format!("passes={cycles} fails=0 covers={}\n", cycles / 2);
-    let finish = format!("llg: $finish at time {} at tb:31:9\n", 2000 * cycles);
+    let finish = format!(
+        "INFO: action_retention.sv:31:9: [SIM-001] (tb @ {}) $finish called\n",
+        crate::sim_harness::sim_time(2000 * cycles, 1000)
+    );
     let tail = format!(
-        "llg: assertion counts: assert_failed=0 assume_failed=0 cover={}\nllg: assertion vacuous=3\n",
+        "INFO: [SIM-008] assertion counts: assert_failed=0 assume_failed=0 cover={}\nINFO: [SIM-008] assertion vacuous=3\n",
         cycles / 2
     );
     let counts = std::cell::RefCell::new(std::collections::BTreeMap::new());
@@ -74,12 +77,15 @@ fn action_retention_processes(cycles: u64) -> std::collections::BTreeMap<String,
         "action_retention",
         &["--define", &define],
         &|label, output| {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr =
+                crate::sim_harness::canonical_messages(&String::from_utf8_lossy(&output.stderr));
             assert!(output.status.success(), "{label}: {stderr}");
             assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
             let rest = stderr
                 .strip_prefix(finish.as_str())
-                .and_then(|rest| rest.strip_prefix("llg: simulation statistics: processes="))
+                .and_then(|rest| {
+                    rest.strip_prefix("INFO: [SIM-008] simulation statistics: processes=")
+                })
                 .unwrap_or_else(|| panic!("{label}: unexpected stderr {stderr:?}"));
             let (count, rest) = rest.split_once('\n').expect("statistics line");
             assert_eq!(rest, tail, "{label}");

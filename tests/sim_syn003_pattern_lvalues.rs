@@ -14,7 +14,7 @@ fn positional_pattern_lvalues_run_in_both_optimizer_modes() {
         "syn003_pattern_lvalues",
         "syn_003_pattern_lvalues",
         "plain 11 22\ntyped 22 11\npattern_rhs 23 24\nselected 11 22\nreversed 31 42\nnested 51 52 61 62\noverlap 82\nnba_before 00 00\nnba_after 11 22\nPASS syn_003_pattern_lvalues\n",
-        "llg: $finish at time 1000 at tb:56:5\n",
+        "INFO: syn_003_pattern_lvalues.sv:56:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }

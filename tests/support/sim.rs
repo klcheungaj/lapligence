@@ -214,43 +214,233 @@ pub(crate) fn frontend_diagnostics(
     Ok(out.snapshot.diagnostics)
 }
 
+/// The tools whose end-of-phase summaries (`TOOL-000`) belong to the
+/// compile report.
+const COMPILE_TOOLS: [&str; 4] = ["SLANG", "ELAB", "LINT", "CODEGEN"];
+
+fn is_summary(message: &llg::core::report::ParsedMessage) -> bool {
+    message.id == llg::core::report::id(message.tool(), 0)
+}
+
 /// Whether an `llg` stderr line is a non-fatal compile report: a frontend
-/// `Warning:`, a lint warning/info finding (`<loc>: [WARNING] rule: ...`), or
-/// the lint count line. Every `llg` run lints, so simulation expectations
-/// ignore these the way they ignore frontend warnings; lint errors still stop
-/// the run and fail the test.
+/// warning or note, a lint warning/info finding, or a compile-phase summary.
+/// Every `llg` run lints, so simulation expectations ignore these the way
+/// they ignore frontend warnings; lint errors still stop the run and fail the
+/// test. Lines are parsed with the product layout (`core::report::parse`), so
+/// a layout change does not touch this helper.
 #[allow(dead_code)]
 pub(crate) fn is_compile_report_line(line: &str) -> bool {
-    if line.starts_with("Warning: ") {
-        return true;
-    }
-    if let Some(counts) = line.strip_prefix("lint: ") {
-        return counts.ends_with(" warning(s)") && counts.contains(" error(s), ");
-    }
-    ["[WARNING] ", "[INFO] "]
-        .iter()
-        .any(|tag| line.starts_with(tag) || line.contains(&format!(": {tag}")))
+    let Some(message) = llg::core::report::parse(line) else {
+        return false;
+    };
+    let tool = message.tool();
+    (matches!(tool, "SLANG" | "LINT") && message.severity <= llg::core::report::Severity::Warning)
+        || (COMPILE_TOOLS.contains(&tool) && is_summary(&message))
 }
 
 /// Whether an `llg` stderr line belongs to a non-blocking lint report: a
-/// warning/info finding or the lint count line.
+/// warning/info finding or the lint summary.
 #[allow(dead_code)]
 pub(crate) fn is_lint_report_line(line: &str) -> bool {
-    if let Some(counts) = line.strip_prefix("lint: ") {
-        return counts.ends_with(" warning(s)") && counts.contains(" error(s), ");
-    }
-    ["[WARNING] ", "[INFO] "]
-        .iter()
-        .any(|tag| line.starts_with(tag) || line.contains(&format!(": {tag}")))
+    let Some(message) = llg::core::report::parse(line) else {
+        return false;
+    };
+    message.tool() == "LINT"
+        && (message.severity <= llg::core::report::Severity::Warning || is_summary(&message))
 }
 
-/// `llg` stderr without its lint report lines (see [`is_lint_report_line`]),
-/// for exact comparisons of what the model and the driver print otherwise.
+/// `llg` stderr without its lint report lines (see [`is_lint_report_line`])
+/// and without the compile-phase summaries (`SLANG-000`, `ELAB-000`,
+/// `CODEGEN-000`, which have their own CLI tests), every message in the
+/// fixed test form of [`canonical_message`], for exact comparisons of what the
+/// model and the driver print otherwise.
 #[allow(dead_code)]
 pub(crate) fn strip_lint_reports(stderr: &[u8]) -> String {
-    String::from_utf8_lossy(stderr)
+    let kept: String = String::from_utf8_lossy(stderr)
         .split_inclusive('\n')
-        .filter(|line| !is_lint_report_line(line.trim_end_matches(['\r', '\n'])))
+        .filter(|line| {
+            let line = line.trim_end_matches(['\r', '\n']);
+            !is_lint_report_line(line)
+                && !llg::core::report::parse(line).is_some_and(|message| {
+                    COMPILE_TOOLS.contains(&message.tool()) && is_summary(&message)
+                })
+        })
+        .collect();
+    canonical_messages(&kept)
+}
+
+/// A message line in the fixed form test expectations are written in:
+/// `SEVERITY: <file>:<line>:<col>: [ID] (<context>) <text>`, the location
+/// reduced to the file name and left out (with its `: `) when absent, the
+/// context likewise. The line is parsed with the product layout, so a later
+/// layout change leaves every expectation as it is. Other lines (design
+/// output, tool output passed through) are returned unchanged.
+#[allow(dead_code)]
+pub(crate) fn canonical_message(line: &str) -> String {
+    let Some(message) = llg::core::report::parse(line) else {
+        return line.to_owned();
+    };
+    let mut out = format!("{}: ", message.severity.name().to_ascii_uppercase());
+    if let Some(location) = &message.location {
+        out.push_str(&short_location(location));
+        out.push_str(": ");
+    }
+    out.push_str(&format!("[{}] ", message.id));
+    if let Some(context) = &message.context {
+        out.push_str(&format!("({context}) "));
+    }
+    out.push_str(&message.text);
+    out
+}
+
+/// `file:line:col` with the file reduced to its name; a `` (`line ...)``
+/// suffix is kept.
+#[allow(dead_code)]
+pub(crate) fn short_location(location: &str) -> String {
+    let (physical, logical) = match location.find(" (`line ") {
+        Some(at) => location.split_at(at),
+        None => (location, ""),
+    };
+    let mut parts = physical.rsplitn(3, ':');
+    let (Some(col), Some(line), Some(file)) = (parts.next(), parts.next(), parts.next()) else {
+        return location.to_owned();
+    };
+    let name = Path::new(file)
+        .file_name()
+        .map_or(file.to_owned(), |name| name.to_string_lossy().into_owned());
+    format!("{name}:{line}:{col}{logical}")
+}
+
+/// Whether `stderr` has a message with id `id` (`SIM-009`) whose location
+/// ends in `at` (`:36:5`; any location when empty) and whose text contains
+/// `text`. Lines are parsed with the product layout.
+#[allow(dead_code)]
+pub(crate) fn has_message(stderr: &str, id: &str, at: &str, text: &str) -> bool {
+    stderr
+        .lines()
+        .filter_map(llg::core::report::parse)
+        .any(|message| {
+            message.id == id
+                && (at.is_empty()
+                    || message.location.as_deref().is_some_and(|location| {
+                        location
+                            .split(" (`line ")
+                            .next()
+                            .is_some_and(|physical| physical.ends_with(at))
+                    }))
+                && message.text.contains(text)
+        })
+}
+
+/// A simulation time of `ticks` design-precision ticks of `precision_fs`
+/// femtoseconds as messages print it: the largest unit that shows it
+/// exactly, a space, the unit (an independent statement of the runtime rule).
+#[allow(dead_code)]
+pub(crate) fn sim_time(ticks: u64, precision_fs: u64) -> String {
+    const UNITS: [&str; 6] = ["fs", "ps", "ns", "us", "ms", "s"];
+    let mut value = u128::from(ticks) * u128::from(precision_fs);
+    let mut unit = 0;
+    if value == 0 {
+        let mut precision = precision_fs.max(1);
+        while unit < 5 && precision % 1000 == 0 {
+            precision /= 1000;
+            unit += 1;
+        }
+        return format!("0 {}", UNITS[unit]);
+    }
+    while unit < 5 && value % 1000 == 0 {
+        value /= 1000;
+        unit += 1;
+    }
+    format!("{value} {}", UNITS[unit])
+}
+
+/// Whether `stderr` mentions `diagnostic`: a substring of the raw stream, or
+/// of one message read as `file.sv:l:c text` (location reduced to the file
+/// name, then the text), so a rejection test can name a located diagnostic
+/// without the layout or the message id.
+#[allow(dead_code)]
+pub(crate) fn mentions(stderr: &str, diagnostic: &str) -> bool {
+    stderr.contains(diagnostic)
+        || stderr
+            .lines()
+            .filter_map(llg::core::report::parse)
+            .any(|message| located_text(&message).contains(diagnostic))
+}
+
+/// `file.sv:l:c text` of a message (location reduced to the file name), or
+/// its text when it has no location.
+#[allow(dead_code)]
+pub(crate) fn located_text(message: &llg::core::report::ParsedMessage) -> String {
+    match &message.location {
+        Some(location) => format!("{} {}", short_location(location), message.text),
+        None => message.text.clone(),
+    }
+}
+
+/// The run-time messages of `stderr` (tool `SIM`) in the canonical test
+/// form, without the `$finish` report (`SIM-001`) and the end-of-run summary
+/// (`SIM-000`).
+#[allow(dead_code)]
+pub(crate) fn runtime_messages(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .filter(|line| {
+            llg::core::report::parse(line).is_some_and(|message| {
+                message.tool() == "SIM" && message.id != "SIM-001" && message.id != "SIM-000"
+            })
+        })
+        .map(canonical_message)
+        .collect()
+}
+
+/// Warnings a case lists by text instead of in its stderr oracle: lowering
+/// warnings and the run-time warnings of statements (qualifier violations,
+/// format and delay fallbacks, memory files, timing checks). Container and
+/// waveform warnings stay in the stderr oracle.
+#[allow(dead_code)]
+pub(crate) fn is_listed_warning(message: &llg::core::report::ParsedMessage) -> bool {
+    use llg::core::report::catalog;
+    let id = message.id.as_str();
+    id == catalog::CODEGEN_WARNING.id()
+        || id == "SIM-013"
+        || id == "SIM-015"
+        || (id == "SIM-011" && !message.text.starts_with("waveform: "))
+}
+
+/// The texts of the [`is_listed_warning`] messages of `stderr`, in order.
+#[allow(dead_code)]
+pub(crate) fn listed_warnings(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .filter_map(llg::core::report::parse)
+        .filter(is_listed_warning)
+        .map(|message| message.text)
+        .collect()
+}
+
+/// The file name of `path`, as [`canonical_message`] shows a location.
+#[allow(dead_code)]
+pub(crate) fn file_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// Every line of `stderr` through [`canonical_message`].
+#[allow(dead_code)]
+pub(crate) fn canonical_messages(stderr: &str) -> String {
+    stderr
+        .split_inclusive('\n')
+        .map(|line| {
+            let body = line.trim_end_matches(['\r', '\n']);
+            let mut out = canonical_message(body);
+            if line.ends_with('\n') {
+                out.push('\n');
+            }
+            out
+        })
         .collect()
 }
 
@@ -515,6 +705,9 @@ pub fn write_value_backend_sources(dir: &std::path::Path) {
         let path = dir.join(name);
         std::fs::create_dir_all(path.parent().unwrap()).expect("create value source directory");
         std::fs::write(path, source).expect("write value source dependency");
+    }
+    for (name, source) in llg::sim::rt::message_headers() {
+        std::fs::write(dir.join(name), source).expect("write runtime message header");
     }
 }
 

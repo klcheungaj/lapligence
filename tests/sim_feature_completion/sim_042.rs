@@ -129,7 +129,7 @@ fn delayed_puts_survive_a_resumed_stop() {
             assert!(output.status.success(), "{label}: {stderr}");
             assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
             assert_eq!(
-                stderr.matches("$stop at time 4").count(),
+                stderr.matches("(4 ns) $stop called").count(),
                 1,
                 "{label}: {stderr}"
             );
@@ -160,7 +160,7 @@ fn delayed_puts_pending_at_an_exit_policy_stop_are_discarded() {
             assert!(output.status.success(), "{label}: {stderr}");
             assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
             assert_eq!(
-                stderr.matches("$stop at time 4").count(),
+                stderr.matches("(4 ns) $stop called").count(),
                 1,
                 "{label}: {stderr}"
             );
@@ -269,7 +269,8 @@ fn unregistered_call_stops_at_startup() {
             assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
             assert!(output.stdout.is_empty(), "{label}: {output:?}");
             assert!(
-                stderr.contains("llg: VPI error: no VPI registration for `$absent` (called at "),
+                stderr
+                    .contains("[SIM-016] VPI error: no VPI registration for `$absent` (called at "),
                 "{label}: {stderr}"
             );
             assert!(stderr.contains("missing.sv:6)"), "{label}: {stderr}");

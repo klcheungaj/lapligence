@@ -71,10 +71,14 @@ process-global changes go through the shared harness lock or a standalone binary
   specific frontend/lowering/runtime diagnostics. Positive migration or
   unsupported-feature rejection is a failure, never a skip or success
   substitute. Keep each suite's frontend, timeout and sanitizer contracts.
-- Every `llg` run lints. Expectations ignore lint warning/info lines and the
-  count line (`sim_harness::is_compile_report_line`,
-  `sim_harness::strip_lint_reports`) like frontend `Warning:` lines; lint errors
-  still fail. A fixture that deliberately mixes blocking and nonblocking
+- Every `llg` run lints. Expectations ignore `LINT` and `SLANG` warning/info
+  lines and the compile-phase summaries (`sim_harness::is_compile_report_line`,
+  `sim_harness::strip_lint_reports`); lint errors still fail. Message lines are
+  parsed through the shared layout template (`llg::core::report::parse`) and
+  compared in a fixed canonical test form, `SEVERITY: file.sv:l:c: [ID] (ctx)
+  text`, with the location reduced to the file name
+  (`sim_harness::canonical_message`), so a change of the product layout
+  ([messages](../docs/messages.md)) does not touch expectations. A fixture that deliberately mixes blocking and nonblocking
   assignments or has combinational feedback is listed with its exact errors in
   `fixtures/sim/lint/expected_errors.tsv`: `sim_cli` first requires the default
   run to stop with exactly those errors, then reruns with the

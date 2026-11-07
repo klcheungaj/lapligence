@@ -285,7 +285,7 @@ endmodule
 
 /// (e) A zero-delay trigger loop (`#0 -> ev` ping-ponged between two events)
 /// must be stopped by the runtime's zero-delay guard, printing
-/// "llg: zero-delay loop detected at time 0" — never hanging.
+/// "ERROR: [SIM-010] zero-delay loop detected at time 0" — never hanging.
 #[test]
 fn sim_events_zero_delay_trigger_loop_guard() {
     if !llg::sim::build::cmake_available() {
@@ -314,7 +314,7 @@ endmodule
     //        stderr and stops with a nonzero status (empty stdout).
     //
     // Expected stdout: (empty)
-    // Expected stderr contains: "llg: zero-delay loop detected at time 0"
+    // Expected stderr contains: "ERROR: [SIM-010] zero-delay loop detected at time 0"
 
     let run = sim_harness::run_generated_sim_allow_failure(sv, "tb", "events-guard")
         .expect("simulation should terminate via the guard");
@@ -322,7 +322,7 @@ endmodule
     assert!(run.stdout.is_empty());
     let stderr = run.stderr;
     assert!(
-        stderr.contains("llg: zero-delay loop detected at time 0"),
+        stderr.contains("ERROR: [SIM-010] zero-delay loop detected at time 0"),
         "stderr did not contain the zero-delay loop guard message: {stderr}"
     );
 }

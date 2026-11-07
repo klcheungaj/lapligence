@@ -13,7 +13,7 @@ fn storage_and_hierarchical_routes_run_in_both_optimizer_modes() {
         "syn038_pairwise",
         "storage_hier_route_remainders",
         "storage_hier_route_remainders=passed\n",
-        "llg: $finish at time 2000 at tb:146:9\n",
+        "INFO: storage_hier_route_remainders.sv:146:9: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );

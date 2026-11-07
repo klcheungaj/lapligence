@@ -106,7 +106,7 @@ fn pending_evaluations_are_bounded() {
         assert!(!limited.status.success(), "optimized={optimized}: {stderr}");
         assert!(
             stderr.contains(
-                "llg: sequence thread budget exhausted: more than 50 live sequence threads at \
+                "ERROR: [SIM-010] sequence thread budget exhausted: more than 50 live sequence threads at \
                  time 2091 (concurrent assertion bud at "
             ),
             "optimized={optimized}: {stderr}"

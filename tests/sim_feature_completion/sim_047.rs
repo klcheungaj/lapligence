@@ -46,14 +46,10 @@ fn assert_success(label: &str, output: &Output, expected: &str) {
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
 }
 
-/// Runtime stderr lines: compile reports and the `$finish` note removed.
+/// Run-time messages without the `$finish` report and the end-of-run
+/// summary ([`sim_harness::runtime_messages`]).
 fn runtime_stderr(output: &Output) -> Vec<String> {
-    String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter(|line| !sim_harness::is_compile_report_line(line))
-        .filter(|line| !line.starts_with("llg: $finish at time"))
-        .map(str::to_owned)
-        .collect()
+    sim_harness::runtime_messages(&String::from_utf8_lossy(&output.stderr))
 }
 
 fn read_vcd(label: &str, dir: &sim_harness::TempDir, file: &str) -> vcd::Vcd {
@@ -358,7 +354,7 @@ fn dumpvars_calls_of_one_step_add_up_and_later_calls_are_ignored() {
         );
         assert_eq!(
             runtime_stderr(&output),
-            ["llg: waveform: warning: $dumpvars at #1 ignored: the dump started at #0"],
+            ["WARNING: [SIM-011] waveform: $dumpvars at #1 ignored: the dump started at #0"],
             "{label}"
         );
         let vcd = read_vcd(&label, &dir, "trace.vcd");
@@ -649,7 +645,7 @@ fn dump_controls_record_end_of_step_values() {
         );
         assert_eq!(
             runtime_stderr(&output),
-            ["llg: waveform: warning: $dumpfile(\"late.vcd\") ignored: the dump started at #0"],
+            ["WARNING: [SIM-011] waveform: $dumpfile(\"late.vcd\") ignored: the dump started at #0"],
             "{label}"
         );
         assert!(
@@ -811,7 +807,7 @@ fn an_unwritable_dump_file_is_reported_and_the_run_still_completes() {
         let stderr = runtime_stderr(&output);
         assert_eq!(stderr.len(), 1, "{label}: one report: {stderr:?}");
         assert!(
-            stderr[0].starts_with("llg: waveform: cannot open `missing_directory/trace.vcd`: "),
+            stderr[0].starts_with("ERROR: [SIM-018] cannot open `missing_directory/trace.vcd`: "),
             "{label}: {stderr:?}"
         );
         assert!(!dir.path().join("missing_directory").exists(), "{label}");

@@ -8,7 +8,7 @@ fn fixed_array_type_keys_and_precedence() {
         "syn001_type_keys",
         "syn_001_type_keys",
         "PASS syn_001_type_keys\n",
-        "llg: $finish at time 1000 at tb:70:9\n",
+        "INFO: syn_001_type_keys.sv:70:9: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
     );
 }
@@ -19,7 +19,7 @@ fn packed_structure_type_keys_remain_a_neighbor_control() {
         "data_types_completion",
         "packed_struct_assignment_patterns",
         "PASS packed_struct_assignment_patterns\n",
-        "llg: $finish at time 0 at tb:117:9\n",
+        "INFO: packed_struct_assignment_patterns.sv:117:9: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
     );
 }

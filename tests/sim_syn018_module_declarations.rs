@@ -12,7 +12,8 @@ const EXPECTED: &str = "extern=7 nested=13/8\n";
 
 #[test]
 fn nested_and_extern_modules_execute_in_both_compilation_unit_modes() {
-    let expected_stderr = "llg: $finish at time 1000 at tb:73:5\n";
+    let expected_stderr =
+        "INFO: module_declarations.sv:73:5: [SIM-001] (tb @ 1 ns) $finish called\n";
     for policy in ["separate", "merged"] {
         sim_cli::run_case_with_source_prefix(
             SUITE,
@@ -33,7 +34,7 @@ fn enclosing_instance_specializations_keep_nested_defaults_and_port_widths() {
             SUITE,
             "nested_specializations",
             "specialized=4/6 widths=4/5\n",
-            "llg: $finish at time 1000 at tb:28:5\n",
+            "INFO: nested_specializations.sv:28:5: [SIM-001] (tb @ 1 ns) $finish called\n",
             &[],
             &["--edition", "sv2009", "--compilation-units", policy],
         );
@@ -49,7 +50,7 @@ fn portless_nested_modules_and_programs_are_implicitly_instantiated() {
         SUITE,
         "implicit_nested",
         "implicit tb.m\nexplicit tb.u1\nexplicit tb.u2\nprogram tb.p sees 5a\n",
-        "llg: $finish at time 2000 at tb.p:25:7\n",
+        "INFO: implicit_nested.sv:25:7: [SIM-001] (tb.p @ 2 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -92,7 +93,7 @@ fn matching_extern_header_and_body_specialize_parameterized_ports() {
             "extern_specializations",
             &["extern_child", "extern_child_body"],
             "extern_specialized=7/8 widths=4/5\n",
-            "llg: $finish at time 1000 at tb:14:5\n",
+            "INFO: extern_specializations.sv:14:5: [SIM-001] (tb @ 1 ns) $finish called\n",
             &[],
             &["--edition", "sv2009", "--compilation-units", policy],
         );

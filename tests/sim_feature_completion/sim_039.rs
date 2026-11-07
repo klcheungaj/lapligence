@@ -28,10 +28,15 @@ fn assert_sorted_stdout(label: &str, output: &Output, expected: &str) {
     );
 }
 
+/// The assertion failure reports (`SIM-007`) of `stderr` whose text starts
+/// with `prefix`.
 fn stderr_lines<'o>(stderr: &'o str, prefix: &str) -> Vec<&'o str> {
     stderr
         .lines()
-        .filter(|line| line.starts_with(prefix))
+        .filter(|line| {
+            llg::core::report::parse(line)
+                .is_some_and(|message| message.id == "SIM-007" && message.text.starts_with(prefix))
+        })
         .collect()
 }
 
@@ -42,18 +47,20 @@ fn action_controls_select_scopes_and_leave_counters_unchanged() {
         assert_sorted_stdout(label, output, expected);
         let stderr = String::from_utf8_lossy(&output.stderr);
         // `nd` fails at 35 (reported) and 65 (fail action off, not reported).
-        let failures = stderr_lines(&stderr, "llg: assertion assert failed: ");
+        let failures = stderr_lines(&stderr, "assert failed");
         assert_eq!(failures.len(), 1, "{label}: {stderr}");
         assert!(failures[0].ends_with("(nd)"), "{label}: {stderr}");
         // Counters: 8 failures (u1, u2, top_chk, nd at 35 and 65), 3 cover
         // hits (25, 45, 75) and 16 vacuous successes (4 assertions at 5, 15,
         // 55, 85), whichever actions were suppressed.
         assert!(
-            stderr.contains("llg: assertion counts: assert_failed=8 assume_failed=0 cover=3\n"),
+            stderr.contains(
+                "INFO: [SIM-008] assertion counts: assert_failed=8 assume_failed=0 cover=3\n"
+            ),
             "{label}: {stderr}"
         );
         assert!(
-            stderr.contains("llg: assertion vacuous=16\n"),
+            stderr.contains("INFO: [SIM-008] assertion vacuous=16\n"),
             "{label}: {stderr}"
         );
     });
@@ -66,11 +73,11 @@ fn action_controls_gate_immediate_deferred_and_expect_actions() {
         assert_sorted_stdout(label, output, expected);
         let stderr = String::from_utf8_lossy(&output.stderr);
         // `nde` reports at 0 and 1; at 4 and 5 its fail action is off.
-        let failures = stderr_lines(&stderr, "llg: assertion assert failed: ");
+        let failures = stderr_lines(&stderr, "assert failed");
         assert_eq!(failures.len(), 2, "{label}: {stderr}");
         assert!(
             stderr.contains(
-                "llg: assertion counts: assert_failed=4 assume_failed=0 expect_failed=1 cover=0\n"
+                "INFO: [SIM-008] assertion counts: assert_failed=4 assume_failed=0 expect_failed=1 cover=0\n"
             ),
             "{label}: {stderr}"
         );

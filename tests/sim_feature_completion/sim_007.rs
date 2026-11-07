@@ -30,14 +30,15 @@ fn native_tagged_unions_match_bind_and_check_members() {
     sim_cli::run_case_after_db_drop(SUITE, "native_tagged", expected);
 }
 
-/// Expected stderr with `{source}` standing for the fixture's absolute path,
-/// which run-time tagged-access reports carry as their source location.
+/// Expected stderr with `{source}` standing for the fixture's file name, as
+/// the canonical test form shows the location of run-time tagged-access
+/// reports.
 fn source_stderr(fixture: &str, template: &str) -> String {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim")
         .join(SUITE)
         .join(format!("{fixture}.sv"));
-    template.replace("{source}", &super::sim_harness::source_display(&source))
+    template.replace("{source}", &super::sim_harness::file_name(&source))
 }
 
 #[test]
@@ -59,9 +60,10 @@ fn native_tagged_unions_cross_ports() {
 fn inactive_native_tagged_members_of_subroutine_values_report() {
     let expected = source_stderr(
         "native_tagged_inactive_calls",
-        "llg: runtime error: access to inactive tagged-union member S at {source}:10:9\n\
-         llg: runtime error: access to inactive tagged-union member S at {source}:11:16\n\
-         llg: runtime error: access to inactive tagged-union member S at {source}:27:26\n",
+        "ERROR: {source}:10:9: [SIM-009] access to inactive tagged-union member S\n\
+         ERROR: {source}:11:16: [SIM-009] access to inactive tagged-union member S\n\
+         ERROR: {source}:27:26: [SIM-009] access to inactive tagged-union member S\n\
+         INFO: [SIM-000] 3 error(s), 0 warning(s)\n",
     );
     sim_cli::run_case_checked_matrix(
         SUITE,
@@ -84,11 +86,12 @@ fn inactive_native_tagged_members_of_subroutine_values_report() {
 fn inactive_native_tagged_members_report_and_store_nothing() {
     let expected = source_stderr(
         "native_tagged_inactive",
-        "llg: runtime error: access to inactive tagged-union member S at {source}:10:28\n\
-         llg: runtime error: access to inactive tagged-union member S at {source}:12:34\n\
-         llg: runtime error: access to inactive tagged-union member F at {source}:12:39\n\
-         llg: runtime error: access to inactive tagged-union member S at {source}:13:9\n\
-         llg: runtime error: access to inactive tagged-union member I at {source}:17:9\n",
+        "ERROR: {source}:10:28: [SIM-009] access to inactive tagged-union member S\n\
+         ERROR: {source}:12:34: [SIM-009] access to inactive tagged-union member S\n\
+         ERROR: {source}:12:39: [SIM-009] access to inactive tagged-union member F\n\
+         ERROR: {source}:13:9: [SIM-009] access to inactive tagged-union member S\n\
+         ERROR: {source}:17:9: [SIM-009] access to inactive tagged-union member I\n\
+         INFO: [SIM-000] 5 error(s), 0 warning(s)\n",
     );
     sim_cli::run_case_checked_matrix(SUITE, "native_tagged_inactive", &[], &|label, output| {
         let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
@@ -406,8 +409,9 @@ fn procedural_block_records_keep_static_and_automatic_lifetimes() {
             ..Default::default()
         },
         expected,
-        "llg container warning: associative-array read of a nonexistent entry returns the default\n\
-         llg container warning: associative-array read of a nonexistent entry returns the default\n",
+        "WARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\n\
+         WARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\n\
+         INFO: [SIM-000] 0 error(s), 2 warning(s)\n",
     );
 }
 
@@ -500,12 +504,13 @@ fn arrays_of_native_tagged_unions_check_each_element() {
 fn inactive_members_of_native_tagged_elements_report() {
     let expected = source_stderr(
         "native_tagged_array_inactive",
-        "llg: runtime error: access to inactive tagged-union member S at {source}:13:28\n\
-         llg: runtime error: access to inactive tagged-union member S at {source}:14:9\n\
-         llg: runtime error: access to inactive tagged-union member S at {source}:15:48\n\
-         llg: runtime error: access to inactive tagged-union member F at {source}:15:58\n\
-         llg: runtime error: access to inactive tagged-union member I at {source}:17:9\n\
-         llg: runtime error: access to inactive tagged-union member I at {source}:19:38\n",
+        "ERROR: {source}:13:28: [SIM-009] access to inactive tagged-union member S\n\
+         ERROR: {source}:14:9: [SIM-009] access to inactive tagged-union member S\n\
+         ERROR: {source}:15:48: [SIM-009] access to inactive tagged-union member S\n\
+         ERROR: {source}:15:58: [SIM-009] access to inactive tagged-union member F\n\
+         ERROR: {source}:17:9: [SIM-009] access to inactive tagged-union member I\n\
+         ERROR: {source}:19:38: [SIM-009] access to inactive tagged-union member I\n\
+         INFO: [SIM-000] 6 error(s), 0 warning(s)\n",
     );
     sim_cli::run_case_checked_matrix(
         SUITE,

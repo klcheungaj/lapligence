@@ -16,13 +16,9 @@ fn assert_stdout(label: &str, output: &Output, expected: &str) {
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
 }
 
-/// The `llg:` lines of a run's stderr other than the `$finish` report.
+/// The run-time messages of a run's stderr ([`super::sim_harness::runtime_messages`]).
 fn llg_messages(output: &Output) -> Vec<String> {
-    String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter(|line| line.starts_with("llg: ") && !line.starts_with("llg: $finish"))
-        .map(str::to_owned)
-        .collect()
+    super::sim_harness::runtime_messages(&String::from_utf8_lossy(&output.stderr))
 }
 
 #[test]
@@ -37,8 +33,8 @@ fn value_bins_follow_19_5_and_19_11_1() {
         assert_eq!(
             llg_messages(output),
             [
-                format!("llg: warning: tb:59:20: bins `good` {limited}"),
-                format!("llg: warning: tb:60:24: bins `split` {limited}"),
+                format!("WARNING: [SIM-011] tb:59:20: bins `good` {limited}"),
+                format!("WARNING: [SIM-011] tb:60:24: bins `split` {limited}"),
             ],
             "{label}"
         );
@@ -63,8 +59,8 @@ fn illegal_values_end_the_run() {
             output,
             expected,
             &[
-                "llg: runtime error: covergroup `g` coverpoint `cp` sampled 5, a value of illegal_bins `bad` at tb:12:20 (IEEE 1800-2009 19.5.5)",
-                "llg: severity fatal: tb:12:20: illegal_bins value sampled",
+                "ERROR: [SIM-010] covergroup `g` coverpoint `cp` sampled 5, a value of illegal_bins `bad` at tb:12:20 (IEEE 1800-2009 19.5.5)",
+                "FATAL: [SIM-009] (tb:12:20 @ 0 ps) illegal_bins value sampled",
             ],
         );
     });
@@ -80,8 +76,8 @@ fn illegal_default_values_end_the_run() {
             output,
             expected,
             &[
-                "llg: runtime error: covergroup `g` coverpoint `cp` sampled 12, a value of illegal_bins `rest` at tb:10:20 (IEEE 1800-2009 19.5.5)",
-                "llg: severity fatal: tb:10:20: illegal_bins value sampled",
+                "ERROR: [SIM-010] covergroup `g` coverpoint `cp` sampled 12, a value of illegal_bins `rest` at tb:10:20 (IEEE 1800-2009 19.5.5)",
+                "FATAL: [SIM-009] (tb:10:20 @ 0 ps) illegal_bins value sampled",
             ],
         );
     });
@@ -99,8 +95,8 @@ fn bins_counts_that_are_not_positive_end_the_run() {
             output,
             expected,
             &[
-                "llg: runtime error: bins `b` at tb:9:29: the number of bins is not a positive value",
-                "llg: severity fatal: tb:9:29: the number of bins is not a positive value",
+                "ERROR: [SIM-010] bins `b` at tb:9:29: the number of bins is not a positive value",
+                "FATAL: [SIM-009] (tb:9:29 @ 0 ps) the number of bins is not a positive value",
             ],
         );
     });
@@ -148,7 +144,7 @@ fn transition_bins_follow_19_5_1() {
 fn illegal_transitions_are_run_time_errors() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_045/transition_illegal.out");
-    let nine = "llg: runtime error: covergroup `g` coverpoint `cp` sampled 9, ending a transition no other bin holds, which is in illegal_bins `rest` at tb:15:20 (IEEE 1800-2009 19.5.5)";
+    let nine = "ERROR: [SIM-010] covergroup `g` coverpoint `cp` sampled 9, ending a transition no other bin holds, which is in illegal_bins `rest` at tb:15:20 (IEEE 1800-2009 19.5.5)";
     let one = nine.replace("sampled 9", "sampled 1");
     sim_cli::run_case_checked_matrix(SUITE, "transition_illegal", &[], &|label, output| {
         assert_eq!(output.status.code(), Some(1), "{label}");
@@ -159,8 +155,8 @@ fn illegal_transitions_are_run_time_errors() {
                 nine,
                 nine,
                 one.as_str(),
-                "llg: runtime error: covergroup `g` coverpoint `cp` sampled 3, completing a transition of illegal_bins `bad` at tb:14:20 (IEEE 1800-2009 19.5.5)",
-                "llg: severity fatal: tb:14:20: illegal_bins transition sampled",
+                "ERROR: [SIM-010] covergroup `g` coverpoint `cp` sampled 3, completing a transition of illegal_bins `bad` at tb:14:20 (IEEE 1800-2009 19.5.5)",
+                "FATAL: [SIM-009] (tb:14:20 @ 0 ps) illegal_bins transition sampled",
             ],
             "{label}"
         );
@@ -209,8 +205,8 @@ fn illegal_cross_products_are_run_time_errors() {
         assert_eq!(
             llg_messages(output),
             [
-                "llg: runtime error: covergroup `zz` cross `xy` sampled a product of illegal_bins `illegal` at tb:14:20 (IEEE 1800-2009 19.6.3)",
-                "llg: severity fatal: tb:14:20: illegal_bins product sampled",
+                "ERROR: [SIM-010] covergroup `zz` cross `xy` sampled a product of illegal_bins `illegal` at tb:14:20 (IEEE 1800-2009 19.6.3)",
+                "FATAL: [SIM-009] (tb:14:20 @ 0 ps) illegal_bins product sampled",
             ],
             "{label}"
         );
@@ -244,8 +240,8 @@ fn options_follow_19_7_and_19_11() {
         assert_eq!(
             llg_messages(output),
             [
-                "llg: warning: covergroup `go` coverpoint `cx`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
-                "llg: warning: covergroup `go` coverpoint `tx`: bins `t1` and `t2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: [SIM-011] covergroup `go` coverpoint `cx`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: [SIM-011] covergroup `go` coverpoint `tx`: bins `t1` and `t2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
             ],
             "{label}"
         );
@@ -260,7 +256,7 @@ fn merged_crosses_need_the_same_cross_bins() {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         assert_eq!(
             llg_messages(output),
-            ["llg: runtime error: covergroup `g` cross `ab`: merged type coverage needs every instance to have the same cross bins (llg limitation)"],
+            ["ERROR: [SIM-010] covergroup `g` cross `ab`: merged type coverage needs every instance to have the same cross bins (llg limitation)"],
             "{label}"
         );
     });

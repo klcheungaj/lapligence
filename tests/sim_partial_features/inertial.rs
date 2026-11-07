@@ -41,7 +41,7 @@ fn constant_driver_updates_outlive_their_evaluation_process() {
     run_case_with_stderr(
         "inertial_constant",
         "final 7 2a\n",
-        "llg: simulation ended without $finish (no processes remain) at time 7\n",
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 7\n",
     );
 }
 

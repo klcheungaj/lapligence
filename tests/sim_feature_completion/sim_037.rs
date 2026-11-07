@@ -546,7 +546,7 @@ fn sequence_thread_budget_reports_exhaustion() {
         assert!(!limited.status.success(), "optimized={optimized}: {stderr}");
         assert!(
             stderr.contains(
-                "llg: sequence thread budget exhausted: more than 50 live sequence threads at time "
+                "ERROR: [SIM-010] sequence thread budget exhausted: more than 50 live sequence threads at time "
             ) && stderr.contains("(concurrent assertion p at "),
             "optimized={optimized}: {stderr}"
         );
@@ -566,7 +566,7 @@ fn sequence_thread_budget_reports_exhaustion() {
         assert!(!invalid.status.success(), "optimized={optimized}: {stderr}");
         assert!(
             stderr.contains(
-                "llg: invalid LLG_SEQUENCE_THREAD_LIMIT (must be a positive decimal uint64)"
+                "ERROR: [SIM-010] invalid LLG_SEQUENCE_THREAD_LIMIT (must be a positive decimal uint64)"
             ),
             "optimized={optimized}: {stderr}"
         );
@@ -600,7 +600,7 @@ fn match_multiplicity_limits_are_reported_errors() {
         assert!(!limited.status.success(), "optimized={optimized}: {stderr}");
         assert!(
             stderr.contains(
-                "llg: sequence thread budget exhausted: 4096 matches must each run match items or a pass statement at time "
+                "ERROR: [SIM-010] sequence thread budget exhausted: 4096 matches must each run match items or a pass statement at time "
             ) && stderr.contains("(concurrent assertion p at "),
             "optimized={optimized}: {stderr}"
         );
@@ -614,7 +614,7 @@ fn match_multiplicity_limits_are_reported_errors() {
         assert!(!output.status.success(), "{label}: {stderr}");
         assert!(
             stderr.contains(
-                "llg: sequence match multiplicity overflow at time 635000 (concurrent assertion p at "
+                "ERROR: [SIM-010] sequence match multiplicity overflow at time 635000 (concurrent assertion p at "
             ),
             "{label}: {stderr}"
         );

@@ -22,7 +22,10 @@ fn assert_collapse_warnings(fixture: &str, expected: &str, warnings: &[&str]) {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         let mut actual = Vec::new();
         for line in stderr.lines() {
-            if let Some(warning) = line.strip_prefix("llg: warning: ") {
+            let lowering = llg::core::report::parse(line)
+                .filter(|message| message.id == llg::core::report::catalog::CODEGEN_WARNING.id())
+                .map(|message| message.text);
+            if let Some(warning) = lowering.as_deref() {
                 let (body, location) = warning
                     .rsplit_once(" at ")
                     .unwrap_or_else(|| panic!("{label}: unlocated warning {warning}"));

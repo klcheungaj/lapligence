@@ -30,7 +30,7 @@ fn static_native_locals_survive_model_optimization_and_db_drop() {
             SUITE,
             "static_native_locals",
             expected,
-            "llg: $finish at time 2000 at tb:100:5\n",
+            "INFO: static_native_locals.sv:100:5: [SIM-001] (tb @ 2 ns) $finish called\n",
             &[],
             &["--model-opt-level", level],
         );
@@ -48,7 +48,7 @@ fn static_native_locals_survive_model_optimization_and_db_drop() {
             ..Default::default()
         },
         expected,
-        "llg: $finish at time 2000 at tb:100:5\n",
+        "INFO: static_native_locals.sv:100:5: [SIM-001] (tb @ 2 ns) $finish called\n",
     );
 }
 
@@ -116,7 +116,7 @@ fn merged_compilation_unit_shares_unit_declarations_between_files() {
         "unit_shared_b",
         &["unit_shared_a"],
         include_str!("../fixtures/sim/feature_completion/sim_022/unit_shared_b.out"),
-        "llg: $finish at time 1000 at tb:9:5\n",
+        "INFO: unit_shared_b.sv:9:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
         &["--compilation-units", "merged"],
     );
@@ -153,7 +153,7 @@ fn separate_compilation_units_keep_same_named_unit_variables_apart() {
         "unit_isolated_b",
         &["unit_shared_a"],
         include_str!("../fixtures/sim/feature_completion/sim_022/unit_isolated_b.out"),
-        "llg: $finish at time 1000 at tb:11:5\n",
+        "INFO: unit_isolated_b.sv:11:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
         &["--compilation-units", "separate"],
     );

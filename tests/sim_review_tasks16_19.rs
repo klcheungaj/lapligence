@@ -128,7 +128,7 @@ fn memory_tokens_and_partial_address_errors_work_in_both_editions() {
         );
         sim_cli::run_case_with_files(
             "continuation_16_19", "memory_partial_error", "retained=aa 0b 0c 0d\n",
-            "llg: error: memory file `bad_address.hex`: address jump is outside the destination memory or selected range; load terminated\n",
+            "ERROR: [SIM-014] memory file `bad_address.hex`: address jump is outside the destination memory or selected range; load terminated\nINFO: [SIM-000] 1 error(s), 0 warning(s)\n",
             &[], &["--edition", edition], &[("bad_address.hex", "aa @8 bb @1 cc\n")],
         );
     }
@@ -142,15 +142,17 @@ fn sparse_memory_warning_and_negative_declared_ranges_keep_edition_policy() {
         ("sv2009", None, "omitted=33 22 11\nstarted=bb aa 00\nexplicit=11 22 33\n"),
     ] {
         let warnings: Vec<&str> = warning.into_iter().collect();
+        // The v2001 runs warn, so the model prints its summary.
+        let summary = if edition == "v2001" { "INFO: [SIM-000] 0 error(s), 1 warning(s)\n" } else { "" };
         sim_cli::run_case_with_files(
-            "continuation_16_19", "memory_sparse", "sparse=07 aa 07 bb\n", "", &warnings,
+            "continuation_16_19", "memory_sparse", "sparse=07 aa 07 bb\n", summary, &warnings,
             &["--edition", edition], &[("sparse.hex", "@2 aa @0 bb\n")],
         );
         let extra_warning: &[&str] = if edition == "v2001" {
             &["memory file `sparse.hex`: memory file contains more words than the selected range"]
         } else { &[] };
         sim_cli::run_case_with_files(
-            "continuation_16_19", "memory_sparse", "sparse=07 07 07 ee\n", "", extra_warning,
+            "continuation_16_19", "memory_sparse", "sparse=07 07 07 ee\n", summary, extra_warning,
             &["--edition", edition], &[("sparse.hex", "@0 aa @0 bb @0 cc @0 dd @0 ee\n")],
         );
         sim_cli::run_case_with_files(
@@ -164,7 +166,7 @@ fn sparse_memory_warning_and_negative_declared_ranges_keep_edition_policy() {
 fn two_state_enum_load_checks_word_digits_before_truncation() {
     sim_cli::run_case_with_files(
         "continuation_16_19", "memory_enum_conversion", "MEMORY_ENUM_CONVERSION_PASS\n",
-        "llg: error: memory file `enum.hex`: memory word has more digits than the element holds; load terminated\n",
+        "ERROR: [SIM-014] memory file `enum.hex`: memory word has more digits than the element holds; load terminated\nINFO: [SIM-000] 1 error(s), 2 warning(s)\n",
         &[
             "memory file `two_state.hex`: X/Z memory data converted to a two-state element",
             "memory file `enum_unknown.hex`: X/Z memory data converted to a two-state element",

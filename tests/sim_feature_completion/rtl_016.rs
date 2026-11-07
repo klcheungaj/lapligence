@@ -3,14 +3,15 @@ use std::path::Path;
 
 const SUITE: &str = "feature_completion/rtl_016";
 
-/// Expected stderr with `{source}` standing for the fixture's absolute path,
-/// which runtime tagged-access reports carry as their source location.
+/// Expected stderr with `{source}` standing for the fixture's file name, as
+/// the canonical test form shows the location of run-time tagged-access
+/// reports.
 fn source_stderr(fixture: &str, template: &str) -> String {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim")
         .join(SUITE)
         .join(format!("{fixture}.sv"));
-    template.replace("{source}", &super::sim_harness::source_display(&source))
+    template.replace("{source}", &super::sim_harness::file_name(&source))
 }
 
 /// Run a fixture whose run-time errors make it exit 1. All its results are on
@@ -68,18 +69,19 @@ fn active_member_selects_read_and_write_only_that_member() {
 fn inactive_member_selects_report_and_store_nothing() {
     assert_runtime_errors(
         "wrong_tag_selects",
-        "llg: runtime error: access to inactive tagged-union member A at {source}:32:21\n\
-         llg: runtime error: access to inactive tagged-union member A at {source}:33:22\n\
-         llg: runtime error: access to inactive tagged-union member A at {source}:34:9\n\
-         llg: runtime error: access to inactive tagged-union member A at {source}:35:9\n\
-         llg: runtime error: access to inactive tagged-union member A at {source}:36:9\n\
-         llg: runtime error: access to inactive tagged-union member Row at {source}:38:21\n\
-         llg: runtime error: access to inactive tagged-union member Row at {source}:39:9\n\
+        "ERROR: {source}:32:21: [SIM-009] access to inactive tagged-union member A\n\
+         ERROR: {source}:33:22: [SIM-009] access to inactive tagged-union member A\n\
+         ERROR: {source}:34:9: [SIM-009] access to inactive tagged-union member A\n\
+         ERROR: {source}:35:9: [SIM-009] access to inactive tagged-union member A\n\
+         ERROR: {source}:36:9: [SIM-009] access to inactive tagged-union member A\n\
+         ERROR: {source}:38:21: [SIM-009] access to inactive tagged-union member Row\n\
+         ERROR: {source}:39:9: [SIM-009] access to inactive tagged-union member Row\n\
          bit=x part=xxxx row=xx calls=2\n\
          p B=ff u Count=7\n\
-         llg: $finish at time 1000 at tb:44:9\n",
+         INFO: {source}:44:9: [SIM-001] (tb @ 1 ns) $finish called\n\
+         INFO: [SIM-000] 7 error(s), 0 warning(s), 1 info(s)\n",
     );
-    sim_cli::reject_case_with_args(SUITE, "wrong_tag_selects", "member Row at", &[]);
+    sim_cli::reject_case_with_args(SUITE, "wrong_tag_selects", "member Row", &[]);
 }
 
 #[test]
@@ -106,7 +108,7 @@ fn largest_finite_payload_below_capacity_keeps_one_owner() {
 #[test]
 fn q03_same_tag_witness() {
     // Adopted FND-002 witness for L-F02-09-02 (SV2009 4.9.4, 10.4.2, 11.9).
-    let stderr = "llg: $finish at time 1000 at tb:7:1\n";
+    let stderr = "INFO: q03_same_tag_witness.sv:7:1: [SIM-001] (tb @ 1 ns) $finish called\n";
     sim_cli::run_case(SUITE, "q03_same_tag_witness", "7\n", stderr, &[]);
     sim_cli::run_case_backend_parity(SUITE, "q03_same_tag_witness", "7\n", &[], &[]);
 }
@@ -125,9 +127,10 @@ fn q03_retag_witness() {
     // (SV2009 4.9.4, 10.4.2, 7.3.2, 11.9).
     assert_runtime_errors(
         "q03_retag_witness",
-        "llg: runtime error: nonblocking write to tagged-union member A at {source}:9:15 found an inactive tag at commit\n\
+        "ERROR: {source}:9:15: [SIM-009] nonblocking write to tagged-union member A found an inactive tag at commit\n\
          0100000010\n\
-         llg: $finish at time 1000 at tb:10:1\n",
+         INFO: {source}:10:1: [SIM-001] (tb @ 1 ns) $finish called\n\
+         INFO: [SIM-000] 1 error(s), 0 warning(s), 1 info(s)\n",
     );
     sim_cli::reject_case_with_args(SUITE, "q03_retag_witness", "at commit", &[]);
 }
@@ -136,14 +139,14 @@ fn q03_retag_witness() {
 fn q03_single_process_retags_fail_the_commit_check() {
     assert_runtime_errors(
         "q03_retag_kinds",
-        "llg: runtime error: nonblocking write to tagged-union member A at {source}:52:9 found an inactive tag at commit\n\
-         llg: runtime error: nonblocking write to tagged-union member A at {source}:54:9 found an inactive tag at commit\n\
-         llg: runtime error: nonblocking write to tagged-union member A at {source}:56:9 found an inactive tag at commit\n\
-         llg: runtime error: nonblocking write to tagged-union member A at {source}:59:9 found an inactive tag at commit\n\
-         llg: runtime error: nonblocking write to tagged-union member A at {source}:60:9 found an inactive tag at commit\n\
-         llg: runtime error: nonblocking write to tagged-union member P at {source}:63:9 found an inactive tag at commit\n\
-         llg: runtime error: nonblocking write to tagged-union member Data at {source}:65:9 found an inactive tag at commit\n\
-         llg: runtime error: nonblocking write to tagged-union member Record at {source}:67:9 found an inactive tag at commit\n\
+        "ERROR: {source}:52:9: [SIM-009] nonblocking write to tagged-union member A found an inactive tag at commit\n\
+         ERROR: {source}:54:9: [SIM-009] nonblocking write to tagged-union member A found an inactive tag at commit\n\
+         ERROR: {source}:56:9: [SIM-009] nonblocking write to tagged-union member A found an inactive tag at commit\n\
+         ERROR: {source}:59:9: [SIM-009] nonblocking write to tagged-union member A found an inactive tag at commit\n\
+         ERROR: {source}:60:9: [SIM-009] nonblocking write to tagged-union member A found an inactive tag at commit\n\
+         ERROR: {source}:63:9: [SIM-009] nonblocking write to tagged-union member P found an inactive tag at commit\n\
+         ERROR: {source}:65:9: [SIM-009] nonblocking write to tagged-union member Data found an inactive tag at commit\n\
+         ERROR: {source}:67:9: [SIM-009] nonblocking write to tagged-union member Record found an inactive tag at commit\n\
          other B=52\n\
          to_void V\n\
          narrower C=3\n\
@@ -152,11 +155,12 @@ fn q03_single_process_retags_fail_the_commit_check() {
          inner Q=8\n\
          outer Halt\n\
          wide Count=-2\n\
-         llg: runtime error: nonblocking write to tagged-union member A at {source}:69:9 found an inactive tag at commit\n\
+         ERROR: {source}:69:9: [SIM-009] nonblocking write to tagged-union member A found an inactive tag at commit\n\
          delayed B=15\n\
-         llg: $finish at time 4000 at tb:82:9\n",
+         INFO: {source}:82:9: [SIM-001] (tb @ 4 ns) $finish called\n\
+         INFO: [SIM-000] 9 error(s), 0 warning(s), 1 info(s)\n",
     );
-    sim_cli::reject_case_with_args(SUITE, "q03_retag_kinds", "member Record at", &[]);
+    sim_cli::reject_case_with_args(SUITE, "q03_retag_kinds", "member Record found", &[]);
 }
 
 #[test]
@@ -167,21 +171,25 @@ fn q03_interprocess_races_end_in_the_retagged_value() {
     // the member NBA; the whole-variable NBA race yields zero or one.
     let blocking_issue = source_stderr(
         "q03_race",
-        "llg: runtime error: access to inactive tagged-union member A at {source}:18:18\n",
+        "ERROR: {source}:18:18: [SIM-009] access to inactive tagged-union member A\n",
     );
     let blocking_commit = source_stderr(
         "q03_race",
-        "llg: runtime error: nonblocking write to tagged-union member A at {source}:18:18 found an inactive tag at commit\n",
+        "ERROR: {source}:18:18: [SIM-009] nonblocking write to tagged-union member A found an inactive tag at commit\n",
     );
     let queued_commit = source_stderr(
         "q03_race",
-        "llg: runtime error: nonblocking write to tagged-union member A at {source}:20:18 found an inactive tag at commit\n",
+        "ERROR: {source}:20:18: [SIM-009] nonblocking write to tagged-union member A found an inactive tag at commit\n",
     );
-    let results =
-        "blocking_target B=55\nqueued_target B=55\nllg: $finish at time 2000 at tb:32:9\n";
+    let results = "blocking_target B=55\nqueued_target B=55\n\
+                   INFO: q03_race.sv:32:9: [SIM-001] (tb @ 2 ns) $finish called\n";
     for optimized in [false, true] {
         let output = sim_cli::invoke_with_env(SUITE, "q03_race", optimized, &[], &[], &[]);
-        let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
+        // The summary counts the reports, which vary with the race.
+        let stderr = crate::sim_harness::strip_lint_reports(&output.stderr)
+            .split_inclusive('\n')
+            .filter(|line| !line.starts_with("INFO: [SIM-000] "))
+            .collect::<String>();
         assert_eq!(
             output.status.code(),
             Some(1),

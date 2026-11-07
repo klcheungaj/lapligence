@@ -111,8 +111,8 @@ fn subtree_calls_function(db: &Db, root: NodeId, function: NodeId) -> bool {
 fn static_function_result_accepts_hierarchical_continuous_variable_assignment() {
     let source = fixture_path();
     let expected_stderr = format!(
-        "Warning: {}:10:27 non-void function 'f' does not return a value\n",
-        sim_harness::source_display(&source)
+        "WARNING: {}:10:27: [SLANG-MissingReturn] non-void function 'f' does not return a value (-Wmissing-return)\n",
+        sim_harness::file_name(&source)
     );
     assert_exact_cli(None, 0, "result=1\n", &expected_stderr);
 }
@@ -121,10 +121,10 @@ fn static_function_result_accepts_hierarchical_continuous_variable_assignment() 
 fn continuous_assignment_call_reads_the_same_driven_static_result() {
     let source = fixture_path();
     let expected_stderr = format!(
-        "Warning: {}:4:8 module definition is unused\n\
-Warning: {}:43:27 non-void function 'f' does not return a value\n",
-        sim_harness::source_display(&source),
-        sim_harness::source_display(&source)
+        "WARNING: {}:4:8: [SLANG-UnusedDefinition] module definition is unused (-Wunused-def)\n\
+WARNING: {}:43:27: [SLANG-MissingReturn] non-void function 'f' does not return a value (-Wmissing-return)\n",
+        sim_harness::file_name(&source),
+        sim_harness::file_name(&source)
     );
     assert!(
         llg::sim::build::cmake_available(),
@@ -333,11 +333,12 @@ fn package_task_static_local_keeps_its_owned_variable_identity() {
 #[test]
 fn static_function_result_rejects_duplicate_continuous_drivers() {
     let source = fixture_path();
+    let name = sim_harness::file_name(&source);
     let source = sim_harness::source_display(&source);
     let expected_stderr = format!(
-        "Warning: {source}:10:27 non-void function 'f' does not return a value\n\
-Warning: {source}:18:12 cannot have multiple continuous assignments to variable 'f'\n\
-llg: codegen error: semantic error: multiple continuous assignments to variable storage `tb.f.f` at {source}:16:12 (also written by `tb.continuous` at {source}:18:12)\n"
+        "WARNING: {name}:10:27: [SLANG-MissingReturn] non-void function 'f' does not return a value (-Wmissing-return)\n\
+WARNING: {name}:18:12: [SLANG-MultipleContAssigns] cannot have multiple continuous assignments to variable 'f' (-Wmultiple-cont-assigns)\n\
+ERROR: {name}:16:12: [CODEGEN-002] semantic error: multiple continuous assignments to variable storage `tb.f.f` (also written by `tb.continuous` at {source}:18:12)\n"
     );
     assert_exact_cli(Some("SYN038_DUPLICATE_DRIVER"), 1, "", &expected_stderr);
 }
@@ -345,11 +346,12 @@ llg: codegen error: semantic error: multiple continuous assignments to variable 
 #[test]
 fn static_function_result_rejects_warning_only_mixed_driver() {
     let source = fixture_path();
+    let name = sim_harness::file_name(&source);
     let source = sim_harness::source_display(&source);
     let expected_stderr = format!(
-        "Warning: {source}:16:12 cannot mix continuous and procedural assignments to variable 'f'\n\
-Warning: {source}:27:13 cannot mix continuous and procedural assignments to variable 'f'\n\
-llg: codegen error: semantic error: static function result `f` has both a continuous driver at {source}:16:12 and a procedural write in its body at {source}:10:27\n"
+        "WARNING: {name}:16:12: [SLANG-MixedVarAssigns] cannot mix continuous and procedural assignments to variable 'f' (-Wmixed-var-assigns)\n\
+WARNING: {name}:27:13: [SLANG-MixedVarAssigns] cannot mix continuous and procedural assignments to variable 'f' (-Wmixed-var-assigns)\n\
+ERROR: {name}:16:12: [CODEGEN-002] semantic error: static function result `f` has both a continuous driver and a procedural write in its body at {source}:10:27\n"
     );
     assert_exact_cli(Some("SYN038_MIXED_DRIVER"), 1, "", &expected_stderr);
 }

@@ -32,24 +32,23 @@ fn source_path(fixture: &str) -> String {
     )
 }
 
-/// The `llg: warning: timing violation` lines of a run, sorted.
+/// The timing violation reports of a run (`SIM-015`) after
+/// `timing violation at `, sorted.
 fn violations(output: &Output) -> Vec<String> {
-    let mut lines = String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter_map(|line| line.strip_prefix("llg: warning: timing violation at "))
+    let mut lines = super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
+        .iter()
+        .filter_map(|text| text.strip_prefix("timing violation at "))
         .map(str::to_owned)
         .collect::<Vec<_>>();
     lines.sort();
     lines
 }
 
-/// The other `llg: warning:` lines of a run (model generation warnings).
+/// The other listed warnings of a run (model generation warnings).
 fn generation_warnings(output: &Output) -> Vec<String> {
-    String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter_map(|line| line.strip_prefix("llg: warning: "))
-        .filter(|line| !line.starts_with("timing violation at "))
-        .map(str::to_owned)
+    super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
+        .into_iter()
+        .filter(|text| !text.starts_with("timing violation at "))
         .collect()
 }
 

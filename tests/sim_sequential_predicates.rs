@@ -170,7 +170,7 @@ fn syn_025_pattern_case_items_filters_and_qualifiers() {
         "sequential_predicates",
         "syn_025_pattern_case",
         "pattern_case=pass result=5a calls=1\n",
-        "",
+        "INFO: [SIM-000] 0 error(s), 1 warning(s)\n",
         &[warning.as_str()],
         &["--edition", "sv2009"],
     );

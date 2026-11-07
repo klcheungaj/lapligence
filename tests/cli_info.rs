@@ -358,3 +358,78 @@ fn pulse_controls_reject_missing_and_invalid_values() {
         );
     }
 }
+
+/// Usage errors are catalog messages without a location, rendered through
+/// the shared layout template.
+#[test]
+fn simulator_usage_errors_carry_a_catalog_id_without_location() {
+    use llg::core::report::{self, catalog, Message, Severity};
+    for (args, def, text) in [
+        (
+            &["--top"][..],
+            &catalog::CLI_OPTION_VALUE,
+            "--top requires a module name",
+        ),
+        (
+            &["--no-such-option"][..],
+            &catalog::CLI_UNKNOWN_OPTION,
+            "unknown option `--no-such-option`",
+        ),
+    ] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), args);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let first = stderr.lines().next().unwrap_or_default();
+        let message = report::parse(first).unwrap_or_else(|| panic!("unparsed: {stderr}"));
+        assert_eq!(message.severity, Severity::Error, "{stderr}");
+        assert_eq!(message.id, def.id(), "{stderr}");
+        assert_eq!(message.location, None, "{stderr}");
+        assert!(message.text.starts_with(text), "{stderr}");
+        assert!(
+            first.starts_with(Message::new(def, text).render().as_str()),
+            "{stderr}"
+        );
+    }
+}
+
+/// A frontend error is a located `SLANG-<name>` message with its option
+/// hint absent (errors have no -W option), followed by the SLANG phase
+/// summary as the last line.
+#[test]
+fn simulator_frontend_errors_end_with_the_slang_summary() {
+    use llg::core::report::{self, Severity};
+    let directory =
+        std::env::temp_dir().join(format!("llg-cli-slang-summary-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("create temp dir");
+    let source = directory.join("undeclared.sv");
+    std::fs::write(&source, "module m;\n  initial x = 1;\nendmodule\n").expect("write source");
+    let output = Command::new(env!("CARGO_BIN_EXE_llg"))
+        .arg("--gen-only")
+        .arg(&source)
+        .current_dir(&directory)
+        .output()
+        .expect("run llg");
+    let _ = std::fs::remove_dir_all(&directory);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let messages: Vec<_> = stderr.lines().filter_map(report::parse).collect();
+    assert_eq!(messages.len(), stderr.lines().count(), "{stderr}");
+    let error = &messages[0];
+    assert_eq!(error.severity, Severity::Error, "{stderr}");
+    assert_eq!(error.id, "SLANG-UndeclaredIdentifier", "{stderr}");
+    assert!(
+        error
+            .location
+            .as_deref()
+            .is_some_and(|l| l.ends_with("undeclared.sv:2:11")),
+        "{stderr}"
+    );
+    let summary = messages.last().expect("summary");
+    assert_eq!(summary.id, "SLANG-000", "{stderr}");
+    assert_eq!(summary.severity, Severity::Info, "{stderr}");
+    let counts = report::Counts {
+        error: 1,
+        ..Default::default()
+    };
+    assert_eq!(summary.text, counts.summary_text(), "{stderr}");
+}

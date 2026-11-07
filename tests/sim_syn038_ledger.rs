@@ -456,8 +456,8 @@ fn assert_static_return_continuous_cli_contract(
 
     for required in [
         "let source = fixture_path();",
-        "Warning: {}:10:27 non-void function 'f' does not return a value\\n",
-        "sim_harness::source_display(&source)",
+        "WARNING: {}:10:27: [SLANG-MissingReturn] non-void function 'f' does not return a value (-Wmissing-return)\\n",
+        "sim_harness::file_name(&source)",
         "assert_exact_cli(None, 0, \"result=1\\n\", &expected_stderr);",
     ] {
         assert!(
@@ -666,7 +666,7 @@ fn assert_operation_context_matrix_cli_contract(test_source: &str, owner_body: &
         "negative_command\n                .args([\"--edition\", \"sv2009\"])\n                .arg(&negative_path);",
         "negative_output.status.code(),\n                Some(1),",
         "assert!(negative_output.stdout.is_empty(), \"{negative_label}\");",
-        "assert_eq!(\n                negative_output.stderr.as_slice(),\n                expected_negative_stderr.as_bytes(),",
+        "assert_eq!(\n                sim_harness::strip_lint_reports(&negative_output.stderr),\n                expected_negative_stderr,",
     ] {
         assert!(
             mode_loop.contains(required),
@@ -758,14 +758,14 @@ fn assert_interface_runtime_initializer_cli_contract(
     }
 
     for required in [
-        "Warning: {}:{}:{} initializer for static variable 'same_scope_copy' refers to 'local_seed' which will not have a value at initialization time\\n",
-        "Warning: {}:{}:{} initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time\\n",
+        "WARNING: {}:{}:{}: [SLANG-StaticInitValue] initializer for static variable 'same_scope_copy' refers to 'local_seed' which will not have a value at initialization time (-Wstatic-init-value)\\n",
+        "WARNING: {}:{}:{}: [SLANG-StaticInitValue] initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time (-Wstatic-init-value)\\n",
         "line.contains(\"same_scope_copy = local_seed;\")",
         "line.contains(\"logic [7:0] copy = bus.value;\")",
         ".find(\"local_seed\")",
         ".find(\"bus.value\")",
-        "sim_harness::source_display(&fixture_path), control_line.0, control_column,",
-        "sim_harness::source_display(&fixture_path), warning_line.0, warning_column",
+        "sim_harness::file_name(&fixture_path), control_line.0, control_column,",
+        "sim_harness::file_name(&fixture_path), warning_line.0, warning_column",
     ] {
         assert!(
             owner_body.contains(required),
@@ -784,7 +784,7 @@ fn assert_storage_write_remainders_cli_contract(root: &Path, owner_body: &str, o
     for required in [
         "let source = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"))\n        .join(\"tests/fixtures/sim/syn038_pairwise/storage_write_remainders.sv\");",
         "let expected_stdout = b\"storage_write_remainders=passed\\n\";",
-        "Warning: {}:101:33 non-void function 'hier_result' does not return a value\\n\\\n         llg: $finish at time 4000 at tb:153:9\\n",
+        "WARNING: {}:101:33: [SLANG-MissingReturn] non-void function 'hier_result' does not return a value (-Wmissing-return)\\n\\\n         INFO: storage_write_remainders.sv:153:9: [SIM-001] (tb @ 4 ns) $finish called\\n",
     ] {
         assert!(
             owner_body.contains(required),
@@ -842,14 +842,14 @@ fn storage_write_remainders_warning_oracle_matches(
     row_id == "SYN038-W88"
         && expected
             == concat!(
-                "Warning: {absolute_fixture_path}:101:33 non-void function 'hier_result' does not return a value\\n",
-                "llg: $finish at time 4000 at tb:153:9\\n",
+                "WARNING: {fixture_name}:101:33: [SLANG-MissingReturn] non-void function 'hier_result' does not return a value (-Wmissing-return)\\n",
+                "INFO: storage_write_remainders.sv:153:9: [SIM-001] (tb @ 4 ns) $finish called\\n",
             )
         && test_source.contains(
-            "Warning: {}:101:33 non-void function 'hier_result' does not return a value\\n",
+            "WARNING: {}:101:33: [SLANG-MissingReturn] non-void function 'hier_result' does not return a value (-Wmissing-return)\\n",
         )
-        && test_source.contains("llg: $finish at time 4000 at tb:153:9\\n")
-        && test_source.contains("sim_harness::source_display(&source)")
+        && test_source.contains("INFO: storage_write_remainders.sv:153:9: [SIM-001] (tb @ 4 ns) $finish called\\n")
+        && test_source.contains("sim_harness::file_name(&source)")
 }
 
 fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, owner: &str) {
@@ -878,7 +878,7 @@ fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, o
         "assert_eq!(output.status.code(), Some(0), \"{label}\");",
         "output.stdout.as_slice(),\n            b\"static-return-ref=passed\\n\",",
         "crate::sim_harness::strip_lint_reports(&output.stderr),\n            expected_stderr,",
-        "let expected_stderr = \"llg: $finish at time 0 at tb:18:9\\n\";",
+        "let expected_stderr = \"INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n\";",
     ] {
         assert!(
             mode_loop.contains(required) || owner_body.contains(required),
@@ -962,7 +962,7 @@ fn assert_read_only_ref_continuous_variable_cli_contract(
         "output.status.success(),",
         "output.stdout, EXPECTED_STDOUT.as_bytes()",
         "source_line(\"capture_ref(source);\")",
-        "assert_eq!(\n        output.stderr,\n        expected_stderr.as_bytes(),",
+        "assert_eq!(\n        sim_harness::strip_lint_reports(&output.stderr),\n        expected_stderr,",
     ] {
         assert!(
             cli_body.contains(required),
@@ -972,7 +972,7 @@ fn assert_read_only_ref_continuous_variable_cli_contract(
     for required in [
         "const EXPECTED_STDOUT: &str = \"ref-read=5a\\n\";",
         "const WARNING: &str = \"cannot mix continuous and procedural assignments to variable 'source'\";",
-        "let expected_stderr = format!(\n        \"Warning: {}:{}:21 {WARNING}\\n\",",
+        "let expected_stderr = format!(\n        \"WARNING: {}:{}:21: [SLANG-MixedVarAssigns] {WARNING} (-Wmixed-var-assigns)\\n\",",
         "let source = fixture_path();",
         ".current_dir(working_directory.path())",
     ] {
@@ -1053,10 +1053,10 @@ fn read_only_ref_continuous_warning_oracle_matches(
 ) -> bool {
     row_id == "SYN038-W123"
         && expected
-            == "Warning: {absolute fixture path}:15:21 cannot mix continuous and procedural assignments to variable 'source'\\n"
+            == "WARNING: {fixture_name}:15:21: [SLANG-MixedVarAssigns] cannot mix continuous and procedural assignments to variable 'source' (-Wmixed-var-assigns)\\n"
         && test_source.contains("source_line(\"capture_ref(source);\")")
-        && test_source.contains("Warning: {}:{}:21 {WARNING}\\n")
-        && test_source.contains("assert_eq!(\n        output.stderr,\n        expected_stderr.as_bytes(),")
+        && test_source.contains("WARNING: {}:{}:21: [SLANG-MixedVarAssigns] {WARNING} (-Wmixed-var-assigns)\\n")
+        && test_source.contains("assert_eq!(\n        sim_harness::strip_lint_reports(&output.stderr),\n        expected_stderr,")
 }
 
 fn static_return_ref_actual_finish_oracle_matches(
@@ -1065,8 +1065,8 @@ fn static_return_ref_actual_finish_oracle_matches(
     test_source: &str,
 ) -> bool {
     row_id == "SYN038-W89"
-        && expected == "llg: $finish at time 0 at tb:18:9\\n"
-        && test_source.contains("let expected_stderr = \"llg: $finish at time 0 at tb:18:9\\n\";")
+        && expected == "INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n"
+        && test_source.contains("let expected_stderr = \"INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n\";")
 }
 
 fn interface_runtime_initializer_warning_oracle_matches(
@@ -1077,23 +1077,23 @@ fn interface_runtime_initializer_warning_oracle_matches(
     row_id == "SYN038-W87"
         && expected
             == concat!(
-                "Warning: {absolute_fixture_path}:9:35 initializer for static variable 'same_scope_copy' refers to 'local_seed' which will not have a value at initialization time\\n",
-                "Warning: {absolute_fixture_path}:10:24 initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time\\n",
+                "WARNING: {fixture_name}:9:35: [SLANG-StaticInitValue] initializer for static variable 'same_scope_copy' refers to 'local_seed' which will not have a value at initialization time (-Wstatic-init-value)\\n",
+                "WARNING: {fixture_name}:10:24: [SLANG-StaticInitValue] initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time (-Wstatic-init-value)\\n",
             )
         && test_source.contains(
-            "Warning: {}:{}:{} initializer for static variable 'same_scope_copy' refers to 'local_seed' which will not have a value at initialization time\\n",
+            "WARNING: {}:{}:{}: [SLANG-StaticInitValue] initializer for static variable 'same_scope_copy' refers to 'local_seed' which will not have a value at initialization time (-Wstatic-init-value)\\n",
         )
         && test_source.contains(
-            "Warning: {}:{}:{} initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time\\n",
+            "WARNING: {}:{}:{}: [SLANG-StaticInitValue] initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time (-Wstatic-init-value)\\n",
         )
-        && test_source.contains("sim_harness::source_display(&fixture_path), control_line.0, control_column,")
-        && test_source.contains("sim_harness::source_display(&fixture_path), warning_line.0, warning_column")
+        && test_source.contains("sim_harness::file_name(&fixture_path), control_line.0, control_column,")
+        && test_source.contains("sim_harness::file_name(&fixture_path), warning_line.0, warning_column")
 }
 
 fn static_return_continuous_path_oracle_matches(row_id: &str, expected: &str) -> bool {
     row_id == "SYN038-W66"
         && expected
-            == "Warning: {absolute_fixture_path}:10:27 non-void function 'f' does not return a value\\n"
+            == "WARNING: {fixture_name}:10:27: [SLANG-MissingReturn] non-void function 'f' does not return a value (-Wmissing-return)\\n"
 }
 
 fn computed_context_oracle_matches(row_id: &str, expected: &str, test_source: &str) -> bool {
@@ -1181,7 +1181,7 @@ fn assert_sim_cli_oracle_contract(root: &Path) {
         "for optimized in [false, true]",
         "assert_eq!(output.status.code(), Some(1)",
         "assert!(output.stdout.is_empty()",
-        "assert!(stderr.contains(diagnostic)",
+        "sim_harness::mentions(&stderr, diagnostic)",
     ] {
         assert!(
             rejection_helper.contains(required),
@@ -1858,8 +1858,9 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
         );
         for expected in code_spans(cells[5]) {
             let generated_finish_diagnostic = matches!(cells[0], "SYN038-W12" | "SYN038-W14")
-                && expected == "llg: $finish at time 0 at tb:12:5\\n"
-                && test_source.contains("at tb:{finish_line}:5\\n")
+                && expected.ends_with(".sv:12:5: [SIM-001] (tb @ 0 ps) $finish called\\n")
+                && test_source
+                    .contains(":{finish_line}:5: [SIM-001] (tb @ 0 ps) $finish called\\n")
                 && test_source.contains(case)
                 && test_source.contains("12,");
             let generated_context_oracle =
@@ -2118,7 +2119,7 @@ fn fixed_record_grid_executes_across_three_unpack_dimensions() {
         "review_bundle",
         "r12_record_grid_3d",
         "record_grid3d=7,56 flags=0,1\n",
-        "llg: $finish at time 0 at tb:21:5\n",
+        "INFO: r12_record_grid_3d.sv:21:5: [SIM-001] (tb @ 0 ps) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -2185,7 +2186,9 @@ fn owned_record_array_database_lowers_after_snapshot_drop() {
             if output.stdout != b"record_grid3d=7,56 flags=0,1\n" {
                 return Err(format!("{variant} stdout: {:?}", output.stdout));
             }
-            if output.stderr != b"llg: $finish at time 0 at tb:21:5\n" {
+            if output.stderr
+                != b"INFO: r12_record_grid_3d.sv:21:5: [SIM-001] (tb @ 0 ps) $finish called\n"
+            {
                 return Err(format!("{variant} stderr: {:?}", output.stderr));
             }
         }

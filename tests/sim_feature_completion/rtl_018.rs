@@ -9,9 +9,9 @@ use llg::core::{compile, db, model};
 use std::path::{Path, PathBuf};
 
 const SUITE: &str = "feature_completion/rtl_018";
-const COMPOSE_STDERR: &str = "llg: $finish at time 31000 at tb:50:9\n";
-const UNITS_STDERR: &str = "llg: $finish at time 1000 at tb:17:5\n";
-const BINDING_STDERR: &str = "llg: $finish at time 1000 at tb:16:5\n";
+const COMPOSE_STDERR: &str = "INFO: compose.sv:50:9: [SIM-001] (tb @ 31 ns) $finish called\n";
+const UNITS_STDERR: &str = "INFO: units.sv:17:5: [SIM-001] (tb @ 1 ns) $finish called\n";
+const BINDING_STDERR: &str = "INFO: binding.sv:16:5: [SIM-001] (tb @ 1 ns) $finish called\n";
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -230,7 +230,7 @@ fn runtime_formats_print_the_library_binding() {
          rtl.rtl018_runtime_bound|rtl.rtl018_runtime_bound|tb.u|%l|7\n\
          rtl.rtl018_runtime_bound\n\
          work.tb\n",
-        "llg: $finish at time 1000 at tb:11:5\n",
+        "INFO: runtime_binding.sv:11:5: [SIM-001] (tb @ 1 ns) $finish called\n",
         &["--libmap", "runtime_binding.map"],
         &[],
     );
@@ -330,7 +330,7 @@ fn adopted_library_witnesses_execute() {
             "witness/empty/README.txt",
         ],
         "library\n",
-        "llg: $finish at time 1000 at tb:5:34\n",
+        "INFO: witness_empty_incdir.v:5:34: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[
             "--edition",
             "v2001",
@@ -346,7 +346,7 @@ fn adopted_library_witnesses_execute() {
         "witness_macro_map.v",
         &["witness/macro_map.map", "witness/cell_display.v"],
         "library\n",
-        "llg: $finish at time 1000 at tb:5:34\n",
+        "INFO: witness_macro_map.v:5:34: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[
             "--edition",
             "v2001",
@@ -451,7 +451,7 @@ fn interface_bound_into_module_executes() {
         SUITE,
         "bind_interface_into_module",
         "watch=8\nwatch=14\n",
-        "llg: $finish at time 2000 at tb:20:5\n",
+        "INFO: bind_interface_into_module.sv:20:5: [SIM-001] (tb @ 2 ns) $finish called\n",
         &[],
     );
 }

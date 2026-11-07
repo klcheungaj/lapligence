@@ -99,7 +99,7 @@ fn stateful_event_helper_witness() {
         SUITE,
         "stateful_event_witness",
         expected,
-        "llg: $finish at time 1000 at tb:7:1\n",
+        "INFO: stateful_event_witness.sv:7:1: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );
@@ -121,7 +121,7 @@ fn real_readonly_helper_witness() {
         SUITE,
         "real_readonly_witness",
         expected,
-        "llg: $finish at time 1000 at tb:7:1\n",
+        "INFO: real_readonly_witness.sv:7:1: [SIM-001] (tb @ 1 ns) $finish called\n",
         &[],
         &["--edition", "sv2009"],
     );

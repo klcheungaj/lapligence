@@ -30,14 +30,10 @@ fn source_path(fixture: &str) -> String {
     )
 }
 
-/// The `llg: warning:` lines of a run, sorted (reports at one time come in
-/// no defined order).
+/// The listed warnings of a run, sorted (reports at one time come in no
+/// defined order).
 fn warnings(output: &Output) -> Vec<String> {
-    let mut lines = String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter_map(|line| line.strip_prefix("llg: warning: "))
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
+    let mut lines = super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr));
     lines.sort();
     lines
 }

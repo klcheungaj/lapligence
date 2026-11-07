@@ -1015,14 +1015,18 @@ fn outcomes_distinguish_no_else_failures_disables_aborts_and_end_of_simulation()
     sim_cli::run_case_checked_matrix(SUITE, "outcomes", &[], &|label, output| {
         assert_sorted_stdout(label, output, expected);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let failures: Vec<&str> = stderr
+        let failures: Vec<String> = stderr
             .lines()
-            .filter(|line| line.starts_with("llg: assertion assert failed: "))
+            .filter_map(llg::core::report::parse)
+            .filter(|message| message.id == "SIM-007")
+            .map(|message| super::sim_harness::located_text(&message))
             .collect();
-        assert_eq!(failures.len(), 2, "{label}: {stderr}");
-        assert!(
-            failures[0].ends_with("outcomes.sv:23:3 (n1)")
-                && failures[1].ends_with("outcomes.sv:49:3 (ens)"),
+        assert_eq!(
+            failures,
+            [
+                "outcomes.sv:23:3 assert failed (n1)",
+                "outcomes.sv:49:3 assert failed (ens)"
+            ],
             "{label}: {stderr}"
         );
     });

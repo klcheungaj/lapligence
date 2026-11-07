@@ -11,7 +11,8 @@ use std::path::Path;
 const FIXTURE_SOURCE: &str =
     include_str!("fixtures/sim/syn038_pairwise/interface_function_source.sv");
 const EXPECTED_STDOUT: &str = "member_through_function=31,6b sibling=92\n";
-const EXPECTED_STDERR: &str = "llg: $finish at time 0 at tb:35:9\n";
+const EXPECTED_STDERR: &str =
+    "INFO: interface_function_source.sv:35:9: [SIM-001] (tb @ 0 ps) $finish called\n";
 
 #[test]
 fn mutable_interface_member_source_flows_through_function_result_in_both_modes() {

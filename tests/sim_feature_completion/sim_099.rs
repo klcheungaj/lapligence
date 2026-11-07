@@ -22,7 +22,8 @@ const SUITE: &str = "feature_completion/sim_099";
 /// objects poisoned, so a missed root stops the run (SIM-018).
 const GC_STRESS: &[(&str, &str)] = &[("LLG_GC_STRESS", "1"), ("LLG_GC_VERIFY", "1")];
 
-const RANDOMIZE_WARNING: &str = "llg: warning: randomize() at env:222:12: the constraints cannot \
+const RANDOMIZE_WARNING: &str =
+    "WARNING: [SIM-011] randomize() at env:222:12: the constraints cannot \
                                  be satisfied; randomize returns 0";
 
 /// `<SUITE>/<name>` in the resolved native spelling llg reports in
@@ -43,17 +44,24 @@ fn archive(directory: &sim_harness::TempDir, stem: &str) -> String {
     super::sim_041::static_archive(SUITE, directory, stem, &[])
 }
 
-/// The `llg:` lines of a run's stderr, without lint reports.
+/// The lowering and run-time messages of a run in the canonical test form,
+/// without the `$finish` report and the summaries.
 fn llg_lines(output: &Output) -> Vec<String> {
     String::from_utf8_lossy(&output.stderr)
         .lines()
-        .filter(|line| line.starts_with("llg: "))
-        .map(str::to_owned)
+        .filter(|line| {
+            llg::core::report::parse(line).is_some_and(|message| {
+                matches!(message.tool(), "SIM" | "CODEGEN")
+                    && !message.id.ends_with("-000")
+                    && message.id != "SIM-001"
+            })
+        })
+        .map(sim_harness::canonical_message)
         .collect()
 }
 
-/// A run that succeeded with exactly `expected` on stdout and, among its
-/// `llg:` stderr lines, exactly `messages` besides the `$finish` report.
+/// A run that succeeded with exactly `expected` on stdout and exactly
+/// `messages` as its lowering and run-time messages ([`llg_lines`]).
 fn assert_run(label: &str, output: &Output, expected: &str, messages: &[&str]) {
     assert!(
         output.status.success(),
@@ -61,17 +69,12 @@ fn assert_run(label: &str, output: &Output, expected: &str, messages: &[&str]) {
         sim_cli::observed_output(output)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
-    let lines = llg_lines(output);
-    let others: Vec<&str> = lines
-        .iter()
-        .map(String::as_str)
-        .filter(|line| !line.starts_with("llg: $finish at time "))
-        .collect();
+    let others = llg_lines(output);
     assert_eq!(others, messages, "{label}");
 }
 
 const TESTBENCH_MESSAGES: &[&str] = &[
-    "llg: warning: repeat count in `tb.bus` is not a constant; evaluated at runtime",
+    "WARNING: [CODEGEN-010] repeat count in `tb.bus` is not a constant; evaluated at runtime",
     RANDOMIZE_WARNING,
 ];
 
@@ -210,27 +213,26 @@ fn reports_keep_their_source_positions() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_099/source_map.out");
     let source = fixture_path("source_map.sv");
     let source = source.to_string_lossy().into_owned();
-    let assertion = format!("llg: assertion assert failed: {source}:16:3 (always_low)");
+    let randomize = "randomize() at tb:40:10: the constraints cannot be satisfied; randomize \
+                     returns 0";
+    let randomize_warning = format!("WARNING: [SIM-011] {randomize}");
     let messages = [
-        "llg: severity error: checks_pkg:10:10: not positive: -2",
-        "llg: severity warning: limited_c:23:5: limited_c warning 1",
-        "llg: warning: randomize() at tb:40:10: the constraints cannot be satisfied; randomize \
-         returns 0",
-        assertion.as_str(),
+        "ERROR: source_map.sv:10:10: [SIM-005] (checks_pkg @ 0 ns) not positive: -2",
+        "WARNING: source_map.sv:23:5: [SIM-004] (limited_c @ 0 ns) limited_c warning 1",
+        randomize_warning.as_str(),
+        "ERROR: source_map.sv:16:3: [SIM-007] (5 ns) assert failed (always_low)",
     ];
     sim_cli::run_case_checked_matrix(SUITE, "source_map", &[], &|label, output| {
         assert_run(label, output, expected, &messages)
     });
     let stderr = messages
         .iter()
-        .filter(|line| !line.starts_with("llg: warning: "))
+        .filter(|line| **line != randomize_warning)
         .map(|line| format!("{line}\n"))
         .collect::<String>()
-        + "llg: $finish at time 6 at tb:45:5\n";
-    let warnings: Vec<&str> = messages
-        .iter()
-        .filter_map(|line| line.strip_prefix("llg: warning: "))
-        .collect();
+        + "INFO: source_map.sv:45:5: [SIM-001] (tb @ 6 ns) $finish called\n\
+           INFO: [SIM-000] 2 error(s), 2 warning(s), 1 info(s)\n";
+    let warnings = [randomize];
     sim_cli::run_compile_opts_after_db_drop_with_warnings(
         SUITE,
         "source_map",
@@ -731,7 +733,7 @@ fn builtins_without_lowering_dispatch_to_vpi() {
     let unregistered = |fixture: &str, name: &str| {
         let source = fixture_path(&format!("{fixture}.sv"));
         format!(
-            "llg: VPI error: no VPI registration for `{name}` (called at {}:7)",
+            "ERROR: [SIM-016] VPI error: no VPI registration for `{name}` (called at {}:7)",
             source.display()
         )
     };
@@ -771,7 +773,7 @@ fn vpi_registrations_of_called_builtins_stop_at_startup() {
     );
     let source = fixture_path("neg_builtin_override.sv");
     let diagnostic = format!(
-        "llg: VPI error: a VPI application registers `$random`, which llg implements as a \
+        "ERROR: [SIM-016] VPI error: a VPI application registers `$random`, which llg implements as a \
          built-in (called at {}:6); llg does not support overriding built-in system tasks and \
          functions (IEEE 1800-2009 36.3.2)",
         source.display()

@@ -27,7 +27,7 @@ fn packed_conditional_policy_uses_published_z_z_cell_in_both_editions() {
             "review_bundle",
             "r10_packed_mux_policy",
             "MUX_POLICY result=x\n",
-            "llg: $finish at time 0 at tb:10:5\n",
+            "INFO: r10_packed_mux_policy.sv:10:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &[],
             &["--edition", edition],
         );

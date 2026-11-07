@@ -282,12 +282,12 @@ fn typed_operation_contexts_keep_source_and_use_site_in_both_cli_modes() {
             );
             assert!(negative_output.stdout.is_empty(), "{negative_label}");
             let expected_negative_stderr = format!(
-                "Error: {}:{line}:{column} {CONST_REF_EXPRESSION_DIAGNOSTIC}\nllg: Slang reported errors; aborting\n",
-                sim_harness::source_display(&negative_path)
+                "ERROR: {}:{line}:{column}: [SLANG-InvalidRefArg] {CONST_REF_EXPRESSION_DIAGNOSTIC}\n",
+                sim_harness::file_name(&negative_path)
             );
             assert_eq!(
-                negative_output.stderr.as_slice(),
-                expected_negative_stderr.as_bytes(),
+                sim_harness::strip_lint_reports(&negative_output.stderr),
+                expected_negative_stderr,
                 "{negative_label}"
             );
         }
