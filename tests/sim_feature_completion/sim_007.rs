@@ -556,11 +556,6 @@ fn container_elements_hold_records_with_container_members() {
     );
     sim_cli::reject_case(
         SUITE,
-        "bad_record_container_event_nba",
-        "an event-controlled nonblocking assignment of a queue, dynamic or associative member or of a member array held in a container in `tb` is not supported; use a delay or an event control before the statement",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "bad_record_element_member_ref",
         "a queue or dynamic-array member of a container record element as the ref actual of `q` in `tb` is not supported",
     );

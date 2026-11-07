@@ -1261,6 +1261,19 @@ pub(super) fn render(
             format!("    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) {store};\n")
         }
         IrContainerStmt::NbaLocateEnd => "    llg_nba_locate_end();\n".to_owned(),
+        IrContainerStmt::NbaHoldOpen(held) => {
+            let held = frame.chandle(held)?;
+            format!("    llg_nba_hold_open({held});\n")
+        }
+        IrContainerStmt::NbaHoldClose => "    llg_nba_hold_close();\n".to_owned(),
+        IrContainerStmt::NbaHoldRelease { held, delay } => {
+            let ticks = match delay {
+                Some(delay) => frame.delay(delay)?,
+                None => "0ULL".to_owned(),
+            };
+            let held = frame.chandle(held)?;
+            format!("    llg_nba_hold_release({held}, {ticks});\n")
+        }
         IrContainerStmt::ContainerNonblocking { target, src, delay } => {
             let storage = &ctx.model.containers[*src];
             let kind = match (&storage.kind, storage.element.is_packed()) {

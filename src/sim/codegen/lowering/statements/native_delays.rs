@@ -25,6 +25,23 @@ impl EmitCtx<'_, '_> {
             )
             || self.cg.persistent_native_target(member)
             || (self.cg.native_record_target(member) && !self.native_nba_target(lhs))
+            || self.whole_unpacked_record(member)
+    }
+
+    /// A record with no packed image: its leaves are written one by one.
+    pub(super) fn whole_unpacked_record(&self, node: NodeId) -> bool {
+        self.cg
+            .resolve_unpacked_aggregate(node)
+            .is_some_and(|selection| {
+                matches!(
+                    &selection.descriptor.shape,
+                    TypeShape::Aggregate(layout)
+                        if matches!(
+                            layout.kind,
+                            AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion
+                        )
+                )
+            })
     }
 
     /// `target <= @(e) value` over a located target. The untimed write is
@@ -53,14 +70,24 @@ impl EmitCtx<'_, '_> {
             before: Vec::new(),
             captures: Vec::new(),
             captured: HashSet::new(),
+            hold: None,
+            guards: Vec::new(),
         };
         let mut action = Vec::new();
         split.statement(statement?, &mut action)?;
         let EventNbaSplit {
             mut before,
             captures,
+            hold,
             ..
         } = split;
+        // Last, so a guarded write that did not run leaves nothing behind.
+        action.extend(hold.map(|held| {
+            IrStmt::Container(Box::new(IrContainerStmt::NbaHoldRelease {
+                held: IrChandleExpr::LocalRead(held),
+                delay: None,
+            }))
+        }));
         before.push(self.spawn_process_evaluated_action(
             h,
             specs,
@@ -102,7 +129,13 @@ impl EmitCtx<'_, '_> {
         let mut before = Vec::new();
         // One runtime delay value serves every queued leaf.
         let ticks = capture_delay(ticks, &format!("_nd{}", h.0), &mut before);
-        before.push(retime_nonblocking(statement, &ticks, &self.path)?);
+        let mut retime = Retime {
+            ticks: &ticks,
+            path: &self.path,
+            prefix: format!("_nd{}", h.0),
+            sequence: 0,
+        };
+        before.push(retime.statement(statement)?);
         Ok(vec![IrStmt::Block(before)])
     }
 
@@ -149,12 +182,53 @@ fn queues_write(statement: &IrStmt) -> bool {
         IrStmt::DelayedAssign { .. }
         | IrStmt::DelayedStringAssign { .. }
         | IrStmt::DelayedChandleAssign { .. } => true,
+        IrStmt::Container(operation)
+            if matches!(
+                **operation,
+                IrContainerStmt::NbaLocate { .. } | IrContainerStmt::NbaLocateEnd
+            ) =>
+        {
+            true
+        }
+        statement => builds_update_in_runtime(statement),
+    }
+}
+
+/// A queued write whose value the runtime copies, or that writes in a loop:
+/// no local can stand for its value, so it runs at issue inside a hold.
+fn builds_update_in_runtime(statement: &IrStmt) -> bool {
+    match statement.unlocated() {
+        IrStmt::FixedValueAssign { nba, .. }
+        | IrStmt::FixedArrayFill { nba, .. }
+        | IrStmt::FixedArrayCopy { nba, .. }
+        | IrStmt::StreamAssign { nba, .. } => *nba,
         IrStmt::Container(operation) => matches!(
             **operation,
-            IrContainerStmt::NbaLocate { .. } | IrContainerStmt::NbaLocateEnd
+            IrContainerStmt::Nonblocking { .. }
+                | IrContainerStmt::ContainerNonblocking { .. }
+                | IrContainerStmt::RealColumnAssign { nba: true, .. }
         ),
+        IrStmt::For { body, .. } | IrStmt::While { body, .. } | IrStmt::Repeat { body, .. } => {
+            body.iter().any(queues_write)
+        }
         _ => false,
     }
+}
+
+fn nba_hold_write(held: &str, write: Vec<IrStmt>) -> Vec<IrStmt> {
+    let mut statements = vec![IrStmt::Container(Box::new(IrContainerStmt::NbaHoldOpen(
+        IrChandleExpr::LocalRead(held.to_owned()),
+    )))];
+    statements.extend(write);
+    statements.push(IrStmt::Container(Box::new(IrContainerStmt::NbaHoldClose)));
+    statements
+}
+
+fn nba_hold_declare(held: &str) -> IrStmt {
+    IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+        held.to_owned(),
+        Some(IrChandleExpr::NbaHold),
+    )))
 }
 
 /// Splits a lowered untimed nonblocking write into what runs at issue and
@@ -169,6 +243,12 @@ struct EventNbaSplit<'e, 'c, 'a> {
     /// Locals with a copy in the process frame. Any other local read names
     /// issue-time storage, such as a leaf of a temporary.
     captured: HashSet<String>,
+    /// The local naming the hold of the updates built at issue, once a write
+    /// needs one.
+    hold: Option<String>,
+    /// The enclosing branches, as issue-time conditions and the arm taken: a
+    /// write in the hold runs at issue under the same choice.
+    guards: Vec<(IrExpr, bool)>,
 }
 
 impl EventNbaSplit<'_, '_, '_> {
@@ -252,14 +332,62 @@ impl EventNbaSplit<'_, '_, '_> {
             .capture_event_assignment_lhs(self.frame, &mut self.captures, lhs)
     }
 
+    /// Run `write` now under the enclosing branches, with its updates kept
+    /// for the action.
+    fn hold_write(&mut self, write: Vec<IrStmt>) {
+        let held = match &self.hold {
+            Some(held) => held.clone(),
+            None => {
+                let held = self.fresh();
+                self.before.push(nba_hold_declare(&held));
+                self.capture_handle(&held);
+                self.hold = Some(held.clone());
+                held
+            }
+        };
+        let mut statements = nba_hold_write(&held, write);
+        for (cond, taken) in self.guards.iter().rev() {
+            let (then_, els) = if *taken {
+                (statements, None)
+            } else {
+                (Vec::new(), Some(statements))
+            };
+            statements = vec![IrStmt::If {
+                cond: cond.clone(),
+                then_,
+                els,
+                check: IrUniquePriorityCheck::None,
+            }];
+        }
+        self.before.extend(statements);
+    }
+
     fn statement(&mut self, statement: IrStmt, action: &mut Vec<IrStmt>) -> Result<(), String> {
         match statement {
             IrStmt::Block(statements) => {
-                for statement in statements {
+                let mut statements = statements.into_iter().peekable();
+                while let Some(statement) = statements.next() {
+                    let locates = matches!(
+                        statement.unlocated(),
+                        IrStmt::Container(operation)
+                            if matches!(**operation, IrContainerStmt::NbaLocate { .. })
+                    );
+                    // A located write keeps its locator: the position is
+                    // fixed at issue and the item found again at commit.
+                    if locates && statements.peek().is_some_and(builds_update_in_runtime) {
+                        let mut group = vec![statement];
+                        group.extend(statements.next());
+                        group.extend(statements.next());
+                        self.hold_write(group);
+                        continue;
+                    }
                     self.statement(statement, action)?;
                 }
             }
             IrStmt::Located { statement, .. } => self.statement(*statement, action)?,
+            statement if builds_update_in_runtime(&statement) => {
+                self.hold_write(vec![statement]);
+            }
             IrStmt::If {
                 cond,
                 then_,
@@ -270,14 +398,20 @@ impl EventNbaSplit<'_, '_, '_> {
                     .as_ref()
                     .is_some_and(|statements| statements.iter().any(queues_write)) =>
             {
+                // The target is chosen at issue, like its selectors.
+                let cond = self.issue_value(cond);
                 let mut then_action = Vec::new();
+                self.guards.push((cond.clone(), true));
                 for statement in then_ {
                     self.statement(statement, &mut then_action)?;
                 }
+                self.guards.pop();
                 let mut else_action = Vec::new();
+                self.guards.push((cond.clone(), false));
                 for statement in els.into_iter().flatten() {
                     self.statement(statement, &mut else_action)?;
                 }
+                self.guards.pop();
                 action.push(IrStmt::If {
                     cond,
                     then_: then_action,
@@ -337,14 +471,6 @@ impl EventNbaSplit<'_, '_, '_> {
                 ) =>
             {
                 action.push(IrStmt::Container(operation));
-            }
-            IrStmt::Container(operation)
-                if matches!(*operation, IrContainerStmt::ContainerNonblocking { .. }) =>
-            {
-                return Err(format!(
-                    "an event-controlled nonblocking assignment of a queue, dynamic or associative member or of a member array held in a container in `{}` is not supported; use a delay or an event control before the statement",
-                    self.ctx.path
-                ));
             }
             IrStmt::DeclLocal {
                 name,
@@ -421,18 +547,28 @@ fn capture_delay(ticks: IrDelay, name: &str, before: &mut Vec<IrStmt>) -> IrDela
     }
 }
 
-/// Give every queued leaf write of an untimed record NBA the delay `ticks`.
-fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<IrStmt, String> {
-    Ok(match statement {
+/// Gives every queued leaf write of an untimed record NBA the delay `ticks`.
+struct Retime<'a> {
+    ticks: &'a IrDelay,
+    path: &'a str,
+    prefix: String,
+    sequence: usize,
+}
+
+impl Retime<'_> {
+    fn statement(&mut self, statement: IrStmt) -> Result<IrStmt, String> {
+        let ticks = self.ticks;
+        let path = self.path;
+        Ok(match statement {
         IrStmt::Block(statements) => IrStmt::Block(
             statements
                 .into_iter()
-                .map(|statement| retime_nonblocking(statement, ticks, path))
+                .map(|statement| self.statement(statement))
                 .collect::<Result<_, _>>()?,
         ),
         IrStmt::Located { origin, statement } => IrStmt::Located {
             origin,
-            statement: Box::new(retime_nonblocking(*statement, ticks, path)?),
+            statement: Box::new(self.statement(*statement)?),
         },
         // The branch of a run-time member select is chosen at issue.
         IrStmt::If {
@@ -441,10 +577,10 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
             els,
             check,
         } => {
-            let retime = |statements: Vec<IrStmt>| {
+            let mut retime = |statements: Vec<IrStmt>| {
                 statements
                     .into_iter()
-                    .map(|statement| retime_nonblocking(statement, ticks, path))
+                    .map(|statement| self.statement(statement))
                     .collect::<Result<Vec<_>, _>>()
             };
             IrStmt::If {
@@ -490,6 +626,43 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
                 delay: Some(ticks.clone()),
             }))
         }
+        IrStmt::Container(operation)
+            if matches!(*operation, IrContainerStmt::Nonblocking { .. }) =>
+        {
+            let IrContainerStmt::Nonblocking {
+                target,
+                dst_start,
+                src,
+                src_start,
+                count,
+                ..
+            } = *operation
+            else {
+                unreachable!("guard checked the statement");
+            };
+            IrStmt::Container(Box::new(IrContainerStmt::Nonblocking {
+                target,
+                dst_start,
+                src,
+                src_start,
+                count,
+                delay: Some(ticks.clone()),
+            }))
+        }
+        // No delay field: the updates are built here and delayed as a group.
+        statement if builds_update_in_runtime(&statement) => {
+            self.sequence += 1;
+            let held = format!("{}_h{}", self.prefix, self.sequence);
+            let mut statements = vec![nba_hold_declare(&held)];
+            statements.extend(nba_hold_write(&held, vec![statement]));
+            statements.push(IrStmt::Container(Box::new(
+                IrContainerStmt::NbaHoldRelease {
+                    held: IrChandleExpr::LocalRead(held),
+                    delay: Some(ticks.clone()),
+                },
+            )));
+            IrStmt::Block(statements)
+        }
         // Every other container statement fills a capture at issue.
         statement @ IrStmt::Container(_) => statement,
         // Captures and the calls that produce native sources run at issue.
@@ -517,6 +690,7 @@ fn retime_nonblocking(statement: IrStmt, ticks: &IrDelay, path: &str) -> Result<
             ))
         }
     })
+    }
 }
 
 /// Move every write of a lowered blocking record assignment behind the

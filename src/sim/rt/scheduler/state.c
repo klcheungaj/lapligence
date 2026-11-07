@@ -698,6 +698,8 @@ typedef struct {
     llg_proc_queue_t process_queues[LLG_REGION_COUNT];
     llg_nba_queue_t nba_queues[LLG_REGION_COUNT];
     llg_nba_bucket_t* delayed_nba_buckets;
+    llg_nba_hold_t* nba_holds;     // every hold, for the GC and for cleanup
+    llg_nba_hold_t* nba_hold_open; // takes new updates instead of the queues
     llg_inertial_t* inertial_drivers;
     llg_inertial_t* inertial_pending;      // sorted by time, FIFO per time
     llg_inertial_t* inertial_pending_tail;

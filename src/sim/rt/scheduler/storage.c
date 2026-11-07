@@ -147,6 +147,16 @@ static void nba_container_destroy(int kind, void* payload) {
     free(payload);
 }
 
+// Updates of an event-controlled write, built at issue and waiting for the
+// control (`llg_nba_hold_new`), linked through `queue_next`.
+typedef struct llg_nba_hold {
+    llg_nba_t* head;
+    llg_nba_t* tail;
+    uint64_t issued;
+    struct llg_nba_hold* prev;
+    struct llg_nba_hold* next;
+} llg_nba_hold_t;
+
 static void nba_destroy(llg_nba_t* nba) {
     if (!nba) return;
     nba_locator_destroy(nba->locator);

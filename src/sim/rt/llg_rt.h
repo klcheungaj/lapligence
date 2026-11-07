@@ -3580,6 +3580,15 @@ enum {
     LLG_NBA_CONTAINER_ASSOC_VALUE = 5,
 };
 void llg_container_nba_after(int kind, void* target, const void* src, uint64_t ticks);
+// A write that takes its value and selectors now and is queued later
+// (`t <= @(e) v`, SV 9.4.5). Between `open` and `close` every nonblocking
+// write builds its update into the hold, which owns it for the GC and for
+// cleanup. `release` queues them as if issued now, `ticks` later, and ends the
+// hold; a process killed while it waits leaves the hold to cleanup.
+void* llg_nba_hold_new(void);
+void llg_nba_hold_open(void* held);
+void llg_nba_hold_close(void);
+void llg_nba_hold_release(void* held, uint64_t ticks);
 // The next NBA queued writes the item at `items` of a value, found when it
 // commits rather than at the address the NBA call names: an element of `array`
 // at `indices` (fixed here), or `root`. Copies its arguments.

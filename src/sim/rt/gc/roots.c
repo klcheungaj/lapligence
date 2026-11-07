@@ -93,6 +93,9 @@ static void gc_trace_nbas(llg_gc_tracer_t* tracer) {
          bucket = bucket->next)
         for (int region = 0; region < LLG_REGION_COUNT; ++region)
             gc_trace_nba_queue(tracer, &bucket->queues[region]);
+    for (const llg_nba_hold_t* hold = g.nba_holds; hold; hold = hold->next)
+        for (const llg_nba_t* nba = hold->head; nba; nba = nba->queue_next)
+            gc_trace_nba(tracer, nba);
 }
 
 // A report issued in a class method keeps its receiver until it reports, or

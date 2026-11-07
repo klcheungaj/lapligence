@@ -679,6 +679,17 @@ pub enum IrContainerStmt {
         src: usize,
         delay: Option<IrDelay>,
     },
+    /// Until [`Self::NbaHoldClose`], nonblocking writes build their updates
+    /// at issue, with their values and selectors, into the
+    /// [`IrChandleExpr::NbaHold`] `.0` instead of queueing them.
+    NbaHoldOpen(IrChandleExpr),
+    NbaHoldClose,
+    /// Queue the updates of hold `held`, `delay` ticks later than they were
+    /// issued, and end the hold (SV 9.4.5, 10.4.2).
+    NbaHoldRelease {
+        held: IrChandleExpr,
+        delay: Option<IrDelay>,
+    },
     /// The next nonblocking write, up to [`Self::NbaLocateEnd`], targets item
     /// `items` of `root`: the element position is fixed here and the item is
     /// found again at commit, so a whole-value write in between cannot leave
@@ -1882,6 +1893,10 @@ impl IrContainerStmt {
                 Ok(())
             }
             Self::NbaLocateEnd => Ok(()),
+            Self::NbaHoldClose => Ok(()),
+            Self::NbaHoldOpen(held) | Self::NbaHoldRelease { held, .. } => {
+                held.validate(model, &[], None)
+            }
             Self::ContainerNonblocking { target, src, .. } => {
                 let src = container_kind(model, *src, None)?;
                 if let Some(target) = target {
@@ -2975,6 +2990,14 @@ impl IrContainerStmt {
                 ..
             } => visit(value),
             Self::ContainerNonblocking { .. } => {}
+            Self::NbaHoldRelease { held, delay } => {
+                held.expressions(visit);
+                if let Some(IrDelay::Runtime { value, .. }) = delay {
+                    visit(value);
+                }
+            }
+            Self::NbaHoldOpen(held) => held.expressions(visit),
+            Self::NbaHoldClose => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,
@@ -3125,6 +3148,14 @@ impl IrContainerStmt {
                 ..
             } => visit(value),
             Self::ContainerNonblocking { .. } => {}
+            Self::NbaHoldRelease { held, delay } => {
+                held.expressions_mut(visit);
+                if let Some(IrDelay::Runtime { value, .. }) = delay {
+                    visit(value);
+                }
+            }
+            Self::NbaHoldOpen(held) => held.expressions_mut(visit),
+            Self::NbaHoldClose => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,

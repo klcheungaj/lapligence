@@ -75,16 +75,16 @@ column. Expected values are derived by hand below; none were captured from
   record of its type stores leaf by leaf; the invalid-index rule quoted above
   holds at any constant, and an unknown index keeps the decoding path. Whole
   writes change only the leaves that differ, and `-0.0` differs from `0.0` by
-  bits as a change of a variable does. Reference (2026-11-06): it stops at a
+  bits as a change of a variable does. Industry-standard behaviour stops at a
   constant select beyond a dynamic-data record's member with an out-of-bound
   error, against 7.4.6, and it does not wake on such a record's members at all
   (9.4.2); without those lines and with the plain record `w`, lines agree.
 - `chosen_element_compare`: whole elements of records with `string` and `real`
   member arrays compare from fixed, dynamic, queue and associative containers;
-  the lines match `-D N=8`, `-D N=5000` and the reference.
+  the lines match `-D N=8`, `-D N=5000` and industry-standard behaviour.
 - `chosen_real_copy`: a whole `real` column copy writes only the cells whose
   bits differ, so an observer wakes once per change; `-0.0` against `0.0` is a
-  change and a repeated NaN is not. Identical to the reference.
+  change and a repeated NaN is not. Identical to industry-standard behaviour.
 - `chosen_dense_source`: a whole member takes a copy from a directly addressed
   array and gives one back; `%p` prints a whole record and a whole member array
   in one image each, in the form of the record's leaves.
@@ -167,3 +167,15 @@ column. Expected values are derived by hand below; none were captured from
 - `chosen_element_ref`: lrm_decisions S13-D4 with a 16-cell member array: the
   formal is the column form's, the actuals are elements with native members, and
   the lines are that fixture's.
+- `chosen_event_nba`, `chosen_event_nba_native`: whole records, elements and
+  cells with columns, per-cell members, strings, handles and containers written
+  through `@`, `repeat` and `#`. §4.9.4: "The values in effect when the update is
+  placed in the event region are used to compute both the right-hand value and
+  the left-hand target."; §9.4.5: "An intra-assignment delay or event control
+  shall delay the assignment of the new value to the left-hand side, but the
+  right-hand expression shall be evaluated before the delay, instead of after the
+  delay." The target of `arr[k].d[k] <= @(e) 6.5` is the one selected at issue;
+  industry-standard behaviour leaves that cell unwritten, against this text. The
+  other lines without a `#` write and without strings, handles or containers match
+  industry-standard behaviour, which refuses a delay on an unpacked struct and
+  a nonblocking write of a record with strings.

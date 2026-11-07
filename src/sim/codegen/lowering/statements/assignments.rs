@@ -817,6 +817,7 @@ impl EmitCtx<'_, '_> {
         // A run-time member select queues one branch's write, as a record
         // queues one write per leaf.
         if self.cg.native_record_target(lhs)
+            || self.whole_unpacked_record(lhs)
             || matches!(self.cg.native_member_select(&self.path, lhs), Ok(Some(_)))
         {
             return self.lower_delayed_native_record(h, lhs, rhs, false, scaled_ticks);

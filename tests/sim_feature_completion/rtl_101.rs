@@ -558,3 +558,21 @@ fn nested_records_and_sets_of_the_column_form() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_nested.out");
     sim_cli::run_case_backend_parity(SUITE, "chosen_nested", expected, &[], &[]);
 }
+
+/// A record written through an event control or a delay keeps the value and
+/// the target of the issue, in every storage form (SV 4.9.4, 9.4.5).
+#[test]
+fn timed_nonblocking_writes_of_records_wait_for_their_control() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_event_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_event_nba", expected, &[], &[]);
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_event_nba_native.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_event_nba_native", expected, &[], &[]);
+    sim_cli::run_case_backend_parity(
+        "feature_completion/sim_007",
+        "record_queue_event_nba",
+        "1000 [] 0\n2000 [b] 2\n",
+        &[],
+        &[],
+    );
+}

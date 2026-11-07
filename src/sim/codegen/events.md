@@ -60,8 +60,9 @@ detached process frame (`lower_native_event_nba`) that waits through
 at run time (`lower_located_event_nba`: record element members, whole records,
 members selected by index) go the same way: selectors, then the right side, then
 the repeat count are evaluated at issue into captured locals, and the waiter
-lowers the ordinary nonblocking write against those locals. Queue, dynamic and
-associative members of records are rejected there with an explicit diagnostic.
+lowers the ordinary nonblocking write against those locals. A write no local can
+stand for (a queue, dynamic or associative member, a column, a descriptor array)
+runs at issue instead, its updates kept in an `NbaHold` that the waiter releases.
 
 Sequential predicates evaluate clauses once, left-to-right, continuing only on
 definite true. Preserve explicit branches/pattern bindings and short-circuit

@@ -184,6 +184,7 @@ impl Frame<'_, '_> {
                     format!("llg_queue_value_pop_chandle(&{name}, {})", i32::from(*back)),
                 ));
             }
+            IrChandleExpr::NbaHold => return Ok(self.scalar("void*", "llg_nba_hold_new()".into())),
             IrChandleExpr::ContainerGetNested { container, indices } => {
                 let container_name = self.container_name(*container)?;
                 let mut container = self.ctx.model.containers[*container].clone();

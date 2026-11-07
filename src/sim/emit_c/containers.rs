@@ -350,6 +350,9 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::Nonblocking { .. }
         | IrContainerStmt::NbaLocate { .. }
         | IrContainerStmt::ContainerNonblocking { .. }
+        | IrContainerStmt::NbaHoldOpen(_)
+        | IrContainerStmt::NbaHoldClose
+        | IrContainerStmt::NbaHoldRelease { .. }
         | IrContainerStmt::NbaLocateEnd
         | IrContainerStmt::Declare(_)
         | IrContainerStmt::SharedDeclare(_)

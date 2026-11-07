@@ -110,7 +110,11 @@ whole-value write in between cannot leave a dangling target; every packed,
 masked, real, string and handle commit path then runs unchanged. A whole
 queue, dynamic or associative array write (`llg_container_nba_after`,
 `is_container`) owns a deep copy of the source from issue to commit; under a
-locator it replaces the nested member slot.
+locator it replaces the nested member slot. An event-controlled write that
+has no per-leaf form (a container, a column, a descriptor array) builds its
+updates at issue into a hold (`llg_nba_hold_new`, between `llg_nba_hold_open`
+and `llg_nba_hold_close`), traced by the GC and freed at cleanup, and
+`llg_nba_hold_release` queues them when the control fires.
 `llg_value_item_{to,from}_{dyn,queue,dyn_value,queue_value}` move a record's
 queue or dynamic-array member between its nested slot in a value (null when
 empty) and a standalone container; they never notify the slot's owner.

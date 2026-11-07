@@ -1,4 +1,12 @@
 
+static uint64_t nba_next_sequence(void) {
+    if (g.nba_sequence == UINT64_MAX) {
+        fprintf(stderr, "llg: fatal: nonblocking assignment sequence overflow\n");
+        abort();
+    }
+    return g.nba_sequence++;
+}
+
 static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     if (!region_can_mutate("nonblocking scheduling")) return NULL;
     llg_proc_t* owner = g.in_deferred_action ? NULL : llg_current();
@@ -6,10 +14,6 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     // the current time slot's NBA region, as industry-standard simulators
     // do (decision S01-D2).
     if (ticks > UINT64_MAX - g.now) ticks = 0;
-    if (g.nba_sequence == UINT64_MAX) {
-        fprintf(stderr, "llg: fatal: nonblocking assignment sequence overflow\n");
-        abort();
-    }
     llg_nba_t* n = (llg_nba_t*)llg_checked_calloc(1, sizeof(llg_nba_t), "nonblocking assignment");
     n->target = NULL;
     n->net_target = NULL;
@@ -29,7 +33,7 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     n->locator = g.nba_locator;
     g.nba_locator = NULL;
     n->time = g.now + ticks;
-    n->sequence = g.nba_sequence++;
+    n->sequence = nba_next_sequence();
     n->region = region;
     n->owner = owner;
     return n;
@@ -94,8 +98,41 @@ static llg_nba_bucket_t* delayed_nba_bucket(uint64_t time) {
     return bucket;
 }
 
+static void nba_hold_destroy(llg_nba_hold_t* hold) {
+    if (hold->prev) hold->prev->next = hold->next;
+    else g.nba_holds = hold->next;
+    if (hold->next) hold->next->prev = hold->prev;
+    free(hold);
+}
+
+void* llg_nba_hold_new(void) {
+    llg_nba_hold_t* hold = llg_checked_calloc(1, sizeof(*hold), "nonblocking assignment");
+    hold->issued = g.now;
+    hold->next = g.nba_holds;
+    if (g.nba_holds) g.nba_holds->prev = hold;
+    g.nba_holds = hold;
+    return hold;
+}
+
+void llg_nba_hold_open(void* held) {
+    g.nba_hold_open = held;
+}
+
+void llg_nba_hold_close(void) {
+    g.nba_hold_open = NULL;
+}
+
 static void enqueue_nba(llg_nba_t* n) {
     if (!n) return;
+    if (g.nba_hold_open) {
+        llg_nba_hold_t* hold = g.nba_hold_open;
+        n->queue_next = NULL;
+        n->owner = NULL;
+        if (hold->tail) hold->tail->queue_next = n;
+        else hold->head = n;
+        hold->tail = n;
+        return;
+    }
     if (n->time == g.now) {
         nba_queue_append(&g.nba_queues[n->region], n);
         if (n->owner) nba_owner_append(n->owner, n);
@@ -194,6 +231,26 @@ static void promote_delayed_nbas(void) {
     }
 }
 
+void llg_nba_hold_release(void* held, uint64_t ticks) {
+    llg_nba_hold_t* hold = held;
+    llg_proc_t* owner = g.in_deferred_action ? NULL : llg_current();
+    llg_region_t region =
+        region_is_reactive(g.current_region) ? LLG_REGION_RE_NBA : LLG_REGION_NBA;
+    while (hold->head) {
+        llg_nba_t* n = hold->head;
+        hold->head = n->queue_next;
+        // As if issued now; the same bound as `new_nba_in_region`.
+        uint64_t after = n->time - hold->issued;
+        after = ticks > UINT64_MAX - after ? UINT64_MAX : after + ticks;
+        n->time = after > UINT64_MAX - g.now ? g.now : g.now + after;
+        n->sequence = nba_next_sequence();
+        n->region = region;
+        n->owner = owner;
+        enqueue_nba(n);
+    }
+    nba_hold_destroy(hold);
+}
+
 static void cancel_proc_nbas(llg_proc_t* proc) {
     while (proc && proc->nba_head) {
         llg_nba_t* n = proc->nba_head;
@@ -230,6 +287,15 @@ static void free_all_nbas(void) {
             }
         }
         free(bucket);
+    }
+    while (g.nba_holds) {
+        llg_nba_hold_t* hold = g.nba_holds;
+        while (hold->head) {
+            llg_nba_t* n = hold->head;
+            hold->head = n->queue_next;
+            nba_destroy(n);
+        }
+        nba_hold_destroy(hold);
     }
 }
 
