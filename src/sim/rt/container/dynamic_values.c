@@ -122,10 +122,26 @@ void llg_dyn_value_copy(llg_dyn_value_array_t* dst,
         int handles = kind == LLG_VALUE_CHANDLE || kind == LLG_VALUE_OPAQUE ||
                       kind == LLG_VALUE_EVENT || kind == LLG_VALUE_PROCESS;
         if (handles && src->element->kind == kind) {
-            for (size_t i = 0; i < dst->size; ++i) {
-                if (dst->data[i].value.handle == src->data[i].value.handle) continue;
-                llg_value_copy(&dst->data[i], dst->element, &src->data[i]);
-                changed = 1;
+            llg_value_t* target = dst->data;
+            const llg_value_t* source = src->data;
+            size_t size = dst->size, i = 0;
+            while (i < size) {
+                /* A run of equal handles costs only its comparisons. */
+                if (size - i >= 8) {
+                    uintptr_t differ = 0;
+                    for (size_t j = 0; j < 8; ++j)
+                        differ |= (uintptr_t)target[i + j].value.handle ^
+                                  (uintptr_t)source[i + j].value.handle;
+                    if (!differ) {
+                        i += 8;
+                        continue;
+                    }
+                }
+                if (target[i].value.handle != source[i].value.handle) {
+                    llg_value_copy(&target[i], dst->element, &source[i]);
+                    changed = 1;
+                }
+                ++i;
             }
         } else if (llg_value_desc_compatible(dst->element, src->element)) {
             for (size_t i = 0; i < dst->size; ++i) {
@@ -323,31 +339,14 @@ static void* dyn_value_read_chandle(const llg_value_t* value) {
         : NULL;
 }
 
-/* An element at a known position, for a constant index: no index value to
- * decode. */
-static llg_value_t* dyn_value_position(const llg_dyn_value_array_t* array,
-                                       uint64_t position) {
-    return position < array->size ? &array->data[position] : NULL;
-}
-
 llg_string_t llg_dyn_value_get_string(const llg_dyn_value_array_t* array,
                                       sv4_t index) {
     return dyn_value_read_string(llg_dyn_value_at(array, index));
 }
 
-llg_string_t llg_dyn_value_string_at(const llg_dyn_value_array_t* array,
-                                     uint64_t position) {
-    return dyn_value_read_string(dyn_value_position(array, position));
-}
-
 void* llg_dyn_value_get_chandle(const llg_dyn_value_array_t* array,
                                 sv4_t index) {
     return dyn_value_read_chandle(llg_dyn_value_at(array, index));
-}
-
-void* llg_dyn_value_chandle_at(const llg_dyn_value_array_t* array,
-                               uint64_t position) {
-    return dyn_value_read_chandle(dyn_value_position(array, position));
 }
 
 sv4_t llg_dyn_value_get_nested(const llg_dyn_value_array_t* array,
@@ -435,9 +434,25 @@ int llg_dyn_value_set_string(llg_dyn_value_array_t* array, sv4_t index,
     return dyn_value_store_string(array, llg_dyn_value_at(array, index), value);
 }
 
-int llg_dyn_value_set_string_at(llg_dyn_value_array_t* array, uint64_t position,
-                                llg_string_t value) {
-    return dyn_value_store_string(array, dyn_value_position(array, position), value);
+int llg_dyn_value_move_string_at(llg_dyn_value_array_t* array, uint64_t position,
+                                 llg_string_t* value) {
+    llg_value_t* target = llg_dyn_value_element_at(array, position);
+    if (!target) {
+        llg_string_destroy(value);
+        return 0;
+    }
+    llg_string_t* stored = &target->value.string;
+    if (stored->len == value->len &&
+        (!value->len || memcmp(stored->data, value->data, value->len) == 0)) {
+        llg_string_destroy(value);
+        return 1;
+    }
+    llg_string_destroy(stored);
+    *stored = *value;
+    *value = (llg_string_t){0};
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    return 1;
 }
 
 int llg_dyn_value_set_chandle(llg_dyn_value_array_t* array, sv4_t index,
@@ -445,9 +460,9 @@ int llg_dyn_value_set_chandle(llg_dyn_value_array_t* array, sv4_t index,
     return dyn_value_store_chandle(array, llg_dyn_value_at(array, index), value);
 }
 
-int llg_dyn_value_set_chandle_at(llg_dyn_value_array_t* array, uint64_t position,
-                                 void* value) {
-    return dyn_value_store_chandle(array, dyn_value_position(array, position), value);
+int llg_dyn_value_store_chandle_at(llg_dyn_value_array_t* array, llg_value_t* target,
+                                   void* value) {
+    return dyn_value_store_chandle(array, target, value);
 }
 
 int llg_dyn_value_set_nested(llg_dyn_value_array_t* array,

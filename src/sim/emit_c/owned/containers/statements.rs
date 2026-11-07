@@ -643,11 +643,14 @@ pub(super) fn render(
             if let (IrContainerKind::Dynamic, Some(position)) =
                 (&ctx.model.containers[*container].kind, dyn_position(index))
             {
-                return Ok(format!(
-                    "    (void)llg_dyn_value_set_string_at(&{}, {position}ULL, {});\n",
+                let owner = frame.string(value)?;
+                let statement = format!(
+                    "    (void)llg_dyn_value_move_string_at(&{}, {position}ULL, {});\n",
                     name(frame, *container)?,
-                    text_operand(frame, strings, value)?
-                ));
+                    owner.address
+                );
+                strings.push(owner);
+                return Ok(statement);
             }
             let function = match ctx.model.containers[*container].kind {
                 IrContainerKind::Dynamic => "llg_dyn_value_set_string",
@@ -1243,6 +1246,13 @@ pub(super) fn render(
                 (None, None) => return Err("real column has no source".to_owned()),
             };
             let total = frame.ctx.model.array(*array).total;
+            if let (Some(source), false) = (source, *nba) {
+                let source = frame.real_column_cell(*source, "0")?;
+                let target = frame.real_column_cell(*array, "0")?;
+                return Ok(format!(
+                    "    llg_real_column_assign({target}, {source}, {total}ULL);\n"
+                ));
+            }
             let store = if *nba {
                 format!("llg_nba_d_after({target}, {value}, 0)")
             } else {

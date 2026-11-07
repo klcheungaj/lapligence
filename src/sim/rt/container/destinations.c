@@ -89,9 +89,6 @@ void llg_assoc_get_string_to(sv4_t* dst, const llg_assoc_t* array, const void* k
 void llg_dyn_value_get_string_to(llg_string_t* dst, const llg_dyn_value_array_t* array, const sv4_t* index) {
     llg_string_replace(dst, llg_dyn_value_get_string(array, *index));
 }
-void llg_dyn_value_string_at_to(llg_string_t* dst, const llg_dyn_value_array_t* array, uint64_t position) {
-    llg_string_replace(dst, llg_dyn_value_string_at(array, position));
-}
 void llg_dyn_value_get_nested_string_to(llg_string_t* dst, const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count) {
     llg_string_replace(dst, llg_dyn_value_get_nested_string(array, indices, count));
 }

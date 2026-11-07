@@ -148,6 +148,8 @@ void llg_fixed_array_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int
 void llg_fixed_array_fill(llg_fixed_array_t*, sv4_t, int, int);
 void llg_fixed_array_stream_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int, uint32_t);
 sv4_t llg_fixed_array_compare(const llg_fixed_array_t*, const llg_fixed_array_t*, int, int);
+/* Blocking copy of a whole real column: a cell of equal bits is no write. */
+void llg_real_column_assign(double* target, const double* source, uint64_t count);
 /* One-bit equality of two columns of `count` doubles, or its negation; case
  * equality compares the bit patterns. */
 sv4_t llg_real_column_compare(const double* left, const double* right, uint64_t count, int case_eq, int negate);

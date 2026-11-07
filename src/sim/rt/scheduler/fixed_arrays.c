@@ -709,6 +709,11 @@ void llg_bitstream_append_fixed_array(llg_bitstream_t* stream,
         llg_bitstream_append_value(stream, *llg_fixed_array_peek(array, index));
 }
 
+void llg_real_column_assign(double* target, const double* source, uint64_t count) {
+    for (uint64_t i = 0; i < count; ++i)
+        if (!real_same(target[i], source[i])) llg_ba_d(&target[i], source[i]);
+}
+
 sv4_t llg_real_column_compare(const double* left, const double* right, uint64_t count, int case_eq, int negate) {
     int equal = 1;
     if (case_eq) equal = memcmp(left, right, (size_t)count * sizeof(double)) == 0;

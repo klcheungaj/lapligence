@@ -763,10 +763,17 @@ impl Frame<'_, '_> {
         }
         let storage = self.ctx.model.containers[container].clone();
         let name = self.container_name(container)?;
-        let (call, depth, touch) = match storage.kind {
-            IrContainerKind::Associative {
-                key: IrAssocKey::String,
-            } => {
+        let position = match indices {
+            [index] => dyn_position(index),
+            _ => None,
+        };
+        let (call, depth, touch) = match (storage.kind, position) {
+            (
+                IrContainerKind::Associative {
+                    key: IrAssocKey::String,
+                },
+                _,
+            ) => {
                 let key = key.ok_or("string-keyed element locator requires a key")?;
                 let key = self.string(key)?;
                 let call = format!(
@@ -779,7 +786,14 @@ impl Frame<'_, '_> {
                 self.native_discard(key);
                 (element, 1, "llg_assoc_value_touch")
             }
-            kind => {
+            (IrContainerKind::Dynamic, Some(position)) => {
+                let element = self.scalar(
+                    "llg_value_t*",
+                    format!("llg_dyn_value_element_at(&{name}, {position}ULL)"),
+                );
+                (element, 1, "llg_dyn_value_touch")
+            }
+            (kind, _) => {
                 let (list, values) = self.container_indices(indices)?;
                 let call = match kind {
                     IrContainerKind::Dynamic => {

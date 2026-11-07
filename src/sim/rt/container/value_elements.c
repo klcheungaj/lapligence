@@ -138,11 +138,6 @@ static int llg_value_element_store(llg_value_t* target, const llg_value_t* value
     return 1;
 }
 
-llg_value_t* llg_dyn_value_element_at(llg_dyn_value_array_t* array,
-                                      uint64_t position) {
-    return dyn_value_position(array, position);
-}
-
 /* A record element written in place: each store reports whether the leaf
  * changed, so the element publishes once and only when some leaf differs. */
 int llg_value_item_set_packed(llg_value_t* item, sv4_t value) {
