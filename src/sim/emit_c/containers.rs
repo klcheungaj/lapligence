@@ -830,6 +830,17 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
             indices.len(),
             super::objects::chandle(ctx, value)?
         ),
+        IrContainerStmt::ExtendNested { container, indices } => format!(
+            "    (void){}(&{}, {}, {});\n",
+            match ctx.model.containers[*container].kind {
+                IrContainerKind::Dynamic => "llg_dyn_value_extend_nested",
+                IrContainerKind::Queue { .. } => "llg_queue_value_extend_nested",
+                IrContainerKind::Associative { .. } => "llg_assoc_value_extend_nested_integral",
+            },
+            name(ctx, *container),
+            super::objects::render_indices(ctx, indices)?,
+            indices.len()
+        ),
         IrContainerStmt::SetContainer {
             container,
             indices,

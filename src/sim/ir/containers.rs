@@ -846,6 +846,14 @@ pub enum IrContainerStmt {
         indices: Vec<IrExpr>,
         value: IrChandleExpr,
     },
+    /// Make the nested element at `indices` exist: a missing associative
+    /// entry is created and a position one past the end of a level appends
+    /// an element with its initial value. Lowering emits it only after a
+    /// bounds check of every level (a checked `$cast`, decision S11-D5).
+    ExtendNested {
+        container: usize,
+        indices: Vec<IrExpr>,
+    },
     SetContainer {
         container: usize,
         indices: Vec<IrExpr>,
@@ -2679,6 +2687,23 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
+            Self::ExtendNested { container, indices } => {
+                let container = container_kind(model, *container, None)?;
+                if matches!(
+                    container.kind,
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String
+                    }
+                ) || indices.len() < 2
+                    || indices.iter().any(IrExpr::is_real)
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested element creation has an invalid index path",
+                    ));
+                }
+                Ok(())
+            }
             Self::SetContainer {
                 container,
                 indices,
@@ -2993,7 +3018,9 @@ impl IrContainerStmt {
                 value.expressions(visit);
             }
             Self::SetNestedChandle { indices, .. } => indices.iter().for_each(&mut *visit),
-            Self::SetContainer { indices, .. } => indices.iter().for_each(&mut *visit),
+            Self::SetContainer { indices, .. } | Self::ExtendNested { indices, .. } => {
+                indices.iter().for_each(&mut *visit)
+            }
             Self::SetDefault { value, .. } => visit(value),
             Self::SetDefaultString { value, .. } => value.expressions(visit),
             Self::SetDefaultChandle { .. } => {}
@@ -3151,7 +3178,9 @@ impl IrContainerStmt {
                 value.expressions_mut(visit);
             }
             Self::SetNestedChandle { indices, .. } => indices.iter_mut().for_each(&mut *visit),
-            Self::SetContainer { indices, .. } => indices.iter_mut().for_each(&mut *visit),
+            Self::SetContainer { indices, .. } | Self::ExtendNested { indices, .. } => {
+                indices.iter_mut().for_each(&mut *visit)
+            }
             Self::SetDefault { value, .. } => visit(value),
             Self::SetDefaultString { value, .. } => value.expressions_mut(visit),
             Self::SetDefaultChandle { .. } => {}

@@ -624,6 +624,18 @@ llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
 llg_value_t* llg_assoc_value_element_string(llg_assoc_value_t* array,
                                             const void* key, size_t length,
                                             int create);
+/* Make the nested element at `indices` (`count` >= 2) exist before a checked
+ * `$cast` source runs (decision S11-D5): a missing associative entry is
+ * created, and at each level a position one past the end appends an element
+ * holding its initial value. The caller has already stopped on every
+ * position no write can reach, so an append only meets a queue level.
+ * Returns 1 when the whole path then exists. */
+int llg_dyn_value_extend_nested(llg_dyn_value_array_t* array,
+                                const sv4_t* indices, size_t count);
+int llg_queue_value_extend_nested(llg_queue_value_array_t* queue,
+                                  const sv4_t* indices, size_t count);
+int llg_assoc_value_extend_nested_integral(llg_assoc_value_t* array,
+                                           const sv4_t* indices, size_t count);
 void llg_dyn_value_touch(llg_dyn_value_array_t* array);
 void llg_queue_value_touch(llg_queue_value_array_t* queue);
 void llg_assoc_value_touch(llg_assoc_value_t* array);

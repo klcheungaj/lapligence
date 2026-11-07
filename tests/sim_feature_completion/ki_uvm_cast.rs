@@ -3,8 +3,8 @@
 //! and `ref` formals, class-typed `?:`, comparisons of method results,
 //! discarded pops, unformatted handles, class string actuals, record locals,
 //! branch handles, local array locators, `$bits` bounds and bare and
-//! `this.c` constraint modes. Clauses and oracles are in the
-//! fixture readme.
+//! `this.c` constraint modes, and nested `$cast` destinations. Clauses and
+//! oracles are in the fixture readme.
 use super::sim_cli;
 
 const SUITE: &str = "feature_completion/ki_uvm_cast";
@@ -243,5 +243,27 @@ fn initializer_stop_reachable() {
         ),
         &[],
         &[],
+    );
+}
+
+#[test]
+fn nested_destinations() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "nested_destinations",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/nested_destinations.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn nested_destination_stop() {
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "nested_destination_stop",
+        &[],
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/nested_destination_stop.out"),
+        "$cast failed to assign an incompatible value at tb:13:15: the destination element does not exist",
     );
 }

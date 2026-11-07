@@ -86,6 +86,98 @@ llg_value_t* llg_assoc_value_element_string(llg_assoc_value_t* array,
     return found ? &array->entries[position].value : NULL;
 }
 
+/* Append one element holding its initial value. A nested array has no
+ * spare capacity, so its storage moves: element references into it are
+ * outdated, as after any other change of its shape. */
+static void llg_dyn_value_append_initial(llg_dyn_value_array_t* array) {
+    if (array->size == SIZE_MAX) llg_container_fatal("dynamic array size overflow");
+    llg_value_t* data = llg_alloc_items(array->size + 1, sizeof(*data));
+    if (array->size) memcpy(data, array->data, array->size * sizeof(*data));
+    memset(&data[array->size], 0, sizeof(*data));
+    if (!llg_value_try_default_mode(&data[array->size], array->element, 1))
+        llg_container_fatal("container allocation failed");
+    llg_native_refs_outdate_all(&array->references);
+    free(array->data);
+    array->data = data;
+    ++array->size;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
+}
+
+/* The inner levels of `llg_*_extend_nested`, below the outer element. */
+static int llg_value_extend_path(llg_value_t* value, const sv4_t* indices,
+                                 size_t count, int* change) {
+    for (size_t level = 0; level < count; ++level) {
+        if (!value || !value->desc || value->desc->kind != LLG_VALUE_CONTAINER)
+            return 0;
+        if (!value->value.container) {
+            /* An empty nested array has no storage of its own yet. */
+            value->value.container =
+                llg_alloc_items(1, sizeof(*value->value.container));
+            memset(value->value.container, 0, sizeof(*value->value.container));
+            llg_dyn_value_init(value->value.container, value->desc->element);
+        }
+        llg_dyn_value_array_t* array = value->value.container;
+        size_t native;
+        if (!llg_index(indices[level], array->size, 1, &native)) return 0;
+        if (native == array->size) {
+            llg_dyn_value_append_initial(array);
+            *change |= LLG_CONTAINER_CHANGED_CONTENTS;
+        }
+        value = &array->data[native];
+    }
+    return 1;
+}
+
+int llg_dyn_value_extend_nested(llg_dyn_value_array_t* array,
+                                const sv4_t* indices, size_t count) {
+    if (!array || !indices || count < 2) return 0;
+    int change = 0;
+    int result = llg_value_extend_path(llg_dyn_value_at(array, indices[0]),
+                                       indices + 1, count - 1, &change);
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency, change);
+    return result;
+}
+
+int llg_queue_value_extend_nested(llg_queue_value_array_t* queue,
+                                  const sv4_t* indices, size_t count) {
+    if (!queue || !indices || count < 2) return 0;
+    int change = 0;
+    size_t native;
+    if (!llg_index(indices[0], queue->size, 1, &native)) return 0;
+    if (native == queue->size) {
+        llg_value_t initial = {0};
+        if (!llg_value_try_default_mode(&initial, queue->element, 1))
+            llg_container_fatal("container allocation failed");
+        int appended =
+            llg_queue_value_set_source(queue, indices[0], &initial, &change);
+        llg_value_drop(&initial);
+        if (!appended) {
+            llg_notify(queue->notify, queue->contents_dependency,
+                       queue->shape_dependency, change);
+            return 0;
+        }
+    }
+    int result = llg_value_extend_path(&queue->data[native], indices + 1,
+                                       count - 1, &change);
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
+    return result;
+}
+
+int llg_assoc_value_extend_nested_integral(llg_assoc_value_t* array,
+                                           const sv4_t* indices, size_t count) {
+    if (!array || !indices || count < 2) return 0;
+    llg_value_t* outer = llg_assoc_value_element_integral(array, indices, 1, 1);
+    int change = 0;
+    int result = llg_value_extend_path(outer, indices + 1, count - 1, &change);
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency, change);
+    return result;
+}
+
 /* A write through a borrowed element pointer happens after the locator
  * returned; these publish it once the store is complete. */
 void llg_dyn_value_touch(llg_dyn_value_array_t* array) {

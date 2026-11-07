@@ -1237,7 +1237,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   source; a string source converts to a packed value. An element of a queue,
   dynamic or associative array is written through its ordinary assignment only
   when the cast succeeds; a class or enum element whose outcome depends on the
-  run time binds first and stops at a missing element (S11-D5, S11-D6).
+  run time binds first and stops at a missing element (S11-D5, S11-D6); a
+  nested destination (`qq[i][j]`) binds and creates every level, outermost
+  first.
   SV §6.24 **[SV-2005]**.
 - 🟨 **Mutating operators** — Prefix/postfix `++/--` and `+= -= *= /= %= &= |= ^=`
   plus shift assignments capture an admitted whole/member/selected/fixed-array

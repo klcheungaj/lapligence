@@ -3,7 +3,7 @@
 use super::*;
 use crate::core::db::TypeDescriptor;
 use crate::sim::codegen::lowering::collection::HoistedValue;
-use crate::sim::ir::IrDynamicCast;
+use crate::sim::ir::{IrContainerElement, IrDynamicCast};
 
 impl<'a> Codegen<'a> {
     fn dynamic_cast_lhs_shape(&self, lhs: &IrLhs) -> Result<(u32, bool, bool, bool), String> {
@@ -461,8 +461,12 @@ impl<'a> Codegen<'a> {
     }
 
     /// Whether `lower_lhs` serves a `$cast` destination: anything but a
-    /// selection through an element of a resizable container.
+    /// selection through an element of a resizable container, nested ones
+    /// included (the frontend may flatten `q[i][j]` into one select).
     fn cast_destination_has_lhs(&self, destination: NodeId) -> bool {
+        if self.nested_cast_path(destination).is_some() {
+            return false;
+        }
         let mut node = destination;
         loop {
             if self.element_select(node).is_some() {
@@ -693,7 +697,7 @@ impl<'a> Codegen<'a> {
                 !value.valid_values.is_empty() && !matches!(value.rhs.kind, IrExprKind::Const(_))
             }
         };
-        let result = (|| {
+        let result = (|| -> Result<IrStmt, String> {
             if checked {
                 receiver = self.capture_cast_receiver(path, destination, &mut statements)?;
                 self.capture_cast_selectors(
@@ -825,7 +829,15 @@ impl<'a> Codegen<'a> {
                 init: Some(Box::new(cast)),
             });
             self.hoisted_values.insert(placeholder, hoisted);
-            self.lower_cast_store(path, destination, placeholder)
+            let store = self.lower_cast_store(path, destination, placeholder)?;
+            // An unchecked cast binds nothing before its source, so a nested
+            // element is created only when the store happens.
+            if !checked {
+                if let Some(extend) = self.nested_cast_extend(path, destination)? {
+                    return Ok(IrStmt::Block(vec![extend, store]));
+                }
+            }
+            Ok(store)
         })();
         self.hoisted_values.remove(&placeholder);
         for node in captured {
@@ -893,6 +905,9 @@ impl<'a> Codegen<'a> {
         destination: NodeId,
         location: String,
     ) -> Result<Vec<IrStmt>, String> {
+        if let Some((container, indices)) = self.nested_cast_path(destination) {
+            return self.nested_cast_bounds_stop(path, destination, container, indices, location);
+        }
         let Some((container, index)) = self
             .element_select(destination)
             .map(|(container, index)| (container.ir, index))
@@ -905,8 +920,142 @@ impl<'a> Codegen<'a> {
             IrContainerKind::Associative { .. } => return Ok(Vec::new()),
         };
         let index = self.lower_container_top_index(path, container, index)?;
-        let index = IrExpr::convert_to(index, CAST_INDEX_WIDTH, true);
         let size = cast_container_size(container);
+        let slot = format!("{}", destination.0);
+        Ok(vec![self.cast_range_stop(
+            index,
+            size,
+            limit_extra,
+            &slot,
+            &location,
+        )])
+    }
+
+    /// A destination below an element of a resizable container
+    /// (`qq[i][j]`): the container and its integral index path, outermost
+    /// first. A one-level select is not one (`element_select`).
+    fn nested_cast_path(&self, destination: NodeId) -> Option<(usize, Vec<NodeId>)> {
+        if self.element_select(destination).is_some() {
+            return None;
+        }
+        let (container, indices) = self.container_element_path(destination)?;
+        (indices.len() >= 2).then_some((container, indices))
+    }
+
+    /// The bounds check of every level of a nested destination, outermost
+    /// first, each with the rule of a one-level destination: a queue level
+    /// admits one past its end, a dynamic level only its elements, and an
+    /// associative level any key (the entry is created). A level below a
+    /// position that does not exist yet has size 0.
+    fn nested_cast_bounds_stop(
+        &mut self,
+        path: &str,
+        destination: NodeId,
+        container: usize,
+        indices: Vec<NodeId>,
+        location: String,
+    ) -> Result<Vec<IrStmt>, String> {
+        let lowered = self.lower_container_path_indices(path, container, indices)?;
+        let outer = self.model.containers[container].kind.clone();
+        let mut statements = Vec::new();
+        for level in 0..lowered.len() {
+            let slot = format!("{}_{level}", destination.0);
+            let (limit_extra, size) = if level == 0 {
+                match outer {
+                    IrContainerKind::Queue { .. } => (1, cast_container_size(container)),
+                    IrContainerKind::Dynamic => (0, cast_container_size(container)),
+                    IrContainerKind::Associative { .. } => continue,
+                }
+            } else {
+                let Some(IrContainerElement::Container {
+                    kind, key: None, ..
+                }) = self.container_element_type(container, level)
+                else {
+                    return Err(format!(
+                        "$cast destination in `{path}` selects through an unsupported nested container"
+                    ));
+                };
+                let size = IrExpr::convert_to(
+                    IrExpr::new(
+                        IrExprKind::Container(Box::new(IrContainerExpr::NestedSize {
+                            container,
+                            indices: lowered[..level].to_vec(),
+                        })),
+                        32,
+                        true,
+                        None,
+                    ),
+                    CAST_INDEX_WIDTH,
+                    true,
+                );
+                let size = if matches!(outer, IrContainerKind::Associative { .. }) {
+                    // A missing entry has size 0; reading through its key
+                    // would report a read of a nonexistent entry.
+                    let name = format!("_llg_cast_size{slot}");
+                    statements.push(IrStmt::DeclLocal {
+                        name: name.clone(),
+                        width: CAST_INDEX_WIDTH,
+                        signed: true,
+                        two_state: true,
+                        init: Some(Box::new(super::super::containers::pattern_key_expr(
+                            0,
+                            CAST_INDEX_WIDTH,
+                            true,
+                            false,
+                        ))),
+                    });
+                    let exists = IrExpr::new(
+                        IrExprKind::Container(Box::new(IrContainerExpr::Exists {
+                            container,
+                            key: Box::new(lowered[0].clone()),
+                        })),
+                        32,
+                        true,
+                        None,
+                    );
+                    statements.push(IrStmt::If {
+                        cond: exists,
+                        then_: vec![IrStmt::Assign {
+                            lhs: IrLhs::WholeRef {
+                                addr: format!("&{name}"),
+                                width: CAST_INDEX_WIDTH,
+                                signed: true,
+                                two_state: true,
+                                shortreal: false,
+                            },
+                            rhs: size,
+                            nba: false,
+                        }],
+                        els: None,
+                        check: IrUniquePriorityCheck::None,
+                    });
+                    IrExpr::new(IrExprKind::LocalRead(name), CAST_INDEX_WIDTH, true, None)
+                } else {
+                    size
+                };
+                (i128::from(kind == "Queue"), size)
+            };
+            statements.push(self.cast_range_stop(
+                lowered[level].clone(),
+                size,
+                limit_extra,
+                &slot,
+                &location,
+            ));
+        }
+        Ok(statements)
+    }
+
+    /// Stop the run when `index` is outside `0 .. size + limit_extra`.
+    fn cast_range_stop(
+        &self,
+        index: IrExpr,
+        size: IrExpr,
+        limit_extra: i128,
+        slot: &str,
+        location: &str,
+    ) -> IrStmt {
+        let index = IrExpr::convert_to(index, CAST_INDEX_WIDTH, true);
         let limit = bin_expr(
             IrBinOp::Add,
             size,
@@ -921,8 +1070,9 @@ impl<'a> Codegen<'a> {
             ),
             bin_expr(IrBinOp::Lt, index, limit),
         );
-        let slot = format!("_llg_cast_slot{}", destination.0);
-        Ok(vec![IrStmt::If {
+        let stop = format!("_llg_cast_stop{slot}");
+        let slot = format!("_llg_cast_slot{slot}");
+        IrStmt::If {
             cond: un_expr(IrUnOp::LogNot, in_range),
             then_: vec![
                 IrStmt::DeclLocal {
@@ -933,7 +1083,7 @@ impl<'a> Codegen<'a> {
                     init: None,
                 },
                 IrStmt::DeclLocal {
-                    name: format!("_llg_cast_stop{}", destination.0),
+                    name: stop,
                     width: 1,
                     signed: false,
                     two_state: true,
@@ -947,7 +1097,7 @@ impl<'a> Codegen<'a> {
             ],
             els: None,
             check: IrUniquePriorityCheck::None,
-        }])
+        }
     }
 
     /// A bound destination exists before the source runs: a missing
@@ -961,6 +1111,9 @@ impl<'a> Codegen<'a> {
         declare: IrStmt,
         default: HoistedValue,
     ) -> Result<Vec<IrStmt>, String> {
+        if let Some(extend) = self.nested_cast_extend(path, destination)? {
+            return Ok(vec![extend]);
+        }
         let Some((container, selector)) = self
             .element_select(destination)
             .map(|(container, selector)| (container.ir, selector))
@@ -1003,6 +1156,24 @@ impl<'a> Codegen<'a> {
             els: None,
             check: IrUniquePriorityCheck::None,
         }])
+    }
+
+    /// The creation of every missing level of a nested destination,
+    /// outermost first (`IrContainerStmt::ExtendNested`); `None` for any
+    /// other destination. A nested store alone writes only an element that
+    /// already exists.
+    fn nested_cast_extend(
+        &mut self,
+        path: &str,
+        destination: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let Some((container, indices)) = self.nested_cast_path(destination) else {
+            return Ok(None);
+        };
+        let indices = self.lower_container_path_indices(path, container, indices)?;
+        Ok(Some(IrStmt::Container(Box::new(
+            IrContainerStmt::ExtendNested { container, indices },
+        ))))
     }
 
     /// Evaluate a computed handle the destination goes through (`get().q[i]`)

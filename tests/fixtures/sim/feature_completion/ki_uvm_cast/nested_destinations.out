@@ -1,0 +1,16 @@
+mk(a)
+inner end ok 2 7
+mk(b)
+inner end fail 3
+mk(c)
+outer end ok 2 1 7
+upcast 3 1
+mk(d)
+dyn ok 1 7
+mk(e)
+assoc ok 1 1 7
+mk(f)
+assoc fail 2 1
+enum ok 1 GREEN
+enum fail 2
+done
