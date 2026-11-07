@@ -3108,9 +3108,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   objects reached through `rand` handles), 18.5.12 guards, `randomize() with`
   (also `with (identifier_list)`), variable lists and `randomize(null)`,
   `std::randomize()` of variables and of fixed, dynamic and queue arrays of any scope with and without
-  `with`, `rand_mode`/`constraint_mode` in every form except a bare constraint
-  name ([known issue](known_issues.md#constrained-randomization-limits-sim-029-sim-030)),
-  and `pre_randomize`/
+  `with`, `rand_mode`/`constraint_mode` in every form, and `pre_randomize`/
   `post_randomize`. Values come from an in-house C11 solver: exact BDD
   counting with uniform (or dist- and order-weighted) sampling, uniform
   rejection sampling, then a CDCL search that is not uniform (S29-D10), each

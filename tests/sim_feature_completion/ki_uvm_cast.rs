@@ -2,8 +2,8 @@
 //! source into any singular destination, handle functions with packed output
 //! and `ref` formals, class-typed `?:`, comparisons of method results,
 //! discarded pops, unformatted handles, class string actuals, record locals,
-//! branch handles, local array locators, `$bits` bounds and `this.c`
-//! constraint modes. Clauses and oracles are in the
+//! branch handles, local array locators, `$bits` bounds and bare and
+//! `this.c` constraint modes. Clauses and oracles are in the
 //! fixture readme.
 use super::sim_cli;
 

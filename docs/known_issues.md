@@ -2505,8 +2505,6 @@ these forms remain outside them.
 
 ### Symptom
 
-- `c.constraint_mode(...)` with a bare constraint name in a method stops with
-  `unsupported executable node`; `this.c` and `h.c` work.
 - Rejected with a located `randomization:` error: nested dynamic arrays and
   queues, associative arrays, `randc` arrays and `randc` variables wider than
   16 bits (18.4.2 lets an implementation limit them), a random untagged union
