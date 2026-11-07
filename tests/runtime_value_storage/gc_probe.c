@@ -16,6 +16,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,7 +90,7 @@ static void node_condemn(void* object) {
 }
 
 static const llg_gc_type_t node_type = {
-    "probe node", node_trace, node_interior, node_finalize, node_condemn};
+    "probe node", node_trace, node_interior, node_finalize, node_condemn, 0};
 
 static uint32_t next_id;
 
@@ -215,6 +216,32 @@ static void pins_retain_until_the_last_release(void) {
     llg_gc_collect();
     CHECK(stats().live == 0 && stats().freed == 2);
     finish();
+}
+
+// Generated code pins an object once, so only this probe can reach the limit.
+static void pins_hold_every_count_to_the_limit(void) {
+    start(0);
+    gc_node* a = cycle_new();
+    for (uint64_t pin = 0; pin < LLG_GC_PIN_MAX; ++pin) CHECK(llg_gc_pin(a));
+    CHECK(stats().pinned == 1);
+    llg_gc_collect();
+    CHECK(stats().live == 2);
+    check_node(a);
+    for (uint64_t pin = 1; pin < LLG_GC_PIN_MAX; ++pin) CHECK(llg_gc_unpin(a));
+    llg_gc_collect();
+    CHECK(stats().live == 2 && stats().pinned == 1);
+    CHECK(llg_gc_unpin(a));
+    llg_gc_collect();
+    CHECK(stats().live == 0 && stats().pinned == 0);
+    finish();
+}
+
+// One pin past the limit must stop the run. CTest matches the fatal's message.
+static void one_pin_past_the_limit(void) {
+    start(0);
+    gc_node* a = cycle_new();
+    for (uint64_t pin = 0; pin <= LLG_GC_PIN_MAX; ++pin) CHECK(llg_gc_pin(a));
+    puts("the pin count overflowed");
 }
 
 static void interior_addresses_and_handle_cells_are_roots(void) {
@@ -401,7 +428,7 @@ static void repeated_collection_stays_bounded(void) {
     roots[0] = cycle_new();
     roots[1] = cycle_new();
     // Cross an epoch wrap: stale marks must not keep or lose objects.
-    llg_gc.epoch = UINT32_MAX - 5;
+    llg_gc.epoch = (uint32_t)LLG_GC_MARK_MAX - 5;
     size_t max_capacity = 0;
     for (int round = 0; round < 300; ++round) {
         for (int i = 0; i < 500; ++i) (void)cycle_new();
@@ -413,7 +440,8 @@ static void repeated_collection_stays_bounded(void) {
         check_node(roots[1]->edges[0]);
         check_node(roots[2]);
     }
-    CHECK(llg_gc.epoch < 300);
+    CHECK(llg_gc.epoch <= LLG_GC_MARK_MAX);
+    CHECK(stats().mark_clears == 2);
     CHECK(stats().collections == 300 && stats().failed_collections == 0);
     CHECK(stats().freed == 300u * 1000u + 2u * 42u);
     CHECK(max_capacity <= 2048);
@@ -446,10 +474,23 @@ static void allocation_policy_requests_safe_points(void) {
     finish();
 }
 
-int main(void) {
+static void exit_cleanly_on_abort(int signal_number) {
+    (void)signal_number;
+    _Exit(0);
+}
+
+int main(int argc, char** argv) {
     value_test_reset_stats();
+    if (argc > 1) {
+        // CTest fails a test that dies on a signal, whatever it printed.
+        signal(SIGABRT, exit_cleanly_on_abort);
+        one_pin_past_the_limit();
+        return 0;
+    }
+    (void)argv;
     cycles_are_reclaimed_and_rooted_graphs_survive();
     pins_retain_until_the_last_release();
+    pins_hold_every_count_to_the_limit();
     interior_addresses_and_handle_cells_are_roots();
     suspended_frames_are_traced_at_safe_points();
     allocation_failure_abandons_collection(0);

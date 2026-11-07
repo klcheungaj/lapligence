@@ -61,21 +61,28 @@ fn unreachable_cycles_reach_a_bounded_plateau() {
         assert_eq!(stdout, expected);
         assert_eq!(
             stats,
-            "llg: gc: collections=400 failed=0 allocated=40001 freed=39998 condemned=0 live=3 peak=103 pinned=0"
+            "llg: gc: collections=400 failed=0 allocated=40001 freed=39998 condemned=0 live=3 peak=103 pinned=0 mark_clears=1"
         );
         // Default policy (4096, growth 100%): nine collections, bounded peak.
         let (_, stats) = run_with_stats("cycle_plateau", optimized, &[]);
         assert_eq!(
             stats,
-            "llg: gc: collections=9 failed=0 allocated=40001 freed=36862 condemned=0 live=3139 peak=4099 pinned=0"
+            "llg: gc: collections=9 failed=0 allocated=40001 freed=36862 condemned=0 live=3139 peak=4099 pinned=0 mark_clears=0"
         );
         // Without collection every object stays until model close.
         let (_, stats) = run_with_stats("cycle_plateau", optimized, &[("LLG_GC", "0")]);
         assert_eq!(
             stats,
-            "llg: gc: collections=0 failed=0 allocated=40001 freed=0 condemned=0 live=40001 peak=40001 pinned=0"
+            "llg: gc: collections=0 failed=0 allocated=40001 freed=0 condemned=0 live=40001 peak=40001 pinned=0 mark_clears=0"
         );
     }
+    // A collection at every safe point wraps the mark epoch many times; each
+    // dead cycle is still found (a stale mark would keep it) and each live
+    // object still reached (verify mode would report it).
+    let (stdout, stats) = run_with_stats("cycle_plateau", true, &STRESS);
+    assert_eq!(stdout, expected);
+    assert!(stats.contains(" condemned=39998 live=3 "), "{stats}");
+    assert!(!stats.ends_with(" mark_clears=0"), "{stats}");
 }
 
 #[test]
@@ -126,6 +133,49 @@ fn container_and_record_properties_form_collectable_cycles() {
             "{stats}"
         );
     }
+}
+
+/// The header widths narrowed from the C command line, so each limit is met
+/// in a short run.
+fn run_narrow(fixture: &str, flags: &str, extra: &[(&str, &str)]) -> std::process::Output {
+    let mut controls = vec![
+        ("LLG_CFLAGS", flags),
+        ("LLG_GC_STATS", "1"),
+        ("LLG_DEV_VALUE_BACKEND", "legacy"),
+        ("LLG_DEV_COMPACT_KERNELS", "portable"),
+    ];
+    controls.extend_from_slice(extra);
+    sim_cli::invoke_with_env(SUITE, fixture, false, &[], &controls, &[])
+}
+
+#[test]
+fn a_narrow_mark_finds_every_dead_object_across_its_wraps() {
+    for flags in ["-DLLG_GC_MARK_BITS=1", "-DLLG_GC_MARK_BITS=2"] {
+        let output = run_narrow("cycle_plateau", flags, &[]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stderr}");
+        assert!(
+            stderr.contains(" freed=36862 condemned=0 live=3139 peak=4099 pinned=0 mark_clears="),
+            "{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_stale_mark_never_passes_for_the_current_epoch() {
+    let controls = [("LLG_GC_STRESS", "1"), ("LLG_GC_VERIFY", "1")];
+    let output = run_narrow("cycle_plateau", "-DLLG_GC_MARK_BITS=2", &controls);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(stderr.contains(" condemned=39998 live=3 "), "{stderr}");
+    assert!(!stderr.trim_end().ends_with(" mark_clears=0"), "{stderr}");
+}
+
+#[test]
+fn serials_wrap_quietly_without_class_keys() {
+    let output = run_narrow("cycle_plateau", "-DLLG_GC_SERIAL_BITS=6", &[]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
 }
 
 #[test]

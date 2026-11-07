@@ -17,8 +17,26 @@ are reported with `llg_gc_visit_interior`.
 An associative array with class keys holds its keys as roots: global ones
 through `render_gc_roots`, the rest through the traced storage that holds them
 (`llg_gc_trace_assoc`, `llg_gc_trace_assoc_values`, `llg_nested_assoc_trace`).
-Every object takes a creation serial from `llg_gc.next_serial`, 8 bytes per
-header, which orders those keys.
+
+`llg_gc_header_t` is 16 bytes: `type`, then one word with masks (not bitfields,
+so MSVC lays it out alike) holding, from bit 0, 8 mark bits, 16 pin bits and a
+40-bit creation serial.
+
+- **Mark:** epochs run 1..255 and a new object's mark is 0. Reaching 255 clears
+  every mark before the next collection, so no stale mark can equal the current
+  epoch; the clear touches each header once per 255 collections. Six bits cost
+  3.5% on a design with 2182 collections of a small heap; eight cost 0.7%.
+- **Pins:** the only caller is `llg_cov_register`, which pins a covergroup
+  instance with a block sampling event once, when it is built, so generated
+  code never holds a count above 1. Waiters, forks, recursion, NBA payloads and
+  containers hold objects through roots, not pins, whatever their number. The
+  16 bits serve `llg_gc_pin` as an API; pin 65,536 is a fatal naming the limit.
+- **Serial:** 2^40 objects, about 12 days at a million objects a second. A model
+  with class keys stops with a fatal naming the time; a model without them
+  never compares serials and wraps.
+
+The three widths can be narrowed with `-DLLG_GC_MARK_BITS` and friends, which is
+how `sim_018` reaches each limit.
 
 Finalizers release fields only and never follow handles, so cycles and order
 do not matter. One reclaim hook (`llg_gc_reclaim_hook`, installed by the VPI layer once

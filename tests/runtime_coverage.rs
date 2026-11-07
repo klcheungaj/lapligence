@@ -100,7 +100,7 @@ static void object_trace(void* object, llg_gc_tracer_t* tracer) {
     (void)tracer;
 }
 static void object_finalize(void* object) { (void)object; }
-static const llg_gc_type_t object_type = {"probe", object_trace, NULL, object_finalize, NULL};
+static const llg_gc_type_t object_type = {"probe", object_trace, NULL, object_finalize, NULL, 0};
 
 int main(void) {
     llg_rt_init();

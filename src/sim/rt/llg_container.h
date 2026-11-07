@@ -55,16 +55,55 @@ enum {
     LLG_VALUE_ASSOC = 10,
 };
 
-/* First member of every collected object; owned by the collector. `serial`
- * numbers objects in creation order from 1, and orders class keys of
- * associative arrays. */
+/* First member of every collected object; owned by the collector. `state`
+ * packs, from bit 0, the mark epoch, the pin count and the creation serial.
+ * It is one word with masks, not bitfields, so its layout is the same on
+ * every compiler. The serial numbers objects from 1 and orders class keys of
+ * associative arrays (S07-D9). gc/readme.md gives the choice of widths. */
+#ifndef LLG_GC_MARK_BITS
+#define LLG_GC_MARK_BITS 8
+#endif
+#ifndef LLG_GC_PIN_BITS
+#define LLG_GC_PIN_BITS 16
+#endif
+#ifndef LLG_GC_SERIAL_BITS
+#define LLG_GC_SERIAL_BITS 40
+#endif
+#define LLG_GC_MARK_MAX ((UINT64_C(1) << LLG_GC_MARK_BITS) - 1)
+#define LLG_GC_PIN_MAX ((UINT64_C(1) << LLG_GC_PIN_BITS) - 1)
+#define LLG_GC_SERIAL_MAX ((UINT64_C(1) << LLG_GC_SERIAL_BITS) - 1)
+#define LLG_GC_PIN_SHIFT LLG_GC_MARK_BITS
+#define LLG_GC_SERIAL_SHIFT (LLG_GC_MARK_BITS + LLG_GC_PIN_BITS)
 typedef struct llg_gc_type llg_gc_type_t;
+typedef struct llg_gc_tracer llg_gc_tracer_t;
+struct llg_gc_type {
+    const char* name;
+    // Visit every outgoing handle (llg_gc_visit and friends).
+    void (*trace)(void* object, llg_gc_tracer_t* tracer);
+    // Optional: nonzero when the object's own storage contains an address
+    // reported through llg_gc_visit_interior (see llg_gc_interior_hit).
+    int (*interior)(const void* object, const llg_gc_tracer_t* tracer);
+    // Release the object's fields; never follows handles or frees `object`.
+    void (*finalize)(void* object);
+    // Optional (LLG_GC_VERIFY): poison an unreachable object kept allocated so
+    // a later access through a missed root is reported, not undefined.
+    void (*condemn)(void* object);
+    // Position of the object's class among keys of a class-indexed array:
+    // keys sort by rank, then creation (S07-D9). 0 for any other object.
+    uint32_t rank;
+};
 typedef struct llg_gc_header {
     const llg_gc_type_t* type;
-    uint32_t mark;
-    uint32_t pins;
-    uint64_t serial;
+    uint64_t state;
 } llg_gc_header_t;
+_Static_assert(LLG_GC_MARK_BITS + LLG_GC_PIN_BITS + LLG_GC_SERIAL_BITS <= 64,
+               "the header word holds its three fields");
+_Static_assert(sizeof(void*) != 8 || sizeof(llg_gc_header_t) == 16,
+               "a collected object starts with 16 header bytes");
+
+static inline uint64_t llg_gc_serial(const llg_gc_header_t* object) {
+    return object->state >> LLG_GC_SERIAL_SHIFT;
+}
 
 typedef struct llg_value_desc_t llg_value_desc_t;
 typedef struct llg_value_member_desc_t llg_value_member_desc_t;

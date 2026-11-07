@@ -263,22 +263,8 @@ void llg_rt_co_cache_get_stats(llg_rt_co_cache_stats_t* stats);
 #define LLG_GC_DEFAULT_GROWTH_PERCENT 100u
 #endif
 
-typedef struct llg_gc_tracer llg_gc_tracer_t;
 // llg_gc_header_t, the first member of every collected object, is in
 // llg_container.h: the order of class keys reads it.
-struct llg_gc_type {
-    const char* name;
-    // Visit every outgoing handle (llg_gc_visit and friends).
-    void (*trace)(void* object, llg_gc_tracer_t* tracer);
-    // Optional: nonzero when the object's own storage contains an address
-    // reported through llg_gc_visit_interior (see llg_gc_interior_hit).
-    int (*interior)(const void* object, const llg_gc_tracer_t* tracer);
-    // Release the object's fields; never follows handles or frees `object`.
-    void (*finalize)(void* object);
-    // Optional (LLG_GC_VERIFY): poison an unreachable object kept allocated so
-    // a later access through a missed root is reported, not undefined.
-    void (*condemn)(void* object);
-};
 typedef void (*llg_gc_root_fn)(llg_gc_tracer_t* tracer, void* context);
 typedef void (*llg_gc_payload_trace_fn)(const void* payload,
                                         llg_gc_tracer_t* tracer);
@@ -307,7 +293,11 @@ typedef struct {
     uint64_t peak_live;
     uint64_t pinned;
     uint64_t last_marked;
+    uint64_t mark_clears;
 } llg_gc_stats_t;
+
+// The model compares creation serials: running out of them is fatal.
+void llg_gc_order_objects(void);
 
 // Allocate a zeroed object of `size` bytes (>= sizeof(llg_gc_header_t)) whose
 // header is initialized with `type`. Allocation failure is fatal.

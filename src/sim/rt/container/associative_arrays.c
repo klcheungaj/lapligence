@@ -190,7 +190,7 @@ static int llg_integral_compare(sv4_t a, sv4_t b) {
 static uint64_t llg_class_key_serial(sv4_t key) {
     const llg_gc_header_t* object =
         (const llg_gc_header_t*)(uintptr_t)sv4_to_u64(key);
-    return object ? object->serial : 0;
+    return object ? llg_gc_serial(object) : 0;
 }
 
 /* Lookup of class key `key` in `size` entries of `stride` bytes sorted by
