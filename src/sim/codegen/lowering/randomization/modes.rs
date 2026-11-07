@@ -109,6 +109,12 @@ impl Codegen<'_> {
                     let is_static = self.db.variable_lifetime(child) == VariableLifetime::Static;
                     let bit = self.new_mode_bit(class_index, &name, is_static, fields);
                     self.rand_mode_bits.insert(child, bit);
+                    if let Some(cells) = self.element_mode_cells(child) {
+                        let name = format!("_llg_rand_cells_{}", ident(&self.node(child).name));
+                        let cells_bit =
+                            self.new_hidden_state(class_index, &name, is_static, cells, fields);
+                        self.rand_cell_modes.insert(child, (cells_bit, cells));
+                    }
                     if self.db.rand_qualifier(child) == RandQualifier::RandC {
                         // The cycle state of a packed randc property of at
                         // most RAND_CYCLIC_MAX_WIDTH bits; other randc
@@ -186,6 +192,11 @@ impl Codegen<'_> {
             .chain(self.constraint_mode_bits.values())
             .map(|bit| (bit, 1))
             .chain(self.randc_states.values().map(|(bit, width)| (bit, *width)))
+            .chain(
+                self.rand_cell_modes
+                    .values()
+                    .map(|(bit, width)| (bit, *width)),
+            )
             .filter_map(|(bit, width)| match bit {
                 ModeBit::Field(class, field) if *class == class_index => Some((*field, width)),
                 _ => None,
@@ -346,13 +357,30 @@ impl Codegen<'_> {
                     Ok(Some(ModeCall::Value(mode_value(off))))
                 }
                 [state] => {
-                    let lhs = self.mode_target(&bit, receiver)?;
+                    let lhs = self.mode_target(&bit, receiver.clone())?;
                     let off = self.mode_off_value(path, *state)?;
-                    Ok(Some(ModeCall::Statements(vec![IrStmt::Assign {
+                    let cells = self.rand_cell_modes.get(&target).cloned();
+                    let mut statements = Vec::new();
+                    if let Some((cells, width)) = cells {
+                        // The whole array sets every element's mode.
+                        let lhs = self.hidden_state_target(&cells, width, receiver)?;
+                        let zero = packed_const(0, width, false);
+                        statements.push(IrStmt::Assign {
+                            lhs,
+                            rhs: bin_packed(
+                                IrBinOp::Sub,
+                                zero,
+                                IrExpr::resize_to(off.clone(), width, false),
+                            ),
+                            nba: false,
+                        });
+                    }
+                    statements.push(IrStmt::Assign {
                         lhs,
                         rhs: off,
                         nba: false,
-                    }])))
+                    });
+                    Ok(Some(ModeCall::Statements(statements)))
                 }
                 _ => Err(self.rand_error(node, path, &format!("`{name}` takes one argument"))),
             };
@@ -366,6 +394,13 @@ impl Codegen<'_> {
                 &format!("`{name}` of a whole object is a task with one argument (18.8, 18.9)"),
             ));
         };
+        if let Some(property) = receiver.filter(|_| !constraint) {
+            if let Some(selection) = self.handle_property_selection(property) {
+                return self
+                    .lower_handle_variable_mode(path, node, selection, *state)
+                    .map(|statements| Some(ModeCall::Statements(statements)));
+            }
+        }
         let (handle, static_class) = match receiver {
             Some(receiver) => (
                 self.lower_chandle(path, receiver)?,
@@ -428,6 +463,220 @@ impl Codegen<'_> {
         Ok(Some(ModeCall::Statements(vec![IrStmt::Block(statements)])))
     }
 
+    /// The class handle property a `rand_mode` receiver names, directly or
+    /// by one element select: 18.8 "If the random variable is an object
+    /// handle, only the mode of the variable is changed".
+    fn handle_property_selection(&self, receiver: NodeId) -> Option<HandleSelection> {
+        let (base, element) = match self.kind(receiver) {
+            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => (*base, true),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
+                (*base, true)
+            }
+            _ => (receiver, false),
+        };
+        let decl = match self.kind(base) {
+            NodeKind::Expr(ExprKind::Ref { target }) => (*target)?,
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten()?,
+            // An element select keeps its declaration as the base.
+            NodeKind::Array { .. } => base,
+            _ => return None,
+        };
+        let parent = self.node(decl).parent?;
+        self.db.class_metadata(parent)?;
+        let handle = if element {
+            self.is_handle_array(decl)
+        } else {
+            self.is_handle_property(decl)
+        };
+        handle.then_some(HandleSelection {
+            receiver,
+            decl,
+            element,
+        })
+    }
+
+    /// The hidden off bits one element of `rand` handle array `decl` needs:
+    /// its element count, when the design calls `rand_mode` on an element of
+    /// a fixed array. Every other design keeps its class layouts.
+    fn element_mode_cells(&mut self, decl: NodeId) -> Option<u32> {
+        if !self.is_handle_array(decl) {
+            return None;
+        }
+        let selected = match &self.rand_mode_elements {
+            Some(selected) => selected,
+            None => {
+                let selected = (0..self.db.node_count())
+                    .map(NodeId::from_index)
+                    .filter_map(|node| match self.kind(node) {
+                        NodeKind::MethodCall {
+                            name,
+                            receiver: Some(receiver),
+                            ..
+                        } if name == "rand_mode" => self.handle_property_selection(*receiver),
+                        _ => None,
+                    })
+                    .filter(|selection| selection.element)
+                    .map(|selection| selection.decl)
+                    .collect();
+                self.rand_mode_elements.insert(selected)
+            }
+        };
+        if !selected.contains(&decl) {
+            return None;
+        }
+        match &self.db.type_descriptor(decl)?.shape {
+            TypeShape::FixedArray { dimensions, .. } if dimensions.len() == 1 => {
+                let (left, right) = dimensions[0];
+                u32::try_from(i64::from(left).abs_diff(i64::from(right)) + 1).ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// `rand_mode(s)` of a class handle property or of one element of a
+    /// handle array: a variable of the class, so an object it refers to
+    /// keeps its modes (18.8). A property that is not `rand` has no mode and
+    /// the call has no effect.
+    fn lower_handle_variable_mode(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        selection: HandleSelection,
+        state: NodeId,
+    ) -> Result<Vec<IrStmt>, String> {
+        let HandleSelection {
+            receiver,
+            decl,
+            element,
+        } = selection;
+        let Some(bit) = self.rand_mode_bits.get(&decl).cloned() else {
+            return Ok(Vec::new());
+        };
+        let object = match bit {
+            ModeBit::Signal(_) => None,
+            ModeBit::Field(..) => {
+                // A select keeps its declaration as the base; its path
+                // expression child names the object.
+                let named = element
+                    .then(|| {
+                        self.node(receiver).children.iter().copied().find(|child| {
+                            matches!(
+                                self.kind(*child),
+                                NodeKind::Expr(
+                                    ExprKind::HierPath { .. } | ExprKind::MemberSelect { .. }
+                                )
+                            )
+                        })
+                    })
+                    .flatten()
+                    .unwrap_or(receiver);
+                Some(self.class_receiver_for(path, named, decl)?)
+            }
+        };
+        let off = self.mode_off_value(path, state)?;
+        if !element {
+            let lhs = self.mode_target(&bit, object)?;
+            return Ok(vec![IrStmt::Assign {
+                lhs,
+                rhs: off,
+                nba: false,
+            }]);
+        }
+        let Some((cells, width)) = self.rand_cell_modes.get(&decl).cloned() else {
+            return Err(self.rand_error(
+                node,
+                path,
+                "`rand_mode` of an element of a dynamic array or queue of class handles is not supported",
+            ));
+        };
+        let IrChandleExpr::ContainerGet { index, .. } = self.lower_chandle(path, receiver)? else {
+            return Err(self.rand_error(
+                node,
+                path,
+                "`rand_mode` of this element is not supported",
+            ));
+        };
+        let local = format!("_llg_mode_{}", node.index());
+        let (cell, value) = (format!("{local}_c"), format!("{local}_v"));
+        let index_width = index.width;
+        let index_signed = index.signed;
+        let read_cell = || {
+            IrExpr::new(
+                IrExprKind::LocalRead(cell.clone()),
+                index_width,
+                index_signed,
+                None,
+            )
+        };
+        let read_off = || IrExpr::new(IrExprKind::LocalRead(value.clone()), 1, false, None);
+        let at =
+            |bit: IrExpr| bin_packed(IrBinOp::Shl, bit, IrExpr::resize_to(read_cell(), 32, false));
+        let mask = at(packed_const(1, width, false));
+        let kept = bin_packed(
+            IrBinOp::BitAnd,
+            self.hidden_state_read(&cells, width, object.clone())?,
+            bit_not(mask),
+        );
+        let updated = bin_packed(
+            IrBinOp::BitOr,
+            kept,
+            at(IrExpr::resize_to(read_off(), width, false)),
+        );
+        // A selector outside the array names no element: no effect.
+        let cond = IrExpr::new(
+            IrExprKind::Bin {
+                op: IrBinOp::Lt,
+                a: Box::new(IrExpr::resize_to(read_cell(), 32, false)),
+                b: Box::new(packed_const(u64::from(width), 32, false)),
+            },
+            1,
+            false,
+            None,
+        );
+        let base_lhs = self.mode_target(&bit, object.clone())?;
+        let base_kept = bin_packed(
+            IrBinOp::BitAnd,
+            self.mode_read(&bit, object.clone())?,
+            read_off(),
+        );
+        let lhs = self.hidden_state_target(&cells, width, object)?;
+        Ok(vec![IrStmt::Block(vec![
+            IrStmt::DeclLocal {
+                name: cell.clone(),
+                width: index_width,
+                signed: index_signed,
+                init: Some(index),
+                two_state: false,
+            },
+            IrStmt::DeclLocal {
+                name: value.clone(),
+                width: 1,
+                signed: false,
+                init: Some(Box::new(off)),
+                two_state: true,
+            },
+            IrStmt::If {
+                cond,
+                then_: vec![
+                    IrStmt::Assign {
+                        lhs,
+                        rhs: updated,
+                        nba: false,
+                    },
+                    // One active element makes the array active again; the
+                    // others keep their own bits.
+                    IrStmt::Assign {
+                        lhs: base_lhs,
+                        rhs: base_kept,
+                        nba: false,
+                    },
+                ],
+                els: None,
+                check: crate::sim::ir::IrUniquePriorityCheck::None,
+            },
+        ])])
+    }
+
     /// The off bit a `rand_mode(s)`/`constraint_mode(s)` argument sets: the
     /// argument converted to `bit` (6.24), inverted.
     fn mode_off_value(&mut self, path: &str, state: NodeId) -> Result<IrExpr, String> {
@@ -443,6 +692,28 @@ impl Codegen<'_> {
             None,
         ))
     }
+}
+
+/// A `rand_mode` receiver naming a class handle variable.
+struct HandleSelection {
+    receiver: NodeId,
+    decl: NodeId,
+    element: bool,
+}
+
+/// An unsigned packed operation at the width of `a`.
+fn bin_packed(op: IrBinOp, a: IrExpr, b: IrExpr) -> IrExpr {
+    let width = a.width;
+    IrExpr::new(
+        IrExprKind::Bin {
+            op,
+            a: Box::new(a),
+            b: Box::new(b),
+        },
+        width,
+        false,
+        None,
+    )
 }
 
 /// The `int` a function-form mode query returns: 1 when active.

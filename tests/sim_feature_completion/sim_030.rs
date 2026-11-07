@@ -33,6 +33,17 @@ fn dist_items_that_read_random_variables_solve_them_first() {
 }
 
 #[test]
+fn rand_mode_of_a_handle_variable_leaves_its_object() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "rand_mode_variables",
+        include_str!("../fixtures/sim/feature_completion/sim_030/rand_mode_variables.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn solve_before_orders_the_draws() {
     sim_cli::run_case_backend_parity(
         SUITE,
@@ -166,6 +177,12 @@ fn unsupported_array_and_object_forms_are_located_errors() {
         "a random array may be used in a constraint only through element selects",
     );
     names_source_position("neg_array_compare");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_element_mode_queue",
+        "`rand_mode` of an element of a dynamic array or queue of class handles is not supported",
+    );
+    names_source_position("neg_element_mode_queue");
     sim_cli::reject_case(
         SUITE,
         "neg_handle_index",

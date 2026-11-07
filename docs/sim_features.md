@@ -3101,7 +3101,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   [solver readme](../src/sim/rt/constraints/readme.md)). A failed call leaves
   every variable unchanged; infeasible constraints warn, evaluation errors and
   exhausted budgets are run-time errors (S29-D1 to S29-D10 and S30-D1 to
-  S30-D15 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays,
+  S30-D16 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays,
   associative arrays and the other forms in
   [known issues](known_issues.md#constrained-randomization-limits-sim-029-sim-030)
   are located errors; see
