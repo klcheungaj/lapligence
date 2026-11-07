@@ -2882,6 +2882,35 @@ pin collectable targets in the handle slot, and turn the catalog row from
 plugin that asks for one of the objects above, or with the ADV-019 catalog
 walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
 
+## VPI work during static initialization
+
+### Symptom
+
+A user VPI system function called from a static declaration initializer runs
+before any process exists. Work its calltf schedules there, such as a
+`vpi_put_value` with a delay, is not reported as the S13-D5 error that SV
+13.4.4 requires for deferred work outside a procedure's thread. A call from it
+into a DPI-C export stops the run as a call outside a DPI-C import (SV
+35.5.3).
+
+### Cause
+
+The static-initializer walk of S13-D5 follows SystemVerilog calls,
+constructors, virtual overrides and, from a context DPI-C import, every
+export. Foreign VPI code is opaque to it, and the run-time check for a
+process spawned with no parent covers only a `fork`.
+
+### Intended direction
+
+Check the VPI routines that schedule work against the static-initialization
+phase at run time, as a parentless fork is.
+
+### Reproduce
+
+`int x = $sched();` at module scope, where the calltf of `$sched` calls
+`vpi_put_value` on a variable with `vpiInertialDelay`: the run starts
+without the S13-D5 error.
+
 ## Functional coverage limits (SIM-044, SIM-045)
 
 **Status:** open. SIM-044 and SIM-045 provide covergroup instances, the

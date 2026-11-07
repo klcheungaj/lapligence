@@ -4410,6 +4410,30 @@ fn s13_d5_initializer_deferred_effect_runtime() {
 }
 
 #[test]
+fn s13_d5_context_import_export_fork() {
+    // A context import's foreign code reaches every export, so the fork in
+    // the export is checked; the run stops before any process starts.
+    run_dpi_fatal_decision(
+        "S13-D5_context_import_export_fork",
+        include_str!("fixtures/sim/lrm_decisions/S13-D5_context_import_export_fork.out"),
+        "fork in function 's13_spawn' schedules work after the call returns, during the static initializer of 'started' at ",
+    );
+}
+
+#[test]
+fn s13_d5_static_fork_guard() {
+    // The run stops before any process starts, so stdout stays empty.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S13-D5_static_fork_guard.out").is_empty());
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "S13-D5_static_fork_guard",
+        &[],
+        "",
+        "item::f.fork: a fork starts this branch during static initialization, outside every process; ",
+    );
+}
+
+#[test]
 fn s13_d6_ref_wait_nonexistent_element() {
     // The run stops at the second call, so stdout ends after "selected".
     sim_cli::run_case_failing_at_runtime(

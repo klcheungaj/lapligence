@@ -561,6 +561,7 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
     llg_configured_process_step_limit = g.process_step_limit;
     llg_configured_stop_policy = g.stop_policy;
     g.initialized = 1;
+    g.static_init_phase = 1;
     install_value_handle_hooks();
     g.current_region = LLG_REGION_PREPONED;
     llg_rng_state_seed(&g.rng_root, LLG_RNG_DEFAULT_SEED);

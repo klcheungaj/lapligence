@@ -12,7 +12,8 @@
 //! the statement runs. Call-graph reachability only chooses where the checks
 //! go: `prepare_static_effect_sites` selects the statements a static
 //! initializer can reach, through calls, constructors, property initializers,
-//! `randomize` callbacks and virtual overrides, and only those get
+//! `randomize` callbacks, virtual overrides and, from a context DPI import,
+//! every DPI export, and only those get
 //! `IrObjectStmt::StaticEffectCheck`. Only initializers that reach one record
 //! themselves in the static schedule. A design with neither has no check.
 //! Verilog-2001 initializers run as active-region processes, where these
@@ -212,6 +213,15 @@ impl Codegen<'_> {
         if let Some(callee) = self.static_effect_callee(node) {
             callees.push(callee);
             self.static_effect_overrides(callee, callees);
+            // The foreign code of a context import may call any export
+            // (SV 35.5.3); nothing tells which, so it reaches them all.
+            if self
+                .db
+                .dpi_import(callee)
+                .is_some_and(|import| import.context)
+            {
+                callees.extend(self.db.dpi_export_subroutines());
+            }
         }
     }
 
