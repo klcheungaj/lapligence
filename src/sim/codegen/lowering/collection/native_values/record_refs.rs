@@ -325,13 +325,14 @@ impl Codegen<'_> {
         }
         // A record element that no index selects (of a member array, a fixed
         // array, a queue or a dynamic array) has no leaf form to stop at
-        // (`lower_record_ref_select`); a call whose callee waits stops at the
-        // reference instead, as at fewer cells.
+        // (`lower_record_ref_select`); with index checks on, the call stops
+        // at the reference instead, as at fewer cells.
         let stop_unselected = (kind == IrElementRefKind::Record
             && matches!(place.root, IrElementRoot::Element { .. }))
         .then(|| IrRefStop {
             scope: path.to_owned(),
             location: self.source_location(self.record_ref_call_site.unwrap_or(node)),
+            waited: false,
         });
         Ok(Some(IrCallArg::ElementRef(Box::new(IrElementRef {
             root: place.root,

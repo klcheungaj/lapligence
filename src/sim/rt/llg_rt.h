@@ -1723,6 +1723,13 @@ void llg_rt_static_init_enter(const char* variable, const char* location);
 void llg_rt_static_init_leave(void);
 void llg_rt_static_effect(const char* what, const char* location,
                           const char* subroutine);
+// simulator.index_checks, from LLG_INDEX_CHECKS (`on`, the default, or
+// `off`). With the check on, an access some simulators stop the run on, where
+// IEEE 1800 gives a result, stops it instead: llg_rt_index_stop reports the
+// operation, the current process and `detail`, then ends the run at once
+// with status 1, without finals.
+int llg_rt_index_checks(void);
+void llg_rt_index_stop(const char* operation, const char* detail);
 // Make the run that a following fatal severity task ends skip its final
 // procedures: some simulator-generated errors stop the run at once, without
 // the end-of-simulation work a `$finish` or `$fatal` does.

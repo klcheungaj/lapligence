@@ -848,6 +848,14 @@ void llg_dyn_method(llg_dyn_array_t* array, int method,
  * uses a private stream that llg_container_seed reseeds. */
 void llg_container_seed(uint64_t seed);
 void llg_container_set_rng_source(llg_rng_state_t* (*source)(void));
+/* Index checks (simulator.index_checks): with a hook installed, an access the
+ * check covers calls it with the operation and what made the access invalid,
+ * instead of applying the text's result and warning; the hook stops the run.
+ * Covered: queue insert and delete(index) with an index outside the queue or
+ * with X or Z bits, and associative-array reads and writes through a key with
+ * X or Z bits. NULL (the default) follows the text. */
+typedef void (*llg_index_stop_fn)(const char* operation, const char* detail);
+void llg_container_set_index_stop(llg_index_stop_fn hook);
 
 /* Fixed-array sort workspace for generated models. The model evaluates each
  * element's key once, in declaration order, into `keys`; llg_fixed_order_sort

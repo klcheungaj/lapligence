@@ -73,6 +73,50 @@ pub(crate) fn run_compile_opts_after_db_drop_with_warnings(
     expected_stderr: &str,
     expected_warnings: &[&str],
 ) {
+    run_after_db_drop_with_env(
+        suite,
+        fixture,
+        opts,
+        expected,
+        expected_stderr,
+        expected_warnings,
+        &[],
+    );
+}
+
+/// [`run_case_after_db_drop`] with index checks off (S07-D15): for fixtures
+/// that test the result IEEE 1800 gives an invalid index or key.
+pub(crate) fn run_case_after_db_drop_without_index_checks(
+    suite: &str,
+    fixture: &str,
+    expected: &str,
+    expected_stderr: &str,
+) {
+    let source = fixture_path(suite, fixture);
+    run_after_db_drop_with_env(
+        suite,
+        fixture,
+        llg::core::compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        },
+        expected,
+        expected_stderr,
+        &[],
+        &[("LLG_INDEX_CHECKS", "off")],
+    );
+}
+
+fn run_after_db_drop_with_env(
+    suite: &str,
+    fixture: &str,
+    opts: llg::core::compile::CompileOpts,
+    expected: &str,
+    expected_stderr: &str,
+    expected_warnings: &[&str],
+    envs: &[(&str, &str)],
+) {
     use llg::core::{compile, db::Db};
     use llg::sim::{build, codegen, opt::OptConfig};
 
@@ -139,8 +183,8 @@ pub(crate) fn run_compile_opts_after_db_drop_with_warnings(
             let executable =
                 build::build_model_cmake_with_opts(directory.path(), &model.sources(), &options)
                     .expect("build owned generated model");
-            let output =
-                sim_harness::run_executable_output(&executable).expect("execute owned model");
+            let output = sim_harness::run_executable_output_with_env(&executable, envs)
+                .expect("execute owned model");
             let label =
                 format!("{suite}/{fixture}, Db dropped, optimized={optimized}, native={level:?}");
             assert_case_output(output, &label, expected, expected_stderr, expected_warnings);

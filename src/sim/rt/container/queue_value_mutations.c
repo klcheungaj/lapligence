@@ -175,7 +175,7 @@ static int llg_queue_value_insert_source(llg_queue_value_array_t* queue,
                                          const llg_value_t* source, int* change) {
     size_t native;
     if (!llg_index(index, queue->size, 1, &native)) {
-        llg_container_warning("invalid recursive queue insert index");
+        llg_invalid_queue_index("queue insert", "invalid recursive queue insert index", index, queue->size, 1);
         return 0;
     }
     if (queue->limit == 0 ||
@@ -281,7 +281,10 @@ int llg_queue_value_insert_container_from_packed(
 
 int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index) {
     size_t native;
-    if (!llg_index(index, queue->size, 0, &native)) return 0;
+    if (!llg_index(index, queue->size, 0, &native)) {
+        llg_invalid_queue_index("queue delete", NULL, index, queue->size, 0);
+        return 0;
+    }
     llg_native_refs_removed(&queue->references, native);
     llg_value_drop(&queue->data[native]);
     if (native + 1 < queue->size)

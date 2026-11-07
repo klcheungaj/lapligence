@@ -2882,6 +2882,33 @@ pin collectable targets in the handle slot, and turn the catalog row from
 plugin that asks for one of the objects above, or with the ADV-019 catalog
 walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
 
+## Container index-check stops name no array or source line
+
+### Symptom
+
+With index checks on (S07-D15), a queue `insert` or `delete(index)` with an
+invalid index and an associative-array access through an X or Z key stop the
+run with a message that names the operation, the index or key, the valid
+range and the current process, but not the array or the source line. The run
+ends at once with status 1: final procedures do not run and an open waveform
+file is not completed.
+
+### Cause
+
+These checks sit on the invalid path inside the container runtime, which
+receives neither a name nor a location, so valid accesses pay nothing; the
+generated code after a container call has no exit check, so the runtime
+cannot hand the stop back to the process.
+
+### Intended direction
+
+Pass a site index to the container calls only where a cheap static table can
+name the array and line, if the cost measures as zero.
+
+### Reproduce
+
+`q.insert(5, 9);` on a two-element queue.
+
 ## VPI work during static initialization
 
 ### Symptom

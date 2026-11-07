@@ -122,6 +122,10 @@ pub enum IrRuntimeQuery {
     /// initialized active free variable keeps its initial value in the
     /// first time step (IEEE 1800-2009 17.7).
     InitialTimeStep,
+    /// Whether index checks are on (`simulator.index_checks`, read by the
+    /// model at run time; 1-bit unsigned two-state). Only the invalid branch
+    /// of an access the check covers reads it.
+    IndexChecks,
 }
 
 /// Structural expression kinds.  The self-determined width/signedness/fill of

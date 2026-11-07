@@ -52,7 +52,9 @@ backends, and (except the adopted witness) after snapshot/Db destruction.
   > be combined element by element. If the elements match, the element is returned. If they do not
   > match, then the default-uninitialized value for that element’s type shall be returned.
 - `cast_contract` checks `$cast` membership against the complete source value,
-  selector and source evaluation once, invalid destinations, packed-member
+  selector and source evaluation once, invalid destinations (run with
+  `--no-index-checks`: such a cast warns, writes nothing and returns 0,
+  S07-D15), packed-member
   destinations, aliasing, two-state/sign/real conversion, and static width/sign
   and unpacked bit-stream casts with state conversion.
 - `cast_task_failure` writes its values to stderr: the failed task-form cast is

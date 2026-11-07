@@ -58,7 +58,7 @@ llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
     if (!value) {
         if (create) {
             if (!valid)
-                llg_container_warning("invalid associative-array key write");
+                llg_invalid_key_access("associative-array write", "invalid associative-array key write");
         } else {
             llg_assoc_read_miss(valid, array->has_default_value);
         }
@@ -340,7 +340,7 @@ int llg_assoc_value_set_element_integral(llg_assoc_value_t* array,
         sv4_t normalized = SV4_EMPTY;
         result = llg_assoc_value_normalize_key(array, indices[0], &normalized);
         if (!result)
-            llg_container_warning("invalid associative-array key write");
+            llg_invalid_key_access("associative-array write", "invalid associative-array key write");
         else
             result = llg_assoc_value_set_source(array, &normalized, NULL, 0,
                                                 value, &change);

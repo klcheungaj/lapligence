@@ -4363,7 +4363,7 @@ fn s11_d6_cast_element_out_of_range() {
                 label,
                 output,
                 expected,
-                "$cast failed to assign an incompatible value at tb:28:27: the destination element does not exist",
+                "$cast failed to assign an incompatible value at tb:28:27: the destination element of `q` does not exist",
             );
         },
     );
@@ -5394,9 +5394,14 @@ fn s07_d2_multidim_native_pattern_format() {
 
 #[test]
 fn s07_d7_wide_index_invalid() {
-    run_decision(
+    // The text's result for the queue methods; index checks would stop at
+    // `insert` (S07-D15).
+    sim_cli::run_case_backend_parity(
+        SUITE,
         "S07-D7_wide_index_invalid",
         include_str!("fixtures/sim/lrm_decisions/S07-D7_wide_index_invalid.out"),
+        &["--no-index-checks"],
+        &[],
     );
 }
 
@@ -5461,6 +5466,69 @@ fn s07_d14_nonblocking_trigger_missing_entry() {
     run_decision(
         "S07-D14_nonblocking_trigger_missing_entry",
         include_str!("fixtures/sim/lrm_decisions/S07-D14_nonblocking_trigger_missing_entry.out"),
+    );
+}
+
+#[test]
+fn s07_d15_index_checks_stop() {
+    // Each case stops at its first statement, so stdout stays empty.
+    let cases: [(&str, &str); 13] = [
+        ("1", "queue insert in process 'tb.initial': index 5 is outside the valid range 0 to 2"),
+        ("2", "queue insert in process 'tb.initial': the index has X or Z bits"),
+        ("3", "queue delete in process 'tb.initial': index -5 is outside the valid range 0 to 1"),
+        ("4", "associative-array read in process 'tb.initial': the key has X or Z bits"),
+        ("5", "associative-array write in process 'tb.initial': the key has X or Z bits"),
+        ("6", "associative-array write in process 'tb.initial': the key has X or Z bits"),
+        ("7", "the destination element of `fa` does not exist: its index is outside the declared range 0 to 3"),
+        ("8", "the destination element of `ef` does not exist: its index is outside the declared range 0 to 3"),
+        ("9", "the destination element of `cq` does not exist: its index is outside the array"),
+        ("10", "the destination element of `cd` does not exist: its index is outside the array"),
+        ("11", "the destination element of `ca` does not exist: the key has X or Z bits"),
+        ("12", "index of a `ref` actual selects no element"),
+        // The binding creates the entry, so the key check stops it.
+        ("13", "associative-array write in process 'tb.initial': the key has X or Z bits"),
+    ];
+    for (case, message) in cases {
+        let plusarg = format!("+case={case}");
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "S07-D15_index_checks",
+            &[plusarg.as_str()],
+            "",
+            message,
+        );
+    }
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "S07-D15_index_checks",
+        &["+case=1"],
+        "",
+        "; run with --no-index-checks or set simulator.index_checks = false",
+    );
+}
+
+#[test]
+fn s07_d15_index_checks_off() {
+    sim_cli::run_case_with_args(
+        SUITE,
+        "S07-D15_index_checks",
+        include_str!("fixtures/sim/lrm_decisions/S07-D15_index_checks.out"),
+        concat!(
+            "llg container warning: invalid queue insert index\n",
+            "llg container warning: invalid queue insert index\n",
+            "llg container warning: invalid associative-array key read\n",
+            "llg container warning: invalid associative-array integral key write\n",
+            "llg container warning: invalid associative-array key write\n",
+            "llg: severity warning: tb:60:33: the $cast destination element of `fa` does not exist: index 5 is outside the declared range 0 to 3; the cast writes nothing and returns 0\n",
+            "llg: severity warning: tb:61:33: the $cast destination element of `ef` does not exist: index -5 is outside the declared range 0 to 3; the cast writes nothing and returns 0\n",
+            "llg: severity warning: tb:62:33: the $cast destination element of `cq` does not exist: index X is outside the valid range 0 to 0; the cast writes nothing and returns 0\n",
+            "llg: severity warning: tb:63:34: the $cast destination element of `cd` does not exist: index Z is outside the valid range 0 to 1; the cast writes nothing and returns 0\n",
+            "llg: severity warning: tb:64:34: the $cast destination element of `ca` does not exist: the key has X or Z bits; the cast writes nothing and returns 0\n",
+            "llg container warning: invalid associative-array integral key write\n",
+            "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        ),
+        &[],
+        &["--no-index-checks"],
     );
 }
 

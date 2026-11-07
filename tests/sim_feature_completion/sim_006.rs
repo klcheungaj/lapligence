@@ -153,8 +153,15 @@ fn event_containers_keep_trigger_identity() {
 #[test]
 fn associative_defaults_and_invalid_indices_follow_7_8_6() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_006/assoc_defaults.out");
-    sim_cli::run_case_backend_parity(SUITE, "assoc_defaults", expected, &[], &[]);
-    sim_cli::run_case(
+    // The 7.8.6 results for X keys, with index checks off (S07-D15).
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "assoc_defaults",
+        expected,
+        &["--no-index-checks"],
+        &[],
+    );
+    sim_cli::run_case_with_args(
         SUITE,
         "assoc_defaults",
         expected,
@@ -168,6 +175,7 @@ fn associative_defaults_and_invalid_indices_follow_7_8_6() {
             "llg container warning: associative-array read of a nonexistent entry returns the default\n",
         ),
         &[],
+        &["--no-index-checks"],
     );
 }
 

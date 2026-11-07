@@ -20,6 +20,7 @@ build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dp
 output:   --out-dir <dir>  --runtime-cache <dir>
 append:   --append-<list> <value>  # adds to the list instead of replacing it; see --help
 stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)
+index:    --[no-]index-checks  # stop on an invalid index or key (default: on)
 pulse:    --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled
 timing:   --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --[no-]neg-timing-checks
 sdf:      --sdf [min:|typ:|max:][<scope>=]<file.sdf>...  # annotate before simulation starts
@@ -110,6 +111,9 @@ pub(crate) struct Cli {
     /// limits and `$nochange` offsets through delayed signals (default off:
     /// they count as 0).
     pub neg_timing_checks: Option<bool>,
+    /// `--[no-]index-checks`: stop the run on an invalid index or key where
+    /// some simulators stop it (default on); off applies the text's result.
+    pub index_checks: Option<bool>,
     /// `--sdf [min:|typ:|max:][scope=]file`, repeatable: SDF files annotated
     /// before simulation starts, in order (IEEE 1800-2009 32).
     pub sdf: Vec<sim::codegen::SdfCommand>,
@@ -162,6 +166,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut notifiers: Option<bool> = None;
     let mut timing_check_messages: Option<bool> = None;
     let mut neg_timing_checks: Option<bool> = None;
+    let mut index_checks: Option<bool> = None;
     let mut sdf: Vec<sim::codegen::SdfCommand> = Vec::new();
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
@@ -268,6 +273,10 @@ Options:
                               negative limits count as 0)
       --no-neg-timing-checks Count negative timing check limits as 0
                               (overrides llg.toml)
+      --no-index-checks      Apply the IEEE 1800 result of an invalid queue
+                              index, X/Z associative key or missing `ref`
+                              element instead of stopping (default: stop)
+      --index-checks         Stop on those accesses (overrides llg.toml)
       --sdf [min:|typ:|max:][<scope>=]<file.sdf>
                               Annotate the SDF file into <scope> (default: the
                               top instance) before simulation starts, with the
@@ -633,6 +642,8 @@ Options:
             }
             "--neg-timing-checks" => neg_timing_checks = Some(true),
             "--no-neg-timing-checks" => neg_timing_checks = Some(false),
+            "--index-checks" => index_checks = Some(true),
+            "--no-index-checks" => index_checks = Some(false),
             "--lint-only" => lint_only = Some(true),
             "--no-lint-only" => {
                 lint_only = Some(false);
@@ -704,6 +715,7 @@ Options:
         notifiers,
         timing_check_messages,
         neg_timing_checks,
+        index_checks,
         sdf,
     })
 }

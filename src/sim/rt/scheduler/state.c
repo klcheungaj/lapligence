@@ -701,6 +701,8 @@ typedef struct {
     // process exists, so a fork there has no parent (SV 13.4.4).
     int static_init_phase;
     int static_spawn_reported;
+    // simulator.index_checks (LLG_INDEX_CHECKS), on unless set to `off`.
+    int index_checks;
     llg_proc_t* current;
     llg_proc_queue_t process_queues[LLG_REGION_COUNT];
     llg_nba_queue_t nba_queues[LLG_REGION_COUNT];

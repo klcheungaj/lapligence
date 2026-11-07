@@ -366,7 +366,18 @@ pub(crate) fn run_executable(executable: &Path) -> Result<String, String> {
 }
 
 pub(crate) fn run_executable_output(executable: &Path) -> Result<Output, String> {
-    let output = run_command(&mut Command::new(executable), MODEL_TIMEOUT)?;
+    run_executable_output_with_env(executable, &[])
+}
+
+/// [`run_executable_output`] with extra environment variables for the model,
+/// such as `LLG_INDEX_CHECKS=off` for a fixture that tests the text's result.
+pub(crate) fn run_executable_output_with_env(
+    executable: &Path,
+    envs: &[(&str, &str)],
+) -> Result<Output, String> {
+    let mut command = Command::new(executable);
+    command.envs(envs.iter().copied());
+    let output = run_command(&mut command, MODEL_TIMEOUT)?;
     if !output.status.success() {
         return Err(format!(
             "simulation exited with {:?}, stderr: {}",

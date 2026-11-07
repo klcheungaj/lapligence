@@ -169,6 +169,7 @@ server, accepted and ignored by `llg`.
 | `simulator.show_cancelled` | bool | llg | `--show-cancelled` / `--no-show-cancelled` |
 | `simulator.timing_checks`, `simulator.notifiers`, `simulator.timing_check_messages` | bools | llg | `--[no-]timing-checks`, `--[no-]notifiers`, `--[no-]timing-check-messages` |
 | `simulator.neg_timing_checks` | bool | llg | `--[no-]neg-timing-checks` |
+| `simulator.index_checks` | bool | llg | `--[no-]index-checks` |
 | `simulator.plusargs` | strings | llg | arguments after `--` (they replace; `--append-plusarg` adds) |
 | `waveform.file` | `.vcd`/`.fst` path | llg | `--wave` |
 | `waveform.depth` | integer 0 to 4294967295 | llg | `--wave-depth`; requires `file` |
@@ -415,6 +416,15 @@ severity = "error"
   `--neg-timing-checks`; IEEE 1800-2009 31.9). Off, a negative limit counts
   as 0 with a warning and explicit delayed signals are copies of their
   signals (31.9.4). Negative `$nochange` offsets apply either way.
+- `index_checks` (bool, default `true`) — stop the run with an error on the
+  invalid accesses some simulators stop on although IEEE 1800 gives them a
+  result: a checked `$cast` into an array element that does not exist, queue
+  `insert` and `delete(index)` with an index outside the queue, an
+  associative-array read or write through a key with X or Z bits, and a `ref`
+  actual that selects no element. `false` (`--no-index-checks`) applies the
+  text's result: no write, a warning, `$cast` returning 0, a read giving the
+  default. The model reads it from `LLG_INDEX_CHECKS` (`on` or `off`) at
+  run time, so changing it needs no regeneration.
 - `plusargs` (array of strings) — arguments passed to the generated simulator
   (the arguments after `--`).
 

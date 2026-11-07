@@ -177,6 +177,7 @@ fn run(options: DriverOptions) -> i32 {
         vpi,
         vpi_port_delays,
         stop_policy,
+        index_checks,
         path_pulse,
         timing_checks,
         sdf,
@@ -420,7 +421,8 @@ fn run(options: DriverOptions) -> i32 {
     let mut command = Command::new(&exe);
     command
         .args(&runtime_args)
-        .env("LLG_STOP_POLICY", stop_policy.env_value());
+        .env("LLG_STOP_POLICY", stop_policy.env_value())
+        .env("LLG_INDEX_CHECKS", if index_checks { "on" } else { "off" });
     if let Some(path) = dll_search_path {
         command.env("PATH", path);
     }

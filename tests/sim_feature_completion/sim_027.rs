@@ -464,7 +464,7 @@ fn associative_arrays_of_unpacked_arrays_load_and_dump() {
     sim_cli::run_case_checked_matrix_with_files(
         SUITE,
         "assoc_rows",
-        &[],
+        &["--no-index-checks"],
         &[],
         &exact(
             include_str!("../fixtures/sim/feature_completion/sim_027/assoc_rows.out"),

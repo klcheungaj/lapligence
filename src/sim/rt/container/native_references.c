@@ -571,7 +571,7 @@ void* llg_assoc_value_ref_acquire_integral(llg_assoc_value_t* array, sv4_t key) 
     if (!array) llg_container_fatal("null associative-array reference source");
     sv4_t normalized = SV4_EMPTY;
     if (!llg_assoc_value_normalize_key(array, key, &normalized)) {
-        llg_container_warning("invalid associative-array key write");
+        llg_invalid_key_access("associative-array write", "invalid associative-array key write");
         return llg_native_ref_new(array->element, NULL,
                                   LLG_NATIVE_REF_ASSOC_INTEGRAL, NULL);
     }

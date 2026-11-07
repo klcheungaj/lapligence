@@ -287,7 +287,7 @@ fn nested_destination_stop() {
         "nested_destination_stop",
         &[],
         include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/nested_destination_stop.out"),
-        "$cast failed to assign an incompatible value at tb:13:15: the destination element does not exist",
+        "$cast failed to assign an incompatible value at tb:13:15: the destination element of `dq` does not exist",
     );
 }
 

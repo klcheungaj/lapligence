@@ -81,6 +81,8 @@ pub(crate) struct DriverOptions {
     /// Keep every port separate for VPI port delays (`--vpi-port-delays`).
     pub vpi_port_delays: bool,
     pub stop_policy: StopPolicy,
+    /// `simulator.index_checks`, passed to the model as `LLG_INDEX_CHECKS`.
+    pub index_checks: bool,
     /// Module path pulse limits, style and showcancelled setting.
     pub path_pulse: sim::ir::IrPathPulseOptions,
     /// System timing check, notifier and violation report switches.
@@ -499,6 +501,10 @@ pub(crate) fn resolve(
             .stop_policy
             .or(config.simulator.stop_policy)
             .unwrap_or(StopPolicy::Resume),
+        index_checks: cli
+            .index_checks
+            .or(config.simulator.index_checks)
+            .unwrap_or(true),
         path_pulse,
         timing_checks: sim::ir::IrTimingCheckOptions {
             checks: cli
@@ -1372,6 +1378,24 @@ files = ["a.sv"]
                 "{rejected:?}"
             );
         }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn index_checks_follow_the_precedence_rules() {
+        let dir = temp("index-checks");
+        let defaults = resolve_no_env(cli(&["x.sv"]), None).unwrap();
+        assert!(defaults.index_checks);
+        let cfg = config(
+            &dir,
+            "schema_version = 1\n[simulator]\nindex_checks = false\n",
+        );
+        let options = resolve_no_env(cli(&["x.sv"]), Some(&cfg)).unwrap();
+        assert!(!options.index_checks);
+        let options = resolve_no_env(cli(&["--index-checks", "x.sv"]), Some(&cfg)).unwrap();
+        assert!(options.index_checks);
+        let options = resolve_no_env(cli(&["--no-index-checks", "x.sv"]), None).unwrap();
+        assert!(!options.index_checks);
         let _ = std::fs::remove_dir_all(dir);
     }
 

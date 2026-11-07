@@ -64,7 +64,7 @@ impl Frame<'_, '_> {
             self.scalar("double*", target.binding.address.clone())
         } else {
             if let Some(stop) = stop {
-                self.unselected_stop(&format!("!({})", target.valid), stop);
+                self.unselected_stop(&format!("!({})", target.valid), stop, stop.waited);
             }
             let scope = self.scalar(
                 "llg_value_scope_t*",

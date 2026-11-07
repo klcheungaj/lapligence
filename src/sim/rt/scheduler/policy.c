@@ -178,6 +178,40 @@ static int configure_stop_policy(void) {
     return 0;
 }
 
+static int configure_index_checks(void) {
+    const char* text = getenv("LLG_INDEX_CHECKS");
+    if (!text || strcmp(text, "on") == 0) {
+        g.index_checks = 1;
+        return 1;
+    }
+    if (strcmp(text, "off") == 0) {
+        g.index_checks = 0;
+        return 1;
+    }
+    fprintf(stderr, "llg: invalid LLG_INDEX_CHECKS `%s` (expected on or off)\n",
+            text);
+    return 0;
+}
+
+int llg_rt_index_checks(void) { return g.index_checks; }
+
+/* The container code that calls this has no exit check after it, and the
+ * process must not run on past the access, so the run ends here with status
+ * 1: buffered output is flushed, but final procedures do not run and open
+ * waveform files are not completed. */
+void llg_rt_index_stop(const char* operation, const char* detail) {
+    const char* process = g.current && g.current->name ? g.current->name : NULL;
+    fprintf(stderr, "llg: runtime error: %s", operation);
+    if (process) fprintf(stderr, " in process '%s'", process);
+    fprintf(stderr,
+            ": %s; run with --no-index-checks or set "
+            "simulator.index_checks = false to apply the result IEEE 1800 "
+            "gives instead\n",
+            detail);
+    fflush(NULL);
+    exit(1);
+}
+
 static int consume_limit(uint64_t* counter, uint64_t limit) {
     if (*counter >= limit) return 0;
     *counter += 1;

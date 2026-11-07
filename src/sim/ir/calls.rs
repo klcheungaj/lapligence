@@ -128,8 +128,8 @@ pub enum IrCallArg {
         /// Caller-side read used for dependency/effect analysis. The C
         /// descriptor evaluates the address separately at the call boundary.
         read: Box<IrExpr>,
-        /// Set only for a formal the callee waits on and an actual an index
-        /// can leave unselected: the run stops there when it does.
+        /// Set for an actual an index can leave unselected: with index checks
+        /// on, the run stops there when it does.
         stop_unselected: Option<IrRefStop>,
     },
     /// Output/inout formal bound to a registered caller-side temporary.
@@ -231,10 +231,8 @@ pub struct IrElementRef {
     /// companion containers, which the call creates and keeps equal to the
     /// element's nested slots for as long as the reference lives.
     pub(in crate::sim) companions: Vec<IrRefCompanion>,
-    /// Where the run stops when the index selects no element and the callee
-    /// waits on the formal. A record element sets it unconditionally (the
-    /// emitter tests `IrFormal::record_marker`); any other kind carries it
-    /// only for a waited formal.
+    /// Where the run stops, with index checks on, when the index selects no
+    /// element.
     pub(in crate::sim) stop_unselected: Option<IrRefStop>,
 }
 
@@ -244,6 +242,15 @@ pub struct IrElementRef {
 pub const UNSELECTED_REF_MESSAGE: &str =
     "index of a `ref` actual selects no element of a task that waits on the formal";
 
+/// Message of the run-time error for a `ref` formal the callee does not wait
+/// on whose actual selects no element.
+pub const UNSELECTED_REF_BIND_MESSAGE: &str = "index of a `ref` actual selects no element";
+
+/// How to turn an index check off, appended to every message of one: the
+/// stop applies where some simulators stop the run, while IEEE 1800 gives
+/// the access a result.
+pub const INDEX_CHECK_HINT: &str = "; run with --no-index-checks or set simulator.index_checks = false to apply the result IEEE 1800 gives instead";
+
 /// Source context of the stop of [`IrElementRef::stop_unselected`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrRefStop {
@@ -251,6 +258,9 @@ pub struct IrRefStop {
     pub(in crate::sim) scope: String,
     /// Source context shown in the runtime diagnostic prefix.
     pub(in crate::sim) location: String,
+    /// The callee waits on the formal. A record reference sets it false and
+    /// the emitter reads the callee's change marker instead.
+    pub(in crate::sim) waited: bool,
 }
 
 /// One companion container of a record element bound to a `ref` formal.

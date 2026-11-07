@@ -471,6 +471,7 @@ void llg_rt_cleanup(void) {
     reap_retired_procs();
     rng_scopes_free();
     llg_container_set_rng_source(NULL);
+    llg_container_set_index_stop(NULL);
     while (g.programs) {
         llg_program_t* next = g.programs->next;
         free(g.programs);
@@ -550,7 +551,8 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
         return;
     }
     llg_timeformat_defaults(precision_fs);
-    if (!configure_limits() || !configure_stop_policy() || !configure_output_files() ||
+    if (!configure_limits() || !configure_stop_policy() ||
+        !configure_index_checks() || !configure_output_files() ||
         !gc_runtime_init()) {
         llg_last_failure = 1;
         llg_last_config_error = 1;
@@ -566,6 +568,7 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
     g.current_region = LLG_REGION_PREPONED;
     llg_rng_state_seed(&g.rng_root, LLG_RNG_DEFAULT_SEED);
     llg_container_set_rng_source(llg_container_thread_rng);
+    llg_container_set_index_stop(g.index_checks ? llg_rt_index_stop : NULL);
     g.argc = argc > 0 ? argc : 0;
     g.argv = g.argc > 0 ? argv : NULL;
 }

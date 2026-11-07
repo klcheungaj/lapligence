@@ -252,7 +252,7 @@ sv4_t llg_assoc_get_integral(const llg_assoc_t* array, sv4_t key) {
 int llg_assoc_set_integral(llg_assoc_t* array, sv4_t key, sv4_t value) {
     sv4_t normalized = SV4_EMPTY;
     if (!llg_assoc_normalize_key(array, key, &normalized)) {
-        llg_container_warning("invalid associative-array integral key write");
+        llg_invalid_key_access("associative-array write", "invalid associative-array integral key write");
         return 0;
     }
     int found;

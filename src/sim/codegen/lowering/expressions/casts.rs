@@ -3,7 +3,31 @@
 use super::*;
 use crate::core::db::TypeDescriptor;
 use crate::sim::codegen::lowering::collection::HoistedValue;
-use crate::sim::ir::{IrContainerElement, IrDynamicCast};
+use crate::sim::ir::{IrContainerElement, IrDisplayArg, IrDynamicCast};
+
+/// A comparison or logical operator with its one-bit unsigned result, so a
+/// check never sign-extends a true result.
+fn bool_expr(op: IrBinOp, a: IrExpr, b: IrExpr) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::Bin {
+            op,
+            a: Box::new(a),
+            b: Box::new(b),
+        },
+        1,
+        false,
+        None,
+    )
+}
+
+/// Where the destination check of one checked `$cast` reports, and the local
+/// that records an invalid destination when index checks are off.
+struct CastIndexCheck {
+    bad: String,
+    array: String,
+    scope: String,
+    location: String,
+}
 
 impl<'a> Codegen<'a> {
     fn dynamic_cast_lhs_shape(&self, lhs: &IrLhs) -> Result<(u32, bool, bool, bool), String> {
@@ -477,6 +501,20 @@ impl<'a> Codegen<'a> {
             if self.element_select(node).is_some() {
                 return false;
             }
+            // An element of a fixed unpacked array is checked before the
+            // store (`fixed_cast_bounds_stop`), which a direct LHS skips.
+            if let NodeKind::Expr(
+                ExprKind::BitSelect { base, .. } | ExprKind::ArraySelect { base, .. },
+            ) = self.kind(node)
+            {
+                if matches!(
+                    self.query_descriptor(*base)
+                        .map(|descriptor| &descriptor.shape),
+                    Some(TypeShape::FixedArray { .. })
+                ) {
+                    return false;
+                }
+            }
             match self.kind(node) {
                 NodeKind::Expr(
                     ExprKind::BitSelect { base, .. }
@@ -691,6 +729,7 @@ impl<'a> Codegen<'a> {
         let placeholder = cast_placeholder(path, placeholder)?;
         let temporary = format!("_llg_cast{}", placeholder.0);
         let status = format!("_llg_cast_ok{}", placeholder.0);
+        let bad = format!("_llg_cast_bad{}", placeholder.0);
         let mut statements = Vec::new();
         let mut captured = Vec::new();
         let mut receiver = None;
@@ -712,8 +751,22 @@ impl<'a> Codegen<'a> {
                     &mut statements,
                     &mut captured,
                 )?;
-                let location = self.cast_location(path, destination);
-                statements.extend(self.cast_bounds_stop(path, destination, location)?);
+                let check = CastIndexCheck {
+                    bad: bad.clone(),
+                    array: self.cast_array_name(destination),
+                    scope: path.to_owned(),
+                    location: self.cast_location(path, destination),
+                };
+                statements.push(IrStmt::DeclLocal {
+                    name: bad.clone(),
+                    width: 1,
+                    signed: false,
+                    two_state: true,
+                    init: Some(Box::new(super::super::containers::pattern_key_expr(
+                        0, 1, false, false,
+                    ))),
+                });
+                statements.extend(self.cast_bounds_stop(path, destination, &check)?);
                 let default = format!("{temporary}_default");
                 let (declare, hoisted) = match &target {
                     DynamicCastTarget::Handle { .. } => (
@@ -734,13 +787,19 @@ impl<'a> Codegen<'a> {
                         HoistedValue::Packed(default, value.width, value.signed),
                     ),
                 };
-                statements.extend(self.create_cast_element(
-                    path,
-                    destination,
-                    placeholder,
-                    declare,
-                    hoisted,
-                )?);
+                let create =
+                    self.create_cast_element(path, destination, placeholder, declare, hoisted)?;
+                if !create.is_empty() {
+                    statements.push(IrStmt::If {
+                        cond: un_expr(
+                            IrUnOp::LogNot,
+                            IrExpr::new(IrExprKind::LocalRead(bad.clone()), 1, false, None),
+                        ),
+                        then_: create,
+                        els: None,
+                        check: IrUniquePriorityCheck::None,
+                    });
+                }
             }
             let (cast, hoisted) = match target {
                 DynamicCastTarget::Handle { expected, .. } => {
@@ -833,6 +892,26 @@ impl<'a> Codegen<'a> {
                 two_state: true,
                 init: Some(Box::new(cast)),
             });
+            // A destination found invalid with index checks off writes
+            // nothing and the cast returns 0; the source still runs.
+            if checked {
+                statements.push(IrStmt::If {
+                    cond: IrExpr::new(IrExprKind::LocalRead(bad.clone()), 1, false, None),
+                    then_: vec![IrStmt::Assign {
+                        lhs: IrLhs::WholeRef {
+                            addr: format!("&{status}"),
+                            width: 1,
+                            signed: false,
+                            two_state: true,
+                            shortreal: false,
+                        },
+                        rhs: super::super::containers::pattern_key_expr(0, 1, false, false),
+                        nba: false,
+                    }],
+                    els: None,
+                    check: IrUniquePriorityCheck::None,
+                });
+            }
             self.hoisted_values.insert(placeholder, hoisted);
             let store = self.lower_cast_store(path, destination, placeholder)?;
             // An unchecked cast binds nothing before its source, so a nested
@@ -895,6 +974,24 @@ impl<'a> Codegen<'a> {
                 .any(|child| self.names_queue_end(*child))
     }
 
+    /// The name of the array a `$cast` destination selects from, for the
+    /// destination check's message.
+    fn cast_array_name(&self, destination: NodeId) -> String {
+        let mut node = destination;
+        while let NodeKind::Expr(
+            ExprKind::BitSelect { base, .. } | ExprKind::ArraySelect { base, .. },
+        ) = self.kind(node)
+        {
+            node = *base;
+        }
+        let name = &self.node(node).name;
+        if name.is_empty() {
+            "the array".to_owned()
+        } else {
+            name.clone()
+        }
+    }
+
     fn cast_location(&self, path: &str, node: NodeId) -> String {
         let source = self.node(node);
         format!("{path}:{}:{}", source.line, source.col)
@@ -908,10 +1005,89 @@ impl<'a> Codegen<'a> {
         &mut self,
         path: &str,
         destination: NodeId,
-        location: String,
+        check: &CastIndexCheck,
+    ) -> Result<Vec<IrStmt>, String> {
+        let mut statements = self.fixed_cast_bounds_stop(path, destination, check)?;
+        statements.extend(self.container_cast_bounds_stop(path, destination, check)?);
+        Ok(statements)
+    }
+
+    /// The check of every fixed unpacked dimension a destination selects,
+    /// outermost first: an index outside the declared range or with X or Z
+    /// bits selects no element.
+    fn fixed_cast_bounds_stop(
+        &mut self,
+        path: &str,
+        destination: NodeId,
+        check: &CastIndexCheck,
+    ) -> Result<Vec<IrStmt>, String> {
+        let mut selects = Vec::new();
+        let mut node = destination;
+        loop {
+            let (base, index) = match self.kind(node) {
+                NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
+                    (*base, indices[0])
+                }
+                _ => break,
+            };
+            if let Some(TypeShape::FixedArray { dimensions, .. }) = self
+                .query_descriptor(base)
+                .map(|descriptor| &descriptor.shape)
+            {
+                if let Some(&(left, right)) = dimensions.first() {
+                    selects.push((index, left.min(right), left.max(right)));
+                }
+            }
+            node = base;
+        }
+        let mut statements = Vec::new();
+        for (index, low, high) in selects.into_iter().rev() {
+            // Extend by the index's own signedness, then compare signed.
+            let value = self.lower_expr(path, index)?;
+            let signed = value.signed;
+            let value = IrExpr::convert_to(
+                IrExpr::convert_to(value, CAST_INDEX_WIDTH, signed),
+                CAST_INDEX_WIDTH,
+                true,
+            );
+            let bound = |value: i32| {
+                super::super::containers::pattern_key_expr(
+                    i128::from(value),
+                    CAST_INDEX_WIDTH,
+                    true,
+                    false,
+                )
+            };
+            let valid = bool_expr(
+                IrBinOp::LogAnd,
+                bool_expr(IrBinOp::Ge, value.clone(), bound(low)),
+                bool_expr(IrBinOp::Le, value.clone(), bound(high)),
+            );
+            let stop_detail = format!(
+                "the destination element of `{}` does not exist: its index is outside the declared range {low} to {high} or has X or Z bits",
+                check.array
+            );
+            statements.push(self.cast_index_check(
+                valid,
+                &format!("index %0d is outside the declared range {low} to {high}"),
+                &stop_detail,
+                vec![value],
+                check,
+            ));
+        }
+        Ok(statements)
+    }
+
+    /// The check of a destination in a queue, dynamic or associative array.
+    fn container_cast_bounds_stop(
+        &mut self,
+        path: &str,
+        destination: NodeId,
+        check: &CastIndexCheck,
     ) -> Result<Vec<IrStmt>, String> {
         if let Some((container, indices)) = self.nested_cast_path(destination) {
-            return self.nested_cast_bounds_stop(path, destination, container, indices, location);
+            return self.nested_cast_bounds_stop(path, container, indices, check);
         }
         let Some((container, index)) = self
             .element_select(destination)
@@ -922,18 +1098,13 @@ impl<'a> Codegen<'a> {
         let limit_extra = match self.model.containers[container].kind {
             IrContainerKind::Queue { .. } => 1,
             IrContainerKind::Dynamic => 0,
-            IrContainerKind::Associative { .. } => return Ok(Vec::new()),
+            IrContainerKind::Associative { ref key } => {
+                return self.assoc_cast_key_check(path, key.clone(), index, check);
+            }
         };
         let index = self.lower_container_top_index(path, container, index)?;
         let size = cast_container_size(container);
-        let slot = format!("{}", destination.0);
-        Ok(vec![self.cast_range_stop(
-            index,
-            size,
-            limit_extra,
-            &slot,
-            &location,
-        )])
+        Ok(vec![self.cast_range_stop(index, size, limit_extra, check)])
     }
 
     /// A destination below an element of a resizable container
@@ -955,16 +1126,15 @@ impl<'a> Codegen<'a> {
     fn nested_cast_bounds_stop(
         &mut self,
         path: &str,
-        destination: NodeId,
         container: usize,
         indices: Vec<NodeId>,
-        location: String,
+        check: &CastIndexCheck,
     ) -> Result<Vec<IrStmt>, String> {
         let lowered = self.lower_container_path_indices(path, container, indices)?;
         let outer = self.model.containers[container].kind.clone();
         let mut statements = Vec::new();
         for level in 0..lowered.len() {
-            let slot = format!("{}_{level}", destination.0);
+            let slot = format!("{}_{level}", check.bad.trim_start_matches("_llg_cast_bad"));
             let (limit_extra, size) = if level == 0 {
                 match outer {
                     IrContainerKind::Queue { .. } => (1, cast_container_size(container)),
@@ -1040,25 +1210,62 @@ impl<'a> Codegen<'a> {
                 };
                 (i128::from(kind == "Queue"), size)
             };
-            statements.push(self.cast_range_stop(
-                lowered[level].clone(),
-                size,
-                limit_extra,
-                &slot,
-                &location,
-            ));
+            statements.push(self.cast_range_stop(lowered[level].clone(), size, limit_extra, check));
         }
         Ok(statements)
     }
 
-    /// Stop the run when `index` is outside `0 .. size + limit_extra`.
+    /// The check of an associative destination key with X or Z bits; a
+    /// string or two-state key always names an entry.
+    fn assoc_cast_key_check(
+        &mut self,
+        path: &str,
+        key: IrAssocKey,
+        selector: NodeId,
+        check: &CastIndexCheck,
+    ) -> Result<Vec<IrStmt>, String> {
+        if matches!(
+            key,
+            IrAssocKey::String
+                | IrAssocKey::Class
+                | IrAssocKey::Integral {
+                    two_state: true,
+                    ..
+                }
+        ) {
+            return Ok(Vec::new());
+        }
+        let key = self.lower_container_index(path, selector)?;
+        let unknown = IrExpr::new(
+            IrExprKind::SysFunc(Box::new(crate::sim::ir::IrSysFunc::BitQuery {
+                kind: crate::sim::ir::IrBitQuery::IsUnknown,
+                arg: Box::new(key),
+            })),
+            1,
+            false,
+            None,
+        );
+        let stop_detail = format!(
+            "the destination element of `{}` does not exist: the key has X or Z bits",
+            check.array
+        );
+        Ok(vec![self.cast_index_check(
+            un_expr(IrUnOp::LogNot, unknown),
+            "the key has X or Z bits",
+            &stop_detail,
+            Vec::new(),
+            check,
+        )])
+    }
+
+    /// The check of a destination index outside `0 .. size + limit_extra`
+    /// or with X or Z bits.
     fn cast_range_stop(
         &self,
         index: IrExpr,
         size: IrExpr,
         limit_extra: i128,
-        slot: &str,
-        location: &str,
+        check: &CastIndexCheck,
     ) -> IrStmt {
         let index = IrExpr::convert_to(index, CAST_INDEX_WIDTH, true);
         let limit = bin_expr(
@@ -1066,40 +1273,116 @@ impl<'a> Codegen<'a> {
             size,
             super::super::containers::pattern_key_expr(limit_extra, CAST_INDEX_WIDTH, true, false),
         );
-        let in_range = bin_expr(
+        let last = bin_expr(
+            IrBinOp::Sub,
+            limit.clone(),
+            super::super::containers::pattern_key_expr(1, CAST_INDEX_WIDTH, true, false),
+        );
+        let in_range = bool_expr(
             IrBinOp::LogAnd,
-            bin_expr(
+            bool_expr(
                 IrBinOp::Ge,
                 index.clone(),
                 super::super::containers::pattern_key_expr(0, CAST_INDEX_WIDTH, true, false),
             ),
-            bin_expr(IrBinOp::Lt, index, limit),
+            bool_expr(IrBinOp::Lt, index.clone(), limit),
         );
-        let stop = format!("_llg_cast_stop{slot}");
-        let slot = format!("_llg_cast_slot{slot}");
+        let stop_detail = format!(
+            "the destination element of `{}` does not exist: its index is outside the array or has X or Z bits",
+            check.array
+        );
+        self.cast_index_check(
+            in_range,
+            "index %0d is outside the valid range 0 to %0d",
+            &stop_detail,
+            vec![index, last],
+            check,
+        )
+    }
+
+    /// With index checks on, a destination that `valid` (which may be X)
+    /// does not admit stops the run, naming the array, `detail` and the
+    /// location; off, it warns and the cast writes nothing and returns 0
+    /// (IEEE 1800-2009 8.16 gives no destination rule; S11-D6). Only the
+    /// invalid branch reads the setting.
+    fn cast_index_check(
+        &self,
+        valid: IrExpr,
+        detail: &str,
+        stop_detail: &str,
+        args: Vec<IrExpr>,
+        check: &CastIndexCheck,
+    ) -> IrStmt {
+        let bad = || IrExpr::new(IrExprKind::LocalRead(check.bad.clone()), 1, false, None);
+        let invalid = bool_expr(
+            IrBinOp::LogAnd,
+            un_expr(IrUnOp::LogNot, bad()),
+            bool_expr(
+                IrBinOp::CaseNeq,
+                valid,
+                super::super::containers::pattern_key_expr(1, 1, false, false),
+            ),
+        );
+        let severity = |level, text: String, runtime_failure: bool| IrStmt::Severity {
+            level,
+            fmt: format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\"")),
+            args: args.iter().cloned().map(IrDisplayArg::Packed).collect(),
+            scope: check.scope.clone(),
+            location: check.location.clone(),
+            fatal_finish_number: runtime_failure.then_some(0),
+            runtime_failure,
+            skip_finals: false,
+        };
+        let element = format!(
+            "the $cast destination element of `{}` does not exist: {detail}",
+            check.array
+        );
         IrStmt::If {
-            cond: un_expr(IrUnOp::LogNot, in_range),
-            then_: vec![
-                IrStmt::DeclLocal {
-                    name: slot.clone(),
-                    width: 1,
-                    signed: false,
-                    two_state: true,
-                    init: None,
-                },
-                IrStmt::DeclLocal {
-                    name: stop,
+            cond: invalid,
+            then_: vec![IrStmt::If {
+                cond: IrExpr::new(
+                    IrExprKind::RuntimeQuery(crate::sim::ir::IrRuntimeQuery::IndexChecks),
+                    1,
+                    false,
+                    None,
+                ),
+                // The failing status reports and stops like any checked cast
+                // that fails (S11-D6).
+                then_: vec![IrStmt::DeclLocal {
+                    name: format!("{}_stop", check.bad),
                     width: 1,
                     signed: false,
                     two_state: true,
                     init: Some(Box::new(self.lower_failing_cast_status(
-                        slot,
+                        format!("{}_stop", check.bad),
                         Some(format!(
-                            "{location}: the destination element does not exist"
+                            "{}: {}{}",
+                            check.location,
+                            stop_detail,
+                            crate::sim::ir::INDEX_CHECK_HINT
                         )),
                     ))),
-                },
-            ],
+                }],
+                els: Some(vec![
+                    severity(
+                        crate::sim::ir::IrSeverityLevel::Warning,
+                        format!("{element}; the cast writes nothing and returns 0"),
+                        false,
+                    ),
+                    IrStmt::Assign {
+                        lhs: IrLhs::WholeRef {
+                            addr: format!("&{}", check.bad),
+                            width: 1,
+                            signed: false,
+                            two_state: true,
+                            shortreal: false,
+                        },
+                        rhs: super::super::containers::pattern_key_expr(1, 1, false, false),
+                        nba: false,
+                    },
+                ]),
+                check: IrUniquePriorityCheck::None,
+            }],
             els: None,
             check: IrUniquePriorityCheck::None,
         }

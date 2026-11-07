@@ -35,7 +35,13 @@ fn string_element_refs_follow_elements_until_outdated() {
     sim_cli::run_case_backend_parity(SUITE, "string_element_refs", expected, &[], &[]);
     let invalid =
         include_str!("../fixtures/sim/feature_completion/sim_008/string_element_refs_invalid.out");
-    sim_cli::run_case_backend_parity(SUITE, "string_element_refs_invalid", invalid, &[], &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "string_element_refs_invalid",
+        invalid,
+        &["--no-index-checks"],
+        &[],
+    );
 }
 
 #[test]
@@ -44,7 +50,13 @@ fn record_element_refs_share_the_element_until_outdated() {
         include_str!("../fixtures/sim/feature_completion/sim_008/record_element_refs.out");
     sim_cli::run_case_backend_parity(SUITE, "record_element_refs", expected, &[], &[]);
     let members = include_str!("../fixtures/sim/feature_completion/sim_008/record_member_refs.out");
-    sim_cli::run_case_backend_parity(SUITE, "record_member_refs", members, &[], &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "record_member_refs",
+        members,
+        &["--no-index-checks"],
+        &[],
+    );
 }
 
 #[test]
@@ -53,7 +65,13 @@ fn module_record_leaves_bind_ref_formals_by_run_time_index() {
     sim_cli::run_case_backend_parity(SUITE, "record_leaf_refs", expected, &[], &[]);
     let members =
         include_str!("../fixtures/sim/feature_completion/sim_008/record_leaf_ref_members.out");
-    sim_cli::run_case_backend_parity(SUITE, "record_leaf_ref_members", members, &[], &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "record_leaf_ref_members",
+        members,
+        &["--no-index-checks"],
+        &[],
+    );
 }
 
 #[test]
@@ -190,19 +208,32 @@ fn waited_ref_actuals_that_select_no_element_stop_the_run() {
     );
 }
 
-/// The stop belongs to a waiting callee; any other keeps the default.
+/// With index checks off (S07-D15), a callee that does not wait keeps the
+/// default; with them on, the first call stops the run.
 #[test]
 fn unwaited_ref_actuals_that_select_no_element_read_the_default() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_008/ref_unselected_unwaited.out");
-    sim_cli::run_case_backend_parity(SUITE, "ref_unselected_unwaited", expected, &[], &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "ref_unselected_unwaited",
+        expected,
+        &["--no-index-checks"],
+        &[],
+    );
 }
 
 #[test]
 fn run_time_record_elements_bind_ref_formals() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_008/record_ref_element_select.out");
-    sim_cli::run_case_backend_parity(SUITE, "record_ref_element_select", expected, &[], &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "record_ref_element_select",
+        expected,
+        &["--no-index-checks"],
+        &[],
+    );
     sim_cli::run_case_checked_matrix(
         SUITE,
         "record_ref_element_select_fatal",
@@ -271,7 +302,13 @@ fn leaf_form_run_time_selections_beyond_the_branch_limit_are_rejected() {
 fn record_elements_with_container_members_bind_ref_formals() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_008/record_ref_container_member.out");
-    sim_cli::run_case_backend_parity(SUITE, "record_ref_container_member", expected, &[], &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "record_ref_container_member",
+        expected,
+        &["--no-index-checks"],
+        &[],
+    );
 }
 
 #[test]

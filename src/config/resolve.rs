@@ -293,6 +293,7 @@ fn resolve_simulator(raw: &RawSimulator) -> Result<SimulatorConfig, ConfigError>
         notifiers: raw.notifiers,
         timing_check_messages: raw.timing_check_messages,
         neg_timing_checks: raw.neg_timing_checks,
+        index_checks: raw.index_checks,
         plusargs: raw.plusargs.clone(),
     })
 }
