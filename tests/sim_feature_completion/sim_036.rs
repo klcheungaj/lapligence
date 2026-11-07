@@ -114,12 +114,10 @@ fn finish_action_ends_the_step_after_the_issuing_process() {
 
 #[test]
 fn fatal_action_ends_the_run() {
-    sim_cli::run_case_backend_parity(
+    sim_cli::run_case_backend_parity_ending_in_fatal(
         SUITE,
         "fatal_action",
         include_str!("../fixtures/sim/feature_completion/sim_036/fatal_action.out"),
-        &[],
-        &[],
     );
 }
 

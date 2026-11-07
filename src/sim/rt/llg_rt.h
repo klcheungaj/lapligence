@@ -1696,6 +1696,11 @@ void llg_rt_run(void);
 // True when the runtime stopped because of a configuration, nonconvergence,
 // or other controlled simulation failure.  The result survives cleanup.
 int llg_rt_failed(void);
+// True when a `$fatal` severity task ran in the last run (IEEE 1800-2009
+// 20.9: the run ends with an error code). Unlike llg_rt_failed it does not
+// mark the run as a simulator failure; a generated model's exit status is
+// nonzero when either holds. The result survives cleanup.
+int llg_rt_fatal_severity_ran(void);
 // Region currently being drained. During initialization this is PREPONED.
 llg_region_t llg_current_region(void);
 // Return a stable printable name for diagnostics and callback traces.

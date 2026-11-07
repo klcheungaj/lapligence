@@ -59,7 +59,7 @@ for the boundaries these tests do not cover.
 | `clocking_h14*.sv` | Clocking output/inout synchronous drives, constant output skews and signal edge qualifiers, cycle-event waits on irregular clocks, selected targets, captured RHS/selectors, NBA/Re-NBA ordering and resolved inout conflicts |
 | `time_literal_exact_2009.sv` | SystemVerilog 2009 local `timeunit`/`timeprecision`, signed/sub-femtosecond unit-suffixed literals, and exact femtosecond delay rounding |
 | `finish_*.sv` | Nonreturning termination, pending-work discard, final-block boundary, forked-coroutine exit, diagnostic levels, and source-bearing argument rejection |
-| `severity_*.sv` | Typed `$info/$warning/$error` diagnostics, `$fatal` continuation/termination/final behavior, stable counts, and finish-number validation |
+| `severity_*.sv` | Typed `$info/$warning/$error` diagnostics, `$fatal` continuation/termination/final behavior, stable counts, and finish-number validation; a run that executed `$fatal` exits with status 1 (SV 20.9, "terminates the simulation with an error code"), one with only `$error` or `$warning` exits 0 |
 | `assertions*.sv`, `deferred_assertions*.sv` | Immediate and deferred assert/assume/cover four-state truth, issue-time value and action-time reference captures, Reactive reports, same-slot glitch coalescing, module-level actions, defaults, labels and optimizer parity |
 | `stop_*.sv` | Resumable nested-call suspension, retained future work/finals, explicit batch exit policy, and diagnostic levels |
 

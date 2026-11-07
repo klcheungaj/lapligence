@@ -89,6 +89,54 @@ fn fatal_string_first_message_uses_default_finish_level() {
 }
 
 #[test]
+fn fatal_after_an_error_ends_the_run_with_a_failure_status() {
+    // The harness expects exit status 1 because a fatal report is expected;
+    // the `$error` alone ends with status 0 (`severity_nonfatal`).
+    run_case_with_stderr(
+        "severity_error_then_fatal",
+        "stdout between\n",
+        concat!(
+            "llg: severity error: tb:4:5: e1\n",
+            "llg: severity fatal: tb:6:5: boom\n",
+            "llg: $finish at time 0 at tb:6:5\n",
+        ),
+    );
+}
+
+#[test]
+fn fatal_in_a_forked_task_ends_the_run_with_a_failure_status() {
+    run_case_with_stderr(
+        "severity_fatal_in_fork",
+        "stdout final\n",
+        concat!(
+            "llg: severity fatal: tb:4:8: late fatal\n",
+            "llg: $finish at time 1000 at tb:4:8\n",
+        ),
+    );
+}
+
+#[test]
+fn the_model_binary_exits_with_the_status_of_its_severity_tasks() {
+    // The generated executable itself, without `llg` in between: `$fatal`
+    // ends the run "with an error code" (SV 20.9), while `$error` and a
+    // `$finish` that follows it leave the status 0.
+    let run = |source: &str, tag: &str| {
+        crate::sim_harness::run_generated_sim_allow_failure(source, "tb", tag)
+            .unwrap_or_else(|error| panic!("{tag}: {error}"))
+    };
+    let fatal = run(
+        "module tb; initial begin $error(\"e1\"); $fatal(1, \"boom\"); end endmodule",
+        "severity-exit-fatal",
+    );
+    assert_eq!(fatal.status.code(), Some(1), "{}", fatal.stderr);
+    let nonfatal = run(
+        "module tb; initial begin $error(\"e1\"); #1 $finish; end endmodule",
+        "severity-exit-error",
+    );
+    assert_eq!(nonfatal.status.code(), Some(0), "{}", nonfatal.stderr);
+}
+
+#[test]
 fn fatal_finish_number_must_be_a_known_constant_in_range() {
     reject_case("severity_invalid_argument", "$fatal finish number at");
     reject_case("severity_runtime_argument", "$fatal finish number at");

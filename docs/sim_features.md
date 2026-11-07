@@ -2159,7 +2159,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   level 1; `$fatal/$error/$warning/$info` format messages once in source order
   with source/scope context. Fatal terminates through the final-block handoff;
   nonfatal levels continue. Finish/fatal numbers must be constant integral
-  0/1/2, not OS exit codes; level 2 includes severity statistics.
+  0/1/2, not OS exit codes; level 2 includes severity statistics. A run in
+  which a `$fatal` executed exits with status 1, as does one ended by a run-time
+  error; `$error`, `$warning`, failing assertions and `$finish` leave the
+  status 0 ([exit statuses](../readme.md#using-llg), decision ES-D1).
   V §17.4.1; SV §§20.2, 20.9–20.10 **[1995/SV-2005]**.
 - 🟨 **Stop/resume** — `$stop` preserves pending work, activations, output and
   time. `--stop-policy resume` is the noninteractive default; `exit` returns

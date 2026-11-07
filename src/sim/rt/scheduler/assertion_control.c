@@ -74,6 +74,7 @@ void llg_rt_fatal_typed(int finish_number, const char* fmt,
     }
     llg_report_severity_typed(LLG_SEVERITY_FATAL, fmt, args, n, scope, location);
     llg_fmt_args_destroy(args, n);
+    llg_fatal_severity_ran = 1;
     llg_rt_finish_with_level(finish_number, location);
 }
 
