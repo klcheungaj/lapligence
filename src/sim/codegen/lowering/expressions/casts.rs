@@ -233,6 +233,12 @@ impl<'a> Codegen<'a> {
     /// fails. Any other destination is written through its assignment family
     /// (`lower_cast_through_assignment`). `failure_location` selects the task
     /// form: a failed cast is then a run-time error (SV 6.24.2).
+    ///
+    /// Design rule: the path is chosen here, at compile time, from the kind
+    /// of destination alone (a storage slot or an IR LHS takes the direct
+    /// store, which needs no temporary or copy; everything else goes through
+    /// the assignment). Neither path falls back to the other and nothing is
+    /// retried at run time.
     pub(in super::super) fn lower_dynamic_cast(
         &mut self,
         path: &str,

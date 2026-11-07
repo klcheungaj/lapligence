@@ -1239,7 +1239,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   when the cast succeeds; a class or enum element whose outcome depends on the
   run time binds first and stops at a missing element (S11-D5, S11-D6); a
   nested destination (`qq[i][j]`) binds and creates every level, outermost
-  first.
+  first. The store path is fixed at compile time by destination kind (a
+  storage slot takes a direct store, every other destination its assignment),
+  with no fallback or retry.
   SV §6.24 **[SV-2005]**.
 - 🟨 **Mutating operators** — Prefix/postfix `++/--` and `+= -= *= /= %= &= |= ^=`
   plus shift assignments capture an admitted whole/member/selected/fixed-array
