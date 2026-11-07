@@ -19,6 +19,21 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// A replication whose constant count is zero.
+    pub(in super::super) fn is_zero_replication(&self, node: NodeId) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::MultiConcat,
+                operands,
+                ..
+            }) if operands
+                .first()
+                .is_some_and(|count| self.eval_bits(*count).ok().and_then(|value| value.to_u128())
+                    == Some(0))
+        )
+    }
+
     /// Evaluate a constant-ish expression node to a 4-state value, mirroring
     /// `core::elab::Resolver::eval_expr` for the constructs that can appear in
     /// elaborated bound positions.

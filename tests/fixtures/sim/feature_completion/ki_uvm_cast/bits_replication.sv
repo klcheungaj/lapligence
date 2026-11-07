@@ -24,6 +24,7 @@ module tb;
     $display("%h", {{($bits(s) - 20) {1'b1}}, 4'h0});
     $display("%h", {{($bits(s_t) / 8) {4'ha}}});
     $display("%h", f());
+    $display("%h", {{($bits(int) - 32) {1'b1}}, 4'h5});
     $finish;
   end
 endmodule
