@@ -341,17 +341,20 @@ typedef struct llg_wait_subscription {
 // the subscribers that keeps the row alive and leaves out waiters armed after
 // that write. A marker's record toggles the marker at the check if a cell
 // bound to it changed (`fire`) or the handle in `slot` is not `before_handle`.
-// A storage only clocking history can observe gets a history record instead:
-// no row or cursor, found through its clocking history entry (`edge`).
+// A packed storage with no row when its first write is routed has no waiter
+// to walk at the check (a waiter armed later sees nothing), so it gets a
+// rowless record instead: no row or cursor, found through its clocking
+// history entry (`edge`) or through a marker record it opened (`owner`).
 typedef enum {
     LLG_CHANGE_PACKED,
     LLG_CHANGE_REAL,
     LLG_CHANGE_MARKER,
-    LLG_CHANGE_HISTORY,
+    LLG_CHANGE_ROWLESS,
 } llg_change_kind_t;
 
 typedef struct llg_change {
     llg_wait_subscription_t cursor;
+    const void* key; // The storage or marker.
     struct llg_clocking_edge* edge;
     sv4_t before;
     double before_real;
@@ -369,6 +372,10 @@ typedef struct llg_change {
     // `fires_exact`; otherwise the check looks the markers up.
     struct llg_change* fires[2];
     uint64_t fires_serial[2];
+    // A marker record opened by a rowless record's first write: that record,
+    // valid while it keeps `owner_serial`.
+    struct llg_change* owner;
+    uint64_t owner_serial;
     uint64_t serial;
     llg_change_kind_t kind;
     uint8_t fire;

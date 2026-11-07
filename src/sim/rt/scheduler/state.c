@@ -614,7 +614,7 @@ typedef struct llg_clocking_edge {
     uint64_t negedge_count;
     unsigned occurred;
     int keep_ticks;
-    // A pending history record of this signal (LLG_CHANGE_HISTORY), else NULL.
+    // A pending rowless record of this signal (LLG_CHANGE_ROWLESS), else NULL.
     struct llg_change* change;
 } llg_clocking_edge_t;
 
@@ -760,7 +760,10 @@ typedef struct {
     llg_change_t** changes;
     size_t change_count;
     size_t change_capacity;
-    size_t change_rows; // Open records on wait-source rows (not history ones).
+    size_t change_rows; // Open records on wait-source rows.
+    // Open rowless records found only through their marker records (no
+    // clocking history entry).
+    size_t change_unrowed;
     uint64_t change_serial; // Last serial given to a change record.
     llg_change_t* change_free; // Recycled records, linked by cursor.next.
     // The first NBA sequence number of this time slot: an older one matured
