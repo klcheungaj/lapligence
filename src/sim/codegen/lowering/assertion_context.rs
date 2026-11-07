@@ -167,7 +167,7 @@ impl<'a> Codegen<'a> {
         }
         let source = formal_actual.or(declared).expect("one initializer source");
         let value = self.lower_expr(path, source)?;
-        if value.is_real() || !assertions::sampled_compatible(&value) {
+        if value.is_real() || !self.sampled_compatible(&value) {
             return Err(format!(
                 "local variable `{name}` declared at {location} needs one packed sampled initial value"
             ));

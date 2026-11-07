@@ -272,8 +272,8 @@ impl Validator<'_> {
                 let right = self.model.arrays.get(*right).ok_or_else(|| {
                     IrValidationError::new(path, "invalid fixed compare right array")
                 })?;
-                if !left.sparse()
-                    || !right.sparse()
+                if left.real != right.real
+                    || (!left.real && (!left.sparse() || !right.sparse()))
                     || left.total != right.total
                     || left.elem_width != right.elem_width
                     || expr.width != 1
@@ -1841,6 +1841,10 @@ fn sequence_statement(statement: &IrStmt) -> bool {
                 | IrContainerStmt::ContainerNonblocking { .. }
                 | IrContainerStmt::NbaLocate { .. }
                 | IrContainerStmt::NbaLocateEnd
+                | IrContainerStmt::RealColumnAssign { nba: true, .. }
+                | IrContainerStmt::NbaHoldOpen(_)
+                | IrContainerStmt::NbaHoldClose
+                | IrContainerStmt::NbaHoldRelease { .. }
         ),
         IrStmt::Block(statements) => statements.iter().all(sequence_statement),
         // Generated array-method loops: lexical locals and bounded loops

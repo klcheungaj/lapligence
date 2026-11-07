@@ -60,12 +60,17 @@ typedef struct llg_fixed_range llg_fixed_range_t;
 typedef struct llg_fixed_array {
     uint64_t total;
     size_t count, capacity;
-    llg_fixed_cell_t **buckets, *cells;
+    union {
+        llg_fixed_cell_t** buckets; /* Sparse arrays: hash table. */
+        sv4_t** pages;              /* Up to 4,096 cells: `capacity` pages. */
+    };
+    struct llg_fixed_block* blocks;
     sv4_t initial;
     sv4_t* contents;
     struct llg_fixed_array* owner;
     uint64_t origin;
     llg_fixed_range_t* ranges;
+    struct llg_fixed_sampled* sampled;
 } llg_fixed_array_t;
 
 
@@ -122,6 +127,16 @@ extern "C" {
  * cell remains stable until array destruction. Destroy globals after runtime cleanup.
  * copy snapshots its entire source before publishing any destination. */
 void llg_fixed_array_init(llg_fixed_array_t*, uint64_t, sv4_t, sv4_t*);
+/* Start every cell of a freshly initialized array from the consumed `image`,
+ * first cell most significant. Nothing observes the array yet, so nothing is
+ * published. */
+void llg_fixed_array_initial_cells(llg_fixed_array_t* array, sv4_t image, int is_signed,
+                                   int two_state);
+/* Nothing in the model names this array's contents marker: writes skip it. */
+void llg_fixed_array_unobserved(llg_fixed_array_t*);
+/* Keep the Preponed value of each cell for llg_fixed_array_sampled_peek. */
+void llg_fixed_array_sampled(llg_fixed_array_t*);
+const sv4_t* llg_fixed_array_sampled_peek(const llg_fixed_array_t*, uint64_t);
 void llg_fixed_array_reset(llg_fixed_array_t*, sv4_t);
 void llg_fixed_array_view_init(llg_fixed_array_t*, llg_fixed_array_t*, uint64_t, uint64_t, int);
 void llg_fixed_array_stream_segments(llg_fixed_array_t*, const llg_fixed_array_t* const*, size_t, int, int, uint32_t);
@@ -133,6 +148,11 @@ void llg_fixed_array_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int
 void llg_fixed_array_fill(llg_fixed_array_t*, sv4_t, int, int);
 void llg_fixed_array_stream_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int, uint32_t);
 sv4_t llg_fixed_array_compare(const llg_fixed_array_t*, const llg_fixed_array_t*, int, int);
+/* Blocking copy of a whole real column: a cell of equal bits is no write. */
+void llg_real_column_assign(double* target, const double* source, uint64_t count);
+/* One-bit equality of two columns of `count` doubles, or its negation; case
+ * equality compares the bit patterns. */
+sv4_t llg_real_column_compare(const double* left, const double* right, uint64_t count, int case_eq, int negate);
 /* Pack a runtime `with` selection of a one-dimensional descriptor array in
  * stream order; indices outside the bounds stream `fallback` (borrowed). */
 sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t*, int64_t, int64_t, uint32_t, sv4_t, int, sv4_t, sv4_t);
@@ -149,6 +169,10 @@ int llg_fixed_array_stream_value(llg_fixed_array_t*, const llg_fixed_array_t* co
 /* Copy `total` dense cells from `origin` into a zeroed scratch array; an
  * invalid view (`origin` UINT64_MAX) reads the borrowed `fallback`. */
 void llg_fixed_array_dense_source(llg_fixed_array_t*, const sv4_t*, uint64_t, uint64_t, sv4_t);
+/* Transport between a descriptor array and a native fixed-array item, whose
+ * elements are packed values or records of them. */
+void llg_fixed_array_items_source(llg_fixed_array_t*, const llg_value_t*, sv4_t);
+void llg_fixed_array_items_store(llg_value_t*, const llg_fixed_array_t*);
 /* A descriptor stream operand holding the `cell_width`-bit cells of a
  * runtime-sized bit stream, left cell first; returns 0 for an empty stream. */
 int llg_fixed_array_bitstream_source(llg_fixed_array_t*, const llg_bitstream_t*, uint32_t);
@@ -3557,6 +3581,15 @@ enum {
     LLG_NBA_CONTAINER_ASSOC_VALUE = 5,
 };
 void llg_container_nba_after(int kind, void* target, const void* src, uint64_t ticks);
+// A write that takes its value and selectors now and is queued later
+// (`t <= @(e) v`, SV 9.4.5). Between `open` and `close` every nonblocking
+// write builds its update into the hold, which owns it for the GC and for
+// cleanup. `release` queues them as if issued now, `ticks` later, and ends the
+// hold; a process killed while it waits leaves the hold to cleanup.
+void* llg_nba_hold_new(void);
+void llg_nba_hold_open(void* held);
+void llg_nba_hold_close(void);
+void llg_nba_hold_release(void* held, uint64_t ticks);
 // The next NBA queued writes the item at `items` of a value, found when it
 // commits rather than at the address the NBA call names: an element of `array`
 // at `indices` (fixed here), or `root`. Copies its arguments.
@@ -3737,7 +3770,13 @@ int llg_rt_command_line(char*** argv);
  * arguments are borrowed by address; string arguments are consumed through
  * their address and left empty, like the returning forms' by-value strings. */
 void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3);
+void llg_real_column_compare_to(sv4_t* dst, const double* left, const double* right, uint64_t count, int case_eq, int negate);
 void llg_dense_cells_image_to(sv4_t* dst, const sv4_t* cells, uint64_t count);
+/* Writes to `dst` the image of a record's `count` columns, whole: the first
+ * column is the most significant, each in `llg_fixed_array_cells_image` order.
+ * Reads peek. */
+void llg_fixed_array_columns_image_to(sv4_t* dst, const llg_fixed_array_t* const* columns,
+                                      size_t count);
 void llg_fixed_array_cells_image_to(sv4_t* dst, const llg_fixed_array_t* array, uint64_t first,
                                   uint64_t count);
 void llg_fixed_array_stream_source_to(sv4_t* dst, const llg_fixed_array_t* array, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);

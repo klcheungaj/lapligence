@@ -193,6 +193,22 @@ void llg_dyn_resize(llg_dyn_array_t* array, sv4_t size) {
 
 void llg_dyn_copy(llg_dyn_array_t* dst, const llg_dyn_array_t* src) {
     if (dst == src) return;
+    /* As llg_dyn_value_copy: the same size keeps the storage. */
+    if (dst->size == src->size && !dst->references &&
+        dst->element_width == src->element_width &&
+        dst->element_signed == src->element_signed &&
+        dst->element_two_state == src->element_two_state) {
+        int changed = 0;
+        for (size_t i = 0; i < dst->size; ++i) {
+            if (sv4_same(dst->data[i], src->data[i])) continue;
+            sv4_destroy(&dst->data[i]);
+            dst->data[i] = sv4_clone(&src->data[i]);
+            changed = 1;
+        }
+        llg_notify(dst->notify, dst->contents_dependency, dst->shape_dependency,
+                   changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
+        return;
+    }
     size_t size = llg_checked_count((uint64_t)src->size, sizeof(sv4_t));
     llg_dyn_new_count(dst, size, src);
 }

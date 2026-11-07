@@ -37,7 +37,10 @@ impl Codegen<'_> {
                 descriptor.name
             )
         })?;
-        let mut leaves = NativeLeaves::default();
+        let mut leaves = NativeLeaves {
+            columns: self.record_column_layout(descriptor),
+            ..NativeLeaves::default()
+        };
         collect_native_root_leaves(descriptor, &element, &mut leaves).map_err(|error| {
             format!(
                 "mailbox message of type `{}` in `{path}` is not supported: {error}",
@@ -78,6 +81,7 @@ impl Codegen<'_> {
             descriptor: descriptor.clone(),
             leaves: leaves.scalars,
             containers: leaves.containers,
+            fixed: leaves.fixed,
         };
         let companions = self.native_companions(&layout, true);
         // `site` is an expression, never a declaration that native storage

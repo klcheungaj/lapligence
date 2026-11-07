@@ -1711,7 +1711,11 @@ fn render_model(
         &mut out,
     )?;
     out.push_str(&constants.lifecycle());
-    out.push_str(&super::owned::model::main(execution, &sharing.spawns)?);
+    let start = super::owned::model::main(execution, &sharing.spawns)?;
+    let unobserved = unobserved_contents(model, &out, &start);
+    out.push_str(&unobserved);
+    unobserved_real_columns(model, &mut out, &start);
+    out.push_str(&start);
     let referenced = referenced_descriptor_tables(&out, &activation_descriptors);
     out.insert_str(activation_descriptors_at, &referenced);
     out.insert_str(constant_declarations_at, &constants.declarations());
@@ -1747,6 +1751,102 @@ fn referenced_descriptor_tables(rendered: &str, tables: &[(String, String)]) -> 
         .map(|(_, declaration)| declaration.as_str())
         .collect()
 }
+
+/// The definition of `llg_model_unobserved_contents`, which every model with
+/// descriptor arrays calls at start. A write to a cell publishes its array's
+/// contents marker through the whole scheduler, so it clears the marker of
+/// each array no rendered text reads. The marker is a file-scope static, so
+/// the runtime can only learn its address from `model.c`: a name that appears
+/// only in its [`CONTENTS_MARKER_STORAGE_MENTIONS`] storage lines has no
+/// reader. Any other mention keeps the marker, however it was rendered.
+fn unobserved_contents(model: &IrModel, rendered: &str, start: &str) -> String {
+    let arrays = || {
+        model
+            .arrays
+            .iter()
+            .filter(|array| !array.activation && array.sparse())
+    };
+    if arrays().next().is_none() {
+        return String::new();
+    }
+    let mut mentions = HashMap::<&str, usize>::new();
+    for name in c_identifiers(rendered).chain(c_identifiers(start)) {
+        if let Some(array) = name.strip_suffix("_llg_contents_dep") {
+            *mentions.entry(array).or_default() += 1;
+        }
+    }
+    let clears = arrays()
+        .filter(|array| {
+            mentions.get(array.c_name.as_str()).copied() == Some(CONTENTS_MARKER_STORAGE_MENTIONS)
+        })
+        .map(|array| format!("    llg_fixed_array_unobserved(&{});\n", array.c_name))
+        .collect::<String>();
+    let sampled = arrays()
+        .filter(|array| {
+            rendered.contains(&format!("llg_fixed_array_sampled_peek(&{},", array.c_name))
+        })
+        .map(|array| format!("    llg_fixed_array_sampled(&{});\n", array.c_name))
+        .collect::<String>();
+    format!("static void llg_model_unobserved_contents(void) {{\n{clears}{sampled}}}\n\n")
+}
+
+/// Declaration, default, `llg_fixed_array_init` argument and destruction.
+const CONTENTS_MARKER_STORAGE_MENTIONS: usize = 4;
+
+/// Drop the change markers of `real` record columns that nothing reads. Every
+/// cell has one marker and two dependency bindings, which cost twenty times
+/// the double itself and which no write needs when no process or observer
+/// names them. As in [`unobserved_contents`], a name that appears only in its
+/// [`REAL_COLUMN_MARKER_MENTIONS`] storage lines has no reader.
+fn unobserved_real_columns(model: &IrModel, rendered: &mut String, start: &str) {
+    let columns = || {
+        model.arrays.iter().filter(|array| {
+            array.real
+                && !array.activation
+                && array.cell_names == crate::sim::ir::IrCellNames::RecordLeaf
+        })
+    };
+    if columns().next().is_none() {
+        return;
+    }
+    let mut mentions = HashMap::<String, usize>::new();
+    for name in c_identifiers(rendered).chain(c_identifiers(start)) {
+        if name.ends_with("_llg_contents_dep") || name.ends_with("_llg_element_deps") {
+            *mentions.entry(name.to_owned()).or_default() += 1;
+        }
+    }
+    let unread = |marker: String| {
+        mentions.get(&marker).copied().unwrap_or_default() == REAL_COLUMN_MARKER_MENTIONS
+    };
+    let mut lines = Vec::new();
+    for array in columns() {
+        let name = &array.c_name;
+        if unread(format!("{name}_llg_element_deps")) {
+            lines.push(format!(
+                "static sv4_t {name}_llg_element_deps[{}];\n",
+                array.total
+            ));
+            lines.push(format!(
+                "    sv4_from_u64_to(&{name}_llg_element_deps[_i], 0, 1, 0);\n"
+            ));
+            lines.push(format!(
+                "    llg_dependency_bind_real(&{name}[_i], &{name}_llg_element_deps[_i]);\n"
+            ));
+            lines.push(format!("    sv4_destroy(&{name}_llg_element_deps[_i]);\n"));
+        }
+        if unread(format!("{name}_llg_contents_dep")) {
+            lines.push(format!(
+                "    llg_dependency_bind_real(&{name}[_i], &{name}_llg_contents_dep);\n"
+            ));
+        }
+    }
+    for line in lines {
+        *rendered = rendered.replacen(&line, "", 1);
+    }
+}
+
+/// Declaration, default, dependency binding and destruction.
+const REAL_COLUMN_MARKER_MENTIONS: usize = 4;
 
 fn c_identifiers(text: &str) -> impl Iterator<Item = &str> {
     text.split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))

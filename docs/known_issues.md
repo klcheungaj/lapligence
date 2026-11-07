@@ -451,15 +451,11 @@ about 10 KB of C instead of 79 MB. RTL-101b adds whole-value pattern bindings,
 record call results compared or selected inside an expression, static and
 automatic declaration initializers, uniform member initializers, `real`,
 `string` and `chandle` members (a SIM-003 native value per subroutine record)
-and tag checks on whole member copies. Column records still reject: a member
-initializer that gives a column's cells different values (a column keeps one
-element default); selecting a whole member array, a sub-record, or a
+and tag checks on whole member copies. Column records still reject: selecting
+a whole member array, a sub-record, or a
 `chandle` member of a call result inside an expression, and comparing a
 record pattern, conditional or tagged expression operand (only storage and
-calls compare); an output or inout record argument with `real`, `string` or
-`chandle` members of a function called inside an expression (statement calls
-stage it through a temporary) and a `ref` formal of such a record; and a
-whole-value binding in a continuous assignment. A nonblocking write of a whole
+calls compare); and a whole-value binding in a continuous assignment. A nonblocking write of a whole
 tagged-union member array checks the tag when it is issued; element writes
 recheck at commit. The oversized source of a whole-value `matches` binding that
 is a fixed array rather than a record still rejects (RTL-016).
@@ -549,10 +545,7 @@ assignment, call or system-task statement (a condition or loop header that
 pops it), or named as the target of a timing-controlled assignment or a
 `ref` actual (reads in conditions, loop headers,
 `foreach`, initializers and timed assignment values copy the member at each
-evaluation); an event-controlled nonblocking write of a queue, dynamic or
-associative member, or of a record that has one (the detached process has no
-frame storage for the container copied at issue; untimed and `#delay` writes
-work); instance class properties of a record type with container
+evaluation); instance class properties of a record type with container
 members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
 properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
@@ -635,7 +628,7 @@ roots for forked automatic block records, strings and handles.
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_008/neg_record_ref_element_select_value.sv`,
-`sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
+`sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
 `sim_011/neg_record_container_property.sv`, `sim_007/bad_multidim_row_*.sv` and `sim_007/bad_tagged_*.sv`.
@@ -1426,6 +1419,22 @@ module tb;
 endmodule
 ```
 
+## Records of the leaf form: two errors a column does not have
+
+### Symptom
+
+Below 16 cells, two forms that a column accepts stop compilation. A constant
+select beyond a `string` or handle member array (`r.s[20] = "x"` with
+`string s[8]`) reports "cannot resolve array base of select", where SV 7.4.6
+reads the default and writes nothing. A whole record with a class handle member
+assigned to a member element (`r.a[5] = x` with `e_t a[8]`) reports "assignment
+between incompatible unpacked aggregate types".
+
+### Cause
+
+The leaf form names one object per cell, so an index outside the array names
+none, and `equivalent_copy_shape` accepts only `chandle` and `void` handles.
+
 ## Record results with real members as equality operands
 
 **Status:** open (FIN-001 G3, F07-03). Records with real members compare with
@@ -1821,34 +1830,65 @@ state but not per-cell generated code; see the remaining steps in
 
 ## Unpacked records with dense member arrays emit per-cell code
 
-**Status:** open; found by codegen-size.
+**Status:** narrowed; found by codegen-size. A member array of at least
+`LLG_RECORD_COLUMN_MIN_CELLS` (16) cells is stored as a column
+([record storage by size](sim_performance_tradeoffs.md#record-storage-by-size)),
+so its selections do not grow with the array. Below 16 cells each cell is its
+own leaf, a structural rule: the code is small and a reader needs no lookup.
 
-An unpacked structure or union whose member is a dense unpacked array (for
-example `typedef struct { logic [3:0] a; int m[4096]; } rec_t;`) is stored as
-one leaf signal per member cell. Every operation on such a variable is then
-linear in the cell count in generated C, including its declaration, a whole
-copy, `==`/`===`, an ambiguous `?:` merge, a continuous assignment, `%p` and
-even a dynamic element access, which builds one reference per cell. Measured
-with `--gen-only` on a quick build, a 4,096-cell member array gives 5.7 MB
-(`%p`) to 9.8 MB (continuous assignment) of `model.c`. A member array above
-`LLG_DENSE_FIXED_ARRAY_CELLS` (4,096) cells is one sparse fixed-array leaf
-instead and stays at about 15-20 KB, so the cost peaks just below that
-threshold.
+Every shape follows that rule. A member array of integral, packed or `real`
+elements in a structure that also holds a member with no packed width, such as
+`typedef struct { logic [3:0] a; real m[4096]; string t; } rec_t;`, is one
+column; `string`, handle and record elements, and any element above 4,096 cells
+without a packed width, are one container. No operation on such a member is
+linear in generated C.
+
+Two shapes are not columns at this size:
+
+- An unpacked union with a member array keeps its packed image.
+- A record with a member array above 4,096 cells and another member array whose
+  elements have no packed width, such as `struct { int p[5000]; string d[20]; }`,
+  keeps the packed member in a container too: 40 bytes per declared cell instead
+  of the sparse column's cost per written cell.
+
+Members held in a container (`string`, handles, records with such members) have
+these limits, each an error at its source location unless noted:
+
+- a nested record whose type has the column layout on its own, inside a record
+  that holds a native member array: `o.i = x` with `x` declared alone is not
+  resolved.
+- not an error: a dump omits the members of an array of records held in a
+  container (`rows__iN__n`), like the other contents of a container.
+
+A use the column form cannot lower is an error at its source location. These
+limits apply to the form named:
+
+- both forms: a member array selected on a call result (`f().a[1]`), and a
+  row of a multidimensional member array of a queue element at a run-time index
+  (`q[0].a[k] = '{1, 2}`); assign through a record variable first. A whole member
+  array of an element written through an event control (`m.e[1].a <= @(e) v`), and
+  a record nested in an element of a nested associative array
+  (`oa[1]["a"].e[1].t[2] = s`).
+- both forms: a virtual-interface method that waits on a record `ref` formal bound
+  to an element. A whole record property of a class written with `<=` (`c.r <= v`).
+- per-cell form, below 16 cells: a whole record assigned to or read from an
+  element of a member array at a run-time index (`r.rows[i] = x`), and two
+  continuous assignments to separate bits of one member of an element of an
+  array of records. A record of packed members only, read whole from an element
+  into a fixed-array element, a class property, an output formal or an initializer
+  (`fa[2] = q[0]`), and a whole record read from a member array of an element
+  (`x = oq[0].e[1]`). The column form has none of these limits.
+- column form: an event control on a member of a `ref` formal whose actual is an
+  automatic record of a subroutine; a module, static or procedural-block record
+  works, and so does an element of a column.
 
 codegen-size made whole-value reads and writes of unpacked arrays O(1)
 in generated C (`emit_c/owned/dense_cells.rs`), and removed the lowering
 stack overflow that whole equality of such records hit from about 256 leaves
-(the leaf comparisons are now combined as a balanced tree). It did not change
-the record storage: switching it needs a dense-array leaf kind that the
-leaf/signal model, the column layout (RTL-101) and every record consumer
-understand.
+(the leaf comparisons are now combined as a balanced tree).
 
 Reproduce with the record above, `rec_t a, b; initial b = a;` and
 `--gen-only`, then measure `model.c`.
-
-The intended direction is to store a dense member array as one dense array
-leaf (one `sv4_t[N]` per member) so the dense-cell range helpers apply to
-record members as well.
 
 ## Gate and UDP array elements emit one process function each
 

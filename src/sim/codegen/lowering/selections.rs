@@ -528,6 +528,10 @@ impl<'a> Codegen<'a> {
             .iter()
             .find(|member| member.path == path)
             .cloned()?;
+        // A cell of a member column is selected through the column.
+        if member.array.is_some() && matches!(path.last(), Some(AggregatePathPart::Index(_))) {
+            return None;
+        }
         Some((target, aggregate.kind, member))
     }
 
@@ -634,6 +638,10 @@ impl<'a> Codegen<'a> {
     }
 
     fn unpacked_array_base_path(&self, array: NodeId) -> Option<(NodeId, Vec<AggregatePathPart>)> {
+        // A declared array is its own storage, whatever members share its name.
+        if self.array_globals.contains_key(&array) {
+            return None;
+        }
         let name = self.node(array).name.as_str();
         let mut found = None;
         for target in sorted_node_ids(&self.unpacked_aggregates) {

@@ -221,6 +221,23 @@ fn sized_aggregates_and_strings_use_the_c_layout() {
     );
 }
 
+/// The columns of a record are an internal form: foreign code sees the same
+/// C layout for import and export formals of every direction.
+#[test]
+fn records_of_the_column_form_keep_the_c_layout() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "record_columns") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "record_columns",
+        include_str!("../fixtures/sim/feature_completion/sim_040/record_columns.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
 /// SV `byte` is C `char` (Table H.1), whose signedness is the ABI's: plain
 /// `char` is unsigned on AArch64 Linux, PowerPC and RISC-V. `-funsigned-char`
 /// (GCC and Clang; MSVC `/J`) reproduces that ABI here for the companion and

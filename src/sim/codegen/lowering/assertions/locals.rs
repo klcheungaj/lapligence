@@ -147,7 +147,7 @@ impl Codegen<'_> {
             match formal.direction {
                 DbDirection::Input | DbDirection::Inout => {
                     let actual = self.lower_expr(path, formal.actual)?;
-                    if actual.is_real() || !sampled_compatible(&actual) {
+                    if actual.is_real() || !self.sampled_compatible(&actual) {
                         return Err(format!(
                             "local formal `{name}` of the sequence instance at {location} needs one packed sampled actual (SV 16.8.2)"
                         ));
@@ -207,7 +207,7 @@ impl Codegen<'_> {
                     .assertion_local_initializer(*local)
                     .ok_or_else(|| "declared local lost its initializer".to_owned())?;
                 let value = this.lower_expr(path, source)?;
-                if value.is_real() || !sampled_compatible(&value) {
+                if value.is_real() || !this.sampled_compatible(&value) {
                     return Err(format!(
                         "local variable `{}` declared at {} needs one packed sampled initial value",
                         this.node(*local).name,

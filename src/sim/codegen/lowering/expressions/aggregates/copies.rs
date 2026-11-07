@@ -97,6 +97,14 @@ impl Codegen<'_> {
                 let storage = self.unpacked_aggregates.get(&root)?.clone();
                 (root, prefix, storage)
             };
+        // An element of a member container is not leaf storage.
+        if storage.leaves.iter().any(|leaf| {
+            leaf.container.is_some()
+                && prefix.len() > leaf.path.len()
+                && prefix.starts_with(&leaf.path)
+        }) {
+            return None;
+        }
         let descriptor = Self::descriptor_at_path(self.query_descriptor(root)?, &prefix)?;
         if !matches!(
             descriptor.shape,
@@ -192,6 +200,17 @@ impl Codegen<'_> {
                     "selected aggregate copy has incompatible leaf types in `{path}`"
                 ));
             }
+            // A selection of part of a member column moves by cell.
+            let whole = |leaf: &AggregateMemberInfo, prefix: &[AggregatePathPart]| {
+                member_cell_column(leaf)
+                    .is_some_and(|column| leaf.path.len() >= prefix.len() + column.dims.len())
+            };
+            if whole(left, &lhs.prefix) && whole(right, &rhs.prefix) {
+                if let Some(statements) = self.member_column_copy(left, right, nba) {
+                    assignments.extend(statements);
+                    continue;
+                }
+            }
             let name = format!(
                 "_agg_copy_{}_{}_{sequence}_{position}",
                 lhs.root.0, rhs.root.0
@@ -201,9 +220,19 @@ impl Codegen<'_> {
                 // Each container member is its own storage, so no other leaf
                 // write of this copy can change the source.
                 if nba {
-                    return Err(format!(
-                        "nonblocking assignment of a record with a container member in `{path}` is not supported"
-                    ));
+                    if !self.model.containers[lhs_container.ir].is_global_storage() {
+                        return Err(format!(
+                            "nonblocking assignment to a container member of an automatic record in `{path}` is illegal (SV 6.21, 10.4.2)"
+                        ));
+                    }
+                    assignments.push(IrStmt::Container(Box::new(
+                        IrContainerStmt::ContainerNonblocking {
+                            target: Some(lhs_container.ir),
+                            src: rhs_container.ir,
+                            delay: None,
+                        },
+                    )));
+                    continue;
                 }
                 if lhs_container.ir != rhs_container.ir {
                     assignments.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {

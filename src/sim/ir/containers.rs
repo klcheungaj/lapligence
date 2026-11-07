@@ -696,6 +696,17 @@ pub enum IrContainerStmt {
         src: usize,
         delay: Option<IrDelay>,
     },
+    /// Until [`Self::NbaHoldClose`], nonblocking writes build their updates
+    /// at issue, with their values and selectors, into the
+    /// [`IrChandleExpr::NbaHold`] `.0` instead of queueing them.
+    NbaHoldOpen(IrChandleExpr),
+    NbaHoldClose,
+    /// Queue the updates of hold `held`, `delay` ticks later than they were
+    /// issued, and end the hold (SV 9.4.5, 10.4.2).
+    NbaHoldRelease {
+        held: IrChandleExpr,
+        delay: Option<IrDelay>,
+    },
     /// The next nonblocking write, up to [`Self::NbaLocateEnd`], targets item
     /// `items` of `root`: the element position is fixed here and the item is
     /// found again at commit, so a whole-value write in between cannot leave
@@ -945,6 +956,14 @@ pub enum IrContainerStmt {
         slot: IrValueSlot,
         value: usize,
     },
+    /// Write the leaves of one record element of a dynamic array in place
+    /// from sources of the element's type: only a leaf that differs changes,
+    /// and the element publishes once when any did. Items name every leaf.
+    SetElementItems {
+        container: usize,
+        slot: IrValueSlot,
+        items: Vec<IrElementItem>,
+    },
     /// Copy an element (or the Table 7-1 default for a missing one) into a
     /// native value root; pop slots also remove it.
     GetValue {
@@ -962,6 +981,22 @@ pub enum IrContainerStmt {
         root: IrValueItemRoot,
         items: Vec<u32>,
         container: usize,
+    },
+    /// Store every cell of descriptor or real `array` in the fixed-array item
+    /// at `items` of `root`, element for element; the source never grows code.
+    FixedToValueItem {
+        array: usize,
+        root: IrValueItemRoot,
+        items: Vec<u32>,
+    },
+    /// Assign every cell of real `array`, in one statement for any size: from
+    /// another real column, or from the fixed-array item at `items` of `root`.
+    RealColumnAssign {
+        array: usize,
+        source: Option<usize>,
+        root: Option<IrValueItemRoot>,
+        items: Vec<u32>,
+        nba: bool,
     },
     /// Replace the queue or dynamic-array member slot at `items` of `root`
     /// with a deep copy of `container`: before a whole-element write stores
@@ -1008,6 +1043,40 @@ pub enum IrValueItemRoot {
 }
 
 impl IrValueItemRoot {
+    /// Check that `items` names a fixed array of `total` items.
+    pub(in crate::sim) fn fixed_item(
+        &self,
+        model: &super::IrModel,
+        items: &[u32],
+        total: u64,
+    ) -> Result<(), IrValidationError> {
+        let mut item = Some(self.element(model)?);
+        for step in items {
+            item = match item {
+                Some(IrContainerElement::Aggregate { members, .. }) => members
+                    .get(*step as usize)
+                    .map(|member| member.element.as_ref()),
+                Some(IrContainerElement::FixedArray { element, .. }) => Some(element.as_ref()),
+                _ => None,
+            };
+        }
+        match item {
+            Some(IrContainerElement::FixedArray { dimensions, .. })
+                if dimensions
+                    .iter()
+                    .map(|(left, right)| i64::from(*left).abs_diff(i64::from(*right)) + 1)
+                    .product::<u64>()
+                    == total =>
+            {
+                Ok(())
+            }
+            _ => Err(IrValidationError::new(
+                "container value",
+                "native item path does not name a fixed array of this size",
+            )),
+        }
+    }
+
     /// The record type of the root value.
     fn element<'a>(
         &self,
@@ -1055,6 +1124,23 @@ impl IrValueItemRoot {
             element.expressions_mut(visit);
         }
     }
+}
+
+/// One leaf of `IrContainerStmt::SetElementItems`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrElementItem {
+    /// Item positions from the element down to the leaf.
+    pub path: Vec<u32>,
+    pub value: IrElementItemValue,
+}
+
+/// The source of one written leaf, of the leaf's own type.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrElementItemValue {
+    Packed(IrExpr),
+    Real(IrExpr),
+    String(IrStringExpr),
+    Chandle(IrChandleExpr),
 }
 
 /// Where a whole-element value transfer reads or writes.
@@ -1834,6 +1920,10 @@ impl IrContainerStmt {
                 Ok(())
             }
             Self::NbaLocateEnd => Ok(()),
+            Self::NbaHoldClose => Ok(()),
+            Self::NbaHoldOpen(held) | Self::NbaHoldRelease { held, .. } => {
+                held.validate(model, &[], None)
+            }
             Self::ContainerNonblocking { target, src, .. } => {
                 let src = container_kind(model, *src, None)?;
                 if let Some(target) = target {
@@ -1889,6 +1979,45 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
+            Self::RealColumnAssign {
+                array,
+                source,
+                root,
+                items,
+                ..
+            } => {
+                let storage = model.arrays.get(*array).filter(|storage| storage.real);
+                let storage = storage.ok_or_else(|| {
+                    IrValidationError::new("container value", "real column has no real array")
+                })?;
+                match (source, root) {
+                    (Some(source), None)
+                        if model
+                            .arrays
+                            .get(*source)
+                            .is_some_and(|other| other.real && other.total == storage.total) =>
+                    {
+                        Ok(())
+                    }
+                    (None, Some(root)) => root.fixed_item(model, items, storage.total),
+                    _ => Err(IrValidationError::new(
+                        "container value",
+                        "real column needs one source of its size",
+                    )),
+                }
+            }
+            Self::FixedToValueItem { array, root, items } => {
+                let storage = model.arrays.get(*array).ok_or_else(|| {
+                    IrValidationError::new("container value", "array index is out of bounds")
+                })?;
+                if !storage.sparse() && !storage.real {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "native fixed-array store needs descriptor storage",
+                    ));
+                }
+                root.fixed_item(model, items, storage.total)
+            }
             Self::ValueItemToContainer {
                 root,
                 items,
@@ -1916,10 +2045,15 @@ impl IrContainerStmt {
                     // An empty path names a whole native value of container
                     // type, such as a mailbox message (SIM-017), or a whole
                     // nested container element staged by a statement.
-                    Some(IrContainerElement::Container { element, key: None, .. })
-                        if !matches!(container.kind, IrContainerKind::Associative { .. })
-                            && element.compatible_with(&container.element)
-                            && container.element.compatible_with(element) =>
+                    // A fixed member array moves as one container of its items.
+                    Some(
+                        IrContainerElement::Container {
+                            element, key: None, ..
+                        }
+                        | IrContainerElement::FixedArray { element, .. },
+                    ) if !matches!(container.kind, IrContainerKind::Associative { .. })
+                        && element.compatible_with(&container.element)
+                        && container.element.compatible_with(element) =>
                     {
                         Ok(())
                     }
@@ -2658,6 +2792,29 @@ impl IrContainerStmt {
                 string_container(model, *container)?;
                 key.validate(model, string_return)
             }
+            Self::SetElementItems {
+                container,
+                slot,
+                items,
+            } => {
+                let container = container_kind(model, *container, None)?;
+                if !matches!(container.kind, IrContainerKind::Dynamic)
+                    || !matches!(slot, IrValueSlot::Element { key: None, .. })
+                    || items.is_empty()
+                {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "in-place element items require an integral dynamic array element",
+                    ));
+                }
+                slot.element(container, true, string_return, model)?;
+                for item in items {
+                    if let IrElementItemValue::String(value) = &item.value {
+                        value.validate(model, string_return)?;
+                    }
+                }
+                Ok(())
+            }
             Self::SetValue {
                 container,
                 slot,
@@ -2828,6 +2985,18 @@ impl IrContainerStmt {
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions(visit),
             Self::SetValue { slot, .. } | Self::GetValue { slot, .. } => slot.expressions(visit),
+            Self::SetElementItems { slot, items, .. } => {
+                slot.expressions(visit);
+                for item in items {
+                    match &item.value {
+                        IrElementItemValue::Packed(value) | IrElementItemValue::Real(value) => {
+                            visit(value)
+                        }
+                        IrElementItemValue::String(value) => value.expressions(visit),
+                        IrElementItemValue::Chandle(_) => {}
+                    }
+                }
+            }
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter().for_each(visit)
             }
@@ -2861,6 +3030,14 @@ impl IrContainerStmt {
                 ..
             } => visit(value),
             Self::ContainerNonblocking { .. } => {}
+            Self::NbaHoldRelease { held, delay } => {
+                held.expressions(visit);
+                if let Some(IrDelay::Runtime { value, .. }) = delay {
+                    visit(value);
+                }
+            }
+            Self::NbaHoldOpen(held) => held.expressions(visit),
+            Self::NbaHoldClose => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,
@@ -2890,7 +3067,13 @@ impl IrContainerStmt {
             Self::NbaLocateEnd => {}
             Self::ValueItemToContainer { root, .. }
             | Self::ContainerToValueItem { root, .. }
+            | Self::FixedToValueItem { root, .. }
             | Self::BindElement { root, .. } => root.expressions(visit),
+            Self::RealColumnAssign { root, .. } => {
+                if let Some(root) = root {
+                    root.expressions(visit);
+                }
+            }
             Self::NbaLocate { root, selects, .. } => {
                 root.expressions(visit);
                 for select in selects {
@@ -2962,6 +3145,18 @@ impl IrContainerStmt {
             Self::SetValue { slot, .. } | Self::GetValue { slot, .. } => {
                 slot.expressions_mut(visit)
             }
+            Self::SetElementItems { slot, items, .. } => {
+                slot.expressions_mut(visit);
+                for item in items {
+                    match &mut item.value {
+                        IrElementItemValue::Packed(value) | IrElementItemValue::Real(value) => {
+                            visit(value)
+                        }
+                        IrElementItemValue::String(value) => value.expressions_mut(visit),
+                        IrElementItemValue::Chandle(_) => {}
+                    }
+                }
+            }
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter_mut().for_each(visit)
             }
@@ -2995,6 +3190,14 @@ impl IrContainerStmt {
                 ..
             } => visit(value),
             Self::ContainerNonblocking { .. } => {}
+            Self::NbaHoldRelease { held, delay } => {
+                held.expressions_mut(visit);
+                if let Some(IrDelay::Runtime { value, .. }) = delay {
+                    visit(value);
+                }
+            }
+            Self::NbaHoldOpen(held) => held.expressions_mut(visit),
+            Self::NbaHoldClose => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,
@@ -3024,7 +3227,13 @@ impl IrContainerStmt {
             Self::NbaLocateEnd => {}
             Self::ValueItemToContainer { root, .. }
             | Self::ContainerToValueItem { root, .. }
+            | Self::FixedToValueItem { root, .. }
             | Self::BindElement { root, .. } => root.expressions_mut(visit),
+            Self::RealColumnAssign { root, .. } => {
+                if let Some(root) = root {
+                    root.expressions_mut(visit);
+                }
+            }
             Self::NbaLocate { root, selects, .. } => {
                 root.expressions_mut(visit);
                 for select in selects {

@@ -826,6 +826,7 @@ fn collect_effects(
                     **operation,
                     IrContainerStmt::Nonblocking { .. }
                         | IrContainerStmt::ContainerNonblocking { .. }
+                        | IrContainerStmt::NbaHoldRelease { .. }
                 ) =>
             {
                 effects.push(ExecutionEffect::EnqueueUpdate(
@@ -2743,7 +2744,9 @@ fn collect_chandle_effects(
                 collect_string_effects(ir, key, effects, visited_calls);
             }
         }
-        IrChandleExpr::QueuePop { .. } => effects.push(ExecutionEffect::ImmediateStore),
+        IrChandleExpr::QueuePop { .. } | IrChandleExpr::NbaHold => {
+            effects.push(ExecutionEffect::ImmediateStore)
+        }
         IrChandleExpr::Required { handle, .. } => {
             // A null handle is a fatal run-time error: the process stops
             // after the statement instead of running on.
@@ -2870,6 +2873,7 @@ fn collect_fixed_value_effects(
         }
         IrFixedValue::Array(_)
         | IrFixedValue::Dense(_)
+        | IrFixedValue::ValueItems { .. }
         | IrFixedValue::Packed { .. }
         | IrFixedValue::Selected { .. } => {}
         IrFixedValue::Convert { value, .. } => {

@@ -83,6 +83,26 @@ released cell (decision A19-D78); outlined runs hold no such locals.
 - Writable callback leaves must all be proven private. Never allow external refs,
   net/scheduler writes or NBAs through this path.
 
+A descriptor array's contents marker is a file-scope static, so only `model.c`
+can give the runtime its address. `render_model` scans the finished text and
+`llg_model_unobserved_contents` clears the marker of each array named only by
+its four storage lines: a cell write then publishes nothing array-wide, which
+is most of what such a write would cost. Any other mention keeps the marker,
+whichever context rendered it. A constant in-range selection of a descriptor
+emits its linear index directly (`Frame::array_cell`).
+
+A `real` record column has no contents array to clear: each cell has a marker
+and two dependency bindings at start, which cost more than the double. The same
+scan drops the marker and bindings of each column named only by their four
+storage lines, so such a column is its doubles alone.
+
+A sampled expression selects a descriptor cell through
+`llg_fixed_array_sampled_peek`, and `llg_model_unobserved_contents` flags each
+array the rendered model reads that way (`llg_fixed_array_sampled`). A flagged
+array saves a cell's old value on its first change of a time slot, keyed by
+index, and keeps one whole image if the slot replaces its default. Arrays with
+no such read pay nothing, and direct arrays stay outside sampled expressions.
+
 ## Native boundaries
 
 String inputs are copied; reserve return ownership before argument scopes. Check
@@ -127,8 +147,10 @@ packed one through `llg_ref_wait_spec`/`llg_arm_ref_dependencies` (which expand
 the descriptor into the leaf markers of the storage it selects; retained
 container cells carry their container's contents marker), on a string `ref`
 formal through its `llg_string_t.dependency` and on a handle `ref` formal
-through the marker parameter `d<idx>` that follows `r<idx>`
-(`handle_marker_param`): the caller passes the module handle's
+through the marker parameter `d<idx>` that follows `r<idx>` (a native record
+formal of a watching specialization has one after its companions, from
+`llg_native_ref_watch`, its own `d<idx>` when forwarded, see
+`IrFormal::record_marker`) (`handle_marker_param`): the caller passes the module handle's
 `<name>_llg_dep`, the object's `llg_class_handle_dependency`, its own `d<idx>`
 or a fork-shared handle's `llg_frame_opaque_marker`, else NULL. Stores through
 the formal publish that marker at the store (`Frame::handle_store_marker`). A
@@ -166,7 +188,9 @@ right after its arm, so a suspended get writes only live storage on resume. Neve
 
 DPI-C export entries, thunks and string lifetimes: `model/dpi_exports.rs`
 module docs; thunks convert with the import layout helpers and call `<fn>` with
-`depth + 1`. When
+`depth + 1`. A column-layout record crosses whole: its columns are extra C
+parameters of `<fn>` (`record_columns` of the import or export) that the thunk
+joins into and splits from one payload, so foreign code sees one structure. When
 a model has any context import or export, every import thunk brackets the
 call with `llg_dpi_import_enter/leave`; every import call site sets
 `llg_dpi_next_site` just before the call (decision S41-D3), and an

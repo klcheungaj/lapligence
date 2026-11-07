@@ -144,7 +144,7 @@ impl<'a> Codegen<'a> {
             };
             self.check_sampled_argument_type(scope_path, name, *argument)?;
             let argument = self.lower_expr(scope_path, *argument)?;
-            if !super::super::assertions::sampled_compatible(&argument) {
+            if !self.sampled_compatible(&argument) {
                 return Err(sampled_argument_error(name, scope_path, &argument));
             }
             // Outside an assertion `$sampled` still returns the Preponed
@@ -205,7 +205,7 @@ impl<'a> Codegen<'a> {
         }
         self.check_sampled_argument_type(scope_path, name, args[0])?;
         let argument = self.lower_expr(scope_path, args[0])?;
-        if !super::super::assertions::sampled_compatible(&argument) {
+        if !self.sampled_compatible(&argument) {
             return Err(sampled_argument_error(name, scope_path, &argument));
         }
         // An active free checker variable is read with its current value,
@@ -316,7 +316,7 @@ impl<'a> Codegen<'a> {
                 })?
         };
         if let Some(gate) = &gate {
-            if gate.is_real() || !super::super::assertions::sampled_compatible(gate) {
+            if gate.is_real() || !self.sampled_compatible(gate) {
                 return Err(format!(
                     "$past gate must be a static packed expression in `{scope_path}`"
                 ));

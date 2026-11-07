@@ -36,6 +36,7 @@ mod fixed_patterns;
 mod fixed_projections;
 mod fixed_transport;
 mod fixed_values;
+pub(super) use fixed_values::fixed_path_descriptor;
 mod function_bodies;
 mod gates;
 mod initialization;
@@ -65,7 +66,8 @@ mod timing_checks;
 mod vpi;
 pub(super) use packed_elements::Select;
 pub(super) use record_columns::{
-    column_tagged_union, record_cell_leaf, record_column_layout_type, RecordColumn, RecordValue,
+    column_tagged_union, member_cell_column, record_cell_indices, record_cell_leaf,
+    record_column_choice, RecordColumn, RecordValue,
 };
 pub(super) use vpi::VpiScopeIndex;
 mod port_aliases;
@@ -260,7 +262,7 @@ fn leaf_member(base: &AggregateMember, descriptor: &TypeDescriptor) -> Aggregate
     }
 }
 
-fn port_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
+pub(super) fn port_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
     fn visit(
         dims: &[(i32, i32)],
         dimension: usize,

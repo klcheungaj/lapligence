@@ -60,8 +60,9 @@ detached process frame (`lower_native_event_nba`) that waits through
 at run time (`lower_located_event_nba`: record element members, whole records,
 members selected by index) go the same way: selectors, then the right side, then
 the repeat count are evaluated at issue into captured locals, and the waiter
-lowers the ordinary nonblocking write against those locals. Queue, dynamic and
-associative members of records are rejected there with an explicit diagnostic.
+lowers the ordinary nonblocking write against those locals. A write no local can
+stand for (a queue, dynamic or associative member, a column, a descriptor array)
+runs at issue instead, its updates kept in an `NbaHold` that the waiter releases.
 
 Sequential predicates evaluate clauses once, left-to-right, continuing only on
 definite true. Preserve explicit branches/pattern bindings and short-circuit
@@ -99,8 +100,9 @@ for `sparse()` storage and oversized values, never a per-cell expansion; new
 writers of fixed storage must register cell intervals for the single-writer
 rule; and new net-array driver forms must be added to the `net_cells.rs`
 classification inventory.
-Column-layout records and tagged unions (RTL-101; wider than the packed limit
-or with a member array above the dense threshold) are classified in
+Column-layout records and tagged unions (RTL-101; wider than the packed limit,
+or with a member array of 16 cells or more, decided by
+`collection/record_columns/choice.rs`) are classified in
 `collection/record_columns.rs` and lowered in
 `expressions/aggregates/columns.rs`: every integral leaf is an
 `IrArray::descriptor` column (a scalar leaf is one cell, a tag is one more

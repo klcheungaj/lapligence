@@ -1,5 +1,16 @@
 //! Container calls consume only explicitly prepared operand snapshots.
 use super::*;
+/// The item a path names below `_llg_element`.
+fn element_item(path: &[u32]) -> String {
+    let mut item = "_llg_element->value".to_owned();
+    for (depth, step) in path.iter().enumerate() {
+        if depth > 0 {
+            item.push_str(".value");
+        }
+        item.push_str(&format!(".items[{step}]"));
+    }
+    item
+}
 
 /// Whether a nested queue element is built from an associative array.
 fn assoc_source(ctx: &RCtx<'_>, source: usize) -> bool {
@@ -648,6 +659,18 @@ pub(super) fn render(
             index,
             value,
         } => {
+            if let (IrContainerKind::Dynamic, Some(position)) =
+                (&ctx.model.containers[*container].kind, dyn_position(index))
+            {
+                let owner = frame.string(value)?;
+                let statement = format!(
+                    "    (void)llg_dyn_value_move_string_at(&{}, {position}ULL, {});\n",
+                    name(frame, *container)?,
+                    owner.address
+                );
+                strings.push(owner);
+                return Ok(statement);
+            }
             let function = match ctx.model.containers[*container].kind {
                 IrContainerKind::Dynamic => "llg_dyn_value_set_string",
                 IrContainerKind::Queue { .. } => "llg_queue_value_set_string",
@@ -665,6 +688,15 @@ pub(super) fn render(
             index,
             value,
         } => {
+            if let (IrContainerKind::Dynamic, Some(position)) =
+                (&ctx.model.containers[*container].kind, dyn_position(index))
+            {
+                return Ok(format!(
+                    "    (void)llg_dyn_value_set_chandle_at(&{}, {position}ULL, {});\n",
+                    name(frame, *container)?,
+                    frame.chandle(value)?
+                ));
+            }
             let function = match ctx.model.containers[*container].kind {
                 IrContainerKind::Dynamic => "llg_dyn_value_set_chandle",
                 IrContainerKind::Queue { .. } => "llg_queue_value_set_chandle",
@@ -1042,6 +1074,66 @@ pub(super) fn render(
                 name(frame, *source)?
             )
         }
+        IrContainerStmt::SetElementItems {
+            container,
+            slot,
+            items,
+        } => {
+            let IrValueSlot::Element { indices, .. } = slot else {
+                return Err("in-place element items need an element slot".to_owned());
+            };
+            let target = name(frame, *container)?;
+            let position = match indices.as_slice() {
+                [index] => dyn_position(index),
+                _ => None,
+            };
+            let element = match position {
+                Some(position) => format!("llg_dyn_value_element_at(&{target}, {position}ULL)"),
+                None => {
+                    let list = super::indices(frame, owners, indices)?;
+                    format!(
+                        "llg_dyn_value_element(&{target}, {list}, {})",
+                        indices.len()
+                    )
+                }
+            };
+            let mut stores = String::new();
+            for item in items {
+                let leaf = element_item(&item.path);
+                let store = match &item.value {
+                    IrElementItemValue::Packed(value) => {
+                        let value = operand(frame, owners, value)?.code;
+                        format!("llg_value_item_set_packed(&{leaf}, {value})")
+                    }
+                    IrElementItemValue::Real(value) => {
+                        let rendered = operand(frame, owners, value)?;
+                        let value = if rendered.width == 0 {
+                            rendered.code
+                        } else {
+                            format!("sv4_to_real({})", rendered.code)
+                        };
+                        format!("llg_value_item_set_real(&{leaf}, {value})")
+                    }
+                    IrElementItemValue::String(text) => match frame.string_address(text)? {
+                        Some(address) => {
+                            format!("llg_value_item_set_string(&{leaf}, {address})")
+                        }
+                        None => {
+                            let code = text_operand(frame, strings, text)?;
+                            format!("llg_value_item_take_string(&{leaf}, {code})")
+                        }
+                    },
+                    IrElementItemValue::Chandle(value) => {
+                        let value = frame.chandle(value)?;
+                        format!("llg_value_item_set_handle(&{leaf}, {value})")
+                    }
+                };
+                stores.push_str(&format!("            changed |= {store};\n"));
+            }
+            format!(
+                "    {{\n        llg_value_t* _llg_element = {element};\n        if (_llg_element) {{\n            int changed = 0;\n{stores}            if (changed) llg_dyn_value_touch(&{target});\n        }}\n    }}\n"
+            )
+        }
         IrContainerStmt::SetValue {
             container,
             slot,
@@ -1160,21 +1252,7 @@ pub(super) fn render(
             {
                 frame.note_ref_store(*value)?;
             }
-            let item = match root {
-                // The whole value is the container (a mailbox message).
-                IrValueItemRoot::Value(value) if items.is_empty() => {
-                    frame.native_value_read(*value)?
-                }
-                IrValueItemRoot::Value(value) => frame.native_value_item(*value, items)?,
-                // An empty path names a whole nested container element.
-                IrValueItemRoot::Element(element) if items.is_empty() => {
-                    format!("((llg_value_t*){})", frame.chandle(element)?)
-                }
-                IrValueItemRoot::Element(element) => {
-                    let element = frame.chandle(element)?;
-                    frame.value_item(&format!("((llg_value_t*){element})"), items)?
-                }
-            };
+            let item = frame.value_item_root(root, items)?;
             let target = name(frame, *container)?;
             if matches!(operation, IrContainerStmt::ValueItemToContainer { .. }) {
                 format!("    llg_value_item_to_{kind}(&{target}, {item});\n")
@@ -1182,7 +1260,67 @@ pub(super) fn render(
                 format!("    llg_value_item_from_{kind}({item}, &{target});\n")
             }
         }
+        IrContainerStmt::FixedToValueItem { array, root, items } => {
+            if let IrValueItemRoot::Value(value) = root {
+                frame.note_ref_store(*value)?;
+            }
+            let item = frame.value_item_root(root, items)?;
+            let total = frame.ctx.model.array(*array).total;
+            if frame.ctx.model.array(*array).real {
+                let source = frame.real_column_cell(*array, "_llg_n")?;
+                format!(
+                    "    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) ({item})->value.items[_llg_n].value.real = *{source};\n"
+                )
+            } else {
+                let source = frame.fixed_array_address(*array)?;
+                format!("    llg_fixed_array_items_store({item}, {source});\n")
+            }
+        }
+        IrContainerStmt::RealColumnAssign {
+            array,
+            source,
+            root,
+            items,
+            nba,
+        } => {
+            let target = frame.real_column_cell(*array, "_llg_n")?;
+            let value = match (source, root) {
+                (Some(source), _) => format!("*{}", frame.real_column_cell(*source, "_llg_n")?),
+                (None, Some(root)) => {
+                    let item = frame.value_item_root(root, items)?;
+                    format!("({item})->value.items[_llg_n].value.real")
+                }
+                (None, None) => return Err("real column has no source".to_owned()),
+            };
+            let total = frame.ctx.model.array(*array).total;
+            if let (Some(source), false) = (source, *nba) {
+                let source = frame.real_column_cell(*source, "0")?;
+                let target = frame.real_column_cell(*array, "0")?;
+                return Ok(format!(
+                    "    llg_real_column_assign({target}, {source}, {total}ULL);\n"
+                ));
+            }
+            let store = if *nba {
+                format!("llg_nba_d_after({target}, {value}, 0)")
+            } else {
+                format!("llg_ba_d({target}, {value})")
+            };
+            format!("    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) {store};\n")
+        }
         IrContainerStmt::NbaLocateEnd => "    llg_nba_locate_end();\n".to_owned(),
+        IrContainerStmt::NbaHoldOpen(held) => {
+            let held = frame.chandle(held)?;
+            format!("    llg_nba_hold_open({held});\n")
+        }
+        IrContainerStmt::NbaHoldClose => "    llg_nba_hold_close();\n".to_owned(),
+        IrContainerStmt::NbaHoldRelease { held, delay } => {
+            let ticks = match delay {
+                Some(delay) => frame.delay(delay)?,
+                None => "0ULL".to_owned(),
+            };
+            let held = frame.chandle(held)?;
+            format!("    llg_nba_hold_release({held}, {ticks});\n")
+        }
         IrContainerStmt::ContainerNonblocking { target, src, delay } => {
             let storage = &ctx.model.containers[*src];
             let kind = match (&storage.kind, storage.element.is_packed()) {
@@ -1289,4 +1427,23 @@ fn dst_start_whole(operation: &IrContainerStmt) -> bool {
             ..
         }
     )
+}
+
+impl Frame<'_, '_> {
+    /// Address of cell `index` of a real column.
+    pub(in crate::sim::emit_c::owned) fn real_column_cell(
+        &mut self,
+        array: usize,
+        index: &str,
+    ) -> Result<String, String> {
+        let info = self.ctx.model.array(array);
+        if info.activation {
+            Ok(format!(
+                "(&({})[{index}])",
+                self.fixed_array_address(array)?
+            ))
+        } else {
+            Ok(format!("({})", info.cell_address(index)))
+        }
+    }
 }

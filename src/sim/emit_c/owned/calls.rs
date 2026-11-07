@@ -437,6 +437,9 @@ impl Frame<'_, '_> {
                         for container in self.ctx.model.native_values[*value].companions.clone() {
                             parameters.push(format!("(void*)&{}", self.container_name(container)?));
                         }
+                        if formal.record_marker {
+                            parameters.push(self.record_ref_marker(*value)?);
+                        }
                         continue;
                     }
                     // A function cannot suspend or be disabled by another
@@ -738,7 +741,8 @@ impl Frame<'_, '_> {
                     parameters.push(self.native_address(address, NativeKind::String)?.address);
                 }
                 IrCallArg::ElementRef(reference) => {
-                    let reference = self.element_reference_binding(reference)?;
+                    let reference =
+                        self.element_reference_binding(reference, formal.record_marker)?;
                     parameters.extend(reference);
                 }
                 IrCallArg::ChandleRefAddr(address) if self.is_process_slot(address) => {
@@ -1015,9 +1019,25 @@ impl Frame<'_, '_> {
     /// Acquire the retained reference of one element in a value scope, which
     /// ends with the call even when the callee is cancelled, and return the
     /// formal's parameters: its address and, for a handle, its marker.
+    /// The marker parameter of the record formal holding native value
+    /// `value`, forwarded to a formal that takes one.
+    fn record_ref_marker(&self, value: usize) -> Result<String, String> {
+        self.formal_function()
+            .and_then(|function| {
+                function
+                    .formals
+                    .iter()
+                    .position(|formal| formal.record_marker && formal.native_value == Some(value))
+            })
+            .map(super::super::model::handle_marker_param)
+            .ok_or_else(|| "a waited record `ref` actual has no change marker".to_owned())
+    }
+
+    /// `watched`: the callee follows the record through its marker.
     fn element_reference_binding(
         &mut self,
         reference: &crate::sim::ir::IrElementRef,
+        watched: bool,
     ) -> Result<Vec<String>, String> {
         let mut acquire = match &reference.root {
             IrElementRoot::Leaves { index, leaves } => {
@@ -1073,6 +1093,9 @@ impl Frame<'_, '_> {
                 let mut parameters = vec![value.clone()];
                 for companion in &reference.companions {
                     parameters.push(self.companion_mirror(&acquire, &value, companion)?);
+                }
+                if watched {
+                    parameters.push(format!("llg_native_ref_watch({acquire})"));
                 }
                 parameters
             }

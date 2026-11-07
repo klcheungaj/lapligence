@@ -1,0 +1,23 @@
+init 3 4
+dflt [] 0.000000 0 xxxx 1
+sel 2 2.500000 s 0.100000 9 6 t 1.250000
+sel2 5 mm 8.500000 11 12
+copy 2 2.500000 s 9 x
+cmp 0 1 0
+cond 3.000000 z
+call 3 3.000000 m 3 3 rs 0.500000 mm 2.500000
+ref 4 4.000000 m! 1 103 3
+in 9
+out 5 7.500000 o
+wakes 111 wa 1
+wakes 222 wa 10
+nba 4 4.500000 nb 44
+port 11 4.500000 w
+foreach 14.000000 wnb
+meth 14 16
+queue 1.750000 qq 5 9.500000
+class 6.250000 ko 6.250000
+whole 9.500000 w 1
+pat pt 2.500000 2 e 0.500000 1
+mb 5 1
+p 0

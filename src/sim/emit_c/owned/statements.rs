@@ -152,7 +152,18 @@ impl Frame<'_, '_> {
                 self.copy_native_companions(*dst, *src)?;
             }
             IrStmt::FixedValueAssign { dst, src, nba } => {
-                let source = self.fixed_value(src, dst.array, dst.total)?;
+                // Between two whole arrays nothing runs after the source is
+                // read, and the copy keeps its own image where it needs one.
+                let source = match src.as_ref() {
+                    IrFixedValue::Array(view)
+                        if view.array != dst.array
+                            && self.whole_fixed_view(view)
+                            && self.whole_fixed_view(dst) =>
+                    {
+                        self.fixed_view(view)?
+                    }
+                    _ => self.fixed_value(src, dst.array, dst.total)?,
+                };
                 let target = self.fixed_view(dst)?;
                 self.line(format!(
                     "llg_fixed_array_copy({target}, {source}, {}, {});",

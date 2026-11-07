@@ -179,7 +179,7 @@ fn waited_record_refs_to_subroutine_records_are_explicit() {
     sim_cli::reject_case(
         SUITE,
         "neg_record_ref_wait_actual",
-        "task `worker` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record (SIM-009) at ",
+        "task `worker` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record or an element of an array or container (SIM-009) at ",
     );
 }
 

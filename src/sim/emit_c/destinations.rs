@@ -146,6 +146,11 @@ const OPERATIONS: &[(&str, &str, &[Param])] = &[
         "llg_fixed_array_compare_to",
         &[S, S, S, S],
     ),
+    (
+        "llg_real_column_compare",
+        "llg_real_column_compare_to",
+        &[S, S, S, S, S],
+    ),
     ("llg_dense_cells_image", "llg_dense_cells_image_to", &[S, S]),
     (
         "llg_fixed_array_cells_image",
@@ -310,6 +315,11 @@ const STRING_OPERATIONS: &[(&str, &str, &[Param])] = &[
         "llg_dyn_value_get_string",
         "llg_dyn_value_get_string_to",
         &[S, P],
+    ),
+    (
+        "llg_dyn_value_string_at",
+        "llg_dyn_value_string_at_to",
+        &[S, S],
     ),
     (
         "llg_dyn_value_get_nested_string",

@@ -339,9 +339,12 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
 pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<String, String> {
     Ok(match operation {
         IrContainerStmt::SetValue { .. }
+        | IrContainerStmt::SetElementItems { .. }
         | IrContainerStmt::GetValue { .. }
         | IrContainerStmt::ValueItemToContainer { .. }
         | IrContainerStmt::ContainerToValueItem { .. }
+        | IrContainerStmt::FixedToValueItem { .. }
+        | IrContainerStmt::RealColumnAssign { .. }
         | IrContainerStmt::BindElement { .. }
         | IrContainerStmt::TouchContents(_)
         | IrContainerStmt::CopyRange { .. }
@@ -349,6 +352,9 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::Nonblocking { .. }
         | IrContainerStmt::NbaLocate { .. }
         | IrContainerStmt::ContainerNonblocking { .. }
+        | IrContainerStmt::NbaHoldOpen(_)
+        | IrContainerStmt::NbaHoldClose
+        | IrContainerStmt::NbaHoldRelease { .. }
         | IrContainerStmt::NbaLocateEnd
         | IrContainerStmt::Declare(_)
         | IrContainerStmt::SharedDeclare(_)

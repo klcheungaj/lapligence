@@ -938,7 +938,7 @@ impl<'a> Codegen<'a> {
             };
             let receiver = self.class_method_receiver(scope_path, h)?;
             let mut value = self.lower_func_call_expr(scope_path, h, &name, callee)?;
-            if let IrExprKind::CallFn(call) = &mut value.kind {
+            if let Some(call) = Self::record_staged_call_mut(&mut value) {
                 call.receiver = receiver;
                 call.virtual_dispatch = self.class_method_virtual_dispatch(h);
             }
@@ -1215,7 +1215,8 @@ impl<'a> Codegen<'a> {
                         self.nested_associative_select_error(*base, scope_path)
                             .unwrap_or_else(|| {
                                 format!(
-                                    "cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
+                                    "{}: cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
+                                    self.source_location(h),
                                     self.node(*base).name,
                                     self.kind(*base)
                                 )
@@ -1240,31 +1241,10 @@ impl<'a> Codegen<'a> {
                     if let Some(guard) = self.record_select_guard(h)? {
                         // A member array of a column-layout tagged union
                         // reads only while its member is active.
-                        let (tag, guard) = (guard.tag_read, guard.guard);
-                        let tag_width = tag.width;
-                        return Ok(IrExpr::new(
-                            IrExprKind::TaggedSelect {
-                                base: Box::new(IrExpr::new(
-                                    IrExprKind::Concat {
-                                        parts: vec![tag, element],
-                                    },
-                                    tag_width + ai.elem_width,
-                                    false,
-                                    None,
-                                )),
-                                steps: vec![crate::sim::ir::IrTaggedSelectStep {
-                                    selection: crate::sim::ir::IrPackedSelect {
-                                        base: lhs_integer_expr(0),
-                                        width: ai.elem_width,
-                                    },
-                                    two_state: false,
-                                    guard: Some(guard),
-                                }],
-                                location: self.source_location(h),
-                            },
-                            ai.elem_width,
-                            ai.signed,
-                            None,
+                        return Ok(self.record_guarded_element_read(
+                            &guard,
+                            element,
+                            self.source_location(h),
                         ));
                     }
                     return Ok(element);
@@ -1664,7 +1644,7 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 let mut value = self.lower_func_call_expr(scope_path, h, name, *callee)?;
-                if let IrExprKind::CallFn(call) = &mut value.kind {
+                if let Some(call) = Self::record_staged_call_mut(&mut value) {
                     call.virtual_dispatch = self.class_method_virtual_dispatch(h);
                 }
                 Ok(value)
@@ -1767,6 +1747,30 @@ impl<'a> Codegen<'a> {
                 // to their concrete owned storage identity.
                 if let Some(info) = self.hier_path_signal(h) {
                     return self.signal_read_expr(info);
+                }
+                if let Some(value) = self.column_record_storage(h) {
+                    return self.record_image(scope_path, &value);
+                }
+                // A whole member kept as leaves, compared with a column.
+                if let Some(selection) = self.resolve_unpacked_aggregate(h) {
+                    let mut parts = Vec::new();
+                    for leaf in selection
+                        .storage
+                        .leaves
+                        .iter()
+                        .filter(|leaf| leaf.path.starts_with(&selection.prefix))
+                    {
+                        parts.push(self.aggregate_leaf_read(leaf)?);
+                    }
+                    let width = parts.iter().map(|part| part.width).sum();
+                    if !parts.iter().any(IrExpr::is_real) {
+                        return Ok(IrExpr::new(
+                            IrExprKind::Concat { parts },
+                            width,
+                            false,
+                            None,
+                        ));
+                    }
                 }
                 Err(format!(
                     "hierarchical reference `{}` is not supported (in `{scope_path}`): {:?}",
@@ -2068,6 +2072,9 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 return enum_value_expr(value.as_ref(), &self.node(t).name);
+            }
+            if let Some(value) = self.column_record_storage(r) {
+                return self.record_image(scope_path, &value);
             }
             return Err(format!(
                 "cannot resolve bound expression reference `{}` in `{scope_path}`",

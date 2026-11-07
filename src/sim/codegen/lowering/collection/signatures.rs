@@ -129,6 +129,7 @@ impl<'a> Codegen<'a> {
                                     chandle: is_handle_kind(&ty.kind),
                                     event: ty.kind == "event",
                                     event_marker: false,
+                                    record_marker: false,
                                     string: ty.kind == "string",
                                     shared_local: None,
                                     shared_observed: false,
@@ -142,8 +143,18 @@ impl<'a> Codegen<'a> {
                 // column: the first takes the formal's own slot, the rest
                 // follow the declared formals, before any trailing result.
                 let mut record_columns = Vec::new();
-                for ((io, _), formal) in formals.iter().zip(&formals_ir) {
-                    for array in self.record_formal_columns(*io).into_iter().skip(1) {
+                let mut foreign_columns = Vec::with_capacity(formals.len());
+                for (position, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
+                    let arrays = self.record_formal_columns(*io);
+                    let first = formals_ir.len() + record_columns.len();
+                    foreign_columns.push(if arrays.is_empty() {
+                        Vec::new()
+                    } else {
+                        std::iter::once(position)
+                            .chain(first..first + arrays.len() - 1)
+                            .collect()
+                    });
+                    for array in arrays.into_iter().skip(1) {
                         let mut column = formal.clone();
                         column.fixed_array = Some(array);
                         record_columns.push(column);
@@ -151,12 +162,6 @@ impl<'a> Codegen<'a> {
                     // Real, string and chandle members travel in one native
                     // value after the columns (SIM-003 transport).
                     if let Some(value) = self.record_formal_native(*io) {
-                        if formal.is_ref() {
-                            return Err(format!(
-                                "ref formal `{}` of a column-layout record with real, string or chandle members is not supported",
-                                self.node(*io).name
-                            ));
-                        }
                         let mut column = formal.clone();
                         column.fixed_array = None;
                         column.native_value = Some(value);
@@ -164,13 +169,6 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 let export_name = self.db.dpi_export(*c).map(str::to_owned);
-                if (dpi.is_some() || export_name.is_some()) && !record_columns.is_empty() {
-                    return Err(format!(
-                        "DPI-C {} `{}` cannot pass a column-layout record",
-                        if dpi.is_some() { "import" } else { "export" },
-                        self.node(*c).name
-                    ));
-                }
                 formals_ir.extend(record_columns);
                 let mut dpi_types = None;
                 let dpi_export = match &export_name {
@@ -497,7 +495,9 @@ impl<'a> Codegen<'a> {
                                 })
                         })
                         .collect();
-                    export.with_storage(storage)
+                    export
+                        .with_storage(storage)
+                        .with_record_columns(foreign_columns.clone())
                 });
                 let c_name =
                     self.func_names.get(c).cloned().ok_or_else(|| {
@@ -515,6 +515,7 @@ impl<'a> Codegen<'a> {
                         ret,
                     )
                     .with_scope(dpi_scope)
+                    .with_record_columns(foreign_columns.clone())
                 });
                 // An open-array import is a template: each call selects a
                 // specialization for its actuals (`dpi_open_callee`). So is a
@@ -529,7 +530,9 @@ impl<'a> Codegen<'a> {
                 let ir = self.model.funcs.len();
                 self.model.funcs.push(crate::sim::ir::IrFunc {
                     origin: self.origin(*c),
-                    return_default: self.fixed_default_literal(*c),
+                    // A column-layout result is trailing outputs: no value
+                    // returns, so there is no default for one.
+                    return_default: self.fixed_default_literal(*c).filter(|_| ret.is_some()),
                     return_signal: None,
                     c_name,
                     diagnostic_name: self.func_labels.get(c).cloned(),

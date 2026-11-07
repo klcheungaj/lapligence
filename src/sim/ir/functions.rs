@@ -67,6 +67,11 @@ pub struct IrFormal {
     /// when a class event property is bound to a `ref` formal and some wait
     /// reads such a property's identity; no other model pays for it.
     pub(in crate::sim) event_marker: bool,
+    /// For a native record `ref` formal a task waits on, bound to an element:
+    /// a `sv4_t* d{idx}` parameter follows the value and its companions,
+    /// naming the change marker of the element reference. It toggles when
+    /// the element's container changes, and the wait re-reads the record.
+    pub(in crate::sim) record_marker: bool,
     /// Native arbitrary-byte string formal. String formals use
     /// `llg_string_t` values/pointers rather than packed storage.
     pub(in crate::sim) string: bool,
@@ -105,6 +110,8 @@ pub struct IrDpiImport {
     /// Index into [`super::IrModel::dpi_scopes`] of the instantiated scope
     /// holding the declaration: a context call runs in it (SV 35.5.3).
     pub(in crate::sim) scope: Option<usize>,
+    /// See [`IrDpiImport::with_record_columns`].
+    pub(in crate::sim) record_columns: Vec<Vec<usize>>,
 }
 
 impl IrDpiImport {
@@ -122,7 +129,22 @@ impl IrDpiImport {
             formals,
             ret,
             scope: None,
+            record_columns: Vec::new(),
         }
+    }
+
+    /// The same import with, for each declared formal of a column-layout
+    /// record, the positions in [`IrFunc::formals`] of its columns in member
+    /// order (empty for any other formal). The foreign value is the record's
+    /// payload, so one foreign parameter stands for all of them.
+    pub fn with_record_columns(mut self, columns: Vec<Vec<usize>>) -> Self {
+        self.record_columns = columns;
+        self
+    }
+
+    /// Column positions of declared formal `index`.
+    pub fn record_columns(&self, index: usize) -> &[usize] {
+        self.record_columns.get(index).map_or(&[], Vec::as_slice)
     }
 
     /// The same import declared in DPI scope `scope`.
@@ -183,6 +205,8 @@ pub struct IrDpiExport {
     /// of its persistent formal storage: such a subroutine reads inouts from
     /// and writes outputs to that storage, which its callers fill and read.
     pub(in crate::sim) storage: Vec<Option<String>>,
+    /// See [`IrDpiImport::with_record_columns`].
+    pub(in crate::sim) record_columns: Vec<Vec<usize>>,
 }
 
 impl IrDpiExport {
@@ -198,7 +222,20 @@ impl IrDpiExport {
             ret,
             scope,
             storage: Vec::new(),
+            record_columns: Vec::new(),
         }
+    }
+
+    /// The same export with the column positions of each declared formal,
+    /// see [`IrDpiImport::with_record_columns`].
+    pub fn with_record_columns(mut self, columns: Vec<Vec<usize>>) -> Self {
+        self.record_columns = columns;
+        self
+    }
+
+    /// Column positions of declared formal `index`.
+    pub fn record_columns(&self, index: usize) -> &[usize] {
+        self.record_columns.get(index).map_or(&[], Vec::as_slice)
     }
 
     /// The same export with the persistent storage of each formal.
@@ -354,6 +391,7 @@ impl IrFormal {
             chandle: false,
             event: false,
             event_marker: false,
+            record_marker: false,
             string: false,
             shared_local: None,
             shared_observed: false,

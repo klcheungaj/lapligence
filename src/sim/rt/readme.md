@@ -21,7 +21,12 @@ Fixed integral variable arrays above the dense threshold use
 `scheduler/fixed_arrays.c`: one owned default, indexed stable exceptions and a
 contents dependency. Reads borrow defaults without allocating cells. Whole copies
 capture only exceptions plus the default; an NBA owns one descriptor snapshot.
-Selected observers materialize stable cells. Model arrays are destroyed after
+Selected observers materialize stable cells. Cells live in blocks, with no
+allocation or links of their own: up to 4,096 cells an array is paged, so a
+cell is two loads away and a page holds 64 positions, and a larger array fills
+blocks of hashed cells in order. Only blocks of arrays with a contents marker or
+sampled cells are filed by address, and a side table holds inertial sites.
+Model arrays are destroyed after
 scheduler cleanup; lexical descriptors are registered objects drained on scope
 exit or cancellation. All payload operations use the public value facade.
 
@@ -140,10 +145,12 @@ selected write over the same range keeps its node, and a same-width unchanged
 driver returns before any resize. Publication snapshots and resolved net
 values live in private value scopes (`value_scope_begin_private`): they are
 never write, NBA or clocking targets, so they skip the address index and
-clocking history and allocate node and cells together. Pending inertial
-updates form a doubly linked list sorted by time (FIFO among equal times);
-insertion searches from the tail and the due-now scans stop at the first later
-time.
+clocking history and allocate node and cells together. A change marker holding
+a known bit flips in place and publishes two permanent values, without
+snapshots, because a marker can flip on every cell or string write. Pending
+inertial updates form a doubly linked list sorted by time (FIFO among equal
+times); insertion searches from the tail and the due-now scans stop at the
+first later time.
 
 Stop/resume retains a live context; close releases observers/queues before model
 storage. Runtime ticks are integer design-precision units; lowering supplies

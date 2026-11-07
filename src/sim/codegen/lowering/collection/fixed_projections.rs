@@ -548,6 +548,89 @@ impl Codegen<'_> {
         Ok(Some(projection))
     }
 
+    /// An aggregate element of a column-layout record member array
+    /// (`r.cells[i]`) holds its whole value in one column cell, which roots
+    /// the members selected from it. Other elements have no projection.
+    fn record_element_projection(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<Projection>, String> {
+        let Some((column, indices)) = self.record_column_select(node) else {
+            return Ok(None);
+        };
+        let (array, width, signed, dims) = (
+            column.ir,
+            column.elem_width,
+            column.signed,
+            column.dims.clone(),
+        );
+        let indices = indices.to_vec();
+        let Some(descriptor) = self.query_descriptor(node).cloned().filter(|descriptor| {
+            indices.len() == dims.len() && matches!(descriptor.shape, TypeShape::Aggregate(_))
+        }) else {
+            return Ok(None);
+        };
+        let known_valid = indices.iter().zip(&dims).all(|(index, dim)| {
+            let (left, right) = (i128::from(dim.0), i128::from(dim.1));
+            self.eval_bound_i128(*index)
+                .is_ok_and(|index| (left.min(right)..=left.max(right)).contains(&index))
+        });
+        let indices = indices
+            .iter()
+            .map(|index| self.lower_expr(path, *index))
+            .collect::<Result<Vec<_>, _>>()?;
+        let arr = self.reference_array(array);
+        let element = IrExpr::new(
+            IrExprKind::ArrayRead {
+                arr,
+                indices: indices.clone(),
+                elem_sel: IrElemSel::Whole,
+            },
+            width,
+            signed,
+            None,
+        );
+        let target = IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel: IrElemSel::Whole,
+        };
+        let (read, target) = match self.record_select_guard(node)? {
+            Some(guard) => {
+                let location = self.source_location(node);
+                let read = self.record_guarded_element_read(&guard, element, location.clone());
+                (
+                    read,
+                    self.record_guarded_element_lhs(
+                        guard,
+                        target,
+                        width,
+                        Vec::new(),
+                        signed,
+                        location,
+                    ),
+                )
+            }
+            None => (element, target),
+        };
+        // A read at an invalid index yields each leaf's default, whatever the
+        // cell reads as (SV 7.4.6).
+        let read = if !known_valid && !two_state(&descriptor) && has_two_state_leaf(&descriptor) {
+            self.convert_fixed_descriptor_payload(&descriptor, read)?
+        } else {
+            read
+        };
+        Ok(Some(Projection {
+            root: FixedRoot::Cell { read, target },
+            signed: descriptor.info.signed,
+            descriptor,
+            steps: Vec::new(),
+            element_states: Vec::new(),
+            ref_legal: true,
+        }))
+    }
+
     /// The whole column-layout record (or tagged union) a member path is
     /// rooted at, with the member path below it.
     fn record_root_value(&self, node: NodeId) -> Option<(RecordValue, Vec<AggregatePathPart>)> {
@@ -565,7 +648,11 @@ impl Codegen<'_> {
     }
 
     fn record_value_of_root(&self, root: NodeId) -> Option<RecordValue> {
-        if let Some(value) = self.activation_records.get(&root) {
+        if let Some(value) = self
+            .activation_records
+            .get(&root)
+            .filter(|_| !self.record_ref_aliases.contains_key(&root))
+        {
             return Some(value.clone());
         }
         let aggregate = self
@@ -731,6 +818,43 @@ impl Codegen<'_> {
     /// tagged union member: the tag cell sits above the selected element,
     /// as in the packed tagged layout, so one guarded step precedes the
     /// element's own packed steps.
+    /// The read of a column element that exists only while the member of a
+    /// tagged union holding it is active.
+    pub(in super::super) fn record_guarded_element_read(
+        &self,
+        guard: &RecordSelectGuard,
+        element: IrExpr,
+        location: String,
+    ) -> IrExpr {
+        let (width, signed) = (element.width, element.signed);
+        let tag = guard.tag_read.clone();
+        let tag_width = tag.width;
+        IrExpr::new(
+            IrExprKind::TaggedSelect {
+                base: Box::new(IrExpr::new(
+                    IrExprKind::Concat {
+                        parts: vec![tag, element],
+                    },
+                    tag_width + width,
+                    false,
+                    None,
+                )),
+                steps: vec![crate::sim::ir::IrTaggedSelectStep {
+                    selection: IrPackedSelect {
+                        base: lhs_integer_expr(0),
+                        width,
+                    },
+                    two_state: false,
+                    guard: Some(guard.guard.clone()),
+                }],
+                location,
+            },
+            width,
+            signed,
+            None,
+        )
+    }
+
     pub(in super::super) fn record_guarded_element_lhs(
         &self,
         guard: RecordSelectGuard,
@@ -838,7 +962,7 @@ impl Codegen<'_> {
         // An element of a column-layout record member array is read from
         // its column, never from another projection of the record.
         if self.record_column_select(node).is_some() {
-            return Ok(None);
+            return self.record_element_projection(path, node);
         }
         if let Some(root) = self.fixed_root(path, node)? {
             return Ok(Some(root));

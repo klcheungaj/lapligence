@@ -24,6 +24,18 @@
 //! grows with the elements and calls of each site, bounded by
 //! `NATIVE_RECORD_SELECT_LIMIT`.
 //!
+//! A column-form record formal bound to one image inside a column cell
+//! (`t(m.rows[i])`, for any index and any owner of the column) has no columns
+//! to hand over. Its specialization takes the formal as a packed `ref` of the
+//! image instead ([`RecordRefBinding::cell`]), so one body serves every cell
+//! and every write reaches the cell at once.
+//!
+//! A task waiting on a formal bound to any other element, or to a selection
+//! too large for that tree, keeps the formal as a native record and takes the
+//! element reference's marker (`Codegen::task_specialization_watching`); the
+//! wait re-reads the record, so one body serves every element and a change of
+//! another element ends no wait.
+//!
 //! A class method keeps its receiver in a specialization. A virtual call
 //! specializes the whole override family under a fresh virtual slot, so the
 //! ordinary dispatchers serve it and nothing changes for unbound calls. A
@@ -324,15 +336,32 @@ impl Codegen<'_> {
         if !self.is_ref_formal(formal) {
             return None;
         }
-        let layout = self.native_layouts.get(&formal)?;
+        if self.record_ref_cell(formal, actual) {
+            return Some(RecordRefBinding {
+                formal,
+                root: formal,
+                prefix: Vec::new(),
+                cell: true,
+            });
+        }
+        // A column formal with native members has no native layout: its
+        // columns would alias through addresses, its native value cannot.
+        // Nor can a wait follow an address, so a waited formal binds too.
+        let columns = self.record_formal_native(formal).is_some()
+            || (self.record_declaration(formal) && self.record_ref_waited(formal));
+        let descriptor = if columns {
+            &self.activation_records.get(&formal)?.descriptor
+        } else {
+            &self.native_layouts.get(&formal)?.descriptor
+        };
         let source = self.p30_unwrap_cast(actual);
         let (root, prefix) = match self.record_ref_pins.get(&source) {
             Some(RecordRefPin::Element { root, prefix }) => (*root, prefix.clone()),
             Some(RecordRefPin::Default(_)) => return None,
             None if matches!(self.native_path_of(source), Ok(None)) => {
                 let selection = self.resolve_unpacked_aggregate(source)?;
-                if selection.storage.columns
-                    || !same_record_type(&layout.descriptor, &selection.descriptor)
+                if selection.storage.columns != columns
+                    || !same_record_type(descriptor, &selection.descriptor)
                 {
                     return None;
                 }
@@ -352,7 +381,120 @@ impl Codegen<'_> {
             formal,
             root,
             prefix,
+            cell: false,
         })
+    }
+
+    /// Whether the task owning column-form `ref` formal `formal` waits on it.
+    fn record_ref_waited(&self, formal: NodeId) -> bool {
+        let Some(task) = self.enclosing_func_task(formal) else {
+            return false;
+        };
+        let inst = self.callable_environment(task).unwrap_or(task);
+        let Some(position) = self
+            .func_formals(task)
+            .iter()
+            .position(|(declared, _)| *declared == formal)
+        else {
+            return false;
+        };
+        self.call_shape(task, inst).static_refs.contains(&position)
+    }
+
+    /// Whether `actual` of a `ref` formal of the column form has no columns
+    /// to hand over: one record image inside a column cell or a fixed array,
+    /// or a formal already holding such an image.
+    fn record_ref_cell(&self, formal: NodeId, actual: NodeId) -> bool {
+        let source = self.p30_unwrap_cast(actual);
+        self.activation_records.contains_key(&formal)
+            && self.column_record_storage(source).is_none()
+            && !self.record_ref_pins.contains_key(&source)
+    }
+
+    /// The reference to the image a [`RecordRefBinding::cell`] formal takes;
+    /// `actual` is evaluated once, at the call. A record with no packed image
+    /// is an element holding native members, reached by its address.
+    pub(in crate::sim::codegen::lowering) fn record_ref_cell_argument(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        actual: NodeId,
+    ) -> Result<IrCallArg, String> {
+        let Some(width) = self.fixed_value_width(formal) else {
+            let layout = self.record_ref_native(formal)?;
+            if let Ok(Some((value, prefix))) = self.native_path_of(self.p30_unwrap_cast(actual)) {
+                if prefix.is_empty() {
+                    return Ok(IrCallArg::NativeValue(value));
+                }
+            }
+            return self.native_ref_operand(path, formal, &layout, actual);
+        };
+        let descriptor = self
+            .query_descriptor(formal)
+            .ok_or("record `ref` formal has no type")?;
+        let (signed, two_state) = (descriptor.info.signed, self.db.is_two_state_type(formal));
+        let (const_ref, ref_static) = match self.kind(formal) {
+            NodeKind::FuncArg {
+                const_ref,
+                ref_static,
+                ..
+            } => (*const_ref, *ref_static),
+            _ => (false, false),
+        };
+        self.lower_ref_arg(
+            path,
+            &BoundArg {
+                width,
+                signed,
+                two_state,
+                real: false,
+                shortreal: false,
+                string: false,
+                expr: actual,
+                is_default: false,
+                is_event: false,
+            },
+            const_ref,
+            ref_static,
+        )
+    }
+
+    /// The native layout of a column-form formal bound to an element holding
+    /// native members.
+    fn record_ref_native(&mut self, formal: NodeId) -> Result<NativeLayout, String> {
+        if let Some(layout) = self.record_ref_native_layouts.get(&formal) {
+            return Ok(layout.clone());
+        }
+        self.record_ref_natives.insert(formal);
+        let layout = self.native_layout(formal);
+        self.record_ref_natives.remove(&formal);
+        self.native_layouts.remove(&formal);
+        let layout = layout?.ok_or_else(|| {
+            format!(
+                "record `ref` formal `{}` has neither a packed image nor a native layout",
+                self.node(formal).name
+            )
+        })?;
+        self.record_ref_native_layouts
+            .insert(formal, layout.clone());
+        Ok(layout)
+    }
+
+    /// The activation value of a native-bound cell formal in one instance.
+    pub(in crate::sim::codegen::lowering) fn record_ref_native_value(
+        &mut self,
+        inst: NodeId,
+        formal: NodeId,
+    ) -> Result<usize, String> {
+        let layout = self.record_ref_native(formal)?;
+        self.native_layouts.insert(formal, layout);
+        self.record_ref_natives.insert(formal);
+        let value = self.native_storage_for(inst, formal, true);
+        self.record_ref_natives.remove(&formal);
+        self.native_layouts.remove(&formal);
+        let value = value?.ok_or("record `ref` formal has no native storage")?;
+        self.native_value_layouts.insert(value, formal);
+        Ok(value)
     }
 
     /// Record bindings of every native record `ref` formal of one call.
@@ -389,9 +531,17 @@ impl Codegen<'_> {
             return self.dpi_open_callee(template, formals, bound);
         }
         if dispatch == RecordRefDispatch::Virtual {
-            return self.record_ref_family(function, records);
+            let watched = if self.any_override_waits_on_record_ref(function, inst) {
+                let every = self.native_record_formals(formals);
+                self.unbound_record_formals(formals, &every, &records)
+            } else {
+                Vec::new()
+            };
+            return self.record_ref_family(function, records, watched);
         }
-        self.task_specialization(function, inst, Vec::new(), records)
+        let waited = self.call_shape(function, inst).static_refs;
+        let watched = self.unbound_record_formals(formals, &waited, &records);
+        self.task_specialization_watching(function, inst, Vec::new(), records, watched)
     }
 
     /// How the call node `call` reaches its method.
@@ -502,7 +652,7 @@ impl Codegen<'_> {
                             self.node(function).name
                         )
                     })?;
-                Ok((position, binding.root, binding.prefix.clone()))
+                Ok((position, binding.root, binding.prefix.clone(), binding.cell))
             })
             .collect()
     }
@@ -516,7 +666,7 @@ impl Codegen<'_> {
         let formals = self.func_formals(function);
         positions
             .iter()
-            .map(|(position, root, prefix)| {
+            .map(|(position, root, prefix, cell)| {
                 let (formal, _) = formals.get(*position).ok_or_else(|| {
                     format!(
                         "override `{}` has no formal {position}",
@@ -525,8 +675,9 @@ impl Codegen<'_> {
                 })?;
                 Ok(RecordRefBinding {
                     formal: *formal,
-                    root: *root,
+                    root: if *cell { *formal } else { *root },
                     prefix: prefix.clone(),
+                    cell: *cell,
                 })
             })
             .collect()
@@ -536,18 +687,21 @@ impl Codegen<'_> {
     /// of record bindings, joined by a fresh virtual slot, so that a call
     /// dispatches on the receiver exactly as the unbound family does and
     /// code grows with distinct actuals. Overrides name their own formals,
-    /// so a binding carries over by formal position.
-    fn record_ref_family(
+    /// so a binding carries over by formal position, and so do the formals
+    /// at `watched`, which keep their native values and take a marker.
+    pub(in crate::sim::codegen::lowering) fn record_ref_family(
         &mut self,
         function: NodeId,
         records: Vec<RecordRefBinding>,
+        watched: Vec<usize>,
     ) -> Result<usize, String> {
         let slot = *self
             .method_virtual_slots
             .get(&function)
             .ok_or_else(|| format!("method `{}` has no virtual slot", self.node(function).name))?;
         let positions = self.record_ref_positions(function, &records)?;
-        if let Some(family) = self.record_ref_families.get(&(slot, positions.clone())) {
+        let key = (slot, positions.clone(), watched.clone());
+        if let Some(family) = self.record_ref_families.get(&key) {
             if let Some(index) = family.get(&function) {
                 return Ok(*index);
             }
@@ -563,7 +717,13 @@ impl Codegen<'_> {
                     continue;
                 }
                 let bindings = self.record_ref_rebind(method, &positions)?;
-                let index = self.task_specialization(method, class, Vec::new(), bindings)?;
+                let index = self.task_specialization_watching(
+                    method,
+                    class,
+                    Vec::new(),
+                    bindings,
+                    watched.clone(),
+                )?;
                 self.model.funcs[index].virtual_slot = Some(family_slot);
                 family.insert(method, index);
             }
@@ -574,7 +734,7 @@ impl Codegen<'_> {
                 self.node(function).name
             )
         })?;
-        self.record_ref_families.insert((slot, positions), family);
+        self.record_ref_families.insert(key, family);
         Ok(index)
     }
 
@@ -583,8 +743,23 @@ impl Codegen<'_> {
     pub(in crate::sim::codegen::lowering) fn bind_record_refs(
         &mut self,
         records: &[RecordRefBinding],
+        inst: NodeId,
     ) -> Result<(), String> {
         for binding in records {
+            if binding.cell {
+                // The body sees an ordinary `ref` of the record image, or of
+                // a native element.
+                if let Some(value) = self.activation_records.remove(&binding.formal) {
+                    self.record_ref_cells.insert(binding.formal, value);
+                }
+                if self.fixed_value_width(binding.formal).is_none() {
+                    let value = self.record_ref_native_value(inst, binding.formal)?;
+                    let layout = self.record_ref_native(binding.formal)?;
+                    self.native_layouts.insert(binding.formal, layout);
+                    self.native_roots.insert(binding.formal, value);
+                }
+                continue;
+            }
             let view = self.record_ref_view(binding)?;
             self.native_roots.remove(&binding.formal);
             self.unpacked_aggregates.insert(binding.formal, view);
@@ -599,6 +774,13 @@ impl Codegen<'_> {
         records: &[RecordRefBinding],
     ) {
         for binding in records {
+            if binding.cell {
+                if let Some(value) = self.record_ref_cells.remove(&binding.formal) {
+                    self.activation_records.insert(binding.formal, value);
+                }
+                self.native_layouts.remove(&binding.formal);
+                continue;
+            }
             self.unpacked_aggregates.remove(&binding.formal);
             self.record_ref_aliases.remove(&binding.formal);
         }

@@ -8,7 +8,8 @@
 //! dropped (SV 7.4.6).
 //!
 //! A module native record keeps each element of a member array as its own
-//! object or signal, with its own change marker, so a run-time index selects
+//! object or signal, with its own change marker, unless the record is stored
+//! as columns (`record_columns/choice.rs`). A run-time index then selects
 //! one leaf by comparing the index with every declared index; an index that
 //! matches none (out of range, X or Z) reads the element default and writes
 //! nothing. Small arrays compare in a chain; above
@@ -101,14 +102,14 @@ impl NativeRecordShape {
 
 /// One step of a selection below a record root.
 #[derive(Clone)]
-enum SelectStep {
+pub(in crate::sim::codegen::lowering) enum SelectStep {
     Member(String),
     Constant(i32),
     Run(NodeId),
 }
 
 /// The storage a selection starts from.
-enum SelectRoot {
+pub(in crate::sim::codegen::lowering) enum SelectRoot {
     Value(usize),
     Element(ElementSelection),
     Module(NodeId),
@@ -199,7 +200,7 @@ fn match_leaf_path(path: &[AggregatePathPart], steps: &[SelectStep]) -> Option<V
 
 /// The zero-based flat position of constant `indices` in an array of
 /// `dimensions`, or `None` when one is out of range.
-fn constant_position(indices: &[i32], dimensions: &[(i32, i32)]) -> Option<u32> {
+pub(super) fn constant_position(indices: &[i32], dimensions: &[(i32, i32)]) -> Option<u32> {
     let mut position = 0u64;
     for (index, (left, right)) in indices.iter().zip(dimensions) {
         let (low, high) = (*left.min(right), *left.max(right));
@@ -288,7 +289,10 @@ impl Codegen<'_> {
 
     /// The root and steps of the selection `node`, however its frontend
     /// shape nests detached arrays, member paths and bit selects.
-    fn selected_steps(&self, node: NodeId) -> Option<(SelectRoot, Vec<SelectStep>)> {
+    pub(in crate::sim::codegen::lowering::collection) fn selected_steps(
+        &self,
+        node: NodeId,
+    ) -> Option<(SelectRoot, Vec<SelectStep>)> {
         let node = self.p30_unwrap_cast(node);
         if let Some(selection) = self.record_element_of(node) {
             return Some((SelectRoot::Element(selection), Vec::new()));
@@ -496,6 +500,10 @@ impl Codegen<'_> {
         if !steps.iter().any(|step| matches!(step, SelectStep::Run(_))) {
             return Ok(None);
         }
+        // A member column is one lookup at any size.
+        if self.record_column_select(leaf_node).is_some() {
+            return Ok(None);
+        }
         let mut indices = Vec::new();
         let (form, inside) = match root {
             SelectRoot::Value(value) => {
@@ -663,6 +671,10 @@ impl Codegen<'_> {
         let Some((select, base, index, trailing)) = self.member_select_parts(node)? else {
             return Ok(None);
         };
+        // A record element of a column is one cell, selected like any other.
+        if self.record_column_select(select).is_some() {
+            return Ok(None);
+        }
         let select_path = self.db.array_select_path(select);
         let value_root = match &select_path {
             Some((owner, members)) => self.native_roots.get(owner).map(|value| {
@@ -689,6 +701,17 @@ impl Codegen<'_> {
             }
             (None, _) => self.unpacked_path_for_expr(base),
         };
+        // An element of a member container is selected in place.
+        if let Some((root, prefix)) = &module_root {
+            if self.unpacked_aggregates.get(root).is_some_and(|storage| {
+                storage
+                    .leaves
+                    .iter()
+                    .any(|leaf| leaf.container.is_some() && leaf.path == *prefix)
+            }) {
+                return Ok(None);
+            }
+        }
         let (descriptor, prefix) = if let Some((value, prefix)) = &value_root {
             let layout = self.native_layout_of_value(*value)?;
             (layout.descriptor.clone(), prefix.clone())
@@ -1121,7 +1144,7 @@ impl Codegen<'_> {
                     _ => false,
                 };
                 let default = match values.first().map(|(_, value)| value) {
-                    Some(LeafValue::Container(_)) => {
+                    Some(LeafValue::Container(_) | LeafValue::Slot(..)) => {
                         return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
                     }
                     Some(LeafValue::String(_)) => {
@@ -1213,7 +1236,10 @@ impl Codegen<'_> {
                     .first()
                     .ok_or("member array selection has no elements")?;
                 match first {
-                    NativeEndpointLeaf::Container(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+                    NativeEndpointLeaf::Container(_)
+                    | NativeEndpointLeaf::Slot(..)
+                    | NativeEndpointLeaf::Column(_)
+                    | NativeEndpointLeaf::Cell(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
                     NativeEndpointLeaf::Value(_, leaf) => Ok(leaf.ty),
                     NativeEndpointLeaf::Module(leaf) => Ok(match leaf.object {
                         Some(object) => {

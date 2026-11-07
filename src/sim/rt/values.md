@@ -71,6 +71,10 @@ subroutine record alive through its root reference and addresses the selected
 leaf. A run-time index into a module-like record chooses among its stable leaf
 addresses at the call and needs no reference; an index selecting none binds a
 private default cell (`llg_native_ref_detached_string` and its siblings).
+A record reference a task waits on is watched (`llg_native_ref_watch`): any
+change of a container toggles its marker, since a notify carries no position, and
+the wait re-reads the record, so only that element's change ends it. Unwatched
+references cost nothing.
 A real element or member binds the same way (`llg_native_ref_real`); `real_write`
 reports each changed cell while such a reference lives, for one counter load
 otherwise, and the formal's waiters follow its `double`.
@@ -123,7 +127,11 @@ whole-value write in between cannot leave a dangling target; every packed,
 masked, real, string and handle commit path then runs unchanged. A whole
 queue, dynamic or associative array write (`llg_container_nba_after`,
 `is_container`) owns a deep copy of the source from issue to commit; under a
-locator it replaces the nested member slot.
+locator it replaces the nested member slot. An event-controlled write that
+has no per-leaf form (a container, a column, a descriptor array) builds its
+updates at issue into a hold (`llg_nba_hold_new`, between `llg_nba_hold_open`
+and `llg_nba_hold_close`), traced by the GC and freed at cleanup, and
+`llg_nba_hold_release` queues them when the control fires.
 `llg_value_item_{to,from}_{dyn,queue,dyn_value,queue_value}` move a record's
 queue or dynamic-array member between its nested slot in a value (null when
 empty) and a standalone container; they never notify the slot's owner.

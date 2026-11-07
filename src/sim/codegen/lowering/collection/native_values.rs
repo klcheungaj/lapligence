@@ -14,7 +14,9 @@ use crate::sim::ir::{
     is_class_handle_kind, native_item_count, validate_native_type, IrNativeAccessKind,
     IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue, IrObjectQuery,
 };
-use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrRefCompanion};
+use crate::sim::ir::{
+    IrElementRefKind, IrElementRoot, IrFixedValue, IrRefCompanion, IrValueItemRoot,
+};
 
 mod conditionals;
 mod elements;
@@ -65,6 +67,8 @@ pub(in super::super) enum LeafValue {
     Real(IrExpr),
     String(IrStringExpr),
     Chandle(IrChandleExpr),
+    /// A fixed member array in the slot of a native value.
+    Slot(usize, NativeFixedLeaf),
     /// A queue, dynamic or associative member's own storage (SIM-007),
     /// read in place: transfers copy it after every scalar leaf is captured.
     Container(usize),
@@ -81,7 +85,9 @@ impl LeafValue {
             LeafValue::Real(value) => IrNativeLeafExpr::Real(value),
             LeafValue::String(value) => IrNativeLeafExpr::String(value),
             LeafValue::Chandle(value) => IrNativeLeafExpr::Chandle(value),
-            LeafValue::Container(_) => return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+            LeafValue::Container(_) | LeafValue::Slot(..) => {
+                return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
+            }
         })
     }
 }
@@ -90,6 +96,7 @@ impl LeafValue {
 fn capture_leaf(value: LeafValue, name: String, captures: &mut Vec<IrStmt>) -> LeafValue {
     match value {
         LeafValue::Container(container) => LeafValue::Container(container),
+        LeafValue::Slot(value, items) => LeafValue::Slot(value, items),
         LeafValue::String(value) => {
             captures.push(IrStmt::DeclString {
                 name: name.clone(),
@@ -151,6 +158,10 @@ pub(super) fn leaf_ty(element: &IrContainerElement) -> Result<IrClassFieldType, 
 pub(super) struct NativeLeaves {
     pub(super) scalars: Vec<NativeLeaf>,
     pub(super) containers: Vec<NativeContainerLeaf>,
+    pub(super) fixed: Vec<NativeFixedLeaf>,
+    /// The record has the column form: its packed member arrays are columns,
+    /// which a transfer pairs with their items.
+    pub(super) columns: bool,
 }
 
 fn collect_native_leaves(
@@ -188,6 +199,29 @@ fn collect_native_leaves(
                 items.pop();
                 path.pop();
             }
+            Ok(())
+        }
+        // A member array of the minimum size that a record keeps in a
+        // container moves as one.
+        (
+            IrContainerElement::FixedArray {
+                dimensions,
+                element: item,
+            },
+            TypeShape::FixedArray { .. },
+        ) if !path.is_empty()
+            && !output.columns
+            && !super::record_columns::member_column(descriptor)
+            && native_item_count(element)
+                .is_some_and(|count| count >= crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS) =>
+        {
+            output.fixed.push(NativeFixedLeaf {
+                path: path.clone(),
+                items: items.clone(),
+                element: item.as_ref().clone(),
+                descriptor: descriptor.clone(),
+                dimensions: dimensions.clone(),
+            });
             Ok(())
         }
         (
@@ -391,6 +425,14 @@ fn has_builtin_class_leaf(descriptor: &TypeDescriptor) -> bool {
 impl Codegen<'_> {
     /// The native value type of a declaration, or `None` when the existing
     /// packed, fixed-array or leaf storage represents it.
+    /// Whether `node` is a non-static class property.
+    fn instance_property(&self, node: NodeId) -> bool {
+        self.node(node)
+            .parent()
+            .is_some_and(|parent| matches!(self.kind(parent), NodeKind::ClassDef))
+            && self.db.variable_lifetime(node) != VariableLifetime::Static
+    }
+
     pub(in super::super) fn native_value_type(&self, node: NodeId) -> Option<IrContainerElement> {
         let descriptor = self.query_descriptor(node)?;
         let TypeShape::Aggregate(layout) = &descriptor.shape else {
@@ -412,10 +454,13 @@ impl Codegen<'_> {
         // packed capacity they use column layout (RTL-101), not native
         // storage. So do records with a member array above the dense
         // threshold, whose real, string and chandle members travel in a
-        // native value of their own (RTL-101b).
+        // native value of their own (RTL-101b). An instance property has no
+        // column storage: each object holds one native value of any record.
         if layout.kind != AggregateKind::UnpackedStruct
             || Self::fixed_descriptor_width_bits(descriptor).is_some()
-            || super::record_columns::record_column_layout_type(descriptor)
+            || (self.record_column_layout(descriptor)
+                && !self.instance_property(node)
+                && !self.record_ref_natives.contains(&node))
         {
             return None;
         }
@@ -442,7 +487,10 @@ impl Codegen<'_> {
             .query_descriptor(node)
             .cloned()
             .ok_or("native declaration has no type descriptor")?;
-        let mut leaves = NativeLeaves::default();
+        let mut leaves = NativeLeaves {
+            columns: self.record_column_layout(&descriptor),
+            ..NativeLeaves::default()
+        };
         collect_native_root_leaves(&descriptor, &element, &mut leaves)
             .map_err(|error| format!("{error} (`{}`)", self.node(node).name))?;
         let ty = match self
@@ -462,6 +510,7 @@ impl Codegen<'_> {
             descriptor,
             leaves: leaves.scalars,
             containers: leaves.containers,
+            fixed: leaves.fixed,
         };
         self.native_layouts.insert(node, layout.clone());
         Ok(Some(layout))
@@ -469,7 +518,7 @@ impl Codegen<'_> {
 
     /// Storage for one native declaration of one instance. Automatic storage
     /// is a lexical activation; static storage persists for the model.
-    fn native_storage_for(
+    pub(in super::super) fn native_storage_for(
         &mut self,
         inst: NodeId,
         node: NodeId,
@@ -518,6 +567,34 @@ impl Codegen<'_> {
             .collect()
     }
 
+    /// A lexical container holding the items of `leaf` for one transfer. The
+    /// caller declares it.
+    pub(super) fn fixed_leaf_temporary(&mut self, leaf: &NativeFixedLeaf) -> usize {
+        let ir = self.model.containers.len();
+        self.model.containers.push(crate::sim::ir::IrContainer {
+            c_name: format!("S_llg_container_{ir}"),
+            element: leaf.element.clone(),
+            kind: IrContainerKind::Dynamic,
+            initial_size: super::fixed_values::fixed_array_cell_count(&leaf.dimensions).ok(),
+            activation: true,
+            class_field: None,
+            receiver: None,
+        });
+        match leaf.dimensions.as_slice() {
+            [range] => {
+                self.fixed_view_ranges.insert(ir, *range);
+            }
+            dimensions => {
+                self.fixed_view_dims.insert(ir, dimensions.to_vec());
+            }
+        }
+        if matches!(leaf.element, IrContainerElement::Aggregate { .. }) {
+            self.staged_container_types
+                .insert(ir, leaf.descriptor.clone());
+        }
+        ir
+    }
+
     /// The companion container of member `path` of native value `value`.
     pub(in super::super) fn native_companion(
         &self,
@@ -538,9 +615,13 @@ impl Codegen<'_> {
     /// A fresh lexical value of the same type as `node`, for caller-side
     /// transfers. The caller declares it with `NativeValueDeclare`.
     pub(in super::super) fn native_temporary(&mut self, node: NodeId) -> Result<usize, String> {
-        let layout = self
-            .native_layout(node)?
-            .ok_or("native temporary requires a native record type")?;
+        let layout = self.native_layout(node)?.ok_or_else(|| {
+            format!(
+                "{}: a whole record with a member array selected at a run-time index is not supported below {} cells",
+                self.source_location(node),
+                crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS
+            )
+        })?;
         let companions = self.native_companions(&layout, true);
         let index = self.model.native_values.len();
         self.model.native_values.push(IrNativeValue {
@@ -591,7 +672,8 @@ impl Codegen<'_> {
                     // Shared activation records and containers live in a
                     // fork frame.
                     && !self.shared_locals.contains(&target);
-                if activation && !self.node_is_within(target, branch) {
+                if activation && !self.is_ref_formal(target) && !self.node_is_within(target, branch)
+                {
                     return Some(self.node(target).name.clone());
                 }
             }
@@ -857,8 +939,10 @@ impl Codegen<'_> {
                         .ok()
                         .and_then(|index| i32::try_from(index).ok())
                         .ok_or_else(|| {
-                            "runtime index into a native record array member is not supported"
-                                .to_owned()
+                            format!(
+                                "{}: runtime index into a native record array member is not supported",
+                                self.source_location(*index)
+                            )
                         })?;
                     path.push(AggregatePathPart::Index(index));
                 }
@@ -884,6 +968,16 @@ impl Codegen<'_> {
         let layout = self.native_layout_of_value(value)?;
         if let Some(leaf) = layout.leaves.iter().find(|leaf| leaf.path == path) {
             return Ok(Some((value, leaf.clone())));
+        }
+        if let Some(leaf) = fixed_item_leaf(&layout.fixed, &path) {
+            return Ok(Some((value, leaf)));
+        }
+        if layout
+            .fixed
+            .iter()
+            .any(|leaf| leaf.path.starts_with(&path) || path.starts_with(&leaf.path))
+        {
+            return Ok(None);
         }
         if layout.leaves.iter().any(|leaf| {
             leaf.path.starts_with(&path)
@@ -1121,7 +1215,12 @@ impl Codegen<'_> {
             // struct or packed array member is one scalar leaf.
             let below =
                 |path: &[AggregatePathPart]| path.len() > prefix.len() && path.starts_with(&prefix);
+            let inside_fixed = |leaf: &NativeFixedLeaf| {
+                below(&leaf.path)
+                    || (prefix.len() > leaf.path.len() && prefix.starts_with(&leaf.path))
+            };
             if !layout.leaves.iter().any(|leaf| below(&leaf.path))
+                && !layout.fixed.iter().any(inside_fixed)
                 && !layout.containers.iter().any(|leaf| below(&leaf.path))
             {
                 return Ok(None);
@@ -1168,6 +1267,24 @@ impl Codegen<'_> {
                         ));
                     }
                 }
+                for leaf in &layout.fixed {
+                    if leaf.path.starts_with(prefix) {
+                        leaves.push((
+                            leaf.path[prefix.len()..].to_vec(),
+                            NativeEndpointLeaf::Slot(*value, Box::new(leaf.clone())),
+                        ));
+                    } else if prefix.starts_with(&leaf.path) {
+                        // A sub-record inside one item of the array.
+                        for item in fixed_leaf_items(leaf)? {
+                            if item.path.starts_with(prefix) {
+                                leaves.push((
+                                    item.path[prefix.len()..].to_vec(),
+                                    NativeEndpointLeaf::Value(*value, item),
+                                ));
+                            }
+                        }
+                    }
+                }
                 Ok(leaves)
             }
             NativeEndpoint::Module(selection) => {
@@ -1203,6 +1320,11 @@ impl Codegen<'_> {
         match leaf {
             NativeEndpointLeaf::Value(value, leaf) => Ok(self.native_leaf_read(*value, leaf)),
             NativeEndpointLeaf::Container(container) => Ok(LeafValue::Container(*container)),
+            NativeEndpointLeaf::Slot(value, leaf) => Ok(LeafValue::Slot(*value, (**leaf).clone())),
+            NativeEndpointLeaf::Column(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+            NativeEndpointLeaf::Cell(array) => Ok(LeafValue::Packed(
+                self.record_column_read(&RecordColumn::Cell(*array))?,
+            )),
             NativeEndpointLeaf::Module(leaf) => {
                 if let Some(object) = leaf.object {
                     let object = self.reference_object(object);
@@ -1215,6 +1337,9 @@ impl Codegen<'_> {
                             return Err("process record members cannot be copied".to_owned())
                         }
                     });
+                }
+                if let Some(image) = self.column_leaf_image(leaf) {
+                    return Ok(LeafValue::Packed(image));
                 }
                 let value = self.aggregate_leaf_read(leaf)?;
                 Ok(if value.is_real() {
@@ -1237,6 +1362,64 @@ impl Codegen<'_> {
         value: LeafValue,
         nba: bool,
     ) -> Result<IrStmt, String> {
+        match (&value, leaf) {
+            (LeafValue::Packed(_) | LeafValue::Real(_), NativeEndpointLeaf::Cell(array)) => {
+                let lhs = self.record_column_lhs(&RecordColumn::Cell(*array))?;
+                let (LeafValue::Packed(value) | LeafValue::Real(value)) = value else {
+                    return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned());
+                };
+                return Ok(IrStmt::Assign {
+                    rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+                    lhs,
+                    nba,
+                });
+            }
+            (LeafValue::Slot(source, slot), NativeEndpointLeaf::Container(target)) if !nba => {
+                return Ok(IrStmt::Container(Box::new(
+                    IrContainerStmt::ValueItemToContainer {
+                        root: IrValueItemRoot::Value(*source),
+                        items: slot.items.clone(),
+                        container: *target,
+                    },
+                )));
+            }
+            (LeafValue::Container(source), NativeEndpointLeaf::Slot(target, slot)) => {
+                return Ok(IrStmt::Container(Box::new(
+                    IrContainerStmt::ContainerToValueItem {
+                        container: *source,
+                        root: IrValueItemRoot::Value(*target),
+                        items: slot.items.clone(),
+                    },
+                )));
+            }
+            (LeafValue::Slot(source, slot), target @ NativeEndpointLeaf::Slot(..))
+            | (LeafValue::Slot(source, slot), target @ NativeEndpointLeaf::Container(_)) => {
+                // Through a temporary: a nonblocking container write takes its
+                // value now, and two slots have no direct copy.
+                let temporary = self.fixed_leaf_temporary(slot);
+                let mut block = vec![
+                    IrStmt::Container(Box::new(IrContainerStmt::Declare(temporary))),
+                    IrStmt::Container(Box::new(IrContainerStmt::ValueItemToContainer {
+                        root: IrValueItemRoot::Value(*source),
+                        items: slot.items.clone(),
+                        container: temporary,
+                    })),
+                ];
+                block.push(self.endpoint_leaf_write(
+                    path,
+                    target,
+                    LeafValue::Container(temporary),
+                    nba,
+                )?);
+                return Ok(IrStmt::Block(block));
+            }
+            (_, NativeEndpointLeaf::Slot(..)) | (LeafValue::Slot(..), _) => {
+                return Err(format!(
+                    "native record transfer pairs a member array with a scalar leaf in `{path}`"
+                ));
+            }
+            _ => {}
+        }
         if let LeafValue::Container(source) = value {
             let NativeEndpointLeaf::Container(target) = leaf else {
                 return Err(format!(
@@ -1273,12 +1456,15 @@ impl Codegen<'_> {
                 NativeEndpointLeaf::Value(native, leaf) => {
                     return self.native_leaf_nba(path, *native, leaf, value)
                 }
-                NativeEndpointLeaf::Container(_) => {
-                    return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
-                }
+                NativeEndpointLeaf::Container(_)
+                | NativeEndpointLeaf::Slot(..)
+                | NativeEndpointLeaf::Column(_)
+                | NativeEndpointLeaf::Cell(_) => return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
             };
             return match value {
-                LeafValue::Container(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+                LeafValue::Container(_) | LeafValue::Slot(..) => {
+                    Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
+                }
                 LeafValue::String(value) => self.object_leaf_nba(
                     path,
                     self.reference_object(leaf.object.ok_or("string leaf has no storage")?),
@@ -1300,7 +1486,14 @@ impl Codegen<'_> {
             };
         }
         match (leaf, value) {
-            (NativeEndpointLeaf::Container(_), _) | (_, LeafValue::Container(_)) => {
+            (
+                NativeEndpointLeaf::Container(_)
+                | NativeEndpointLeaf::Slot(..)
+                | NativeEndpointLeaf::Column(_)
+                | NativeEndpointLeaf::Cell(_),
+                _,
+            )
+            | (_, LeafValue::Container(_) | LeafValue::Slot(..)) => {
                 Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
             }
             (NativeEndpointLeaf::Value(native, leaf), LeafValue::String(value)) => {
@@ -1386,10 +1579,133 @@ impl Codegen<'_> {
                 });
             }
         }
+        if let Some(statement) = self.record_cell_endpoint_transfer(path, target, source, nba)? {
+            return Ok(statement);
+        }
         let targets = self.endpoint_leaves(target)?;
         let sources = self.endpoint_leaves(source)?;
+        let descriptor = self.endpoint_descriptor(target)?;
+        self.native_leaf_transfer(path, &descriptor, targets, sources, nba)
+    }
+
+    /// Copy between `other` and a selection that names one record cell of a
+    /// member column, which has no leaf of its own: each leaf of `other`
+    /// takes or gives its bits of the cell.
+    fn record_cell_endpoint_transfer(
+        &mut self,
+        path: &str,
+        target: &NativeEndpoint,
+        source: &NativeEndpoint,
+        nba: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        let (selection, column, other, write) =
+            if let Some((selection, column)) = record_cell_selection(target) {
+                (selection, column, source, true)
+            } else if let Some((selection, column)) = record_cell_selection(source) {
+                (selection, column, target, false)
+            } else {
+                return Ok(None);
+            };
+        let Some(array) = column.array.as_ref().map(|array| array.ir) else {
+            return Ok(None);
+        };
+        let array = self.reference_array(array);
+        let root = self
+            .query_descriptor(selection.root)
+            .ok_or("record selection has no type")?;
+        let Some(cell) = record_cell_of(root, &column.path, &selection.prefix) else {
+            return Ok(None);
+        };
+        let within = selection.prefix[column.path.len()..].to_vec();
+        let mut leaves = Vec::new();
+        for (relative, leaf) in self.endpoint_leaves(other)? {
+            match leaf {
+                NativeEndpointLeaf::Slot(value, fixed) => {
+                    let base = fixed.path.len() - relative.len();
+                    leaves.extend(fixed_leaf_items(&fixed)?.into_iter().map(|item| {
+                        (
+                            item.path[base..].to_vec(),
+                            NativeEndpointLeaf::Value(value, item),
+                        )
+                    }));
+                }
+                leaf => leaves.push((relative, leaf)),
+            }
+        }
+        if leaves.is_empty() {
+            return Err(format!(
+                "native record transfer in `{path}` moves one record cell into another"
+            ));
+        }
+        let mut statements = Vec::with_capacity(leaves.len());
+        for (relative, leaf) in &leaves {
+            let mut position = within.clone();
+            position.extend_from_slice(relative);
+            statements.push(self.record_cell_transfer(
+                path,
+                array,
+                &cell,
+                &position,
+                leaf,
+                (write, nba),
+            )?);
+        }
+        Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// The record type at `endpoint`.
+    fn endpoint_descriptor(&self, endpoint: &NativeEndpoint) -> Result<TypeDescriptor, String> {
+        match endpoint {
+            NativeEndpoint::Value { value, prefix } => {
+                let layout = self.native_layout_of_value(*value)?;
+                Self::descriptor_at_path(&layout.descriptor, prefix)
+                    .ok_or_else(|| "native record selection has no type".to_owned())
+            }
+            NativeEndpoint::Module(selection) => Ok(selection.descriptor.clone()),
+        }
+    }
+
+    /// Copy the columns of record `value`, the result of a call, into
+    /// `target`.
+    fn record_value_transfer(
+        &mut self,
+        path: &str,
+        target: &NativeEndpoint,
+        value: &RecordValue,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let targets = self.endpoint_leaves(target)?;
+        let sources = record_value_leaves(value, &targets);
+        self.native_leaf_transfer(path, &value.descriptor, targets, sources, nba)
+    }
+
+    /// Copy `source`, a native or module record endpoint, into the columns
+    /// of record `value`.
+    pub(super) fn endpoint_to_record_value(
+        &mut self,
+        path: &str,
+        value: &RecordValue,
+        source: &NativeEndpoint,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let sources = self.endpoint_leaves(source)?;
+        let targets = record_value_leaves(value, &sources);
+        self.native_leaf_transfer(path, &value.descriptor, targets, sources, nba)
+    }
+
+    /// Copy paired leaf lists, `sources` read whole before the first write.
+    fn native_leaf_transfer(
+        &mut self,
+        path: &str,
+        descriptor: &TypeDescriptor,
+        mut targets: NativeLeafPairs,
+        mut sources: NativeLeafPairs,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let columns =
+            self.native_column_transfers(path, descriptor, &mut targets, &mut sources, nba)?;
         if targets.len() != sources.len()
-            || targets.is_empty()
+            || (targets.is_empty() && columns.is_empty())
             || targets
                 .iter()
                 .zip(&sources)
@@ -1408,9 +1724,360 @@ impl Codegen<'_> {
             writes.push(self.endpoint_leaf_write(path, target, captured, nba)?);
         }
         self.native_copy_sequence += 1;
+        captures.extend(columns);
         captures.extend(writes);
         Ok(IrStmt::Block(captures))
     }
+
+    /// Move one leaf inside a packed record cell of column `array`: `relative`
+    /// names the cell and the leaf below the column, and `direction` holds
+    /// whether the column is written and whether the write queues.
+    fn record_cell_transfer(
+        &mut self,
+        path: &str,
+        array: usize,
+        cell: &RecordCell,
+        relative: &[AggregatePathPart],
+        leaf: &NativeEndpointLeaf,
+        direction: (bool, bool),
+    ) -> Result<IrStmt, String> {
+        let (write, nba) = direction;
+        let unsupported = || format!("native record transfer in `{path}` splits a record cell");
+        let (indices, below) = relative
+            .split_at_checked(cell.dimensions)
+            .ok_or_else(unsupported)?;
+        let indices = indices
+            .iter()
+            .map(|part| match part {
+                AggregatePathPart::Index(index) => Ok(lhs_integer_expr(i128::from(*index))),
+                AggregatePathPart::Member(_) => Err(unsupported()),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (item, lsb) =
+            Self::fixed_descriptor_path(&cell.element, below).ok_or_else(unsupported)?;
+        let width = Self::fixed_descriptor_width(&item).ok_or_else(unsupported)?;
+        let (left, right) = (i64::from(lsb) + i64::from(width) - 1, i64::from(lsb));
+        let elem_sel = IrElemSel::Part(left, right);
+        if !write {
+            let value = IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: array,
+                    indices,
+                    elem_sel,
+                },
+                width,
+                false,
+                None,
+            );
+            return self.endpoint_leaf_write(path, leaf, LeafValue::Packed(value), nba);
+        }
+        let LeafValue::Packed(value) = self.endpoint_leaf_read(leaf)? else {
+            return Err(unsupported());
+        };
+        let lhs = self.reference_lhs(IrLhs::ArrayElem {
+            arr: array,
+            indices,
+            elem_sel,
+        })?;
+        Ok(IrStmt::Assign {
+            rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+            lhs,
+            nba,
+        })
+    }
+
+    /// Take each record column out of a transfer's leaf lists, with the
+    /// items it pairs with on the other side, as one whole-column copy: a
+    /// native value keeps a member array as one fixed-array item.
+    fn native_column_transfers(
+        &mut self,
+        path: &str,
+        descriptor: &TypeDescriptor,
+        targets: &mut NativeLeafPairs,
+        sources: &mut NativeLeafPairs,
+        nba: bool,
+    ) -> Result<Vec<IrStmt>, String> {
+        let mut statements = Vec::new();
+        for write in [true, false] {
+            let (columns, items) = if write {
+                (&mut *targets, &mut *sources)
+            } else {
+                (&mut *sources, &mut *targets)
+            };
+            let mut position = 0;
+            while position < columns.len() {
+                let (member, leaf) = &columns[position];
+                let Some((array, cells)) = column_leaf_array(leaf).filter(|(_, cells)| {
+                    // A selection of part of a member column moves by cell.
+                    member.len() >= *cells
+                }) else {
+                    position += 1;
+                    continue;
+                };
+                // The cell leaves of a member column stand for the column.
+                let member = member[..member.len() - cells].to_vec();
+                let array = self.reference_array(array);
+                let real = self.model.array(array).real;
+                let selected = items
+                    .iter()
+                    .position(|(path, _)| path.starts_with(&member))
+                    .ok_or_else(|| {
+                        format!("native record transfer in `{path}` has no column source")
+                    })?;
+                if let Some(cell) = record_cell_of(descriptor, &member, &items[selected].0) {
+                    let moved = items
+                        .iter()
+                        .filter(|(leaf, _)| leaf.starts_with(&member))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let member_len = member.len();
+                    for (leaf, item) in &moved {
+                        let statement = self.record_cell_transfer(
+                            path,
+                            array,
+                            &cell,
+                            &leaf[member_len..],
+                            item,
+                            (write, nba),
+                        )?;
+                        statements.push(statement);
+                    }
+                    columns.retain(|(path, _)| !path.starts_with(&member));
+                    items.retain(|(path, _)| !path.starts_with(&member));
+                    continue;
+                }
+                let slot = match &items[selected].1 {
+                    NativeEndpointLeaf::Value(value, leaf) => {
+                        Some((*value, leaf.items[..leaf.items.len() - 1].to_vec()))
+                    }
+                    NativeEndpointLeaf::Slot(value, leaf) => Some((*value, leaf.items.clone())),
+                    _ => None,
+                };
+                let statement = match slot {
+                    Some((value, items)) => {
+                        let root = IrValueItemRoot::Value(value);
+                        if write && real {
+                            IrStmt::Container(Box::new(IrContainerStmt::RealColumnAssign {
+                                array,
+                                source: None,
+                                root: Some(root),
+                                items,
+                                nba,
+                            }))
+                        } else if write {
+                            IrStmt::FixedValueAssign {
+                                dst: self.record_column_view(array),
+                                src: Box::new(IrFixedValue::ValueItems { root, items, array }),
+                                nba,
+                            }
+                        } else {
+                            IrStmt::Container(Box::new(IrContainerStmt::FixedToValueItem {
+                                array,
+                                root,
+                                items,
+                            }))
+                        }
+                    }
+                    None => {
+                        let other = &items[selected].1;
+                        let (other, _) = column_leaf_array(other).ok_or_else(|| {
+                            format!("native record transfer in `{path}` splits a column")
+                        })?;
+                        let other = self.reference_array(other);
+                        let (dst, src) = if write {
+                            (array, other)
+                        } else {
+                            (other, array)
+                        };
+                        if real {
+                            IrStmt::Container(Box::new(IrContainerStmt::RealColumnAssign {
+                                array: dst,
+                                source: Some(src),
+                                root: None,
+                                items: Vec::new(),
+                                nba,
+                            }))
+                        } else {
+                            IrStmt::FixedValueAssign {
+                                dst: self.record_column_view(dst),
+                                src: Box::new(IrFixedValue::Array(self.record_column_view(src))),
+                                nba,
+                            }
+                        }
+                    }
+                };
+                statements.push(statement);
+                columns.retain(|(path, _)| !path.starts_with(&member));
+                items.retain(|(path, _)| !path.starts_with(&member));
+            }
+        }
+        Ok(statements)
+    }
+}
+
+/// The cells of a member column that holds a record per cell, when the leaves
+/// of the other side of a transfer sit inside the records: `member` is the
+/// column and `leaf` the first such leaf.
+fn record_cell_of(
+    descriptor: &TypeDescriptor,
+    member: &[AggregatePathPart],
+    leaf: &[AggregatePathPart],
+) -> Option<RecordCell> {
+    let at = Codegen::descriptor_at_path(descriptor, member)?;
+    let TypeShape::FixedArray {
+        dimensions,
+        element,
+    } = at.shape
+    else {
+        return None;
+    };
+    (matches!(element.shape, TypeShape::Aggregate(_)) && leaf.len() > member.len()).then(|| {
+        RecordCell {
+            dimensions: dimensions.len(),
+            element: (*element).clone(),
+        }
+    })
+}
+
+/// The selection and the column of `endpoint` when it names something inside
+/// one cell of a member column.
+fn record_cell_selection(
+    endpoint: &NativeEndpoint,
+) -> Option<(&AggregateSelection, &AggregateMemberInfo)> {
+    let NativeEndpoint::Module(selection) = endpoint else {
+        return None;
+    };
+    let column = selection.storage.leaves.iter().find(|leaf| {
+        leaf.array.is_some()
+            && leaf.path.len() < selection.prefix.len()
+            && selection.prefix.starts_with(&leaf.path)
+    })?;
+    Some((selection, column))
+}
+
+/// The shape of a member column holding a packed record per cell.
+struct RecordCell {
+    dimensions: usize,
+    element: TypeDescriptor,
+}
+
+/// The item a constant `path` names inside a fixed member array that moves as
+/// one container: the array has no leaf per cell, but its slot holds them.
+pub(super) fn fixed_item_leaf(
+    fixed: &[NativeFixedLeaf],
+    path: &[AggregatePathPart],
+) -> Option<NativeLeaf> {
+    let leaf = fixed
+        .iter()
+        .find(|leaf| path.len() > leaf.path.len() && path.starts_with(&leaf.path))?;
+    let mut items = leaf.items.clone();
+    let mut rest = &path[leaf.path.len()..];
+    let subscript = |rest: &mut &[AggregatePathPart], dimensions: &[(i32, i32)]| {
+        let (indices, tail) = rest.split_at_checked(dimensions.len())?;
+        let indices = indices
+            .iter()
+            .map(|part| match part {
+                AggregatePathPart::Index(index) => Some(*index),
+                AggregatePathPart::Member(_) => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        *rest = tail;
+        member_select::constant_position(&indices, dimensions)
+    };
+    items.push(subscript(&mut rest, &leaf.dimensions)?);
+    let mut element = &leaf.element;
+    loop {
+        match (element, rest.first()) {
+            (
+                IrContainerElement::Aggregate { members, .. },
+                Some(AggregatePathPart::Member(name)),
+            ) => {
+                let position = members.iter().position(|member| member.name == *name)?;
+                items.push(u32::try_from(position).ok()?);
+                element = &members[position].element;
+                rest = &rest[1..];
+            }
+            (
+                IrContainerElement::FixedArray {
+                    dimensions,
+                    element: inner,
+                },
+                _,
+            ) => {
+                items.push(subscript(&mut rest, dimensions)?);
+                element = inner;
+            }
+            (_, None) => {
+                return Some(NativeLeaf {
+                    path: path.to_vec(),
+                    items,
+                    ty: leaf_ty(element).ok()?,
+                });
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// One leaf per scalar item of `element` at `items`, named below `path`.
+fn fixed_item_leaves(
+    path: Vec<AggregatePathPart>,
+    items: Vec<u32>,
+    element: &IrContainerElement,
+    leaves: &mut Vec<NativeLeaf>,
+) -> Result<(), String> {
+    match element {
+        IrContainerElement::Aggregate { members, .. } => {
+            for (position, member) in members.iter().enumerate() {
+                let mut member_path = path.clone();
+                member_path.push(AggregatePathPart::Member(member.name.clone()));
+                let mut member_items = items.clone();
+                member_items
+                    .push(u32::try_from(position).map_err(|_| "native record is too wide")?);
+                fixed_item_leaves(member_path, member_items, &member.element, leaves)?;
+            }
+            Ok(())
+        }
+        IrContainerElement::FixedArray {
+            dimensions,
+            element,
+        } => {
+            for (position, coordinates) in
+                port_array_index_vectors(dimensions).into_iter().enumerate()
+            {
+                let mut cell_path = path.clone();
+                cell_path.extend(coordinates.into_iter().map(AggregatePathPart::Index));
+                let mut cell_items = items.clone();
+                cell_items.push(u32::try_from(position).map_err(|_| "native record is too wide")?);
+                fixed_item_leaves(cell_path, cell_items, element, leaves)?;
+            }
+            Ok(())
+        }
+        IrContainerElement::Container { .. } => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+        leaf => {
+            leaves.push(NativeLeaf {
+                path,
+                items,
+                ty: leaf_ty(leaf)?,
+            });
+            Ok(())
+        }
+    }
+}
+
+/// The scalar items of a fixed member array, named from the record root.
+pub(super) fn fixed_leaf_items(leaf: &NativeFixedLeaf) -> Result<Vec<NativeLeaf>, String> {
+    let mut leaves = Vec::new();
+    fixed_item_leaves(
+        leaf.path.clone(),
+        leaf.items.clone(),
+        &IrContainerElement::FixedArray {
+            dimensions: leaf.dimensions.clone(),
+            element: Box::new(leaf.element.clone()),
+        },
+        &mut leaves,
+    )?;
+    Ok(leaves)
 }
 
 impl Codegen<'_> {
@@ -1451,7 +2118,19 @@ impl Codegen<'_> {
             return Ok(None);
         }
         let mut values = Vec::new();
-        self.aggregate_descriptor_pattern_values(path, rhs, descriptor, prefix, &mut values)?;
+        let layout = self.native_layout_of_value(value)?;
+        let stops = layout
+            .containers
+            .iter()
+            .map(|leaf| leaf.path.clone())
+            .chain(layout.fixed.iter().map(|leaf| leaf.path.clone()))
+            .collect();
+        let fixed = layout.fixed.clone();
+        self.pattern_stops = stops;
+        let flattened =
+            self.aggregate_descriptor_pattern_values(path, rhs, descriptor, prefix, &mut values);
+        self.pattern_stops.clear();
+        flattened?;
         let leaves = self.native_layout_of_value(value)?.leaves.clone();
         // Container members are written in place, after every scalar source
         // is captured; a pattern must not read another container member it
@@ -1474,7 +2153,27 @@ impl Codegen<'_> {
                 writes.push(self.lower_container_into(path, node, container, node)?);
                 continue;
             }
-            let Some(leaf) = leaves.iter().find(|leaf| leaf.path == member_path) else {
+            if let Some(slot) = fixed.iter().find(|leaf| leaf.path == member_path) {
+                let temporary = self.fixed_leaf_temporary(slot);
+                writes.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                    temporary,
+                ))));
+                writes.push(self.lower_container_into(path, node, temporary, node)?);
+                writes.push(IrStmt::Container(Box::new(
+                    IrContainerStmt::ContainerToValueItem {
+                        container: temporary,
+                        root: IrValueItemRoot::Value(value),
+                        items: slot.items.clone(),
+                    },
+                )));
+                continue;
+            }
+            let leaf = leaves
+                .iter()
+                .find(|leaf| leaf.path == member_path)
+                .cloned()
+                .or_else(|| fixed_item_leaf(&fixed, &member_path));
+            let Some(leaf) = leaf else {
                 // A whole nested record or subarray value.
                 let (source, _) = self.native_endpoint(node)?.ok_or_else(|| {
                     format!(
@@ -1495,7 +2194,9 @@ impl Codegen<'_> {
                 self.native_copy_sequence
             );
             let captured = match source {
-                LeafValue::Container(_) => return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+                LeafValue::Container(_) | LeafValue::Slot(..) => {
+                    return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
+                }
                 LeafValue::String(source) => {
                     captures.push(IrStmt::DeclString {
                         name: name.clone(),
@@ -1603,6 +2304,12 @@ impl Codegen<'_> {
             members.push(AggregatePathPart::Member(member.clone()));
             current = *base;
         }
+        members.reverse();
+        if !members.is_empty() {
+            if let Some(selected) = self.column_call_select(path, current, &members)? {
+                return Ok(Some(selected));
+            }
+        }
         // A record popped from a queue (`q.pop_front().m`) is removed once
         // into the temporary, like a call result (SIM-019).
         if members.is_empty()
@@ -1610,7 +2317,6 @@ impl Codegen<'_> {
         {
             return Ok(None);
         }
-        members.reverse();
         let Some((temporary, statements)) = self.native_value_of(path, current)? else {
             return Ok(None);
         };
@@ -1627,6 +2333,53 @@ impl Codegen<'_> {
                 )
             })?;
         let value = self.endpoint_leaf_read(&NativeEndpointLeaf::Value(temporary, leaf))?;
+        Ok(Some((statements, value)))
+    }
+
+    /// A scalar member of a call returning a column-layout record: the call
+    /// runs once into a lexical temporary whose column holds the member.
+    fn column_call_select(
+        &mut self,
+        path: &str,
+        call: NodeId,
+        members: &[AggregatePathPart],
+    ) -> Result<Option<(Vec<IrStmt>, LeafValue)>, String> {
+        let Some(function) = self.record_call_function(call)? else {
+            return Ok(None);
+        };
+        let mut statements = Vec::new();
+        let temporary = self.record_call_result_value(path, function, call, &mut statements)?;
+        let column = temporary
+            .columns
+            .iter()
+            .find(|(column, _)| column == members)
+            .map(|(_, column)| column.clone());
+        let value = match column {
+            Some(RecordColumn::Native(value, leaf)) => {
+                self.endpoint_leaf_read(&NativeEndpointLeaf::Value(value, *leaf))?
+            }
+            Some(RecordColumn::Cell(array)) => {
+                let array = self.reference_array(array);
+                let info = &self.model.arrays[array];
+                let (width, signed) = (info.elem_width, info.signed);
+                LeafValue::Packed(IrExpr::new(
+                    IrExprKind::ArrayRead {
+                        arr: array,
+                        indices: vec![lhs_integer_expr(0)],
+                        elem_sel: IrElemSel::Whole,
+                    },
+                    width,
+                    signed,
+                    None,
+                ))
+            }
+            _ => {
+                return Err(format!(
+                    "selection `{}` of a record call result in `{path}` must name a scalar member",
+                    aggregate_path_suffix(members)
+                ))
+            }
+        };
         Ok(Some((statements, value)))
     }
 
@@ -1882,6 +2635,17 @@ impl Codegen<'_> {
         if let Some((source, _)) = self.native_endpoint(source)? {
             return self.native_transfer(path, target, &source, nba);
         }
+        // An automatic record of the column form has no endpoint of its own.
+        if let Some(value) = self.column_record_storage(source) {
+            return self.record_value_transfer(path, target, &value, nba);
+        }
+        // A column-layout result arrives in columns, whatever its width.
+        if let Some(function) = self.record_call_function(source)? {
+            let mut statements = Vec::new();
+            let value = self.record_call_result_value(path, function, source, &mut statements)?;
+            statements.push(self.record_value_transfer(path, target, &value, nba)?);
+            return Ok(IrStmt::Block(statements));
+        }
         // A fixed record is one packed value where it is not leaf storage
         // (a procedural-block local, a packed function result); each leaf
         // takes its bits of that value.
@@ -1950,7 +2714,7 @@ impl Codegen<'_> {
             return Ok(None);
         }
         let layout = self.native_layout_of_value(value)?.clone();
-        if !layout.containers.is_empty() || layout.leaves.is_empty() {
+        if !layout.containers.is_empty() || !layout.fixed.is_empty() || layout.leaves.is_empty() {
             return Ok(None);
         }
         let mut pieces = Vec::with_capacity(layout.leaves.len());
@@ -2099,6 +2863,9 @@ impl Codegen<'_> {
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
         if op == Operation::Assignment {
+            if let Some(statement) = self.element_subrecord_assignment(path, lhs, rhs, nba)? {
+                return Ok(Some(statement));
+            }
             if let Some(select) = self.native_record_select(path, lhs)? {
                 return self
                     .native_record_select_write(path, &select, lhs, rhs, nba)
@@ -2168,14 +2935,17 @@ impl Codegen<'_> {
     /// of its type: a bound record, or storage reached through a reference.
     /// An element's container members live in nested slots, so the call
     /// builds the companions its formal addresses (`IrRefCompanion`).
-    fn native_ref_operand(
+    pub(in super::super) fn native_ref_operand(
         &mut self,
         path: &str,
         formal: NodeId,
         layout: &NativeLayout,
         actual: NodeId,
     ) -> Result<IrCallArg, String> {
-        if self.record_ref_binding(formal, actual).is_some() {
+        if self
+            .record_ref_binding(formal, actual)
+            .is_some_and(|binding| !binding.cell)
+        {
             return Ok(IrCallArg::NativeRefBound);
         }
         if let Some(RecordRefPin::Default(value)) =
@@ -2311,6 +3081,10 @@ impl Codegen<'_> {
         layout: &NativeLayout,
         actual: NodeId,
     ) -> Result<Option<NativeInputLeaves>, String> {
+        // A fixed member array moves as one item: only a temporary carries it.
+        if !layout.fixed.is_empty() {
+            return Ok(None);
+        }
         let mut leaves = Vec::new();
         let mut containers = Vec::new();
         if let NodeKind::Expr(ExprKind::TaggedUnion { member, value }) =
@@ -2322,7 +3096,7 @@ impl Codegen<'_> {
         let pattern = self.unwrap_assignment_pattern_cast(actual);
         if self.assignment_pattern_operands(path, pattern)?.is_some() {
             // Pattern container members are built in a statement temporary.
-            if !layout.containers.is_empty() {
+            if !layout.containers.is_empty() || !layout.fixed.is_empty() {
                 return Ok(None);
             }
             let mut values = Vec::new();
@@ -2350,7 +3124,10 @@ impl Codegen<'_> {
         // A whole record element of a container is read in place, leaf by
         // leaf; its nested containers live inside the element value, so
         // only a statement temporary can carry them.
-        if layout.containers.is_empty() && self.is_container_record(actual) {
+        if layout.containers.is_empty()
+            && layout.fixed.is_empty()
+            && self.is_container_record(actual)
+        {
             let Some(reads) = self.container_record_leaf_reads(path, actual)? else {
                 return Ok(None);
             };
@@ -2465,7 +3242,7 @@ impl Codegen<'_> {
                 || self.assignment_pattern_operands(path, pattern)?.is_none()
             {
                 values.push((prefix, value));
-            } else if layout.containers.is_empty() {
+            } else if layout.containers.is_empty() && layout.fixed.is_empty() {
                 self.aggregate_descriptor_pattern_values(
                     path,
                     value,
@@ -2556,7 +3333,35 @@ impl Codegen<'_> {
         node: NodeId,
         setup: &mut Vec<IrStmt>,
     ) -> Result<Option<LeafReads>, String> {
-        if let Some(reads) = self.container_record_staged_reads(path, node, setup)? {
+        self.record_leaf_reads_of(path, node, Some(setup))
+    }
+
+    /// Like [`Self::record_leaf_reads`] for an expression with no statement
+    /// to set up in: a fixed member array reads item by item.
+    pub(in super::super) fn record_leaf_reads_in_place(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<LeafReads>, String> {
+        self.record_leaf_reads_of(path, node, None)
+    }
+
+    fn record_leaf_reads_of(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        mut setup: Option<&mut Vec<IrStmt>>,
+    ) -> Result<Option<LeafReads>, String> {
+        let mut staged = Vec::new();
+        if let Some(read) = self.container_record_staged_reads(path, node, &mut staged)? {
+            let Some(setup) = setup else {
+                return Ok(staged.is_empty().then_some(read));
+            };
+            setup.append(&mut staged);
+            let mut reads = Vec::with_capacity(read.len());
+            for (leaf_path, value) in read {
+                self.settled_leaf_read(leaf_path, value, Some(&mut *setup), &mut reads)?;
+            }
             return Ok(Some(reads));
         }
         if let Some(reads) = self.container_record_leaf_reads(path, node)? {
@@ -2567,9 +3372,52 @@ impl Codegen<'_> {
         };
         let mut reads = Vec::new();
         for (leaf_path, leaf) in self.endpoint_leaves(&endpoint)? {
-            reads.push((leaf_path, self.endpoint_leaf_read(&leaf)?));
+            let read = self.endpoint_leaf_read(&leaf)?;
+            self.settled_leaf_read(leaf_path, read, setup.as_deref_mut(), &mut reads)?;
         }
         Ok(Some(reads))
+    }
+
+    /// Add one leaf read to `reads`; a fixed member array has no value of its
+    /// own, so it reads as one container, or item by item with no statement
+    /// to set up in.
+    fn settled_leaf_read(
+        &mut self,
+        leaf_path: Vec<AggregatePathPart>,
+        read: LeafValue,
+        setup: Option<&mut Vec<IrStmt>>,
+        reads: &mut LeafReads,
+    ) -> Result<(), String> {
+        let read = match (read, setup) {
+            (LeafValue::Slot(value, slot), None) => {
+                for item in fixed_leaf_items(&slot)? {
+                    let below = leaf_path
+                        .iter()
+                        .cloned()
+                        .chain(item.path[slot.path.len()..].iter().cloned())
+                        .collect();
+                    reads.push((below, self.native_leaf_read(value, &item)));
+                }
+                return Ok(());
+            }
+            (LeafValue::Slot(value, slot), Some(setup)) => {
+                let temporary = self.fixed_leaf_temporary(&slot);
+                setup.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                    temporary,
+                ))));
+                setup.push(IrStmt::Container(Box::new(
+                    IrContainerStmt::ValueItemToContainer {
+                        root: IrValueItemRoot::Value(value),
+                        items: slot.items,
+                        container: temporary,
+                    },
+                )));
+                LeafValue::Container(temporary)
+            }
+            (read, _) => read,
+        };
+        reads.push((leaf_path, read));
+        Ok(())
     }
 
     /// Member-wise `==`/`!=`/`===`/`!==` when either record operand is
@@ -2837,7 +3685,10 @@ impl Codegen<'_> {
     fn endpoint_leaf_type(&self, leaf: &NativeEndpointLeaf) -> Result<IrClassFieldType, String> {
         match leaf {
             NativeEndpointLeaf::Value(_, leaf) => Ok(leaf.ty),
-            NativeEndpointLeaf::Container(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+            NativeEndpointLeaf::Container(_)
+            | NativeEndpointLeaf::Slot(..)
+            | NativeEndpointLeaf::Column(_)
+            | NativeEndpointLeaf::Cell(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
             NativeEndpointLeaf::Module(leaf) => {
                 if let Some(object) = leaf.object {
                     return match self.model.objects[self.reference_object(object)].ty {
@@ -2845,6 +3696,19 @@ impl Codegen<'_> {
                         IrObjectType::Chandle => Ok(IrClassFieldType::Chandle),
                         _ => Err("record member object is not a string or chandle".to_owned()),
                     };
+                }
+                if let Some(cell) = &leaf.array {
+                    return Ok(if cell.real {
+                        IrClassFieldType::Real {
+                            shortreal: cell.shortreal,
+                        }
+                    } else {
+                        IrClassFieldType::Packed {
+                            width: cell.elem_width,
+                            signed: cell.signed,
+                            two_state: self.model.arrays[self.reference_array(cell.ir)].two_state,
+                        }
+                    });
                 }
                 let signal = leaf
                     .signal
@@ -2947,6 +3811,54 @@ impl Codegen<'_> {
     }
 }
 
+/// Leaves of a transfer endpoint with their paths below it.
+type NativeLeafPairs = Vec<(Vec<AggregatePathPart>, NativeEndpointLeaf)>;
+
+/// The leaves of record `value`, each scalar at the position of its partner
+/// in `partners`: scalars pair by position, and a value lists its columns in
+/// declaration order where an endpoint lists its kinds of leaf in turn.
+fn record_value_leaves(value: &RecordValue, partners: &NativeLeafPairs) -> NativeLeafPairs {
+    let mut leaves = value
+        .columns
+        .iter()
+        .map(|(member, column)| {
+            let leaf = match column {
+                RecordColumn::Array(array) => NativeEndpointLeaf::Column(*array),
+                RecordColumn::Cell(array) => NativeEndpointLeaf::Cell(*array),
+                RecordColumn::Leaf(leaf) => NativeEndpointLeaf::Module(leaf.clone()),
+                RecordColumn::Native(value, leaf) => {
+                    NativeEndpointLeaf::Value(*value, (**leaf).clone())
+                }
+            };
+            (member.clone(), leaf)
+        })
+        .collect::<NativeLeafPairs>();
+    leaves.sort_by_key(|(member, _)| {
+        partners
+            .iter()
+            .position(|(partner, _)| partner == member)
+            .unwrap_or(usize::MAX)
+    });
+    leaves
+}
+
+/// The descriptor column a module record leaf is, if it is one.
+/// The column of a transfer leaf, and how many path steps below the member a
+/// leaf of it sits: a member column of a record kept in leaves has a leaf per
+/// cell.
+fn column_leaf_array(leaf: &NativeEndpointLeaf) -> Option<(usize, usize)> {
+    match leaf {
+        NativeEndpointLeaf::Module(leaf) if !record_cell_leaf(leaf) => {
+            leaf.array.as_ref().map(|array| (array.ir, 0))
+        }
+        NativeEndpointLeaf::Module(leaf) => {
+            member_cell_column(leaf).map(|array| (array.ir, array.dims.len()))
+        }
+        NativeEndpointLeaf::Column(array) => Some((*array, 0)),
+        _ => None,
+    }
+}
+
 /// One leaf of a transfer endpoint.
 #[derive(Clone)]
 pub(in super::super) enum NativeEndpointLeaf {
@@ -2955,4 +3867,10 @@ pub(in super::super) enum NativeEndpointLeaf {
     /// A container member's storage: a native value's companion or a
     /// module record member's own container (SIM-007).
     Container(usize),
+    /// A fixed member array in the slot of a native value.
+    Slot(usize, Box<NativeFixedLeaf>),
+    /// A member array column of a record value.
+    Column(usize),
+    /// The one-cell column of a scalar member of a record value.
+    Cell(usize),
 }

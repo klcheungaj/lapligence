@@ -26,7 +26,10 @@ impl EmitCtx<'_, '_> {
         // it, so the bound value outlives the test.
         let hoist = matches!(
             self.cg.kind(h),
-            NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::SysCall { .. }
+            NodeKind::Stmt(StmtKind::Assign { .. })
+                | NodeKind::SysCall { .. }
+                | NodeKind::FuncCall { .. }
+                | NodeKind::MethodCall { .. }
         );
         let saved = std::mem::replace(&mut self.cg.container_call_prelude, hoist.then(Vec::new));
         let mailbox_hoist =
@@ -91,16 +94,16 @@ impl EmitCtx<'_, '_> {
         let mailbox_prelude =
             std::mem::replace(&mut self.cg.mailbox_statement_prelude, saved_mailbox);
         let rand_prelude = std::mem::replace(&mut self.cg.rand_prelude, saved_rand);
-        let mut statements = lowered?;
+        let mut statements = lowered.map_err(|error| self.cg.record_located_error(h, error))?;
         // An operand reached by another path than the expression lowering
         // would read a handle local that was never set.
         for root in receiver_roots {
             self.cg.receiver_roots.remove(&root);
             if !self.cg.receiver_roots_lowered.remove(&root) {
-                return Err(format!(
+                return Err(self.cg.record_located_error(h, format!(
                     "a class property selected through a computed handle in `{}` is not supported in this operand; assign the handle to a variable first",
                     self.path
-                ));
+                )));
             }
         }
         if let Some((_, mut prelude)) = rand_prelude.filter(|(_, prelude)| !prelude.is_empty()) {

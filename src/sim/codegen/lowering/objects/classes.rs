@@ -1350,7 +1350,7 @@ impl Codegen<'_> {
                 _ => return Err("class constructor edge does not name a function call".to_owned()),
             };
             let mut call = self.lower_func_call_expr(path, constructor, &name, callee)?;
-            if let IrExprKind::CallFn(call) = &mut call.kind {
+            if let Some(call) = Self::record_staged_call_mut(&mut call) {
                 call.receiver = Some(receiver);
                 call.virtual_dispatch = false;
             }
@@ -1632,7 +1632,7 @@ impl Codegen<'_> {
             } else {
                 self.lower_func_call_expr_with_args(path, class, "new", Some(constructor), &[])?
             };
-            if let IrExprKind::CallFn(call) = &mut call.kind {
+            if let Some(call) = Self::record_staged_call_mut(&mut call) {
                 call.receiver = Some(receiver);
                 call.virtual_dispatch = false;
             }

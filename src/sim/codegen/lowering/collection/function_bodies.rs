@@ -46,6 +46,20 @@ impl<'a> Codegen<'a> {
         statics: Vec<StaticRef>,
         records: Vec<RecordRefBinding>,
     ) -> Result<usize, String> {
+        self.task_specialization_watching(task, inst, statics, records, Vec::new())
+    }
+
+    /// [`Self::task_specialization`] whose formals at `watched` stay native
+    /// record `ref` formals and take the change marker of their element
+    /// (`IrFormal::record_marker`).
+    pub(in super::super) fn task_specialization_watching(
+        &mut self,
+        task: NodeId,
+        inst: NodeId,
+        statics: Vec<StaticRef>,
+        records: Vec<RecordRefBinding>,
+        watched: Vec<usize>,
+    ) -> Result<usize, String> {
         let signals = statics
             .iter()
             .map(|bound| match bound.lhs {
@@ -53,31 +67,45 @@ impl<'a> Codegen<'a> {
                 _ => Err("task specialization requires a whole-signal actual".to_owned()),
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let key = (task, inst, signals, records.clone());
+        let key = (task, inst, signals, records.clone(), watched.clone());
         if let Some(index) = self.task_specializations.get(&key) {
             return Ok(*index);
         }
         let formals = self.func_formals(task);
-        let bound_native_refs = records
-            .iter()
-            .map(|binding| {
-                formals
-                    .iter()
-                    .position(|(formal, _)| *formal == binding.formal)
-                    .ok_or_else(|| {
-                        format!(
-                            "record `ref` formal `{}` is not a formal of `{}`",
-                            self.node(binding.formal).name,
-                            self.node(task).name
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
         let template = self
             .func_meta
             .get(&task)
             .map(|meta| meta.ir)
             .ok_or_else(|| format!("task `{}` has no model entry", self.node(task).name))?;
+        let bound_native_refs = records
+            .iter()
+            // A cell formal changes form and a column formal keeps passing
+            // its columns: neither has a null native value.
+            .filter(|binding| {
+                !binding.cell
+                    && (!self.record_declaration(binding.formal)
+                        || self.record_formal_native(binding.formal).is_some())
+            })
+            .map(|binding| {
+                // A column formal's native value follows the declared formals.
+                match self.record_formal_native(binding.formal) {
+                    Some(native) => self.model.funcs[template]
+                        .formals
+                        .iter()
+                        .position(|formal| formal.native_value == Some(native)),
+                    None => formals
+                        .iter()
+                        .position(|(formal, _)| *formal == binding.formal),
+                }
+                .ok_or_else(|| {
+                    format!(
+                        "record `ref` formal `{}` is not a formal of `{}`",
+                        self.node(binding.formal).name,
+                        self.node(task).name
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let mut function = self.model.funcs[template].clone();
         function.c_name = format!(
             "{}__spec{}",
@@ -86,6 +114,16 @@ impl<'a> Codegen<'a> {
         );
         function.inline_expanded = false;
         function.bound_native_refs = bound_native_refs;
+        for index in &watched {
+            let formal = function
+                .formals
+                .get_mut(*index)
+                .ok_or("watched record formal is out of range")?;
+            formal.record_marker = true;
+        }
+        for binding in records.iter().filter(|binding| binding.cell) {
+            self.record_ref_cell_formal(&mut function, inst, &formals, binding.formal)?;
+        }
         let ir = self.model.funcs.len();
         self.model.funcs.push(function);
         self.task_specializations.insert(key, ir);
@@ -95,8 +133,53 @@ impl<'a> Codegen<'a> {
             inst,
             statics,
             records,
+            watched,
         });
         Ok(ir)
+    }
+
+    /// Turn the column-form formal `formal` of a specialization into a `ref`
+    /// of the record image, or of a native element when the record has no
+    /// image: its own slot takes the reference and its other columns and
+    /// native value leave the signature.
+    fn record_ref_cell_formal(
+        &mut self,
+        function: &mut crate::sim::ir::IrFunc,
+        inst: NodeId,
+        formals: &[(NodeId, bool)],
+        formal: NodeId,
+    ) -> Result<(), String> {
+        let position = formals
+            .iter()
+            .position(|(declared, _)| *declared == formal)
+            .ok_or("record `ref` formal is not a declared formal")?;
+        let columns = self.record_formal_columns(formal);
+        let native = self.record_formal_native(formal);
+        let mut index = 0;
+        function.formals.retain(|entry| {
+            let declared = index < formals.len();
+            index += 1;
+            declared
+                || !(entry
+                    .fixed_array
+                    .is_some_and(|array| columns.contains(&array))
+                    || (entry.native_value.is_some() && entry.native_value == native))
+        });
+        let width = self.fixed_value_width(formal);
+        let value = if width.is_none() {
+            Some(self.record_ref_native_value(inst, formal)?)
+        } else {
+            None
+        };
+        let slot = &mut function.formals[position];
+        slot.fixed_array = None;
+        slot.native_value = value;
+        slot.width = width.unwrap_or(0);
+        if width.is_some() {
+            slot.fixed_shape = self.fixed_formal_shape(formal)?;
+            slot.fixed_default = self.fixed_default_literal(formal);
+        }
+        Ok(())
     }
 
     fn emit_func_task_with(
@@ -148,8 +231,16 @@ impl<'a> Codegen<'a> {
             || self.real_array_return(ft))
         .then_some(ft);
         self.bind_native_function(inst, ft);
+        self.record_ref_markers.clear();
         if let Some(specialization) = specialization {
-            self.bind_record_refs(&specialization.records)?;
+            self.bind_record_refs(&specialization.records, inst)?;
+            let formals = self.func_formals(ft);
+            self.record_ref_markers.extend(
+                specialization
+                    .watched
+                    .iter()
+                    .map(|index| (formals[*index].0, *index)),
+            );
         }
         self.bind_container_function(inst, ft);
         let body = self

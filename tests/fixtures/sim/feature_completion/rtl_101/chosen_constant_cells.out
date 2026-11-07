@@ -1,0 +1,30 @@
+three 1 [] 1
+[] 1
+5 0
+2 d1 [] [] [] 2 1
+[] []
+1
+3 x 1.500000 2.500000 1 7 10xz 1 1
+same 1 1
+deep 1 2
+both y 2 2
+out 2 
+y 1
+9 ys 1
+11 11 made
+21 not an alias
+plain 1
+plain same 1
+plain real 2
+plain zero 3
+plain other 3 0.000000
+3 2
+2
+1 3
+real 1
+real 1 2.500000
+zero 3
+nan 4
+nan again 4 1
+1 2 1 2 1
+1 0

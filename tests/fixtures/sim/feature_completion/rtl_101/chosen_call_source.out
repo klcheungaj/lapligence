@@ -1,0 +1,30 @@
+assoc a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+fixed a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+2
+nested a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+push a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+queue a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+dyn a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+twice a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+nba-before a=0 s= last=0 d=0.0 m=0 b=0 sm=0
+nba-after a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+st-before a=0 s= last=0 d=0.0 m=0 b=0 sm=0
+st-after a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+class a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+task a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+task of a call a=4 s=x+++ last=16 d=3.0 m=10 b=5 sm=13
+local into element a=1 s=x last=10 d=1.5 m=7 b=2 sm=4
+element into local a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+pop into local a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+conditional into local a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+member a=4 s=x+++ last=16 d=3.0 m=10 b=5 sm=13
+element member a=5 s=x++++ last=18 d=3.5 m=11 b=6 sm=16
+nested member a=4 s=x+++ last=16 d=3.0 m=10 b=5 sm=13
+3 4 5 6
+3 4 5
+7 4 5
+5 5 5 5
+1 [p] []
+1 [p] [r]
+0
+1 [p] [q]

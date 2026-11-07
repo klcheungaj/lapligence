@@ -248,8 +248,8 @@ use crate::core::db::{
     ConstantSource, ConstantType, Db, Direction as DbDirection, DriverDelay, EventSpec,
     EventTriggerTiming, ExprKind, ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind,
     NetType, NodeId, NodeKind, Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind,
-    StmtKind, StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape,
-    UnconnectedDrive, VariableLifetime,
+    StmtKind, StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeId,
+    TypeShape, UnconnectedDrive, VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
 use crate::core::model::TypeInfo;
@@ -630,6 +630,15 @@ pub fn sdf_targets(
 }
 
 fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String> {
+    lower_model_with_ports(db, options, &collection::record_column_choice(db))
+}
+
+/// Lower with the port sharing the model needs.
+fn lower_model_with_ports(
+    db: &Db,
+    options: &CodegenOptions,
+    columns: &HashSet<TypeId>,
+) -> Result<LoweredModel, String> {
     // A VPI application may write either side of a port, so a model that
     // keeps the VPI catalog keeps every port whose sink would share a
     // variable's storage as a link (a put on the sink must not reach the
@@ -648,13 +657,13 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     } else {
         PortSharing::All
     };
-    let lowered = lower_model_retrying(db, options, first)?;
+    let lowered = lower_model_retrying(db, options, first, columns)?;
     if first == PortSharing::All
         && !lowered.model.vpi_compile_calls.is_empty()
         && (lowered.shared_variable_ports || vpi_sharing == PortSharing::Separate)
     {
         drop(lowered);
-        return lower_model_retrying(db, options, vpi_sharing);
+        return lower_model_retrying(db, options, vpi_sharing, columns);
     }
     Ok(lowered)
 }
@@ -668,10 +677,11 @@ fn lower_model_retrying(
     db: &Db,
     options: &CodegenOptions,
     sharing: PortSharing,
+    record_columns: &HashSet<TypeId>,
 ) -> Result<LoweredModel, String> {
     let mut excluded = HashSet::new();
     for _ in 0..MAX_PORT_COLLAPSE_RETRIES {
-        let lowered = lower_model_with(db, options, sharing, &excluded)?;
+        let lowered = lower_model_with(db, options, sharing, &excluded, record_columns)?;
         if lowered.retry_ports.is_empty() {
             return Ok(lowered);
         }
@@ -682,7 +692,7 @@ fn lower_model_retrying(
     } else {
         PortSharing::Merges
     };
-    lower_model_with(db, options, bound, &HashSet::new())
+    lower_model_with(db, options, bound, &HashSet::new(), record_columns)
 }
 
 /// Which ports a lowering lets share storage or merge their nets.
@@ -708,6 +718,7 @@ fn lower_model_with(
     options: &CodegenOptions,
     sharing: PortSharing,
     excluded_ports: &HashSet<NodeId>,
+    record_columns: &HashSet<TypeId>,
 ) -> Result<LoweredModel, String> {
     let waveform = options.waveform.as_ref();
     let semantic = checked_semantic(db)?;
@@ -720,6 +731,7 @@ fn lower_model_with(
     cg.alias_net_ports = matches!(sharing, PortSharing::All | PortSharing::Nets);
     cg.merge_ports = sharing != PortSharing::Separate;
     cg.port_collapse_exclusions = excluded_ports.clone();
+    cg.record_column_types = record_columns.clone();
     cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
     cg.plan_code_coverage(options.vpi);
@@ -1319,6 +1331,19 @@ struct NativeContainerLeaf {
     kind: crate::sim::ir::IrContainerKind,
 }
 
+/// A member array of the minimum column size in a native value without
+/// columns: the value's slot holds its items, so it has no companion, and it
+/// moves whole to the one container a module record keeps it in.
+#[derive(Clone)]
+struct NativeFixedLeaf {
+    path: Vec<AggregatePathPart>,
+    /// Item indices of the member's slot in the value.
+    items: Vec<u32>,
+    element: crate::sim::ir::IrContainerElement,
+    descriptor: TypeDescriptor,
+    dimensions: Vec<(i32, i32)>,
+}
+
 /// Interned native record type and its declaration-order leaves.
 #[derive(Clone)]
 struct NativeLayout {
@@ -1328,6 +1353,7 @@ struct NativeLayout {
     /// Container members in declaration order, matching
     /// [`crate::sim::ir::IrNativeValue::companions`] of every value.
     containers: Vec<NativeContainerLeaf>,
+    fixed: Vec<NativeFixedLeaf>,
 }
 
 #[derive(Clone)]
@@ -1565,6 +1591,9 @@ struct Codegen<'a> {
     next_virtual_slot: usize,
     /// Specializations whose bodies are lowered after all call sites exist.
     pending_specializations: Vec<PendingSpecialization>,
+    /// Record `ref` formals of the body being lowered that a wait follows
+    /// through a marker, with their indices.
+    record_ref_markers: HashMap<NodeId, usize>,
     /// Pass switches in lowering order; their networks are numbered after
     /// every process is lowered (`finish_switch_network`).
     pending_switches: Vec<collection::PendingSwitch>,
@@ -1631,6 +1660,12 @@ struct Codegen<'a> {
     shared_run_slot_bits: u64,
     /// Ports a previous lowering showed must keep their link.
     port_collapse_exclusions: HashSet<NodeId>,
+    /// Record types stored as columns by the design's selections, beyond
+    /// those their shape puts in column layout.
+    record_column_types: HashSet<TypeId>,
+    /// Paths of the container members of the record a pattern is being
+    /// flattened for: a container takes its whole pattern value.
+    pattern_stops: Vec<Vec<AggregatePathPart>>,
     /// Collapsed net ports with a time-zero observer of the sink, and the
     /// root storage whose start the lowered model must show to be all X.
     port_start_checks: Vec<(NodeId, usize)>,
@@ -1815,6 +1850,15 @@ struct Codegen<'a> {
     /// Native record `ref` formals of the specialization being lowered, each
     /// bound to declaration-owned record storage (SIM-008).
     record_ref_aliases: HashMap<NodeId, RecordRefBinding>,
+    /// Column values of the formals the specialization being lowered takes
+    /// as references to one image ([`RecordRefBinding::cell`]).
+    record_ref_cells: HashMap<NodeId, collection::RecordValue>,
+    /// Column-form `ref` formals that some call binds to an element holding
+    /// native members, each with the layout of that element.
+    record_ref_native_layouts: HashMap<NodeId, NativeLayout>,
+    /// Formals whose native layout is being built or lowered despite their
+    /// column-form type (`record_ref_native_layouts`).
+    record_ref_natives: HashSet<NodeId>,
     /// Actuals whose run-time selection the call being lowered fixes to one
     /// element, and the branches the selections so far multiply to.
     record_ref_pins: HashMap<NodeId, collection::RecordRefPin>,
@@ -2369,6 +2413,7 @@ impl<'a> Codegen<'a> {
             record_ref_interface_methods: HashMap::new(),
             next_virtual_slot: 0,
             pending_specializations: Vec::new(),
+            record_ref_markers: HashMap::new(),
             pending_switches: Vec::new(),
             strength_nets: Default::default(),
             static_string_task_locals: HashMap::new(),
@@ -2391,6 +2436,8 @@ impl<'a> Codegen<'a> {
             merge_ports: false,
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),
+            record_column_types: HashSet::new(),
+            pattern_stops: Vec::new(),
             port_start_checks: Vec::new(),
             port_alias_sinks: HashSet::new(),
             reference_arrays: HashMap::new(),
@@ -2457,6 +2504,9 @@ impl<'a> Codegen<'a> {
             native_value_layouts: HashMap::new(),
             native_roots: HashMap::new(),
             record_ref_aliases: HashMap::new(),
+            record_ref_cells: HashMap::new(),
+            record_ref_native_layouts: HashMap::new(),
+            record_ref_natives: HashSet::new(),
             record_ref_pins: HashMap::new(),
             record_ref_pin_span: 1,
             native_leaf_symbols: HashMap::new(),
@@ -3235,16 +3285,27 @@ struct RecordRefBinding {
     /// Declaration owning the leaves, never another bound formal.
     root: NodeId,
     prefix: Vec<AggregatePathPart>,
+    /// The formal has the column form and its actual is one image inside a
+    /// column cell, which has no columns to hand over. The specialization
+    /// takes the formal as a packed `ref` of that image, whatever selects
+    /// the cell at the call; `root` and `prefix` carry nothing.
+    cell: bool,
 }
 
 /// Identity of one subroutine specialization; see
 /// [`Codegen::task_specializations`].
-type SpecializationKey = (NodeId, NodeId, Vec<usize>, Vec<RecordRefBinding>);
+type SpecializationKey = (
+    NodeId,
+    NodeId,
+    Vec<usize>,
+    Vec<RecordRefBinding>,
+    Vec<usize>,
+);
 
 /// Identity of one virtual family bound to records; see
 /// [`Codegen::record_ref_families`].
-type RecordRefPositions = Vec<(usize, NodeId, Vec<AggregatePathPart>)>;
-type RecordRefFamilyKey = (usize, RecordRefPositions);
+type RecordRefPositions = Vec<(usize, NodeId, Vec<AggregatePathPart>, bool)>;
+type RecordRefFamilyKey = (usize, RecordRefPositions, Vec<usize>);
 
 /// A task specialization awaiting body lowering. `ir` indexes the model
 /// entry cloned from the task's template definition.
@@ -3254,6 +3315,8 @@ struct PendingSpecialization {
     inst: NodeId,
     statics: Vec<StaticRef>,
     records: Vec<RecordRefBinding>,
+    /// Formals with a change marker (`IrFormal::record_marker`).
+    watched: Vec<usize>,
 }
 
 /// How to read a formal argument (or local) in the lowered IR: width and

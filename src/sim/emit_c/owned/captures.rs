@@ -170,6 +170,16 @@ impl Frame<'_, '_> {
                                 "fork capture of a `ref` formal requires its descriptor".to_owned()
                             );
                         }
+                        if let Some(names) = self.native_ref_capture_names(*index) {
+                            let position = captured_formals.iter().filter(|f| *f == index).count();
+                            captured_formals.push(*index);
+                            let name = names
+                                .get(position)
+                                .ok_or("native record formal has no such capture")?;
+                            let handle = self.scalar("void*", format!("(void*)(uintptr_t){name}"));
+                            values.push((storage, CapturedValue::Handle(handle)));
+                            continue;
+                        }
                         let markerless_event = self
                             .formal_function()
                             .and_then(|function| function.formals.get(*index))
@@ -483,6 +493,75 @@ impl Frame<'_, '_> {
     /// selects and waits in the branch emit exactly as in the subroutine.
     /// With `marker`, bind a handle or event formal's change marker parameter, which
     /// the branch captured in the slot after the descriptor's.
+    /// The parameters of native record `ref` formal `index`, as a fork branch
+    /// captures them.
+    fn native_ref_capture_names(&self, index: usize) -> Option<Vec<String>> {
+        let formal = self.formal_function()?.formals.get(index)?;
+        formal.native_value?;
+        let value = format!("o{index}");
+        let mut names = vec![value.clone()];
+        names.extend(
+            (0..formal.native_companions.len())
+                .map(|position| super::super::model::native_companion_param(&value, position)),
+        );
+        if formal.record_marker {
+            names.push(super::super::model::handle_marker_param(index));
+        }
+        Some(names)
+    }
+
+    /// Bind parameter `position` of native record `ref` formal `index` in a
+    /// branch; `None` for any other formal.
+    pub(super) fn bind_native_ref_capture(
+        &mut self,
+        index: usize,
+        position: usize,
+        storage: StorageRef,
+        source: &str,
+    ) -> Result<Option<()>, String> {
+        let Some(names) = self.native_ref_capture_names(index) else {
+            return Ok(None);
+        };
+        let formal = self
+            .formal_function()
+            .and_then(|function| function.formals.get(index))
+            .ok_or("captured `ref` formal outside its subroutine")?;
+        let (value, companions) = (formal.native_value, formal.native_companions.clone());
+        let name = names
+            .get(position)
+            .ok_or("native record formal has no such capture")?
+            .clone();
+        let ty = if position == 0 {
+            "llg_value_t*"
+        } else if position <= companions.len() {
+            "void*"
+        } else {
+            "sv4_t*"
+        };
+        let load = format!(
+            "({ty})(uintptr_t)llg_frame_read_opaque({source}, {}u)",
+            storage.slot()
+        );
+        if self.layout.storage() == FrameStorage::CoFrame {
+            self.frame_field(ty, &name)?;
+            self.line(format!("{name} = {load};"));
+        } else {
+            self.line(format!("{ty} {name} = {load};"));
+        }
+        if position == 0 {
+            let value = value.ok_or("native record formal has no value")?;
+            self.native_values.insert(value, name);
+        } else if let Some(container) = companions.get(position - 1) {
+            let (ty, _, _) = super::super::containers::activation_storage(
+                &self.ctx.model.containers[*container],
+                "",
+            )?;
+            self.containers
+                .insert(*container, format!("(*({ty}*){name})"));
+        }
+        Ok(Some(()))
+    }
+
     pub(super) fn bind_ref_formal_capture(
         &mut self,
         index: usize,

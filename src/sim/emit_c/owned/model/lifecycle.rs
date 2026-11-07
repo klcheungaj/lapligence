@@ -1,6 +1,7 @@
 //! Embeddable start/advance/close API. Suspension does not destroy live owners.
 use super::*;
 use crate::sim::execution::ScheduleRegion;
+use crate::sim::ir::IrCellNames;
 use std::collections::HashMap;
 
 /// Startup calls whose arguments are compile-time constants.
@@ -379,7 +380,15 @@ pub(in crate::sim::emit_c) fn main(
     if model.random.threads || model.random.objects {
         out.push_str("    llg_rt_use_instance_random_streams();\n");
     }
-    out.push_str("    llg_model_storage_defaults();\n    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n");
+    out.push_str("    llg_model_storage_defaults();\n");
+    if model
+        .arrays
+        .iter()
+        .any(|array| !array.activation && array.sparse())
+    {
+        out.push_str("    llg_model_unobserved_contents();\n");
+    }
+    out.push_str("    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n");
     out.push_str(&crate::sim::emit_c::owned::coverage::fsm_startup(model));
     out.push_str(&crate::sim::emit_c::owned::coverage::toggle_startup(model));
     out.push_str(&crate::sim::emit_c::owned::native::helpers_used());
@@ -487,11 +496,24 @@ pub(in crate::sim::emit_c) fn main(
                 let mut format = array.hdl_name.replace('%', "%%");
                 let mut coordinates = Vec::new();
                 let mut stride = array.total;
-                for (left, right) in &array.dims {
+                let names = array.cell_names;
+                for (left, right) in array
+                    .dims
+                    .iter()
+                    .filter(|_| names != IrCellNames::RecordScalar)
+                {
                     let extent = i64::from(*left).abs_diff(i64::from(*right)) + 1;
                     stride /= extent;
-                    format.push_str("[%lld]");
+                    format.push_str(if names == IrCellNames::RecordLeaf {
+                        "__i%lld"
+                    } else {
+                        "[%lld]"
+                    });
                     coordinates.push(format!("(long long)((int64_t){left} {} (int64_t)((_llg_n / {stride}ULL) % {extent}ULL))", if left >= right { "-" } else { "+" }));
+                }
+                if coordinates.is_empty() {
+                    coordinates.push(c_string_literal(&format));
+                    format = "%s".to_owned();
                 }
                 let capacity = array.hdl_name.len() + array.dims.len() * 14 + 1;
                 out.push_str(&format!("    for (uint64_t _llg_n = 0; _llg_n < {}ULL; ++_llg_n) {{ char _llg_name[{capacity}]; snprintf(_llg_name, sizeof(_llg_name), {}, {}); if (llg_wave_register_sv4(_llg_name, {}, {}u) != 0) goto start_failed; }}\n", array.total, c_string_literal(&format), coordinates.join(", "), array.cell_address("_llg_n"), array.elem_width));

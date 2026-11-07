@@ -97,9 +97,21 @@ impl Codegen<'_> {
                 );
             }
             if self.column_record_type(clause.expression) {
-                return Err(format!(
-                    "a `matches` source beyond packed capacity must be a variable in `{scope_path}`"
-                ));
+                // Any other source is evaluated once into a temporary.
+                let descriptor = self
+                    .query_descriptor(clause.expression)
+                    .cloned()
+                    .ok_or_else(|| format!("`matches` source in `{scope_path}` has no type"))?;
+                let mut statements = Vec::new();
+                let value =
+                    self.record_value_of(scope_path, &descriptor, source, &mut statements)?;
+                let test = self.lower_column_pattern(
+                    scope_path,
+                    &value,
+                    pattern_id,
+                    IrPatternMatchKind::Exact,
+                )?;
+                return Ok(Self::record_sequence(statements, test));
             }
         }
         if let Some(test) = self.lower_native_pattern(
@@ -1297,7 +1309,7 @@ impl Codegen<'_> {
                 member.name
             ));
         }
-        if super::super::collection::record_column_layout_type(&member.descriptor) {
+        if self.record_column_layout(&member.descriptor) {
             let nested = RecordValue {
                 descriptor: member.descriptor.clone(),
                 columns,

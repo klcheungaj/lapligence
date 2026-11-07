@@ -278,12 +278,17 @@ impl Codegen<'_> {
         };
         let indices = indices.clone();
         let ticks = delay.unwrap_or(IrDelay::Constant(0));
-        let source = self.native_layout_of_value(temporary)?.leaves.clone();
+        let layout = self.native_layout_of_value(temporary)?;
+        let (source, fixed) = (layout.leaves.clone(), layout.fixed.clone());
         for leaf in leaves {
-            let Some(value) = source.iter().find(|candidate| candidate.path == leaf.path) else {
-                return Err("element temporary has no such leaf".to_owned());
+            // The temporary has the element's type, so an item inside a fixed
+            // member has the same position in both.
+            let value = match source.iter().find(|candidate| candidate.path == leaf.path) {
+                Some(value) => value.clone(),
+                None if fixed.iter().any(|slot| leaf.path.starts_with(&slot.path)) => leaf.clone(),
+                None => return Err("element temporary has no such leaf".to_owned()),
             };
-            let value = self.native_leaf_read(temporary, value);
+            let value = self.native_leaf_read(temporary, &value);
             statements.push(IrStmt::Container(Box::new(IrContainerStmt::NbaLocate {
                 root: IrValueItemRoot::Element(IrChandleExpr::ContainerElement {
                     container: selection.container,

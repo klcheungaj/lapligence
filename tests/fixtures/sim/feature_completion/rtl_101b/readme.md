@@ -38,10 +38,12 @@ captured from `llg`.
   (`k = 2`); an `if` and a conditional operator bind `y` and `p`; `x` is an
   independent copy of `r` (later `r.a[3] = 1` leaves `x.a[3]` and `c.a[3]` at
   9); a `t` member matches only `default` (`-1`).
-- Negative cases: a member initializer giving cells different values, a `ref`
-  formal or an expression-call output of a record with a string member, a
-  whole member array of a call result, and a whole-value binding in a
-  continuous assignment are rejected with explicit diagnostics.
+- `nonuniform_member_initializer`: a 65,537-cell member whose initializer gives
+  cell 0 another value starts with that cell and the element default.
+- `native_output_in_expression`: an output record with a string member of a
+  call inside an expression holds its value when the statement goes on.
+- Negative cases: a whole member array of a call result and a whole-value
+  binding in a continuous assignment are rejected with explicit diagnostics.
 - `call_string_member` (SIM-007): scalar members of a call result read inside
   one `$display`: `f(r, "!").n` is `z!` after one call, `f(r, "?").k` is the
   second call's count 2, and `calls` is 2 once both ran: `z! 2 2`.

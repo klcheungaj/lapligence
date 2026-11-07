@@ -7,7 +7,7 @@
 //! module records, native roots, patterns and calls share the SIM-003
 //! transfers. Copies are deep except for handles (SV 7.5-7.10, 8.4).
 use super::*;
-use crate::sim::ir::{IrValueItemRoot, IrValueSlot};
+use crate::sim::ir::{IrElementItem, IrElementItemValue, IrValueItemRoot, IrValueSlot};
 
 /// How one whole element of a container is selected.
 #[derive(Clone)]
@@ -125,6 +125,22 @@ pub(super) fn element_leaf_value(name: String, ty: IrClassFieldType) -> LeafValu
     }
 }
 
+/// Whether each scalar leaf of a record stands alone: no union shares storage
+/// or carries a tag above it.
+fn leaf_record(descriptor: &TypeDescriptor) -> bool {
+    let TypeShape::Aggregate(layout) = &descriptor.shape else {
+        return true;
+    };
+    match layout.kind {
+        AggregateKind::UnpackedStruct => layout
+            .members
+            .iter()
+            .all(|member| leaf_record(&member.descriptor)),
+        AggregateKind::PackedStruct | AggregateKind::PackedUnion => true,
+        AggregateKind::UnpackedUnion | AggregateKind::TaggedUnion => false,
+    }
+}
+
 fn record_element(element: &IrContainerElement) -> bool {
     matches!(
         element,
@@ -223,7 +239,10 @@ impl Codegen<'_> {
                 descriptor.name
             )
         })?;
-        let mut leaves = NativeLeaves::default();
+        let mut leaves = NativeLeaves {
+            columns: self.record_column_layout(&descriptor),
+            ..NativeLeaves::default()
+        };
         collect_native_root_leaves(&descriptor, &element, &mut leaves)
             .map_err(|error| format!("{error} (container element `{}`)", descriptor.name))?;
         // A container element owns a queue or dynamic-array member as a
@@ -317,6 +336,7 @@ impl Codegen<'_> {
             descriptor,
             leaves: leaves.scalars,
             containers: leaves.containers,
+            fixed: leaves.fixed,
         };
         let companions = self.native_companions(&layout, true);
         self.native_layouts.insert(site, layout);
@@ -500,9 +520,81 @@ impl Codegen<'_> {
         let Some(selection) = self.record_element_of(lhs) else {
             return Ok(None);
         };
+        if let Some(statement) = self.element_items_assignment(path, &selection, rhs)? {
+            return Ok(Some(statement));
+        }
         let slot = self.lower_element_slot(path, &selection)?;
         self.record_into_slot(path, selection.container, selection.depth(), slot, lhs, rhs)
             .map(Some)
+    }
+
+    /// `a[i] = v` from a record variable of the element's own type, leaf by
+    /// leaf in place: no temporary and no string copy. `None` when a leaf
+    /// needs more than a store: a dynamic array is the one kind whose element
+    /// write creates nothing (`q[$+1]` appends, a missing key inserts), and
+    /// members that are containers, fixed arrays or unions move as a whole.
+    fn element_items_assignment(
+        &mut self,
+        path: &str,
+        selection: &ElementSelection,
+        rhs: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let container = selection.container;
+        if self.element_nba_target.is_some()
+            || self.model.containers[container].kind != IrContainerKind::Dynamic
+            || !selection.side_effect_free(self)
+        {
+            return Ok(None);
+        }
+        let (_, descriptor, leaves) = self.element_leaves(container, selection.depth())?;
+        if leaves.columns
+            || !leaves.containers.is_empty()
+            || !leaves.fixed.is_empty()
+            || !leaf_record(&descriptor)
+        {
+            return Ok(None);
+        }
+        let Ok(Some((source, source_type))) = self.native_endpoint(rhs) else {
+            return Ok(None);
+        };
+        if source_type != descriptor {
+            return Ok(None);
+        }
+        let sources = self.endpoint_leaves(&source)?;
+        let paired = leaves
+            .scalars
+            .iter()
+            .map(|leaf| sources.iter().find(|(path, _)| *path == leaf.path))
+            .collect::<Option<Vec<_>>>();
+        let Some(paired) = paired.filter(|paired| paired.len() == sources.len()) else {
+            return Ok(None);
+        };
+        let slot = self.lower_element_slot(path, selection)?;
+        let mut items = Vec::with_capacity(paired.len());
+        for (leaf, (_, source)) in leaves.scalars.iter().zip(paired) {
+            let value = match self.endpoint_leaf_read(source)? {
+                LeafValue::Packed(value) => IrElementItemValue::Packed(value),
+                LeafValue::Real(value) => IrElementItemValue::Real(value),
+                LeafValue::String(value) => IrElementItemValue::String(value),
+                LeafValue::Chandle(value) => IrElementItemValue::Chandle(value),
+                _ => {
+                    return Err(format!(
+                        "record element leaf has no scalar source in `{path}`"
+                    ))
+                }
+            };
+            items.push(IrElementItem {
+                path: leaf.items.clone(),
+                value,
+            });
+        }
+        Ok(Some(IrStmt::Container(Box::new(
+            IrContainerStmt::SetElementItems {
+                container,
+                slot,
+                items,
+            },
+        ))))
     }
 
     /// `push_front`, `push_back` or `insert` of a record into a queue.
@@ -525,15 +617,117 @@ impl Codegen<'_> {
         source: NodeId,
         nba: bool,
     ) -> Result<Option<IrStmt>, String> {
-        let Some((temporary, mut statements)) = self.element_copy(path, source)? else {
+        let (element, prefix) = match self.element_subrecord(source) {
+            Some((element, _, prefix, _)) => (element, prefix),
+            None => (source, Vec::new()),
+        };
+        let Some((temporary, mut statements)) = self.element_copy(path, element)? else {
             return Ok(None);
         };
         let endpoint = NativeEndpoint::Value {
             value: temporary,
-            prefix: Vec::new(),
+            prefix,
         };
         statements.push(self.native_transfer(path, target, &endpoint, nba)?);
         Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// Copy a whole record element, a sub-record of one or the record removed
+    /// by a pop into the columns of `value`; `None` for other sources.
+    pub(in crate::sim::codegen::lowering) fn element_into_record_value(
+        &mut self,
+        path: &str,
+        value: &RecordValue,
+        source: NodeId,
+        nba: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        let (element, prefix) = match self.element_subrecord(source) {
+            Some((element, _, prefix, _)) => (element, prefix),
+            None => (source, Vec::new()),
+        };
+        let Some((temporary, mut statements)) = self.element_copy(path, element)? else {
+            return Ok(None);
+        };
+        let endpoint = NativeEndpoint::Value {
+            value: temporary,
+            prefix,
+        };
+        statements.push(self.endpoint_to_record_value(path, value, &endpoint, nba)?);
+        Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// The element, selection and member path of `node` when it names a whole
+    /// sub-record or member array inside a record element.
+    fn element_subrecord(
+        &self,
+        node: NodeId,
+    ) -> Option<(
+        NodeId,
+        ElementSelection,
+        Vec<AggregatePathPart>,
+        TypeDescriptor,
+    )> {
+        let (element, selection, member) = self.element_member_parts(node)?;
+        let descriptor = self.query_descriptor(node)?.clone();
+        matches!(
+            &descriptor.shape,
+            TypeShape::FixedArray { .. }
+                | TypeShape::Aggregate(AggregateLayout {
+                    kind: AggregateKind::UnpackedStruct,
+                    ..
+                })
+        )
+        .then_some((element, selection, member, descriptor))
+    }
+
+    /// `q[i].m = v` and `v = q[i].m` for a sub-record: the element moves
+    /// through a temporary, whose member is an ordinary record endpoint. The
+    /// indices of a written element are evaluated once.
+    pub(super) fn element_subrecord_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        if let Some((element, selection, prefix, descriptor)) = self.element_subrecord(lhs) {
+            if nba {
+                return self
+                    .lower_element_member_nba(path, lhs, rhs, None)
+                    .map(Some);
+            }
+            let mut statements = Vec::new();
+            let slot = self.element_nba_slot(path, &selection, &mut statements)?;
+            let (container, depth) = (selection.container, selection.depth());
+            let temporary = self.element_temporary(container, depth, element)?;
+            statements.push(IrStmt::NativeValueDeclare(temporary));
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::GetValue {
+                container,
+                slot: slot.clone(),
+                value: temporary,
+            })));
+            statements.extend(self.element_items_to_companions(temporary)?);
+            let target = NativeEndpoint::Value {
+                value: temporary,
+                prefix,
+            };
+            statements.push(self.native_assign_into(path, &target, &descriptor, rhs, false)?);
+            statements.extend(self.companions_to_element_items(temporary)?);
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::SetValue {
+                container,
+                slot,
+                value: temporary,
+            })));
+            return Ok(Some(IrStmt::Block(statements)));
+        }
+        let source = self.p30_unwrap_cast(rhs);
+        if self.element_subrecord(source).is_none() {
+            return Ok(None);
+        }
+        let Some((target, _)) = self.native_endpoint(lhs)? else {
+            return Ok(None);
+        };
+        self.container_record_into(path, &target, source, nba)
     }
 
     /// Copy a whole record element, or the record removed by a pop, into
@@ -678,14 +872,20 @@ impl Codegen<'_> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
                 let first = (*refs.first()?)?;
-                let selection = self.record_element_of(first)?;
-                let path = parts
+                let members = parts
                     .iter()
                     .skip(1)
                     .filter(|part| !part.is_empty())
-                    .map(|part| AggregatePathPart::Member(part.clone()))
-                    .collect::<Vec<_>>();
-                (!path.is_empty()).then_some((first, selection, path))
+                    .map(|part| AggregatePathPart::Member(part.clone()));
+                // The first step may itself be an element of a member array
+                // of a record element (`q[i].a[1].n`).
+                if let Some(selection) = self.record_element_of(first) {
+                    let path = members.collect::<Vec<_>>();
+                    return (!path.is_empty()).then_some((first, selection, path));
+                }
+                let (element, selection, mut path) = self.element_member_parts(first)?;
+                path.extend(members);
+                Some((element, selection, path))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 // A member array is named by a detached array node; the
@@ -763,6 +963,16 @@ impl Codegen<'_> {
                 return Ok(None);
             }
             return Err(unstaged_member_error(&leaf.path));
+        }
+        if let Some(leaf) = fixed_item_leaf(&leaves.fixed, &path) {
+            return Ok(Some((selection, leaf)));
+        }
+        if leaves
+            .fixed
+            .iter()
+            .any(|leaf| leaf.path.starts_with(&path) || path.starts_with(&leaf.path))
+        {
+            return Ok(None);
         }
         let leaves = leaves.scalars;
         if let Some(leaf) = leaves.iter().find(|leaf| leaf.path == path) {
@@ -858,11 +1068,20 @@ impl Codegen<'_> {
         };
         let (selection, prefix) = self.element_member_path(node).ok_or_else(not_supported)?;
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
-        let scalars = leaves
+        let mut scalars = leaves
             .scalars
             .into_iter()
             .filter(|leaf| leaf.path.starts_with(&prefix))
             .collect::<Vec<_>>();
+        for fixed in &leaves.fixed {
+            if fixed.path.starts_with(&prefix) || prefix.starts_with(&fixed.path) {
+                scalars.extend(
+                    fixed_leaf_items(fixed)?
+                        .into_iter()
+                        .filter(|leaf| leaf.path.starts_with(&prefix)),
+                );
+            }
+        }
         let containers = leaves
             .containers
             .into_iter()
@@ -1047,6 +1266,9 @@ impl Codegen<'_> {
             ));
         }
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        if !leaves.fixed.is_empty() {
+            return Ok(None);
+        }
         if let Some(leaf) = leaves.containers.first() {
             return Err(format!(
                 "a container record element with queue or dynamic-array member `{}` cannot be read member by member in `{path}`",
@@ -1076,7 +1298,7 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
-        if leaves.containers.is_empty() {
+        if leaves.containers.is_empty() && leaves.fixed.is_empty() {
             return Ok(None);
         }
         // The copy evaluates the element's locator once.
@@ -1967,9 +2189,18 @@ impl Codegen<'_> {
                 ))));
                 HoistedValue::Handle(name)
             }
+            // Only a whole element takes the value; a sub-record is written
+            // through the element's bound copy.
             Some(TypeShape::Aggregate(_))
-                if self.selection_record_depth(&nested).is_some()
-                    && matches!(self.kind(lhs), NodeKind::Expr(ExprKind::ArraySelect { .. })) =>
+                if self
+                    .selection_record_depth(&nested)
+                    .is_some_and(|(container, depth)| {
+                        matches!(self.kind(lhs), NodeKind::Expr(ExprKind::ArraySelect { .. }))
+                            && self
+                                .container_element_descriptor(container, depth)
+                                .zip(self.query_descriptor(lhs))
+                                .is_some_and(|(element, target)| element.id == target.id)
+                    }) =>
             {
                 let Some((container, depth)) = self.selection_record_depth(&nested) else {
                     return Ok(Vec::new());

@@ -374,6 +374,10 @@ pub enum IrChandleExpr {
         container: usize,
         back: bool,
     },
+    /// A new runtime-owned list of nonblocking writes built at issue and
+    /// queued later (`IrContainerStmt::NbaHoldOpen`, `NbaHoldRelease`). The
+    /// handle names no object: the GC ignores it and traces the list instead.
+    NbaHold,
     Call {
         receiver: Option<Box<IrChandleExpr>>,
         virtual_dispatch: bool,
@@ -2362,6 +2366,7 @@ impl IrChandleExpr {
                 self.located_value(model)?;
                 base.validate(model, formals, chandle_return)
             }
+            Self::NbaHold => Ok(()),
             Self::QueuePop { container, .. } => {
                 if !model.containers.get(*container).is_some_and(|container| {
                     container.element.is_handle()
@@ -2699,6 +2704,7 @@ impl IrChandleExpr {
             }
             Self::Null
             | Self::Construct(_)
+            | Self::NbaHold
             | Self::InterfaceInstance { .. }
             | Self::Verbatim(_)
             | Self::Read(_)
@@ -2760,6 +2766,7 @@ impl IrChandleExpr {
             }
             Self::Null
             | Self::Construct(_)
+            | Self::NbaHold
             | Self::InterfaceInstance { .. }
             | Self::Verbatim(_)
             | Self::Read(_)

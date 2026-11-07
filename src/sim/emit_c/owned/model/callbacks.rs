@@ -108,8 +108,20 @@ fn render_with_frame(
                     let storage = capture.storage();
                     if let IrExprKind::FormalRead(index) = capture.initial().kind() {
                         if storage.kind() == StorageKind::Opaque {
-                            let marker = captured_formals.contains(index);
+                            let position = captured_formals.iter().filter(|f| *f == index).count();
+                            let marker = position > 0;
                             captured_formals.push(*index);
+                            if frame
+                                .bind_native_ref_capture(
+                                    *index,
+                                    position,
+                                    storage,
+                                    "llg_proc_frame(self)",
+                                )?
+                                .is_some()
+                            {
+                                continue;
+                            }
                             frame.bind_ref_formal_capture(
                                 *index,
                                 marker,

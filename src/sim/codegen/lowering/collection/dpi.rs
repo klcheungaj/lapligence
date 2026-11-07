@@ -153,16 +153,23 @@ impl Codegen<'_> {
                         "DPI-C {role} `{name}` formal {index} (`{formal_name}`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)"
                     ));
                 }
-                if ir.fixed_array.is_some()
+                // A column-layout record crosses as its whole payload, which
+                // the thunk builds from the columns.
+                let columns = !self.record_formal_columns(*io).is_empty();
+                if ir.fixed_array.is_some() && !columns
                     || ir.native_value.is_some()
                     || ir.real_array.is_some()
                     || ir.container.is_some()
+                    || columns
+                        && ty
+                            .payload_width()
+                            .is_none_or(|width| width > u64::from(LLG_MAX_WIDTH))
                 {
                     return Err(format!(
                         "DPI-C {role} `{name}` formal {index} (`{formal_name}`): an unpacked aggregate wider than {LLG_MAX_WIDTH} payload bits is not supported (SIM-040)"
                     ));
                 }
-                if let Some(width) = ty.payload_width() {
+                if let Some(width) = ty.payload_width().filter(|_| !columns) {
                     if width != u64::from(ir.width) {
                         return Err(format!(
                             "DPI-C {role} `{name}` formal {index} (`{formal_name}`): foreign layout covers {width} bits but the formal carries {}",
@@ -407,7 +414,8 @@ impl Codegen<'_> {
                 types,
                 dpi.ret.clone(),
             )
-            .with_scope(dpi.scope),
+            .with_scope(dpi.scope)
+            .with_record_columns(dpi.record_columns.clone()),
         );
         let index = self.model.funcs.len();
         self.model.funcs.push(function);

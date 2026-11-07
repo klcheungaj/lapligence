@@ -97,6 +97,14 @@ impl Validator<'_> {
                     "VPI object cannot reference both signal and array storage",
                 );
             }
+            if object.fixed_cell
+                && !object
+                    .array
+                    .and_then(|array| self.model.arrays.get(array))
+                    .is_some_and(|array| array.total == 1 && array.sparse())
+            {
+                return self.fail(path, "VPI fixed cell must name a one-cell descriptor array");
+            }
             if object
                 .typespec
                 .is_some_and(|typespec| typespec >= self.model.vpi_typespecs.len())
@@ -194,6 +202,9 @@ impl Validator<'_> {
                     } else {
                         self.validate_width(object.width, &format!("{path}.width"))?;
                     }
+                }
+                _ if object.fixed_cell => {
+                    self.validate_width(object.width, &format!("{path}.width"))?;
                 }
                 _ => {
                     let Some(signal) = object.signal else {

@@ -1,0 +1,17 @@
+5 s=01 b=x p=1 r=1 c=1 f=0 st=0 q=xx xx u=10 d=xx xx
+5 no cell
+15 s=02 b=x p=2 r=0 c=1 f=0 st=0 q=01 xx u=11 d=xx xx
+15 follows
+15 no cell
+25 s=09 b=1 p=9 r=1 c=1 f=0 st=0 q=02 01 u=12 d=xx xx
+25 follows
+25 no cell
+35 s=09 b=1 p=9 r=0 c=0 f=0 st=0 q=09 02 u=13 d=xx xx
+35 follows
+35 cell
+45 s=40 b=x p=0 r=0 c=1 f=0 st=0 q=81 09 u=14 d=xx xx
+45 misses
+45 no cell
+55 s=55 b=0 p=5 r=1 c=1 f=1 st=0 q=xx 09 u=15 d=55 66
+55 follows
+55 no cell

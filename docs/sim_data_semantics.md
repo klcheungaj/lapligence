@@ -30,7 +30,10 @@ cells and descriptor views for whole and selected values, conditionals, patterns
 streams and function formals/returns; arrays of unpacked records use the same
 views. A single record or tagged union wider than the packed limit, or with a
 member array above the dense threshold, stores one descriptor column per member
-array and scalar leaf (RTL-101); in a subroutine value its real, string and
+array and scalar leaf (RTL-101), and so does a smaller structure when the
+design's selections choose it (`LLG_RECORD_COLUMN_MIN_CELLS`, see
+[performance trade-offs](sim_performance_tradeoffs.md#record-storage-by-selection));
+values and scheduling are the same in both forms. In a subroutine value its real, string and
 chandle members share one native value (RTL-101b); see
 [resource limits](sim_features.md#resource-limits) for the exact descriptor profile.
 Dynamic, resizable and unbounded aggregate values remain separately bounded. The executable

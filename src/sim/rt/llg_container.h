@@ -268,6 +268,14 @@ struct llg_dyn_value_array_t {
     struct llg_native_ref* references;
 };
 
+/* Element access at a position known not to be negative, X or Z: inline, so
+ * a constant select costs one bound check. Without an element, a read gives
+ * the default and a write changes nothing. */
+static inline llg_value_t* llg_dyn_value_element_at(const llg_dyn_value_array_t* array,
+                                                    uint64_t position) {
+    return position < array->size ? &array->data[position] : NULL;
+}
+
 void llg_dyn_value_init(llg_dyn_value_array_t* array,
                         const llg_value_desc_t* element);
 void llg_dyn_value_destroy(llg_dyn_value_array_t* array);
@@ -308,6 +316,22 @@ llg_string_t llg_dyn_value_get_string(const llg_dyn_value_array_t* array,
                                       sv4_t index);
 void* llg_dyn_value_get_chandle(const llg_dyn_value_array_t* array,
                                 sv4_t index);
+static inline void* llg_dyn_value_chandle_at(const llg_dyn_value_array_t* array,
+                                             uint64_t position) {
+    const llg_value_t* value = llg_dyn_value_element_at(array, position);
+    return value ? value->value.handle : NULL;
+}
+int llg_dyn_value_store_chandle_at(llg_dyn_value_array_t* array, llg_value_t* target,
+                                   void* value);
+static inline int llg_dyn_value_set_chandle_at(llg_dyn_value_array_t* array, uint64_t position,
+                                               void* value) {
+    llg_value_t* target = llg_dyn_value_element_at(array, position);
+    if (!target) return 0;
+    return target->value.handle == value ? 1 : llg_dyn_value_store_chandle_at(array, target, value);
+}
+/* Store the string owner `*value`, leaving it empty. */
+int llg_dyn_value_move_string_at(llg_dyn_value_array_t* array, uint64_t position,
+                                 llg_string_t* value);
 sv4_t llg_dyn_value_get_nested(const llg_dyn_value_array_t* array,
                                const sv4_t* indices, size_t count);
 double llg_dyn_value_get_nested_real(const llg_dyn_value_array_t* array,
@@ -689,6 +713,10 @@ sv4_t* llg_native_ref_dependency(const void* reference);
 /* The change marker of one reference: it toggles when this element changes,
  * through the reference or the container, and never for other elements. */
 sv4_t* llg_native_ref_marker(void* reference);
+/* The marker of a record reference a wait follows. It toggles after any change
+ * of a container (see llg_native_refs_publish_watched) and the wait re-reads
+ * the record. */
+sv4_t* llg_native_ref_watch(void* reference);
 /* A reference marker has this width, which no other change marker has: a
  * store through a handle `ref` formal publishes only a marker, and
  * llg_dependency_changed uses the width to run llg_native_ref_stored. */
@@ -722,6 +750,14 @@ void llg_value_item_from_queue_value(llg_value_t* item,
                                      const llg_queue_value_array_t* src);
 /* Whole-element writes borrow `value` and copy it with conversion; they
  * return 0 without writing for an invalid index (a queue accepts `$+1`). */
+/* In-place stores into one leaf of a record element from a source of the
+ * leaf's own type; each returns whether the leaf changed, and the writer
+ * publishes through llg_dyn_value_touch once. take_string consumes `value`. */
+int llg_value_item_set_packed(llg_value_t* item, sv4_t value);
+int llg_value_item_set_real(llg_value_t* item, double value);
+int llg_value_item_set_string(llg_value_t* item, const llg_string_t* value);
+int llg_value_item_take_string(llg_value_t* item, llg_string_t value);
+int llg_value_item_set_handle(llg_value_t* item, void* value);
 int llg_dyn_value_set_element(llg_dyn_value_array_t* array,
                               const sv4_t* indices, size_t count,
                               const llg_value_t* value);
@@ -1250,6 +1286,18 @@ void llg_assoc_get_string_to(sv4_t* dst, const llg_assoc_t* array, const void* k
 /* String destination forms: `X_to(dst, ...)` replaces the expression owner at
  * dst (destroyed first; it must carry no change callback) with the string
  * `X(...)` would return. Argument conventions match the packed forms above. */
+static inline void llg_dyn_value_string_at_to(llg_string_t* dst, const llg_dyn_value_array_t* array, uint64_t position);
+static inline void llg_dyn_value_string_at_to(llg_string_t* dst, const llg_dyn_value_array_t* array,
+                                              uint64_t position) {
+    const llg_value_t* value = llg_dyn_value_element_at(array, position);
+    if (value) llg_string_clone_to(dst, &value->value.string);
+    else llg_string_replace(dst, (llg_string_t){0});
+}
+static inline llg_string_t llg_dyn_value_string_at(const llg_dyn_value_array_t* array,
+                                                   uint64_t position) {
+    const llg_value_t* value = llg_dyn_value_element_at(array, position);
+    return value ? llg_string_clone(&value->value.string) : (llg_string_t){0};
+}
 void llg_dyn_value_get_string_to(llg_string_t* dst, const llg_dyn_value_array_t* array, const sv4_t* index);
 void llg_dyn_value_get_nested_string_to(llg_string_t* dst, const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count);
 void llg_queue_value_get_string_to(llg_string_t* dst, const llg_queue_value_array_t* queue, const sv4_t* index);

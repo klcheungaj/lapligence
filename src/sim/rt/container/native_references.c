@@ -62,6 +62,9 @@ struct llg_native_ref {
     uint8_t borrowed;
     /* Counted in llg_native_real_refs_live. */
     uint8_t real_counted;
+    /* A record a wait follows: `marker` toggles when a container changes. */
+    uint8_t watched;
+    uint64_t watch_pass;
     /* The record a borrowed root stands for. */
     llg_value_t* origin;
 };
@@ -74,6 +77,7 @@ enum {
 };
 
 static struct llg_native_ref* llg_native_refs_all;
+static size_t llg_native_refs_watched;
 size_t llg_native_real_refs_live;
 /* The one notify function containers use; references forward to it. */
 static llg_container_notify_fn llg_native_refs_forward;
@@ -335,10 +339,31 @@ static void llg_native_refs_mirrors_load(void) {
             if (!mirror->syncing) llg_native_ref_mirror_load(mirror);
 }
 
+/* A notify carries no position and a record has no copy to compare with, so a
+ * watched record's wait re-reads it, for a change of any element. A subscriber
+ * may end the process holding any reference, so each publication rescans; the
+ * pass keeps that from publishing a reference twice. */
+static void llg_native_refs_publish_watched(void) {
+    static uint64_t pass;
+    uint64_t current = ++pass;
+    for (llg_native_ref_t* ref = llg_native_refs_all; ref;) {
+        if (ref->watched && ref->watch_pass != current) {
+            ref->watch_pass = current;
+            ref->syncing = 1;
+            llg_native_ref_publish(ref);
+            ref->syncing = 0;
+            ref = llg_native_refs_all;
+        } else {
+            ref = ref->all_next;
+        }
+    }
+}
+
 static void llg_native_refs_notify(sv4_t* contents, sv4_t* shape, int change) {
     llg_native_refs_mirrors_load();
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;)
         ref = llg_native_ref_refresh(ref) ? llg_native_refs_all : ref->all_next;
+    if (llg_native_refs_watched) llg_native_refs_publish_watched();
     if (llg_native_refs_forward) llg_native_refs_forward(contents, shape, change);
 }
 
@@ -608,6 +633,7 @@ void llg_native_ref_release(void* reference) {
     if (ref->all_next) ref->all_next->all_prev = ref->all_prev;
     --llg_native_refs_live;
     if (ref->real_counted) --llg_native_real_refs_live;
+    if (ref->watched) --llg_native_refs_watched;
     llg_value_drop(&ref->value);
     sv4_destroy(&ref->marker);
     sv4_destroy(&ref->key);
@@ -769,4 +795,13 @@ sv4_t* llg_native_ref_dependency(const void* reference) {
 
 sv4_t* llg_native_ref_marker(void* reference) {
     return &((llg_native_ref_t*)reference)->marker;
+}
+
+sv4_t* llg_native_ref_watch(void* reference) {
+    llg_native_ref_t* ref = reference;
+    if (!ref->watched) {
+        ref->watched = 1;
+        ++llg_native_refs_watched;
+    }
+    return &ref->marker;
 }

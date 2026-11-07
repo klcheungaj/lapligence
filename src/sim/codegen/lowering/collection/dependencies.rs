@@ -40,6 +40,13 @@ impl<'a> Codegen<'a> {
         ) {
             return None;
         }
+        // A waited record formal bound to an element.
+        if let Some(index) = self.record_ref_markers.get(&target) {
+            return Some(IrDependency::NativeRefFormal {
+                index: *index,
+                handle: true,
+            });
+        }
         let func = self.func.as_ref()?;
         // String and handle `ref` formals name the actual's change marker.
         if let Some(crate::sim::ir::IrStringExpr::FormalRead(index)) = func.string_read.get(&target)
@@ -65,6 +72,37 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// The dependency of `path` on the column `array` at member depth
+    /// `depth`: its one cell when `path` goes on to a constant in-range
+    /// element, so that other cells do not wake the reader.
+    fn column_dependency(
+        &self,
+        array: &ArrayInfo,
+        path: &[AggregatePathPart],
+        depth: usize,
+    ) -> IrDependency {
+        let array_index = self.reference_array(array.ir);
+        let contents = IrDependency::ArrayContents(array_index);
+        let Some(indices) = path.get(depth..depth + array.dims.len()) else {
+            return contents;
+        };
+        let mut linear = 0u64;
+        for ((left, right), part) in array.dims.iter().zip(indices) {
+            let AggregatePathPart::Index(value) = part else {
+                return contents;
+            };
+            let (left, right, value) = (i64::from(*left), i64::from(*right), i64::from(*value));
+            if value < left.min(right) || value > left.max(right) {
+                return contents;
+            }
+            linear = linear * (left.abs_diff(right) + 1) + left.abs_diff(value);
+        }
+        IrDependency::ArrayElement {
+            array: array_index,
+            index: linear,
+        }
+    }
+
     fn unpacked_storage_dependencies(&self, node: NodeId) -> Option<Vec<IrDependency>> {
         let (root, prefix) = self.unpacked_path_for_expr(node).or_else(|| {
             self.unpacked_aggregate_info(node)
@@ -74,12 +112,56 @@ impl<'a> Codegen<'a> {
         let descriptor = self.query_descriptor(root)?;
         let selected = super::fixed_values::fixed_path_descriptor(descriptor, &prefix);
         let mut dependencies = Vec::new();
+        let mut member_columns = HashSet::new();
         for leaf in &storage.leaves {
             if !prefix.starts_with(&leaf.path) && !leaf.path.starts_with(&prefix) {
                 continue;
             }
             if let Some(array) = &leaf.array {
-                dependencies.push(IrDependency::ArrayContents(self.reference_array(array.ir)));
+                // The cell leaves of a member column stand for the column.
+                let member_cell = matches!(leaf.path.last(), Some(AggregatePathPart::Index(_)));
+                let base = leaf.path.len() - if member_cell { array.dims.len() } else { 0 };
+                if member_cell && !member_columns.insert(array.ir) {
+                    continue;
+                }
+                // The tag cell of a column-layout tagged union shares its
+                // path with the union, whose members have columns of their own.
+                let cell = !member_cell
+                    && super::record_columns::record_cell_leaf(leaf)
+                    && !super::fixed_values::fixed_path_descriptor(descriptor, &leaf.path)
+                        .is_some_and(|(owner, _)| {
+                            super::record_columns::column_tagged_union(&owner)
+                        });
+                let depth = base + if cell { 0 } else { array.dims.len() };
+                let dependency = if cell {
+                    IrDependency::ArrayElement {
+                        array: self.reference_array(array.ir),
+                        index: 0,
+                    }
+                } else {
+                    self.column_dependency(array, &prefix[..], base)
+                };
+                // A member inside one cell is that cell's bits, so writers of
+                // different members stay separate (SV 9.2.2.2).
+                let member = (prefix.len() > depth).then(|| {
+                    let (selected, offset) = selected.as_ref()?;
+                    let (_, base) = super::fixed_values::fixed_path_descriptor(
+                        descriptor,
+                        prefix.get(..depth)?,
+                    )?;
+                    Some((
+                        Self::fixed_descriptor_width(selected)?,
+                        offset.checked_sub(base)?,
+                    ))
+                });
+                dependencies.push(match (member.flatten(), &dependency) {
+                    (Some((width, offset)), IrDependency::ArrayElement { .. })
+                        if offset + width <= array.elem_width =>
+                    {
+                        self.slice_dependency(dependency, offset, width)
+                    }
+                    _ => dependency,
+                });
                 continue;
             }
             // A queue, dynamic or associative member (SIM-007) is read whole.
@@ -2248,6 +2330,28 @@ impl<'a> Codegen<'a> {
                 .get(container)
                 .is_some_and(|container| container.class_field.is_some())
         {
+            return;
+        }
+        // A mirror of a watched record's member follows the record's marker:
+        // loading a mirror publishes nothing.
+        if let Some(index) = self.record_ref_markers.iter().find_map(|(formal, index)| {
+            self.native_roots
+                .get(formal)
+                .filter(|value| {
+                    self.model.native_values[**value]
+                        .companions
+                        .contains(&container)
+                })
+                .map(|_| *index)
+        }) {
+            self.add_dependency(
+                IrDependency::NativeRefFormal {
+                    index,
+                    handle: true,
+                },
+                seen,
+                out,
+            );
             return;
         }
         if contents {

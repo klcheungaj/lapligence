@@ -265,12 +265,9 @@ fn run_time_member_indices_select_native_record_elements() {
     let records =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_records.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_records", records, &[], &[]);
-    sim_cli::reject_case_with_args(
-        SUITE,
-        "bad_member_select_limit",
-        "record member array `w.s` in `tb` needs integral elements within the packed limit",
-        &[],
-    );
+    let large =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_large.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_member_select_large", large, &[], &[]);
 }
 
 #[test]
@@ -554,13 +551,20 @@ fn container_elements_hold_records_with_container_members() {
     sim_cli::run_case_after_db_drop(SUITE, "record_container_elements", expected);
     sim_cli::reject_case(
         SUITE,
-        "bad_record_container_event_nba",
-        "an event-controlled nonblocking assignment of a queue, dynamic or associative member in `tb` is not supported; use a delay or an event control before the statement",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "bad_record_element_member_ref",
         "a queue or dynamic-array member of a container record element as the ref actual of `q` in `tb` is not supported",
+    );
+}
+
+/// A record with a queue member keeps the queue of the issue until its event.
+#[test]
+fn event_controlled_writes_keep_the_queue_of_the_issue() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "record_queue_event_nba",
+        "1000 [] 0\n2000 [b] 2\n",
+        &[],
+        &[],
     );
 }
 

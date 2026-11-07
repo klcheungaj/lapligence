@@ -64,6 +64,10 @@ feature_completion/rtl_016/q03_stable.sv	mixed-assignments	36:5
 feature_completion/rtl_016/unpacked_contexts.sv	mixed-assignments	70:5
 feature_completion/rtl_016/wrong_tag_selects.sv	mixed-assignments	28:5
 feature_completion/rtl_099/record_array_values.sv	mixed-assignments	16:3
+feature_completion/rtl_101/chosen_call_source.sv	mixed-assignments	135:3
+feature_completion/rtl_101/chosen_event_nba.sv	mixed-assignments	23:3
+feature_completion/rtl_101/chosen_event_nba_native.sv	mixed-assignments	53:3
+feature_completion/rtl_101/chosen_ref_wait.sv	mixed-assignments	109:3
 feature_completion/rtl_101/member_columns.sv	mixed-assignments	14:3
 feature_completion/rtl_101/oversized_values.sv	mixed-assignments	50:3
 feature_completion/rtl_103/dense_patterns.sv	mixed-assignments	18:3
@@ -92,6 +96,7 @@ feature_completion/sim_007/record_container_nba_sources.sv	mixed-assignments	18:
 feature_completion/sim_007/record_element_member_nba.sv	mixed-assignments	19:3
 feature_completion/sim_007/record_event_nba.sv	mixed-assignments	20:3
 feature_completion/sim_007/record_member_select_nba.sv	mixed-assignments	21:3
+feature_completion/sim_007/record_queue_event_nba.sv	mixed-assignments	7:5
 force/Force_Advanced_Contexts.sv	mixed-assignments	32:3
 group1_repairs/packed_selection_capture.sv	mixed-assignments	5:3
 group1_repairs/subaggregate_types.sv	mixed-assignments	8:5

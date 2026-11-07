@@ -686,7 +686,8 @@ impl Codegen<'_> {
                 callee_inst,
                 &meta.formals,
                 &bound,
-                Some(&mut copies),
+                &mut copies,
+                true,
             )?;
             let call = IrChandleExpr::Call {
                 receiver: self.class_method_receiver(path, node)?.map(Box::new),
@@ -699,7 +700,7 @@ impl Codegen<'_> {
             if copies.before.is_empty() && copies.after.is_empty() {
                 return Ok(call);
             }
-            // The handle is read after the element copies are stored.
+            // The handle is read after the copies are stored.
             let result = format!("_llg_hret{}", node.0);
             let mut statements = copies.before;
             statements.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(

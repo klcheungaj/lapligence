@@ -2,7 +2,8 @@
 
 use super::*;
 
-/// Statements around a value call for element actuals of output formals.
+/// Statements around a value call for the record actuals that are no record
+/// storage and the element actuals of output formals.
 #[derive(Default)]
 pub(in crate::sim::codegen) struct CallElementCopies {
     pub(in super::super) before: Vec<IrStmt>,
@@ -142,9 +143,11 @@ impl<'a> Codegen<'a> {
             ));
         }
         if self.record_return(ft) && !std::mem::take(&mut self.record_call_result) {
-            return Err(format!(
-                "function `{name}` returns a column-layout record; call it only as the source of a record assignment or return in `{scope_path}`"
-            ));
+            // Outside a record context the result is its packed image.
+            let mut statements = Vec::new();
+            let value = self.record_call_result_value(scope_path, ft, h, &mut statements)?;
+            let image = self.record_image(scope_path, &value)?;
+            return Ok(Self::record_sequence(statements, image));
         }
         let formals = meta.formals.clone();
         let bound = self.bind_call_args(self.inst, &formals, args)?;
@@ -164,8 +167,17 @@ impl<'a> Codegen<'a> {
         // side effects and yields all-X.
         let ret_val = meta.ret;
         let (ret_w, ret_s, _, _) = ret_val.unwrap_or((1, false, false, false));
-        let out_args =
-            self.lower_call_arguments(scope_path, h, name, callee_inst, &formals, &bound, None)?;
+        let mut copies = CallElementCopies::default();
+        let out_args = self.lower_call_arguments(
+            scope_path,
+            h,
+            name,
+            callee_inst,
+            &formals,
+            &bound,
+            &mut copies,
+            false,
+        )?;
         // A class method written without an explicit receiver inside another
         // class method is represented as a plain function call by Slang. Bind
         // that call to the current `this` (or the object under construction).
@@ -212,7 +224,7 @@ impl<'a> Codegen<'a> {
             ));
         }
         let depth = parse_depth(&self.depth_arg);
-        Ok(IrExpr::new(
+        let call = IrExpr::new(
             IrExprKind::CallFn(Box::new(IrCallExpr {
                 f: function,
                 args: out_args,
@@ -227,14 +239,16 @@ impl<'a> Codegen<'a> {
             ret_w,
             ret_s,
             None,
-        ))
+        );
+        self.record_call_operand(scope_path, copies.before, call, copies.after)
     }
 
     /// Lower the actuals of a function call used as a value, in the C
-    /// parameter order: address arguments, then inputs. With `copies`, a
-    /// handle or string element bound to an output formal goes through a
-    /// temporary whose statements the caller runs around the call; without
-    /// them such an actual has no storage to pass.
+    /// parameter order: address arguments, then inputs. `copies` receives
+    /// the statements the caller runs around the call: those staging record
+    /// actuals that are no record storage and, with `element_copies`, those
+    /// of a handle or string element bound to an output formal. Without
+    /// `element_copies` such an element has no storage to pass.
     #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn lower_call_arguments(
         &mut self,
@@ -244,7 +258,8 @@ impl<'a> Codegen<'a> {
         callee_inst: NodeId,
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
-        mut copies: Option<&mut CallElementCopies>,
+        copies: &mut CallElementCopies,
+        element_copies: bool,
     ) -> Result<Vec<IrCallArg>, String> {
         let mut out_args: Vec<IrCallArg> = Vec::new();
         // Inputs are gathered by two passes below; the formal index keeps
@@ -291,7 +306,10 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *io,
                     bound[idx].expr,
-                    prelude.as_mut().map(|(before, after)| (before, after)),
+                    Some(match prelude.as_mut() {
+                        Some((before, after)) => (before, after),
+                        None => (&mut copies.before, &mut copies.after),
+                    }),
                 );
                 self.native_call_prelude = prelude;
                 let mut columns = columns?.into_iter();
@@ -384,7 +402,7 @@ impl<'a> Codegen<'a> {
                             continue;
                         }
                     }
-                    if let (Some(copies), false) = (copies.as_deref_mut(), is_ref) {
+                    if element_copies && !is_ref {
                         let copy_in = matches!(
                             self.kind(*io),
                             NodeKind::FuncArg {

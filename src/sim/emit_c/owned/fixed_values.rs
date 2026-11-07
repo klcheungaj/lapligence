@@ -3,12 +3,16 @@ use super::*;
 use crate::sim::ir::IrFixedValue;
 
 impl Frame<'_, '_> {
-    pub(super) fn fixed_view(&mut self, view: &IrMemoryView) -> Result<String, String> {
-        let owner = self.fixed_array_address(view.array)?;
-        if view.origin == 0
+    /// Whether `view` is its whole array, which evaluates no selector.
+    pub(super) fn whole_fixed_view(&self, view: &IrMemoryView) -> bool {
+        view.origin == 0
             && view.selectors.is_empty()
             && view.total == self.ctx.model.array(view.array).total
-        {
+    }
+
+    pub(super) fn fixed_view(&mut self, view: &IrMemoryView) -> Result<String, String> {
+        let owner = self.fixed_array_address(view.array)?;
+        if self.whole_fixed_view(view) {
             return Ok(owner);
         }
         let origin = self.fixed_view_origin(view)?;
@@ -54,6 +58,9 @@ impl Frame<'_, '_> {
                 .ok_or_else(|| "fixed stream has no descriptor-shaped operand".to_owned()),
             IrFixedValue::Convert { array, .. } => Ok((*array, self.ctx.model.array(*array).total)),
             IrFixedValue::Dense(view) => Ok((view.array, view.total)),
+            IrFixedValue::ValueItems { array, .. } => {
+                Ok((*array, self.ctx.model.array(*array).total))
+            }
             IrFixedValue::Packed { .. }
             | IrFixedValue::Selected { .. }
             | IrFixedValue::BitStream { .. } => {
@@ -271,6 +278,23 @@ impl Frame<'_, '_> {
             } => self.fixed_bit_stream_source(stream, *cell_width, *consume),
             IrFixedValue::Selected { .. } => {
                 Err("a runtime `with` selection is only a descriptor stream operand".to_owned())
+            }
+            IrFixedValue::ValueItems { root, items, array } => {
+                let info = self.ctx.model.array(*array).clone();
+                let item = self.value_item_root(root, items)?;
+                let fallback = self.expression(&IrExpr::new(
+                    IrExprKind::Const(info.element_fallback()),
+                    info.elem_width,
+                    false,
+                    None,
+                ))?;
+                let object = self.fixed_scratch();
+                self.line(format!(
+                    "llg_fixed_array_items_source({object}, {item}, {});",
+                    fallback.code
+                ));
+                self.discard(fallback);
+                Ok(object)
             }
             IrFixedValue::Dense(view) => {
                 let info = self.ctx.model.array(view.array).clone();

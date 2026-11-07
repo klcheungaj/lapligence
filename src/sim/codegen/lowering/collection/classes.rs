@@ -371,7 +371,11 @@ impl<'a> Codegen<'a> {
                 };
                 // A record with string, real or handle leaves is one native
                 // value per object (SIM-011).
-                if self.native_value_type(child).is_some() {
+                let static_columns = self.db.variable_lifetime(child) == VariableLifetime::Static
+                    && self
+                        .query_descriptor(child)
+                        .is_some_and(|descriptor| self.record_column_layout(descriptor));
+                if static_columns || self.native_value_type(child).is_some() {
                     // A static one is one record for the whole model, stored
                     // leaf by leaf like a package record (SV 8.9).
                     let path = format!("llg_class{class_index}");

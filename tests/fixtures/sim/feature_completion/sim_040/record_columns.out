@@ -1,0 +1,12 @@
+rc_in c id=-5 tag=6/3 wide=123456789a data=-8,-7,-1,7
+rc_in g n=300 c/a c/0 0/0 7/0
+out id=77 tag=10xz wide=42deadbeef data=-20,-17,1,25
+inout id=995 tag=01xz wide=123456789a data=-8,-7,-100,7
+inout n=600 7 0 Z X
+ex_auto in id=9 tag=0110 wide=0100000000 data=1,2,8,16
+ex_auto io n=11 0 9 0 0
+rc_drive out id=10 tag=6/0 wide=0100000000 data=1,-2,8,16
+rc_drive io n=12 0/0 0/0 9/0 0/0
+rc_drive static id=9 tag=9/0 wide=0100000000 data=1,2,8,16
+rc_drive wait id=9 tag=6/0 wide=0100000000 data=1,2,8,17
+2000 done

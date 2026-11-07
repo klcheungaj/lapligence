@@ -277,6 +277,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::EventObject(_)
         | IrChandleExpr::QueuePop { .. }
         | IrChandleExpr::EventEntry { .. }
+        | IrChandleExpr::NbaHold
         | IrChandleExpr::Mailbox(_)
         | IrChandleExpr::Process(_)
         | IrChandleExpr::PinnedProcess(_)

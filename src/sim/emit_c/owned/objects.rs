@@ -132,6 +132,17 @@ impl Frame<'_, '_> {
                 let container_name = self.container_name(*container)?;
                 let mut container = self.ctx.model.containers[*container].clone();
                 container.c_name = container_name;
+                if let (IrContainerKind::Dynamic, Some(position)) =
+                    (&container.kind, dyn_position(index))
+                {
+                    return Ok(self.scalar(
+                        "void*",
+                        format!(
+                            "llg_dyn_value_chandle_at(&{}, {position}ULL)",
+                            container.c_name
+                        ),
+                    ));
+                }
                 let index = self.expression(index)?;
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_chandle",
@@ -212,6 +223,7 @@ impl Frame<'_, '_> {
                     format!("llg_queue_value_pop_chandle(&{name}, {})", i32::from(*back)),
                 ));
             }
+            IrChandleExpr::NbaHold => return Ok(self.scalar("void*", "llg_nba_hold_new()".into())),
             IrChandleExpr::ContainerGetNested { container, indices } => {
                 let container_name = self.container_name(*container)?;
                 let mut container = self.ctx.model.containers[*container].clone();
@@ -809,10 +821,17 @@ impl Frame<'_, '_> {
         }
         let storage = self.ctx.model.containers[container].clone();
         let name = self.container_name(container)?;
-        let (call, depth, touch) = match storage.kind {
-            IrContainerKind::Associative {
-                key: IrAssocKey::String,
-            } => {
+        let position = match indices {
+            [index] => dyn_position(index),
+            _ => None,
+        };
+        let (call, depth, touch) = match (storage.kind, position) {
+            (
+                IrContainerKind::Associative {
+                    key: IrAssocKey::String,
+                },
+                _,
+            ) => {
                 let key = key.ok_or("string-keyed element locator requires a key")?;
                 let key = self.string(key)?;
                 let call = format!(
@@ -825,7 +844,14 @@ impl Frame<'_, '_> {
                 self.native_discard(key);
                 (element, 1, "llg_assoc_value_touch")
             }
-            kind => {
+            (IrContainerKind::Dynamic, Some(position)) => {
+                let element = self.scalar(
+                    "llg_value_t*",
+                    format!("llg_dyn_value_element_at(&{name}, {position}ULL)"),
+                );
+                (element, 1, "llg_dyn_value_touch")
+            }
+            (kind, _) => {
                 let (list, values) = self.container_indices(indices)?;
                 let call = match kind {
                     IrContainerKind::Dynamic => {

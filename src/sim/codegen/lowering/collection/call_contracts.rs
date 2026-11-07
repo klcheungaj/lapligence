@@ -873,20 +873,98 @@ impl<'a> Codegen<'a> {
         self.call_shape_of(ft, inst, &mut Vec::new())
     }
 
-    /// Whether a task waits on a native record `ref` formal. Its body reads
-    /// the record's leaves, which only a specialization binding a module,
-    /// static or procedural-block record can name (SIM-008), so the retained
-    /// definition is a template no call reaches (`IrFunc::inline_expanded`).
+    /// Whether a task waits on a record `ref` formal. Its wait needs a
+    /// specialization binding the leaves of a module, static or
+    /// procedural-block record (SIM-008) or a marker for an element's
+    /// reference (`IrFormal::record_marker`), so the retained definition is a
+    /// template no call reaches (`IrFunc::inline_expanded`).
     pub(in super::super) fn waits_on_record_ref(&self, ft: NodeId, inst: NodeId) -> bool {
         if !matches!(self.kind(ft), NodeKind::FuncTask { is_task: true, .. }) {
             return false;
         }
         let formals = self.func_formals(ft);
         self.call_shape(ft, inst).static_refs.iter().any(|index| {
-            formals
-                .get(*index)
-                .is_some_and(|(formal, _)| self.is_native_declaration(*formal))
+            formals.get(*index).is_some_and(|(formal, _)| {
+                self.is_native_declaration(*formal) || self.record_declaration(*formal)
+            })
         })
+    }
+
+    /// The formals at `waited` that are native record `ref` formals.
+    pub(in super::super) fn watched_record_formals(
+        &self,
+        formals: &[(NodeId, bool)],
+        waited: &[usize],
+    ) -> Vec<usize> {
+        let mut watched: Vec<usize> = waited
+            .iter()
+            .copied()
+            .filter(|index| {
+                formals
+                    .get(*index)
+                    .is_some_and(|(formal, _)| self.is_native_declaration(*formal))
+            })
+            .collect();
+        watched.sort_unstable();
+        watched.dedup();
+        watched
+    }
+
+    /// The positions of every native record `ref` formal: one override of a
+    /// virtual family may wait on a formal another does not.
+    pub(in super::super) fn native_record_formals(&self, formals: &[(NodeId, bool)]) -> Vec<usize> {
+        (0..formals.len())
+            .filter(|index| self.is_ref_formal(formals[*index].0))
+            .collect()
+    }
+
+    /// [`Self::watched_record_formals`] that no binding of `records` names.
+    pub(in super::super) fn unbound_record_formals(
+        &self,
+        formals: &[(NodeId, bool)],
+        waited: &[usize],
+        records: &[RecordRefBinding],
+    ) -> Vec<usize> {
+        let mut watched = self.watched_record_formals(formals, waited);
+        watched.retain(|index| {
+            records
+                .iter()
+                .all(|record| record.formal != formals[*index].0)
+        });
+        watched
+    }
+
+    /// The index of native record `ref` formal `target` of the body being
+    /// lowered, and the fork capture slots its parameters take.
+    pub(in super::super) fn native_ref_formal_slots(
+        &self,
+        target: NodeId,
+    ) -> Option<(usize, usize)> {
+        let value = *self.native_roots.get(&target)?;
+        let (index, formal) = self.model.funcs.iter().find_map(|function| {
+            function
+                .formals
+                .iter()
+                .enumerate()
+                .find(|(_, formal)| formal.is_ref() && formal.native_value == Some(value))
+        })?;
+        let marker = usize::from(self.record_ref_markers.contains_key(&target));
+        Some((index, 1 + formal.native_companions.len() + marker))
+    }
+
+    /// Whether `argument` of a waited record formal has a change marker: a
+    /// record element, or a formal of this body that took one.
+    pub(in super::super) fn watchable_record_argument(&self, argument: &IrCallArg) -> bool {
+        match argument {
+            IrCallArg::ElementRef(reference) => {
+                matches!(reference.kind, crate::sim::ir::IrElementRefKind::Record)
+            }
+            IrCallArg::NativeValue(value) => self
+                .record_ref_markers
+                .keys()
+                .any(|formal| self.native_roots.get(formal) == Some(value)),
+            _ => false,
+        }
     }
 
     /// `waits_on_record_ref` for a call that may reach any override of `ft`.

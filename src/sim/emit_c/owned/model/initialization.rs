@@ -647,6 +647,12 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
                 "    llg_fixed_array_init(&{}, {}ULL, {value}, &{}_llg_contents_dep);\n",
                 array.c_name, array.total, array.c_name
             ));
+            if let Some(cells) = super::super::super::expressions::fixed_array_initial_cells(
+                array,
+                &format!("&{}", array.c_name),
+            ) {
+                initialize.push_str(&format!("    {cells}\n"));
+            }
             destroy.push_str(&format!(
                 "    llg_fixed_array_destroy(&{});\n",
                 array.c_name

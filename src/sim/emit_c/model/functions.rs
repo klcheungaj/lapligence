@@ -89,6 +89,9 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
         } else if form.native_value.is_some() && form.is_address() {
             params.push(("llg_value_t*".to_owned(), format!("o{idx}")));
             params.extend(native_companion_params(form, &format!("o{idx}")));
+            if form.record_marker {
+                params.push(("sv4_t*".to_owned(), handle_marker_param(idx)));
+            }
         } else if form.real_array.is_some() && form.is_address() {
             params.push((
                 "double*".to_owned(),

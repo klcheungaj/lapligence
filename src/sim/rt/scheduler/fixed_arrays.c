@@ -1,17 +1,23 @@
 /* Lazy fixed cells never move: queued writes and selected dependencies retain
- * descriptor identity. Unvisited cells share only a read-only default. */
-struct llg_fixed_inertial {
-    const void* site;
-    llg_inertial_t* handle;
-    struct llg_fixed_inertial* next;
-};
-
+ * descriptor identity. Unvisited cells share only a read-only default.
+ *
+ * Cells live in blocks, so a cell has no allocation or links of its own. An
+ * array of at most LLG_FIXED_DIRECT_CELLS cells is paged: a block is one page of
+ * positions, a table finds it, and an empty value (width 0, which no cell of
+ * an array has) marks a position nobody touched. A larger array is sparse:
+ * hashed cells fill blocks in order. */
 struct llg_fixed_cell {
     uint64_t index;
     sv4_t value;
+    struct llg_fixed_cell* bucket_next;
+};
+
+struct llg_fixed_block {
+    struct llg_fixed_block *next, *address_next;
     llg_fixed_array_t* array;
-    struct llg_fixed_inertial* inertial;
-    struct llg_fixed_cell *bucket_next, *next, *address_next;
+    uint64_t first;         /* Paged: index of the first position. */
+    uint16_t cells, used;   /* Paged: `used` is every position. */
+    uint32_t registered;    /* In the address table. */
 };
 
 static _Noreturn void fixed_bad_state(const char* reason) {
@@ -20,8 +26,38 @@ static _Noreturn void fixed_bad_state(const char* reason) {
 }
 
 #define LLG_FIXED_INDEX_INITIAL_CAPACITY 16u
-static llg_fixed_cell_t** fixed_addresses;
+/* Arrays of at most this many cells reach a cell by position: two loads and no
+ * hash, and a page's table entry costs far less than a link in every cell. */
+#define LLG_FIXED_DIRECT_CELLS 4096u
+#define LLG_FIXED_PAGE_SHIFT 6u
+#define LLG_FIXED_PAGE_CELLS (1u << LLG_FIXED_PAGE_SHIFT)
+#define LLG_FIXED_SPARSE_BLOCK_CELLS 32u
+/* The address table files a block under the 4 KiB granule of its start. No
+ * block is larger, so a cell's block starts in its granule or the one before. */
+#define LLG_FIXED_ADDRESS_SHIFT 12u
+_Static_assert(sizeof(struct llg_fixed_block) + LLG_FIXED_PAGE_CELLS * sizeof(sv4_t) <= 1u << LLG_FIXED_ADDRESS_SHIFT,
+               "a page fits an address granule");
+_Static_assert(sizeof(struct llg_fixed_block) + LLG_FIXED_SPARSE_BLOCK_CELLS * sizeof(struct llg_fixed_cell)
+                   <= 1u << LLG_FIXED_ADDRESS_SHIFT,
+               "a sparse block fits an address granule");
+/* Only blocks of marked arrays are filed: nothing else asks. */
+static struct llg_fixed_block** fixed_addresses;
 static size_t fixed_address_capacity, fixed_address_count;
+/* Bounds of the filed blocks: most writes are to signals outside them. */
+static uintptr_t fixed_address_low = UINTPTR_MAX, fixed_address_high;
+/* Arrays with a contents marker or sampled cells: with none, a write has no
+ * array to tell. */
+static size_t fixed_marked_arrays;
+
+/* Cells driven through an inertial delay, by address. Few cells ever are. */
+struct llg_fixed_inertial {
+    const sv4_t* target;
+    const void* site;
+    llg_inertial_t* handle;
+    struct llg_fixed_inertial* next;
+};
+static struct llg_fixed_inertial** fixed_inertials;
+static size_t fixed_inertial_capacity, fixed_inertial_count;
 
 static size_t fixed_hash(uint64_t key) {
     key ^= key >> 30;
@@ -36,18 +72,65 @@ static size_t fixed_grow(size_t capacity) {
     return capacity ? capacity * 2 : LLG_FIXED_INDEX_INITIAL_CAPACITY;
 }
 
+static int fixed_direct(const llg_fixed_array_t* array) {
+    return array->total <= LLG_FIXED_DIRECT_CELLS;
+}
+
+static sv4_t* fixed_block_page(struct llg_fixed_block* block) {
+    return (sv4_t*)(block + 1);
+}
+
+static llg_fixed_cell_t* fixed_block_sparse(struct llg_fixed_block* block) {
+    return (llg_fixed_cell_t*)(block + 1);
+}
+
+/* The cells of one array in no particular order; adds during a walk are safe
+ * only into another array. */
+struct fixed_cursor {
+    struct llg_fixed_block* block;
+    uint32_t slot;
+    int paged;
+    uint64_t index;
+    sv4_t* value;
+    const struct llg_fixed_block* peer_block;
+    const sv4_t* peer;
+};
+
+static inline int fixed_next(struct fixed_cursor* cursor) {
+    for (; cursor->block; cursor->block = cursor->block->next, cursor->slot = 0) {
+        struct llg_fixed_block* block = cursor->block;
+        while (cursor->slot < block->used) {
+            uint32_t slot = cursor->slot++;
+            if (!cursor->paged) {
+                cursor->index = fixed_block_sparse(block)[slot].index;
+                cursor->value = &fixed_block_sparse(block)[slot].value;
+                return 1;
+            }
+            if (llg_sv4_width(fixed_block_page(block)[slot])) {
+                cursor->index = block->first + slot;
+                cursor->value = &fixed_block_page(block)[slot];
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+#define FIXED_EACH(cursor, array) \
+    for (struct fixed_cursor cursor = {.block = (array)->blocks, .paged = fixed_direct(array)}; fixed_next(&cursor);)
+
 static void fixed_address_reserve(void) {
     if (fixed_address_count < fixed_address_capacity / 2) return;
     size_t capacity = fixed_grow(fixed_address_capacity);
-    llg_fixed_cell_t** buckets = llg_checked_calloc(capacity, sizeof(*buckets), "fixed cell address index");
+    struct llg_fixed_block** buckets = llg_checked_calloc(capacity, sizeof(*buckets), "fixed cell address index");
     for (size_t i = 0; i < fixed_address_capacity; ++i) {
-        llg_fixed_cell_t* cell = fixed_addresses[i];
-        while (cell) {
-            llg_fixed_cell_t* next = cell->address_next;
-            size_t slot = fixed_hash((uint64_t)(uintptr_t)&cell->value) & (capacity - 1);
-            cell->address_next = buckets[slot];
-            buckets[slot] = cell;
-            cell = next;
+        struct llg_fixed_block* block = fixed_addresses[i];
+        while (block) {
+            struct llg_fixed_block* next = block->address_next;
+            size_t slot = fixed_hash((uint64_t)((uintptr_t)block >> LLG_FIXED_ADDRESS_SHIFT)) & (capacity - 1);
+            block->address_next = buckets[slot];
+            buckets[slot] = block;
+            block = next;
         }
     }
     free(fixed_addresses);
@@ -55,32 +138,131 @@ static void fixed_address_reserve(void) {
     fixed_address_capacity = capacity;
 }
 
-static void fixed_array_changed(sv4_t* target) {
-    if (!fixed_address_capacity) return;
-    size_t slot = fixed_hash((uint64_t)(uintptr_t)target) & (fixed_address_capacity - 1);
-    for (llg_fixed_cell_t* cell = fixed_addresses[slot]; cell; cell = cell->address_next) {
-        if (&cell->value == target) {
-            llg_dependency_changed(cell->array->contents);
-            return;
-        }
+static size_t fixed_block_bytes(const struct llg_fixed_block* block) {
+    return sizeof(*block) + block->cells * (fixed_direct(block->array) ? sizeof(sv4_t) : sizeof(llg_fixed_cell_t));
+}
+
+static void fixed_block_file(struct llg_fixed_block* block) {
+    if (block->registered) return;
+    fixed_address_reserve();
+    size_t slot = fixed_hash((uint64_t)((uintptr_t)block >> LLG_FIXED_ADDRESS_SHIFT)) & (fixed_address_capacity - 1);
+    block->address_next = fixed_addresses[slot];
+    fixed_addresses[slot] = block;
+    block->registered = 1;
+    ++fixed_address_count;
+    uintptr_t start = (uintptr_t)block;
+    if (start < fixed_address_low) fixed_address_low = start;
+    if (start + fixed_block_bytes(block) > fixed_address_high) fixed_address_high = start + fixed_block_bytes(block);
+}
+
+static void fixed_block_unfile(struct llg_fixed_block* block) {
+    if (!block->registered) return;
+    size_t slot = fixed_hash((uint64_t)((uintptr_t)block >> LLG_FIXED_ADDRESS_SHIFT)) & (fixed_address_capacity - 1);
+    struct llg_fixed_block** link = &fixed_addresses[slot];
+    while (*link != block) link = &(*link)->address_next;
+    *link = block->address_next;
+    if (!--fixed_address_count) {
+        free(fixed_addresses);
+        fixed_addresses = NULL;
+        fixed_address_capacity = 0;
+        fixed_address_low = UINTPTR_MAX;
+        fixed_address_high = 0;
     }
 }
 
-llg_inertial_t** llg_fixed_array_inertial(sv4_t* target, const void* site) {
-    if (fixed_address_capacity) {
-        size_t slot = fixed_hash((uint64_t)(uintptr_t)target) & (fixed_address_capacity - 1);
-        for (llg_fixed_cell_t* cell = fixed_addresses[slot]; cell; cell = cell->address_next) {
-            if (&cell->value != target) continue;
-            for (struct llg_fixed_inertial* entry = cell->inertial; entry; entry = entry->next)
-                if (entry->site == site) return &entry->handle;
-            struct llg_fixed_inertial* entry = llg_checked_calloc(1, sizeof(*entry), "fixed inertial site");
-            entry->site = site;
-            entry->next = cell->inertial;
-            cell->inertial = entry;
-            return &entry->handle;
+static struct llg_fixed_block* fixed_block_of(const sv4_t* target) {
+    uintptr_t address = (uintptr_t)target, granule = address >> LLG_FIXED_ADDRESS_SHIFT;
+    if (address < fixed_address_low || address >= fixed_address_high) return NULL;
+    for (int before = 0; before < 2; ++before, --granule) {
+        size_t slot = fixed_hash((uint64_t)granule) & (fixed_address_capacity - 1);
+        for (struct llg_fixed_block* block = fixed_addresses[slot]; block; block = block->address_next) {
+            uintptr_t start = (uintptr_t)block;
+            if (address >= start && address - start < fixed_block_bytes(block)) return block;
         }
     }
-    fixed_bad_state("inertial target is not a fixed cell");
+    return NULL;
+}
+
+static struct llg_fixed_block* fixed_block_new(llg_fixed_array_t* array, uint64_t first, uint32_t cells, size_t cell_bytes) {
+    struct llg_fixed_block* block = llg_checked_calloc(1, sizeof(*block) + cells * cell_bytes, "fixed array cells");
+    block->array = array;
+    block->first = first;
+    block->cells = (uint16_t)cells;
+    block->next = array->blocks;
+    array->blocks = block;
+    if (array->contents || array->sampled) fixed_block_file(block);
+    return block;
+}
+
+static void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index, sv4_t old);
+
+static void fixed_array_changed(sv4_t* target, sv4_t old) {
+    if (!fixed_marked_arrays || !fixed_address_capacity) return;
+    struct llg_fixed_block* block = fixed_block_of(target);
+    if (!block) return;
+    llg_fixed_array_t* array = block->array;
+    if (array->sampled) {
+        uint64_t index;
+        if (fixed_direct(array)) index = block->first + (uint64_t)(target - fixed_block_page(block));
+        else {
+            size_t offset = (size_t)((const char*)target - (const char*)fixed_block_sparse(block));
+            index = fixed_block_sparse(block)[offset / sizeof(llg_fixed_cell_t)].index;
+        }
+        fixed_sampled_record(array, index, old);
+    }
+    llg_dependency_changed(array->contents);
+}
+
+static size_t fixed_inertial_slot(const sv4_t* target) {
+    return fixed_hash((uint64_t)(uintptr_t)target) & (fixed_inertial_capacity - 1);
+}
+
+llg_inertial_t** llg_fixed_array_inertial(sv4_t* target, const void* site) {
+    if (fixed_inertial_capacity)
+        for (struct llg_fixed_inertial* entry = fixed_inertials[fixed_inertial_slot(target)]; entry; entry = entry->next)
+            if (entry->target == target && entry->site == site) return &entry->handle;
+    if (fixed_inertial_count >= fixed_inertial_capacity / 2) {
+        struct llg_fixed_inertial** previous = fixed_inertials;
+        size_t capacity = fixed_inertial_capacity;
+        fixed_inertial_capacity = fixed_grow(capacity);
+        fixed_inertials = llg_checked_calloc(fixed_inertial_capacity, sizeof(*fixed_inertials), "fixed inertial sites");
+        for (size_t i = 0; i < capacity; ++i) {
+            for (struct llg_fixed_inertial* entry = previous[i], *next; entry; entry = next) {
+                next = entry->next;
+                size_t slot = fixed_inertial_slot(entry->target);
+                entry->next = fixed_inertials[slot];
+                fixed_inertials[slot] = entry;
+            }
+        }
+        free(previous);
+    }
+    struct llg_fixed_inertial* entry = llg_checked_calloc(1, sizeof(*entry), "fixed inertial site");
+    size_t slot = fixed_inertial_slot(target);
+    entry->target = target;
+    entry->site = site;
+    entry->next = fixed_inertials[slot];
+    fixed_inertials[slot] = entry;
+    ++fixed_inertial_count;
+    return &entry->handle;
+}
+
+static void fixed_inertial_forget(const sv4_t* target) {
+    if (!fixed_inertial_count) return;
+    for (struct llg_fixed_inertial** link = &fixed_inertials[fixed_inertial_slot(target)]; *link;) {
+        struct llg_fixed_inertial* entry = *link;
+        if (entry->target != target) {
+            link = &entry->next;
+            continue;
+        }
+        *link = entry->next;
+        free(entry);
+        --fixed_inertial_count;
+    }
+    if (!fixed_inertial_count) {
+        free(fixed_inertials);
+        fixed_inertials = NULL;
+        fixed_inertial_capacity = 0;
+    }
 }
 
 static sv4_t fixed_read(const llg_fixed_array_t*, uint64_t);
@@ -89,12 +271,31 @@ static llg_fixed_range_t* fixed_ranges_copy(const llg_fixed_array_t*, uint64_t, 
 static void fixed_array_snapshot(llg_fixed_array_t*, const llg_fixed_array_t*, int);
 static void fixed_array_apply(llg_fixed_array_t*, const llg_fixed_array_t*);
 
-static llg_fixed_cell_t* fixed_find(const llg_fixed_array_t* array, uint64_t index) {
+static sv4_t* fixed_find(const llg_fixed_array_t* array, uint64_t index) {
     if (!array->capacity) return NULL;
+    if (fixed_direct(array)) {
+        if (index >= array->total) return NULL;
+        sv4_t* page = array->pages[index >> LLG_FIXED_PAGE_SHIFT];
+        sv4_t* cell = page ? &page[index & (LLG_FIXED_PAGE_CELLS - 1)] : NULL;
+        return cell && llg_sv4_width(*cell) ? cell : NULL;
+    }
     size_t slot = fixed_hash(index) & (array->capacity - 1);
     for (llg_fixed_cell_t* cell = array->buckets[slot]; cell; cell = cell->bucket_next)
-        if (cell->index == index) return cell;
+        if (cell->index == index) return &cell->value;
     return NULL;
+}
+
+/* The cell of `array` at the position of `cursor` in an array of its total:
+ * two paged arrays pair up page by page, with no lookup per cell. */
+static inline const sv4_t* fixed_peer(const llg_fixed_array_t* array, struct fixed_cursor* cursor) {
+    if (!cursor->paged) return fixed_find(array, cursor->index);
+    if (cursor->peer_block != cursor->block) {
+        cursor->peer_block = cursor->block;
+        cursor->peer = array->capacity ? array->pages[cursor->block->first >> LLG_FIXED_PAGE_SHIFT] : NULL;
+    }
+    if (!cursor->peer) return NULL;
+    const sv4_t* cell = &cursor->peer[cursor->slot - 1];
+    return llg_sv4_width(*cell) ? cell : NULL;
 }
 
 void llg_fixed_array_init(llg_fixed_array_t* array, uint64_t total,
@@ -104,6 +305,118 @@ void llg_fixed_array_init(llg_fixed_array_t* array, uint64_t total,
     array->total = total;
     array->initial = initial; /* Consumes the fresh default owner. */
     array->contents = contents;
+    fixed_marked_arrays += contents != NULL;
+}
+
+void llg_fixed_array_unobserved(llg_fixed_array_t* array) {
+    fixed_marked_arrays -= array->contents != NULL;
+    array->contents = NULL;
+}
+
+/* Preponed values of an array that a sampled expression selects into. A
+ * registered signal is copied in every time slot; an array saves a cell's old
+ * value on its first change of the slot instead, so unwritten cells stay
+ * unmaterialized and a slot costs only what it writes. Entries are keyed by
+ * index, not by cell address. A change that replaces the default also moves
+ * unmaterialized cells, so the slot's first one keeps a whole image. */
+struct llg_fixed_sampled_entry { uint64_t index; sv4_t old; };
+struct llg_fixed_sampled {
+    uint64_t time;
+    size_t count, capacity;
+    struct llg_fixed_sampled_entry* entries;
+    llg_fixed_array_t whole;
+    int has_whole;
+};
+#define LLG_FIXED_SAMPLED_FREE UINT64_MAX
+
+void llg_fixed_array_sampled(llg_fixed_array_t* array) {
+    if (!array || array->sampled) return;
+    array->sampled = llg_checked_calloc(1, sizeof(*array->sampled), "fixed sampled values");
+    ++fixed_marked_arrays;
+    for (struct llg_fixed_block* block = array->blocks; block; block = block->next) fixed_block_file(block);
+}
+
+static void fixed_sampled_clear(struct llg_fixed_sampled* sampled) {
+    for (size_t i = 0; i < sampled->capacity; ++i) {
+        if (sampled->entries[i].index == LLG_FIXED_SAMPLED_FREE) continue;
+        sampled->entries[i].index = LLG_FIXED_SAMPLED_FREE;
+        sv4_destroy(&sampled->entries[i].old);
+    }
+    sampled->count = 0;
+    if (sampled->has_whole) llg_fixed_array_destroy(&sampled->whole);
+    sampled->has_whole = 0;
+}
+
+/* The saved values of the current slot, or NULL before its Preponed snapshot:
+ * until then a write is itself what the snapshot will see. */
+static struct llg_fixed_sampled* fixed_sampled_slot(llg_fixed_array_t* array) {
+    struct llg_fixed_sampled* sampled = array->sampled;
+    if (!g.sampled_time_valid || g.sampled_time != g.now) return NULL;
+    if (sampled->time != g.now) {
+        fixed_sampled_clear(sampled);
+        sampled->time = g.now;
+    }
+    return sampled;
+}
+
+static struct llg_fixed_sampled_entry* fixed_sampled_slot_of(
+    const struct llg_fixed_sampled* sampled, uint64_t index) {
+    size_t slot = fixed_hash(index) & (sampled->capacity - 1);
+    while (sampled->entries[slot].index != LLG_FIXED_SAMPLED_FREE &&
+           sampled->entries[slot].index != index)
+        slot = (slot + 1) & (sampled->capacity - 1);
+    return &sampled->entries[slot];
+}
+
+static void fixed_sampled_reserve(struct llg_fixed_sampled* sampled) {
+    if (sampled->count < sampled->capacity / 2) return;
+    struct llg_fixed_sampled previous = *sampled;
+    sampled->capacity = fixed_grow(previous.capacity);
+    sampled->entries = llg_checked_calloc(sampled->capacity, sizeof(*sampled->entries),
+                                          "fixed sampled values");
+    for (size_t i = 0; i < sampled->capacity; ++i)
+        sampled->entries[i].index = LLG_FIXED_SAMPLED_FREE;
+    for (size_t i = 0; i < previous.capacity; ++i)
+        if (previous.entries[i].index != LLG_FIXED_SAMPLED_FREE)
+            *fixed_sampled_slot_of(sampled, previous.entries[i].index) = previous.entries[i];
+    free(previous.entries);
+}
+
+static void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index, sv4_t old) {
+    struct llg_fixed_sampled* sampled = fixed_sampled_slot(array);
+    if (!sampled || sampled->has_whole) return;
+    fixed_sampled_reserve(sampled);
+    struct llg_fixed_sampled_entry* entry = fixed_sampled_slot_of(sampled, index);
+    if (entry->index == index) return;
+    entry->index = index;
+    entry->old = sv4_clone(&old);
+    ++sampled->count;
+}
+
+/* Called before a change that replaces the default, while `array` still holds
+ * the slot's values apart from the cells already saved. */
+static void fixed_sampled_whole(llg_fixed_array_t* array) {
+    struct llg_fixed_sampled* sampled = fixed_sampled_slot(array);
+    if (!sampled || sampled->has_whole) return;
+    fixed_array_snapshot(&sampled->whole, array, 0);
+    sampled->has_whole = 1;
+}
+
+const sv4_t* llg_fixed_array_sampled_peek(const llg_fixed_array_t* array, uint64_t index) {
+    if (!array || index >= array->total) fixed_bad_state("invalid fixed array index");
+    if (array->owner) {
+        if (array->origin == UINT64_MAX) return &array->initial;
+        return llg_fixed_array_sampled_peek(array->owner, array->origin + index);
+    }
+    const struct llg_fixed_sampled* sampled = array->sampled;
+    if (sampled && g.sampled_time_valid && g.sampled_time == g.now && sampled->time == g.now) {
+        if (sampled->capacity) {
+            const struct llg_fixed_sampled_entry* entry = fixed_sampled_slot_of(sampled, index);
+            if (entry->index == index) return &entry->old;
+        }
+        if (sampled->has_whole) return llg_fixed_array_peek(&sampled->whole, index);
+    }
+    return llg_fixed_array_peek(array, index);
 }
 
 const sv4_t* llg_fixed_array_peek(const llg_fixed_array_t* array, uint64_t index) {
@@ -112,9 +425,52 @@ const sv4_t* llg_fixed_array_peek(const llg_fixed_array_t* array, uint64_t index
         if (array->origin == UINT64_MAX) return &array->initial;
         return llg_fixed_array_peek(array->owner, array->origin + index);
     }
-    llg_fixed_cell_t* cell = fixed_find(array, index);
+    sv4_t* cell = fixed_find(array, index);
     if (!cell && array->ranges) return llg_fixed_array_cell((llg_fixed_array_t*)array, index);
-    return cell ? &cell->value : &array->initial;
+    return cell ? cell : &array->initial;
+}
+
+static sv4_t* fixed_page_position(llg_fixed_array_t* array, uint64_t index) {
+    if (!array->capacity) {
+        array->capacity = (size_t)((array->total - 1) >> LLG_FIXED_PAGE_SHIFT) + 1;
+        array->pages = llg_checked_calloc(array->capacity, sizeof(*array->pages), "fixed array pages");
+    }
+    size_t page = (size_t)(index >> LLG_FIXED_PAGE_SHIFT);
+    if (!array->pages[page]) {
+        uint64_t first = (uint64_t)page << LLG_FIXED_PAGE_SHIFT, left = array->total - first;
+        uint32_t cells = left < LLG_FIXED_PAGE_CELLS ? (uint32_t)left : LLG_FIXED_PAGE_CELLS;
+        struct llg_fixed_block* block = fixed_block_new(array, first, cells, sizeof(sv4_t));
+        block->used = block->cells;
+        array->pages[page] = fixed_block_page(block);
+    }
+    return &array->pages[page][index & (LLG_FIXED_PAGE_CELLS - 1)];
+}
+
+static sv4_t* fixed_sparse_add(llg_fixed_array_t* array, uint64_t index) {
+    if (array->count >= array->capacity / 2) {
+        size_t capacity = fixed_grow(array->capacity);
+        llg_fixed_cell_t** buckets = llg_checked_calloc(capacity, sizeof(*buckets), "fixed array index");
+        for (struct llg_fixed_block* block = array->blocks; block; block = block->next) {
+            for (uint32_t i = 0; i < block->used; ++i) {
+                llg_fixed_cell_t* cell = &fixed_block_sparse(block)[i];
+                size_t slot = fixed_hash(cell->index) & (capacity - 1);
+                cell->bucket_next = buckets[slot];
+                buckets[slot] = cell;
+            }
+        }
+        free(array->buckets);
+        array->buckets = buckets;
+        array->capacity = capacity;
+    }
+    struct llg_fixed_block* block = array->blocks;
+    if (!block || block->used == block->cells)
+        block = fixed_block_new(array, 0, LLG_FIXED_SPARSE_BLOCK_CELLS, sizeof(llg_fixed_cell_t));
+    llg_fixed_cell_t* cell = &fixed_block_sparse(block)[block->used++];
+    size_t slot = fixed_hash(index) & (array->capacity - 1);
+    cell->index = index;
+    cell->bucket_next = array->buckets[slot];
+    array->buckets[slot] = cell;
+    return &cell->value;
 }
 
 sv4_t* llg_fixed_array_cell(llg_fixed_array_t* array, uint64_t index) {
@@ -123,77 +479,112 @@ sv4_t* llg_fixed_array_cell(llg_fixed_array_t* array, uint64_t index) {
         if (array->origin == UINT64_MAX) fixed_bad_state("invalid writable fixed view");
         return llg_fixed_array_cell(array->owner, array->origin + index);
     }
-    llg_fixed_cell_t* cell = fixed_find(array, index);
-    if (cell) return &cell->value;
-    if (array->count >= array->capacity / 2) {
-        size_t capacity = fixed_grow(array->capacity);
-        llg_fixed_cell_t** buckets = llg_checked_calloc(capacity, sizeof(*buckets), "fixed array index");
-        for (cell = array->cells; cell; cell = cell->next) {
-            size_t slot = fixed_hash(cell->index) & (capacity - 1);
-            cell->bucket_next = buckets[slot];
-            buckets[slot] = cell;
-        }
-        free(array->buckets);
-        array->buckets = buckets;
-        array->capacity = capacity;
-    }
-    fixed_address_reserve();
-    cell = llg_checked_calloc(1, sizeof(*cell), "fixed array cell");
-    cell->index = index;
-    cell->array = array;
-    cell->value = fixed_read(array, index);
-    size_t slot = fixed_hash(index) & (array->capacity - 1);
-    cell->bucket_next = array->buckets[slot];
-    array->buckets[slot] = cell;
-    cell->next = array->cells;
-    array->cells = cell;
+    sv4_t* cell = fixed_find(array, index);
+    if (cell) return cell;
+    sv4_t value = fixed_read(array, index);
+    cell = fixed_direct(array) ? fixed_page_position(array, index) : fixed_sparse_add(array, index);
+    *cell = value; /* Consumes the fresh owner. */
     ++array->count;
-    slot = fixed_hash((uint64_t)(uintptr_t)&cell->value) & (fixed_address_capacity - 1);
-    cell->address_next = fixed_addresses[slot];
-    fixed_addresses[slot] = cell;
-    ++fixed_address_count;
-    return &cell->value;
+    return cell;
 }
 
 void llg_fixed_array_reset(llg_fixed_array_t* array, sv4_t initial) {
     fixed_ranges_destroy(array->ranges);
     array->ranges = NULL;
-    for (llg_fixed_cell_t* cell = array->cells; cell; cell = cell->next)
-        sv4_copy(&cell->value, &initial);
+    FIXED_EACH(cell, array) sv4_copy(cell.value, &initial);
     sv4_replace(&array->initial, initial);
 }
 
 void llg_fixed_array_destroy(void* object) {
     llg_fixed_array_t* array = object;
     fixed_ranges_destroy(array->ranges);
-    llg_fixed_cell_t* cell = array->cells;
-    while (cell) {
-        llg_fixed_cell_t* next = cell->next;
-        size_t slot = fixed_hash((uint64_t)(uintptr_t)&cell->value) & (fixed_address_capacity - 1);
-        llg_fixed_cell_t** link = &fixed_addresses[slot];
-        while (*link != cell) link = &(*link)->address_next;
-        *link = cell->address_next;
-        --fixed_address_count;
-        llg_clocking_forget_signal(&cell->value);
-        sv4_destroy(&cell->value);
-        while (cell->inertial) {
-            struct llg_fixed_inertial* inertial_next = cell->inertial->next;
-            free(cell->inertial);
-            cell->inertial = inertial_next;
-        }
-        free(cell);
-        cell = next;
+    FIXED_EACH(cell, array) {
+        fixed_inertial_forget(cell.value);
+        llg_clocking_forget_signal(cell.value);
+        sv4_destroy(cell.value);
     }
-    if (!fixed_address_count) {
-        free(fixed_addresses);
-        fixed_addresses = NULL;
-        fixed_address_capacity = 0;
+    for (struct llg_fixed_block* block = array->blocks, *next; block; block = next) {
+        next = block->next;
+        fixed_block_unfile(block);
+        free(block);
     }
     free(array->buckets);
     sv4_destroy(&array->initial);
+    fixed_marked_arrays -= array->contents != NULL;
+    if (array->sampled) {
+        fixed_sampled_clear(array->sampled);
+        free(array->sampled->entries);
+        free(array->sampled);
+        --fixed_marked_arrays;
+    }
     *array = (llg_fixed_array_t){0};
 }
 
+
+struct fixed_publication { sv4_t* target; sv4_t old, value, replacement; };
+struct fixed_transaction { size_t count; struct fixed_publication* cells; llg_fixed_range_t* ranges; sv4_t initial; };
+
+static void fixed_transaction_destroy(void* object) {
+    struct fixed_transaction* transaction = object;
+    for (size_t i = 0; i < transaction->count; ++i) {
+        sv4_destroy(&transaction->cells[i].old);
+        sv4_destroy(&transaction->cells[i].value);
+        sv4_destroy(&transaction->cells[i].replacement);
+    }
+    free(transaction->cells);
+    fixed_ranges_destroy(transaction->ranges);
+    sv4_destroy(&transaction->initial);
+}
+
+/* A blocking copy between two arrays of one type whose represented cells
+ * already pair up: only the cells that differ are written, without building
+ * an image of the source. Returns 0, having changed nothing, when it does not
+ * apply; `*unpaired` then says that a source cell has no destination yet,
+ * which the image path does not add for a default-valued cell. Publication
+ * walks the cells of `dst`, as on the image path, after every value is committed. */
+static int fixed_array_copy_in_place(llg_fixed_array_t* dst, const llg_fixed_array_t* src,
+                                     int two_state, int* unpaired) {
+    if (dst == src || g.private_evaluation || !sv4_same(dst->initial, src->initial)
+        || llg_sv4_signed(dst->initial) != llg_sv4_signed(src->initial)
+        || (two_state && sv4_is_unknown(src->initial)))
+        return 0;
+    size_t shared = 0, changed = 0;
+    llg_value_scope_t* scope = NULL;
+    struct fixed_transaction* prepared = NULL;
+    uint32_t width = llg_sv4_width(dst->initial);
+    int8_t sign = (int8_t)llg_sv4_signed(dst->initial);
+    FIXED_EACH(cell, dst) {
+        const sv4_t* source = fixed_peer(src, &cell);
+        shared += source != NULL;
+        const sv4_t* value = source ? source : &src->initial;
+        if (sv4_same(*cell.value, *value) && !(two_state && sv4_is_unknown(*value))) continue;
+        if (!prepared) {
+            scope = llg_value_scope_begin_object(sizeof(*prepared), fixed_transaction_destroy);
+            prepared = llg_value_scope_object(scope);
+            prepared->cells = llg_checked_calloc(dst->count, sizeof(*prepared->cells), "fixed publication values");
+        }
+        struct fixed_publication* entry = &prepared->cells[prepared->count++];
+        entry->target = cell.value;
+        entry->old = sv4_clone(cell.value);
+        entry->value = sv4_cast(*value, width, sign);
+        if (two_state) sv4_replace(&entry->value, sv4_to_two_state(entry->value));
+        entry->replacement = sv4_clone(&entry->value);
+        ++changed;
+    }
+    if (shared != src->count) {
+        if (scope) llg_value_scope_end(scope);
+        *unpaired = 1;
+        return 0;
+    }
+    for (size_t i = 0; i < changed; ++i)
+        sv4_move(prepared->cells[i].target, &prepared->cells[i].replacement);
+    for (size_t i = 0; i < changed; ++i) {
+        struct fixed_publication* entry = &prepared->cells[i];
+        if (!sv4_same(entry->old, entry->value)) sig_publish_changed(entry->target, entry->old, entry->value);
+    }
+    if (scope) llg_value_scope_end(scope);
+    return 1;
+}
 
 static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fixed_array_t* src,
                           int two_state, int nba, uint32_t slice) {
@@ -203,6 +594,11 @@ static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fix
     if (dst->total != src->total) fixed_bad_state("fixed array copy shape mismatch");
     uint32_t width = llg_sv4_width(src->initial);
     if (slice && width % slice && slice % width) fixed_bad_state("unaligned fixed stream slice");
+    int unpaired = 0;
+    if (!slice && !nba && fixed_array_copy_in_place(dst, src, two_state, &unpaired)) {
+        if (target_pin) llg_value_scope_end(target_pin);
+        return;
+    }
     llg_value_scope_t* scope = llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy);
     llg_fixed_array_t* snapshot = llg_value_scope_object(scope);
     sv4_t initial = sv4_cast(src->initial, llg_sv4_width(dst->initial), llg_sv4_signed(dst->initial));
@@ -212,14 +608,14 @@ static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fix
         sv4_move(&initial, &converted);
     }
     llg_fixed_array_init(snapshot, src->total, initial, NULL);
-    for (llg_fixed_cell_t* cell = src->cells; cell; cell = cell->next) {
-        sv4_t value = sv4_cast(cell->value, llg_sv4_width(dst->initial), llg_sv4_signed(dst->initial));
+    FIXED_EACH(cell, src) {
+        sv4_t value = sv4_cast(*cell.value, llg_sv4_width(dst->initial), llg_sv4_signed(dst->initial));
         if (slice && slice < width) sv4_replace(&value, sv4_stream(value, slice, 1));
         if (two_state) {
             sv4_t converted = sv4_to_two_state(value);
             sv4_move(&value, &converted);
         }
-        uint64_t index = cell->index;
+        uint64_t index = cell.index;
         if (slice) {
             uint64_t group = slice <= width ? 1 : slice / width;
             uint64_t low = src->total - 1 - index;
@@ -232,8 +628,7 @@ static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fix
         sv4_destroy(&value);
     }
     /* Allocate all missing destinations before the first publication. */
-    for (llg_fixed_cell_t* cell = snapshot->cells; cell; cell = cell->next)
-        (void)llg_fixed_array_cell(dst, cell->index);
+    FIXED_EACH(cell, snapshot) (void)llg_fixed_array_cell(dst, cell.index);
     if (nba) {
         llg_nba_t* update = new_nba(0);
         if (update) {
@@ -241,18 +636,23 @@ static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fix
             update->target_scope = value_scope_retain_target(dst);
             update->fixed_value = llg_checked_calloc(1, sizeof(*snapshot), "fixed array NBA snapshot");
             llg_fixed_array_init(update->fixed_value, snapshot->total, sv4_clone(&snapshot->initial), NULL);
-            for (llg_fixed_cell_t* cell = snapshot->cells; cell; cell = cell->next)
-                sv4_copy(llg_fixed_array_cell(update->fixed_value, cell->index), &cell->value);
+            FIXED_EACH(cell, snapshot) sv4_copy(llg_fixed_array_cell(update->fixed_value, cell.index), cell.value);
             enqueue_nba(update);
         }
     } else {
         fixed_array_apply(dst, snapshot);
     }
     llg_value_scope_end(scope);
+    /* Later copies of this pair run in place. */
+    if (unpaired)
+        FIXED_EACH(cell, src) (void)llg_fixed_array_cell(dst, cell.index);
     if (target_pin) llg_value_scope_end(target_pin);
 }
 
 static int fixed_compare_leaf(const sv4_t* left, const sv4_t* right, int case_eq) {
+    /* Equal cells are the common case of a compare that goes on to the next
+     * cell, and need no result value. */
+    if (sv4_same(*left, *right) && (case_eq || !sv4_is_unknown(*left))) return 1;
     sv4_t result = case_eq ? sv4_case_eq(*left, *right) : sv4_eq(*left, *right);
     int state = llg_sv4_state(result, 0);
     sv4_destroy(&result);
@@ -309,6 +709,18 @@ void llg_bitstream_append_fixed_array(llg_bitstream_t* stream,
         llg_bitstream_append_value(stream, *llg_fixed_array_peek(array, index));
 }
 
+void llg_real_column_assign(double* target, const double* source, uint64_t count) {
+    for (uint64_t i = 0; i < count; ++i)
+        if (!real_same(target[i], source[i])) llg_ba_d(&target[i], source[i]);
+}
+
+sv4_t llg_real_column_compare(const double* left, const double* right, uint64_t count, int case_eq, int negate) {
+    int equal = 1;
+    if (case_eq) equal = memcmp(left, right, (size_t)count * sizeof(double)) == 0;
+    else for (uint64_t index = 0; equal && index < count; ++index) equal = left[index] == right[index];
+    return sv4_from_u64((uint64_t)(equal ^ !!negate), 1, 0);
+}
+
 sv4_t llg_fixed_array_compare(const llg_fixed_array_t* left,
                              const llg_fixed_array_t* right, int case_eq, int negate) {
     if (left->total != right->total) fixed_bad_state("fixed comparison shape mismatch");
@@ -324,16 +736,19 @@ sv4_t llg_fixed_array_compare(const llg_fixed_array_t* left,
         return result > 1 ? sv4_x(1, 0) : sv4_from_u64((uint64_t)(result ^ !!negate), 1, 0);
     }
     int result = 1;
-    size_t represented = left->count;
-    for (llg_fixed_cell_t* cell = left->cells; cell; cell = cell->next) {
-        int state = fixed_compare_leaf(&cell->value, llg_fixed_array_peek(right, cell->index), case_eq);
+    size_t represented = left->count, shared = 0;
+    FIXED_EACH(cell, left) {
+        const sv4_t* other = fixed_peer(right, &cell);
+        shared += other != NULL;
+        int state = fixed_compare_leaf(cell.value, other ? other : &right->initial, case_eq);
         if (!state) return sv4_from_u64((uint64_t)negate, 1, 0);
         if (state > 1) result = 2;
     }
-    for (llg_fixed_cell_t* cell = right->cells; cell; cell = cell->next) {
-        if (fixed_find(left, cell->index)) continue;
+    /* Every cell of `right` was met above when all of them are shared. */
+    if (shared != right->count) FIXED_EACH(cell, right) {
+        if (fixed_find(left, cell.index)) continue;
         ++represented;
-        int state = fixed_compare_leaf(&left->initial, &cell->value, case_eq);
+        int state = fixed_compare_leaf(&left->initial, cell.value, case_eq);
         if (!state) return sv4_from_u64((uint64_t)negate, 1, 0);
         if (state > 1) result = 2;
     }
@@ -463,8 +878,8 @@ static sv4_t fixed_read(const llg_fixed_array_t* array, uint64_t index) {
         return array->origin == UINT64_MAX ? sv4_clone(&array->initial)
             : fixed_read(array->owner, array->origin + index);
     }
-    llg_fixed_cell_t* cell = fixed_find(array, index);
-    if (cell) return sv4_clone(&cell->value);
+    sv4_t* cell = fixed_find(array, index);
+    if (cell) return sv4_clone(cell);
     for (const llg_fixed_range_t* range = array->ranges; range; range = range->next) {
         if (index < range->start || index - range->start >= range->count) continue;
         sv4_t value = range->image ? fixed_image_read(range->image, range->source + index - range->start)
@@ -535,26 +950,11 @@ static void fixed_array_snapshot(llg_fixed_array_t* result, const llg_fixed_arra
     llg_fixed_array_init(result, source->total, initial, NULL);
     if (origin == UINT64_MAX) return;
     result->ranges = fixed_ranges_copy(owner, origin, source->total, 0, two_state);
-    for (llg_fixed_cell_t* cell = owner->cells; cell; cell = cell->next) {
-        if (cell->index < origin || cell->index - origin >= source->total) continue;
-        sv4_t value = fixed_convert(cell->value, llg_sv4_width(initial), llg_sv4_signed(initial), two_state);
-        sv4_move(llg_fixed_array_cell(result, cell->index - origin), &value);
+    FIXED_EACH(cell, owner) {
+        if (cell.index < origin || cell.index - origin >= source->total) continue;
+        sv4_t value = fixed_convert(*cell.value, llg_sv4_width(initial), llg_sv4_signed(initial), two_state);
+        sv4_move(llg_fixed_array_cell(result, cell.index - origin), &value);
     }
-}
-
-struct fixed_publication { sv4_t* target; sv4_t old, value, replacement; };
-struct fixed_transaction { size_t count; struct fixed_publication* cells; llg_fixed_range_t* ranges; sv4_t initial; };
-
-static void fixed_transaction_destroy(void* object) {
-    struct fixed_transaction* transaction = object;
-    for (size_t i = 0; i < transaction->count; ++i) {
-        sv4_destroy(&transaction->cells[i].old);
-        sv4_destroy(&transaction->cells[i].value);
-        sv4_destroy(&transaction->cells[i].replacement);
-    }
-    free(transaction->cells);
-    fixed_ranges_destroy(transaction->ranges);
-    sv4_destroy(&transaction->initial);
 }
 
 static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_array_t* snapshot) {
@@ -564,8 +964,7 @@ static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_ar
     if (destination->total != snapshot->total) fixed_bad_state("fixed publication shape mismatch");
     llg_value_scope_t* scope = llg_value_scope_begin_object(sizeof(struct fixed_transaction), fixed_transaction_destroy);
     struct fixed_transaction* prepared = llg_value_scope_object(scope);
-    for (llg_fixed_cell_t* cell = snapshot->cells; cell; cell = cell->next)
-        (void)llg_fixed_array_cell(dst, origin + cell->index);
+    FIXED_EACH(cell, snapshot) (void)llg_fixed_array_cell(dst, origin + cell.index);
     prepared->ranges = fixed_ranges_copy(snapshot, 0, snapshot->total, origin, 0);
     if (origin || destination->total != dst->total) {
         llg_fixed_range_t** tail = &prepared->ranges;
@@ -586,15 +985,16 @@ static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_ar
         prepared->initial = sv4_clone(&dst->initial);
     } else prepared->initial = sv4_clone(&snapshot->initial);
     prepared->cells = llg_checked_calloc(dst->count, sizeof(*prepared->cells), "fixed publication values");
-    for (llg_fixed_cell_t* cell = dst->cells; cell; cell = cell->next) {
-        if (cell->index < origin || cell->index - origin >= snapshot->total) continue;
+    FIXED_EACH(cell, dst) {
+        if (cell.index < origin || cell.index - origin >= snapshot->total) continue;
         struct fixed_publication* entry = &prepared->cells[prepared->count++];
-        entry->target = &cell->value;
-        entry->old = sv4_clone(&cell->value);
-        entry->value = fixed_read(snapshot, cell->index - origin);
+        entry->target = cell.value;
+        entry->old = sv4_clone(cell.value);
+        entry->value = fixed_read(snapshot, cell.index - origin);
         entry->replacement = sv4_clone(&entry->value);
     }
     int default_changed = !sv4_same(dst->initial, prepared->initial) || dst->ranges || prepared->ranges;
+    if (dst->sampled && default_changed) fixed_sampled_whole(dst);
     /* Every owner and publication record is prepared before any value becomes visible. */
     sv4_move(&dst->initial, &prepared->initial);
     llg_fixed_range_t* old_ranges = dst->ranges;
@@ -621,7 +1021,7 @@ static void fixed_snapshot_publish(llg_fixed_array_t* dst, llg_fixed_array_t* sn
             update->fixed_value = llg_checked_calloc(1, sizeof(*snapshot), "fixed array NBA image");
             *update->fixed_value = *snapshot;
             /* Snapshot cell identities are not exposed; keep their reverse-index owner accurate. */
-            for (llg_fixed_cell_t* cell = snapshot->cells; cell; cell = cell->next) cell->array = update->fixed_value;
+            for (struct llg_fixed_block* block = snapshot->blocks; block; block = block->next) block->array = update->fixed_value;
             *snapshot = (llg_fixed_array_t){0};
             enqueue_nba(update);
         }
@@ -716,6 +1116,62 @@ void llg_fixed_array_dense_source(llg_fixed_array_t* result, const sv4_t* cells,
         if (!sv4_same(cells[origin + i], result->initial)) sv4_copy(llg_fixed_array_cell(result, i), &cells[origin + i]);
 }
 
+/* The packed image of a native item: record members run from the most
+ * significant bits, as in a fixed array cell. */
+static sv4_t fixed_item_image(const llg_value_t* item) {
+    const llg_value_desc_t* desc = item->desc;
+    if (desc->kind == LLG_VALUE_PACKED) return sv4_clone(&item->value.packed);
+    if (desc->kind != LLG_VALUE_AGGREGATE && desc->kind != LLG_VALUE_FIXED_ARRAY)
+        fixed_bad_state("native item has no packed image");
+    sv4_t image = fixed_item_image(&item->value.items[0]);
+    for (size_t i = 1; i < desc->item_count; ++i) {
+        sv4_t part = fixed_item_image(&item->value.items[i]);
+        sv4_replace(&image, sv4_concat(image, part));
+        sv4_destroy(&part);
+    }
+    return image;
+}
+
+/* Store the bits of `image` below `*low`, most significant member first. */
+static void fixed_item_store(llg_value_t* item, sv4_t image, uint32_t* low) {
+    const llg_value_desc_t* desc = item->desc;
+    if (desc->kind == LLG_VALUE_PACKED) {
+        uint32_t width = llg_sv4_width(item->value.packed);
+        *low -= width;
+        sv4_t part = sv4_part_select(image, (int64_t)*low + width - 1, *low);
+        llg_sv4_set_signed(&part, llg_sv4_signed(item->value.packed));
+        sv4_move(&item->value.packed, &part);
+        return;
+    }
+    if (desc->kind != LLG_VALUE_AGGREGATE && desc->kind != LLG_VALUE_FIXED_ARRAY)
+        fixed_bad_state("native item has no packed image");
+    for (size_t i = 0; i < desc->item_count; ++i)
+        fixed_item_store(&item->value.items[i], image, low);
+}
+
+void llg_fixed_array_items_source(llg_fixed_array_t* result, const llg_value_t* item,
+                                  sv4_t fallback) {
+    if (!result || result->total || !item || item->desc->kind != LLG_VALUE_FIXED_ARRAY)
+        fixed_bad_state("invalid fixed stream operand");
+    llg_fixed_array_init(result, item->desc->item_count, sv4_clone(&fallback), NULL);
+    for (uint64_t i = 0; i < result->total; ++i) {
+        sv4_t cell = fixed_item_image(&item->value.items[i]);
+        if (!sv4_same(cell, result->initial)) sv4_move(llg_fixed_array_cell(result, i), &cell);
+        sv4_destroy(&cell);
+    }
+}
+
+void llg_fixed_array_items_store(llg_value_t* item, const llg_fixed_array_t* array) {
+    if (!item || !array || item->desc->kind != LLG_VALUE_FIXED_ARRAY ||
+        item->desc->item_count != array->total)
+        fixed_bad_state("invalid native fixed array item");
+    for (uint64_t i = 0; i < array->total; ++i) {
+        const sv4_t* cell = llg_fixed_array_peek(array, i);
+        uint32_t low = llg_sv4_width(*cell);
+        fixed_item_store(&item->value.items[i], *cell, &low);
+    }
+}
+
 int llg_fixed_array_with_source(llg_fixed_array_t* result, const llg_fixed_array_t* array,
                                 int64_t declaration_left, int64_t declaration_right,
                                 sv4_t fallback, int selector_kind, sv4_t first, sv4_t second) {
@@ -747,9 +1203,9 @@ int llg_fixed_array_with_source(llg_fixed_array_t* result, const llg_fixed_array
     while (*tail) tail = &(*tail)->next;
     llg_fixed_range_t uniform = {0}; uniform.value = owner->initial;
     fixed_range_append(&result->ranges, &tail, fixed_range_clone(&uniform, skip, in_bounds, 0, 0));
-    for (llg_fixed_cell_t* cell = owner->cells; cell; cell = cell->next) {
-        if (cell->index < start || cell->index - start >= in_bounds) continue;
-        sv4_copy(llg_fixed_array_cell(result, cell->index - start + skip), &cell->value);
+    FIXED_EACH(cell, owner) {
+        if (cell.index < start || cell.index - start >= in_bounds) continue;
+        sv4_copy(llg_fixed_array_cell(result, cell.index - start + skip), cell.value);
     }
     return 1;
 }
@@ -818,32 +1274,42 @@ static void fixed_plane_deposit(uint64_t* plane, uint64_t offset, uint64_t value
     if (shift && shift + width > 64u) plane[word + 1] |= value >> (64u - shift);
 }
 
-static sv4_t fixed_run_image(const fixed_cell_run_t* run, uint64_t count) {
+/* Cell width of a run of `count` cells, checked to fit `room` image bits. */
+static uint32_t fixed_run_width(const fixed_cell_run_t* run, uint64_t count, uint64_t room) {
     fixed_run_check(run, count);
     uint32_t width = count ? llg_sv4_width(*fixed_run_peek(run, 0)) : 0;
-    if (!width || count > (uint64_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) / width)
-        fixed_bad_state("invalid cell run image");
-    uint64_t total = count * width;
-    size_t words = (size_t)((total + 63u) / 64u);
-    /* Gather every cell's words into three limb planes and construct the
-     * image once: inserting cell by cell into a wide value renormalizes the
-     * whole value per cell, which is quadratic in the run length. The first
-     * cell is the most significant. A peeked cell is read completely before
-     * the next peek, which may materialize a range cell. */
-    uint64_t* planes = llg_checked_calloc(3u * words, sizeof(uint64_t), "cell run image");
-    uint64_t offset = total;
+    if (!width || count > room / width) fixed_bad_state("invalid cell run image");
+    return width;
+}
+
+/* Gather a run's words into three limb planes of `words` words, below bit
+ * `*offset`: inserting cell by cell into a wide value renormalizes the whole
+ * value per cell, which is quadratic in the run length. The first cell is the
+ * most significant. A peeked cell is read completely before the next peek,
+ * which may materialize a range cell. */
+static void fixed_run_gather(const fixed_cell_run_t* run, uint64_t count, uint32_t width,
+                             uint64_t* planes, size_t words, uint64_t* offset) {
     for (uint64_t i = 0; i < count; ++i) {
         const sv4_t* cell = fixed_run_peek(run, i);
         if (llg_sv4_width(*cell) != width) fixed_bad_state("cell run width mismatch");
-        offset -= width;
+        *offset -= width;
         for (size_t word = 0; word < llg_sv4_words(*cell); ++word) {
             uint32_t bits = width - (uint32_t)(word * 64u);
             if (bits > 64u) bits = 64u;
             for (unsigned plane = 0; plane < 3u; ++plane)
-                fixed_plane_deposit(planes + plane * words, offset + word * 64u,
+                fixed_plane_deposit(planes + plane * words, *offset + word * 64u,
                                     llg_sv4_word(*cell, word, plane), bits);
         }
     }
+}
+
+static sv4_t fixed_run_image(const fixed_cell_run_t* run, uint64_t count) {
+    uint32_t width = fixed_run_width(run, count, (uint64_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u));
+    uint64_t total = count * width;
+    size_t words = (size_t)((total + 63u) / 64u);
+    uint64_t* planes = llg_checked_calloc(3u * words, sizeof(uint64_t), "cell run image");
+    uint64_t offset = total;
+    fixed_run_gather(run, count, width, planes, words, &offset);
     sv4_t image = sv4_from_limbs(planes, planes + words, planes + 2u * words,
                                  (uint32_t)total, 0);
     free(planes);
@@ -861,6 +1327,24 @@ static uint64_t fixed_plane_window(sv4_t value, uint64_t start, uint32_t width,
     return width < 64u ? result & ((UINT64_C(1) << width) - 1u) : result;
 }
 
+/* One cell of `width` bits from the image bits at `low`. Built from the image
+ * words directly; a part select per cell would go through the general
+ * selection path. `planes` holds three planes of `words` scratch words. */
+static sv4_t fixed_cell_of_image(sv4_t image, uint64_t low, uint32_t width, size_t words,
+                                 uint64_t* planes, int is_signed, int two_state) {
+    for (size_t word = 0; word < words; ++word) {
+        uint32_t bits = width - (uint32_t)(word * 64u);
+        if (bits > 64u) bits = 64u;
+        for (unsigned plane = 0; plane < 3u; ++plane)
+            planes[plane * words + word] =
+                fixed_plane_window(image, low + word * 64u, bits, plane);
+    }
+    sv4_t value = sv4_from_limbs(planes, planes + words, planes + 2u * words, width,
+                                 (int8_t)is_signed);
+    if (two_state) sv4_replace(&value, sv4_to_two_state(value));
+    return value;
+}
+
 static void fixed_run_store(const fixed_cell_run_t* run, uint64_t count, const sv4_t* image,
                             int64_t left, uint32_t width, int is_signed, int two_state,
                             int nba) {
@@ -869,24 +1353,13 @@ static void fixed_run_store(const fixed_cell_run_t* run, uint64_t count, const s
         (uint64_t)left >= llg_sv4_width(*image) ||
         count > ((uint64_t)left + 1u) / width)
         fixed_bad_state("invalid cell run store");
-    /* Each cell is built from its image words directly; a part select per
-     * cell would go through the general selection path. */
     size_t words = (size_t)((width + 63u) / 64u);
     uint64_t one[3];
     uint64_t* planes = words == 1 ? one :
         llg_checked_calloc(3u * words, sizeof(uint64_t), "cell run store");
     for (uint64_t i = 0; i < count; ++i, left -= (int64_t)width) {
-        uint64_t low = (uint64_t)left - width + 1u;
-        for (size_t word = 0; word < words; ++word) {
-            uint32_t bits = width - (uint32_t)(word * 64u);
-            if (bits > 64u) bits = 64u;
-            for (unsigned plane = 0; plane < 3u; ++plane)
-                planes[plane * words + word] =
-                    fixed_plane_window(*image, low + word * 64u, bits, plane);
-        }
-        sv4_t value = sv4_from_limbs(planes, planes + words, planes + 2u * words, width,
-                                     (int8_t)is_signed);
-        if (two_state) sv4_replace(&value, sv4_to_two_state(value));
+        sv4_t value = fixed_cell_of_image(*image, (uint64_t)left - width + 1u, width, words,
+                                          planes, is_signed, two_state);
         sv4_t* cell = fixed_run_cell(run, i);
         if (nba) llg_nba_after(cell, value, 0);
         else llg_ba(cell, value);
@@ -933,11 +1406,51 @@ sv4_t llg_fixed_array_cells_image(const llg_fixed_array_t* array, uint64_t first
     return fixed_run_image(&run, count);
 }
 
+void llg_fixed_array_columns_image_to(sv4_t* dst, const llg_fixed_array_t* const* columns,
+                                      size_t count) {
+    uint64_t total = 0;
+    for (size_t i = 0; i < count; ++i) {
+        fixed_cell_run_t run = {NULL, (llg_fixed_array_t*)columns[i], 0};
+        uint64_t cells = columns[i] ? columns[i]->total : 0;
+        total += cells * fixed_run_width(&run, cells,
+                                         (uint64_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) - total);
+    }
+    size_t words = (size_t)((total + 63u) / 64u);
+    uint64_t* planes = llg_checked_calloc(3u * words, sizeof(uint64_t), "column image");
+    uint64_t offset = total;
+    for (size_t i = 0; i < count; ++i) {
+        fixed_cell_run_t run = {NULL, (llg_fixed_array_t*)columns[i], 0};
+        uint64_t cells = columns[i]->total;
+        fixed_run_gather(&run, cells, llg_sv4_width(*fixed_run_peek(&run, 0)), planes, words,
+                         &offset);
+    }
+    sv4_replace(dst, sv4_from_limbs(planes, planes + words, planes + 2u * words,
+                                    (uint32_t)total, 0));
+    free(planes);
+}
+
 void llg_fixed_array_cells_store(llg_fixed_array_t* array, uint64_t first, uint64_t count,
                                  const sv4_t* image, int64_t left, uint32_t width,
                                  int is_signed, int two_state, int nba) {
     fixed_cell_run_t run = {NULL, array, first};
     fixed_run_store(&run, count, image, left, width, is_signed, two_state, nba);
+}
+
+void llg_fixed_array_initial_cells(llg_fixed_array_t* array, sv4_t image, int is_signed,
+                                   int two_state) {
+    uint32_t width = llg_sv4_width(array->initial);
+    uint64_t total = array->total;
+    if (!width || (uint64_t)llg_sv4_width(image) != total * width)
+        fixed_bad_state("invalid initial cell image");
+    size_t words = (size_t)((width + 63u) / 64u);
+    uint64_t* planes = llg_checked_calloc(3u * words, sizeof(uint64_t), "initial cells");
+    for (uint64_t i = 0; i < total; ++i) {
+        sv4_t value = fixed_cell_of_image(image, (total - 1u - i) * width, width, words, planes,
+                                          is_signed, two_state);
+        sv4_replace(llg_fixed_array_cell(array, i), value);
+    }
+    free(planes);
+    sv4_destroy(&image);
 }
 
 void llg_fixed_array_cells_fill(llg_fixed_array_t* array, uint64_t first, uint64_t count,

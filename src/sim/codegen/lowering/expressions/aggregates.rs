@@ -5,6 +5,7 @@ use super::*;
 use crate::sim::codegen::lowering::collection::native_values::{
     is_native_tag_path, native_tagged_equality, NativeEndpoint,
 };
+use crate::sim::ir::IrFixedValue;
 
 mod columns;
 mod copies;
@@ -537,6 +538,10 @@ impl<'a> Codegen<'a> {
                         aggregate_path_suffix(&left.path)
                     )
                 })?;
+            if let Some(statements) = self.member_column_copy(left, right, nba) {
+                assignments.extend(statements);
+                continue;
+            }
             if let (Some(lhs), Some(rhs)) = (&left.container, &right.container) {
                 // SV 7.6: a queue, dynamic or associative member is copied
                 // by value into the destination's own container.
@@ -699,7 +704,15 @@ impl<'a> Codegen<'a> {
             )
         })?;
         let mut values = Vec::new();
-        self.aggregate_pattern_leaf_values(path, rhs, layout, &[], &mut values)?;
+        self.pattern_stops = aggregate
+            .leaves
+            .iter()
+            .filter(|leaf| leaf.container.is_some())
+            .map(|leaf| leaf.path.clone())
+            .collect();
+        let flattened = self.aggregate_pattern_leaf_values(path, rhs, layout, &[], &mut values);
+        self.pattern_stops.clear();
+        flattened?;
         self.assign_unpacked_pattern_values(path, target, &aggregate, values, nba)
     }
 
@@ -735,7 +748,16 @@ impl<'a> Codegen<'a> {
             )
         })?;
         let mut values = Vec::new();
-        self.aggregate_descriptor_pattern_values(path, rhs, &descriptor, &prefix, &mut values)?;
+        self.pattern_stops = aggregate
+            .leaves
+            .iter()
+            .filter(|leaf| leaf.container.is_some())
+            .map(|leaf| leaf.path.clone())
+            .collect();
+        let flattened =
+            self.aggregate_descriptor_pattern_values(path, rhs, &descriptor, &prefix, &mut values);
+        self.pattern_stops.clear();
+        flattened?;
         self.assign_unpacked_pattern_values(path, target, &aggregate, values, nba)
     }
 
@@ -1141,7 +1163,11 @@ impl<'a> Codegen<'a> {
                     ));
                     continue;
                 }
-                let member_equal = self.aggregate_leaf_equality(path, op, left, right)?;
+                let member_equal = match self.member_column_equality(op, left, right) {
+                    Some(Some(equal)) => equal,
+                    Some(None) => continue,
+                    None => self.aggregate_leaf_equality(path, op, left, right)?,
+                };
                 equalities.push((left.path.clone(), member_equal));
             }
             match &tagged {
@@ -1170,6 +1196,46 @@ impl<'a> Codegen<'a> {
                 equality
             },
         ))
+    }
+
+    /// Equality of two whole member columns from one pair of their cell
+    /// leaves: the comparison at the first cell, `Some(None)` at any other,
+    /// and `None` when the leaves are not cells of member columns.
+    fn member_column_equality(
+        &self,
+        op: Operation,
+        left: &AggregateMemberInfo,
+        right: &AggregateMemberInfo,
+    ) -> Option<Option<IrExpr>> {
+        let (left_column, right_column) = (member_cell_column(left)?, member_cell_column(right)?);
+        let first = record_cell_indices(left)
+            .iter()
+            .zip(&left_column.dims)
+            .all(|(index, (bound, _))| *index == i128::from(*bound));
+        if !first {
+            return Some(None);
+        }
+        let (left_array, right_array) = (
+            self.reference_array(left_column.ir),
+            self.reference_array(right_column.ir),
+        );
+        let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
+        let kind = if left_column.real {
+            IrExprKind::FixedArrayCompare {
+                left: left_array,
+                right: right_array,
+                case,
+                negate: false,
+            }
+        } else {
+            IrExprKind::FixedValueCompare {
+                left: Box::new(IrFixedValue::Array(self.record_column_view(left_array))),
+                right: Box::new(IrFixedValue::Array(self.record_column_view(right_array))),
+                case,
+                negate: false,
+            }
+        };
+        Some(Some(IrExpr::new(kind, 1, false, None)))
     }
 
     /// Equality of one pair of corresponding record leaves.
@@ -1390,7 +1456,25 @@ impl<'a> Codegen<'a> {
                     aggregate_path_suffix(&right_leaf.path)
                 ));
             }
-            let member_equal = self.aggregate_leaf_equality(path, op, left_leaf, right_leaf)?;
+            // A selection of part of a member column compares by cell.
+            let whole = |leaf: &AggregateMemberInfo, prefix: usize, column: &&ArrayInfo| {
+                leaf.path.len() >= prefix + column.dims.len()
+            };
+            let member_equal = match (
+                member_cell_column(left_leaf)
+                    .filter(|column| whole(left_leaf, left.prefix.len(), column)),
+                member_cell_column(right_leaf)
+                    .filter(|column| whole(right_leaf, right.prefix.len(), column)),
+            ) {
+                (Some(_), Some(_)) => {
+                    match self.member_column_equality(op, left_leaf, right_leaf) {
+                        Some(Some(equal)) => equal,
+                        Some(None) => continue,
+                        None => self.aggregate_leaf_equality(path, op, left_leaf, right_leaf)?,
+                    }
+                }
+                _ => self.aggregate_leaf_equality(path, op, left_leaf, right_leaf)?,
+            };
             equality = Some(match equality {
                 Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, member_equal),
                 None => member_equal,
@@ -1421,7 +1505,10 @@ impl<'a> Codegen<'a> {
         if let Some(cell) = leaf.array.as_ref().filter(|_| record_cell_leaf(leaf)) {
             return self.reference_lhs(IrLhs::ArrayElem {
                 arr: self.reference_array(cell.ir),
-                indices: vec![lhs_integer_expr(0)],
+                indices: record_cell_indices(leaf)
+                    .into_iter()
+                    .map(lhs_integer_expr)
+                    .collect(),
                 elem_sel: IrElemSel::Whole,
             });
         }
@@ -1457,13 +1544,19 @@ impl<'a> Codegen<'a> {
             return Ok(IrExpr::new(
                 IrExprKind::ArrayRead {
                     arr: self.reference_array(cell.ir),
-                    indices: vec![lhs_integer_expr(0)],
+                    indices: record_cell_indices(leaf)
+                        .into_iter()
+                        .map(lhs_integer_expr)
+                        .collect(),
                     elem_sel: IrElemSel::Whole,
                 },
                 cell.elem_width,
                 cell.signed,
                 None,
             ));
+        }
+        if let Some(image) = self.column_leaf_image(leaf) {
+            return Ok(image);
         }
         let signal = leaf.signal.as_ref().ok_or_else(|| {
             format!(
@@ -1522,6 +1615,10 @@ impl<'a> Codegen<'a> {
         prefix: &[AggregatePathPart],
         out: &mut Vec<(Vec<AggregatePathPart>, NodeId)>,
     ) -> Result<(), String> {
+        if self.pattern_stops.iter().any(|stop| stop == prefix) {
+            out.push((prefix.to_vec(), node));
+            return Ok(());
+        }
         // Typed aggregate casts wrap the assignment-pattern operation in the
         // owned Slang graph.  The cast supplies the destination type; it does
         // not turn the nested pattern into a scalar default for every leaf.

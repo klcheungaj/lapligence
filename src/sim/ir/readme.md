@@ -156,7 +156,10 @@ above the dense threshold) store each member array and scalar leaf as such an
 array, a scalar leaf as one cell, and a tagged union's tag as one more cell.
 Every whole-value operation lowers to the existing per-column shapes
 (`FixedValueAssign`, `FixedValueCompare`, `IrCallArg::FixedValue` and trailing
-output formals); no IR variant changes meaning. Remaining limits are in
+output formals); no IR variant changes meaning. A member array of a record with
+no packed form is a column too, with one leaf per cell naming the same
+`IrArray`; `real` cells move through `IrContainerStmt::RealColumnAssign` and
+compare through `FixedArrayCompare`, whose arrays are sparse or both real. Remaining limits are in
 [known issues](../../../docs/known_issues.md#remaining-non-flattened-fixed-value-contexts).
 
 RTL-101b adds one expression variant, `IrExprKind::Sequence`
@@ -263,6 +266,9 @@ record element, a static subroutine record leaf): the element position is
 fixed at issue and the runtime finds the item again at commit
 (`src/sim/rt/values.md`). `ContainerNonblocking` is a whole queue, dynamic or
 associative array NBA and owns a copy of its source from issue to commit.
+`NbaHoldOpen`, `NbaHoldClose` and `NbaHoldRelease` keep the updates a write
+queues under an event or delay control, whatever their form, in a hold of
+`IrChandleExpr::NbaHold` until the control releases them.
 
 ## Recursive containers and handle storage (SIM-006)
 
@@ -282,7 +288,10 @@ built at the call); a container result is a trailing output formal.
 Element types may be records, fixed arrays and identity handles (events,
 processes, class-like objects, chandles). Whole record elements move through
 `IrContainerStmt::SetValue`/`GetValue` with `IrValueSlot` (element, push,
-insert, pop) and native temporaries; members are read and written in place
+insert, pop) and native temporaries, or, from a record of the element's own
+type into a dynamic array, leaf by leaf through
+`IrContainerStmt::SetElementItems`, which publishes once when a leaf changed;
+members are read and written in place
 through `IrNativeAccessKind::ElementItem` with a `ContainerElement` receiver
 (an `ItemElement` receiver selects an element of a fixed-array item with
 run-time indices, below a `ContainerElement` or a `NativeRoot`),

@@ -483,8 +483,7 @@ fn virtual_call_args(f: &IrFunc) -> String {
 
 /// The implementation a class runs for a slot. An inline-expanded template
 /// has no body: calls reach its specializations through a family slot of
-/// their own, and the frontend rejects every call its template slot would
-/// serve (`waits_on_record_ref`), so its slot has no case for that class.
+/// their own (`record_ref_family`), so its slot has no case for that class.
 pub(super) fn virtual_impl_for_class(model: &IrModel, class: usize, slot: usize) -> Option<usize> {
     let mut current = Some(class);
     while let Some(index) = current {

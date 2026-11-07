@@ -492,9 +492,9 @@ impl Codegen<'_> {
         let saved = std::mem::replace(&mut self.container_result_call, true);
         let expression = self.lower_func_call_expr(path, call, &name, callee);
         self.container_result_call = saved;
-        let IrExprKind::CallFn(expression) = expression?.kind else {
-            return Err("container result call did not lower to a typed call".into());
-        };
+        let mut statements = Vec::new();
+        let expression = Self::record_staged_call(expression?, &mut statements)
+            .ok_or("container result call did not lower to a typed call")?;
         let mut args = expression.args;
         let outputs = self.model.funcs[expression.f]
             .formals
@@ -513,6 +513,11 @@ impl Codegen<'_> {
             lowered.receiver = self.class_method_receiver(path, call)?;
             lowered.virtual_dispatch = self.class_method_virtual_dispatch(call);
         }
-        Ok(Some(IrStmt::Call(Box::new(lowered))))
+        statements.push(IrStmt::Call(Box::new(lowered)));
+        Ok(Some(if statements.len() == 1 {
+            statements.remove(0)
+        } else {
+            IrStmt::Block(statements)
+        }))
     }
 }

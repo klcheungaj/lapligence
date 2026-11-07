@@ -42,22 +42,17 @@ impl<'a, 'm> Frame<'a, 'm> {
         index: usize,
         total: u64,
     ) -> Result<String, String> {
-        let array = self.ctx.model.array(index);
-        let initial = array
-            .element_default
-            .as_ref()
-            .map(emit_const)
-            .unwrap_or_else(|| {
-                super::super::expressions::packed_default(
-                    array.elem_width,
-                    array.signed,
-                    array.two_state,
-                )
-            });
+        let initial = super::super::expressions::fixed_array_initial(self.ctx.model.array(index));
         let pointer = self.scalar("llg_fixed_array_t*", "(llg_fixed_array_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy))".to_owned());
         self.line(format!(
             "llg_fixed_array_init({pointer}, {total}ULL, {initial}, NULL);"
         ));
+        if let Some(cells) = super::super::expressions::fixed_array_initial_cells(
+            self.ctx.model.array(index),
+            &pointer,
+        ) {
+            self.line(cells);
+        }
         Ok(pointer)
     }
 
@@ -130,6 +125,49 @@ impl<'a, 'm> Frame<'a, 'm> {
         if indices.len() != array.dims.len() {
             return Err("array index rank mismatch".to_owned());
         }
+        // A constant selection of a descriptor needs no run-time index: its
+        // cost is on every access, and it has nothing to validate.
+        if array.sparse() {
+            if let Some(offset) = self.constant_cell_offset(array_index, indices) {
+                let address =
+                    self.fixed_cell_address(array_index, &format!("{offset}ULL"), writable)?;
+                let pointer =
+                    self.scalar(if writable { "sv4_t*" } else { "const sv4_t*" }, address);
+                return Ok((
+                    Binding {
+                        address: pointer,
+                        width: array.elem_width,
+                        signed: array.signed,
+                        two_state: array.two_state,
+                        shortreal: array.shortreal,
+                        automatic: false,
+                    },
+                    "1".to_owned(),
+                ));
+            }
+        }
+        if array.real {
+            if let Some(offset) = self.constant_cell_offset(array_index, indices) {
+                let offset = format!("{offset}ULL");
+                let address = if array.activation {
+                    format!("&({})[{offset}]", self.fixed_array_address(array_index)?)
+                } else {
+                    array.cell_address(&offset)
+                };
+                let pointer = self.scalar("double*", address);
+                return Ok((
+                    Binding {
+                        address: pointer,
+                        width: 0,
+                        signed: array.signed,
+                        two_state: array.two_state,
+                        shortreal: array.shortreal,
+                        automatic: false,
+                    },
+                    "1".to_owned(),
+                ));
+            }
+        }
         let mut conditions = Vec::new();
         let mut offsets = Vec::new();
         // Capture indices in source order. Invalid arithmetic uses offset zero;
@@ -182,11 +220,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 } else if array.sparse() {
                     format!(
                         "{}({}, {linear})",
-                        if writable {
-                            "llg_fixed_array_cell"
-                        } else {
-                            "llg_fixed_array_peek"
-                        },
+                        self.fixed_cell_accessor(writable),
                         self.fixed_array_address(array_index)?
                     )
                 } else {

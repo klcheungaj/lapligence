@@ -405,6 +405,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
+        if let Some(value) = self.column_record_storage(lhs) {
+            return Ok(Lhs::Canonical(self.record_image_lhs(path, &value)?));
+        }
         if let Some(target) = self.virtual_interface_select_lhs(path, lhs)? {
             return Ok(Lhs::Canonical(target));
         }
@@ -787,7 +790,8 @@ impl<'a> Codegen<'a> {
                         self.nested_associative_select_error(*base, path)
                             .unwrap_or_else(|| {
                                 format!(
-                                    "cannot resolve array base of select `{}` in `{path}`",
+                                    "{}: cannot resolve array base of select `{}` in `{path}`",
+                                    self.source_location(lhs),
                                     self.node(*base).name,
                                 )
                             })

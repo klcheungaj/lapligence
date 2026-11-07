@@ -58,6 +58,17 @@ impl Frame<'_, '_> {
         Ok(CellView { valid, base, shape })
     }
 
+    /// The runtime call that reaches a descriptor cell for this access.
+    pub(super) fn fixed_cell_accessor(&self, writable: bool) -> &'static str {
+        if writable {
+            "llg_fixed_array_cell"
+        } else if self.sampled_reads {
+            "llg_fixed_array_sampled_peek"
+        } else {
+            "llg_fixed_array_peek"
+        }
+    }
+
     /// Address of one linear cell; a read never materializes descriptor storage.
     pub(super) fn fixed_cell_address(
         &self,
@@ -69,11 +80,7 @@ impl Frame<'_, '_> {
         Ok(if info.sparse() {
             format!(
                 "{}({}, {linear})",
-                if writable {
-                    "llg_fixed_array_cell"
-                } else {
-                    "llg_fixed_array_peek"
-                },
+                self.fixed_cell_accessor(writable),
                 self.fixed_array_address(array)?
             )
         } else {
@@ -97,8 +104,9 @@ impl Frame<'_, '_> {
             .unwrap_or_else(|| {
                 super::super::expressions::packed_default(width, signed, info.two_state)
             });
+        let sparse = info.sparse();
         let address = self.fixed_cell_address(array, linear, false)?;
-        if self.sampled_reads {
+        if self.sampled_reads && !sparse {
             let value = self.reserve(width, signed);
             self.line(format!(
                 "if ({valid}) {{ llg_sampled_copy({address}, &{}); }} else {{",
