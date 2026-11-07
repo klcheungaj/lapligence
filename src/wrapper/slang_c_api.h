@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 70u
+#define LLG_SLANG_ABI_VERSION 71u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -26,9 +26,14 @@ typedef struct {
   uint64_t len;
 } LlgSlangString;
 
+/* (ABI v71) `macro_file_name`, when nonempty, is what the `__FILE__` intrinsic
+ * reports for this buffer (the path as the user gave it); empty keeps the
+ * frontend's own name. Diagnostics and positions always use `name`.
+ * llg_slang_parse_metadata() ignores it. */
 typedef struct {
   LlgSlangString name;
   LlgSlangString text;
+  LlgSlangString macro_file_name;
   uint32_t flags;
   uint32_t reserved;
 } LlgSlangSource;
@@ -39,6 +44,7 @@ typedef struct {
   LlgSlangString name;
   LlgSlangString text;
   LlgSlangString library;
+  LlgSlangString macro_file_name; /* as in LlgSlangSource */
   uint32_t flags;
   uint32_t reserved;
 } LlgSlangLibrarySource;

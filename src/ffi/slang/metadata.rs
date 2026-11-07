@@ -184,6 +184,7 @@ pub fn parse_metadata(request: &MetadataRequest<'_>) -> Result<Vec<DefinitionNam
         .map(|source| RawSource {
             name: raw_string(source.name),
             text: raw_text(source.text, source.raw),
+            macro_file_name: empty_raw_string(),
             flags: u32::from(source.is_compilation_unit),
             reserved: 0,
         })

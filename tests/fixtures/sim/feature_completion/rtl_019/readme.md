@@ -8,7 +8,21 @@
 next physical line logical line N in file f, the count then advances with
 physical lines, and leaving an include restores the includer's own position
 (IEEE 1800-2009 22.12-22.13). A macro body's `` `__LINE__`` is the use-site
-line. Physical file names print as the base name the frontend opened.
+line. A physical file name prints as the path the file was opened by: the
+source path as given, or the include directory as given (the including file's
+directory for a local include) joined with the `` `include`` name. The `.out`
+files spell those paths from the suite directory; the tests name the fixtures
+by absolute path and prefix the suite directory.
+
+`macro_file/` (expected `macro_file.out`, checked against an industry-standard
+simulator with the same relative command) is copied and run as
+`../../src/rtl/tb.sv` with `-I ../../src/inc -I ../../src/deep/`, then with
+absolute paths: nested includes, a macro defined in a header and expanded in
+another file (it reports the file it is expanded in) and a `` `line`` rename.
+IEEE 1800-2009 22.13 L39919-39921: "`__FILE__ expands to the name of the
+current input file, in the form of a string literal. This is the path by which
+a tool opened the file, not the short name specified in `include or as a
+tool's input file name argument."
 
 `line_units.sv` with `line_units_peer.sv` shows that a directive in one file
 does not reach the next one in separate or merged compilation units.

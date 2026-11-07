@@ -2367,7 +2367,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   server keeps physical ranges and adds the mapped origin as related
   information ([RTL-106](../tests/sim_feature_completion/rtl_106.rs)).
   Scope-based runtime locations (`$finish`, severity tasks) print a scope path
-  and stay physical. Physical `` `__FILE__ `` is the opened file's base name.
+  and stay physical. Physical `` `__FILE__ `` is the path the file was opened
+  by: the source path as given, or the include directory as given joined with
+  the `` `include `` name (a local include joins the including file's
+  directory); diagnostics keep canonical paths. A macro reports the file it is
+  expanded in.
   V §19.7; SV §§22.12–22.13 **[2001/SV-2009]**.
 - 🟦 **Keyword/macro state** — `` `begin_keywords `` / `` `end_keywords `` retain
   lexical tables without changing the edition; `` `undefineall `` clears macros.

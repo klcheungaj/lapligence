@@ -64,6 +64,7 @@
 #include "slang/text/SourceManager.h"
 #include "slang/util/Bag.h"
 #include "slang/util/SmallVector.h"
+#include "slang/util/String.h"
 
 using namespace slang;
 using namespace slang::ast;
@@ -9923,6 +9924,17 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   sourcePathIndex.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   std::vector<std::string_view> sourceTexts;
   sourceTexts.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
+  // `__FILE__` names, aligned with sourcePaths; empty keeps Slang's name.
+  std::vector<std::string_view> macroFileNames;
+  macroFileNames.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
+  auto macroFileName = [&](const LlgSlangString& value) {
+    const std::string_view name = checkedView(value, "source macro file name");
+    if (name.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "source macro file names must contain no NUL bytes");
+    addChecked(sourceBytes, name.size(), maxSourceBytes, "source byte");
+    macroFileNames.push_back(name);
+  };
   for (uint64_t i = 0; i < request.source_count; i++) {
     const auto& input = request.sources[i];
     if ((input.flags & ~(LLG_SLANG_SOURCE_COMPILATION_UNIT | LLG_SLANG_SOURCE_LIBRARY_MAP)) != 0 ||
@@ -9945,6 +9957,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     sourceNames.emplace_back(name);
     sourcePaths.push_back(normalized);
     sourceTexts.push_back(text);
+    macroFileName(input.macro_file_name);
   }
   std::vector<std::string> libraryNames;
   std::vector<std::string_view> librarySourceTexts;
@@ -9973,6 +9986,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     sourceNames.emplace_back(name);
     sourcePaths.push_back(normalized);
     sourceTexts.push_back(text);
+    macroFileName(input.macro_file_name);
     libraryNames.emplace_back(library);
     librarySourceTexts.push_back(text);
   }
@@ -10185,6 +10199,18 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   preprocessorOptions.keywordMapping.reserve(sourcePaths.size());
   for (const std::string& path : sourcePaths)
     preprocessorOptions.keywordMapping.emplace_back(path, edition.keywordVersion);
+  // Keyed as the source manager keeps an assigned buffer's full path.
+  if (std::any_of(macroFileNames.begin(), macroFileNames.end(),
+                  [](std::string_view name) { return !name.empty(); })) {
+    auto names = std::make_shared<flat_hash_map<std::string, std::string>>();
+    names->reserve(macroFileNames.size());
+    for (size_t i = 0; i < macroFileNames.size(); i++) {
+      if (!macroFileNames[i].empty())
+        names->emplace(getU8Str(std::filesystem::path(sourcePaths[i]).lexically_normal()),
+                       std::string(macroFileNames[i]));
+    }
+    preprocessorOptions.macroFileNames = std::move(names);
+  }
   parsing::LexerOptions lexerOptions;
   lexerOptions.languageVersion = edition.languageVersion;
   // Verilog-XL `protected/`endprotected envelopes are lexed (the encoded text

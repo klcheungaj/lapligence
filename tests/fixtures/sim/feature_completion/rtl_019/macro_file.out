@@ -1,0 +1,7 @@
+tb ../../src/rtl/tb.sv
+macro from include used in tb: ../../src/rtl/tb.sv
+macro from b used in tb: ../../src/rtl/tb.sv
+a ../../src/inc/a.svh
+b ../../src/deep/b.svh macro a in b ../../src/deep/b.svh
+c ../../src/deep/c.svh
+line renamed.sv 100

@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 70;
+const ABI_VERSION: u32 = 71;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -109,6 +109,9 @@ pub struct Source<'a> {
     pub is_compilation_unit: bool,
     /// Parse this compilation unit using Slang's library-map grammar.
     pub is_library_map: bool,
+    /// What `` `__FILE__`` reports for this buffer; `None` keeps the
+    /// frontend's own name.
+    pub macro_file_name: Option<&'a str>,
 }
 
 /// One source buffer assigned to an explicit named source library.
@@ -125,6 +128,8 @@ pub struct LibrarySource<'a> {
     pub library: &'a str,
     /// Parse this library source using Slang's library-map grammar.
     pub is_library_map: bool,
+    /// As [`Source::macro_file_name`].
+    pub macro_file_name: Option<&'a str>,
 }
 
 /// Ordered library-scoped include lookup prefix. Contents must already be admitted.
@@ -142,6 +147,7 @@ impl<'a> Source<'a> {
             raw: None,
             is_compilation_unit: true,
             is_library_map: false,
+            macro_file_name: None,
         }
     }
 
@@ -152,6 +158,7 @@ impl<'a> Source<'a> {
             raw: None,
             is_compilation_unit: false,
             is_library_map: false,
+            macro_file_name: None,
         }
     }
 }
@@ -1875,6 +1882,7 @@ struct RawString {
 struct RawSource {
     name: RawString,
     text: RawString,
+    macro_file_name: RawString,
     flags: u32,
     reserved: u32,
 }
@@ -1885,6 +1893,7 @@ struct RawLibrarySource {
     name: RawString,
     text: RawString,
     library: RawString,
+    macro_file_name: RawString,
     flags: u32,
     reserved: u32,
 }
@@ -2368,6 +2377,9 @@ fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner
         .map(|source| RawSource {
             name: raw_string(source.name),
             text: raw_text(source.text, source.raw),
+            macro_file_name: source
+                .macro_file_name
+                .map_or(empty_raw_string(), raw_string),
             flags: u32::from(source.is_compilation_unit) | (u32::from(source.is_library_map) << 1),
             reserved: 0,
         })
@@ -2379,6 +2391,9 @@ fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner
             name: raw_string(source.name),
             text: raw_text(source.text, source.raw),
             library: raw_string(source.library),
+            macro_file_name: source
+                .macro_file_name
+                .map_or(empty_raw_string(), raw_string),
             flags: u32::from(source.is_library_map),
             reserved: 0,
         })

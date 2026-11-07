@@ -22,6 +22,27 @@ fn fixture(name: &str) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// `expected` as a run naming the fixtures by absolute path prints it: a
+/// `` `__FILE__`` line naming a checked-in file (one of `stems`, as the
+/// `.out` file spells it from the suite directory) reports the path the
+/// file was given or found by, here under the suite directory (IEEE
+/// 1800-2009 22.13). `` `line``-mapped names are unchanged.
+fn from_suite_dir(expected: &str, stems: &[&str]) -> String {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE);
+    expected
+        .lines()
+        .map(|line| {
+            if stems.iter().any(|stem| line.starts_with(stem)) {
+                format!("{}/{line}\n", directory.display())
+            } else {
+                format!("{line}\n")
+            }
+        })
+        .collect()
+}
+
 /// Value-backend lanes: legacy, compact portable and compact GMP (bundled
 /// unless `gmp` names an installation).
 fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
@@ -56,7 +77,10 @@ fn mapped_file_and_line_values_follow_includes_and_line_directives() {
             SUITE,
             "line_map",
             &["line_map_outer.svh", "line_map_inner.svh"],
-            include_str!("../fixtures/sim/feature_completion/rtl_019/line_map.out"),
+            &from_suite_dir(
+                include_str!("../fixtures/sim/feature_completion/rtl_019/line_map.out"),
+                &["line_map"],
+            ),
             LINE_MAP_STDERR,
             &[],
             &envs,
@@ -78,7 +102,10 @@ fn mapped_values_execute_after_snapshot_and_db_destruction() {
             top: Some("tb".to_owned()),
             ..Default::default()
         },
-        include_str!("../fixtures/sim/feature_completion/rtl_019/line_map.out"),
+        &from_suite_dir(
+            include_str!("../fixtures/sim/feature_completion/rtl_019/line_map.out"),
+            &["line_map"],
+        ),
         LINE_MAP_STDERR,
     );
 }
@@ -92,7 +119,10 @@ fn line_state_stays_in_its_file_in_both_unit_modes() {
             SUITE,
             "line_units",
             &["line_units_peer.sv"],
-            include_str!("../fixtures/sim/feature_completion/rtl_019/line_units.out"),
+            &from_suite_dir(
+                include_str!("../fixtures/sim/feature_completion/rtl_019/line_units.out"),
+                &["line_units"],
+            ),
             "llg: $finish at time 0 at tb:9:5\n",
             &["--compilation-units", mode, "line_units_peer.sv"],
             &[],
@@ -530,4 +560,56 @@ fn adopted_post_2009_and_static_ref_witnesses_reject() {
         "witness_ref_static",
         "witness_ref_static.sv:6:15 'ref' arguments can only be used in 'automatic' subroutines",
     );
+}
+
+/// `` `__FILE__`` reports the path by which each file was opened (IEEE
+/// 1800-2009 22.13): the source path and include directories as given,
+/// relative and absolute, through nested includes, with macros expanding to
+/// the file they are used in and `` `line`` still renaming. The fixture tree
+/// is copied so that the run can name it by relative paths.
+#[test]
+fn file_macro_reports_paths_as_given() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE)
+        .join("macro_file");
+    let directory = super::sim_harness::TempDir::new("macro-file").expect("temporary directory");
+    let source = directory.path().join("src");
+    for file in ["rtl/tb.sv", "inc/a.svh", "deep/b.svh", "deep/c.svh"] {
+        let target = source.join(file);
+        std::fs::create_dir_all(target.parent().expect("fixture directory"))
+            .expect("create fixture directory");
+        std::fs::copy(fixtures.join(file), &target).expect("copy fixture");
+    }
+    let run_directory = directory.path().join("runs/r1");
+    std::fs::create_dir_all(&run_directory).expect("create run directory");
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_019/macro_file.out");
+    let absolute = source.to_string_lossy().into_owned();
+    for (prefix, expected) in [
+        ("../../src".to_owned(), expected.to_owned()),
+        (absolute.clone(), expected.replace("../../src", &absolute)),
+    ] {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_llg"));
+        command
+            .current_dir(&run_directory)
+            .args(["--top", "tb", "--out-dir", "out", "-I"])
+            .arg(format!("{prefix}/inc"))
+            .arg("-I")
+            .arg(format!("{prefix}/deep/"))
+            .arg(format!("{prefix}/rtl/tb.sv"));
+        let output =
+            super::sim_harness::run_command(&mut command, std::time::Duration::from_secs(180))
+                .expect("run llg");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{prefix}: {stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "{prefix}"
+        );
+        assert!(
+            stderr.ends_with("llg: $finish at time 0 at tb:21:5\n"),
+            "{prefix}: {stderr}"
+        );
+    }
 }
