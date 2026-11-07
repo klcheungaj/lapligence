@@ -491,7 +491,10 @@ impl Codegen<'_> {
             let lhs = match &tag {
                 NativeEndpointLeaf::Module(leaf) => self.aggregate_leaf_lhs(leaf)?,
                 NativeEndpointLeaf::Value(value, leaf) => self.native_leaf_lhs(*value, leaf),
-                NativeEndpointLeaf::Container(_) | NativeEndpointLeaf::Slot(..) => {
+                NativeEndpointLeaf::Container(_)
+                | NativeEndpointLeaf::Slot(..)
+                | NativeEndpointLeaf::Column(_)
+                | NativeEndpointLeaf::Cell(_) => {
                     return Err("tagged union tag is not a packed leaf".to_owned())
                 }
             };

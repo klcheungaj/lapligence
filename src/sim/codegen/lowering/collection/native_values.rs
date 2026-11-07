@@ -1302,6 +1302,10 @@ impl Codegen<'_> {
             NativeEndpointLeaf::Value(value, leaf) => Ok(self.native_leaf_read(*value, leaf)),
             NativeEndpointLeaf::Container(container) => Ok(LeafValue::Container(*container)),
             NativeEndpointLeaf::Slot(value, leaf) => Ok(LeafValue::Slot(*value, (**leaf).clone())),
+            NativeEndpointLeaf::Column(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+            NativeEndpointLeaf::Cell(array) => Ok(LeafValue::Packed(
+                self.record_column_read(&RecordColumn::Cell(*array))?,
+            )),
             NativeEndpointLeaf::Module(leaf) => {
                 if let Some(object) = leaf.object {
                     let object = self.reference_object(object);
@@ -1422,9 +1426,10 @@ impl Codegen<'_> {
                 NativeEndpointLeaf::Value(native, leaf) => {
                     return self.native_leaf_nba(path, *native, leaf, value)
                 }
-                NativeEndpointLeaf::Container(_) | NativeEndpointLeaf::Slot(..) => {
-                    return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
-                }
+                NativeEndpointLeaf::Container(_)
+                | NativeEndpointLeaf::Slot(..)
+                | NativeEndpointLeaf::Column(_)
+                | NativeEndpointLeaf::Cell(_) => return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
             };
             return match value {
                 LeafValue::Container(_) | LeafValue::Slot(..) => {
@@ -1451,7 +1456,13 @@ impl Codegen<'_> {
             };
         }
         match (leaf, value) {
-            (NativeEndpointLeaf::Container(_) | NativeEndpointLeaf::Slot(..), _)
+            (
+                NativeEndpointLeaf::Container(_)
+                | NativeEndpointLeaf::Slot(..)
+                | NativeEndpointLeaf::Column(_)
+                | NativeEndpointLeaf::Cell(_),
+                _,
+            )
             | (_, LeafValue::Container(_) | LeafValue::Slot(..)) => {
                 Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
             }
@@ -1538,8 +1549,55 @@ impl Codegen<'_> {
                 });
             }
         }
-        let mut targets = self.endpoint_leaves(target)?;
-        let mut sources = self.endpoint_leaves(source)?;
+        let targets = self.endpoint_leaves(target)?;
+        let sources = self.endpoint_leaves(source)?;
+        self.native_leaf_transfer(path, targets, sources, nba)
+    }
+
+    /// Copy the columns of record `value`, the result of a call, into
+    /// `target`.
+    fn record_value_transfer(
+        &mut self,
+        path: &str,
+        target: &NativeEndpoint,
+        value: &RecordValue,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let targets = self.endpoint_leaves(target)?;
+        let mut sources = value
+            .columns
+            .iter()
+            .map(|(member, column)| {
+                let leaf = match column {
+                    RecordColumn::Array(array) => NativeEndpointLeaf::Column(*array),
+                    RecordColumn::Cell(array) => NativeEndpointLeaf::Cell(*array),
+                    RecordColumn::Leaf(leaf) => NativeEndpointLeaf::Module(leaf.clone()),
+                    RecordColumn::Native(value, leaf) => {
+                        NativeEndpointLeaf::Value(*value, (**leaf).clone())
+                    }
+                };
+                (member.clone(), leaf)
+            })
+            .collect::<NativeLeafPairs>();
+        // Scalars pair by position, and a value lists columns in declaration
+        // order where a target lists its kinds of leaf in turn.
+        sources.sort_by_key(|(member, _)| {
+            targets
+                .iter()
+                .position(|(target, _)| target == member)
+                .unwrap_or(usize::MAX)
+        });
+        self.native_leaf_transfer(path, targets, sources, nba)
+    }
+
+    /// Copy paired leaf lists, `sources` read whole before the first write.
+    fn native_leaf_transfer(
+        &mut self,
+        path: &str,
+        mut targets: NativeLeafPairs,
+        mut sources: NativeLeafPairs,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
         let columns = self.native_column_transfers(path, &mut targets, &mut sources, nba)?;
         if targets.len() != sources.len()
             || (targets.is_empty() && columns.is_empty())
@@ -1603,10 +1661,16 @@ impl Codegen<'_> {
                     .ok_or_else(|| {
                         format!("native record transfer in `{path}` has no column source")
                     })?;
-                let statement = match &items[selected].1 {
+                let slot = match &items[selected].1 {
                     NativeEndpointLeaf::Value(value, leaf) => {
-                        let root = IrValueItemRoot::Value(*value);
-                        let items = leaf.items[..leaf.items.len() - 1].to_vec();
+                        Some((*value, leaf.items[..leaf.items.len() - 1].to_vec()))
+                    }
+                    NativeEndpointLeaf::Slot(value, leaf) => Some((*value, leaf.items.clone())),
+                    _ => None,
+                };
+                let statement = match slot {
+                    Some((value, items)) => {
+                        let root = IrValueItemRoot::Value(value);
                         if write && real {
                             IrStmt::Container(Box::new(IrContainerStmt::RealColumnAssign {
                                 array,
@@ -1629,7 +1693,8 @@ impl Codegen<'_> {
                             }))
                         }
                     }
-                    other => {
+                    None => {
+                        let other = &items[selected].1;
                         let (other, _) = column_leaf_array(other).ok_or_else(|| {
                             format!("native record transfer in `{path}` splits a column")
                         })?;
@@ -2338,6 +2403,13 @@ impl Codegen<'_> {
         }
         if let Some((source, _)) = self.native_endpoint(source)? {
             return self.native_transfer(path, target, &source, nba);
+        }
+        // A column-layout result arrives in columns, whatever its width.
+        if let Some(function) = self.record_call_function(source)? {
+            let mut statements = Vec::new();
+            let value = self.record_call_result_value(path, function, source, &mut statements)?;
+            statements.push(self.record_value_transfer(path, target, &value, nba)?);
+            return Ok(IrStmt::Block(statements));
         }
         // A fixed record is one packed value where it is not leaf storage
         // (a procedural-block local, a packed function result); each leaf
@@ -3351,9 +3423,10 @@ impl Codegen<'_> {
     fn endpoint_leaf_type(&self, leaf: &NativeEndpointLeaf) -> Result<IrClassFieldType, String> {
         match leaf {
             NativeEndpointLeaf::Value(_, leaf) => Ok(leaf.ty),
-            NativeEndpointLeaf::Container(_) | NativeEndpointLeaf::Slot(..) => {
-                Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
-            }
+            NativeEndpointLeaf::Container(_)
+            | NativeEndpointLeaf::Slot(..)
+            | NativeEndpointLeaf::Column(_)
+            | NativeEndpointLeaf::Cell(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
             NativeEndpointLeaf::Module(leaf) => {
                 if let Some(object) = leaf.object {
                     return match self.model.objects[self.reference_object(object)].ty {
@@ -3491,6 +3564,7 @@ fn column_leaf_array(leaf: &NativeEndpointLeaf) -> Option<(usize, usize)> {
         NativeEndpointLeaf::Module(leaf) => {
             member_cell_column(leaf).map(|array| (array.ir, array.dims.len()))
         }
+        NativeEndpointLeaf::Column(array) => Some((*array, 0)),
         _ => None,
     }
 }
@@ -3505,4 +3579,8 @@ pub(in super::super) enum NativeEndpointLeaf {
     Container(usize),
     /// A fixed member array in the slot of a native value.
     Slot(usize, Box<NativeFixedLeaf>),
+    /// A member array column of a record value.
+    Column(usize),
+    /// The one-cell column of a scalar member of a record value.
+    Cell(usize),
 }

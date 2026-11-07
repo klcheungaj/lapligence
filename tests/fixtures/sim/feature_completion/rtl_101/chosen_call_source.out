@@ -1,0 +1,17 @@
+assoc a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+fixed a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+2
+nested a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+push a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+queue a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+dyn a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+twice a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+nba-before a=0 s= last=0 d=0.0 m=0 b=0 sm=0
+nba-after a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+class a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+st-before a=0 s= last=0 d=0.0 m=0 b=0 sm=0
+st-after a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+task a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+member a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7
+element member a=3 s=x++ last=14 d=2.5 m=9 b=4 sm=10
+nested member a=2 s=x+ last=12 d=2.0 m=8 b=3 sm=7

@@ -1236,9 +1236,10 @@ impl Codegen<'_> {
                     .first()
                     .ok_or("member array selection has no elements")?;
                 match first {
-                    NativeEndpointLeaf::Container(_) | NativeEndpointLeaf::Slot(..) => {
-                        Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
-                    }
+                    NativeEndpointLeaf::Container(_)
+                    | NativeEndpointLeaf::Slot(..)
+                    | NativeEndpointLeaf::Column(_)
+                    | NativeEndpointLeaf::Cell(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
                     NativeEndpointLeaf::Value(_, leaf) => Ok(leaf.ty),
                     NativeEndpointLeaf::Module(leaf) => Ok(match leaf.object {
                         Some(object) => {

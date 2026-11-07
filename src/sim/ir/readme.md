@@ -264,6 +264,9 @@ record element, a static subroutine record leaf): the element position is
 fixed at issue and the runtime finds the item again at commit
 (`src/sim/rt/values.md`). `ContainerNonblocking` is a whole queue, dynamic or
 associative array NBA and owns a copy of its source from issue to commit.
+`NbaHoldOpen`, `NbaHoldClose` and `NbaHoldRelease` keep the updates a write
+queues under an event or delay control, whatever their form, in a hold of
+`IrChandleExpr::NbaHold` until the control releases them.
 
 ## Recursive containers and handle storage (SIM-006)
 

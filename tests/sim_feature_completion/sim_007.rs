@@ -556,6 +556,18 @@ fn container_elements_hold_records_with_container_members() {
     );
 }
 
+/// A record with a queue member keeps the queue of the issue until its event.
+#[test]
+fn event_controlled_writes_keep_the_queue_of_the_issue() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "record_queue_event_nba",
+        "1000 [] 0\n2000 [b] 2\n",
+        &[],
+        &[],
+    );
+}
+
 #[test]
 fn container_element_members_are_read_in_conditions_loops_and_initializers() {
     let expected = include_str!(

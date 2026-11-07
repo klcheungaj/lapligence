@@ -64,6 +64,7 @@ feature_completion/rtl_016/q03_stable.sv	mixed-assignments	36:5
 feature_completion/rtl_016/unpacked_contexts.sv	mixed-assignments	70:5
 feature_completion/rtl_016/wrong_tag_selects.sv	mixed-assignments	28:5
 feature_completion/rtl_099/record_array_values.sv	mixed-assignments	16:3
+feature_completion/rtl_101/chosen_call_source.sv	mixed-assignments	41:3
 feature_completion/rtl_101/chosen_event_nba.sv	mixed-assignments	23:3
 feature_completion/rtl_101/chosen_event_nba_native.sv	mixed-assignments	53:3
 feature_completion/rtl_101/chosen_ref_wait.sv	mixed-assignments	109:3
