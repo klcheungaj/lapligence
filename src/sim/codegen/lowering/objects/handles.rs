@@ -106,6 +106,9 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),
         };
+        if let Some(name) = target.and_then(|target| self.proc_semaphore_local_name(target)) {
+            return Ok(Some(ChandleTarget::Local(name.to_owned())));
+        }
         let declaration = self.lexical_proc_semaphore_decl(node).or_else(|| {
             target.filter(|target| {
                 matches!(
@@ -618,6 +621,9 @@ impl Codegen<'_> {
             ) {
                 return Ok(IrChandleExpr::Read(index));
             }
+        }
+        if let Some(name) = target.and_then(|target| self.proc_semaphore_local_name(target)) {
+            return Ok(IrChandleExpr::LocalRead(name.to_owned()));
         }
         if let Some(variable) = self.lexical_proc_semaphore_decl(node) {
             if let Some(name) = self.proc_semaphore_local_name(variable) {

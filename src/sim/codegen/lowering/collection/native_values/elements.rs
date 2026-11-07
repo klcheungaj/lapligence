@@ -550,7 +550,10 @@ impl Codegen<'_> {
     ) -> Result<Option<IrStmt>, String> {
         let source = self.p30_unwrap_cast(source);
         if !self.is_container_record(source)
-            || !matches!(self.kind(destination), NodeKind::Expr(ExprKind::Ref { .. }))
+            || !matches!(
+                self.kind(destination),
+                NodeKind::Expr(ExprKind::Ref { .. }) | NodeKind::Var { .. }
+            )
         {
             return Ok(None);
         }

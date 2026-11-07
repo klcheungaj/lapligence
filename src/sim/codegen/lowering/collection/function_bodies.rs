@@ -1665,7 +1665,7 @@ impl<'a> Codegen<'a> {
                     if w == 0 {
                         false
                     } else {
-                        is_two_state_kind(&ty.kind)
+                        self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind)
                     },
                     shortreal,
                 ),

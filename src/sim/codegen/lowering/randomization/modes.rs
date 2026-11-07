@@ -332,6 +332,7 @@ impl Codegen<'_> {
             let target = match self.kind(member) {
                 NodeKind::Expr(ExprKind::Ref { target }) => *target,
                 NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten(),
+                NodeKind::Expr(ExprKind::ScopeRef { target }) => Some(*target),
                 _ => None,
             };
             let bits = if constraint {

@@ -1942,8 +1942,10 @@ impl Codegen<'_> {
         };
         // A whole variable: a selector would be evaluated after the
         // operation instead of being frozen before it.
-        if !matches!(self.kind(destination), NodeKind::Expr(ExprKind::Ref { .. }))
-            || self.fixed_value_width(destination) != Some(width)
+        if !matches!(
+            self.kind(destination),
+            NodeKind::Expr(ExprKind::Ref { .. }) | NodeKind::Var { .. }
+        ) || self.fixed_value_width(destination) != Some(width)
         {
             return Ok(None);
         }

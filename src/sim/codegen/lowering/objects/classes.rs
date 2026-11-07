@@ -941,6 +941,7 @@ impl Codegen<'_> {
                 .func
                 .as_ref()
                 .is_some_and(|function| function.chandle_read.contains_key(&declaration))
+            || self.proc_semaphore_local_name(declaration).is_some()
     }
 
     /// A class handle stored as a record member (`r.h.v`, SIM-007): the

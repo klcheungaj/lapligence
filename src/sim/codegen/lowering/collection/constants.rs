@@ -113,6 +113,22 @@ impl<'a> Codegen<'a> {
                     _ => elab::isunknown(&arg),
                 })
             }
+            // `$bits` of a type or a fixed-size expression (SV 20.6.2); Slang
+            // leaves it in a replication count inside a subroutine body.
+            NodeKind::SysCall { name } if name == "$bits" => {
+                let [arg, ..] = self.node(node).children.as_slice() else {
+                    return Err("$bits requires an argument".to_owned());
+                };
+                let descriptor = self
+                    .query_descriptor(*arg)
+                    .ok_or("$bits argument has no type in bound")?;
+                let width = match descriptor.shape {
+                    TypeShape::Real { shortreal } => Some(if shortreal { 32 } else { 64 }),
+                    _ => descriptor.fixed_size_bits(),
+                };
+                let width = width.ok_or("$bits argument has no fixed size in bound")?;
+                Ok(elab::Value::from_u64(width, 32, true))
+            }
             other => Err(format!("unsupported bound expression: {other:?}")),
         }
     }

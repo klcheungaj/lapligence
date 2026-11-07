@@ -764,7 +764,7 @@ impl IrStringExpr {
                     ));
                 }
                 if let Some(receiver) = receiver {
-                    receiver.validate(model, &[], string_return.map(|_| false))?;
+                    receiver.validate_shape(model, string_return.map(|_| false))?;
                 }
                 if !callee.ret_string
                     || callee.formals.len() != args.len()
@@ -813,7 +813,7 @@ impl IrStringExpr {
                     ));
                 }
                 if let Some(receiver) = receiver {
-                    receiver.validate(model, &[], string_return.map(|_| false))?;
+                    receiver.validate_shape(model, string_return.map(|_| false))?;
                 }
                 if !callee.ret_string || callee.formals.len() != args.len() {
                     return Err(super::IrValidationError::new(
@@ -2126,6 +2126,20 @@ impl IrObjectStmt {
 }
 
 impl IrChandleExpr {
+    /// Validate a handle in a context that does not carry the enclosing
+    /// function's formals: a formal index cannot be checked there.
+    pub(in crate::sim) fn validate_shape(
+        &self,
+        model: &super::IrModel,
+        chandle_return: Option<bool>,
+    ) -> Result<(), super::IrValidationError> {
+        match self {
+            Self::FormalRead(_) => Ok(()),
+            Self::Required { handle, .. } => handle.validate_shape(model, chandle_return),
+            _ => self.validate(model, &[], chandle_return),
+        }
+    }
+
     /// The native value a run-time item locator starts from.
     pub(in crate::sim) fn located_native_root(&self) -> Option<usize> {
         match self {

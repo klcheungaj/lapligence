@@ -43,7 +43,12 @@ impl EmitCtx<'_, '_> {
                 processes.push(*branch);
             }
         }
-        let mut statements = self.lower_fork_branches(target, join_kind, &processes)?;
+        let detached = self.func.as_ref().is_some_and(|function| !function.is_task);
+        let outer = self.cg.detached_function_branch;
+        self.cg.detached_function_branch = outer || detached;
+        let statements = self.lower_fork_branches(target, join_kind, &processes);
+        self.cg.detached_function_branch = outer;
+        let mut statements = statements?;
         if !declarations.is_empty() {
             declarations.append(&mut statements);
             statements = declarations;

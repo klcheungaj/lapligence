@@ -1853,6 +1853,11 @@ struct Codegen<'a> {
     proc_process_static_objects: HashMap<(NodeId, NodeId), usize>,
     /// Automatic semaphore locals declared in process bodies.
     proc_semaphore_locals: HashMap<NodeId, String>,
+    /// Lowering a fork branch of a function: it outlives the activation of
+    /// its function and may run in several at once, so a handle declared in
+    /// a block of the branch is a local of the branch
+    /// (`proc_semaphore_locals`), never one model object.
+    detached_function_branch: bool,
     /// Persistent semaphore objects for static procedural declarations,
     /// keyed by elaborated instance and declaration identity.
     proc_semaphore_static_objects: HashMap<(NodeId, NodeId), usize>,
@@ -2461,6 +2466,7 @@ impl<'a> Codegen<'a> {
             proc_process_locals: HashMap::new(),
             proc_process_static_objects: HashMap::new(),
             proc_semaphore_locals: HashMap::new(),
+            detached_function_branch: false,
             proc_semaphore_static_objects: HashMap::new(),
             proc_local_instances: HashMap::new(),
             capture_locals: HashMap::new(),

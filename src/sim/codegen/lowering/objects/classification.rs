@@ -375,6 +375,7 @@ impl Codegen<'_> {
                         && self
                             .enum_metadata_for_expr(*receiver)
                             .is_some_and(|_| self.node(node).children.len() == 1))
+                    || self.is_string_method_call(node)
             }
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::Concat | Operation::MultiConcat,
@@ -385,6 +386,19 @@ impl Codegen<'_> {
                 .any(|operand| self.is_string_expr(path, *operand)),
             _ => false,
         }
+    }
+
+    /// A call of a class method that returns a string.
+    fn is_string_method_call(&self, node: NodeId) -> bool {
+        let NodeKind::MethodCall { callee, .. } = self.kind(node) else {
+            return false;
+        };
+        self.is_class_method_call(node)
+            && self
+                .resolve_callee_env(self.inst, &self.node(node).name, false, *callee)
+                .ok()
+                .and_then(|(function, _)| self.func_meta.get(&function))
+                .is_some_and(|meta| meta.ret_string)
     }
 
     /// Return whether an expression is a native chandle without requiring it
@@ -436,6 +450,18 @@ impl Codegen<'_> {
             {
                 return true;
             }
+        }
+        if target.is_some_and(|target| self.proc_semaphore_local_name(target).is_some()) {
+            return true;
+        }
+        // A handle a fork branch captured from its parent; the branch of a
+        // function has no enclosing function context to read it from.
+        if self
+            .capture_target(node)
+            .and_then(|captured| self.capture_binding(captured))
+            .is_some_and(|binding| binding.storage.kind() == StorageKind::Opaque)
+        {
+            return true;
         }
         if let Some(index) = self.object_of(path, node) {
             if matches!(
