@@ -1,6 +1,7 @@
 // SIM-035: procedural sampled-value functions on one explicit/inferred edge
 // clock (IEEE 1800-2009 16.9.3): initial values, $past depth and gating,
-// value change functions between edges and a repeated edge in one step.
+// value change functions between edges, and edges that end where they began
+// within one turn, which are no edge (decision T1-D11).
 module tb;
   logic clk = 1'b0;
   logic en = 1'b1;

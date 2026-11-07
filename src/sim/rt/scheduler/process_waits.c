@@ -452,6 +452,9 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
             retained->changes->cap = (uint32_t)n;
             retained->changes->sink.kind = W_CHANGE_LOG;
             retained->changes->sink.proc = self;
+            // Memberships kept from an earlier, unordered wait on this list.
+            for (size_t i = 0; i < retained->n_subscriptions; i++)
+                retained->subscriptions[i].source->write_walkers++;
         }
         retained->changes->n = 0;
     }
@@ -509,6 +512,10 @@ llg_co_arm_t llg_arm_event_dependencies(llg_proc_t* self,
 
 void llg_wait_refresh_on_resume(llg_proc_t* self) {
     if (self) self->next_wait_refresh = 1;
+}
+
+void llg_wait_gate_at_write(llg_proc_t* self) {
+    if (self) self->wait_gate |= LLG_WAIT_GATE_NEXT;
 }
 
 int llg_wait_refreshed(const llg_proc_t* self) {

@@ -198,7 +198,7 @@ get_property(all_tests DIRECTORY PROPERTY TESTS)
 set_tests_properties(${all_tests} PROPERTIES TIMEOUT 60)
 
 add_library(tracked_value STATIC tracked_value.c "${LLG_RT}/llg_string.c" "${LLG_RT}/llg_rng.c"
-  "${LLG_RT}/llg_constraint.c")
+  "${LLG_RT}/llg_constraint.c" "${LLG_RT}/llg_random.c")
 target_include_directories(tracked_value PUBLIC "${LLG_RT}")
 strict_c(tracked_value)
 if(LLG_TEST_VALUE_COMPACT)

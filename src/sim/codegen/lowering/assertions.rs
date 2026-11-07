@@ -1330,6 +1330,10 @@ impl Codegen<'_> {
                     IrStmt::WaitEvents {
                         specs: pending.specs,
                         refresh: false,
+                        // The gate of a `$past` event clock is read at the
+                        // event (AA-D6); assertion clocks read `iff` at the
+                        // check (T1-D11).
+                        gate_at_write: !pending.pulse,
                     },
                     tick,
                 ],

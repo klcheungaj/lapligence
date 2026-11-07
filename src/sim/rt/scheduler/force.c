@@ -303,6 +303,7 @@ void llg_force_expr_parts(const llg_force_part_t* parts, int n_parts,
     llg_force_entry_t* entry = force_prepare_packed(
         parts, n_parts, stream_slice, stream_right_to_left, eval, reads, n_reads);
     force_evaluate_entry(entry);
+    change_check();
     if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(0, parts, n_parts, NULL);
 }
 
@@ -340,6 +341,7 @@ void llg_force_real(double* target, llg_force_real_eval_fn eval,
     entry->eval = NULL;
     entry->n_reads = n_reads;
     force_evaluate_entry(entry);
+    change_check();
     if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(0, NULL, 0, target);
 }
 
@@ -365,6 +367,7 @@ void llg_release_parts(const llg_force_part_t* parts, int n_parts,
         if (nets[i] && nets[i]->switch_net) llg_switch_net_changed(nets[i]);
     }
     free(nets);
+    change_check();
     if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(1, parts, n_parts, NULL);
 }
 
@@ -391,6 +394,7 @@ void llg_force(sv4_t* sig, sv4_t value) {
     llg_force_entry_t* entry = force_prepare_packed(&part, 1, 0, 0, NULL, NULL, 0);
     sv4_copy(&entry->value, &value);
     force_entry_targets(entry);
+    change_check();
     if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(0, &part, 1, NULL);
 }
 
@@ -402,6 +406,7 @@ void llg_force_value_parts(const llg_force_part_t* parts, int n_parts, sv4_t val
     llg_force_entry_t* entry = force_prepare_packed(parts, n_parts, 0, 0, NULL, NULL, 0);
     sv4_copy(&entry->value, &value);
     force_entry_targets(entry);
+    change_check();
 }
 
 // Constant-value force of a real variable; replaces an existing real force.
@@ -431,6 +436,7 @@ void llg_force_real_value(double* target, double value) {
     entry->eval = NULL;
     entry->n_reads = 0;
     force_evaluate_entry(entry);
+    change_check();
 }
 
 void llg_release(sv4_t* sig) {

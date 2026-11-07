@@ -70,13 +70,21 @@ static llg_wait_source_t* wait_source_find(const void* key) {
     return NULL;
 }
 
-static llg_wait_source_t* wait_source_get(const void* key) {
-    llg_wait_source_t* source = wait_source_find(key);
-    if (source) return source;
+// A new row for a key that has none. Freed rows are kept for reuse
+// (g.wait_source_free, linked through `next`): a storage written in each
+// turn, or waited on again after each wake, would otherwise allocate and
+// free its row every time. The pool holds at most the peak number of rows.
+static llg_wait_source_t* wait_source_insert(const void* key) {
+    llg_wait_source_t* source = g.wait_source_free;
     wait_sources_reserve();
     size_t slot = wait_source_hash(key) & (g.wait_sources_capacity - 1);
-    source = (llg_wait_source_t*)llg_checked_calloc(
-        1, sizeof(*source), "wait source");
+    if (source) {
+        g.wait_source_free = source->next;
+        *source = (llg_wait_source_t){0};
+    } else {
+        source = (llg_wait_source_t*)llg_checked_calloc(
+            1, sizeof(*source), "wait source");
+    }
     source->key = key;
     source->next = g.wait_sources[slot];
     source->prev_link = &g.wait_sources[slot];
@@ -84,6 +92,11 @@ static llg_wait_source_t* wait_source_get(const void* key) {
     g.wait_sources[slot] = source;
     g.n_wait_sources++;
     return source;
+}
+
+static llg_wait_source_t* wait_source_get(const void* key) {
+    llg_wait_source_t* source = wait_source_find(key);
+    return source ? source : wait_source_insert(key);
 }
 
 static void wait_subscription_insert(llg_wait_subscription_t* node,
@@ -103,7 +116,8 @@ static void wait_subscription_unlink(llg_wait_subscription_t* node) {
         *source->prev_link = source->next;
         if (source->next) source->next->prev_link = source->prev_link;
         g.n_wait_sources--;
-        free(source);
+        source->next = g.wait_source_free;
+        g.wait_source_free = source;
     }
 }
 
@@ -272,8 +286,10 @@ static void wait_retained_drop(llg_proc_t* proc) {
     llg_wait_retained_t* retained = proc ? proc->retained_wait : NULL;
     if (!retained) return;
     proc->retained_wait = NULL;
-    for (size_t i = 0; i < retained->n_subscriptions; i++)
+    for (size_t i = 0; i < retained->n_subscriptions; i++) {
+        if (retained->changes) retained->subscriptions[i].source->write_walkers--;
         wait_subscription_unlink(&retained->subscriptions[i]);
+    }
     free(retained->subscriptions);
     if (retained->changes) free(retained->changes->changes);
     free(retained->changes);
@@ -347,17 +363,21 @@ static void wait_subscriptions_register(llg_wait_t* wait) {
     wait->subscriptions = (llg_wait_subscription_t*)llg_checked_calloc(
         unique, sizeof(*wait->subscriptions), "wait subscriptions");
     wait->n_subscriptions = unique;
+    int write_walker = wait->kind == W_EXPR && wait->proc && (wait->proc->wait_gate & LLG_WAIT_GATE_ARMED);
     for (size_t i = 0; i < unique; i++) {
         llg_wait_subscription_t* node = &wait->subscriptions[i];
         node->source = wait_source_get(keys.keys[i]);
         node->wait = wait;
         // Head insertion matches the global list's reverse registration order.
         wait_subscription_insert(node, &node->source->head);
+        if (write_walker) node->source->write_walkers++;
     }
     free(keys.keys);
     if (retained) {
         retained->subscriptions = wait->subscriptions;
         retained->n_subscriptions = wait->n_subscriptions;
+        if (retained->changes)
+            for (size_t i = 0; i < unique; i++) wait->subscriptions[i].source->write_walkers++;
     }
 }
 
@@ -401,8 +421,11 @@ static void remove_waiters_entry(llg_wait_t* w) {
         w->n_subscriptions = 0;
         return;
     }
-    for (size_t i = 0; i < w->n_subscriptions; i++)
+    int write_walker = w->kind == W_EXPR && w->proc && (w->proc->wait_gate & LLG_WAIT_GATE_ARMED);
+    for (size_t i = 0; i < w->n_subscriptions; i++) {
+        if (write_walker) w->subscriptions[i].source->write_walkers--;
         wait_subscription_unlink(&w->subscriptions[i]);
+    }
     if (w->subscriptions != &w->payload.single.subscription)
         free(w->subscriptions);
     w->subscriptions = NULL;
@@ -647,6 +670,7 @@ static void wait_payload_release(llg_wait_t* wait) {
                                   : 0);
             free(wait->payload.expression.last);
             free(wait->payload.expression.real_last);
+            free(wait->payload.expression.gate_open);
             free(wait->payload.expression.evs);
             break;
         case W_EVENT:

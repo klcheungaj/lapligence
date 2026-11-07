@@ -1305,6 +1305,7 @@ impl EmitCtx<'_, '_> {
             let wait = IrStmt::WaitEvents {
                 specs,
                 refresh: false,
+                gate_at_write: false,
             };
             let wait = match repeat {
                 Some(count) => IrStmt::Repeat {

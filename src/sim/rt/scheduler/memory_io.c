@@ -586,6 +586,9 @@ static void llg_memory_image_begin(llg_memory_storage_t* storage) {
         storage->image_mode = region_private_store("signal write") ? 1 : 0;
     } else {
         storage->image_mode = 2;
+        // A record is opened before the first word: the end publishes only
+        // bit 0, and a check compares whole values.
+        if (change_defer_active) change_begin(storage->image, storage->image, 1);
     }
 }
 

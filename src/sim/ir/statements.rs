@@ -730,6 +730,10 @@ pub enum IrStmt {
         /// wakes it with [`IrRuntimeQuery::WaitRefreshed`] set so it takes
         /// its armed values again.
         refresh: bool,
+        /// Each `iff` qualifier is read at the write that produced the
+        /// event rather than at the check that publishes it (AA-D6): the
+        /// synthetic tick process of an event-list sampled-value clock.
+        gate_at_write: bool,
     },
     /// `-> ev;` — trigger the named event immediately (index into
     /// [`IrModel::events`]); wakes ALL current waiters.

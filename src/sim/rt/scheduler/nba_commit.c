@@ -58,8 +58,9 @@ static void apply_nba_target(llg_nba_t* next) {
         // matching a blocking handle write.
         void** target = next->native.chandle.target;
         if (target && *target != next->native.chandle.value) {
+            void* previous = *target;
             *target = next->native.chandle.value;
-            llg_dependency_changed(next->native.chandle.dependency);
+            llg_handle_changed(next->native.chandle.dependency, (void* const*)target, previous);
         }
     } else if (next->is_real) {
         if (!llg_is_real_forced(next->real_target))
@@ -135,11 +136,21 @@ static void apply_nba(llg_nba_t* next) {
 static void commit_nbas(llg_region_t region) {
     promote_delayed_nbas();
     llg_nba_queue_t* queue = &g.nba_queues[region];
+    // Updates that matured from an earlier slot lead the queue and are a batch
+    // of their own: a later update of this slot undoing one is still a change.
+    int matured = queue->head && queue->head->sequence < g.nba_slot_sequence;
+    change_defer_active = 1;
     while (queue->head) {
         llg_nba_t* next = queue->head;
+        if (matured && next->sequence >= g.nba_slot_sequence) {
+            matured = 0;
+            change_check();
+        }
         nba_queue_remove(queue, next);
         nba_owner_remove(next);
         apply_nba(next);
         nba_destroy(next);
     }
+    change_defer_active = 0;
+    change_check();
 }

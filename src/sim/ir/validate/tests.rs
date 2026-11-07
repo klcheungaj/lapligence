@@ -617,6 +617,7 @@ fn evaluated_waits_require_valid_helpers_and_dependencies() {
                 IrEdge::Any,
             )],
             refresh: false,
+            gate_at_write: false,
         }],
     );
     model.processes.push(process);
@@ -707,6 +708,7 @@ fn native_access_dependencies_name_rearmed_class_or_interface_storage() {
             IrEdge::Any,
         )],
         refresh: false,
+        gate_at_write: false,
     }];
     assert!(model
         .validate()

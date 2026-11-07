@@ -63,10 +63,13 @@ static int run_region_queue(llg_region_t region) {
             g.current = process;
             g.process_turn_active = 1;
             net_defer_active = 1;
+            change_defer_active = 1;
             llg_co_status_t status = llg_co_run(&process->chain);
+            change_defer_active = 0;
             net_defer_active = 0;
             g.process_turn_active = 0;
             g.current = NULL;
+            change_check();
             if (status == LLG_CO_DONE ||
                 (status == LLG_CO_EXIT &&
                  process->chain.exiting == LLG_EXIT_COMPLETE)) {
@@ -511,6 +514,7 @@ void llg_rt_run(void) {
             llg_wave_slot_end(g.now);
 #endif
             g.now = t;
+            g.nba_slot_sequence = g.nba_sequence;
             g.region_passes = 0;
         }
         llg_wait_t* wait = g.timed_head;

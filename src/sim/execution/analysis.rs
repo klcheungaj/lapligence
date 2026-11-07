@@ -1416,6 +1416,7 @@ mod tests {
             IrStmt::WaitEvents {
                 specs: vec![],
                 refresh: false,
+                gate_at_write: false,
             },
             IrStmt::WaitAny {
                 sens: vec![],

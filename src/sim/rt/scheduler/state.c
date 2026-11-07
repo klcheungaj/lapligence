@@ -195,12 +195,15 @@ typedef struct llg_sampled_clock {
     /* Time + 1 of the step in which the clock last ticked (0: never), read
      * by assertions with global clocking future sampled value functions. */
     uint64_t tick_time1;
+    /* The gate at the last write of a deferred change (AA-D6). */
+    uint8_t gate_open;
 } llg_sampled_clock_t;
 
 static llg_sampled_value_t* find_sampled_value(const sv4_t* signal);
 static void sampled_record_write(sv4_t* signal);
 static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
-                                                sv4_t value);
+                                                sv4_t value, int deferred);
+static void sampled_clock_gates_latch(sv4_t* signal, sv4_t old, sv4_t value);
 
 typedef struct llg_assertion_attempt {
     struct llg_assertion_attempt* next;
@@ -611,6 +614,8 @@ typedef struct llg_clocking_edge {
     uint64_t negedge_count;
     unsigned occurred;
     int keep_ticks;
+    // A pending rowless record of this signal (LLG_CHANGE_ROWLESS), else NULL.
+    struct llg_change* change;
 } llg_clocking_edge_t;
 
 // A synchronous drive issued away from its clocking event retains its
@@ -715,6 +720,7 @@ typedef struct {
     llg_wait_source_t** wait_sources;
     size_t wait_sources_capacity;
     size_t n_wait_sources;
+    llg_wait_source_t* wait_source_free; // Rows kept for reuse (wait_queues.c).
     uint64_t now;
     uint64_t design_precision_fs;
     llg_timeformat_state_t time_format;
@@ -749,6 +755,20 @@ typedef struct {
     size_t clocking_drive_event_refs;
     uint64_t sampled_time;
     int sampled_time_valid;
+    // Value changes of this process turn or NBA region, in first-write order
+    // (T1-D11, dependencies.c); a forgotten one leaves NULL.
+    llg_change_t** changes;
+    size_t change_count;
+    size_t change_capacity;
+    size_t change_rows; // Open records on wait-source rows.
+    // Open rowless records found only through their marker records (no
+    // clocking history entry).
+    size_t change_unrowed;
+    uint64_t change_serial; // Last serial given to a change record.
+    llg_change_t* change_free; // Recycled records, linked by cursor.next.
+    // The first NBA sequence number of this time slot: an older one matured
+    // from an earlier slot, and those commit as their own batch.
+    uint64_t nba_slot_sequence;
     llg_concurrent_assertion_t* assertions;
     // Set when a clock edge reaches a concurrent assertion and cleared when
     // the Observed region evaluates them. An edge enabled by the reactive
@@ -874,6 +894,12 @@ typedef struct {
 } llg_rt_ctx_t;
 
 static llg_rt_ctx_t g;
+
+// A check (T1-D11): changes since the last one reach their consumers.
+static void change_flush(void);
+static inline void change_check(void) {
+    if (LLG_CO_UNLIKELY(g.change_count)) change_flush();
+}
 
 // Defined in free_variables.c, after the assertion engine it reads.
 static void free_sets_release(void);

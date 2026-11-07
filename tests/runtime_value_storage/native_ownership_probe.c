@@ -130,6 +130,9 @@ LLG_PROBE_SIMPLE_PROCESS(writer, 1) {
     } else {
         llg_queue_value_push_front(&value_queue, payload);
     }
+    /* Waiters see the write at a check (T1-D11): run it here, as a print or
+     * random call would, so the evaluator still terminates this coroutine. */
+    change_check();
     LLG_CO_EXIT_CHECK(ch);
     /* Every operation above notifies the waiter and terminates this coroutine. */
     CHECK(0);

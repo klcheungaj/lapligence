@@ -52,8 +52,11 @@ fn duplicate_named_event_clauses_and_disabled_waits_release_registrations() {
 }
 
 #[test]
-fn edge_iff_is_sampled_at_the_edge_not_when_the_waiter_runs() {
-    run_case("event_iff", "rejected 0\naccepted 1\nunknown 1\n");
+fn edge_iff_is_read_at_the_check_not_when_the_waiter_runs() {
+    run_case(
+        "event_iff",
+        "set with the edge 1\ncleared with the edge 1\nunknown 1\n",
+    );
 }
 
 #[test]

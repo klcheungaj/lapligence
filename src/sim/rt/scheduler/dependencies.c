@@ -6,8 +6,23 @@
 
 static void force_dependency_changed(sv4_t* sig, double* real, int is_real);
 static void sig_write(sv4_t* target, sv4_t value);
-static int marker_flip(sv4_t* marker);
-static void fixed_array_changed(sv4_t* target, sv4_t old);
+static void sig_write_now(sv4_t* target, sv4_t value);
+static int marker_flip(sv4_t* marker, int rowless);
+// Passed as the row of a publication whose caller has just found that its
+// storage has no row: the publication skips its own lookup. Never read.
+static llg_wait_source_t wait_source_absent;
+struct llg_fixed_block;
+static struct llg_fixed_block* fixed_array_block(const sv4_t* target);
+static sv4_t* fixed_block_contents(const struct llg_fixed_block* block);
+static void fixed_block_sampled_changed(struct llg_fixed_block* block,
+                                        sv4_t* target, sv4_t old);
+static int fixed_array_contents_waited(const sv4_t* target);
+static sv4_t* fixed_array_contents_marker(const sv4_t* target);
+static void change_forget(const void* key);
+static void change_forget_history(llg_clocking_edge_t* edge);
+static llg_change_t* change_find_unrowed(const void* target);
+// Set while a check settles deferred changes (change_flush).
+static int change_settling;
 
 enum { LLG_DEPENDENCY_INITIAL_BUCKETS = 64u };
 
@@ -53,6 +68,10 @@ static void dependency_index_reserve(void) {
     }
 }
 
+// Advances with every new binding, so a change record can cache whether its
+// storage has bound markers (change_bound).
+static uint64_t dependency_bind_epoch;
+
 static void dependency_bind(const void* key, uint8_t kind, sv4_t* dependency,
                             const char* what) {
     for (llg_dependency_binding_t* binding = dependency_bucket_head(key);
@@ -72,6 +91,7 @@ static void dependency_bind(const void* key, uint8_t kind, sv4_t* dependency,
     binding->bucket_next = llg_dependency_buckets[bucket];
     llg_dependency_buckets[bucket] = binding;
     ++llg_dependency_binding_count;
+    ++dependency_bind_epoch;
 }
 
 void llg_dependency_bind(sv4_t* target, sv4_t* dependency) {
@@ -104,7 +124,7 @@ sv4_t* llg_dependency_or_never(sv4_t* dependency) {
 }
 
 void llg_dependency_changed(sv4_t* dependency) {
-    if (!dependency || marker_flip(dependency)) return;
+    if (!dependency || marker_flip(dependency, 0)) return;
     uint64_t bit = llg_sv4_word(*dependency, 0, LLG_SV4_BITS) & 1u;
     /* A reference marker keeps its width: the value already stored through
      * the reference reaches its element before readers wake. */
@@ -117,7 +137,7 @@ void llg_dependency_changed(sv4_t* dependency) {
     value[0] = reference ? sv4_from_u64(2u | (bit ^ 1u),
                                         LLG_NATIVE_REF_MARKER_WIDTH, 0)
                          : sv4_from_u64(bit ^ 1u, 1, 0);
-    sig_write(dependency, value[0]);
+    sig_write_now(dependency, value[0]);
     llg_value_scope_end(scope);
 }
 
@@ -251,10 +271,12 @@ static llg_clocking_edge_t* clocking_edge_get(sv4_t* signal) {
 }
 
 void llg_clocking_forget_signal(sv4_t* signal) {
+    if (LLG_CO_UNLIKELY((g.change_rows | g.change_unrowed) != 0)) change_forget(signal);
     if (!g.clocking_count || !signal) return;
     size_t slot = clocking_edge_slot(signal);
     llg_clocking_edge_t* edge = g.clocking_index[slot];
     if (!edge) return;
+    if (LLG_CO_UNLIKELY(edge->change != NULL)) change_forget_history(edge);
     if (edge->prev) edge->prev->next = edge->next;
     else g.clocking_edges = edge->next;
     if (edge->next) edge->next->prev = edge->prev;
@@ -291,12 +313,7 @@ void llg_rt_skip_clocking_history(void) {
 
 /* Without history consumers this is one empty-table test per publication
  * instead of an entry allocation, index growth and a time-advance free. */
-static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
-    if (!signal) return;
-    llg_clocking_edge_t* edge = g.clocking_history_skipped
-        ? find_clocking_edge(signal)
-        : clocking_edge_get(signal);
-    if (!edge) return;
+static void clocking_edge_note(llg_clocking_edge_t* edge, sv4_t old, sv4_t value) {
     if (edge->time != g.now) edge->occurred = 0;
     edge->time = g.now;
     edge->occurred |= CLOCKING_ANY;
@@ -312,6 +329,14 @@ static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
     }
 }
 
+static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
+    if (!signal) return;
+    llg_clocking_edge_t* edge = g.clocking_history_skipped
+        ? find_clocking_edge(signal)
+        : clocking_edge_get(signal);
+    if (edge) clocking_edge_note(edge, old, value);
+}
+
 static uint64_t assertion_clock_tick(sv4_t* signal, int edge_kind) {
     llg_clocking_edge_t* edge = find_clocking_edge(signal);
     if (!edge) return 0;
@@ -323,7 +348,21 @@ static int clocking_event_current(const llg_wait_src_t* srcs, int n) {
     if (!srcs || n <= 0) return 0;
     for (int i = 0; i < n; i++) {
         if (srcs[i].sig) {
+            // A change this turn has not published yet (T1-D11) is the
+            // clocking event of this time step: its check follows in the
+            // same slot, so a drive or cycle wait issued now treats it as
+            // occurred instead of slipping to the next one.
             llg_clocking_edge_t* edge = find_clocking_edge(srcs[i].sig);
+            if (LLG_CO_UNLIKELY(g.change_count)) {
+                llg_wait_source_t* source = wait_source_find(srcs[i].sig);
+                llg_change_t* change = source && source->change ? source->change
+                                     : edge && edge->change ? edge->change
+                                     : change_find_unrowed(srcs[i].sig);
+                if (change && (change->kind == LLG_CHANGE_PACKED ||
+                               change->kind == LLG_CHANGE_ROWLESS) &&
+                    ev_matches(change->before, *srcs[i].sig, srcs[i].kind))
+                    return 1;
+            }
             if (!edge) continue;
             unsigned occurred = srcs[i].kind == LLG_EV_POSEDGE
                                     ? CLOCKING_POSEDGE
@@ -528,6 +567,14 @@ static int expression_dependency_changed(const llg_expr_event_spec_t* spec,
     return 0;
 }
 
+static int expression_gate(const llg_wait_t* wait, int index) {
+    const llg_wait_expression_payload_t* payload = &wait->payload.expression;
+    if (change_settling && payload->gate_open && payload->expressions[index].condition &&
+        (wait->proc->wait_gate & LLG_WAIT_GATE_ARMED))
+        return payload->gate_open[index];
+    return expression_qualifies(&payload->expressions[index]);
+}
+
 static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
                              double* real) {
     llg_wait_expression_payload_t* payload = &wait->payload.expression;
@@ -543,7 +590,7 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
         else return 0;
         int matched = real_ev_matches(payload->real_last[index], value, spec->kind);
         payload->real_last[index] = value;
-        return matched && expression_qualifies(spec);
+        return matched && expression_gate(wait, index);
     }
     if (!spec->eval && !spec->sig) return 0;
     llg_value_scope_t* scope = llg_value_scope_begin(1);
@@ -559,7 +606,43 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
     int matched = ev_matches(payload->last[index], *value, spec->kind);
     sv4_move(&payload->last[index], value);
     llg_value_scope_end(scope);
-    return matched && expression_qualifies(spec);
+    return matched && expression_gate(wait, index);
+}
+
+// A gate-at-write wait latches its qualifier at each write after which the
+// expression has its event against the value last seen (AA-D6); the check
+// then uses the latch of the last such write.
+static void expression_gate_latch(llg_wait_t* wait, int index, sv4_t* sig,
+                                  double* real) {
+    llg_wait_expression_payload_t* payload = &wait->payload.expression;
+    llg_expr_event_spec_t* spec = &payload->expressions[index];
+    if (!payload->gate_open || !spec->condition || spec->event ||
+        !expression_dependency_changed(spec, sig, real))
+        return;
+    int matched;
+    if (spec->real || spec->real_eval || spec->real_sig) {
+        double value;
+        if (spec->real_eval) {
+            spec->real_eval(&value, spec->eval_context);
+            if (llg_rt_exiting()) return;
+        } else if (spec->real_sig) value = *spec->real_sig;
+        else return;
+        matched = real_ev_matches(payload->real_last[index], value, spec->kind);
+    } else {
+        if (!spec->eval && !spec->sig) return;
+        llg_value_scope_t* scope = llg_value_scope_begin(1);
+        sv4_t* value = llg_value_scope_values(scope);
+        if (spec->eval) {
+            spec->eval(value, spec->eval_context);
+            if (llg_rt_exiting()) {
+                llg_value_scope_end(scope);
+                return;
+            }
+        } else sv4_copy(value, spec->sig);
+        matched = ev_matches(payload->last[index], *value, spec->kind);
+        llg_value_scope_end(scope);
+    }
+    if (matched) payload->gate_open[index] = (uint8_t)(expression_qualifies(spec) != 0);
 }
 
 static int deferred_expression_update(llg_deferred_trigger_t* trigger,
@@ -718,38 +801,386 @@ static int wait_change_log_packed(llg_wait_change_log_t* log, sv4_t* target) {
     return changed;
 }
 
-static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
-    clocking_record_edge(target, old, value);
-    clocking_drive_signal_match(target, old, value);
-    sampled_record_write(target);
-    sampled_domain_clock_signal_changed(target, old, value);
-    // `disable iff` is an asynchronous, unsampled control. Abort pending
-    // attempts at the write boundary, before any waiter or later region can
-    // observe the changed value.
-    assertion_disable_signal_changed(target);
-    // Ordinary accept_on/reject_on controls are also asynchronous. Their
-    // predicate is evaluated only after the write is visible, while the
-    // synchronous variants are checked at the sampled assertion edge below.
-    assertion_abort_condition_changed();
-    // Queue the clock event after asynchronous controls have seen the new
-    // value. This keeps a clock that also changes an accept/reject condition
-    // from being discarded before its sampled control can resolve it.
-    assertion_clock_signal_changed(target, old, value);
-    if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_PACKED);
-#ifdef LLG_WAVEFORM
-    llg_wave_changed_sv4(target);
-#endif
-    llg_wait_source_t* source = wait_source_find(target);
-    int watched = source && source->watchers;
-    llg_timing_watch_t* timing = source ? source->timing : NULL;
-    llg_switch_watch_t* switches = source ? source->switches : NULL;
-    llg_wait_subscription_t cursor = {0};
-    if (source) {
-        cursor.source = source;
-        wait_subscription_insert(&cursor, &source->head);
+// ── Checks (T1-D11) ──────────────────────────────────────────────────────────
+//
+// A process turn or an NBA region stores each write at once and runs the
+// per-write consumers, but what depends on the change itself waits for a
+// check: the first write of a row opens a record (llg_change_t) holding the
+// value before it, and the check compares that value with the current one.
+// Equal values publish nothing, so only the first and the last value count.
+// What runs at the check is `sig_settle`/`real_settle`: clock history, clocking
+// drives, sampled and assertion clocks, waiters, deferred triggers, and the
+// change markers of cells and bound storage. Waiter snapshots already hold the
+// value at the last check, so edges compare first to last with no extra logic.
+//
+// Writes outside both (startup, region callbacks, net settling after a turn) and
+// every other change marker publish at once, as do strings and containers.
+//
+// A write that nothing depends on opens no record: a signal nobody waits on
+// pays the row lookup it always paid.
+
+// Set during a process turn and during an NBA region's commit.
+static int change_defer_active;
+
+static int wait_source_armed(const llg_wait_source_t* source) {
+    if (!source) return 0;
+    for (const llg_wait_subscription_t* node = source->head; node; node = node->next)
+        if (node->wait) return 1;
+    return 0;
+}
+
+static int change_marker_is_reference(const sv4_t* marker) {
+    return llg_sv4_width(*marker) == LLG_NATIVE_REF_MARKER_WIDTH;
+}
+
+// A reference marker carries the stored value on to its element, so it runs at
+// the write. Other bound markers count when something waits on them now: a
+// waiter that arms later in this turn has no change to see.
+static int dependency_bindings_waited(const void* target, uint8_t kind) {
+    for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
+         binding; binding = binding->bucket_next) {
+        if (binding->key != target || binding->kind != kind ||
+            change_marker_is_reference(binding->dependency))
+            continue;
+        if (wait_source_armed(wait_source_find(binding->dependency))) return 1;
     }
+    return 0;
+}
+
+static llg_change_t* change_take(llg_change_kind_t kind) {
+    llg_change_t* change = g.change_free;
+    if (change) g.change_free = (llg_change_t*)change->cursor.next;
+    else change = llg_checked_calloc(1, sizeof(*change), "value change");
+    if (g.change_count == g.change_capacity) {
+        size_t capacity = g.change_capacity ? g.change_capacity * 2 : 16;
+        llg_change_t** grown = llg_checked_malloc(capacity, sizeof(*grown), "value changes");
+        if (g.change_count) memcpy(grown, g.changes, g.change_count * sizeof(*grown));
+        free(g.changes);
+        g.changes = grown;
+        g.change_capacity = capacity;
+    }
+    change->kind = kind;
+    change->fire = 0;
+    change->edge = NULL;
+    change->owner = NULL;
+    change->bind_epoch = UINT64_MAX;
+    change->contents_known = 0;
+    change->fires_exact = 0;
+    change->serial = ++g.change_serial;
+    change->index = g.change_count;
+    g.changes[g.change_count++] = change;
+    return change;
+}
+
+static void change_attach(llg_change_t* change, llg_wait_source_t* source) {
+    ++g.change_rows;
+    change->key = source->key;
+    change->cursor.source = source;
+    change->cursor.wait = NULL;
+    wait_subscription_insert(&change->cursor, &source->head);
+    source->change = change;
+}
+
+static llg_change_t* change_open(llg_wait_source_t* source, llg_change_kind_t kind) {
+    llg_change_t* change = change_take(kind);
+    change_attach(change, source);
+    return change;
+}
+
+// Unlinking the cursor may free the row. `before` keeps its limbs for the next
+// record of the same width: most writes need no allocation.
+static void change_close(llg_change_t* change) {
+    if (change->kind == LLG_CHANGE_ROWLESS) {
+        if (change->edge) change->edge->change = NULL;
+        else --g.change_unrowed;
+    } else {
+        --g.change_rows;
+        change->cursor.source->change = NULL;
+        wait_subscription_unlink(&change->cursor);
+    }
+    // A cleared serial invalidates the references marker records and
+    // storage records keep to this one (`owner`, `fires`).
+    change->serial = 0;
+    change->cursor.next = (llg_wait_subscription_t*)g.change_free;
+    g.change_free = change;
+}
+
+// The rowless record that opened `marker`, while it is open.
+static llg_change_t* change_marker_owner(const llg_change_t* marker) {
+    if (!marker || marker->kind != LLG_CHANGE_MARKER || !marker->owner) return NULL;
+    return marker->owner->serial == marker->owner_serial ? marker->owner : NULL;
+}
+
+// The rowless record of `target` that no clocking history entry holds: found
+// through the marker records it opened (its bound markers or its array's
+// contents marker). NULL when none is open.
+static llg_change_t* change_find_unrowed(const void* target) {
+    if (LLG_CO_LIKELY(!g.change_unrowed)) return NULL;
+    for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
+         binding; binding = binding->bucket_next) {
+        if (binding->key != target || binding->kind != LLG_DEPENDENCY_BINDING_PACKED)
+            continue;
+        llg_wait_source_t* source = wait_source_find(binding->dependency);
+        llg_change_t* owner = change_marker_owner(source ? source->change : NULL);
+        if (owner && owner->key == target) return owner;
+    }
+    sv4_t* contents = fixed_array_contents_marker((const sv4_t*)target);
+    llg_wait_source_t* source = contents ? wait_source_find(contents) : NULL;
+    llg_change_t* owner = change_marker_owner(source ? source->change : NULL);
+    return owner && owner->key == target ? owner : NULL;
+}
+
+// A copy of a value of at most 64 bits is a plain store on the compact
+// backends; a wider one reuses the limbs of the pooled record when the width
+// matches, so most writes allocate nothing.
+static void change_save_before(llg_change_t* change, const sv4_t* before) {
+    uint32_t width = llg_sv4_width(*before);
+    if (width > 64 && llg_sv4_width(change->before) == width)
+        llg_sv4_range_copy(&change->before, 0, *before);
+    else
+        sv4_copy(&change->before, before);
+}
+
+// Whether packed markers are bound to the record's storage: looked up once
+// per record unless a binding was added since.
+static int change_bound(llg_change_t* change, const void* key) {
+    if (change->bind_epoch != dependency_bind_epoch) {
+        change->bind_epoch = dependency_bind_epoch;
+        change->bound = 0;
+        for (llg_dependency_binding_t* binding = dependency_bucket_head(key);
+             binding; binding = binding->bucket_next) {
+            if (binding->key == key && binding->kind == LLG_DEPENDENCY_BINDING_PACKED) {
+                change->bound = 1;
+                break;
+            }
+        }
+    }
+    return change->bound;
+}
+
+// The record of a packed storage something waits on now. A rowless record
+// opened by an earlier write of this turn moves to the row, keeping its
+// before value, so that the storage keeps one record.
+// `source` is the storage's row, or NULL when it has none.
+static llg_wait_source_t* change_open_packed(llg_wait_source_t* source,
+                                             sv4_t* target, const sv4_t* before) {
+    if (!source) source = wait_source_insert(target);
+    // Only a turn with a rowless record open can hold one for this storage.
+    llg_change_t* moved = NULL;
+    if (g.change_count > g.change_rows) {
+        llg_clocking_edge_t* edge = find_clocking_edge(target);
+        if (edge && edge->change) {
+            moved = edge->change;
+            edge->change = NULL;
+            moved->edge = NULL;
+        } else if ((moved = change_find_unrowed(target)) != NULL) {
+            --g.change_unrowed;
+        }
+    }
+    if (moved) {
+        moved->kind = LLG_CHANGE_PACKED;
+        change_attach(moved, source);
+    } else {
+        change_save_before(change_open(source, LLG_CHANGE_PACKED), before);
+    }
+    return source;
+}
+
+// Called before a deferred packed write stores, or with the old value after
+// it. Returns the row, whose `change` tells whether a check will settle it.
+// `eager` also opens the record for waited bound markers and array contents
+// markers; otherwise sig_publish opens it while it routes them (one pass over
+// the bindings instead of two). A storage that only clocking history observes
+// gets a history record, kept on its history entry: no row is created and
+// freed per write.
+static llg_wait_source_t* change_begin(sv4_t* target, const sv4_t* before, int eager) {
+    llg_wait_source_t* source = wait_source_find(target);
+    if (source && source->change) return source;
+    if (wait_source_armed(source) || g.deferred_triggers ||
+        (eager && (dependency_bindings_waited(target, LLG_DEPENDENCY_BINDING_PACKED) ||
+                   fixed_array_contents_waited(target))))
+        return change_open_packed(source, target, before);
+    llg_clocking_edge_t* edge = g.clocking_history_skipped ? find_clocking_edge(target)
+                                                           : clocking_edge_get(target);
+    if (edge && !edge->change) {
+        llg_change_t* change = change_take(LLG_CHANGE_ROWLESS);
+        change->key = target;
+        change->edge = edge;
+        edge->change = change;
+        change_save_before(change, before);
+    }
+    return source;
+}
+
+// A marker with a waiter now toggles at the check: its record's cursor leaves
+// out waiters armed after this write, as a toggle at the write would. NULL
+// for a marker nothing waits on, which toggles at once; and for a reference
+// marker, which carries the stored value on and so runs at the write. A
+// marker bound to further markers counts only its own waiters: those further
+// markers toggle at its check when it has a record (LLG_BOUND_SETTLE), and
+// at each write otherwise, which keeps this test to one row lookup.
+// `rowless`, when given, is set when the marker has no row, so that the
+// caller toggling it now skips a second lookup (marker_toggle).
+// `opened`, when given, is set when this call opened the record.
+static llg_change_t* change_marker_defer(sv4_t* marker, int* rowless, int* opened) {
+    llg_wait_source_t* source = wait_source_find(marker);
+    if (rowless) *rowless = source == NULL;
+    if (opened) *opened = 0;
+    if (source && source->change)
+        return source->change->kind == LLG_CHANGE_MARKER ? source->change : NULL;
+    if (!(g.deferred_triggers || wait_source_armed(source)) ||
+        change_marker_is_reference(marker))
+        return NULL;
+    if (!source) source = wait_source_get(marker);
+    llg_change_t* change = change_open(source, LLG_CHANGE_MARKER);
+    change->slot = NULL;
+    change->fire = 0;
+    if (opened) *opened = 1;
+    return change;
+}
+
+// Toggles a marker now; `rowless` as for marker_flip.
+static void marker_toggle(sv4_t* marker, int rowless) {
+    if (!(rowless && marker_flip(marker, 1))) llg_dependency_changed(marker);
+}
+
+// A deferred write of storage bound to markers: those with a record wait for
+// the storage's own check, the others toggle now.
+static void defer_bound_markers(const void* target, uint8_t kind) {
+    for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
+         binding; binding = binding->bucket_next) {
+        if (binding->key != target || binding->kind != kind) continue;
+        int rowless;
+        if (!change_marker_defer(binding->dependency, &rowless, NULL))
+            marker_toggle(binding->dependency, rowless);
+    }
+}
+
+void llg_handle_changed(sv4_t* dependency, void* const* slot, void* previous) {
+    if (!dependency) return;
+    if (change_defer_active && slot) {
+        llg_wait_source_t* source = wait_source_find(dependency);
+        llg_change_t* change = source ? source->change : NULL;
+        if (change && change->kind == LLG_CHANGE_MARKER) {
+            // One record per marker: another slot sharing it (two handle
+            // properties of one object) or a bound cell toggles it.
+            if (change->slot != slot) change->fire = 1;
+            return;
+        }
+        if (!change && (change = change_marker_defer(dependency, NULL, NULL)) != NULL) {
+            change->slot = slot;
+            change->before_handle = previous;
+            return;
+        }
+    }
+    llg_dependency_changed(dependency);
+}
+
+// The check of changed storage: its deferred markers will toggle.
+// A marker whose record is open toggles at its check.
+static void fire_marker(sv4_t* marker) {
+    llg_wait_source_t* source = wait_source_find(marker);
+    if (source && source->change && source->change->kind == LLG_CHANGE_MARKER)
+        source->change->fire = 1;
+}
+
+static void fire_bound_markers(const void* target, uint8_t kind, int toggle_rest) {
+    for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
+         binding; binding = binding->bucket_next) {
+        if (binding->key != target || binding->kind != kind) continue;
+        llg_wait_source_t* source = wait_source_find(binding->dependency);
+        if (source && source->change && source->change->kind == LLG_CHANGE_MARKER)
+            source->change->fire = 1;
+        else if (toggle_rest)
+            marker_toggle(binding->dependency, source == NULL);
+    }
+}
+
+static llg_wait_source_t* change_begin_real(double* target, double before) {
+    llg_wait_source_t* source = wait_source_find(target);
+    if (source && source->change) return source;
+    if (wait_source_armed(source) || g.deferred_triggers ||
+        dependency_bindings_waited(target, LLG_DEPENDENCY_BINDING_REAL)) {
+        if (!source) source = wait_source_get(target);
+        change_open(source, LLG_CHANGE_REAL)->before_real = before;
+    }
+    return source;
+}
+
+static void change_forget_history(llg_clocking_edge_t* edge) {
+    g.changes[edge->change->index] = NULL;
+    change_close(edge->change);
+}
+
+// Storage that ends before its check has nothing left to publish. Value
+// scopes forget every value they release, mostly temporaries, while a turn
+// has records open: a few records are scanned instead of a row lookup.
+static void change_forget(const void* key) {
+    llg_change_t* change = NULL;
+    if (g.change_count <= 8) {
+        for (size_t i = 0; i < g.change_count; i++) {
+            llg_change_t* open = g.changes[i];
+            if (open && open->key == key) {
+                change = open;
+                break;
+            }
+        }
+    } else {
+        llg_wait_source_t* source = wait_source_find(key);
+        if (source) change = source->change;
+        if (!change) change = change_find_unrowed(key);
+    }
+    if (!change) return;
+    g.changes[change->index] = NULL;
+    change_close(change);
+}
+
+static void changes_release(void) {
+    for (size_t i = 0; i < g.change_count; i++)
+        if (g.changes[i]) change_close(g.changes[i]);
+    g.change_count = 0;
+    free(g.changes);
+    g.changes = NULL;
+    g.change_capacity = 0;
+    while (g.change_free) {
+        llg_change_t* next = (llg_change_t*)g.change_free->cursor.next;
+        sv4_destroy(&g.change_free->before);
+        free(g.change_free);
+        g.change_free = next;
+    }
+}
+
+// Ordered waits see each write in the order of the writes (S3-D5), bit by bit
+// on one vector, so they log and wake here and find nothing new at the check.
+// Gate-at-write waits latch their qualifiers here and wake at the check.
+// Nothing here unlinks a membership: a woken ordered wait keeps its retained
+// memberships in place (they point at its log), and latching only evaluates
+// effect-free callbacks. So the walk needs no cursor.
+static void wait_write_walk(llg_wait_source_t* source, sv4_t* sig, double* real) {
+    for (llg_wait_subscription_t *node = source->head, *next; node; node = next) {
+        next = node->next;
+        llg_wait_t* w = node->wait;
+        if (!w) continue;
+        if (w->kind == W_EXPR && (w->proc->wait_gate & LLG_WAIT_GATE_ARMED)) {
+            for (int i = 0; i < w->payload.expression.n; i++)
+                expression_gate_latch(w, i, sig, real);
+            continue;
+        }
+        llg_wait_change_log_t* log = NULL;
+        if (w->kind == W_CHANGE_LOG) log = (llg_wait_change_log_t*)w;
+        else if (w->kind == W_DEPS && w->proc->wait_ordered)
+            log = w->proc->retained_wait->changes;
+        if (!log) continue;
+        int changed = 1;
+        if (sig) changed = wait_change_log_packed(log, sig);
+        else wait_change_note(log, real, LLG_WAIT_CHANGE_WHOLE);
+        if (changed && w->kind == W_DEPS && !wait_held_by_suspension(w)) wake_proc(w->proc);
+    }
+}
+
+LLG_CO_INLINE void publish_waiters_packed(llg_wait_subscription_t* cursor, sv4_t* target) {
     llg_wait_t* w;
-    while (source && (w = wait_source_next(&cursor)) != NULL) {
+    while ((w = wait_source_next(cursor)) != NULL) {
         int wake = 0;
         if (w->kind == W_EVENTS_INLINE) {
             llg_wait_inline_payload_t* single = &w->payload.single;
@@ -812,15 +1243,232 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
         }
         if (wake && !wait_held_by_suspension(w)) wake_proc(w->proc);
     }
-    if (source) wait_subscription_unlink(&cursor);
-    deferred_trigger_source_change(target, NULL);
+}
+
+static void publish_bound_markers(const void* target, uint8_t kind) {
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
-        if (binding->key == (const void*)target &&
-            binding->kind == LLG_DEPENDENCY_BINDING_PACKED)
+        if (binding->key == target && binding->kind == kind)
             llg_dependency_changed(binding->dependency);
     }
-    fixed_array_changed(target, old);
+}
+
+// Clocking drives, sampled-value clocks and assertion clocks. Each is called
+// only when it has entries: `sv4_t` arguments passed by value cost a copy
+// per call on the hottest path.
+LLG_CO_INLINE void clock_consumers_changed(sv4_t* target, sv4_t old, sv4_t value,
+                                          int deferred) {
+    if (g.clocking_drives && clocking_drive_source_pending(target))
+        clocking_drive_signal_match(target, old, value);
+    if (g.sampled_edge_clocks) sampled_domain_clock_signal_changed(target, old, value, deferred);
+    // Queue the clock event after asynchronous controls have seen the new
+    // value. This keeps a clock that also changes an accept/reject condition
+    // from being discarded before its sampled control can resolve it.
+    if (g.assertions) assertion_clock_signal_changed(target, old, value);
+}
+
+// How a publication reaches the markers bound to its storage.
+enum {
+    LLG_BOUND_PUBLISH,   // toggle each now (a write outside a turn)
+    LLG_BOUND_FIRE,      // a storage's check: markers without a record
+                         // toggled at the write; those with one toggle at
+                         // their own check
+    LLG_BOUND_SETTLE,    // a marker's check: as FIRE, but the markers
+                         // without a record toggle now
+    LLG_BOUND_NONE,      // a check of storage no marker is bound to
+};
+
+// Everything that depends on the change itself. `cursor`, when given, is an
+// open record's and excludes waiters armed since the write. `old` and `value`
+// need only their LSB unless the record compared them.
+// `contents` is the contents marker of the array holding the storage, or NULL.
+LLG_CO_INLINE void sig_settle(sv4_t* target, llg_wait_source_t* source,
+                              llg_wait_subscription_t* cursor, sv4_t old, sv4_t value,
+                              int bound, sv4_t* contents) {
+    clocking_record_edge(target, old, value);
+    clock_consumers_changed(target, old, value, cursor != NULL);
+    if (cursor) {
+        publish_waiters_packed(cursor, target);
+    } else if (source) {
+        llg_wait_subscription_t own = {0};
+        own.source = source;
+        wait_subscription_insert(&own, &source->head);
+        publish_waiters_packed(&own, target);
+        wait_subscription_unlink(&own);
+    }
+    deferred_trigger_source_change(target, NULL);
+    if (bound == LLG_BOUND_PUBLISH) {
+        publish_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED);
+        if (contents) llg_dependency_changed(contents);
+    } else {
+        if (bound != LLG_BOUND_NONE)
+            fire_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED,
+                               bound == LLG_BOUND_SETTLE);
+        if (contents) fire_marker(contents);
+    }
+}
+
+// The check of a history record: nothing waited on the storage or its bound
+// markers at the write, and its writes already ran every per-write consumer.
+static void history_settle(llg_clocking_edge_t* edge, sv4_t* target, sv4_t old,
+                           sv4_t value) {
+    clocking_edge_note(edge, old, value);
+    clock_consumers_changed(target, old, value, 1);
+}
+
+// Routes the markers bound to a deferred write's storage, and the contents
+// marker of its array, when its row holds no record: a marker something waits
+// on gets a record and so does the storage, with `before`; the others toggle
+// at once. Returns whether the storage now has a record.
+// `row` is the storage's row, or NULL when it has none. A storage without a
+// row has no waiter to walk at its check, so its record is rowless: it is
+// found again through its clocking history entry, when it has one, or
+// through a marker record this write opened (`owner`). A storage whose
+// waited markers all have records opened by other storage takes a row.
+typedef struct {
+    llg_change_t* fires[2];
+    llg_change_t* opened[2];
+    llg_change_t* found; // This storage's rowless record, from an earlier write.
+    int fired;
+    int n_opened;
+} llg_route_t;
+
+static void change_route_note(llg_route_t* route, const sv4_t* target,
+                              llg_change_t* marker, int opened) {
+    if (opened) {
+        if (route->n_opened < 2) route->opened[route->n_opened++] = marker;
+    } else if (!route->found) {
+        llg_change_t* owner = change_marker_owner(marker);
+        if (owner && owner->key == target) route->found = owner;
+    }
+    if (route->fired < 2) route->fires[route->fired] = marker;
+    ++route->fired;
+}
+
+static int change_route_markers(sv4_t* target, const sv4_t* before, sv4_t* contents,
+                                llg_wait_source_t* row) {
+    llg_route_t route = {{NULL, NULL}, {NULL, NULL}, NULL, 0, 0};
+    int bound = 0;
+    for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
+         binding; binding = binding->bucket_next) {
+        if (binding->key != target || binding->kind != LLG_DEPENDENCY_BINDING_PACKED)
+            continue;
+        int rowless, opened;
+        llg_change_t* marker = change_marker_defer(binding->dependency, &rowless, &opened);
+        if (marker) {
+            bound = 1;
+            change_route_note(&route, target, marker, opened);
+        } else {
+            marker_toggle(binding->dependency, rowless);
+        }
+    }
+    if (contents) {
+        int rowless, opened;
+        llg_change_t* marker = change_marker_defer(contents, &rowless, &opened);
+        if (marker) change_route_note(&route, target, marker, opened);
+        else marker_toggle(contents, rowless);
+    }
+    if (!route.fired) return 0;
+    llg_change_t* storage = route.found;
+    llg_clocking_edge_t* edge = !storage && g.change_count > g.change_rows
+                                    ? find_clocking_edge(target) : NULL;
+    if (edge && edge->change && edge->change->contents_known) storage = edge->change;
+    if (storage) {
+        // An earlier write of this turn routed the storage. A marker record
+        // opened since is not among its direct fires: the check looks the
+        // markers up instead.
+        if (route.n_opened) storage->fires_exact = 0;
+        return 1;
+    }
+    if (edge && edge->change) {
+        // The history record change_begin opened.
+        storage = edge->change;
+    } else if (!row && route.n_opened) {
+        storage = change_take(LLG_CHANGE_ROWLESS);
+        storage->key = target;
+        ++g.change_unrowed;
+        change_save_before(storage, before);
+    } else {
+        storage = change_open_packed(row, target, before)->change;
+    }
+    for (int i = 0; i < route.n_opened; i++) {
+        route.opened[i]->owner = storage;
+        route.opened[i]->owner_serial = storage->serial;
+    }
+    if (bound) {
+        storage->bound = 1;
+        storage->bind_epoch = dependency_bind_epoch;
+    }
+    storage->contents = contents;
+    storage->contents_known = 1;
+    if (route.fired <= 2) {
+        // The check fires these records directly instead of looking the
+        // markers up again.
+        storage->fires_exact = 1;
+        for (int i = 0; i < 2; i++) {
+            storage->fires[i] = route.fires[i];
+            storage->fires_serial[i] = route.fires[i] ? route.fires[i]->serial : 0;
+        }
+    }
+    return 1;
+}
+
+// `source` is the row after change_begin for a deferred write, else unused.
+// `before`, when given, is the complete value before the write: with it a
+// record can still open here for waited markers (change_route_markers).
+// `cursor`, for a marker's check (marker_settle), is its record's: the
+// publication then runs at once from that cursor.
+static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
+                        llg_wait_source_t* source, int deferred,
+                        const sv4_t* before, llg_wait_subscription_t* cursor) {
+    sampled_record_write(target);
+    if (deferred && g.sampled_edge_clocks) sampled_clock_gates_latch(target, old, value);
+    // `disable iff` is an asynchronous, unsampled control. Abort pending
+    // attempts at the write boundary, before any waiter or later region can
+    // observe the changed value.
+    assertion_disable_signal_changed(target);
+    // Ordinary accept_on/reject_on controls are also asynchronous. Their
+    // predicate is evaluated only after the write is visible, while the
+    // synchronous variants are checked at the sampled assertion edge below.
+    assertion_abort_condition_changed();
+    if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_PACKED);
+#ifdef LLG_WAVEFORM
+    llg_wave_changed_sv4(target);
+#endif
+    struct llg_fixed_block* block = fixed_array_block(target);
+    sv4_t* contents = fixed_block_contents(block);
+    // Consumers above can drop a row no record keeps alive.
+    if (cursor) source = cursor->source;
+    else if (source == &wait_source_absent) source = NULL;
+    else if (!deferred || (source && !source->change)) source = wait_source_find(target);
+    int watched = source && source->watchers;
+    llg_timing_watch_t* timing = source ? source->timing : NULL;
+    llg_switch_watch_t* switches = source ? source->switches : NULL;
+    if (cursor) {
+        sig_settle(target, source, cursor, old, value,
+                   change_bound(source->change, target) ? LLG_BOUND_SETTLE : LLG_BOUND_NONE,
+                   contents);
+    } else if (!deferred) {
+        sig_settle(target, source, NULL, old, value, LLG_BOUND_PUBLISH, contents);
+    } else {
+        int noted = source && source->change;
+        if (LLG_CO_UNLIKELY(source && source->write_walkers)) wait_write_walk(source, target, NULL);
+        if (noted) {
+            source->change->contents = contents;
+            source->change->contents_known = 1;
+            if (change_bound(source->change, target))
+                defer_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED);
+            int rowless;
+            if (contents && !change_marker_defer(contents, &rowless, NULL))
+                marker_toggle(contents, rowless);
+        } else if (before) {
+            (void)change_route_markers(target, before, contents, source);
+        } else {
+            publish_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED);
+            if (contents) llg_dependency_changed(contents);
+        }
+    }
+    fixed_block_sampled_changed(block, target, old);
     force_dependency_changed(target, NULL, 0);
     // Timing check terminals only mark their sets; the checks run later in
     // the time step (llg_timing_checks_run).
@@ -832,17 +1480,39 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
     if (LLG_CO_UNLIKELY(watched)) value_watch_notify(target);
 }
 
+// `old` must be complete: the first write's record keeps it.
+static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
+    int deferred = change_defer_active;
+    llg_wait_source_t* source = deferred ? change_begin(target, &old, 0) : NULL;
+    sig_publish(target, old, value, source, deferred, &old, NULL);
+}
+
 // Set while a clocking block publishes its own sampled clockvars. #0 inputs
 // update in the Observed region (IEEE 1800-2009 14.13), whose user code is
 // otherwise read-only, and `@(cb.x)` waiters must still see the change.
 static int clocking_sample_publication;
 
-static void sig_write(sv4_t* target, sv4_t value) {
+static void sig_write_as(sv4_t* target, sv4_t value, int deferred) {
     if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
         if (region_private_store("signal write")) sv4_copy(target, &value);
         return;
     }
     if (llg_sv4_width(*target) == llg_sv4_width(value) && sv4_same(*target, value)) return;
+#if LLG_SV4_USE_GMP
+    // On the compact backend a value of at most 64 bits lives in its
+    // descriptor: a copy owns no allocation, so a callback that abandons the
+    // writer leaves nothing behind and no registered snapshot is needed.
+    if (llg_sv4_width(*target) <= 64 && llg_sv4_width(value) <= 64) {
+        llg_value_scope_t* target_pin = value_target_pin(target);
+        sv4_t old = SV4_EMPTY;
+        sv4_copy(&old, target);
+        sv4_copy(target, &value);
+        llg_wait_source_t* source = deferred ? change_begin(target, &old, 0) : NULL;
+        sig_publish(target, old, value, source, deferred, &old, NULL);
+        if (target_pin) llg_value_scope_end(target_pin);
+        return;
+    }
+#endif
     // Callbacks can finish/disable the writer without returning through here.
     // Heap-backed registered owners survive both suspension and stack discard.
     llg_value_scope_t* target_pin = value_target_pin(target);
@@ -853,9 +1523,18 @@ static void sig_write(sv4_t* target, sv4_t value) {
     value = owned[0]; /* Borrows the registered snapshot until scope end. */
     sv4_t old = owned[1];
     sv4_copy(target, &value);
-    sig_publish_changed(target, old, value);
+    llg_wait_source_t* source = deferred ? change_begin(target, &old, 0) : NULL;
+    sig_publish(target, old, value, source, deferred, &old, NULL);
     llg_value_scope_end(snapshots);
     if (target_pin) llg_value_scope_end(target_pin);
+}
+
+static void sig_write(sv4_t* target, sv4_t value) {
+    sig_write_as(target, value, change_defer_active);
+}
+
+static void sig_write_now(sv4_t* target, sv4_t value) {
+    sig_write_as(target, value, 0);
 }
 
 // The two values of a one-bit marker: permanent and never changed, so a
@@ -865,7 +1544,10 @@ static sv4_t marker_values[2];
 // A marker flips on every change of what it stands for, and sig_write's owned
 // snapshots would cost more than the rest of the publication. A marker holding
 // a known bit flips in place; anything else takes the general write.
-static int marker_flip(sv4_t* marker) {
+// `rowless` tells that the caller has just found no row for the marker:
+// nothing the publication runs before its walk arms a wait, so it skips the
+// lookup.
+static int marker_flip(sv4_t* marker, int rowless) {
     if (llg_sv4_width(*marker) != 1 || region_is_read_only_now(g.current_region))
         return 0;
     unsigned old = llg_sv4_state(*marker, 0);
@@ -876,7 +1558,8 @@ static int marker_flip(sv4_t* marker) {
     }
     llg_value_scope_t* target_pin = value_target_pin(marker);
     llg_sv4_set_state(marker, 0, old ^ 1u);
-    sig_publish_changed(marker, marker_values[old], marker_values[old ^ 1u]);
+    sig_publish(marker, marker_values[old], marker_values[old ^ 1u],
+                rowless ? &wait_source_absent : NULL, 0, NULL, NULL);
     if (target_pin) llg_value_scope_end(target_pin);
     return 1;
 }
@@ -926,11 +1609,14 @@ static int sig_write_ranges(sv4_t* target,
     // Every directional packed edge rule consumes only the LSB. Publication
     // has already established that some bit changed, so these stable one-bit
     // snapshots also preserve any-change behavior through nested callbacks.
+    // A check compares whole values, so a record is opened before the store.
+    int deferred = change_defer_active;
+    llg_wait_source_t* source = deferred ? change_begin(target, target, 1) : NULL;
     sv4_replace(&edges[0], sv4_bit_select(*target, 0));
     if (first_changed) sig_range_copy(target, first_offset, &first);
     if (second_changed) sig_range_copy(target, second_offset, &second);
     sv4_replace(&edges[1], sv4_bit_select(*target, 0));
-    sig_publish_changed(target, edges[0], edges[1]);
+    sig_publish(target, edges[0], edges[1], source, deferred, NULL, NULL);
     llg_value_scope_end(snapshots);
     if (target_pin) llg_value_scope_end(target_pin);
     return 1;
@@ -940,32 +1626,9 @@ static int sig_write_range(sv4_t* target, uint32_t offset, sv4_t value) {
     return sig_write_ranges(target, offset, value, 0, (sv4_t)SV4_EMPTY, 0);
 }
 
-// Real equality is bitwise: repeated NaNs with the same payload are
-// suppressed, while changes in NaN payload and signed zero are observable.
-static void real_write(double* target, double value) {
-    if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
-        if (region_private_store("real write")) *target = value;
-        return;
-    }
-    double old = *target;
-    if (real_same(old, value)) return;
-    /* Real locals have stable native owner slots, just like packed descriptors.
-     * Keep the slot alive if a callback cancels its receiving process. */
-    llg_value_scope_t* target_pin = value_target_pin(target);
-    *target = value;
-    if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_REAL);
-#ifdef LLG_WAVEFORM
-    llg_wave_changed_real(target);
-#endif
-    llg_wait_source_t* source = wait_source_find(target);
-    int watched = source && source->watchers;
-    llg_wait_subscription_t cursor = {0};
-    if (source) {
-        cursor.source = source;
-        wait_subscription_insert(&cursor, &source->head);
-    }
+static void publish_waiters_real(llg_wait_subscription_t* cursor, double* target) {
     llg_wait_t* w;
-    while (source && (w = wait_source_next(&cursor)) != NULL) {
+    while ((w = wait_source_next(cursor)) != NULL) {
         int wake = 0;
         if (w->kind == W_DEPS) {
             llg_wait_expression_payload_t* payload = &w->payload.expression;
@@ -990,18 +1653,168 @@ static void real_write(double* target, double value) {
             wake_proc(w->proc);
         }
     }
-    if (source) wait_subscription_unlink(&cursor);
+}
+
+static void real_settle(double* target, llg_wait_source_t* source,
+                        llg_wait_subscription_t* cursor) {
+    if (cursor) {
+        publish_waiters_real(cursor, target);
+    } else if (source) {
+        llg_wait_subscription_t own = {0};
+        own.source = source;
+        wait_subscription_insert(&own, &source->head);
+        publish_waiters_real(&own, target);
+        wait_subscription_unlink(&own);
+    }
     deferred_trigger_source_change(NULL, target);
-    for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
-         binding; binding = binding->bucket_next) {
-        if (binding->key == (const void*)target &&
-            binding->kind == LLG_DEPENDENCY_BINDING_REAL)
-            llg_dependency_changed(binding->dependency);
+    if (cursor) fire_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL, 0);
+    else publish_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
+}
+
+// Real equality is bitwise: repeated NaNs with the same payload are
+// suppressed, while changes in NaN payload and signed zero are observable.
+static void real_write(double* target, double value) {
+    if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
+        if (region_private_store("real write")) *target = value;
+        return;
+    }
+    double old = *target;
+    if (real_same(old, value)) return;
+    /* Real locals have stable native owner slots, just like packed descriptors.
+     * Keep the slot alive if a callback cancels its receiving process. */
+    llg_value_scope_t* target_pin = value_target_pin(target);
+    int deferred = change_defer_active;
+    llg_wait_source_t* source = deferred ? change_begin_real(target, old) : NULL;
+    *target = value;
+    if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_REAL);
+#ifdef LLG_WAVEFORM
+    llg_wave_changed_real(target);
+#endif
+    if (!deferred || (source && !source->change)) source = wait_source_find(target);
+    int watched = source && source->watchers;
+    if (!deferred) {
+        real_settle(target, source, NULL);
+    } else {
+        int noted = source && source->change;
+        if (LLG_CO_UNLIKELY(source && source->write_walkers)) wait_write_walk(source, NULL, target);
+        if (noted) defer_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
+        else publish_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
     }
     if (LLG_CO_UNLIKELY(llg_native_real_refs_live)) llg_native_ref_real_stored(target);
     force_dependency_changed(NULL, target, 1);
     if (LLG_CO_UNLIKELY(watched)) value_watch_notify(target);
     if (target_pin) llg_value_scope_end(target_pin);
+}
+
+// A deferred marker toggles once, publishing from its record's cursor.
+static void marker_settle(sv4_t* marker, llg_wait_subscription_t* cursor) {
+    unsigned old = llg_sv4_state(*marker, 0);
+    if (llg_sv4_width(*marker) != 1 || old > 1u) {
+        // A marker not yet holding a known bit takes the general write.
+        llg_dependency_changed(marker);
+        return;
+    }
+    if (!llg_sv4_width(marker_values[0])) {
+        marker_values[0] = sv4_from_u64(0u, 1, 0);
+        marker_values[1] = sv4_from_u64(1u, 1, 0);
+    }
+    llg_sv4_set_state(marker, 0, old ^ 1u);
+    sig_publish(marker, marker_values[old], marker_values[old ^ 1u], NULL, 0, NULL, cursor);
+}
+
+// The check of a rowless record that routed markers: as sig_settle, with no
+// waiter to walk.
+static void rowless_settle(llg_change_t* change, sv4_t* target) {
+    sv4_t old = change->before;
+    if (change->edge) clocking_edge_note(change->edge, old, *target);
+    else clocking_record_edge(target, old, *target);
+    clock_consumers_changed(target, old, *target, 1);
+    deferred_trigger_source_change(target, NULL);
+    if (change->fires_exact) {
+        for (int i = 0; i < 2; i++) {
+            llg_change_t* marker = change->fires[i];
+            if (marker && marker->serial == change->fires_serial[i]) marker->fire = 1;
+        }
+    } else {
+        if (change_bound(change, target))
+            fire_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED, 0);
+        if (change->contents) fire_marker(change->contents);
+    }
+}
+
+static void change_settle(llg_change_t* change) {
+    llg_wait_subscription_t* cursor = &change->cursor;
+    if (change->kind == LLG_CHANGE_ROWLESS) {
+        sv4_t* target = (sv4_t*)change->key;
+        if (llg_sv4_width(change->before) == llg_sv4_width(*target) &&
+            sv4_same(change->before, *target))
+            return;
+        // A history record (no markers routed) always has its entry.
+        if (!change->contents_known) history_settle(change->edge, target, change->before, *target);
+        else rowless_settle(change, target);
+        return;
+    }
+    const void* key = change->key;
+    if (change->kind == LLG_CHANGE_PACKED) {
+        sv4_t* target = (sv4_t*)key;
+        if (llg_sv4_width(change->before) != llg_sv4_width(*target) ||
+            !sv4_same(change->before, *target)) {
+            if (change->fires_exact) {
+                for (int i = 0; i < 2; i++) {
+                    llg_change_t* marker = change->fires[i];
+                    if (marker && marker->serial == change->fires_serial[i]) marker->fire = 1;
+                }
+                sig_settle(target, cursor->source, cursor, change->before, *target,
+                           LLG_BOUND_NONE, NULL);
+            } else {
+                sig_settle(target, cursor->source, cursor, change->before, *target,
+                           change_bound(change, target) ? LLG_BOUND_FIRE : LLG_BOUND_NONE,
+                           change->contents_known ? change->contents
+                                                  : fixed_array_contents_marker(target));
+            }
+        }
+    } else if (change->kind == LLG_CHANGE_REAL) {
+        double* target = (double*)key;
+        if (!real_same(change->before_real, *target))
+            real_settle(target, cursor->source, cursor);
+    } else if (change->fire || (change->slot && *change->slot != change->before_handle)) {
+        marker_settle((sv4_t*)key, cursor);
+    }
+}
+
+// Publishes in first-write order, with deferral off: what a walk evaluates or
+// triggers publishes at once and so cannot add a record.
+// Storage records settle first and marker records after them, so that every
+// storage a marker stands for has fired it, whatever the opening order (an
+// array's contents marker is shared by its cells). A marker firing a further
+// marker whose record already settled toggles it at once (LLG_BOUND_SETTLE).
+static void change_flush(void) {
+    int deferred = change_defer_active;
+    int settling = change_settling;
+    change_defer_active = 0;
+    change_settling = 1;
+    int markers_left = 0;
+    for (size_t i = 0; i < g.change_count; i++) {
+        llg_change_t* change = g.changes[i];
+        if (!change) continue;
+        if (change->kind == LLG_CHANGE_MARKER) {
+            markers_left = 1;
+            continue;
+        }
+        g.changes[i] = NULL;
+        change_settle(change);
+        change_close(change);
+    }
+    for (size_t i = 0; markers_left && i < g.change_count; i++) {
+        llg_change_t* change = g.changes[i];
+        if (!change) continue;
+        g.changes[i] = NULL;
+        change_settle(change);
+        change_close(change);
+    }
+    g.change_count = 0;
+    change_settling = settling;
+    change_defer_active = deferred;
 }
 
 // ── Procedural force / release ───────────────────────────────────────────────

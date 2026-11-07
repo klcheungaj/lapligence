@@ -238,6 +238,8 @@ int llg_sampled_clock_register_edge(uint64_t identity, sv4_t* signal, int edge,
     clock->data = data;
     clock->next_edge = g.sampled_edge_clocks;
     g.sampled_edge_clocks = clock;
+    // The entry marks the signal for changes in a turn (dependencies.c).
+    clocking_edge_get(signal)->keep_ticks = 1;
     return 1;
 }
 
@@ -352,13 +354,26 @@ void llg_sampled_clock_tick(uint64_t identity) {
 }
 
 static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
-                                                sv4_t value) {
+                                                sv4_t value, int deferred) {
     for (llg_sampled_clock_t* clock = g.sampled_edge_clocks; clock;
          clock = clock->next_edge) {
         if (clock->signal != signal || !ev_matches_changed(old, value, clock->edge))
             continue;
-        if (clock->gate && !clock->gate(clock->data)) continue;
+        if (clock->gate && !(deferred ? clock->gate_open : clock->gate(clock->data)))
+            continue;
         sampled_clock_record(clock);
+    }
+}
+
+/* An event clock's gate is read at the event (AA-D6), which a deferred change
+ * reaches only at its check. A change that ends on the clock's edge ended on a
+ * write matching it, so the last matching write is the one that counts. */
+static void sampled_clock_gates_latch(sv4_t* signal, sv4_t old, sv4_t value) {
+    for (llg_sampled_clock_t* clock = g.sampled_edge_clocks; clock;
+         clock = clock->next_edge) {
+        if (clock->signal == signal && clock->gate &&
+            ev_matches_changed(old, value, clock->edge))
+            clock->gate_open = (uint8_t)(clock->gate(clock->data) != 0);
     }
 }
 

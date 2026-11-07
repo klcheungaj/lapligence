@@ -1,0 +1,13 @@
+-- 10 large array cells
+-- 20 small array cell
+-- 30 records
+-- 40 handle
+-- 50 property
+51 h1.p=9
+   big_runs=0 small_runs=0 rec_runs=0
+-- 60 string, queue and dynamic cells
+60 s=
+60 q[0]=0
+60 d[0]=0
+-- 70 variable index
+70 dyn[di]=4

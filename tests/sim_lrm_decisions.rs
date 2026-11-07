@@ -143,6 +143,22 @@ fn t1_d10_net_redeclared_rejected() {
 }
 
 #[test]
+fn t1_d11_changes_at_check() {
+    run_decision(
+        "T1-D11_changes_at_check",
+        include_str!("fixtures/sim/lrm_decisions/T1-D11_changes_at_check.out"),
+    );
+}
+
+#[test]
+fn t1_d11_aggregates_at_check() {
+    run_decision(
+        "T1-D11_aggregates_at_check",
+        include_str!("fixtures/sim/lrm_decisions/T1-D11_aggregates_at_check.out"),
+    );
+}
+
+#[test]
 fn t1_d4_port_delay_merges() {
     run_decision(
         "T1-D4_port_delay_merges",
