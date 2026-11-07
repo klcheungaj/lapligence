@@ -247,6 +247,29 @@ fn initializer_stop_reachable() {
 }
 
 #[test]
+fn initializer_stop_held() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/initializer_stop_held.out");
+    let stop = "llg: $stop at time 0 at reporter:10:19\n";
+    sim_cli::run_case_with_args(
+        SUITE,
+        "initializer_stop_held",
+        expected,
+        &format!("{stop}llg: simulation ended without $finish (no processes remain) at time 0\n"),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_with_args(
+        SUITE,
+        "initializer_stop_held",
+        "make 1\nmake 2\nmake 3\n",
+        stop,
+        &[],
+        &["--stop-policy", "exit"],
+    );
+}
+
+#[test]
 fn nested_destinations() {
     sim_cli::run_case_backend_parity(
         SUITE,

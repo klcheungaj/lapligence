@@ -174,6 +174,14 @@ void llg_rt_request_stop(int verbosity, const char* location) {
         abort();
     }
     report_stop(verbosity, location);
+    // Static initialization runs after init and before the first llg_rt_run,
+    // outside every process turn. The stop takes effect when the scheduler
+    // starts, before any process runs, so the remaining initializers still
+    // complete and every static variable holds its initial value.
+    if (g.initialized && !g.running && !llg_in_finals && !g.suspended) {
+        g.held_stop = 1;
+        return;
+    }
     if (!g.running || !g.process_turn_active || !g.current) {
         fprintf(stderr,
                 "llg: warning: deferred $stop outside a process turn ignored\n");
@@ -206,7 +214,7 @@ int llg_rt_control_stop(int verbosity) {
 
 int llg_rt_control_stop_before_run(int verbosity) {
     if (!g.initialized || g.running || g.finish || g.suspended || g.stop_proc ||
-        g.deferred_stop)
+        g.deferred_stop || g.held_stop)
         return 0;
     report_stop(verbosity, NULL);
     // The noninteractive RESUME policy resumes immediately; EXIT returns

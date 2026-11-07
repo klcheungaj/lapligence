@@ -456,6 +456,18 @@ void llg_rt_run(void) {
     // scheduler can advance. This keeps future queues and the suspended
     // coroutine untouched when an embedding probes the runtime again.
     if (g.suspended) return;
+    if (g.held_stop) {
+        // A static initializer's `$stop`, already reported. The RESUME policy
+        // continues at once; EXIT returns before any process runs, as a stop
+        // from cbStartOfSimulation does.
+        g.held_stop = 0;
+        if (g.stop_policy == LLG_STOP_POLICY_EXIT) {
+            g.stop_proc = NULL;
+            g.stop_region = LLG_REGION_PREPONED;
+            g.suspended = 1;
+            return;
+        }
+    }
     g.running = 1;
     g.current_region = LLG_REGION_PREPONED;
     for (;;) {

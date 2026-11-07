@@ -2163,7 +2163,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Stop/resume** — `$stop` preserves pending work, activations, output and
   time. `--stop-policy resume` is the noninteractive default; `exit` returns
   control without finals or future-work draining. Stop numbers use the same
-  constant 0/1/2 diagnostic levels. A full interactive debugger is not provided.
+  constant 0/1/2 diagnostic levels. A `$stop` executed during static
+  initialization is reported there and acted on when the scheduler starts,
+  before any process runs. A full interactive debugger is not provided.
   V §17.4.2 **[1995]**.
 - 🟦 **Conversions** — `$rtoi` truncates toward zero; `$itor` handles numeric
   signed/unsigned conversion. `$realtobits/$bitstoreal` and

@@ -1,0 +1,4 @@
+make 1
+make 2
+make 3
+run 1 2 3 3

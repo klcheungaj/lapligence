@@ -1736,7 +1736,10 @@ int llg_rt_exiting(void);
 // stop now and, when called during a scheduler process turn, records a request
 // that the scheduler observes immediately after llg_co_run returns and before
 // any other process, region, or callback work. No continuation is requeued.
-// Outside a scheduler process turn (including finals and idle embeddings), the
+// During static initialization (after init, before the first llg_rt_run) the
+// request is held and acted on when llg_rt_run starts, before any process
+// runs: under the EXIT policy llg_rt_run then returns suspended. Elsewhere
+// outside a process turn (finals, idle embeddings, a suspended scheduler) the
 // reported request is ignored with a warning. Coroutine-body `$stop` uses
 // llg_arm_stop so it can preserve its exact continuation.
 void llg_rt_request_stop(int verbosity, const char* location);
