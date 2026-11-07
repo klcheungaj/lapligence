@@ -1890,11 +1890,14 @@ limits apply to the form named:
   a record nested in an element of a nested associative array
   (`oa[1]["a"].e[1].t[2] = s`).
 - both forms: a virtual-interface method that waits on a record `ref` formal bound
-  to an element.
+  to an element. A whole record property of a class written with `<=` (`c.r <= v`).
 - per-cell form, below 16 cells: a whole record assigned to or read from an
   element of a member array at a run-time index (`r.rows[i] = x`), and two
   continuous assignments to separate bits of one member of an element of an
-  array of records. The column form has neither limit.
+  array of records. A record of packed members only, read whole from an element
+  into a fixed-array element, a class property, an output formal or an initializer
+  (`fa[2] = q[0]`), and a whole record read from a member array of an element
+  (`x = oq[0].e[1]`). The column form has none of these limits.
 - column form: an event control on a member of a `ref` formal whose actual is an
   automatic record of a subroutine; a module, static or procedural-block record
   works, and so does an element of a column.
