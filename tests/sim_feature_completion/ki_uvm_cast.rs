@@ -219,3 +219,16 @@ fn join_branch_detached_fork() {
         &[],
     );
 }
+
+#[test]
+fn initializer_virtual_dispatch() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "initializer_virtual_dispatch",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_cast/initializer_virtual_dispatch.out"
+        ),
+        &[],
+        &[],
+    );
+}

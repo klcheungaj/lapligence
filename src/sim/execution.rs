@@ -657,6 +657,22 @@ pub(crate) fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec
     effects
 }
 
+/// Effects of a static declaration initializer. A virtual dispatch there
+/// takes the union of the effects of every implementation of its slot, the
+/// set the dispatch switch selects from, instead of the summary of an unknown
+/// callee: an initializer calls functions, and their overrides are functions.
+pub(crate) fn effects_for_initializer(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
+    let mut effects = Vec::new();
+    let mut visits = CallVisits {
+        virtual_slots: Some(HashSet::new()),
+        ..CallVisits::default()
+    };
+    collect_effects(ir, statements, &mut effects, &mut visits);
+    effects.sort();
+    effects.dedup();
+    effects
+}
+
 /// Effects of running subprogram `function`: its body's, plus for a context
 /// DPI-C import those of every exported subroutine its foreign code may call
 /// (SV 35.5.3: a context call is an optimization barrier). Noncontext and
@@ -779,6 +795,10 @@ pub(crate) fn direct_call_targets(ir: &IrModel, statements: &[IrStmt]) -> Vec<Ca
 struct CallVisits {
     visited: HashSet<usize>,
     direct: Option<BTreeSet<CallTarget>>,
+    /// Virtual slots whose implementations were walked; `Some` follows a
+    /// virtual dispatch into every implementation of its slot instead of
+    /// summarizing it as an unknown callee.
+    virtual_slots: Option<HashSet<usize>>,
 }
 
 impl CallVisits {
@@ -1123,6 +1143,50 @@ fn collect_effects(
     }
 }
 
+/// With `CallVisits::virtual_slots`, collect the effects of every
+/// implementation of the slot `function` dispatches through. False when the
+/// walker summarizes virtual calls, or the slot has an inline-expanded
+/// implementation, whose specializations dispatch through other slots.
+fn collect_virtual_effects(
+    ir: &IrModel,
+    function: usize,
+    effects: &mut Vec<ExecutionEffect>,
+    visited_calls: &mut CallVisits,
+) -> bool {
+    if visited_calls.direct.is_some() {
+        return false;
+    }
+    let Some(slot) = ir
+        .funcs
+        .get(function)
+        .and_then(|callee| callee.virtual_slot)
+    else {
+        return false;
+    };
+    let Some(slots) = visited_calls.virtual_slots.as_mut() else {
+        return false;
+    };
+    let implementations = ir
+        .funcs
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.virtual_slot == Some(slot))
+        .collect::<Vec<_>>();
+    if implementations
+        .iter()
+        .any(|(_, candidate)| candidate.inline_expanded)
+    {
+        return false;
+    }
+    if !slots.insert(slot) {
+        return true;
+    }
+    for (index, _) in implementations {
+        collect_callee_effects(ir, index, false, effects, visited_calls);
+    }
+    true
+}
+
 fn collect_callee_effects(
     ir: &IrModel,
     function: usize,
@@ -1130,7 +1194,7 @@ fn collect_callee_effects(
     effects: &mut Vec<ExecutionEffect>,
     visited_calls: &mut CallVisits,
 ) {
-    if conservative {
+    if conservative && !collect_virtual_effects(ir, function, effects, visited_calls) {
         effects.push(ExecutionEffect::Suspend);
         effects.push(ExecutionEffect::Terminate);
         effects.push(ExecutionEffect::Disable);

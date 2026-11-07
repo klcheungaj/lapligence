@@ -1063,7 +1063,7 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         } => {
             // The model initialization frame is an ordinary C function, not
             // a coroutine, so a suspending body cannot be represented here.
-            if crate::sim::execution::effects_for_statements(model, std::slice::from_ref(body))
+            if crate::sim::execution::effects_for_initializer(model, std::slice::from_ref(body))
                 .contains(&crate::sim::execution::ExecutionEffect::Suspend)
             {
                 return Err("static declaration initializer cannot suspend".to_owned());
