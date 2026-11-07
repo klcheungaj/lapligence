@@ -7,7 +7,10 @@
 static void force_dependency_changed(sv4_t* sig, double* real, int is_real);
 static void sig_write(sv4_t* target, sv4_t value);
 static void sig_write_now(sv4_t* target, sv4_t value);
-static int marker_flip(sv4_t* marker);
+static int marker_flip(sv4_t* marker, int rowless);
+// Passed as the row of a publication whose caller has just found that its
+// storage has no row: the publication skips its own lookup. Never read.
+static llg_wait_source_t wait_source_absent;
 struct llg_fixed_block;
 static struct llg_fixed_block* fixed_array_block(const sv4_t* target);
 static sv4_t* fixed_block_contents(const struct llg_fixed_block* block);
@@ -120,7 +123,7 @@ sv4_t* llg_dependency_or_never(sv4_t* dependency) {
 }
 
 void llg_dependency_changed(sv4_t* dependency) {
-    if (!dependency || marker_flip(dependency)) return;
+    if (!dependency || marker_flip(dependency, 0)) return;
     uint64_t bit = llg_sv4_word(*dependency, 0, LLG_SV4_BITS) & 1u;
     /* A reference marker keeps its width: the value already stored through
      * the reference reaches its element before readers wake. */
@@ -976,8 +979,11 @@ static llg_wait_source_t* change_begin(sv4_t* target, const sv4_t* before, int e
 // marker bound to further markers counts only its own waiters: those further
 // markers toggle at its check when it has a record (LLG_BOUND_SETTLE), and
 // at each write otherwise, which keeps this test to one row lookup.
-static llg_change_t* change_marker_defer(sv4_t* marker) {
+// `rowless`, when given, is set when the marker has no row, so that the
+// caller toggling it now skips a second lookup (marker_toggle).
+static llg_change_t* change_marker_defer(sv4_t* marker, int* rowless) {
     llg_wait_source_t* source = wait_source_find(marker);
+    if (rowless) *rowless = source == NULL;
     if (source && source->change)
         return source->change->kind == LLG_CHANGE_MARKER ? source->change : NULL;
     if (!(g.deferred_triggers || wait_source_armed(source)) ||
@@ -990,14 +996,20 @@ static llg_change_t* change_marker_defer(sv4_t* marker) {
     return change;
 }
 
+// Toggles a marker now; `rowless` as for marker_flip.
+static void marker_toggle(sv4_t* marker, int rowless) {
+    if (!(rowless && marker_flip(marker, 1))) llg_dependency_changed(marker);
+}
+
 // A deferred write of storage bound to markers: those with a record wait for
 // the storage's own check, the others toggle now.
 static void defer_bound_markers(const void* target, uint8_t kind) {
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
         if (binding->key != target || binding->kind != kind) continue;
-        if (!change_marker_defer(binding->dependency))
-            llg_dependency_changed(binding->dependency);
+        int rowless;
+        if (!change_marker_defer(binding->dependency, &rowless))
+            marker_toggle(binding->dependency, rowless);
     }
 }
 
@@ -1012,7 +1024,7 @@ void llg_handle_changed(sv4_t* dependency, void* const* slot, void* previous) {
             if (change->slot != slot) change->fire = 1;
             return;
         }
-        if (!change && (change = change_marker_defer(dependency)) != NULL) {
+        if (!change && (change = change_marker_defer(dependency, NULL)) != NULL) {
             change->slot = slot;
             change->before_handle = previous;
             return;
@@ -1037,7 +1049,7 @@ static void fire_bound_markers(const void* target, uint8_t kind, int toggle_rest
         if (source && source->change && source->change->kind == LLG_CHANGE_MARKER)
             source->change->fire = 1;
         else if (toggle_rest)
-            llg_dependency_changed(binding->dependency);
+            marker_toggle(binding->dependency, source == NULL);
     }
 }
 
@@ -1285,23 +1297,25 @@ static int change_route_markers(sv4_t* target, const sv4_t* before, sv4_t* conte
          binding; binding = binding->bucket_next) {
         if (binding->key != target || binding->kind != LLG_DEPENDENCY_BINDING_PACKED)
             continue;
-        llg_change_t* marker = change_marker_defer(binding->dependency);
+        int rowless;
+        llg_change_t* marker = change_marker_defer(binding->dependency, &rowless);
         if (marker) {
             if (!source) source = change_route_open(target, before, row, 1);
             if (fired < 2) fires[fired] = marker;
             ++fired;
         } else {
-            llg_dependency_changed(binding->dependency);
+            marker_toggle(binding->dependency, rowless);
         }
     }
     if (contents) {
-        llg_change_t* marker = change_marker_defer(contents);
+        int rowless;
+        llg_change_t* marker = change_marker_defer(contents, &rowless);
         if (marker) {
             if (!source) source = change_route_open(target, before, row, 0);
             if (fired < 2) fires[fired] = marker;
             ++fired;
         } else {
-            llg_dependency_changed(contents);
+            marker_toggle(contents, rowless);
         }
     }
     if (!source) return 0;
@@ -1346,6 +1360,7 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
     sv4_t* contents = fixed_block_contents(block);
     // Consumers above can drop a row no record keeps alive.
     if (cursor) source = cursor->source;
+    else if (source == &wait_source_absent) source = NULL;
     else if (!deferred || (source && !source->change)) source = wait_source_find(target);
     int watched = source && source->watchers;
     llg_timing_watch_t* timing = source ? source->timing : NULL;
@@ -1364,7 +1379,9 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
             source->change->contents_known = 1;
             if (change_bound(source->change, target))
                 defer_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED);
-            if (contents && !change_marker_defer(contents)) llg_dependency_changed(contents);
+            int rowless;
+            if (contents && !change_marker_defer(contents, &rowless))
+                marker_toggle(contents, rowless);
         } else if (before) {
             (void)change_route_markers(target, before, contents, source);
         } else {
@@ -1433,7 +1450,10 @@ static sv4_t marker_values[2];
 // A marker flips on every change of what it stands for, and sig_write's owned
 // snapshots would cost more than the rest of the publication. A marker holding
 // a known bit flips in place; anything else takes the general write.
-static int marker_flip(sv4_t* marker) {
+// `rowless` tells that the caller has just found no row for the marker:
+// nothing the publication runs before its walk arms a wait, so it skips the
+// lookup.
+static int marker_flip(sv4_t* marker, int rowless) {
     if (llg_sv4_width(*marker) != 1 || region_is_read_only_now(g.current_region))
         return 0;
     unsigned old = llg_sv4_state(*marker, 0);
@@ -1444,7 +1464,8 @@ static int marker_flip(sv4_t* marker) {
     }
     llg_value_scope_t* target_pin = value_target_pin(marker);
     llg_sv4_set_state(marker, 0, old ^ 1u);
-    sig_publish(marker, marker_values[old], marker_values[old ^ 1u], NULL, 0, NULL, NULL);
+    sig_publish(marker, marker_values[old], marker_values[old ^ 1u],
+                rowless ? &wait_source_absent : NULL, 0, NULL, NULL);
     if (target_pin) llg_value_scope_end(target_pin);
     return 1;
 }
