@@ -31,6 +31,7 @@ mod include_dir_search;
 mod lint_config_cli;
 mod llg_config_cli;
 mod lsp_stdio;
+mod messages_catalog;
 mod model_tests;
 mod native_lto;
 mod opt_storage_differential;

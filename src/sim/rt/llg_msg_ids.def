@@ -1,0 +1,31 @@
+/* llg_msg_ids.def: the generated-model runtime messages. Read by llg_msg.h
+ * (the enum llg_msg_id_t and the id table) and by the host catalog
+ * (src/core/report/catalog.rs), which renders docs/messages.md from it.
+ *
+ * LLG_MSG_ID(NAME, TOOL, INDEX, SEVERITY, "meaning", "how to disable")
+ * Indices are stable: a new message takes a free index; a removed one's
+ * index is never reused. Index 000 is the end-of-run summary. */
+LLG_MSG_ID(SUMMARY, SIM, 0, LLG_SEVERITY_INFO, "end-of-run counts, printed at every exit when the run reported a warning or worse", "-")
+LLG_MSG_ID(FINISH, SIM, 1, LLG_SEVERITY_INFO, "$finish ran (finish number 1 or 2)", "$finish(0)")
+LLG_MSG_ID(STOP, SIM, 2, LLG_SEVERITY_INFO, "$stop ran (finish number 1 or 2)", "$stop(0)")
+LLG_MSG_ID(TASK_INFO, SIM, 3, LLG_SEVERITY_INFO, "$info; the user text follows the frame unchanged", "-")
+LLG_MSG_ID(TASK_WARNING, SIM, 4, LLG_SEVERITY_WARNING, "$warning; the user text follows the frame unchanged", "-")
+LLG_MSG_ID(TASK_ERROR, SIM, 5, LLG_SEVERITY_ERROR, "$error; the user text follows the frame unchanged", "-")
+LLG_MSG_ID(TASK_FATAL, SIM, 6, LLG_SEVERITY_FATAL, "$fatal; the run ends with exit status 1", "-")
+LLG_MSG_ID(ASSERTION_FAILED, SIM, 7, LLG_SEVERITY_ERROR, "an assert, assume or expect failed without an else action", "an else action block, $assertoff, $assertfailoff")
+LLG_MSG_ID(STATISTICS, SIM, 8, LLG_SEVERITY_INFO, "run statistics printed by $finish(2) and $stop(2)", "a finish number below 2")
+LLG_MSG_ID(RUNTIME_FAILURE, SIM, 9, LLG_SEVERITY_ERROR, "a run-time error the simulator detects in the design (bad cast, out-of-bounds access that stops the run)", "-")
+LLG_MSG_ID(RUNTIME_ERROR, SIM, 10, LLG_SEVERITY_ERROR, "a run-time error of a runtime service (scheduler, synchronization, file I/O, coverage, constraints)", "-")
+LLG_MSG_ID(RUNTIME_WARNING, SIM, 11, LLG_SEVERITY_WARNING, "a run-time warning of a runtime service", "-")
+LLG_MSG_ID(CONTAINER_WARNING, SIM, 12, LLG_SEVERITY_WARNING, "a dynamic array, queue or associative array operation fell back to the default (IEEE 1800-2009 7.4-7.10)", "-")
+LLG_MSG_ID(MEMORY_FILE_WARNING, SIM, 13, LLG_SEVERITY_WARNING, "$readmem/$writemem file warning", "-")
+LLG_MSG_ID(MEMORY_FILE_ERROR, SIM, 14, LLG_SEVERITY_ERROR, "$readmem/$writemem file error", "-")
+LLG_MSG_ID(TIMING_VIOLATION, SIM, 15, LLG_SEVERITY_WARNING, "a timing check violation or SDF annotation message", "--no-timing-check-messages")
+LLG_MSG_ID(VPI_ERROR, SIM, 16, LLG_SEVERITY_ERROR, "a VPI application or plugin error", "-")
+LLG_MSG_ID(DPI_ERROR, SIM, 17, LLG_SEVERITY_ERROR, "a DPI-C bridge error", "-")
+LLG_MSG_ID(WAVEFORM, SIM, 18, LLG_SEVERITY_ERROR, "the waveform writer failed", "-")
+LLG_MSG_ID(STALL, SIM, 19, LLG_SEVERITY_ERROR, "the run ended without $finish: deadlock, zero-delay loop or step limit", "-")
+LLG_MSG_ID(ENVIRONMENT, SIM, 20, LLG_SEVERITY_WARNING, "a model environment setting (LLG_SIM_LOG_FILE, LLG_STOP_POLICY, plusargs) is unusable", "-")
+LLG_MSG_ID(RUNTIME_NOTE, SIM, 21, LLG_SEVERITY_INFO, "runtime information (randomize statistics, stack limit notes)", "-")
+LLG_MSG_ID(INTERNAL, SIM, 30, LLG_SEVERITY_FATAL, "an internal runtime invariant failed; the model aborts", "-")
+LLG_MSG_ID(ALLOCATION, SIM, 31, LLG_SEVERITY_FATAL, "the model could not allocate memory; it aborts", "-")

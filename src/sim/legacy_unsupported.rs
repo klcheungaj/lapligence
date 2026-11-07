@@ -33,6 +33,19 @@ pub enum LegacyFamily {
 }
 
 impl LegacyFamily {
+    /// Every family, in catalog order (`core::report::catalog::LEGACY_FAMILIES`).
+    pub const ALL: [LegacyFamily; 9] = [
+        Self::ProceduralAssign,
+        Self::MosSwitch,
+        Self::TriregCharge,
+        Self::ChargeDirective,
+        Self::ExtendedVcd,
+        Self::StochasticQueue,
+        Self::Pla,
+        Self::DriverInspection,
+        Self::PliTfAcc,
+    ];
+
     /// The family spelling shown in diagnostics and `docs/sim_features.md`.
     pub fn label(self) -> &'static str {
         match self {
