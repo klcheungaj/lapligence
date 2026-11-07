@@ -509,6 +509,56 @@ processes or clock edges, at the cost of a few bytes per object.
   task root frame grows from 1,640 to 2,760 B). Designs without eligible
   locals are unchanged.
 
+### Value changes settled at checks
+
+- **Trade-off:** T1-D11 ([LRM decisions](lrm_decisions.md)) makes waiters see
+  a change at a check, comparing the first and the last value. Publishing at
+  each write needs no bookkeeping but pays for every intermediate value;
+  settling at a check pays a record per changed storage per process turn or
+  NBA batch, and a second look at the storage's consumers.
+- **Decision:** a storage gets a record only when something observes it at
+  its first write in the turn: a waiter on its row, a deferred trigger, a
+  waited bound marker or array contents marker, or clocking history. Records
+  and freed wait-source rows are pooled; a value of up to 64 bits is copied
+  as a plain store on the compact backends; a storage only clocking history
+  observes keeps its record on its history entry instead of a row. Bound
+  markers are routed in one pass, a routed storage fires its marker records
+  directly, and clock consumers are called only when they have entries, which
+  also removes by-value `sv4_t` copies from every publication. Per-write
+  consumers (VPI, waveforms, `disable iff`, force, switches, timing checks)
+  are unchanged. Generated C changes only where a class handle store passes
+  the previous handle (`llg_handle_changed`), and an event-clock sampled
+  process calls `llg_wait_gate_at_write` before it arms.
+- **Evidence:** 5 interleaved rounds pinned to one CPU, medians, O3 models,
+  compact GMP backend; another agent was running (load 6–8), so a few
+  percent is within noise. Output identical except where T1-D11 removes
+  wakes.
+
+  | Workload | Base s | T1-D11 s | Ratio |
+  | --- | ---: | ---: | ---: |
+  | many-masked-20k | 0.301 | 0.296 | 0.986 |
+  | many-registers-10k | 0.102 | 0.099 | 0.967 |
+  | tasks | 0.083 | 0.083 | 1.004 |
+  | wide-values | 0.328 | 0.334 | 1.019 |
+  | zero-delay | 0.150 | 0.145 | 0.969 |
+  | 2,000 waiters on one clock | 1.598 | 1.631 | 1.020 |
+  | Every write changes a waited variable once per turn | 0.320 | 0.348 | 1.089 |
+  | Clocking block present, 500 unwaited array cells written per cycle | 0.600 | 0.643 | 1.072 |
+  | 256 array cells, each read by an `always @*` | 0.236 | 0.253 | 1.076 |
+  | Default-then-override in 1,000 processes | 4.233 | 2.816 | 0.665 |
+  | One vector, a waiter per bit | 1.586 | 0.065 | 0.041 |
+  | Two NBAs per register per cycle | 10.956 | 9.743 | 0.889 |
+  | 100 concurrent assertions, 1,000 writes per cycle | 4.236 | 3.821 | 0.902 |
+
+  The first five rows are the regular corpus. The others were built for
+  this change: the clock case, three worst cases where every write opens a
+  record and nothing coalesces, and four where values return or repeat
+  within a turn.
+  Peak RSS is unchanged except `zero-delay` (+1.7%) and
+  `many-registers-10k` (+1.1%); a wait-source row grows from 80 to 88 B, a
+  clocking history entry from 56 to 64 B, and the process record and the
+  wait record keep their sizes. Executable size +1.4%.
+
 ### Bounded retention of finished work
 
 - **Trade-off:** keeping completed process records and every sampled slot until
