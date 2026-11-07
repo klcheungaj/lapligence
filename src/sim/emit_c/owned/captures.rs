@@ -351,8 +351,11 @@ impl Frame<'_, '_> {
                 "capture_string",
                 format!("llg_frame_string_address({source}, {}u)", storage.slot()),
             );
+            // Nested forks name it by the capture local.
             self.shared_cells
                 .insert(local.clone(), (source.to_owned(), storage.slot()));
+            self.shared_cells
+                .insert(name.to_owned(), (source.to_owned(), storage.slot()));
             self.bind_native(local, address.clone(), NativeKind::String);
             self.bind_native(name, address, NativeKind::String);
             return Ok(());
@@ -623,8 +626,8 @@ impl Frame<'_, '_> {
         Ok(())
     }
 
-    /// Bind `alias` to the packed or real cell already bound as `name` in
-    /// the innermost scope (see `IrCapture::alias`).
+    /// Bind `alias` to the cell already bound as `name` in the innermost
+    /// scope (see `IrCapture::alias`).
     pub(super) fn alias_capture(&mut self, alias: &str, name: &str) {
         let scope = self
             .bindings
@@ -632,6 +635,10 @@ impl Frame<'_, '_> {
             .expect("frame always has a binding scope");
         if let Some(binding) = scope.get(name).cloned() {
             scope.insert(alias.to_owned(), binding);
+        }
+        let natives = self.native_bindings.last_mut().expect("native scope");
+        if let Some(binding) = natives.get(name).cloned() {
+            natives.insert(alias.to_owned(), binding);
         }
     }
 

@@ -1,0 +1,45 @@
+typedef enum {R=1,G=2,B=4} col_t;
+typedef enum bit [7:0] {A="A", Z="Z"} ch_t;
+module tb;
+  string s, q[$], da[], sa[string], ia[int], fx[2];
+  int iq[$]; col_t cq[$]; col_t ca[string]; real rq[$]; bit [7:0] bq[$]; byte bda[]; logic [3:0] lq[$]; int fi[3];
+  bit [31:0] v = "AB"; int i=65; real r=66.5; col_t c=G; byte b=67; ch_t ch=Z;
+  string src="hello"; string num="5"; real ro; bit [7:0] bo; col_t co; int io=0;
+  initial begin
+    q.push_back("x"); q.push_back("y"); da=new[2]; iq={1,2}; cq={R,R}; rq={1.5}; bq={1}; bda=new[2]; lq={1};
+    $display("%0d [%s]", $cast(s, src), s);
+    $display("%0d [%s]", $cast(s, "lit"), s);
+    $display("%0d [%s]", $cast(s, v), s);
+    $display("%0d [%s]", $cast(s, i), s);
+    $display("%0d [%s]", $cast(s, b), s);
+    $display("%0d [%s]", $cast(s, c), s);
+    $display("%0d [%s]", $cast(s, ch), s);
+    $display("%0d [%s]", $cast(q[1], src), q[1]);
+    $display("%0d [%s]", $cast(q[2], src), q[2]);
+    $display("%0d %0d", $cast(q[7], src), q.size());
+    $display("%0d [%s]", $cast(da[0], src), da[0]);
+    $display("%0d [%s]", $cast(sa["a"], src), sa["a"]);
+    $display("%0d %0d", $cast(ia[1], v), ia.size());
+    $display("%0d [%s]", $cast(fx[1], src), fx[1]);
+    $display("%0d %0d", $cast(iq[1], c), iq[1]);
+    $display("%0d %0d", $cast(iq[1], r), iq[1]);
+    $display("%0d %0d", $cast(cq[1], 2), cq[1]);
+    $display("%0d %0d", $cast(cq[1], 3), cq[1]);
+    $display("%0d %0d", $cast(cq[1], 4.2), cq[1]);
+    $display("%0d %0d %0d", $cast(ca["x"], 3), ca.size(), ca.exists("x"));
+    $display("%0d %0d %0d", $cast(ca["y"], 4), ca.size(), ca["y"]);
+    $display("%0d %f", $cast(rq[0], i), rq[0]);
+    $display("%0d %f", $cast(rq[1], 7), rq[1]);
+    $display("%0d %0d", $cast(bq[0], 300), bq[0]);
+    $display("%0d %0d", $cast(bda[1], -1), bda[1]);
+    $display("%0d %h", $cast(lq[0], 8'hxz), lq[0]);
+    $display("%0d %0d", $cast(fi[1], c), fi[1]);
+    $display("%0d %0d", $cast(iq[0][3:0], 5), iq[0]);
+    $display("%0d %0d", $cast(io, num), io);
+    $display("%0d %0d", $cast(co, num), co);
+    $display("%0d %f", $cast(ro, num), ro);
+    $display("%0d %0d", $cast(bo, num), bo);
+    $cast(q[0], "task"); $display("[%s]", q[0]);
+    $cast(cq[0], 4); $display("%0d", cq[0]);
+  end
+endmodule

@@ -19,6 +19,21 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// A replication whose constant count is zero.
+    pub(in super::super) fn is_zero_replication(&self, node: NodeId) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::MultiConcat,
+                operands,
+                ..
+            }) if operands
+                .first()
+                .is_some_and(|count| self.eval_bits(*count).ok().and_then(|value| value.to_u128())
+                    == Some(0))
+        )
+    }
+
     /// Evaluate a constant-ish expression node to a 4-state value, mirroring
     /// `core::elab::Resolver::eval_expr` for the constructs that can appear in
     /// elaborated bound positions.
@@ -112,6 +127,22 @@ impl<'a> Codegen<'a> {
                     "$onehot0" => elab::onehot0(&arg),
                     _ => elab::isunknown(&arg),
                 })
+            }
+            // `$bits` of a type or a fixed-size expression (SV 20.6.2); Slang
+            // leaves it in a replication count inside a subroutine body.
+            NodeKind::SysCall { name } if name == "$bits" => {
+                let [arg, ..] = self.node(node).children.as_slice() else {
+                    return Err("$bits requires an argument".to_owned());
+                };
+                let descriptor = self
+                    .query_descriptor(*arg)
+                    .ok_or("$bits argument has no type in bound")?;
+                let width = match descriptor.shape {
+                    TypeShape::Real { shortreal } => Some(if shortreal { 32 } else { 64 }),
+                    _ => descriptor.fixed_size_bits(),
+                };
+                let width = width.ok_or("$bits argument has no fixed size in bound")?;
+                Ok(elab::Value::from_u64(width, 32, true))
             }
             other => Err(format!("unsupported bound expression: {other:?}")),
         }

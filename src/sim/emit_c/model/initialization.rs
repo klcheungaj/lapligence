@@ -148,6 +148,14 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                     s.c_name
                 ));
             }
+            IrInitStep::StaticScopeEnter { variable, location } => {
+                out.push_str(&format!(
+                    "    llg_rt_static_init_enter({}, {});\n",
+                    super::super::constants::c_string_literal(variable),
+                    super::super::constants::c_string_literal(location)
+                ));
+            }
+            IrInitStep::StaticScopeLeave => out.push_str("    llg_rt_static_init_leave();\n"),
             IrInitStep::RegisterSampledValue(sig) => {
                 let s = model.signal(*sig);
                 out.push_str(&format!("    llg_sampled_register_value(&{});\n", s.c_name));

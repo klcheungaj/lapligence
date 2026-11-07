@@ -72,6 +72,35 @@ int llg_rt_exiting(void) {
     return g.current && g.current->chain.exiting != LLG_EXIT_NONE;
 }
 
+const char* llg_static_init_variable = NULL;
+static const char* llg_static_init_location = NULL;
+
+void llg_rt_static_init_enter(const char* variable, const char* location) {
+    llg_static_init_variable = variable;
+    llg_static_init_location = location;
+}
+
+void llg_rt_static_init_leave(void) {
+    llg_static_init_variable = NULL;
+    llg_static_init_location = NULL;
+}
+
+void llg_rt_static_effect(const char* what, const char* location,
+                          const char* subroutine) {
+    llg_rt_mark_failed();
+    fprintf(stderr,
+            "llg: runtime error: %s: %s in function '%s' schedules work after "
+            "the call returns, during the static initializer of '%s' at %s; a "
+            "function may do this only when its calling thread was created by "
+            "an initial or always procedure or a fork of one (SV 13.4.4)\n",
+            location, what, subroutine, llg_static_init_variable,
+            llg_static_init_location);
+    fflush(stderr);
+    llg_rt_skip_finals();
+    llg_rt_fatal_typed(0, "deferred statement during static initialization",
+                       NULL, 0, "", location);
+}
+
 void llg_rt_mark_failed(void) {
     llg_last_failure = 1;
 }

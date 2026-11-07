@@ -270,6 +270,12 @@ impl Validator<'_> {
                     return self.fail(path, "sampled history needs a packed source and a skew");
                 }
             }
+            IrInitStep::StaticScopeEnter { variable, location }
+                if variable.is_empty() || location.is_empty() =>
+            {
+                return self.fail(path, "static scope needs a variable and a location");
+            }
+            IrInitStep::StaticScopeEnter { .. } | IrInitStep::StaticScopeLeave => {}
             IrInitStep::RegisterSampledValue(sig) => {
                 let Some(signal) = self.model.signals.get(*sig) else {
                     return self.fail(path, format!("sampled signal index {sig} is out of bounds"));
@@ -334,7 +340,9 @@ impl Validator<'_> {
             IrInitStep::FillArrayX(_) => Ok(()),
             IrInitStep::RegisterSampled(_)
             | IrInitStep::RegisterSampledHistory { .. }
-            | IrInitStep::RegisterSampledValue(_) => Ok(()),
+            | IrInitStep::RegisterSampledValue(_)
+            | IrInitStep::StaticScopeEnter { .. }
+            | IrInitStep::StaticScopeLeave => Ok(()),
             // The body was validated above. Suspension is rejected by the
             // owned emitter, which owns the execution-effect analysis.
             IrInitStep::Execute { .. } => Ok(()),

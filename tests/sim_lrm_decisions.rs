@@ -1626,20 +1626,6 @@ fn s22_d2_static_locals_initialize_once() {
 }
 
 #[test]
-fn s22_d3_initializer_deferred_effect_illegal() {
-    // Negative case: the expected stdout is empty because compilation fails.
-    assert!(include_str!(
-        "fixtures/sim/lrm_decisions/S22-D3_initializer_deferred_effect_illegal.out"
-    )
-    .is_empty());
-    sim_cli::reject_case(
-        SUITE,
-        "S22-D3_initializer_deferred_effect_illegal",
-        "calls `watch`, whose fork at ",
-    );
-}
-
-#[test]
 fn s22_d4_const_method_write_illegal() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(
@@ -4354,6 +4340,80 @@ fn s11_d1_task_cast_class_failure() {
                 "$cast failed to assign an incompatible value at tb:36:5",
             );
         },
+    );
+}
+
+#[test]
+fn s11_d5_cast_element_binding() {
+    run_decision(
+        "S11-D5_cast_element_binding",
+        include_str!("fixtures/sim/lrm_decisions/S11-D5_cast_element_binding.out"),
+    );
+}
+
+#[test]
+fn s11_d6_cast_element_out_of_range() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S11-D6_cast_element_out_of_range.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S11-D6_cast_element_out_of_range",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "$cast failed to assign an incompatible value at tb:28:27: the destination element does not exist",
+            );
+        },
+    );
+}
+
+#[test]
+fn s11_d7_class_conditional_ambiguous() {
+    run_decision(
+        "S11-D7_class_conditional_ambiguous",
+        include_str!("fixtures/sim/lrm_decisions/S11-D7_class_conditional_ambiguous.out"),
+    );
+}
+
+#[test]
+fn s11_d8_unformatted_class_handle() {
+    run_decision(
+        "S11-D8_unformatted_class_handle",
+        include_str!("fixtures/sim/lrm_decisions/S11-D8_unformatted_class_handle.out"),
+    );
+}
+
+#[test]
+fn s07_d11_event_entry_binding() {
+    run_decision(
+        "S07-D11_event_entry_binding",
+        include_str!("fixtures/sim/lrm_decisions/S07-D11_event_entry_binding.out"),
+    );
+}
+
+#[test]
+fn s13_d5_initializer_deferred_effect_runtime() {
+    // The run stops before any process starts, so stdout stays empty.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/S13-D5_initializer_deferred_effect_runtime.out"
+    )
+    .is_empty());
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "S13-D5_initializer_deferred_effect_runtime",
+        &[],
+        "",
+        "fork in function 'watch' schedules work after the call returns, during the static initializer of 'started' at ",
+    );
+}
+
+#[test]
+fn s07_d12_iterator_index_declared_range() {
+    run_decision(
+        "S07-D12_iterator_index_declared_range",
+        include_str!("fixtures/sim/lrm_decisions/S07-D12_iterator_index_declared_range.out"),
     );
 }
 

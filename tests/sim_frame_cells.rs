@@ -99,3 +99,13 @@ fn automatic_deferred_readers_preserve_frontend_rejection() {
         &[],
     );
 }
+
+#[test]
+fn static_effect_site_keeps_stack_cells() {
+    sim_cli::run_case("frame_cells", "static_effect_site", "0 6\n", "", &[]);
+    for options in [OptConfig::default(), OptConfig::none()] {
+        let source = render("static_effect_site", &options);
+        assert!(source.contains("if (llg_static_init_variable) llg_rt_static_effect("));
+        assert!(source.contains("llg_value_scope_t _llg_cell_scope_"));
+    }
+}

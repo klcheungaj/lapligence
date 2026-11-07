@@ -941,6 +941,7 @@ impl Codegen<'_> {
                 .func
                 .as_ref()
                 .is_some_and(|function| function.chandle_read.contains_key(&declaration))
+            || self.proc_semaphore_local_name(declaration).is_some()
     }
 
     /// A class handle stored as a record member (`r.h.v`, SIM-007): the
@@ -1117,7 +1118,7 @@ impl Codegen<'_> {
         false
     }
 
-    fn class_constructor(&self, class: NodeId) -> Option<NodeId> {
+    pub(in super::super) fn class_constructor(&self, class: NodeId) -> Option<NodeId> {
         self.class_method_nodes(class).into_iter().find(|child| {
             matches!(
                 self.kind(*child),

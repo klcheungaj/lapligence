@@ -52,6 +52,17 @@ impl EmitCtx<'_, '_> {
             return self.cg.lower_record_local(&self.path, declaration);
         }
         if self.func.is_none() {
+            if let Some(name) = self.cg.collect_branch_handle(declaration) {
+                let value = self
+                    .cg
+                    .db
+                    .var_initializer(declaration)
+                    .map(|initializer| self.cg.lower_chandle(&self.path, initializer))
+                    .transpose()?;
+                return Ok(vec![IrStmt::Object(Box::new(
+                    IrObjectStmt::ChandleDeclareLocal(name, value),
+                ))]);
+            }
             if let Some(statements) = self
                 .cg
                 .lower_block_record_declaration(&self.path, declaration)?
@@ -135,14 +146,10 @@ impl EmitCtx<'_, '_> {
             }
             return Ok(statements);
         }
-        if let Some(value) = self
-            .func
-            .is_some()
-            .then(|| self.cg.native_roots.get(&declaration).copied())
-            .flatten()
-        {
-            // Native record locals: automatic storage is a lexical value
-            // initialized at each entry; static storage persists.
+        if let Some(value) = self.cg.native_roots.get(&declaration).copied() {
+            // Native record locals, also those of a detached function branch:
+            // automatic storage is a lexical value initialized at each entry;
+            // static storage persists.
             if !self.cg.model.native_values[value].activation {
                 // Static storage initializes once in the static schedule
                 // (SV 6.21, 10.5), never at the declaration statement.
@@ -388,16 +395,23 @@ impl EmitCtx<'_, '_> {
                                 self.cg.node(declaration).name
                             )
                         })?;
-                    let init = self
-                        .cg
-                        .db
-                        .var_initializer(declaration)
-                        .or_else(|| {
-                            self.cg
-                                .db
-                                .array_meta(declaration)
-                                .and_then(|array| array.init)
-                        })
+                    let initializer = self.cg.db.var_initializer(declaration).or_else(|| {
+                        self.cg
+                            .db
+                            .array_meta(declaration)
+                            .and_then(|array| array.init)
+                    });
+                    let (initializer, element) = self.split_record_element(initializer);
+                    // A record's two-state flag describes its type for `ref`
+                    // binding. Its value is two-state member by member, so
+                    // whole stores convert nothing.
+                    let store_two_state = two_state
+                        && matches!(
+                            self.cg.kind(declaration),
+                            NodeKind::Var { ty } | NodeKind::Array { ty }
+                                if is_two_state_kind(&ty.kind)
+                        );
+                    let init = initializer
                         .map(|initializer| {
                             let expression = self.cg.lower_expr(&self.path, initializer)?;
                             if width == 0 {
@@ -411,7 +425,7 @@ impl EmitCtx<'_, '_> {
                                     None,
                                 ))
                             } else {
-                                ir_to_storage(expression, width, signed, two_state)
+                                ir_to_storage(expression, width, signed, store_two_state)
                             }
                             .map(Box::new)
                         })
@@ -429,14 +443,15 @@ impl EmitCtx<'_, '_> {
                         .and_then(|function| function.locals.get(&declaration))
                         .map(|(name, ..)| name.clone())
                         .expect("automatic local storage checked above");
-                    Ok(vec![self.automatic_local(
+                    let declare = self.automatic_local(
                         declaration,
                         name,
                         width,
                         signed,
-                        two_state,
+                        store_two_state,
                         init,
-                    )])
+                    );
+                    self.with_record_element(declaration, declare, element)
                 }
                 VariableLifetime::Unavailable => Err(format!(
                     "resolved lifetime is unavailable for subprogram variable `{}` in `{}`",
@@ -527,16 +542,14 @@ impl EmitCtx<'_, '_> {
         if info.static_signal.is_some() {
             return Ok(Vec::new());
         }
-        let init = self
-            .cg
-            .db
-            .var_initializer(declaration)
-            .or_else(|| {
-                self.cg
-                    .db
-                    .array_meta(declaration)
-                    .and_then(|array| array.init)
-            })
+        let initializer = self.cg.db.var_initializer(declaration).or_else(|| {
+            self.cg
+                .db
+                .array_meta(declaration)
+                .and_then(|array| array.init)
+        });
+        let (initializer, element) = self.split_record_element(initializer);
+        let init = initializer
             .map(|initializer| {
                 let expr = self.cg.lower_expr(&self.path, initializer)?;
                 ir_to_storage(expr, info.width, info.signed, info.two_state).map(Box::new)
@@ -554,14 +567,50 @@ impl EmitCtx<'_, '_> {
                 })
             })
             .or_else(|| default_real_local_initializer(info.width));
-        Ok(vec![self.automatic_local(
+        let declare = self.automatic_local(
             declaration,
             info.c_name,
             info.width,
             info.signed,
             info.two_state,
             init,
-        )])
+        );
+        self.with_record_element(declaration, declare, element)
+    }
+
+    /// Separate an initializer naming a whole record element. It is no
+    /// scalar value, so it stores through the assignment that reads one.
+    fn split_record_element(
+        &self,
+        initializer: Option<NodeId>,
+    ) -> (Option<NodeId>, Option<NodeId>) {
+        match initializer {
+            Some(node) if self.cg.is_container_record(node) => (None, Some(node)),
+            other => (other, None),
+        }
+    }
+
+    fn with_record_element(
+        &mut self,
+        declaration: NodeId,
+        declare: IrStmt,
+        element: Option<NodeId>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let mut statements = vec![declare];
+        if let Some(element) = element {
+            statements.push(
+                self.cg
+                    .lower_native_value_assignment(
+                        &self.path,
+                        declaration,
+                        element,
+                        false,
+                        Operation::Assignment,
+                    )?
+                    .ok_or("record element initializer has no record assignment")?,
+            );
+        }
+        Ok(statements)
     }
 
     /// The declaration of an automatic handle local: a shared frame slot

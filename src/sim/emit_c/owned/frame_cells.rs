@@ -376,6 +376,8 @@ impl CellEligibility {
                 IrObjectStmt::StringAssign(_, value)
                 | IrObjectStmt::StringAssignLocal(_, value)
                 | IrObjectStmt::StringPrint(value) => self.string(ctx, value),
+                // Reads only the current static initializer and constants.
+                IrObjectStmt::StaticEffectCheck { .. } => {}
                 _ => self.proven = false,
             },
             IrStmt::Block(body)

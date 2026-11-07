@@ -156,6 +156,36 @@ impl Frame<'_, '_> {
                 self.discard(index);
                 return Ok(value);
             }
+            IrChandleExpr::EventEntry {
+                container,
+                index,
+                key,
+            } => {
+                if self.read_only_callback {
+                    return Err(pending("event entry creation in a read-only callback"));
+                }
+                let name = self.container_name(*container)?;
+                if let Some(index) = index {
+                    let index = self.expression(index)?;
+                    let value = self.scalar(
+                        "void*",
+                        format!("llg_assoc_event_entry_integral(&{name}, {})", index.code),
+                    );
+                    self.discard(index);
+                    return Ok(value);
+                }
+                let key = key.as_ref().ok_or("event entry has no key")?;
+                let key = self.string(key)?;
+                let value = self.scalar(
+                    "void*",
+                    format!(
+                        "llg_assoc_event_entry_string(&{name}, ({})->data, ({})->len)",
+                        key.address, key.address
+                    ),
+                );
+                self.native_discard(key);
+                return Ok(value);
+            }
             IrChandleExpr::Mailbox(mailbox) => return self.mailbox_handle(mailbox),
             IrChandleExpr::ContainerElement {
                 container,
@@ -425,6 +455,16 @@ impl Frame<'_, '_> {
     pub(super) fn object_statement(&mut self, statement: &IrObjectStmt) -> Result<(), String> {
         use IrObjectStmt::*;
         match statement {
+            StaticEffectCheck {
+                what,
+                location,
+                subroutine,
+            } => self.line(format!(
+                "if (llg_static_init_variable) llg_rt_static_effect({}, {}, {});",
+                c_string_literal(what),
+                c_string_literal(location),
+                c_string_literal(subroutine)
+            )),
             StringPrint(text) => {
                 let value = self.string(text)?;
                 self.line(format!("llg_string_print({});", value.take_string()));

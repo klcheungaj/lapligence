@@ -13,6 +13,7 @@
 //! back into the model ([`IrContainerStmt::Gather`],
 //! [`IrContainerStmt::UniquePositions`], [`IrContainerStmt::SortByKeys`]).
 
+use super::fixed_reductions::reduction_integral;
 use super::*;
 use crate::sim::ir::{IrBitQuery, IrObjectQuery, IrObjectStmt, IrSysFunc};
 
@@ -1230,10 +1231,52 @@ pub(super) struct FixedMethodCopy {
     /// Leading indices of a selected row (`m[i].find(...)`), read from
     /// locals the copy statements set once; empty for a whole array.
     row: Vec<IrExpr>,
-    range: (i32, i32),
+    pub(super) range: (i32, i32),
     real: bool,
     width: u32,
     signed: bool,
+}
+
+/// A fixed array held as one packed value, copied into an activation queue.
+pub(super) struct FixedValueCopy {
+    pub(super) queue: usize,
+    pub(super) statements: Vec<IrStmt>,
+    pub(super) range: (i32, i32),
+}
+
+/// Declare `position` and push `value`, which reads it, `count` times.
+fn fixed_copy_loop(position: &str, count: i128, queue: usize, value: IrExpr) -> [IrStmt; 2] {
+    let read = || local_read(position, 32, true);
+    [
+        IrStmt::DeclLocal {
+            name: position.to_owned(),
+            width: 32,
+            signed: true,
+            init: None,
+            two_state: true,
+        },
+        IrStmt::For {
+            init: vec![assign(
+                local_lhs(position, 32, true, true),
+                int_const(0, 32, true),
+            )],
+            cond: cmp_expr_ir(IrBinOp::Lt, read(), int_const(count, 32, true)),
+            incr: vec![assign(
+                local_lhs(position, 32, true, true),
+                IrExpr::resize_to(
+                    common_bin_expr(IrBinOp::Add, read(), int_const(1, 32, true)),
+                    32,
+                    true,
+                ),
+            )],
+            body: vec![IrStmt::Container(Box::new(
+                IrContainerStmt::QueuePushBack {
+                    container: queue,
+                    value,
+                },
+            ))],
+        },
+    ]
 }
 
 impl Codegen<'_> {
@@ -1332,37 +1375,8 @@ impl Codegen<'_> {
             signed,
             None,
         );
-        statements.extend([
-            declare,
-            IrStmt::DeclLocal {
-                name: position.clone(),
-                width: 32,
-                signed: true,
-                init: None,
-                two_state: true,
-            },
-            IrStmt::For {
-                init: vec![assign(
-                    local_lhs(&position, 32, true, true),
-                    int_const(0, 32, true),
-                )],
-                cond: cmp_expr_ir(IrBinOp::Lt, read(), int_const(count, 32, true)),
-                incr: vec![assign(
-                    local_lhs(&position, 32, true, true),
-                    IrExpr::resize_to(
-                        common_bin_expr(IrBinOp::Add, read(), int_const(1, 32, true)),
-                        32,
-                        true,
-                    ),
-                )],
-                body: vec![IrStmt::Container(Box::new(
-                    IrContainerStmt::QueuePushBack {
-                        container: queue,
-                        value,
-                    },
-                ))],
-            },
-        ]);
+        statements.push(declare);
+        statements.extend(fixed_copy_loop(&position, count, queue, value));
         Ok(Some(FixedMethodCopy {
             queue,
             statements,
@@ -1372,6 +1386,83 @@ impl Codegen<'_> {
             real,
             width,
             signed,
+        }))
+    }
+
+    /// Copy a fixed integral array held as one packed value, which is how a
+    /// subroutine local is stored, into a fresh activation queue for a method
+    /// that returns a queue. The element at left-to-right position `p` of `n`
+    /// sits `n - 1 - p` strides above bit 0.
+    pub(super) fn fixed_value_method_copy(
+        &mut self,
+        path: &str,
+        receiver: NodeId,
+    ) -> Result<Option<FixedValueCopy>, String> {
+        let Some(descriptor) = self.query_descriptor(receiver).cloned() else {
+            return Ok(None);
+        };
+        let TypeShape::FixedArray {
+            dimensions,
+            element,
+        } = &descriptor.shape
+        else {
+            return Ok(None);
+        };
+        let (&[range], Some(width)) = (
+            dimensions.as_slice(),
+            Self::fixed_descriptor_width(element).filter(|_| reduction_integral(element)),
+        ) else {
+            return Ok(None);
+        };
+        let signed = element.info.signed;
+        let count = i128::from(range.0.abs_diff(range.1)) + 1;
+        let image = self.lower_expr(path, receiver)?;
+        if image.is_real() || i128::from(image.width) != count * i128::from(width) {
+            return Ok(None);
+        }
+        let (queue, declare) = self.inline_queue(IrContainerElement::Packed {
+            width,
+            signed,
+            two_state: element.two_state,
+        });
+        self.inline_fixed_ranges.insert(queue, range);
+        let (image_name, position) = (self.inline_name("fval"), self.inline_name("fpos"));
+        let image_width = image.width;
+        let offset = common_bin_expr(
+            IrBinOp::Mul,
+            common_bin_expr(
+                IrBinOp::Sub,
+                int_const(count - 1, 32, true),
+                local_read(&position, 32, true),
+            ),
+            int_const(i128::from(width), 32, true),
+        );
+        let value = IrExpr::new(
+            IrExprKind::IdxPartSel {
+                base: Box::new(local_read(&image_name, image_width, false)),
+                base_idx: Box::new(IrExpr::resize_to(offset, 32, true)),
+                width_expr: Box::new(int_const(i128::from(width), 32, true)),
+                neg: false,
+            },
+            width,
+            signed,
+            None,
+        );
+        let mut statements = vec![
+            declare,
+            IrStmt::DeclLocal {
+                name: image_name,
+                width: image_width,
+                signed: false,
+                init: Some(Box::new(image)),
+                two_state: element.two_state,
+            },
+        ];
+        statements.extend(fixed_copy_loop(&position, count, queue, value));
+        Ok(Some(FixedValueCopy {
+            queue,
+            statements,
+            range,
         }))
     }
 
@@ -1441,7 +1532,7 @@ impl Codegen<'_> {
     /// declared fixed-array index.
     pub(super) fn fixed_method_indices(
         &mut self,
-        copy: &FixedMethodCopy,
+        range: (i32, i32),
         dst: usize,
     ) -> Result<Vec<IrStmt>, String> {
         let IrContainerElement::Packed {
@@ -1473,7 +1564,7 @@ impl Codegen<'_> {
             32,
             true,
         );
-        let index = fixed_index_of(current, copy.range.0, copy.range.1);
+        let index = fixed_index_of(current, range.0, range.1);
         let value = ir_to_storage(
             IrExpr::convert_to(index, width, signed),
             width,

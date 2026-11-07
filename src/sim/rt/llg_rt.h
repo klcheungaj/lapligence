@@ -1709,6 +1709,15 @@ int llg_region_is_read_only(void);
 void llg_rt_request_finish(void);
 // Mark a simulator-generated failure before terminating through a severity task.
 void llg_rt_mark_failed(void);
+/* The variable whose static initializer is running, when it can reach a
+ * deferred statement; NULL otherwise. Generated checks read it before such a
+ * statement, and `llg_rt_static_effect` stops the run (SV 13.4.4). The
+ * strings are model constants. */
+extern const char* llg_static_init_variable;
+void llg_rt_static_init_enter(const char* variable, const char* location);
+void llg_rt_static_init_leave(void);
+void llg_rt_static_effect(const char* what, const char* location,
+                          const char* subroutine);
 // Make the run that a following fatal severity task ends skip its final
 // procedures: some simulator-generated errors stop the run at once, without
 // the end-of-simulation work a `$finish` or `$fatal` does.
@@ -3139,6 +3148,11 @@ void llg_event_object_reset(llg_event_object_t* ev);
 // new event elements of resizable containers it is owned by the scheduler
 // until model close, so handles copied out of the activation stay valid.
 llg_event_object_t* llg_event_object_new(void);
+/* The event of one associative array entry; a missing entry is created with
+ * a new event. An invalid key creates nothing and yields null. */
+void* llg_assoc_event_entry_integral(llg_assoc_value_t* array, sv4_t key);
+void* llg_assoc_event_entry_string(llg_assoc_value_t* array, const void* key,
+                                   size_t key_length);
 
 // `object` is an llg_event_object_t*, typed void* so that a `ref` event formal
 // bound to a class event property can address the property's void* handle slot

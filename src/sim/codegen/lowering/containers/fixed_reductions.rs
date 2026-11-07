@@ -275,7 +275,7 @@ fn undefined_iterator_dimension(
     )
 }
 
-fn reduction_integral(descriptor: &TypeDescriptor) -> bool {
+pub(super) fn reduction_integral(descriptor: &TypeDescriptor) -> bool {
     matches!(&descriptor.shape, TypeShape::PackedAtom { .. })
         || matches!(&descriptor.shape, TypeShape::Aggregate(layout)
             if matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion))

@@ -335,6 +335,14 @@ impl<'a> Codegen<'a> {
                         init: Some(self.lower_string(path, node)?),
                     }])));
                 }
+                if self.model.containers[container.ir].element.is_handle() {
+                    return Ok(Some(IrStmt::Block(vec![IrStmt::Object(Box::new(
+                        crate::sim::ir::IrObjectStmt::ChandleDeclareLocal(
+                            format!("_llg_pop{}", node.0),
+                            Some(self.lower_chandle(path, node)?),
+                        ),
+                    ))])));
+                }
                 let Some(value) = self.lower_container_query(path, node)? else {
                     return Ok(None);
                 };

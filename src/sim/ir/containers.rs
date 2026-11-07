@@ -1049,8 +1049,9 @@ impl IrValueItemRoot {
         model: &super::IrModel,
         items: &[u32],
         total: u64,
+        string_return: Option<bool>,
     ) -> Result<(), IrValidationError> {
-        let mut item = Some(self.element(model)?);
+        let mut item = Some(self.element(model, string_return)?);
         for step in items {
             item = match item {
                 Some(IrContainerElement::Aggregate { members, .. }) => members
@@ -1081,6 +1082,7 @@ impl IrValueItemRoot {
     fn element<'a>(
         &self,
         model: &'a super::IrModel,
+        string_return: Option<bool>,
     ) -> Result<&'a IrContainerElement, IrValidationError> {
         match self {
             Self::Value(value) => {
@@ -1104,7 +1106,7 @@ impl IrValueItemRoot {
                     indices: indices.clone(),
                     key: key.as_deref().cloned(),
                 }
-                .located_element(storage, None, model)
+                .located_element(storage, string_return, model)
             }
             Self::Element(_) => Err(IrValidationError::new(
                 "container value",
@@ -1217,7 +1219,19 @@ impl IrValueSlot {
         string_return: Option<bool>,
         model: &super::IrModel,
     ) -> Result<&'a IrContainerElement, IrValidationError> {
-        let element = self.slot_element(container, true, string_return, model)?;
+        let element = self.located_shape(container)?;
+        self.validate_key(string_return, model)?;
+        Ok(element)
+    }
+
+    /// The element shape of an element locator, for a type lookup. Its key is
+    /// not validated: the locator is validated on its own, in the context of
+    /// its call.
+    pub(in crate::sim) fn located_shape<'a>(
+        &self,
+        container: &'a IrContainer,
+    ) -> Result<&'a IrContainerElement, IrValidationError> {
+        let element = self.slot_shape(container, true)?;
         match element {
             IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. } => {
                 Ok(element)
@@ -1237,6 +1251,27 @@ impl IrValueSlot {
         string_return: Option<bool>,
         model: &super::IrModel,
     ) -> Result<&'a IrContainerElement, IrValidationError> {
+        let element = self.slot_shape(container, write)?;
+        self.validate_key(string_return, model)?;
+        Ok(element)
+    }
+
+    fn validate_key(
+        &self,
+        string_return: Option<bool>,
+        model: &super::IrModel,
+    ) -> Result<(), IrValidationError> {
+        match self {
+            Self::Element { key: Some(key), .. } => key.validate(model, string_return),
+            _ => Ok(()),
+        }
+    }
+
+    fn slot_shape<'a>(
+        &self,
+        container: &'a IrContainer,
+        write: bool,
+    ) -> Result<&'a IrContainerElement, IrValidationError> {
         let queue = matches!(container.kind, IrContainerKind::Queue { .. });
         let string_keyed = matches!(
             container.kind,
@@ -1246,14 +1281,13 @@ impl IrValueSlot {
         );
         let depth = match self {
             Self::Element { indices, key } => {
-                if let Some(key) = key {
+                if key.is_some() {
                     if !string_keyed || !indices.is_empty() {
                         return Err(IrValidationError::new(
                             "container value",
                             "a string key selects one element of a string-keyed array",
                         ));
                     }
-                    key.validate(model, string_return)?;
                     1
                 } else {
                     if string_keyed || indices.is_empty() || indices.iter().any(IrExpr::is_real) {
@@ -1945,7 +1979,7 @@ impl IrContainerStmt {
                 items,
                 selects,
             } => {
-                let mut item = Some(root.element(model)?);
+                let mut item = Some(root.element(model, string_return)?);
                 for (slot, step) in items.iter().enumerate() {
                     let selected = selects.iter().find(|select| select.slot == slot);
                     if let (Some(select), Some(array)) = (selected, item) {
@@ -1999,7 +2033,9 @@ impl IrContainerStmt {
                     {
                         Ok(())
                     }
-                    (None, Some(root)) => root.fixed_item(model, items, storage.total),
+                    (None, Some(root)) => {
+                        root.fixed_item(model, items, storage.total, string_return)
+                    }
                     _ => Err(IrValidationError::new(
                         "container value",
                         "real column needs one source of its size",
@@ -2016,7 +2052,7 @@ impl IrContainerStmt {
                         "native fixed-array store needs descriptor storage",
                     ));
                 }
-                root.fixed_item(model, items, storage.total)
+                root.fixed_item(model, items, storage.total, string_return)
             }
             Self::ValueItemToContainer {
                 root,
@@ -2029,7 +2065,7 @@ impl IrContainerStmt {
                 items,
             } => {
                 let container = container_kind(model, *container, None)?;
-                let mut item = Some(root.element(model)?);
+                let mut item = Some(root.element(model, string_return)?);
                 for step in items {
                     item = match item {
                         Some(IrContainerElement::Aggregate { members, .. }) => members
@@ -2071,7 +2107,7 @@ impl IrContainerStmt {
                         "only activation containers alias a nested element",
                     ));
                 }
-                match (root.element(model)?, &container.kind) {
+                match (root.element(model, string_return)?, &container.kind) {
                     (
                         IrContainerElement::Container {
                             element,

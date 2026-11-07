@@ -437,7 +437,7 @@ impl Validator<'_> {
                     self.validate_native_value_use(*value, path)?;
                 }
                 let info = &self.model.arrays[*array];
-                root.fixed_item(self.model, items, info.total)?;
+                root.fixed_item(self.model, items, info.total, self.string_return.get())?;
                 u64::from(info.elem_width)
                     .checked_mul(info.total)
                     .ok_or_else(|| IrValidationError::new(path, "fixed operand width overflow"))
