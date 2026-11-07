@@ -162,3 +162,14 @@ fn constraint_scope() {
         &[],
     );
 }
+
+#[test]
+fn handle_call_arguments() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "handle_call_arguments",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/handle_call_arguments.out"),
+        &[],
+        &[],
+    );
+}
