@@ -65,6 +65,13 @@ fn class_container_forms_of_method_bodies() {
 }
 
 #[test]
+fn generic_class_specializations() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/generic_specializations.out");
+    sim_cli::run_case_backend_parity(SUITE, "generic_specializations", expected, &[], &[]);
+}
+
+#[test]
 fn call_results_are_method_receivers_and_select_bases() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/call_result_selects.out");

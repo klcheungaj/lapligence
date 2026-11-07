@@ -2535,6 +2535,54 @@ bool isSyntheticLValue(const Expression& expression) {
   return current->kind == ExpressionKind::LValueReference;
 }
 
+// A key that orders the specializations of one generic class by their
+// parameter values: printed values and types, plus the declaring path and
+// source position of each type, which tell apart same-named types of
+// different scopes.
+std::string specializationOrderKey(const Type& specialization) {
+  std::string key;
+  if (specialization.kind != SymbolKind::ClassType)
+    return key;
+  for (const Symbol& member : specialization.as<ClassType>().members()) {
+    if (member.kind == SymbolKind::Parameter) {
+      key += member.as<ParameterSymbol>().getValue().toString(
+          std::numeric_limits<bitwidth_t>::max(), true);
+      key += '\x1f';
+    }
+    else if (member.kind == SymbolKind::TypeParameter) {
+      const Type& type = member.as<TypeParameterSymbol>().targetType.getType();
+      for (const Type* named : {&type, &type.getCanonicalType()}) {
+        key += named->toString();
+        key += '\x1e';
+        key += named->getHierarchicalPath();
+        key += '\x1e';
+        key += std::to_string(named->location.buffer().getId());
+        key += ':';
+        key += std::to_string(named->location.offset());
+        key += '\x1f';
+      }
+    }
+  }
+  return key;
+}
+
+// Slang keeps a generic class's specializations in a hash map keyed by type
+// and value addresses, so its iteration order changes between runs. Capture
+// numbers the nodes it visits in order, so it visits them sorted instead.
+std::vector<const Type*> orderedSpecializations(const GenericClassDefSymbol& generic) {
+  std::vector<std::pair<std::string, const Type*>> keyed;
+  keyed.reserve(generic.numSpecializations());
+  for (const Type& specialization : generic.specializations())
+    keyed.emplace_back(specializationOrderKey(specialization), &specialization);
+  std::stable_sort(keyed.begin(), keyed.end(),
+                   [](const auto& left, const auto& right) { return left.first < right.first; });
+  std::vector<const Type*> ordered;
+  ordered.reserve(keyed.size());
+  for (const auto& entry : keyed)
+    ordered.push_back(entry.second);
+  return ordered;
+}
+
 class SemanticCapture final
     : public ASTVisitor<SemanticCapture, VisitFlags::AllGood | VisitFlags::Bad> {
 public:
@@ -3516,6 +3564,13 @@ public:
         visitDefault(symbol);
       else
         captureProduction(id, symbol);
+    }
+    else if constexpr (std::same_as<T, GenericClassDefSymbol>) {
+      // visitDefault would only walk the specializations, in hash order.
+      const Symbol* outer = std::exchange(lookupOwner, &symbol);
+      for (const Type* specialization : orderedSpecializations(symbol))
+        specialization->visit(*this);
+      lookupOwner = outer;
     }
     else {
       const Symbol* outer = std::exchange(lookupOwner, &symbol);
