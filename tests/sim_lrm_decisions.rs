@@ -5429,6 +5429,14 @@ fn s07_d10_class_key_pattern() {
 }
 
 #[test]
+fn s07_d13_min_max_unknown_elements() {
+    run_decision(
+        "S07-D13_min_max_unknown_elements",
+        include_str!("fixtures/sim/lrm_decisions/S07-D13_min_max_unknown_elements.out"),
+    );
+}
+
+#[test]
 fn s14_d7_event_nba_order() {
     run_decision(
         "S14-D7_event_nba_order",

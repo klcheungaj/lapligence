@@ -1,0 +1,147 @@
+# type source targets: rows that build and print the same at 16 and at 3 cells
+# regenerate with: gen_record_shapes.py survey <llg> <work dir>
+str mod mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str loc mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str stat mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str call mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+str ident mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+str q mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str dyn mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str as mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str fa mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str nas mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,cmp,arg,arg2,var,nba,mnba
+str naq mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str cls mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str mem mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+str emem mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+str pop mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+str cond mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+str cond2 mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+str var mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+pk mod mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+pk loc mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+pk stat mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+pk call mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+pk ident mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+pk q mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+pk dyn mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+pk as mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+pk fa mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+pk nas mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+pk naq mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+pk cls mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+pk mem mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+pk emem mod,q,push,dyn,as,nas,naq,mem,var,mnba
+pk pop mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+pk pat mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,arg,arg2,var,nba,mnba
+pk var mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+mix mod mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix loc mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix stat mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix call mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+mix ident mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+mix q mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix dyn mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix as mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix fa mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix nas mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,cmp,arg,arg2,var,nba,mnba
+mix naq mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix cls mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix mem mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+mix emem mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+mix pop mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+mix cond mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+mix cond2 mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+mix var mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+nest mod mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+nest loc mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+nest stat mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+nest call mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+nest ident mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+nest q mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+nest dyn mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+nest as mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+nest fa mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+nest nas mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+nest naq mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+nest cls mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+nest mem mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,cmp,arg,arg2,var,nba,mnba
+nest emem mod,q,push,dyn,as,nas,naq,mem,var,mnba
+nest pop mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+nest pat mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,init,arg,arg2,var,nba,mnba
+nest var mod,loc,stat,q,push,dyn,as,nas,naq,mem,var,mnba
+rl mod mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl loc mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl stat mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl call mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+rl ident mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+rl q mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl dyn mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl as mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl fa mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl nas mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,cmp,arg,arg2,var,nba,mnba
+rl naq mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl cls mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl mem mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+rl emem mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+rl pop mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+rl cond mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+rl cond2 mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+rl var mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st mod mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st loc mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st stat mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st call mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+st ident mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+st q mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st dyn mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st as mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st fa mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st nas mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,cmp,arg,arg2,var,nba,mnba
+st naq mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st cls mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st mem mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+st emem mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+st pop mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+st cond mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+st cond2 mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,arg,arg2,var,nba,mnba
+st var mod,loc,stat,q,push,dyn,as,fa,nas,naq,cls,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj mod mod,loc,stat,q,push,dyn,as,fa,nas,naq,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj loc mod,loc,stat,q,push,dyn,as,fa,nas,naq,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj stat mod,loc,stat,q,push,dyn,as,fa,nas,naq,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj call mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+obj ident mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+obj q mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj dyn mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj as mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj fa mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj nas mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,cmp,arg,arg2,var,nba,mnba
+obj naq mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj cls mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+obj mem q,push,dyn,as,fa,nas,naq,out,ref,cmp,arg,arg2,var,nba
+obj emem mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+obj pop mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+obj cond mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+obj cond2 mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,arg,arg2,var,nba,mnba
+obj var mod,loc,stat,q,push,dyn,as,fa,nas,naq,mem,out,ref,init,cmp,arg,arg2,var,nba,mnba
+# rows that build only at 16 cells (no per-cell form to compare with)
+# pk q fa,cls,out,init,arg,arg2,nba
+# pk dyn fa,cls,out,init,arg,arg2,nba
+# pk as fa,cls,out,init,arg,arg2,nba
+# pk nas fa,cls,out,arg,arg2,nba
+# pk naq fa,cls,out,init,arg,arg2,nba
+# pk emem loc,stat,fa,cls,out,init,cmp,arg,arg2,nba
+# pk pop fa,cls,out,init,arg,arg2,nba
+# pk cond mod,loc,stat,fa,cls,mem,out,init,arg,arg2,nba,mnba
+# pk cond2 mod,loc,stat,fa,cls,mem,out,init,arg,arg2,nba,mnba
+# pk var fa,cls,out,init,arg,arg2,nba
+# nest q fa,cls,out,init,arg,arg2,nba
+# nest dyn fa,cls,out,init,arg,arg2,nba
+# nest as fa,cls,out,init,arg,arg2,nba
+# nest nas fa,cls,out,arg,arg2,nba
+# nest naq fa,cls,out,init,arg,arg2,nba
+# nest emem loc,stat,fa,cls,out,init,cmp,arg,arg2,nba
+# nest pop fa,cls,out,init,arg,arg2,nba
+# nest cond mod,loc,stat,fa,cls,mem,out,init,arg,arg2,nba,mnba
+# nest cond2 mod,loc,stat,fa,cls,mem,out,init,arg,arg2,nba,mnba
+# nest var fa,cls,out,init,arg,arg2,nba

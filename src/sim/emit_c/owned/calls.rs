@@ -1053,6 +1053,7 @@ impl Frame<'_, '_> {
                 key,
             } => self.element_reference_root(*container, index.as_ref(), key.as_ref())?,
         };
+        let root = acquire.clone();
         for step in &reference.steps {
             let position = match step {
                 IrElementStep::Item(position) => position.to_string(),
@@ -1081,6 +1082,20 @@ impl Frame<'_, '_> {
         self.line(format!(
             "*(void**)llg_value_scope_object({scope}) = {acquire};"
         ));
+        // A waiter on the default an unselected index binds never wakes, so
+        // the call stops the run instead; the scope above releases the
+        // reference. Calls whose callee does not wait pay nothing.
+        if let (true, Some(stop)) = (watched, &reference.stop_unselected) {
+            self.line(format!("if (!llg_native_ref_selected({root})) {{"));
+            self.line("llg_rt_mark_failed();");
+            self.line(format!(
+                "llg_rt_fatal_typed(0, {}, NULL, 0, {}, {});",
+                super::c_string_literal(crate::sim::ir::RECORD_REF_UNSELECTED_MESSAGE),
+                super::c_string_literal(&stop.scope),
+                super::c_string_literal(&stop.location),
+            ));
+            self.line("}");
+        }
         Ok(match reference.kind {
             IrElementRefKind::String => vec![format!("llg_native_ref_string({acquire})")],
             IrElementRefKind::Handle => vec![

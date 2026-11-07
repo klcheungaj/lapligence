@@ -1326,6 +1326,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   locators, min/max/unique result queues, sort/rsort/reverse/shuffle are present.
   Queue/dynamic `sort`/`rsort` evaluate each `with` key once in index order, then
   stable merge-sort in O(n log n); elements with an X/Z key stay in place.
+  `min`/`max` order an element or key with an X/Z bit below every known value,
+  so the extreme does not depend on the order of the array (S07-D13, both the
+  callback runtime and the generated loop).
   Where the packed/real callback runtime cannot express a method (string,
   record, handle or nested-container items, real or string keys, `with`
   expressions that read automatic state or call subroutines, string-keyed
@@ -1813,7 +1816,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   through the formal reaches the element's readers at that store, whatever its
   form ([record_ref_write_paths](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   A run-time record element of a module record binds through one
-  specialization per element under a decision tree in statement calls
+  specialization per element under a decision tree in statement calls; a task
+  that waits on the formal stops the run when the index selects no element,
+  at any array size
   ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   Virtual-interface methods take these actuals through a bound dispatch entry
   ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).

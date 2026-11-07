@@ -43,6 +43,7 @@ mod sim_random;
 mod sim_random_streams;
 mod sim_real;
 mod sim_real_conversions;
+mod sim_record_shape_grid;
 mod sim_reference_args;
 mod sim_resume_locations;
 mod sim_review_batch2;

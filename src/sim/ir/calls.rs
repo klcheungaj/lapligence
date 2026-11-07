@@ -228,6 +228,23 @@ pub struct IrElementRef {
     /// companion containers, which the call creates and keeps equal to the
     /// element's nested slots for as long as the reference lives.
     pub(in crate::sim) companions: Vec<IrRefCompanion>,
+    /// For a record element of a member array: where the run stops when the
+    /// index selects no element and the callee waits on the formal.
+    pub(in crate::sim) stop_unselected: Option<IrRefStop>,
+}
+
+/// Message of the run-time error for a waited record `ref` formal whose
+/// actual selects no element: a waiter on a default record would never wake.
+pub const RECORD_REF_UNSELECTED_MESSAGE: &str =
+    "index of a record `ref` actual selects no element of a task that waits on the formal";
+
+/// Source context of the stop of [`IrElementRef::stop_unselected`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrRefStop {
+    /// HDL hierarchy used by `%m`.
+    pub(in crate::sim) scope: String,
+    /// Source context shown in the runtime diagnostic prefix.
+    pub(in crate::sim) location: String,
 }
 
 /// One companion container of a record element bound to a `ref` formal.
