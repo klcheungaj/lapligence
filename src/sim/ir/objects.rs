@@ -731,9 +731,7 @@ impl IrStringExpr {
             }
             return Ok(());
         }
-        let mut valid = true;
-        self.visit_expressions(false, &mut |expr| valid &= !expr.is_real());
-        if !valid {
+        if self.has_real_operand() {
             return Err(super::IrValidationError::new(
                 "string",
                 "string operation requires packed integral operands",
@@ -1000,6 +998,23 @@ impl IrStringExpr {
     /// Visit every packed or real operand; `typed_call_args` includes the
     /// arguments of typed calls, which may legitimately be real or carry
     /// native leaves and so are not string-operation operands.
+    /// Whether an operand of this string operation is real. A format takes
+    /// real arguments, wherever a concatenation or conditional nests one.
+    fn has_real_operand(&self) -> bool {
+        match self {
+            Self::Format { .. } => false,
+            Self::Concat(parts) => parts.iter().any(Self::has_real_operand),
+            Self::Conditional {
+                then, otherwise, ..
+            } => then.has_real_operand() || otherwise.has_real_operand(),
+            _ => {
+                let mut real = false;
+                self.visit_expressions(false, &mut |expr| real |= expr.is_real());
+                real
+            }
+        }
+    }
+
     fn visit_expressions(&self, typed_call_args: bool, visit: &mut impl FnMut(&IrExpr)) {
         match self {
             Self::Literal(_)

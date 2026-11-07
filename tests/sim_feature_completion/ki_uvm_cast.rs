@@ -173,3 +173,14 @@ fn handle_call_arguments() {
         &[],
     );
 }
+
+#[test]
+fn string_contexts() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "string_contexts",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/string_contexts.out"),
+        &[],
+        &[],
+    );
+}
