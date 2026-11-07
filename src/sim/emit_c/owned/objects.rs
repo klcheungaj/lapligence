@@ -62,6 +62,15 @@ impl Frame<'_, '_> {
                 let handle = self.rand_instance(*problem, inst)?;
                 return Ok(self.scalar("void*", handle));
             }
+            IrChandleExpr::ClassFromKey(key) => {
+                let key = self.expression(key)?;
+                let handle = self.scalar(
+                    "void*",
+                    format!("(void*)(uintptr_t)sv4_to_u64({})", key.code),
+                );
+                self.discard(key);
+                return Ok(handle);
+            }
             IrChandleExpr::Required { handle, site } => {
                 let handle = self.chandle(handle)?;
                 if self.quiet_receivers {
@@ -358,6 +367,14 @@ impl Frame<'_, '_> {
                 let left = self.chandle(left)?;
                 let right = self.chandle(right)?;
                 self.value(format!("sv4_from_u64({left} == {right}, 1, 0)"), 1, false)
+            }
+            ClassKey(handle) => {
+                let handle = self.chandle(handle)?;
+                self.value(
+                    format!("sv4_from_u64((uint64_t)(uintptr_t){handle}, 64, 0)"),
+                    64,
+                    false,
+                )
             }
             Coverage(query) => self.coverage_query(query)?,
             VirtualInterfaceInstance {

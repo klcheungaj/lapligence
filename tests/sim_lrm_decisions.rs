@@ -29,6 +29,14 @@ fn t1_d2_event_compare_wait_rejected() {
 }
 
 #[test]
+fn s30_d16_rand_mode_handle_variable() {
+    run_decision(
+        "S30-D16_rand_mode_handle_variable",
+        include_str!("fixtures/sim/lrm_decisions/S30-D16_rand_mode_handle_variable.out"),
+    );
+}
+
+#[test]
 fn t1_d8_strength_only_events() {
     run_decision(
         "T1-D8_strength_only_events",
@@ -5317,6 +5325,30 @@ fn s07_d8_nested_write_value_first() {
     run_decision(
         "S07-D8_nested_write_value_first",
         include_str!("fixtures/sim/lrm_decisions/S07-D8_nested_write_value_first.out"),
+    );
+}
+
+#[test]
+fn s05_d1_escapes_beside_non_ascii_source() {
+    run_decision(
+        "S05-D1_escapes_beside_non_ascii_source",
+        include_str!("fixtures/sim/lrm_decisions/S05-D1_escapes_beside_non_ascii_source.out"),
+    );
+}
+
+#[test]
+fn s07_d9_class_key_order() {
+    run_decision(
+        "S07-D9_class_key_order",
+        include_str!("fixtures/sim/lrm_decisions/S07-D9_class_key_order.out"),
+    );
+}
+
+#[test]
+fn s07_d10_class_key_pattern() {
+    run_decision(
+        "S07-D10_class_key_pattern",
+        include_str!("fixtures/sim/lrm_decisions/S07-D10_class_key_pattern.out"),
     );
 }
 

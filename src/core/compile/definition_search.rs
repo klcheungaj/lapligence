@@ -25,6 +25,7 @@ struct Candidate {
     name: String,
     target: AdmittedTarget,
     text: String,
+    raw: Option<std::sync::Arc<[u8]>>,
     declared: BTreeSet<String>,
     referenced: BTreeSet<String>,
 }
@@ -74,6 +75,7 @@ fn include_buffers(owned: &[OwnedSource]) -> impl Iterator<Item = Source<'_>> {
         .map(|source| Source {
             name: &source.name,
             text: &source.text,
+            raw: source.raw.as_deref(),
             is_compilation_unit: false,
             is_library_map: false,
         })
@@ -90,14 +92,20 @@ fn admitted_names(
         .owned
         .iter()
         .filter(|source| source.is_compilation_unit && !source.is_library_map)
-        .map(|source| Source::compilation_unit(&source.name, &source.text))
+        .map(|source| Source {
+            raw: source.raw.as_deref(),
+            ..Source::compilation_unit(&source.name, &source.text)
+        })
         .collect();
     sources.extend(
         state
             .library_owned
             .iter()
             .filter(|source| !source.is_library_map)
-            .map(|source| Source::compilation_unit(&source.name, &source.text)),
+            .map(|source| Source {
+                raw: source.raw.as_deref(),
+                ..Source::compilation_unit(&source.name, &source.text)
+            }),
     );
     sources.extend(include_buffers(state.owned));
     let defines = metadata_defines(opts);
@@ -198,7 +206,8 @@ fn scan_candidates(
         candidates.push(Candidate {
             name,
             target,
-            text,
+            text: text.text,
+            raw: text.raw,
             declared: BTreeSet::new(),
             referenced: BTreeSet::new(),
         });
@@ -208,7 +217,10 @@ fn scan_candidates(
     }
     let mut sources: Vec<Source<'_>> = candidates
         .iter()
-        .map(|candidate| Source::compilation_unit(&candidate.name, &candidate.text))
+        .map(|candidate| Source {
+            raw: candidate.raw.as_deref(),
+            ..Source::compilation_unit(&candidate.name, &candidate.text)
+        })
         .collect();
     sources.extend(include_buffers(state.owned));
     let defines = metadata_defines(opts);
@@ -263,11 +275,10 @@ fn admit_found_file(
     state
         .admitted_targets
         .insert(path.clone(), candidate.target.clone());
-    state.library_owned.push(LibrarySource::new(
-        candidate.name.clone(),
-        candidate.text.clone(),
-        library,
-    ));
+    state.library_owned.push(
+        LibrarySource::new(candidate.name.clone(), candidate.text.clone(), library)
+            .with_raw(candidate.raw.clone()),
+    );
 
     // Includes follow the library-source rules in `compile`: merged mode
     // shares one macro environment per library in admission order.

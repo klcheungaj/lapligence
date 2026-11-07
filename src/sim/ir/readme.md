@@ -211,7 +211,9 @@ S27-D21). An integral-index associative array of packed words has no
 geometry: its addresses are keys. When its elements are fixed arrays it takes
 the same `Row` selector (the key) for one element (S27-D23..D25). The whole
 container of fixed arrays, or a slice of its elements, is not a memory
-(S27-D22).
+(S27-D22). A class key (`IrAssocKey::Class`) is an integral key of
+`CLASS_KEY_WIDTH` bits holding the object's address: `IrObjectQuery::ClassKey`
+makes one from a handle and `IrChandleExpr::ClassFromKey` reads one back.
 The view geometry (`origin`, `selectors`, `dims`, `strides`, `total`) is the
 one fixed-array memory views use and is validated by the same
 `validate_memory_geometry`. Module and static memories keep their existing

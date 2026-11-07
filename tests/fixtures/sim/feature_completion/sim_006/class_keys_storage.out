@@ -1,0 +1,38 @@
+empty first 0 1
+5 2 1
+7 x 1 y 1
+r 1 1
+r 2 7
+r 3 1
+hd 1 3
+hd 2 4
+1 1 6
+qa 0 3
+0 8
+s4 s1 2
+2 3
+3
+9 1 2
+deep 0 b 1 7
+deep 1 a 1 8
+deep 1 a 3 9
+cnt 1 2
+cnt 2 1
+pv
+1
+ic 1
+ic 2
+ab xxxxxxxx
+1 3
+1 4
+4
+1 2
+1 -1
+0 -1
+0 -1
+1 -1
+1 2
+1 3
+del loop -1
+del loop 2
+del loop 3

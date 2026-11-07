@@ -1638,9 +1638,20 @@ impl<'a> Codegen<'a> {
                 prefix,
             );
         }
-        if let NodeKind::Stmt(StmtKind::Foreach { body, .. }) = self.kind(node) {
+        if let NodeKind::Stmt(StmtKind::Foreach { body, vars, .. }) = self.kind(node) {
             // Foreach iterator variables have the same loop-entry lifetime;
             // omitted slots carry no declaration and are skipped naturally.
+            // A class key iterator needs its handle storage named here.
+            for variable in vars.iter().flatten() {
+                if matches!(self.kind(*variable), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
+                {
+                    chandle_locals.entry(*variable).or_insert_with(|| {
+                        let cname = format!("{prefix}_l{seq}");
+                        *seq += 1;
+                        cname
+                    });
+                }
+            }
             return self.collect_func_locals(
                 *body,
                 locals,

@@ -101,6 +101,9 @@ const MAX_SOURCES: usize = NATIVE_MAX_SOURCES as usize;
 pub struct Source<'a> {
     pub name: &'a str,
     pub text: &'a str,
+    /// The bytes Slang lexes in place of `text` when they are not UTF-8.
+    /// Same length as `text`, whose offsets it shares.
+    pub raw: Option<&'a [u8]>,
     /// Parse this source as a compilation unit. `false` preloads an admitted
     /// include buffer that can only be opened through Slang's in-memory cache.
     pub is_compilation_unit: bool,
@@ -117,6 +120,8 @@ pub struct Source<'a> {
 pub struct LibrarySource<'a> {
     pub name: &'a str,
     pub text: &'a str,
+    /// The bytes Slang lexes in place of `text`; see [`Source::raw`].
+    pub raw: Option<&'a [u8]>,
     pub library: &'a str,
     /// Parse this library source using Slang's library-map grammar.
     pub is_library_map: bool,
@@ -134,6 +139,7 @@ impl<'a> Source<'a> {
         Self {
             name,
             text,
+            raw: None,
             is_compilation_unit: true,
             is_library_map: false,
         }
@@ -143,6 +149,7 @@ impl<'a> Source<'a> {
         Self {
             name,
             text,
+            raw: None,
             is_compilation_unit: false,
             is_library_map: false,
         }
@@ -2360,7 +2367,7 @@ fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner
         .iter()
         .map(|source| RawSource {
             name: raw_string(source.name),
-            text: raw_string(source.text),
+            text: raw_text(source.text, source.raw),
             flags: u32::from(source.is_compilation_unit) | (u32::from(source.is_library_map) << 1),
             reserved: 0,
         })
@@ -2370,7 +2377,7 @@ fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner
         .iter()
         .map(|source| RawLibrarySource {
             name: raw_string(source.name),
-            text: raw_string(source.text),
+            text: raw_text(source.text, source.raw),
             library: raw_string(source.library),
             flags: u32::from(source.is_library_map),
             reserved: 0,
@@ -2706,6 +2713,15 @@ fn raw_string(value: &str) -> RawString {
     RawString {
         data: value.as_ptr(),
         len: value.len() as u64,
+    }
+}
+
+/// The bytes a source hands the frontend: `raw` when the file is not UTF-8.
+fn raw_text(text: &str, raw: Option<&[u8]>) -> RawString {
+    let bytes = raw.unwrap_or(text.as_bytes());
+    RawString {
+        data: bytes.as_ptr(),
+        len: bytes.len() as u64,
     }
 }
 

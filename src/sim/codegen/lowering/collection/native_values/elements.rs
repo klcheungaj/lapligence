@@ -1536,9 +1536,9 @@ impl Codegen<'_> {
                     self.collect_staged_members(child, false, out, nested);
                 }
             }
-            // A member passed to a subroutine may be an output, inout or
-            // ref actual, so it is copied back after the call. A nested
-            // element passed whole to an input formal is read once.
+            // A member passed to an output, inout or ref formal is copied
+            // back after the call. A nested element passed whole to an
+            // input formal is read once.
             NodeKind::FuncCall {
                 callee, is_task, ..
             } => {
@@ -1595,7 +1595,10 @@ impl Codegen<'_> {
                             }
                         }
                     }
-                    self.collect_staged_members(child, true, out, nested);
+                    // An input actual is only read: copying it back would
+                    // undo what the callee did to the array.
+                    let changes = direction != Some(DbDirection::Input);
+                    self.collect_staged_members(child, changes, out, nested);
                 }
             }
             NodeKind::Expr(ExprKind::Operation {
@@ -2163,6 +2166,11 @@ impl Codegen<'_> {
             .query_descriptor(lhs)
             .map(|descriptor| &descriptor.shape)
         {
+            // A string member keeps the element it was bound to when its
+            // value is a conditional, a conversion or a system call.
+            Some(TypeShape::String) if self.string_member_binds_first(lhs, rhs) => {
+                return Ok(Vec::new());
+            }
             Some(TypeShape::String) => {
                 statements.push(IrStmt::DeclString {
                     name: name.clone(),
@@ -2186,19 +2194,7 @@ impl Codegen<'_> {
                     return Ok(Vec::new());
                 };
                 let temporary = self.element_temporary(container, depth, rhs)?;
-                let prelude = self.container_call_prelude.as_ref().map(Vec::len);
-                match self.record_value_into(path, temporary, rhs) {
-                    Ok(fill) => statements.extend(fill),
-                    // A form only the bound array resolves keeps that order.
-                    Err(_) => {
-                        if let (Some(list), Some(length)) =
-                            (self.container_call_prelude.as_mut(), prelude)
-                        {
-                            list.truncate(length);
-                        }
-                        return Ok(Vec::new());
-                    }
-                }
+                statements.extend(self.record_value_into(path, temporary, rhs)?);
                 HoistedValue::Record(temporary)
             }
             Some(TypeShape::Aggregate(_)) if self.selection_holds_packed(&nested) => {
@@ -2217,12 +2213,14 @@ impl Codegen<'_> {
                 return Ok(Vec::new());
             }
             Some(TypeShape::Container { .. }) | None => return Ok(Vec::new()),
-            // A packed or real member keeps the element it was bound to.
-            Some(_)
+            // A packed or real member keeps the element it was bound to,
+            // except a real value an implicit conversion made.
+            Some(shape)
                 if matches!(
                     self.kind(lhs),
                     NodeKind::Expr(ExprKind::MemberSelect { .. } | ExprKind::HierPath { .. })
-                ) =>
+                ) && !(matches!(shape, TypeShape::Real { .. })
+                    && self.db.is_implicit_conversion(rhs)) =>
             {
                 return Ok(Vec::new());
             }
@@ -2243,6 +2241,32 @@ impl Codegen<'_> {
         self.hoisted_values.insert(self.p30_unwrap_cast(rhs), value);
         self.hoisted_source = Some(rhs);
         Ok(statements)
+    }
+
+    fn string_member_binds_first(&self, lhs: NodeId, rhs: NodeId) -> bool {
+        let member = matches!(
+            self.kind(lhs),
+            NodeKind::Expr(ExprKind::MemberSelect { .. } | ExprKind::HierPath { .. })
+        );
+        let mut source = rhs;
+        while let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(source) {
+            if !self.db.is_implicit_conversion(source) {
+                return member;
+            }
+            source = *operand;
+        }
+        member
+            && matches!(
+                self.kind(source),
+                NodeKind::SysCall { .. }
+                    | NodeKind::Expr(
+                        ExprKind::Conditional { .. }
+                            | ExprKind::Operation {
+                                op: Operation::Conditional,
+                                ..
+                            }
+                    )
+            )
     }
 
     /// Container and depth of the record element reached through the first
@@ -2356,8 +2380,7 @@ impl Codegen<'_> {
     /// container storage (`qq[i]`, `qd[i][j]`, `sq[k]`), named whole.
     fn nested_element_selection(&self, node: NodeId) -> Option<ElementSelection> {
         let nested = |element: Option<IrContainerElement>| {
-            matches!(element, Some(IrContainerElement::Container { kind, key, .. })
-                if key.is_some() || !kind.to_ascii_lowercase().contains("assoc"))
+            matches!(element, Some(IrContainerElement::Container { .. }))
         };
         // `a3["a"]["b"]`: a key of a bound nested array.
         if let Some((staged, tail)) = self.select_below_staged_element(node) {

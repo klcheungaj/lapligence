@@ -680,6 +680,21 @@ impl<'a> Codegen<'a> {
                                 "associative array `{path}` uses a wildcard index; first/last/next/prev are illegal"
                             ));
                         }
+                        if matches!(
+                            self.model.containers[container.ir].kind,
+                            IrContainerKind::Associative {
+                                key: IrAssocKey::Class
+                            }
+                        ) {
+                            let (target, read) = self.lower_chandle_lvalue(path, *key)?;
+                            return Ok(Some(class_key_traversal(
+                                container.ir,
+                                direction,
+                                read,
+                                target,
+                                node.0.to_string(),
+                            )));
+                        }
                         let (key_address, key_signal, key_width, key_signed, key_two_state) =
                             match self.container_key_address(path, *key) {
                                 Ok(address) => address,
@@ -830,4 +845,80 @@ impl Codegen<'_> {
             None,
         ))
     }
+}
+
+/// A traversal of class-keyed `container` from the handle `read` yields, into
+/// `target`: the runtime steps a packed copy of the key and a key that does
+/// not move stores the same handle back. `tag` names the temporaries.
+pub(in crate::sim::codegen) fn class_key_traversal(
+    container: usize,
+    direction: IrAssocTraversal,
+    read: IrChandleExpr,
+    target: ChandleTarget,
+    tag: String,
+) -> IrExpr {
+    let name = format!("_llg_ckey{tag}");
+    let status = format!("_llg_cfound{tag}");
+    let key = IrExpr::new(
+        IrExprKind::LocalRead(name.clone()),
+        CLASS_KEY_WIDTH,
+        false,
+        None,
+    );
+    let traverse = IrExpr::new(
+        IrExprKind::Container(Box::new(IrContainerExpr::AssocTraverse {
+            container,
+            direction,
+            key_address: format!("&{name}"),
+            key_signal: None,
+            key_width: CLASS_KEY_WIDTH,
+            key_signed: false,
+            key_two_state: true,
+        })),
+        32,
+        true,
+        None,
+    );
+    let value = IrChandleExpr::ClassFromKey(Box::new(key));
+    let store = match target {
+        ChandleTarget::Object(index) => crate::sim::ir::IrObjectStmt::ChandleAssign(index, value),
+        ChandleTarget::Local(local) => {
+            crate::sim::ir::IrObjectStmt::ChandleAssignLocal(local, value)
+        }
+    };
+    IrExpr::new(
+        IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+            statements: vec![
+                IrStmt::DeclLocal {
+                    name,
+                    width: CLASS_KEY_WIDTH,
+                    signed: false,
+                    init: Some(Box::new(class_key_expr(read))),
+                    two_state: true,
+                },
+                IrStmt::DeclLocal {
+                    name: status.clone(),
+                    width: 32,
+                    signed: true,
+                    init: Some(Box::new(traverse)),
+                    two_state: true,
+                },
+                IrStmt::Object(Box::new(store)),
+            ],
+            value: IrExpr::new(IrExprKind::LocalRead(status), 32, true, None),
+        })),
+        32,
+        true,
+        None,
+    )
+}
+
+/// The packed form of a class handle key.
+pub(in crate::sim::codegen) fn class_key_expr(handle: IrChandleExpr) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::ObjectQuery(Box::new(crate::sim::ir::IrObjectQuery::ClassKey(handle))),
+        CLASS_KEY_WIDTH,
+        false,
+        None,
+    )
 }

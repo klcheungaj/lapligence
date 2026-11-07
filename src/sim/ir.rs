@@ -45,7 +45,7 @@ pub use containers::{
     IrAssocKey, IrAssocTraversal, IrBitStream, IrContainer, IrContainerElement, IrContainerExpr,
     IrContainerKind, IrContainerMember, IrContainerMethod, IrContainerReduction, IrContainerStmt,
     IrElementItem, IrElementItemValue, IrItemSelect, IrQueueBound, IrQueueSource, IrStreamSegment,
-    IrStreamSelector, IrValueItemRoot, IrValueSlot, PROCESS_ELEMENT_KIND,
+    IrStreamSelector, IrValueItemRoot, IrValueSlot, CLASS_KEY_WIDTH, PROCESS_ELEMENT_KIND,
 };
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,

@@ -38,6 +38,12 @@ void llg_assoc_value_init_string(llg_assoc_value_t* array,
     llg_value_default(&array->default_value, element);
 }
 
+void llg_assoc_value_init_class(llg_assoc_value_t* array,
+                                const llg_value_desc_t* element) {
+    llg_assoc_value_init_integral(array, element, 64, 0, 1);
+    array->key_class = 1;
+}
+
 void llg_assoc_value_delete(llg_assoc_value_t* array) {
     int changed = array->size != 0;
     llg_native_refs_outdate_all(&array->references);
@@ -93,6 +99,9 @@ static int llg_assoc_value_normalize_key(const llg_assoc_value_t* array,
 
 static size_t llg_assoc_value_integral_position(
     const llg_assoc_value_t* array, sv4_t key, int* found) {
+    if (array->key_class)
+        return llg_class_key_position(array->entries, sizeof(*array->entries),
+                                      array->size, key, found);
     size_t low = 0, high = array->size;
     while (low < high) {
         size_t mid = low + (high - low) / 2;

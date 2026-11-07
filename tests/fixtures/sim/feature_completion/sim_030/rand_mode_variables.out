@@ -1,0 +1,4 @@
+all: 1 1 1 1 one 1
+odd off: 1 0 1 0 one 1
+one off: 0 0 1 0 one 0
+all on: 1 1 1 1 one 1

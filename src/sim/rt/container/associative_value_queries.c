@@ -449,6 +449,7 @@ void llg_assoc_value_merge(llg_assoc_value_t* dst, const llg_assoc_value_t* a,
                                       dst->key_signed, dst->key_two_state);
     else
         llg_assoc_value_init_string(&merged, dst->element);
+    merged.key_class = dst->key_class;
     if (a->size > SIZE_MAX - b->size)
         llg_container_fatal("associative-array size overflow");
     llg_assoc_value_reserve(&merged, a->size + b->size);
@@ -460,7 +461,7 @@ void llg_assoc_value_merge(llg_assoc_value_t* dst, const llg_assoc_value_t* a,
             j < b->size ? &b->entries[j] : NULL;
         int cmp = !left ? 1
             : !right ? -1
-            : llg_assoc_entry_compare(dst->key_kind, left->integral_key,
+            : llg_assoc_entry_compare(dst->key_kind, dst->key_class, left->integral_key,
                                       left->string_key, left->string_length,
                                       right->integral_key, right->string_key,
                                       right->string_length);

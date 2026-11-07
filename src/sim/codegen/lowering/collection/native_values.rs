@@ -805,6 +805,25 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<(usize, Vec<AggregatePathPart>)>, String> {
         match self.kind(node) {
+            // A record property of a computed handle (`get().r`), or a member
+            // of one, through its alias.
+            NodeKind::Expr(ExprKind::MemberSelect { .. })
+                if !self.receiver_native_values.is_empty() =>
+            {
+                let mut members = Vec::new();
+                let mut current = node;
+                while !self.receiver_native_values.contains_key(&current) {
+                    let NodeKind::Expr(ExprKind::MemberSelect { base, member }) =
+                        self.kind(current)
+                    else {
+                        return Ok(None);
+                    };
+                    members.push(AggregatePathPart::Member(member.clone()));
+                    current = *base;
+                }
+                members.reverse();
+                Ok(Some((self.receiver_native_values[&current], members)))
+            }
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) => Ok(self
@@ -2635,9 +2654,34 @@ impl Codegen<'_> {
         {
             return Ok(statement);
         }
+        // A record member of a record call result (`f().r`) comes from the
+        // temporary that holds the result.
+        if let Some((call, members)) = self.native_call_member(source) {
+            if let Some((temporary, mut statements)) = self.native_value_of(path, call)? {
+                let from = NativeEndpoint::Value {
+                    value: temporary,
+                    prefix: members,
+                };
+                statements.push(self.native_transfer(path, target, &from, nba)?);
+                return Ok(IrStmt::Block(statements));
+            }
+        }
         Err(format!(
             "native record assignment in `{path}` has no record source"
         ))
+    }
+
+    /// The call under a member selection of its record result, and the
+    /// selected path.
+    fn native_call_member(&self, node: NodeId) -> Option<(NodeId, Vec<AggregatePathPart>)> {
+        let mut members = Vec::new();
+        let mut current = node;
+        while let NodeKind::Expr(ExprKind::MemberSelect { base, member }) = self.kind(current) {
+            members.push(AggregatePathPart::Member(member.clone()));
+            current = *base;
+        }
+        members.reverse();
+        (!members.is_empty() && self.native_call_node(current)).then_some((current, members))
     }
 
     /// Write native value `value` to `destination`, a fixed record held as

@@ -872,6 +872,7 @@ impl<'a> Codegen<'a> {
             c_name: format!("llg_class_{class}"),
             base: None,
             fields,
+            rank: 0,
         });
         self.class_nodes.insert(group, class);
         // Coverpoint tables.

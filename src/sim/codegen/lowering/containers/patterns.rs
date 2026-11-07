@@ -641,6 +641,23 @@ impl<'a> Codegen<'a> {
                         }),
                     }));
                 }
+                IrContainerKind::Associative {
+                    key: IrAssocKey::Class,
+                } => {
+                    let index = self.class_pattern_key(path, operand)?;
+                    writes.push(IrStmt::Container(match &element {
+                        IrContainerElement::Real { .. } => Box::new(IrContainerStmt::SetReal {
+                            container,
+                            index,
+                            value: lowered,
+                        }),
+                        _ => Box::new(IrContainerStmt::Set {
+                            container,
+                            index,
+                            value: lowered,
+                        }),
+                    }));
+                }
                 IrContainerKind::Associative { key: assoc_key, .. } => {
                     let index = self
                         .assignment_pattern_index_key(path, operand)?
@@ -662,7 +679,7 @@ impl<'a> Codegen<'a> {
                             two_state,
                         } => (*width, *signed, *two_state),
                         IrAssocKey::Wildcard => (32, true, false),
-                        IrAssocKey::String => unreachable!(),
+                        IrAssocKey::String | IrAssocKey::Class => unreachable!(),
                     };
                     writes.push(IrStmt::Container(match &element {
                         IrContainerElement::Real { .. } => Box::new(IrContainerStmt::SetReal {
@@ -768,6 +785,24 @@ impl<'a> Codegen<'a> {
                         _ => unreachable!(),
                     }
                 }
+                IrContainerKind::Associative {
+                    key: IrAssocKey::Class,
+                } => {
+                    let index = self.class_pattern_key(path, operand)?;
+                    match &element {
+                        IrContainerElement::String => IrContainerStmt::SetStringValue {
+                            container,
+                            index,
+                            value: self.lower_string(path, value)?,
+                        },
+                        element if element.is_handle() => IrContainerStmt::SetChandleValue {
+                            container,
+                            index,
+                            value: self.lower_container_handle(path, element, value)?,
+                        },
+                        _ => unreachable!(),
+                    }
+                }
                 IrContainerKind::Associative { key: assoc_key, .. } => {
                     let index = self
                         .assignment_pattern_index_key(path, operand)?
@@ -787,7 +822,7 @@ impl<'a> Codegen<'a> {
                             two_state,
                         } => (*width, *signed, *two_state),
                         IrAssocKey::Wildcard => (32, true, false),
-                        IrAssocKey::String => unreachable!(),
+                        IrAssocKey::String | IrAssocKey::Class => unreachable!(),
                     };
                     let index = pattern_key_expr(index, width, signed, two_state);
                     match &element {
@@ -937,6 +972,20 @@ impl<'a> Codegen<'a> {
     /// `c[i] = src`): a dynamic-array variable passes directly; a pattern or
     /// an unpacked concatenation is first built in a fresh dynamic-array
     /// temporary declared by `prelude`.
+    /// The class handle key of an associative assignment pattern item.
+    fn class_pattern_key(&mut self, path: &str, operand: NodeId) -> Result<IrExpr, String> {
+        let NodeKind::Expr(ExprKind::TaggedPattern {
+            index_key: Some(index),
+            ..
+        }) = self.kind(operand)
+        else {
+            return Err(format!(
+                "a class key of an associative assignment pattern in `{path}` has no expression"
+            ));
+        };
+        self.lower_container_index(path, *index)
+    }
+
     pub(in super::super) fn nested_container_source(
         &mut self,
         path: &str,

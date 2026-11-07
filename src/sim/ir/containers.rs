@@ -67,9 +67,7 @@ impl IrContainerElement {
                 members.iter().all(|member| member.element.is_bit_stream())
             }
             Self::FixedArray { element, .. } => element.is_bit_stream(),
-            Self::Container { kind, element, .. } => {
-                !kind.to_ascii_lowercase().contains("assoc") && element.is_bit_stream()
-            }
+            Self::Container { key, element, .. } => key.is_none() && element.is_bit_stream(),
             Self::Real { .. }
             | Self::Chandle
             | Self::Event
@@ -237,7 +235,15 @@ pub enum IrAssocKey {
         two_state: bool,
     },
     String,
+    /// A class handle (7.8.3). Selecting with one uses the integral forms:
+    /// the key value is the handle as an unsigned 64-bit two-state value
+    /// ([`IrObjectQuery::ClassKey`](super::IrObjectQuery::ClassKey)), and the
+    /// runtime orders entries by the creation serial of each object.
+    Class,
 }
+
+/// Width of the packed form of a class handle key.
+pub const CLASS_KEY_WIDTH: u32 = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IrContainerKind {
@@ -1216,11 +1222,7 @@ impl IrValueSlot {
             IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. } => {
                 Ok(element)
             }
-            IrContainerElement::Container { kind, key, .. }
-                if key.is_some() || !kind.to_ascii_lowercase().contains("assoc") =>
-            {
-                Ok(element)
-            }
+            IrContainerElement::Container { .. } => Ok(element),
             _ => Err(IrValidationError::new(
                 "container value",
                 "element locators apply to record, fixed-array and nested container elements",
@@ -1582,12 +1584,12 @@ impl IrContainerExpr {
                 if !matches!(
                     container.kind,
                     IrContainerKind::Associative {
-                        key: IrAssocKey::Integral { .. }
+                        key: IrAssocKey::Integral { .. } | IrAssocKey::Class
                     }
                 ) {
                     return Err(IrValidationError::new(
                         "container",
-                        "associative traversal requires a declared integral index type",
+                        "associative traversal requires a declared integral or class index type",
                     ));
                 }
                 if key_address.is_empty() {
@@ -1596,18 +1598,18 @@ impl IrContainerExpr {
                         "associative traversal key address is empty",
                     ));
                 }
-                let IrContainerKind::Associative {
-                    key:
-                        IrAssocKey::Integral {
-                            width,
-                            signed,
-                            two_state,
-                        },
-                } = &container.kind
-                else {
-                    unreachable!()
+                let (width, signed, two_state) = match &container.kind {
+                    IrContainerKind::Associative {
+                        key:
+                            IrAssocKey::Integral {
+                                width,
+                                signed,
+                                two_state,
+                            },
+                    } => (*width, *signed, *two_state),
+                    _ => (CLASS_KEY_WIDTH, false, true),
                 };
-                if (*key_width, *key_signed, *key_two_state) != (*width, *signed, *two_state) {
+                if (*key_width, *key_signed, *key_two_state) != (width, signed, two_state) {
                     return Err(IrValidationError::new(
                         "container",
                         "associative traversal key type does not match its index type",
@@ -2244,7 +2246,7 @@ impl IrContainerStmt {
                             key: IrAssocKey::String,
                         } => destination.element.is_string(),
                         IrContainerKind::Associative {
-                            key: IrAssocKey::Wildcard,
+                            key: IrAssocKey::Wildcard | IrAssocKey::Class,
                         } => false,
                     }
                 } else {

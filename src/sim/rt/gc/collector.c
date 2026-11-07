@@ -61,6 +61,8 @@ static struct {
     size_t frame_count;
     uint32_t epoch;
     uint64_t since_last;
+    uint64_t next_serial; // creation serial of the last allocated object
+    int ordered_serials;  // an array with class keys compares serials
     uint64_t threshold;
     uint64_t base_threshold;
     uint64_t growth_percent;
@@ -159,6 +161,20 @@ void* llg_gc_alloc(size_t size, const llg_gc_type_t* type) {
     llg_gc_header_t* object =
         (llg_gc_header_t*)llg_checked_calloc(1, size, "collected object");
     object->type = type;
+    // Only an array with class keys compares serials; other models wrap.
+    if (++llg_gc.next_serial > LLG_GC_SERIAL_MAX) {
+        if (llg_gc.ordered_serials) {
+            fprintf(stderr,
+                    "llg runtime fatal: more than %llu collected objects were "
+                    "created at time %llu; an array with class keys orders "
+                    "objects by a %d-bit creation serial\n",
+                    (unsigned long long)LLG_GC_SERIAL_MAX,
+                    (unsigned long long)llg_time(), LLG_GC_SERIAL_BITS);
+            abort();
+        }
+        llg_gc.next_serial = 1;
+    }
+    object->state = llg_gc.next_serial << LLG_GC_SERIAL_SHIFT;
     gc_index_insert(object);
     ++llg_gc.stats.allocated;
     gc_update_live_stats();
@@ -166,6 +182,10 @@ void* llg_gc_alloc(size_t size, const llg_gc_type_t* type) {
         (llg_gc.stress || ++llg_gc.since_last >= llg_gc.threshold))
         llg_gc_pending = 1;
     return object;
+}
+
+void llg_gc_order_objects(void) {
+    llg_gc.ordered_serials = 1;
 }
 
 int llg_gc_is_object(const void* handle) {
@@ -189,13 +209,21 @@ static void gc_push(llg_gc_tracer_t* tracer, llg_gc_header_t* object) {
     tracer->stack[tracer->depth++] = object;
 }
 
+static inline void gc_set_mark(llg_gc_header_t* object, uint64_t epoch) {
+    object->state = (object->state & ~LLG_GC_MARK_MAX) | epoch;
+}
+
+static inline uint64_t gc_pins(const llg_gc_header_t* object) {
+    return (object->state >> LLG_GC_PIN_SHIFT) & LLG_GC_PIN_MAX;
+}
+
 void llg_gc_visit(llg_gc_tracer_t* tracer, const void* handle) {
     if (!tracer || !handle || tracer->failed) return;
     size_t slot = gc_index_find(handle);
     if (slot == SIZE_MAX) return;
     llg_gc_header_t* object = llg_gc.index[slot];
-    if (object->mark == tracer->epoch) return;
-    object->mark = tracer->epoch;
+    if ((object->state & LLG_GC_MARK_MAX) == tracer->epoch) return;
+    gc_set_mark(object, tracer->epoch);
     ++tracer->marked;
     gc_push(tracer, object);
 }
@@ -375,11 +403,16 @@ int llg_gc_pin(void* handle) {
     size_t slot = gc_index_find(handle);
     if (slot == SIZE_MAX) return 0;
     llg_gc_header_t* object = llg_gc.index[slot];
-    if (object->pins == UINT32_MAX) {
-        fputs("llg runtime fatal: collected object pin count overflow\n", stderr);
+    if (gc_pins(object) == LLG_GC_PIN_MAX) {
+        fprintf(stderr,
+                "llg runtime fatal: more than %llu covergroup or foreign pins "
+                "on one collected object of type %s at time %llu\n",
+                (unsigned long long)LLG_GC_PIN_MAX, object->type->name,
+                (unsigned long long)llg_time());
         abort();
     }
-    if (object->pins++ == 0) ++llg_gc.stats.pinned;
+    if (gc_pins(object) == 0) ++llg_gc.stats.pinned;
+    object->state += UINT64_C(1) << LLG_GC_PIN_SHIFT;
     return 1;
 }
 
@@ -387,11 +420,12 @@ int llg_gc_unpin(void* handle) {
     size_t slot = gc_index_find(handle);
     if (slot == SIZE_MAX) return 0;
     llg_gc_header_t* object = llg_gc.index[slot];
-    if (object->pins == 0) {
+    if (gc_pins(object) == 0) {
         fputs("llg runtime fatal: unbalanced collected object unpin\n", stderr);
         abort();
     }
-    if (--object->pins == 0) --llg_gc.stats.pinned;
+    object->state -= UINT64_C(1) << LLG_GC_PIN_SHIFT;
+    if (gc_pins(object) == 0) --llg_gc.stats.pinned;
     return 1;
 }
 
@@ -421,19 +455,22 @@ void llg_gc_collect(void) {
     if (llg_gc.collecting || llg_gc.disabled) return;
     llg_gc.collecting = 1;
     llg_gc_pending = 0;
-    if (++llg_gc.epoch == 0) {
+    if (llg_gc.epoch >= LLG_GC_MARK_MAX) {
         // Epoch wrap: clear stale marks once so no old mark can match.
+        // Epochs run 1..LLG_GC_MARK_MAX and a new object's mark is 0.
         for (size_t i = 0; i < llg_gc.capacity; ++i)
             if (llg_gc.index[i] && llg_gc.index[i] != &llg_gc_tombstone)
-                llg_gc.index[i]->mark = 0;
-        llg_gc.epoch = 1;
+                gc_set_mark(llg_gc.index[i], 0);
+        ++llg_gc.stats.mark_clears;
+        llg_gc.epoch = 0;
     }
+    ++llg_gc.epoch;
     llg_gc_tracer_t tracer = {0};
     tracer.epoch = llg_gc.epoch;
     if (llg_gc.stats.pinned) {
         for (size_t i = 0; i < llg_gc.capacity; ++i) {
             llg_gc_header_t* object = llg_gc.index[i];
-            if (object && object != &llg_gc_tombstone && object->pins)
+            if (object && object != &llg_gc_tombstone && gc_pins(object))
                 llg_gc_visit(&tracer, object);
         }
         gc_drain(&tracer);
@@ -448,7 +485,8 @@ void llg_gc_collect(void) {
         for (size_t i = 0; i < llg_gc.capacity && !tracer.failed; ++i) {
             llg_gc_header_t* object = llg_gc.index[i];
             if (!object || object == &llg_gc_tombstone ||
-                object->mark == tracer.epoch || !object->type->interior)
+                (object->state & LLG_GC_MARK_MAX) == tracer.epoch ||
+                !object->type->interior)
                 continue;
             if (object->type->interior(object, &tracer)) {
                 llg_gc_visit(&tracer, object);
@@ -482,7 +520,8 @@ void llg_gc_collect(void) {
     size_t found = 0;
     for (size_t i = 0; i < llg_gc.capacity && found < dead_count; ++i) {
         llg_gc_header_t* object = llg_gc.index[i];
-        if (!object || object == &llg_gc_tombstone || object->mark == tracer.epoch)
+        if (!object || object == &llg_gc_tombstone ||
+            (object->state & LLG_GC_MARK_MAX) == tracer.epoch)
             continue;
         dead[found++] = object;
         gc_index_remove_slot(i);
@@ -588,9 +627,21 @@ void llg_gc_trace_queue_values(const void* payload, llg_gc_tracer_t* tracer) {
 void llg_gc_trace_assoc_values(const void* payload, llg_gc_tracer_t* tracer) {
     const llg_assoc_value_t* assoc = (const llg_assoc_value_t*)payload;
     if (!assoc) return;
-    for (size_t i = 0; i < assoc->size; ++i)
+    for (size_t i = 0; i < assoc->size; ++i) {
+        if (assoc->key_class)
+            llg_gc_visit(tracer, (const void*)(uintptr_t)sv4_to_u64(
+                                     assoc->entries[i].integral_key));
         llg_gc_visit_value(tracer, &assoc->entries[i].value);
+    }
     if (assoc->has_default_value) llg_gc_visit_value(tracer, &assoc->default_value);
+}
+
+void llg_gc_trace_assoc(const void* payload, llg_gc_tracer_t* tracer) {
+    const llg_assoc_t* assoc = (const llg_assoc_t*)payload;
+    if (!assoc || !assoc->key_class) return;
+    for (size_t i = 0; i < assoc->size; ++i)
+        llg_gc_visit(tracer,
+                     (const void*)(uintptr_t)sv4_to_u64(assoc->entries[i].integral_key));
 }
 
 static void gc_trace_native_value(const void* payload, llg_gc_tracer_t* tracer) {
@@ -623,7 +674,7 @@ void llg_gc_teardown(void) {
     if (llg_gc.print_stats) {
         fprintf(stderr,
                 "llg: gc: collections=%llu failed=%llu allocated=%llu freed=%llu "
-                "condemned=%llu live=%llu peak=%llu pinned=%llu\n",
+                "condemned=%llu live=%llu peak=%llu pinned=%llu mark_clears=%llu\n",
                 (unsigned long long)llg_gc.stats.collections,
                 (unsigned long long)llg_gc.stats.failed_collections,
                 (unsigned long long)llg_gc.stats.allocated,
@@ -631,7 +682,8 @@ void llg_gc_teardown(void) {
                 (unsigned long long)llg_gc.stats.condemned,
                 (unsigned long long)llg_gc.stats.live,
                 (unsigned long long)llg_gc.stats.peak_live,
-                (unsigned long long)llg_gc.stats.pinned);
+                (unsigned long long)llg_gc.stats.pinned,
+                (unsigned long long)llg_gc.stats.mark_clears);
     }
     for (size_t i = 0; i < llg_gc.capacity; ++i) {
         llg_gc_header_t* object = llg_gc.index[i];

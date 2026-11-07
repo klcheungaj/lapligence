@@ -9,6 +9,7 @@ use crate::ffi::slang::{self, CompileOptions, CompileRequest, Define, Limits, Pa
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub use crate::ffi::slang::{
     CompilationUnitMode, DelaySelection, Diagnostic as SlangDiagnostic, DiagnosticProvider,
@@ -33,6 +34,8 @@ pub use protected::{
 pub struct OwnedSource {
     pub name: String,
     pub text: String,
+    /// The file's exact bytes when they are not UTF-8; see [`SourceText`].
+    pub raw: Option<Arc<[u8]>>,
     pub is_compilation_unit: bool,
     /// Parse an admitted map with Slang's library-map grammar.
     pub is_library_map: bool,
@@ -43,6 +46,7 @@ impl OwnedSource {
         Self {
             name: name.into(),
             text: text.into(),
+            raw: None,
             is_compilation_unit: true,
             is_library_map: false,
         }
@@ -52,9 +56,50 @@ impl OwnedSource {
         Self {
             name: name.into(),
             text: text.into(),
+            raw: None,
             is_compilation_unit: false,
             is_library_map: false,
         }
+    }
+
+    /// This source with the exact bytes of a file that is not UTF-8.
+    pub fn with_raw(mut self, raw: Option<Arc<[u8]>>) -> Self {
+        self.raw = raw;
+        self
+    }
+}
+
+/// A source file as read. `text` serves every Rust consumer; when the file is
+/// not UTF-8, each invalid byte is a `?` there, so offsets, lines and columns
+/// are the file's, and `raw` holds the exact bytes the frontend must lex.
+/// A byte stays legal only in a comment, which the frontend decides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceText {
+    pub text: String,
+    pub raw: Option<Arc<[u8]>>,
+}
+
+impl SourceText {
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        match String::from_utf8(bytes) {
+            Ok(text) => Self { text, raw: None },
+            Err(error) => {
+                let bytes = error.into_bytes();
+                let mut text = String::with_capacity(bytes.len());
+                for chunk in bytes.utf8_chunks() {
+                    text.push_str(chunk.valid());
+                    text.extend(std::iter::repeat_n('?', chunk.invalid().len()));
+                }
+                Self {
+                    text,
+                    raw: Some(bytes.into()),
+                }
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.text.len()
     }
 }
 
@@ -65,6 +110,8 @@ impl OwnedSource {
 pub struct LibrarySource {
     pub name: String,
     pub text: String,
+    /// The file's exact bytes when they are not UTF-8; see [`SourceText`].
+    pub raw: Option<Arc<[u8]>>,
     pub library: String,
     /// Parse this library source as a library map.
     pub is_library_map: bool,
@@ -86,9 +133,16 @@ impl LibrarySource {
         Self {
             name: name.into(),
             text: text.into(),
+            raw: None,
             library: library.into(),
             is_library_map: false,
         }
+    }
+
+    /// This source with the exact bytes of a file that is not UTF-8.
+    pub fn with_raw(mut self, raw: Option<Arc<[u8]>>) -> Self {
+        self.raw = raw;
+        self
     }
 }
 
@@ -708,7 +762,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         })?;
         let text = read_bounded_target(&name, &resolved, content_limit, "SystemVerilog source")?;
         remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
-        owned.push(OwnedSource::compilation_unit(name, text));
+        owned.push(OwnedSource::compilation_unit(name, text.text).with_raw(text.raw));
     }
     for spec in &opts.library_files {
         let (library, path) = split_library_file_spec(spec, opts.default_library.as_deref())?;
@@ -762,7 +816,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
                 format!("source path {name} exceeds the configured Slang byte limit"),
             )
         })?;
-        library_owned.push(LibrarySource::new(name, text, library));
+        library_owned.push(LibrarySource::new(name, text.text, library).with_raw(text.raw));
     }
     let include_dirs = resolve_path_include_dirs(&opts.include_dirs);
     let mut library_include_dirs = opts
@@ -1089,6 +1143,7 @@ fn compile_source_groups(
         .map(|source| Source {
             name: &source.name,
             text: &source.text,
+            raw: source.raw.as_deref(),
             is_compilation_unit: source.is_compilation_unit,
             is_library_map: source.is_library_map,
         })
@@ -1098,6 +1153,7 @@ fn compile_source_groups(
         .map(|source| crate::ffi::slang::LibrarySource {
             name: &source.name,
             text: &source.text,
+            raw: source.raw.as_deref(),
             library: &source.library,
             is_library_map: source.is_library_map,
         })
@@ -1252,7 +1308,7 @@ fn preflight_library_maps(maps: &[OwnedSource], limits: Limits) -> Result<(), St
     Ok(())
 }
 
-fn read_bounded(path: &str, limit: u64) -> Result<String, StartupError> {
+fn read_bounded(path: &str, limit: u64) -> Result<SourceText, StartupError> {
     let expected = secure_fs::open_path(Path::new(path)).map_err(|error| {
         StartupError::new(
             StartupErrorKind::Input,
@@ -1272,7 +1328,7 @@ fn read_bounded_at(
     expected: &AdmittedTarget,
     limit: u64,
     kind: &str,
-) -> Result<String, StartupError> {
+) -> Result<SourceText, StartupError> {
     let (mut file, metadata) = open_regular_file_at(path, expected, kind)?;
     let bytes = read_regular_file_contents(
         &mut file,
@@ -1284,12 +1340,7 @@ fn read_bounded_at(
         "source read",
         "source final metadata",
     )?;
-    String::from_utf8(bytes).map_err(|error| {
-        StartupError::new(
-            StartupErrorKind::Input,
-            format!("{kind} {path} is not UTF-8: {error}"),
-        )
-    })
+    Ok(SourceText::from_bytes(bytes))
 }
 
 fn read_bounded_target(
@@ -1297,7 +1348,7 @@ fn read_bounded_target(
     expected: &AdmittedTarget,
     limit: u64,
     kind: &str,
-) -> Result<String, StartupError> {
+) -> Result<SourceText, StartupError> {
     read_bounded_at(path, expected, limit, kind)
 }
 
@@ -1320,6 +1371,7 @@ fn read_bounded_library_map(
         work,
         "library map",
     )
+    .map(|source| source.text)
 }
 
 fn read_bounded_library_file_at(
@@ -1328,7 +1380,7 @@ fn read_bounded_library_file_at(
     limit: u64,
     work: &mut LibraryMapWorkBudget,
     kind: &str,
-) -> Result<String, StartupError> {
+) -> Result<SourceText, StartupError> {
     let (open_operation, metadata_operation, read_operation, final_metadata_operation) =
         if kind == "library map" {
             (
@@ -1363,12 +1415,16 @@ fn read_bounded_library_file_at(
         read_operation,
         final_metadata_operation,
     )?;
-    String::from_utf8(bytes).map_err(|error| {
-        StartupError::new(
-            StartupErrorKind::Input,
-            format!("{kind} {path} is not UTF-8: {error}"),
-        )
-    })
+    // Slang's map grammar has no comment rule to keep a byte legal by.
+    if kind == "library map" {
+        if let Err(error) = std::str::from_utf8(&bytes) {
+            return Err(StartupError::new(
+                StartupErrorKind::Input,
+                format!("{kind} {path} is not UTF-8: {error}"),
+            ));
+        }
+    }
+    Ok(SourceText::from_bytes(bytes))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1618,7 +1674,8 @@ fn admit_library_maps_with_targets(
             )
         })?;
         let text =
-            read_bounded_library_file_at(&name, &resolved, content_limit, work, "library map")?;
+            read_bounded_library_file_at(&name, &resolved, content_limit, work, "library map")?
+                .text;
         *remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
         work.charge_usize(name.len(), "library map identity admission")?;
         let resolved_path = resolved.actual_path().to_path_buf();
@@ -1697,7 +1754,8 @@ fn admit_library_maps_with_targets(
                     content_limit,
                     work,
                     "library map",
-                )?;
+                )?
+                .text;
                 *remaining = remaining.saturating_sub(name.len() as u64 + map_text.len() as u64);
                 pending.push((path.to_path_buf(), map_text, target));
             }
@@ -1807,9 +1865,10 @@ fn admit_library_maps_with_targets(
                             format!("source path {name} exceeds the configured Slang byte limit"),
                         )
                     })?;
-                    buffers
-                        .sources
-                        .push(OwnedSource::compilation_unit(name, source_text));
+                    buffers.sources.push(
+                        OwnedSource::compilation_unit(name, source_text.text)
+                            .with_raw(source_text.raw),
+                    );
                 }
             }
         }
@@ -3969,7 +4028,9 @@ fn admit_macro_includes(
                 read_bounded_at(&path_name, &path, content_limit, "SystemVerilog source")?;
             *remaining = remaining.saturating_sub(path_name.len() as u64 + child_text.len() as u64);
             identities.insert(path.actual_path().to_path_buf());
-            owned.push(OwnedSource::include(path_name.clone(), child_text));
+            owned.push(
+                OwnedSource::include(path_name.clone(), child_text.text).with_raw(child_text.raw),
+            );
         }
 
         // A repeated include still executes its directives, but a cycle must
@@ -4606,8 +4667,14 @@ pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, Startu
                 "source path exceeds the configured Slang byte limit",
             )
         })?;
-    let text = read_bounded(file, content_limit)?;
-    parse_source(file, &text, defines)
+    let source = read_bounded(file, content_limit)?;
+    parse_owned_in_context(
+        OwnedSource::compilation_unit(file, source.text).with_raw(source.raw),
+        defines,
+        &[],
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
 /// Compile one supplied buffer in isolation without a filesystem read.
@@ -4637,6 +4704,23 @@ pub fn parse_source_in_context(
     includes: Vec<OwnedSource>,
     dependencies: Vec<OwnedSource>,
 ) -> Result<ParseOnlyOut, StartupError> {
+    parse_owned_in_context(
+        OwnedSource::compilation_unit(name, text),
+        defines,
+        include_dirs,
+        includes,
+        dependencies,
+    )
+}
+
+fn parse_owned_in_context(
+    source: OwnedSource,
+    defines: &[String],
+    include_dirs: &[String],
+    includes: Vec<OwnedSource>,
+    dependencies: Vec<OwnedSource>,
+) -> Result<ParseOnlyOut, StartupError> {
+    let (name, text) = (source.name.as_str(), source.text.as_str());
     let limits = Limits::default();
     let source_bytes = (name.len() as u64)
         .checked_add(text.len() as u64)
@@ -4675,10 +4759,12 @@ pub fn parse_source_in_context(
     let library_sources: Vec<_> = dependencies
         .into_iter()
         .filter(|dependency| dependency.name != name)
-        .map(|dependency| LibrarySource::new(dependency.name, dependency.text, "work"))
+        .map(|dependency| {
+            LibrarySource::new(dependency.name, dependency.text, "work").with_raw(dependency.raw)
+        })
         .collect();
     let mut sources = Vec::with_capacity(includes.len() + 1);
-    sources.push(OwnedSource::compilation_unit(name, text));
+    sources.push(source.clone());
     // Include buffers keep the include-only role whatever the caller passed,
     // so a second elaborated compilation unit can never enter the isolated
     // parse. The buffer itself or a dependency may be in the context (a unit

@@ -1,0 +1,20 @@
+a 100 0 s
+a 101 1 s
+a 102 2 s
+a 103 3 s
+hm 100 h
+hm 101 h
+hm 102 h
+hm 103 h
+ca 100 100
+ca 101 101
+ca 102 102
+ca 103 103
+qa 0 200
+local 500 0 l
+local 501 1 l
+local 502 2 l
+b 100
+b 101
+b 102
+b 103

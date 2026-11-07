@@ -183,7 +183,7 @@ pub fn parse_metadata(request: &MetadataRequest<'_>) -> Result<Vec<DefinitionNam
         .iter()
         .map(|source| RawSource {
             name: raw_string(source.name),
-            text: raw_string(source.text),
+            text: raw_text(source.text, source.raw),
             flags: u32::from(source.is_compilation_unit),
             reserved: 0,
         })

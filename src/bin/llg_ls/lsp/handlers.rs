@@ -1724,7 +1724,7 @@ impl LanguageServer for Backend {
                 CompletionSource::Open(text) => text,
                 CompletionSource::Disk(path, max_file_bytes) => {
                     match read_closed_input_snapshot(&path, max_file_bytes) {
-                        Ok(text) => text,
+                        Ok(read) => read.text,
                         Err(error) => {
                             error.log_rejection();
                             crate::llg_debug!(
@@ -1995,7 +1995,7 @@ impl Backend {
                 })
                 .await
                 {
-                    Ok(Ok(text)) => text,
+                    Ok(Ok(read)) => read.text,
                     Ok(Err(limit)) => {
                         limit.log_rejection();
                         crate::llg_debug!(

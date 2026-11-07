@@ -505,6 +505,7 @@ fn class_id_guards_a_null_handle_before_reading_it() {
         c_name: "only".to_owned(),
         base: None,
         fields: Vec::new(),
+        rank: 0,
     });
     let mut out = String::new();
     classes::render_class_decls(&model, &mut out);

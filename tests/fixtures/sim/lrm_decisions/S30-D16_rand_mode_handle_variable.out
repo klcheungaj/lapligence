@@ -1,0 +1,15 @@
+scalar off: kept 1
+scalar off, own randomize: changed 1
+scalar on: changed 1
+element off: kept 1
+element off, own randomize: changed 1
+new object in element: kept 1
+element on: changed 1
+not rand, element: changed 1
+not rand, scalar: changed 1
+module element: kept 1
+procedure variable: kept 1
+descending range: kept 1
+other element: changed 1
+whole off, one on: kept 1 changed 1
+outside the array: 1 changed 1

@@ -504,12 +504,12 @@ fn inside_item_exprs(item: &IrInsideItem) -> Vec<&IrExpr> {
 
 impl Codegen<'_> {
     /// Whether `decl` is a class handle property.
-    fn is_handle_property(&self, decl: NodeId) -> bool {
+    pub(super) fn is_handle_property(&self, decl: NodeId) -> bool {
         matches!(self.kind(decl), NodeKind::Var { ty } if ty.kind == "class")
     }
 
     /// Whether `decl` is an unpacked array of class handles.
-    fn is_handle_array(&self, decl: NodeId) -> bool {
+    pub(super) fn is_handle_array(&self, decl: NodeId) -> bool {
         self.db.array_meta(decl).is_some()
             && self.array_element_kind(decl).as_deref() == Some("class")
     }
@@ -3290,8 +3290,41 @@ impl Codegen<'_> {
                     continue;
                 }
                 let random = self.unit_active(&st.root, index, slot.decl, object)?;
+                // The off bits of the elements, under the default selection
+                // only: a list of `randomize` names what it names (18.11).
+                let default_mode = index != 0 || matches!(st.root, RootMode::Default);
+                let cell_modes = match self.rand_cell_modes.get(&slot.decl).cloned() {
+                    Some((cells, width)) if default_mode => {
+                        Some(self.hidden_state_read(&cells, width, object.cloned())?)
+                    }
+                    _ => None,
+                };
                 let cases = self.class_cases(slot.target);
                 let links = |child: &IrChandleExpr, at: Option<IrExpr>| -> Vec<Vec<IrStmt>> {
+                    let random = match (&cell_modes, &at) {
+                        (Some(cells), Some(at)) => {
+                            let off = IrExpr::new(
+                                IrExprKind::BitSel {
+                                    base: Box::new(cells.clone()),
+                                    idx: Box::new(at.clone()),
+                                },
+                                1,
+                                false,
+                                None,
+                            );
+                            IrExpr::new(
+                                IrExprKind::Bin {
+                                    op: IrBinOp::BitAnd,
+                                    a: Box::new(random.clone()),
+                                    b: Box::new(bit_not(off)),
+                                },
+                                1,
+                                false,
+                                None,
+                            )
+                        }
+                        _ => random.clone(),
+                    };
                     cases
                         .iter()
                         .map(|case| {

@@ -106,6 +106,7 @@ fn library_name_bytes_consume_the_native_source_budget() {
     let library_sources = [LibrarySource {
         name: "library.sv",
         text: "module library; endmodule\n",
+        raw: None,
         library: "named_library",
         is_library_map: false,
     }];
@@ -1100,6 +1101,7 @@ package own_pkg; class InPackage; endclass endpackage
         Source {
             name: "inc/defs.svh",
             text: "`define INSTANCE_OF(name) name\n",
+            raw: None,
             is_compilation_unit: false,
             is_library_map: false,
         },
@@ -1187,6 +1189,7 @@ fn parse_metadata_rejects_library_maps_and_budget_overruns() {
     let map = [Source {
         name: "lib.map",
         text: "library work *.sv;\n",
+        raw: None,
         is_compilation_unit: true,
         is_library_map: true,
     }];

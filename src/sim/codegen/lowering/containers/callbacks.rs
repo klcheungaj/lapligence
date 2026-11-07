@@ -85,7 +85,7 @@ impl<'a> Codegen<'a> {
                     },
             } => (width, signed),
             IrContainerKind::Associative {
-                key: IrAssocKey::String | IrAssocKey::Wildcard,
+                key: IrAssocKey::String | IrAssocKey::Wildcard | IrAssocKey::Class,
             } => (0, false),
         };
         let saved_iterator = self.container_iterator.replace(ContainerIterator {

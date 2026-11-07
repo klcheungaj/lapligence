@@ -810,6 +810,7 @@ fn lower_model_with(
     }
     cg.emit_clocking_processes()?;
     cg.check_coverage_block_events()?;
+    cg.rank_class_keys();
     // Every process call site that requests a task specialization has been
     // lowered; their bodies may register initializers flushed below, and an
     // initializer may call a subroutine bound to a record (SIM-008), so drain
@@ -2317,6 +2318,13 @@ struct Codegen<'a> {
     /// Hidden `rand_mode` off bit of each `rand`/`randc` class property
     /// (IEEE 1800-2009 18.8), by declaration.
     rand_mode_bits: HashMap<NodeId, randomization::ModeBit>,
+    /// Hidden off bits of the elements of a fixed `rand` handle array the
+    /// design calls `rand_mode` on by element, with their count, by
+    /// declaration (18.8).
+    rand_cell_modes: HashMap<NodeId, (randomization::ModeBit, u32)>,
+    /// The `rand` handle arrays selected by `rand_mode` receivers, found
+    /// once by the first such array.
+    rand_mode_elements: Option<HashSet<NodeId>>,
     /// Hidden cycle state of each packed `randc` class property of at most
     /// 16 bits (18.4.2, S30-D3), with its width, by declaration.
     randc_states: HashMap<NodeId, (randomization::ModeBit, u32)>,
@@ -2642,6 +2650,8 @@ impl<'a> Codegen<'a> {
             virtual_interface_views: HashMap::new(),
             virtual_interface_view_methods: HashMap::new(),
             rand_mode_bits: HashMap::new(),
+            rand_cell_modes: HashMap::new(),
+            rand_mode_elements: None,
             randc_states: HashMap::new(),
             constraint_mode_bits: HashMap::new(),
             rand_lowering: None,

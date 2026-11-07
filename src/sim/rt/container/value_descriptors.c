@@ -606,7 +606,7 @@ static int llg_value_desc_valid_at(const llg_value_desc_t* desc,
                    desc->member_count == 0 &&
                    llg_value_desc_valid_at(desc->element, path, depth + 1);
         case LLG_VALUE_ASSOC:
-            return desc->item_count <= 1 && !desc->members &&
+            return desc->item_count <= 2 && !desc->members &&
                    desc->member_count == 0 &&
                    llg_value_desc_valid_at(desc->element, path, depth + 1);
         default:

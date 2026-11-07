@@ -37,6 +37,13 @@ void llg_assoc_init_string(llg_assoc_t* array, uint32_t element_width,
                                                 array->element_two_state);
 }
 
+void llg_assoc_init_class(llg_assoc_t* array, uint32_t element_width,
+                          int8_t element_signed, int element_two_state) {
+    llg_assoc_init_integral(array, element_width, element_signed,
+                            element_two_state, 64, 0, 1);
+    array->key_class = 1;
+}
+
 void llg_assoc_delete(llg_assoc_t* array) {
     llg_assoc_outdate_references(array, SIZE_MAX);
     int changed = array->size != 0;
@@ -179,8 +186,40 @@ static int llg_integral_compare(sv4_t a, sv4_t b) {
     return 0;
 }
 
+/* Sort position of the object a class key names: its class's rank, then its
+ * creation serial (S07-D9); null precedes them all. */
+static uint64_t llg_class_key_order(sv4_t key) {
+    const llg_gc_header_t* object =
+        (const llg_gc_header_t*)(uintptr_t)sv4_to_u64(key);
+    if (!object) return 0;
+    return ((uint64_t)object->type->rank << LLG_GC_SERIAL_BITS) | llg_gc_serial(object);
+}
+
+/* Lookup of class key `key` in `size` entries of `stride` bytes in key
+ * order. Both entry types start with their integral key. */
+static size_t llg_class_key_position(const void* entries, size_t stride,
+                                     size_t size, sv4_t key, int* found) {
+    uint64_t order = llg_class_key_order(key);
+    size_t low = 0, high = size;
+    while (low < high) {
+        size_t mid = low + (high - low) / 2;
+        if (llg_class_key_order(*(const sv4_t*)((const char*)entries +
+                                                 mid * stride)) < order)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    *found = low < size &&
+             llg_class_key_order(*(const sv4_t*)((const char*)entries +
+                                                  low * stride)) == order;
+    return low;
+}
+
 static size_t llg_assoc_integral_position(const llg_assoc_t* array, sv4_t key,
                                           int* found) {
+    if (array->key_class)
+        return llg_class_key_position(array->entries, sizeof(*array->entries),
+                                      array->size, key, found);
     size_t low = 0, high = array->size;
     while (low < high) {
         size_t mid = low + (high - low) / 2;
@@ -570,11 +609,17 @@ void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src) {
 }
 
 /* Key order of two entries of associative arrays of one index type. */
-static int llg_assoc_entry_compare(uint8_t key_kind, sv4_t a_integral,
+static int llg_assoc_entry_compare(uint8_t key_kind, uint8_t key_class,
+                                   sv4_t a_integral,
                                    const unsigned char* a_string,
                                    size_t a_length, sv4_t b_integral,
                                    const unsigned char* b_string,
                                    size_t b_length) {
+    if (key_class) {
+        uint64_t a = llg_class_key_order(a_integral);
+        uint64_t b = llg_class_key_order(b_integral);
+        return a < b ? -1 : a > b;
+    }
     return key_kind == LLG_ASSOC_INTEGRAL
         ? llg_integral_compare(a_integral, b_integral)
         : llg_assoc_string_compare(a_string, a_length, b_string, b_length);
@@ -617,6 +662,7 @@ void llg_assoc_merge(llg_assoc_t* dst, const llg_assoc_t* a,
     else
         llg_assoc_init_string(&merged, dst->element_width, dst->element_signed,
                               dst->element_two_state);
+    merged.key_class = dst->key_class;
     if (a->size > SIZE_MAX - b->size)
         llg_container_fatal("associative-array size overflow");
     llg_assoc_reserve(&merged, a->size + b->size);
@@ -626,7 +672,7 @@ void llg_assoc_merge(llg_assoc_t* dst, const llg_assoc_t* a,
         const llg_assoc_entry_t* right = j < b->size ? &b->entries[j] : NULL;
         int cmp = !left ? 1
             : !right ? -1
-            : llg_assoc_entry_compare(dst->key_kind, left->integral_key,
+            : llg_assoc_entry_compare(dst->key_kind, dst->key_class, left->integral_key,
                                       left->string_key, left->string_length,
                                       right->integral_key, right->string_key,
                                       right->string_length);

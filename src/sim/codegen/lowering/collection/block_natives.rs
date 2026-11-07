@@ -35,7 +35,7 @@ impl Codegen<'_> {
 
     /// Give one block declaration its model object. `statement` is its
     /// declaration statement, which carries the lexical position.
-    pub(super) fn collect_block_native(
+    pub(in super::super) fn collect_block_native(
         &mut self,
         path: &str,
         declaration: NodeId,

@@ -543,6 +543,15 @@ Macros, includes and their edition-specific behavior are counted in §11.
   for a task or a function, as do two changed nested queues of one container
   with selectors that are not provably distinct
   ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
+  A class handle indexes an associative array at any nesting level (`int a[C]`,
+  `int n[C][string]`, `int w[string][C]`, `int q[C][$]`, `int c[C][C]`) with
+  every method, `foreach`, `%p`, patterns with `null` and `default` keys,
+  conditional merges and subroutine formals. A derived object is a key of its
+  base class's array and `null` is a valid key (7.8.3). The null key comes
+  first, then keys by class declaration, then by creation, so traversal
+  depends on neither time nor addresses (S07-D9). A key is a collection root
+  ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md),
+  [known issue](known_issues.md#class-keyed-associative-arrays-have-explicit-gaps)).
   `ref` formals of queue, dynamic and associative type alias the caller's
   container variable, including from timed tasks and fork branches
   ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
@@ -928,7 +937,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   unpacked dimensions, omitted slots, singleton/implicit vectors, declared/formal
   bounds and signed endpoint guards, including descriptor-backed arrays (to 16M
   cells) traversed in place. Iterators are automatic, lexical and
-  read-only. Dynamic/queue and integral/string-keyed associative traversal have
+  read-only. Dynamic/queue and integral/string/class-keyed associative traversal have
   separate paths. Queues and dynamic arrays of queues or dynamic arrays iterate
   one or several dimensions, each bounded by the size of the element its outer
   variables select
@@ -3107,7 +3116,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   [solver readme](../src/sim/rt/constraints/readme.md)). A failed call leaves
   every variable unchanged; infeasible constraints warn, evaluation errors and
   exhausted budgets are run-time errors (S29-D1 to S29-D10 and S30-D1 to
-  S30-D15 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays,
+  S30-D16 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays,
   associative arrays and the other forms in
   [known issues](known_issues.md#constrained-randomization-limits-sim-029-sim-030)
   are located errors; see

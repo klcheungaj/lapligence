@@ -166,6 +166,45 @@ fn document_admission_rejects_before_storage_and_reuses_shared_text() {
 }
 
 #[test]
+fn a_closed_file_that_is_not_utf8_keeps_its_bytes_and_diagnostics() {
+    let root = std::env::temp_dir().join(format!("llg-ls-encoding-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create root");
+    let comment = root.join("comment.sv");
+    let string = root.join("string.sv");
+    std::fs::write(&comment, b"// \xbf\nmodule tb; endmodule\n").expect("write source");
+    std::fs::write(&string, b"module tb;\n  string s = \"\xbf\";\nendmodule\n")
+        .expect("write source");
+    let config = config_with_budget(&root, vec![root.clone()], 1024, 1024);
+    for (path, severity, line) in [
+        (&comment, llg::core::compile::Severity::Warning, 1),
+        (&string, llg::core::compile::Severity::Error, 2),
+    ] {
+        let budget = enforce_input_budget(&config, std::slice::from_ref(path), &BTreeMap::new())
+            .expect("the file is admitted");
+        let raw = budget.snapshots.raw(path).expect("exact bytes are kept");
+        let text = budget.snapshots.text(path).expect("text is kept");
+        assert_eq!(raw.len(), text.len());
+        let source = llg::core::compile::OwnedSource::compilation_unit(
+            path.to_string_lossy().into_owned(),
+            text,
+        )
+        .with_raw(Some(raw));
+        let out = llg::core::compile::compile_sources(
+            &[source],
+            &llg::core::compile::CompileOpts::default(),
+        )
+        .expect("the compile runs");
+        let found = out
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains("invalid UTF-8"))
+            .expect("the byte is reported");
+        assert_eq!((found.severity, found.line), (severity, line));
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn admitted_snapshot_indexes_share_the_same_text_allocation() {
     let path = PathBuf::from(hp("/tmp/llg-shared-snapshot.sv"));
     let text = Arc::new("module m; endmodule\n".to_owned());
@@ -388,11 +427,10 @@ fn closed_request_snapshot_is_bounded_and_reports_unreadable_inputs() {
     assert_eq!(failure.kind, InputSizeLimitKind::PerFile);
     assert_eq!(failure.measured_bytes, 5);
 
-    std::fs::write(&source, [0xff, 0xfe]).expect("write invalid UTF-8");
-    let failure =
-        read_closed_input_snapshot(&source, 4).expect_err("invalid UTF-8 is not a snapshot");
-    assert_eq!(failure.kind, InputSizeLimitKind::Unreadable);
-    assert!(failure.message().contains("input-snapshot"));
+    std::fs::write(&source, [b'a', 0xff, 0xfe]).expect("write invalid UTF-8");
+    let read = read_closed_input_snapshot(&source, 4).expect("a file that is not UTF-8 is kept");
+    assert_eq!(read.text, "a??");
+    assert_eq!(read.raw.as_deref(), Some(&[b'a', 0xff, 0xfe][..]));
 
     std::fs::remove_file(&source).expect("remove request source");
     let failure =

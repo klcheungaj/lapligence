@@ -138,6 +138,17 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<IrExpr, String> {
+        // A class handle key travels as its packed form (`IrAssocKey::Class`).
+        // Generated-loop iterators and multidimensional selects stand here
+        // as logical indices: their type is the element's, not the index's.
+        let logical_index = self.inline_declaration(node).is_some()
+            || self.multidimensional_element(node).is_some();
+        if !logical_index
+            && (self.is_chandle_expr(path, node) || self.class_node_for_type_expr(node).is_some())
+        {
+            let handle = self.lower_chandle(path, node)?;
+            return Ok(class_key_expr(handle));
+        }
         // An implicit conversion to the index type would turn X/Z bits into
         // zeros; the runtime validates the original value first and treats
         // an unknown index as invalid (SV 7.4.6, 7.8.6).
@@ -586,12 +597,10 @@ impl<'a> Codegen<'a> {
         let container = self.container_of(base)?;
         let mut element = &self.model.containers[container.ir].element;
         while let IrContainerElement::Container {
-            kind,
-            element: next,
-            ..
+            key, element: next, ..
         } = element
         {
-            if kind.to_ascii_lowercase().contains("assoc") {
+            if key.is_some() {
                 return Some(format!(
                     "elements of `{}` in `{path}` are not supported here: a statement reaches one associative array nested in container elements, and this one sits below another or outside a procedural statement",
                     self.node(base).name
@@ -958,7 +967,7 @@ impl<'a> Codegen<'a> {
                 Some((container.ir, indices))
             }
             IrContainerKind::Associative {
-                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
+                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
             } => Some((container.ir, indices)),
             IrContainerKind::Associative {
                 key: IrAssocKey::String,
@@ -978,7 +987,7 @@ impl<'a> Codegen<'a> {
         matches!(
             self.model.containers[container.ir].kind,
             IrContainerKind::Associative {
-                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard
+                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class
             }
         )
         .then_some((container.ir, key))

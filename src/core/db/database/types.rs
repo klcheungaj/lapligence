@@ -34,6 +34,9 @@ pub enum MemberVisibility {
 /// inheritance and construction never require retaining a Slang pointer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClassMetadata {
+    /// The package or instance the class is declared in; `None` in a
+    /// compilation unit.
+    pub scope: Option<NodeId>,
     pub type_id: Option<TypeId>,
     pub base: Option<NodeId>,
     /// Frontend-owned call used to initialize the base, when the source has
@@ -450,6 +453,9 @@ pub enum AssociativeIndex {
         two_state: bool,
     },
     String,
+    /// A class handle of a user class (7.8.3). The built-in classes keep
+    /// their own storage and stay `Unsupported`.
+    Class,
     Unsupported(String),
 }
 

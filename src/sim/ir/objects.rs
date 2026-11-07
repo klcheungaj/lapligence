@@ -26,6 +26,10 @@ pub struct IrClass {
     /// base prefix in declaration order; no unrelated C struct alias is used.
     pub(in crate::sim) base: Option<usize>,
     pub(in crate::sim) fields: Vec<IrClassField>,
+    /// Position of the class among keys of a class-indexed array (S07-D9),
+    /// from 1. 0 in a model with no such array, whose C keeps its one
+    /// `llg_gc_type_t`.
+    pub(in crate::sim) rank: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -378,6 +382,9 @@ pub enum IrChandleExpr {
         /// See [`super::IrCallExpr::vpi_call`].
         vpi_call: Option<u32>,
     },
+    /// The class handle of a packed key value
+    /// ([`IrObjectQuery::ClassKey`]).
+    ClassFromKey(Box<IrExpr>),
     /// Conditional operator with a chandle result (SV 11.4.11). An
     /// ambiguous predicate evaluates both arms and yields their common
     /// pointer when they are equal, otherwise null.
@@ -602,6 +609,9 @@ pub enum IrObjectQuery {
     /// compares it where other expressions compare their value.
     StringDigest(IrStringExpr),
     ChandleEq(IrChandleExpr, IrChandleExpr),
+    /// A class handle as an unsigned 64-bit two-state associative key
+    /// ([`super::IrAssocKey::Class`]).
+    ClassKey(IrChandleExpr),
     SemaphoreTryGet(IrChandleExpr, IrExpr),
     MailboxNum(IrChandleExpr),
     MailboxTryPut {
@@ -1528,6 +1538,7 @@ impl IrObjectQuery {
                 a.validate(model, formals, chandle_return)?;
                 b.validate(model, formals, chandle_return)
             }
+            Self::ClassKey(handle) => handle.validate(model, formals, chandle_return),
             Self::SemaphoreTryGet(receiver, keys) => {
                 receiver.validate(model, formals, chandle_return)?;
                 if keys.is_real() {
@@ -1626,6 +1637,7 @@ impl IrObjectQuery {
                 a.expressions(visit);
                 b.expressions(visit);
             }
+            Self::ClassKey(handle) => handle.expressions(visit),
             Self::SemaphoreTryGet(receiver, keys) => {
                 receiver.expressions(visit);
                 visit(keys);
@@ -1693,6 +1705,7 @@ impl IrObjectQuery {
                 a.expressions_mut(visit);
                 b.expressions_mut(visit);
             }
+            Self::ClassKey(handle) => handle.expressions_mut(visit),
             Self::SemaphoreTryGet(receiver, keys) => {
                 receiver.expressions_mut(visit);
                 visit(keys);
@@ -2254,6 +2267,15 @@ impl IrChandleExpr {
                 Ok(())
             }
             Self::Required { handle, .. } => handle.validate(model, formals, chandle_return),
+            Self::ClassFromKey(key) => {
+                if (key.width, key.signed) != (super::CLASS_KEY_WIDTH, false) {
+                    return Err(super::IrValidationError::new(
+                        "class key",
+                        "a class key is an unsigned 64-bit value",
+                    ));
+                }
+                Ok(())
+            }
             Self::CopyClass { class, source } => {
                 if *class >= model.classes.len() {
                     return Err(super::IrValidationError::new(
@@ -2501,6 +2523,8 @@ impl IrChandleExpr {
                                         reference.kind,
                                         super::IrElementRefKind::Handle
                                     )) => {}
+                        (IrCallArg::Container(_) | IrCallArg::ContainerValues { .. }, formal)
+                            if formal.container.is_some() => {}
                         (IrCallArg::ChandleRefAddr(addr), formal)
                             if formal.chandle && formal.is_ref() =>
                         {
@@ -2549,6 +2573,7 @@ impl IrChandleExpr {
                 }
             }
             Self::EventObject(event) => event.expressions(visit),
+            Self::ClassFromKey(key) => visit(key),
             Self::Required { handle, .. } | Self::CopyClass { source: handle, .. } => {
                 handle.expressions(visit)
             }
@@ -2602,6 +2627,7 @@ impl IrChandleExpr {
                 }
             }
             Self::EventObject(event) => event.expressions_mut(visit),
+            Self::ClassFromKey(key) => visit(key),
             Self::Required { handle, .. } | Self::CopyClass { source: handle, .. } => {
                 handle.expressions_mut(visit)
             }
