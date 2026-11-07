@@ -269,14 +269,30 @@ fn static_record_properties_are_shared_records() {
 
 #[test]
 fn null_property_containers_stop_cleanly() {
-    for (case, site) in [
-        ("null_container_read", "property access at tb:9:9"),
-        ("null_container_write", "property access at tb:9:5"),
-        ("null_container_select", "property access at tb:9:5"),
-        ("null_container_chain", "property access at tb:9:14"),
-    ] {
-        sim_cli::run_case_checked_matrix(SUITE, case, &[], &null_handle_check("before\n", site));
-    }
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "null_container_read",
+        &[],
+        &null_handle_check("before\n", "property access at tb:9:9"),
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "null_container_write",
+        &[],
+        &null_handle_check("before\n", "property access at tb:9:5"),
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "null_container_select",
+        &[],
+        &null_handle_check("before\n", "property access at tb:9:5"),
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "null_container_chain",
+        &[],
+        &null_handle_check("before\n", "property access at tb:9:14"),
+    );
 }
 
 #[test]
