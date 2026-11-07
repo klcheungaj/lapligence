@@ -661,10 +661,12 @@ pub(crate) fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec
 /// takes the union of the effects of every implementation of its slot, the
 /// set the dispatch switch selects from, instead of the summary of an unknown
 /// callee: an initializer calls functions, and their overrides are functions.
+/// A `$stop` in those functions is a stop request, which outside a process
+/// turn is reported and ignored (`llg_rt_request_stop`).
 pub(crate) fn effects_for_initializer(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
     let mut effects = Vec::new();
     let mut visits = CallVisits {
-        virtual_slots: Some(HashSet::new()),
+        initializer_slots: Some(HashSet::new()),
         ..CallVisits::default()
     };
     collect_effects(ir, statements, &mut effects, &mut visits);
@@ -795,10 +797,12 @@ pub(crate) fn direct_call_targets(ir: &IrModel, statements: &[IrStmt]) -> Vec<Ca
 struct CallVisits {
     visited: HashSet<usize>,
     direct: Option<BTreeSet<CallTarget>>,
-    /// Virtual slots whose implementations were walked; `Some` follows a
-    /// virtual dispatch into every implementation of its slot instead of
-    /// summarizing it as an unknown callee.
-    virtual_slots: Option<HashSet<usize>>,
+    /// `Some` in the walk of a static declaration initializer, which calls
+    /// only functions: a virtual dispatch follows every implementation of
+    /// its slot (the slots walked so far) instead of being summarized as an
+    /// unknown callee, and `$stop` is the stop request a function body
+    /// issues, which does not suspend.
+    initializer_slots: Option<HashSet<usize>>,
 }
 
 impl CallVisits {
@@ -1054,7 +1058,9 @@ fn collect_effects(
             }
             IrStmt::StopControl { .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
-                effects.push(ExecutionEffect::Suspend);
+                if visited_calls.initializer_slots.is_none() {
+                    effects.push(ExecutionEffect::Suspend);
+                }
             }
             IrStmt::Call(call) => {
                 // Imported DPI calls are deliberately classified as runtime
@@ -1143,7 +1149,7 @@ fn collect_effects(
     }
 }
 
-/// With `CallVisits::virtual_slots`, collect the effects of every
+/// With `CallVisits::initializer_slots`, collect the effects of every
 /// implementation of the slot `function` dispatches through. False when the
 /// walker summarizes virtual calls, or the slot has an inline-expanded
 /// implementation, whose specializations dispatch through other slots.
@@ -1163,7 +1169,7 @@ fn collect_virtual_effects(
     else {
         return false;
     };
-    let Some(slots) = visited_calls.virtual_slots.as_mut() else {
+    let Some(slots) = visited_calls.initializer_slots.as_mut() else {
         return false;
     };
     let implementations = ir

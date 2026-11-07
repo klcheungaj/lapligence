@@ -232,3 +232,16 @@ fn initializer_virtual_dispatch() {
         &[],
     );
 }
+
+#[test]
+fn initializer_stop_reachable() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "initializer_stop_reachable",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_cast/initializer_stop_reachable.out"
+        ),
+        &[],
+        &[],
+    );
+}
