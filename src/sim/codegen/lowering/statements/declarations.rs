@@ -412,7 +412,8 @@ impl EmitCtx<'_, '_> {
                     let store_two_state = two_state
                         && matches!(
                             self.cg.kind(declaration),
-                            NodeKind::Var { ty } if is_two_state_kind(&ty.kind)
+                            NodeKind::Var { ty } | NodeKind::Array { ty }
+                                if is_two_state_kind(&ty.kind)
                         );
                     let init = initializer
                         .map(|initializer| {
