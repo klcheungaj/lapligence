@@ -36,6 +36,11 @@ packed records) and 164 build only at 16 cells (`# ` lines at the end of
 `rows.txt`). No shape builds only at 3 cells: the column form has none of the
 per-cell form's limits.
 
+The tests run with `--no-index-checks`, so a `ref` actual whose element an
+input actual removes (`rf(q[0], q.pop_back())`) gets the IEEE 1800 result at
+both sizes instead of the default index-check stop
+([S07-D15](../../../../../docs/lrm_decisions.md)).
+
 ## Files
 
 - `shapes_<type>.sv`, `shapes_<type>_nba.sv`: the covering subset the default

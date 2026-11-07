@@ -65,6 +65,20 @@ fn class_container_forms_of_method_bodies() {
 }
 
 #[test]
+fn generic_class_specializations() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/generic_specializations.out");
+    sim_cli::run_case_backend_parity(SUITE, "generic_specializations", expected, &[], &[]);
+}
+
+#[test]
+fn builtin_calls_are_method_receivers() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/builtin_call_receivers.out");
+    sim_cli::run_case_backend_parity(SUITE, "builtin_call_receivers", expected, &[], &[]);
+}
+
+#[test]
 fn call_results_are_method_receivers_and_select_bases() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/call_result_selects.out");
@@ -136,13 +150,21 @@ fn event_containers_keep_trigger_identity() {
 #[test]
 fn associative_defaults_and_invalid_indices_follow_7_8_6() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_006/assoc_defaults.out");
-    sim_cli::run_case_backend_parity(SUITE, "assoc_defaults", expected, &[], &[]);
-    sim_cli::run_case(
+    // The 7.8.6 results for X keys, with index checks off (S07-D15).
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "assoc_defaults",
+        expected,
+        &["--no-index-checks"],
+        &[],
+    );
+    sim_cli::run_case_with_args(
         SUITE,
         "assoc_defaults",
         expected,
         "WARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nWARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nWARNING: [SIM-012] invalid associative-array key read\nWARNING: [SIM-012] invalid associative-array integral key write\nWARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nWARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nWARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\nINFO: [SIM-000] 0 error(s), 7 warning(s)\n",
         &[],
+        &["--no-index-checks"],
     );
 }
 

@@ -409,7 +409,7 @@ impl<'a> Codegen<'a> {
     /// Lower an event target without losing a runtime array index. Constant
     /// selects retain the compact scalar handle path; variable selects carry
     /// typed index expressions to the runtime pointer table.
-    /// The event an event control or trigger binds: a missing entry of an
+    /// The event an event control or blocking trigger binds: a missing entry of an
     /// associative event array comes into existence here, so a later wait
     /// or trigger of the same key names the same event. A read of the
     /// element (`.triggered`, an assignment source) creates nothing.

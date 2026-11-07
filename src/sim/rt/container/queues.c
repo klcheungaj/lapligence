@@ -428,7 +428,7 @@ int llg_queue_set(llg_queue_t* queue, sv4_t index, sv4_t value) {
 int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
     size_t native;
     if (!llg_index(index, queue->size, 1, &native)) {
-        llg_container_warning("invalid queue insert index");
+        llg_invalid_queue_index("queue insert", "invalid queue insert index", index, queue->size, 1);
         return 0;
     }
     if (queue->limit == 0 ||
@@ -479,7 +479,10 @@ int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
 
 int llg_queue_delete_index(llg_queue_t* queue, sv4_t index) {
     size_t native;
-    if (!llg_index(index, queue->size, 0, &native)) return 0;
+    if (!llg_index(index, queue->size, 0, &native)) {
+        llg_invalid_queue_index("queue delete", NULL, index, queue->size, 0);
+        return 0;
+    }
     llg_queue_disconnect(queue, queue->element_ids[native]);
     sv4_destroy(&queue->data[native]);
     if (native + 1 < queue->size) {

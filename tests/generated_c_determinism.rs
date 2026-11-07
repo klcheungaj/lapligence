@@ -6,11 +6,18 @@ use std::time::Duration;
 
 use crate::sim_harness;
 
-const RUNS: usize = 3;
-const FIXTURES: [&str; 3] = [
-    "data_types_next/static_function_executable_assignments.sv",
-    "syn021_tagged_union/struct_contexts.sv",
-    "compact_names/names.sv",
+/// Fixtures and how many times each is generated. Generic class
+/// specializations come from a frontend hash map whose order changes between
+/// processes, so those fixtures run more often to catch an order leak.
+const FIXTURES: [(&str, usize); 5] = [
+    (
+        "data_types_next/static_function_executable_assignments.sv",
+        3,
+    ),
+    ("syn021_tagged_union/struct_contexts.sv", 3),
+    ("compact_names/names.sv", 3),
+    ("feature_completion/sim_006/generic_specializations.sv", 6),
+    ("feature_completion/sim_006/class_container_forms.sv", 6),
 ];
 
 fn snapshot_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
@@ -77,7 +84,7 @@ fn assert_same_tree(
 #[test]
 fn generated_sources_are_repeatable_across_processes() {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim");
-    for fixture in FIXTURES {
+    for (fixture, runs) in FIXTURES {
         for no_opt in [false, true] {
             let mode = if no_opt { "no-opt" } else { "default" };
             let directory = sim_harness::TempDir::new("generated-c-determinism")
@@ -85,7 +92,7 @@ fn generated_sources_are_repeatable_across_processes() {
             let source = fixture_root.join(fixture);
             let lint = crate::sim_cli::expected_lint(&source);
             let mut expected: Option<Vec<(PathBuf, Vec<u8>)>> = None;
-            for run in 1..=RUNS {
+            for run in 1..=runs {
                 let output_root = directory.path().join(format!("{mode}-{run}"));
                 let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
                 command

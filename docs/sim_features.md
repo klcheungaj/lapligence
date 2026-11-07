@@ -405,7 +405,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   or indexed part-select is invalid, so a read returns the element default and
   a write does nothing. The same holds for the index arguments of `insert`,
   `delete`, `getc`, `putc` and `substr` (no `int` conversion), and queue slice
-  bounds clip whatever their width. `$` may appear in an index expression
+  bounds clip whatever their width. Index checks (S07-D15, on by default,
+  `--no-index-checks` or `simulator.index_checks = false` to turn off) stop
+  the run instead at queue `insert`/`delete(index)` with an invalid index,
+  associative reads and writes through an X/Z key, a checked `$cast` into a
+  missing element and a `ref` actual that selects no element.
+  `$` may appear in an index expression
   (`q[$-1]`). The `wide-index` lint rule warns at such an index.
   Associative members of element records, class-property storage of
   container record members, record ports with built-in
@@ -522,7 +527,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   (written from dynamic arrays, patterns or concatenations; nested `size()`)
   and identity handles. Associative reads through an X/Z key or of a missing
   entry warn and return the default unless an explicit default is set;
-  invalid-key writes warn and do nothing; one element accepts compound
+  invalid-key writes warn and do nothing (an X/Z key stops the run while
+  index checks are on, S07-D15); one element accepts compound
   assignment and `++`/`--`
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
   Dynamic arrays and queues assign to each other whole, and records holding
@@ -1237,7 +1243,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   source; a string source converts to a packed value. An element of a queue,
   dynamic or associative array is written through its ordinary assignment only
   when the cast succeeds; a class or enum element whose outcome depends on the
-  run time binds first and stops at a missing element (S11-D5, S11-D6).
+  run time binds first and stops at a missing element, a fixed-array index
+  out of range and an X/Z index or key (S11-D5, S11-D6; with index checks off
+  it warns, writes nothing and returns 0, S07-D15); a
+  nested destination (`qq[i][j]`) binds and creates every level, outermost
+  first. The store path is fixed at compile time by destination kind (a
+  storage slot takes a direct store, every other destination its assignment),
+  with no fallback or retry.
   SV §6.24 **[SV-2005]**.
 - 🟨 **Mutating operators** — Prefix/postfix `++/--` and `+= -= *= /= %= &= |= ^=`
   plus shift assignments capture an admitted whole/member/selected/fixed-array
@@ -2171,7 +2183,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Stop/resume** — `$stop` preserves pending work, activations, output and
   time. `--stop-policy resume` is the noninteractive default; `exit` returns
   control without finals or future-work draining. Stop numbers use the same
-  constant 0/1/2 diagnostic levels. A full interactive debugger is not provided.
+  constant 0/1/2 diagnostic levels. A `$stop` executed during static
+  initialization is reported there and acted on when the scheduler starts,
+  before any process runs. A full interactive debugger is not provided.
   V §17.4.2 **[1995]**.
 - 🟦 **Conversions** — `$rtoi` truncates toward zero; `$itor` handles numeric
   signed/unsigned conversion. `$realtobits/$bitstoreal` and
@@ -2375,7 +2389,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   server keeps physical ranges and adds the mapped origin as related
   information ([RTL-106](../tests/sim_feature_completion/rtl_106.rs)).
   Scope-based runtime locations (`$finish`, severity tasks) print a scope path
-  and stay physical. Physical `` `__FILE__ `` is the opened file's base name.
+  and stay physical. Physical `` `__FILE__ `` is the path the file was opened
+  by: the source path as given, or the include directory as given joined with
+  the `` `include `` name (a local include joins the including file's
+  directory); diagnostics keep canonical paths. A macro reports the file it is
+  expanded in.
   V §19.7; SV §§22.12–22.13 **[2001/SV-2009]**.
 - 🟦 **Keyword/macro state** — `` `begin_keywords `` / `` `end_keywords `` retain
   lexical tables without changing the edition; `` `undefineall `` clears macros.

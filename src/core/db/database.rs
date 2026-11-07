@@ -972,6 +972,13 @@ impl Db {
         !self.dpi_exports.is_empty()
     }
 
+    /// Every subroutine a DPI-C export declaration names, in node order.
+    pub fn dpi_export_subroutines(&self) -> Vec<NodeId> {
+        let mut subroutines = self.dpi_exports.keys().copied().collect::<Vec<_>>();
+        subroutines.sort_unstable_by_key(|subroutine| subroutine.index());
+        subroutines
+    }
+
     /// The C identifier under which a subroutine is exported (SV 35.4,
     /// 35.7), when a DPI-C export declaration names it.
     pub fn dpi_export(&self, id: NodeId) -> Option<&str> {

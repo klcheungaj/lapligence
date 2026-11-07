@@ -78,6 +78,7 @@ fn include_buffers(owned: &[OwnedSource]) -> impl Iterator<Item = Source<'_>> {
             raw: source.raw.as_deref(),
             is_compilation_unit: false,
             is_library_map: false,
+            macro_file_name: source.macro_file_name.as_deref(),
         })
 }
 
@@ -298,12 +299,20 @@ fn admit_found_file(
             .filter(|dir| dir.library == library)
             .map(|dir| dir.path.clone()),
     );
+    // `include_dirs` resolves `opts.include_dirs` one to one; library
+    // directories report their resolved paths.
+    let mut dir_names = dirs.clone();
+    if dirs.len() >= opts.include_dirs.len() {
+        dir_names[..opts.include_dirs.len()].clone_from_slice(&opts.include_dirs);
+    }
     let mut include_stack = vec![path];
     admit_macro_includes(
         &candidate.name,
         &candidate.text,
+        None,
         opts,
         &dirs,
+        &dir_names,
         &mut macros,
         Some(&candidate.target),
         state.admitted_targets,

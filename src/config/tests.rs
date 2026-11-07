@@ -644,6 +644,7 @@ timing_checks = false
 notifiers = true
 timing_check_messages = false
 neg_timing_checks = true
+index_checks = false
 plusargs = ["+seed=1"]
 [waveform]
 file = "waves/run.FST"
@@ -721,6 +722,7 @@ runtime_cache = "../cache"
     assert_eq!(config.simulator.notifiers, Some(true));
     assert_eq!(config.simulator.timing_check_messages, Some(false));
     assert_eq!(config.simulator.neg_timing_checks, Some(true));
+    assert_eq!(config.simulator.index_checks, Some(false));
     assert_eq!(config.build.gen_only, Some(true));
     assert_eq!(config.build.cc.as_deref(), Some("gcc"));
     assert_eq!(

@@ -2882,6 +2882,62 @@ pin collectable targets in the handle slot, and turn the catalog row from
 plugin that asks for one of the objects above, or with the ADV-019 catalog
 walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
 
+## Container index-check stops name no array or source line
+
+### Symptom
+
+With index checks on (S07-D15), a queue `insert` or `delete(index)` with an
+invalid index and an associative-array access through an X or Z key stop the
+run with a message that names the operation, the index or key, the valid
+range and the current process, but not the array or the source line. The run
+ends at once with status 1: final procedures do not run and an open waveform
+file is not completed.
+
+### Cause
+
+These checks sit on the invalid path inside the container runtime, which
+receives neither a name nor a location, so valid accesses pay nothing; the
+generated code after a container call has no exit check, so the runtime
+cannot hand the stop back to the process.
+
+### Intended direction
+
+Pass a site index to the container calls only where a cheap static table can
+name the array and line, if the cost measures as zero.
+
+### Reproduce
+
+`q.insert(5, 9);` on a two-element queue.
+
+## VPI work during static initialization
+
+### Symptom
+
+A user VPI system function called from a static declaration initializer runs
+before any process exists. Work its calltf schedules there, such as a
+`vpi_put_value` with a delay, is not reported as the S13-D5 error that SV
+13.4.4 requires for deferred work outside a procedure's thread. A call from it
+into a DPI-C export stops the run as a call outside a DPI-C import (SV
+35.5.3).
+
+### Cause
+
+The static-initializer walk of S13-D5 follows SystemVerilog calls,
+constructors, virtual overrides and, from a context DPI-C import, every
+export. Foreign VPI code is opaque to it, and the run-time check for a
+process spawned with no parent covers only a `fork`.
+
+### Intended direction
+
+Check the VPI routines that schedule work against the static-initialization
+phase at run time, as a parentless fork is.
+
+### Reproduce
+
+`int x = $sched();` at module scope, where the calltf of `$sched` calls
+`vpi_put_value` on a variable with `vpiInertialDelay`: the run starts
+without the S13-D5 error.
+
 ## Functional coverage limits (SIM-044, SIM-045)
 
 **Status:** open. SIM-044 and SIM-045 provide covergroup instances, the

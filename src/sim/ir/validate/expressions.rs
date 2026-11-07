@@ -383,7 +383,8 @@ impl Validator<'_> {
                     }
                     IrRuntimeQuery::WaitRefreshed
                     | IrRuntimeQuery::CheckerAssume { .. }
-                    | IrRuntimeQuery::InitialTimeStep => 1,
+                    | IrRuntimeQuery::InitialTimeStep
+                    | IrRuntimeQuery::IndexChecks => 1,
                     IrRuntimeQuery::ExpectOutcome(identity) => {
                         if !self.model.assertions.iter().any(|assertion| {
                             assertion.identity == *identity
@@ -1850,6 +1851,9 @@ fn sequence_statement(statement: &IrStmt) -> bool {
         // Generated array-method loops: lexical locals and bounded loops
         // whose bodies are themselves sequence statements.
         IrStmt::DeclLocal { .. } | IrStmt::DeclString { .. } => true,
+        // A report that does not end the run (a `$cast` destination warning
+        // with index checks off) neither suspends nor exits.
+        IrStmt::Severity { level, .. } => !level.is_fatal(),
         IrStmt::If { then_, els, .. } => {
             then_.iter().all(sequence_statement)
                 && els

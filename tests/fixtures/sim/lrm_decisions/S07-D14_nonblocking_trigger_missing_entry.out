@@ -1,0 +1,8 @@
+issue 0
+existing 1
+inactive 0
+early waiter woke 1 0
+t1 1 2
+late waiter woke 1
+delayed 0
+twice 0 2

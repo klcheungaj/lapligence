@@ -1,0 +1,13 @@
+var 1 7
+prop 1 7
+static 1 7
+elem 1 7
+queue 1 1
+assoc 1 7
+member 1 7
+propq 1 1
+ref 1 7
+fail var 0 7
+fail prop 0 7
+fail ref 0 7
+null 1 1

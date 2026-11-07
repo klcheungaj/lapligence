@@ -64,6 +64,10 @@ impl<'a> Codegen<'a> {
         container: usize,
         node: NodeId,
     ) -> Result<IrExpr, String> {
+        // A selector evaluated earlier (a `$cast` binding) keeps its value.
+        if self.hoisted_values.contains_key(&node) {
+            return self.lower_container_index(path, node);
+        }
         if self.is_unbounded_node(node) {
             return self.lower_queue_method_index_with_end(path, container, node, false);
         }
@@ -845,12 +849,15 @@ impl<'a> Codegen<'a> {
         let callee = match self.kind(call) {
             NodeKind::FuncCall { name, callee, .. } => {
                 let (name, callee) = (name.clone(), *callee);
-                // A built-in, such as `process::self()`, has no container result.
-                let Ok((function, _)) = self.resolve_callee_env(self.inst, &name, false, callee)
-                else {
+                // A built-in, such as `process::self()`, has no captured
+                // subroutine body and no container result. Any other callee
+                // must resolve.
+                if callee
+                    .is_some_and(|callee| !matches!(self.kind(callee), NodeKind::FuncTask { .. }))
+                {
                     return Ok(None);
-                };
-                function
+                }
+                self.resolve_callee_env(self.inst, &name, false, callee)?.0
             }
             NodeKind::MethodCall {
                 callee: Some(callee),

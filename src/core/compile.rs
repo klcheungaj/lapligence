@@ -39,6 +39,10 @@ pub struct OwnedSource {
     pub is_compilation_unit: bool,
     /// Parse an admitted map with Slang's library-map grammar.
     pub is_library_map: bool,
+    /// What `` `__FILE__`` reports for this buffer: the path as the user gave
+    /// it (IEEE 1800-2009 22.13). `None` keeps the frontend's own name.
+    /// Diagnostics always use `name`.
+    pub macro_file_name: Option<String>,
 }
 
 impl OwnedSource {
@@ -49,6 +53,7 @@ impl OwnedSource {
             raw: None,
             is_compilation_unit: true,
             is_library_map: false,
+            macro_file_name: None,
         }
     }
 
@@ -59,12 +64,19 @@ impl OwnedSource {
             raw: None,
             is_compilation_unit: false,
             is_library_map: false,
+            macro_file_name: None,
         }
     }
 
     /// This source with the exact bytes of a file that is not UTF-8.
     pub fn with_raw(mut self, raw: Option<Arc<[u8]>>) -> Self {
         self.raw = raw;
+        self
+    }
+
+    /// This source with the name `` `__FILE__`` reports.
+    pub fn with_macro_file_name(mut self, name: Option<String>) -> Self {
+        self.macro_file_name = name;
         self
     }
 }
@@ -115,6 +127,8 @@ pub struct LibrarySource {
     pub library: String,
     /// Parse this library source as a library map.
     pub is_library_map: bool,
+    /// As [`OwnedSource::macro_file_name`].
+    pub macro_file_name: Option<String>,
 }
 
 /// An ordered include search directory for one source library.
@@ -136,6 +150,7 @@ impl LibrarySource {
             raw: None,
             library: library.into(),
             is_library_map: false,
+            macro_file_name: None,
         }
     }
 
@@ -767,7 +782,11 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         })?;
         let text = read_bounded_target(&name, &resolved, content_limit, "SystemVerilog source")?;
         remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
-        owned.push(OwnedSource::compilation_unit(name, text.text).with_raw(text.raw));
+        owned.push(
+            OwnedSource::compilation_unit(name, text.text)
+                .with_raw(text.raw)
+                .with_macro_file_name(Some(path.clone())),
+        );
     }
     for spec in &opts.library_files {
         let (library, path) = split_library_file_spec(spec, opts.default_library.as_deref())?;
@@ -821,7 +840,9 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
                 format!("source path {name} exceeds the configured Slang byte limit"),
             )
         })?;
-        library_owned.push(LibrarySource::new(name, text.text, library).with_raw(text.raw));
+        let mut source = LibrarySource::new(name, text.text, library).with_raw(text.raw);
+        source.macro_file_name = Some(path.to_owned());
+        library_owned.push(source);
     }
     let include_dirs = resolve_path_include_dirs(&opts.include_dirs);
     let mut library_include_dirs = opts
@@ -891,8 +912,10 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         admit_macro_includes(
             &root.name,
             &root.text,
+            root.macro_file_name.as_deref(),
             opts,
             &include_dirs,
+            &opts.include_dirs,
             &mut macros,
             root_target.as_ref(),
             &mut admitted_targets,
@@ -926,13 +949,19 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
                 .filter(|dir| dir.library == root.library)
                 .map(|dir| dir.path.clone()),
         );
+        // A library directory has no spelling of its own here; it reports
+        // its resolved path.
+        let mut include_dir_names = opts.include_dirs.clone();
+        include_dir_names.extend(include_dirs[opts.include_dirs.len()..].iter().cloned());
         let root_target = admitted_targets.get(Path::new(&root.name)).cloned();
         let mut include_stack = vec![PathBuf::from(&root.name)];
         admit_macro_includes(
             &root.name,
             &root.text,
+            root.macro_file_name.as_deref(),
             opts,
             &include_dirs,
+            &include_dir_names,
             &mut library_macros,
             root_target.as_ref(),
             &mut admitted_targets,
@@ -1151,6 +1180,7 @@ fn compile_source_groups(
             raw: source.raw.as_deref(),
             is_compilation_unit: source.is_compilation_unit,
             is_library_map: source.is_library_map,
+            macro_file_name: source.macro_file_name.as_deref(),
         })
         .collect();
     let borrowed_libraries: Vec<_> = library_sources
@@ -1161,6 +1191,7 @@ fn compile_source_groups(
             raw: source.raw.as_deref(),
             library: &source.library,
             is_library_map: source.is_library_map,
+            macro_file_name: source.macro_file_name.as_deref(),
         })
         .collect();
     let options = CompileOptions {
@@ -3849,17 +3880,29 @@ fn resolve_include(
     resolve_include_checked(including, None, target, include_dirs)
 }
 
+#[cfg(test)]
 fn resolve_include_checked(
     including: &Path,
     including_target: Option<&AdmittedTarget>,
     target: &str,
     include_dirs: &[String],
 ) -> Option<AdmittedTarget> {
+    resolve_include_rooted(including, including_target, target, include_dirs).map(|(path, _)| path)
+}
+
+/// [`resolve_include_checked`], also giving where the file was found: `None`
+/// beside the including file, `Some(i)` under `include_dirs[i]`.
+fn resolve_include_rooted(
+    including: &Path,
+    including_target: Option<&AdmittedTarget>,
+    target: &str,
+    include_dirs: &[String],
+) -> Option<(AdmittedTarget, Option<usize>)> {
     let target = Path::new(target);
     if let Some(expected) = including_target {
         let root = secure_fs::open_parent_of_target(expected).ok()?;
         if let Some(path) = resolve_include_under_root(&root, target) {
-            return Some(path);
+            return Some((path, None));
         }
     } else if let Some(parent) = including.parent() {
         if let Some(root) = secure_fs::open_path(parent)
@@ -3867,21 +3910,52 @@ fn resolve_include_checked(
             .filter(|root| root.is_dir())
         {
             if let Some(path) = resolve_include_under_root(&root, target) {
-                return Some(path);
+                return Some((path, None));
             }
         }
     }
 
     include_dirs
         .iter()
-        .map(PathBuf::from)
-        .find_map(|root_path| {
-            let root = secure_fs::open_path(&root_path).ok()?;
+        .enumerate()
+        .find_map(|(index, root_path)| {
+            let root = secure_fs::open_path(Path::new(root_path)).ok()?;
             if !root.is_dir() {
                 return None;
             }
-            resolve_include_under_root(&root, target)
+            resolve_include_under_root(&root, target).map(|path| (path, Some(index)))
         })
+}
+
+/// What `` `__FILE__`` reports in an included file, as a simulator given
+/// these paths spells it: an absolute target as written, otherwise the
+/// directory it was found in, as the user gave that directory (the including
+/// file's directory as its own name spells it), joined with the target.
+fn include_macro_file_name(
+    target: &str,
+    root: Option<usize>,
+    including: Option<&str>,
+    include_dir_names: &[String],
+) -> Option<String> {
+    if Path::new(target).is_absolute() {
+        return Some(target.to_owned());
+    }
+    let directory = match root {
+        Some(index) => include_dir_names.get(index)?.clone(),
+        None => Path::new(including?)
+            .parent()?
+            .to_string_lossy()
+            .into_owned(),
+    };
+    if directory.is_empty() {
+        return Some(target.to_owned());
+    }
+    let separated = directory.ends_with('/') || directory.ends_with(std::path::MAIN_SEPARATOR);
+    Some(if separated {
+        format!("{directory}{target}")
+    } else {
+        format!("{directory}/{target}")
+    })
 }
 
 fn resolve_include_under_root(root: &OpenedPath, target: &Path) -> Option<AdmittedTarget> {
@@ -3983,8 +4057,10 @@ fn macro_environment_from_defines(defines: &[String]) -> MacroEnvironment {
 fn admit_macro_includes(
     name: &str,
     text: &str,
+    macro_file_name: Option<&str>,
     opts: &CompileOpts,
     include_dirs: &[String],
+    include_dir_names: &[String],
     macros: &mut MacroEnvironment,
     including_target: Option<&AdmittedTarget>,
     admitted_targets: &mut HashMap<PathBuf, AdmittedTarget>,
@@ -4004,8 +4080,8 @@ fn admit_macro_includes(
     }
     let including = Path::new(name);
     let mut admit = |target: String, macros: &mut MacroEnvironment| -> Result<(), StartupError> {
-        let Some(path) =
-            resolve_include_checked(including, including_target, &target, include_dirs)
+        let Some((path, root)) =
+            resolve_include_rooted(including, including_target, &target, include_dirs)
         else {
             // Leave missing, malformed, and unauthorized targets for Slang so
             // its diagnostic retains the original directive and source range.
@@ -4033,8 +4109,16 @@ fn admit_macro_includes(
                 read_bounded_at(&path_name, &path, content_limit, "SystemVerilog source")?;
             *remaining = remaining.saturating_sub(path_name.len() as u64 + child_text.len() as u64);
             identities.insert(path.actual_path().to_path_buf());
+            // The first spelling that reaches a file names it.
             owned.push(
-                OwnedSource::include(path_name.clone(), child_text.text).with_raw(child_text.raw),
+                OwnedSource::include(path_name.clone(), child_text.text)
+                    .with_raw(child_text.raw)
+                    .with_macro_file_name(include_macro_file_name(
+                        &target,
+                        root,
+                        macro_file_name,
+                        include_dir_names,
+                    )),
             );
         }
 
@@ -4057,8 +4141,10 @@ fn admit_macro_includes(
         admit_macro_includes(
             &child.name,
             &child.text,
+            child.macro_file_name.as_deref(),
             opts,
             include_dirs,
+            include_dir_names,
             macros,
             Some(&path),
             admitted_targets,

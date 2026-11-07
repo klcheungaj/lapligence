@@ -10,6 +10,18 @@ fn parity(fixture: &str, expected: &str) {
     sim_cli::run_case_backend_parity("container_selects", fixture, expected, &[], &[]);
 }
 
+/// [`parity`] with index checks off (S07-D15), for a fixture that tests the
+/// result IEEE 1800 gives an invalid index.
+fn parity_without_index_checks(fixture: &str, expected: &str) {
+    sim_cli::run_case_backend_parity(
+        "container_selects",
+        fixture,
+        expected,
+        &["--no-index-checks"],
+        &[],
+    );
+}
+
 #[test]
 fn dynamic_array_element_selects_write_only_the_selected_bits() {
     parity(
@@ -86,7 +98,7 @@ fn compound_assignment_to_container_element_select_is_rejected() {
 
 #[test]
 fn queue_indices_beyond_32_bits_are_invalid_not_truncated() {
-    parity(
+    parity_without_index_checks(
         "wide_index_queue",
         concat!(
             "int  0 0 0 0 0 0 0\n",

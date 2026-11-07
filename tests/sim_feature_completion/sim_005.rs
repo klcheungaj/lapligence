@@ -8,8 +8,9 @@ const SUITE: &str = "feature_completion/sim_005";
 #[test]
 fn real_refs_alias_the_selected_numeric_cell() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_005/real_refs.out");
-    sim_cli::run_case_backend_parity(SUITE, "real_refs", expected, &[], &[]);
-    sim_cli::run_case_after_db_drop(SUITE, "real_refs", expected);
+    // Unselected `ref` actuals bind the default with index checks off.
+    sim_cli::run_case_backend_parity(SUITE, "real_refs", expected, &["--no-index-checks"], &[]);
+    sim_cli::run_case_after_db_drop_without_index_checks(SUITE, "real_refs", expected, "");
 }
 
 #[test]

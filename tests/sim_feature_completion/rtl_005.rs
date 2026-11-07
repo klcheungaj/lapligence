@@ -30,9 +30,34 @@ fn conditional_container_operands_select_or_merge_elements() {
 #[test]
 fn dynamic_and_static_casts_share_one_success_contract() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_005/cast_contract.out");
-    sim_cli::run_case(SUITE, "cast_contract", expected, "", &[]);
-    sim_cli::run_case_backend_parity(SUITE, "cast_contract", expected, &[], &[]);
-    sim_cli::run_case_after_db_drop(SUITE, "cast_contract", expected);
+    // Out-of-range destinations take the text's result with index checks
+    // off (S07-D15).
+    let warnings = concat!(
+        "WARNING: cast_contract.sv:52:16: [SIM-004] (tb @ 0 ps) the $cast destination element of `arr` does not exist: index 7 is outside the declared range 0 to 3; the cast writes nothing and returns 0\n",
+        "WARNING: cast_contract.sv:56:16: [SIM-004] (tb @ 0 ps) the $cast destination element of `arr` does not exist: index X is outside the declared range 0 to 3; the cast writes nothing and returns 0\n",
+        "INFO: [SIM-000] 0 error(s), 2 warning(s)\n",
+    );
+    sim_cli::run_case_with_args(
+        SUITE,
+        "cast_contract",
+        expected,
+        warnings,
+        &[],
+        &["--no-index-checks"],
+    );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "cast_contract",
+        expected,
+        &["--no-index-checks"],
+        &[],
+    );
+    sim_cli::run_case_after_db_drop_without_index_checks(
+        SUITE,
+        "cast_contract",
+        expected,
+        warnings,
+    );
 }
 
 #[test]

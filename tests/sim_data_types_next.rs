@@ -53,7 +53,13 @@ fn run_fixture_bytes_with_codegen_rejection(
                     &[("model.c", model.model_c.as_str())],
                 )
                 .map_err(|error| format!("C model build: {error}"))?;
-                sim_harness::run_executable_output(&executable).map(|output| Some(output.stdout))
+                // These conformance files test the result IEEE 1800 gives an
+                // invalid key, so index checks are off (S07-D15).
+                sim_harness::run_executable_output_with_env(
+                    &executable,
+                    &[("LLG_INDEX_CHECKS", "off")],
+                )
+                .map(|output| Some(output.stdout))
             })();
             match actual {
                 Ok(None) => {}

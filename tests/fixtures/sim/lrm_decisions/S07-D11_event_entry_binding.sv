@@ -1,4 +1,4 @@
-// Decision S07-D11: an event control, a trigger and `wait (e.triggered)` on a
+// Decision S07-D11: an event control, a blocking trigger and `wait (e.triggered)` on a
 // missing entry of an associative array of events create the entry with a new
 // event, so a later wait or trigger of that key names the same event. A read
 // of the element (`.triggered` as a value, an assignment source) creates

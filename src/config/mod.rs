@@ -261,6 +261,9 @@ pub struct SimulatorConfig {
     /// Whether negative `$setuphold`/`$recrem` limits and `$nochange`
     /// offsets are simulated with delayed signals (otherwise they count as 0).
     pub neg_timing_checks: Option<bool>,
+    /// Whether an invalid index or key that some simulators stop the run on
+    /// stops it (otherwise the text's result applies).
+    pub index_checks: Option<bool>,
     /// Arguments passed to the generated simulator.
     pub plusargs: Option<Vec<String>>,
 }

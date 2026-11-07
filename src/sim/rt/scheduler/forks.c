@@ -102,11 +102,34 @@ llg_fork_group_t* llg_fork_group_new_target(int join_kind,
     return llg_fork_group_new_impl(join_kind, 1, declaration, instance);
 }
 
+// A fork or detached spawn with no parent during static initialization: a
+// static initializer ran it through a call the reachability checks of
+// `llg_rt_static_effect` did not select. The spawn already fails on this path,
+// so the check costs nothing on a fork that has a parent. The branch's HDL
+// path is the location the descriptor carries.
+static void static_spawn_failed(const llg_co_desc_t* desc) {
+    if (!g.static_init_phase || g.current || g.static_spawn_reported) return;
+    g.static_spawn_reported = 1;
+    const char* branch = desc && desc->name ? desc->name : "<unnamed>";
+    llg_rt_mark_failed();
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL,
+            "%s: a fork starts this branch during static "
+            "initialization, outside every process; a function may schedule "
+            "work after it returns only when its calling thread was created by "
+            "an initial or always procedure or a fork of one (SV 13.4.4)",
+            branch);
+    llg_rt_skip_finals();
+    llg_rt_fatal_typed(0, "deferred statement during static initialization",
+                       NULL, 0, "", branch);
+}
+
 static llg_proc_t* llg_fork_impl(const llg_co_desc_t* desc,
                                  const char* name, llg_fork_group_t* grp,
                                  llg_frame_t* frame) {
-    if (!desc || !desc->fn || !grp || !region_can_mutate("fork scheduling"))
+    if (!desc || !desc->fn || !grp || !region_can_mutate("fork scheduling")) {
+        if (!grp) static_spawn_failed(desc);
         return NULL;
+    }
     if (desc->frame_size < sizeof(llg_co_frame_t) ||
         desc->frame_size > SIZE_MAX - sizeof(llg_proc_t))
         llg_rt_co_oom(desc->frame_size);
@@ -159,8 +182,11 @@ llg_proc_t* llg_spawn_detached_with_frame(const llg_co_desc_t* desc,
                                           const char* name,
                                           llg_frame_t* frame) {
     llg_proc_t* parent = llg_current();
-    if (!desc || !desc->fn || !parent || !region_can_mutate("detached process scheduling"))
+    if (!desc || !desc->fn || !parent ||
+        !region_can_mutate("detached process scheduling")) {
+        if (!parent) static_spawn_failed(desc);
         return NULL;
+    }
     if (desc->frame_size < sizeof(llg_co_frame_t) ||
         desc->frame_size > SIZE_MAX - sizeof(llg_proc_t))
         llg_rt_co_oom(desc->frame_size);

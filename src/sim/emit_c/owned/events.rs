@@ -489,6 +489,11 @@ impl Frame<'_, '_> {
                 1,
                 false,
             ),
+            IrRuntimeQuery::IndexChecks => self.value(
+                "sv4_from_u64(llg_rt_index_checks() ? 1ULL : 0ULL, 1, 0)".to_owned(),
+                1,
+                false,
+            ),
             IrRuntimeQuery::InitialTimeStep => self.value(
                 "sv4_from_u64(llg_time() == 0 ? 1ULL : 0ULL, 1, 0)".to_owned(),
                 1,

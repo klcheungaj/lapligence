@@ -48,12 +48,59 @@ static void llg_container_warning(const char* message) {
 
 LLG_MSG_EXPORT_COUNTS(container)
 
+/* Index checks (simulator.index_checks): the scheduler installs the hook
+ * when they are on. These are the forms some simulators stop the run on
+ * while the text gives a result; with the hook unset, the text's result and
+ * its warning apply. Only invalid accesses reach these helpers. */
+static llg_index_stop_fn llg_index_stop_hook;
+
+void llg_container_set_index_stop(llg_index_stop_fn hook) {
+    llg_index_stop_hook = hook;
+}
+
+/* A read or write through an associative-array key with X or Z bits (SV
+ * 7.8.6). `warning` is the text's warning when the check is off. */
+static void llg_invalid_key_access(const char* operation, const char* warning) {
+    if (llg_index_stop_hook) {
+        llg_index_stop_hook(operation, "the key has X or Z bits");
+        return;
+    }
+    llg_container_warning(warning);
+}
+
+/* A queue method index outside the queue or with X or Z bits (SV 7.10.2).
+ * `allow_end` admits the position after the last element. */
+static void llg_invalid_queue_index(const char* operation, const char* warning,
+                                    sv4_t index, size_t size, int allow_end) {
+    if (llg_index_stop_hook) {
+        char detail[160];
+        int64_t value = 0;
+        size_t last = allow_end ? size : size - 1;
+        if (sv4_is_unknown(index))
+            snprintf(detail, sizeof(detail), "the index has X or Z bits");
+        else if (!allow_end && size == 0)
+            snprintf(detail, sizeof(detail), "the queue is empty");
+        else if (sv4_to_index_i64(index, &value))
+            snprintf(detail, sizeof(detail),
+                     "index %lld is outside the valid range 0 to %llu",
+                     (long long)value, (unsigned long long)last);
+        else
+            snprintf(detail, sizeof(detail),
+                     "the index is outside the valid range 0 to %llu",
+                     (unsigned long long)last);
+        llg_index_stop_hook(operation, detail);
+        return;
+    }
+    if (warning) llg_container_warning(warning);
+}
+
 /* SV 7.8.6: a read through an invalid (X/Z) key or of a nonexistent entry
  * warns and yields the default; an explicit default (SV 7.9.11) is
  * returned without a warning. */
 static void llg_assoc_read_miss(int valid_key, int has_default) {
     if (!valid_key)
-        llg_container_warning("invalid associative-array key read");
+        llg_invalid_key_access("associative-array read",
+                               "invalid associative-array key read");
     else if (!has_default)
         llg_container_warning(
             "associative-array read of a nonexistent entry returns the default");

@@ -784,6 +784,17 @@ pub(super) fn render(
             indices.len(),
             frame.chandle(value)?
         ),
+        IrContainerStmt::ExtendNested { container, indices } => format!(
+            "    (void){}(&{}, {}, {});\n",
+            match ctx.model.containers[*container].kind {
+                IrContainerKind::Dynamic => "llg_dyn_value_extend_nested",
+                IrContainerKind::Queue { .. } => "llg_queue_value_extend_nested",
+                IrContainerKind::Associative { .. } => "llg_assoc_value_extend_nested_integral",
+            },
+            name(frame, *container)?,
+            super::indices(frame, owners, indices)?,
+            indices.len()
+        ),
         IrContainerStmt::SetContainer {
             container,
             indices,

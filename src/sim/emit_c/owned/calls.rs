@@ -898,7 +898,11 @@ impl Frame<'_, '_> {
                     let pointer =
                         self.reference_argument(lhs, read, *width, *signed, *two_state)?;
                     if let Some(stop) = stop_unselected {
-                        self.unselected_stop(&format!("!llg_ref_selected({pointer})"), stop);
+                        self.unselected_stop(
+                            &format!("!llg_ref_selected({pointer})"),
+                            stop,
+                            stop.waited,
+                        );
                     }
                     parameters.push(pointer);
                 }
@@ -1043,12 +1047,23 @@ impl Frame<'_, '_> {
     /// The run stops here, before the callee binds the default of an actual
     /// that no index selected: the report names the call, the scope it ends
     /// is released by the exit path, and the callee never starts.
-    pub(super) fn unselected_stop(&mut self, condition: &str, stop: &crate::sim::ir::IrRefStop) {
-        self.line(format!("if ({condition}) {{"));
+    /// With index checks off the call binds the default instead.
+    pub(super) fn unselected_stop(
+        &mut self,
+        condition: &str,
+        stop: &crate::sim::ir::IrRefStop,
+        waited: bool,
+    ) {
+        let message = if waited {
+            crate::sim::ir::UNSELECTED_REF_MESSAGE
+        } else {
+            crate::sim::ir::UNSELECTED_REF_BIND_MESSAGE
+        };
+        self.line(format!("if (({condition}) && llg_rt_index_checks()) {{"));
         self.line("llg_rt_mark_failed();");
         self.line(format!(
             "llg_rt_fatal_typed(0, {}, NULL, 0, {}, {});",
-            super::c_string_literal(crate::sim::ir::UNSELECTED_REF_MESSAGE),
+            super::c_string_literal(&format!("{message}{}", crate::sim::ir::INDEX_CHECK_HINT)),
             super::c_string_literal(&stop.scope),
             super::c_string_literal(&stop.location),
         ));
@@ -1109,17 +1124,16 @@ impl Frame<'_, '_> {
         self.line(format!(
             "*(void**)llg_value_scope_object({scope}) = {acquire};"
         ));
-        // A waiter on the default an unselected index binds never wakes, so
-        // the call stops the run instead; the scope above releases the
-        // reference. A record carries its stop for every call and tests the
-        // callee's marker; any other kind carries it only for a waited
-        // formal. Calls whose callee does not wait pay nothing.
-        if let Some(stop) = reference
-            .stop_unselected
-            .as_ref()
-            .filter(|_| watched || reference.kind != IrElementRefKind::Record)
-        {
-            self.unselected_stop(&format!("!llg_native_ref_selected({root})"), stop);
+        // With index checks on, an unselected index stops the run; the scope
+        // above releases the reference. A record reads whether the callee
+        // waits from its change marker.
+        if let Some(stop) = reference.stop_unselected.as_ref() {
+            let waited = if reference.kind == IrElementRefKind::Record {
+                watched
+            } else {
+                stop.waited
+            };
+            self.unselected_stop(&format!("!llg_native_ref_selected({root})"), stop, waited);
         }
         Ok(match reference.kind {
             IrElementRefKind::String => vec![format!("llg_native_ref_string({acquire})")],
@@ -1214,7 +1228,7 @@ impl Frame<'_, '_> {
         let chosen = self.scalar("int", tests);
         self.discard(index);
         if let Some(stop) = stop {
-            self.unselected_stop(&format!("{chosen} < 0"), stop);
+            self.unselected_stop(&format!("{chosen} < 0"), stop, stop.waited);
         }
         let mut addresses = Vec::with_capacity(leaves.len());
         let mut markers = Vec::new();

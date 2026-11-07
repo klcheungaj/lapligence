@@ -331,7 +331,7 @@ int llg_assoc_value_set_integral(llg_assoc_value_t* array, sv4_t key,
     sv4_t normalized = SV4_EMPTY;
     int result_value;
 
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_invalid_key_access("associative-array write", "invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_assoc_value_packed_source(array, value);
     int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source, &change);
     llg_value_drop(&source);
@@ -350,7 +350,7 @@ int llg_assoc_value_set_integral_real(llg_assoc_value_t* array, sv4_t key,
     sv4_t normalized = SV4_EMPTY;
     int result_value;
 
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_invalid_key_access("associative-array write", "invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_value_from_real(array->element, value);
     int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source, &change);
     llg_value_drop(&source);
@@ -370,7 +370,7 @@ int llg_assoc_value_set_integral_string(llg_assoc_value_t* array, sv4_t key,
     int result_value;
 
     if (!llg_assoc_value_normalize_key(array, key, &normalized)) {
-        llg_container_warning("invalid associative-array key write");
+        llg_invalid_key_access("associative-array write", "invalid associative-array key write");
         llg_string_destroy(&value);
         do { result_value = 0; goto cleanup_key; } while (0);
     }
@@ -392,7 +392,7 @@ int llg_assoc_value_set_integral_chandle(llg_assoc_value_t* array, sv4_t key,
     sv4_t normalized = SV4_EMPTY;
     int result_value;
 
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_invalid_key_access("associative-array write", "invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_value_from_chandle(array->element, value);
     /* The entry copies the handle; a counted (process) source owns one more
      * reference that must not outlive the call. */
@@ -415,7 +415,7 @@ int llg_assoc_value_set_nested_integral_container(
 
     if (!indices || count == 0) do { result_value = 0; goto cleanup_key; } while (0);
     if (!llg_assoc_value_normalize_key(array, indices[0], &normalized))
-        do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
+        do { llg_invalid_key_access("associative-array write", "invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t* target = count == 1
         ? NULL
         : llg_assoc_value_nested_at_integral(array, indices, count);
@@ -459,7 +459,7 @@ int llg_assoc_value_set_nested_integral_container_from_packed(
     int result_value;
 
     if (!indices || count == 0 || !source) do { result_value = 0; goto cleanup_key; } while (0);
-    if (!llg_assoc_value_normalize_key(array, indices[0], &normalized)) do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, indices[0], &normalized)) do { llg_invalid_key_access("associative-array write", "invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
 
     const llg_value_desc_t* target_desc = NULL;
     if (count == 1) {

@@ -661,8 +661,8 @@ pub(crate) fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec
 /// takes the union of the effects of every implementation of its slot, the
 /// set the dispatch switch selects from, instead of the summary of an unknown
 /// callee: an initializer calls functions, and their overrides are functions.
-/// A `$stop` in those functions is a stop request, which outside a process
-/// turn is reported and ignored (`llg_rt_request_stop`).
+/// A `$stop` in those functions is a stop request, which the runtime holds
+/// until the scheduler starts (`llg_rt_request_stop`).
 pub(crate) fn effects_for_initializer(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
     let mut effects = Vec::new();
     let mut visits = CallVisits {

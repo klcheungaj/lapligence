@@ -1,0 +1,4 @@
+status RUNNING
+same 1
+chain 12
+child RUNNING 1

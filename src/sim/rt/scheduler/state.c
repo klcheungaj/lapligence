@@ -699,6 +699,15 @@ typedef struct {
     int initialized;
     int process_turn_active;
     int deferred_stop;
+    // A `$stop` executed by a static initializer, held until llg_rt_run
+    // starts (SV 20.2 gives no rule for a stop before any process runs).
+    int held_stop;
+    // Set from init until llg_rt_run starts: the static schedule, where no
+    // process exists, so a fork there has no parent (SV 13.4.4).
+    int static_init_phase;
+    int static_spawn_reported;
+    // simulator.index_checks (LLG_INDEX_CHECKS), on unless set to `off`.
+    int index_checks;
     llg_proc_t* current;
     llg_proc_queue_t process_queues[LLG_REGION_COUNT];
     llg_nba_queue_t nba_queues[LLG_REGION_COUNT];

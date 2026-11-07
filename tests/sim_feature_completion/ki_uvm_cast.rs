@@ -3,8 +3,8 @@
 //! and `ref` formals, class-typed `?:`, comparisons of method results,
 //! discarded pops, unformatted handles, class string actuals, record locals,
 //! branch handles, local array locators, `$bits` bounds and bare and
-//! `this.c` constraint modes. Clauses and oracles are in the
-//! fixture readme.
+//! `this.c` constraint modes, and nested `$cast` destinations. Clauses and
+//! oracles are in the fixture readme.
 use super::sim_cli;
 
 const SUITE: &str = "feature_completion/ki_uvm_cast";
@@ -241,6 +241,75 @@ fn initializer_stop_reachable() {
         include_str!(
             "../fixtures/sim/feature_completion/ki_uvm_cast/initializer_stop_reachable.out"
         ),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn initializer_stop_held() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/initializer_stop_held.out");
+    let stop = "INFO: initializer_stop_held.sv:10:19: [SIM-002] (reporter @ 0 ps) $stop called\n";
+    sim_cli::run_case_with_args(
+        SUITE,
+        "initializer_stop_held",
+        expected,
+        &format!(
+            "{stop}INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n"
+        ),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_with_args(
+        SUITE,
+        "initializer_stop_held",
+        "make 1\nmake 2\nmake 3\n",
+        stop,
+        &[],
+        &["--stop-policy", "exit"],
+    );
+}
+
+#[test]
+fn nested_destinations() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "nested_destinations",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/nested_destinations.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn nested_destination_stop() {
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "nested_destination_stop",
+        &[],
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/nested_destination_stop.out"),
+        "$cast failed to assign an incompatible value: the destination element of `dq` does not exist",
+    );
+}
+
+#[test]
+fn queue_end_selectors() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "queue_end_selectors",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/queue_end_selectors.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn class_destinations() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_destinations",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/class_destinations.out"),
         &[],
         &[],
     );

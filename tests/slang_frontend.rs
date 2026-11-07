@@ -109,6 +109,7 @@ fn library_name_bytes_consume_the_native_source_budget() {
         raw: None,
         library: "named_library",
         is_library_map: false,
+        macro_file_name: None,
     }];
     let max_source_bytes = (sources[0].name.len()
         + sources[0].text.len()
@@ -1104,6 +1105,7 @@ package own_pkg; class InPackage; endclass endpackage
             raw: None,
             is_compilation_unit: false,
             is_library_map: false,
+            macro_file_name: None,
         },
         Source::compilation_unit("broken.sv", "module broken; missing_child m(\n"),
     ];
@@ -1192,6 +1194,7 @@ fn parse_metadata_rejects_library_maps_and_budget_overruns() {
         raw: None,
         is_compilation_unit: true,
         is_library_map: true,
+        macro_file_name: None,
     }];
     let error = slang::parse_metadata(&metadata_request(
         &map,

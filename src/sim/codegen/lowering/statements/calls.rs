@@ -284,24 +284,44 @@ impl EmitCtx<'_, '_> {
                 }
             }
         }
+        // With index checks on, an index that selects no element stops the
+        // run; off, a callee that does not wait binds the default. A waited
+        // record formal has no default binding to follow (SIM-009), so that
+        // call stops either way.
         let otherwise = result.and_then(|()| {
+            let message = if waits {
+                crate::sim::ir::UNSELECTED_REF_MESSAGE
+            } else {
+                crate::sim::ir::UNSELECTED_REF_BIND_MESSAGE
+            };
+            let stop = IrStmt::Severity {
+                level: crate::sim::ir::IrSeverityLevel::Fatal,
+                fmt: format!("\"{message}{}\"", crate::sim::ir::INDEX_CHECK_HINT),
+                args: Vec::new(),
+                scope: self.path.clone(),
+                location: self.cg.source_location(h),
+                fatal_finish_number: Some(0),
+                runtime_failure: true,
+                skip_finals: false,
+            };
             if waits {
-                return Ok(IrStmt::Severity {
-                    level: crate::sim::ir::IrSeverityLevel::Fatal,
-                    fmt: format!("\"{}\"", crate::sim::ir::UNSELECTED_REF_MESSAGE),
-                    args: Vec::new(),
-                    scope: self.path.clone(),
-                    location: self.cg.source_location(h),
-                    fatal_finish_number: Some(0),
-                    runtime_failure: true,
-                    skip_finals: false,
-                });
+                return Ok(stop);
             }
             let value = self.cg.native_temporary(select.formal)?;
-            Ok(IrStmt::Block(vec![
-                IrStmt::NativeValueDeclare(value),
-                pinned(self, RecordRefPin::Default(value))?,
-            ]))
+            Ok(IrStmt::If {
+                cond: IrExpr::new(
+                    IrExprKind::RuntimeQuery(crate::sim::ir::IrRuntimeQuery::IndexChecks),
+                    1,
+                    false,
+                    None,
+                ),
+                then_: vec![stop],
+                els: Some(vec![
+                    IrStmt::NativeValueDeclare(value),
+                    pinned(self, RecordRefPin::Default(value))?,
+                ]),
+                check: IrUniquePriorityCheck::None,
+            })
         });
         self.cg.record_ref_pin_span = span;
         statements.extend(member_select_statement(
@@ -365,12 +385,11 @@ impl EmitCtx<'_, '_> {
         Ok(Some(statics))
     }
 
-    /// When the callee waits on `ref` formal `io`, make the actual just
-    /// pushed onto `args` stop the run if its index selects no element: a
-    /// waiter on the default such an index binds would never wake. A call
-    /// whose callee does not wait, and an actual no index selects, are left
-    /// as they are.
-    fn stop_if_waited(
+    /// Make the `ref` actual just pushed onto `args` stop the run, with index
+    /// checks on, when its index selects no element (as some simulators do;
+    /// the text binds the default, which a waiter never sees change). An
+    /// actual that always selects is left as it is.
+    fn stop_if_unselected(
         &self,
         args: &mut [IrCallArg],
         io: NodeId,
@@ -382,12 +401,10 @@ impl EmitCtx<'_, '_> {
         let Some(task) = self.cg.enclosing_func_task(io) else {
             return;
         };
-        if !self.cg.waits_on_ref_formal(task, callee_inst, index) {
-            return;
-        }
         let stop = crate::sim::ir::IrRefStop {
             scope: self.path.clone(),
             location: self.cg.source_location(call),
+            waited: self.cg.waits_on_ref_formal(task, callee_inst, index),
         };
         match last {
             IrCallArg::RefAddr {
@@ -604,7 +621,7 @@ impl EmitCtx<'_, '_> {
                             self.cg.handle_element_ref(&self.path, bound[idx].expr)?
                         {
                             out_args.push(argument);
-                            self.stop_if_waited(&mut out_args, *io, callee_inst, idx, h);
+                            self.stop_if_unselected(&mut out_args, *io, callee_inst, idx, h);
                             continue;
                         }
                     }
@@ -647,7 +664,7 @@ impl EmitCtx<'_, '_> {
                         self.cg.handle_element_ref(&self.path, bound[idx].expr)?
                     {
                         out_args.push(argument);
-                        self.stop_if_waited(&mut out_args, *io, callee_inst, idx, h);
+                        self.stop_if_unselected(&mut out_args, *io, callee_inst, idx, h);
                         continue;
                     }
                 }
@@ -694,7 +711,7 @@ impl EmitCtx<'_, '_> {
                             .string_element_ref(&self.path, bound[idx].expr, const_ref)?
                     {
                         out_args.push(argument);
-                        self.stop_if_waited(&mut out_args, *io, callee_inst, idx, h);
+                        self.stop_if_unselected(&mut out_args, *io, callee_inst, idx, h);
                         continue;
                     }
                     // A class string property is passed by the address of
@@ -734,7 +751,7 @@ impl EmitCtx<'_, '_> {
                         const_ref,
                         ref_static,
                     )?);
-                    self.stop_if_waited(&mut out_args, *io, callee_inst, idx, h);
+                    self.stop_if_unselected(&mut out_args, *io, callee_inst, idx, h);
                 }
                 if !bound[idx].string && !matches!(out_args.last(), Some(IrCallArg::ElementRef(_)))
                 {

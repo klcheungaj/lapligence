@@ -1,0 +1,42 @@
+diff --git a/include/slang/parsing/Preprocessor.h b/include/slang/parsing/Preprocessor.h
+index f5090804c..9121f4d03 100644
+--- a/include/slang/parsing/Preprocessor.h
++++ b/include/slang/parsing/Preprocessor.h
+@@ -71,6 +71,13 @@ struct SLANG_EXPORT PreprocessorOptions {
+     /// and whether the file is being skipped as an already-included header (isSkip).
+     function_ref<void(BufferID, bool isBack, bool isSkip)> bufferChangeCB;
+ 
++    /// Names the `__FILE__` intrinsic reports for source files, keyed by the
++    /// full path the source manager holds for each file (getU8Str of
++    /// SourceManager::getFullPath). A file that is not listed, or a line that a
++    /// `line directive renames, reports SourceManager::getFileName as before.
++    /// Shared so that every preprocessor of a compilation copies one pointer.
++    std::shared_ptr<const flat_hash_map<std::string, std::string>> macroFileNames;
++
+     /// If true, the preprocessor will assume that a missing end of scope token for a
+     /// module/program/package/class inside an include file with protected code has the
+     /// end of scope token inside the protected code.
+diff --git a/source/parsing/Preprocessor_macros.cpp b/source/parsing/Preprocessor_macros.cpp
+index 326ce316d..25313f2c0 100644
+--- a/source/parsing/Preprocessor_macros.cpp
++++ b/source/parsing/Preprocessor_macros.cpp
+@@ -826,6 +826,19 @@ bool Preprocessor::expandIntrinsic(MacroIntrinsic intrinsic, MacroExpansion& exp
+                                                                        macroName);
+ 
+             std::string_view fileName = sourceManager.getFileName(loc);
++            if (options.macroFileNames) {
++                // A `line directive's name takes precedence over the given one.
++                auto buffer = sourceManager.getFullyExpandedLoc(loc).buffer();
++                if (fileName == sourceManager.getRawFileName(buffer)) {
++                    auto it = options.macroFileNames->find(
++                        getU8Str(sourceManager.getFullPath(buffer)));
++                    if (it != options.macroFileNames->end()) {
++                        SmallVector<char> name;
++                        name.append_range(it->second);
++                        fileName = toStringView(name.copy(alloc));
++                    }
++                }
++            }
+             text.push_back('"');
+             text.append_range(fileName);
+             text.push_back('"');
