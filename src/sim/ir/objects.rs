@@ -2212,7 +2212,7 @@ impl IrChandleExpr {
                     indices: indices.clone(),
                     key: key.as_deref().cloned(),
                 }
-                .located_element(container, None, model)
+                .located_shape(container)
             }
             Self::ItemElement {
                 base,
@@ -2359,7 +2359,8 @@ impl IrChandleExpr {
                     indices: indices.clone(),
                     key: key.as_deref().cloned(),
                 };
-                slot.located_element(container, None, model).map(|_| ())
+                slot.located_element(container, chandle_return.map(|_| false), model)
+                    .map(|_| ())
             }
             Self::NativeRoot(_) => self.located_value(model).map(|_| ()),
             Self::ItemElement { base, .. } => {

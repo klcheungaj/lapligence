@@ -184,3 +184,14 @@ fn string_contexts() {
         &[],
     );
 }
+
+#[test]
+fn nested_string_keys() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "nested_string_keys",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/nested_string_keys.out"),
+        &[],
+        &[],
+    );
+}
