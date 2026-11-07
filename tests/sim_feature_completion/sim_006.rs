@@ -72,6 +72,13 @@ fn generic_class_specializations() {
 }
 
 #[test]
+fn builtin_calls_are_method_receivers() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/builtin_call_receivers.out");
+    sim_cli::run_case_backend_parity(SUITE, "builtin_call_receivers", expected, &[], &[]);
+}
+
+#[test]
 fn call_results_are_method_receivers_and_select_bases() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/call_result_selects.out");
