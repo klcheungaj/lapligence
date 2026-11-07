@@ -1074,7 +1074,7 @@
       "stdout": "static-return-ref=passed\n",
       "stderr": "INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\n",
       "stderr_mode": "derived",
-      "stderr_anchors": ["let expected_stderr = \"INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n\";"],
+      "stderr_anchors": ["let expected_stderr =\n        \"INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n\";"],
       "tokens": ["static_return_ref_actual", "--edition", "2009"],
       "runner": "tests/sim_syn038_static_return_ref_actual.rs",
       "oracle_mode": "derived",

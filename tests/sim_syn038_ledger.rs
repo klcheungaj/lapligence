@@ -878,7 +878,7 @@ fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, o
         "assert_eq!(output.status.code(), Some(0), \"{label}\");",
         "output.stdout.as_slice(),\n            b\"static-return-ref=passed\\n\",",
         "crate::sim_harness::strip_lint_reports(&output.stderr),\n            expected_stderr,",
-        "let expected_stderr = \"INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n\";",
+        "let expected_stderr =\n        \"INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n\";",
     ] {
         assert!(
             mode_loop.contains(required) || owner_body.contains(required),
@@ -1066,7 +1066,7 @@ fn static_return_ref_actual_finish_oracle_matches(
 ) -> bool {
     row_id == "SYN038-W89"
         && expected == "INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n"
-        && test_source.contains("let expected_stderr = \"INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n\";")
+        && test_source.contains("let expected_stderr =\n        \"INFO: static_return_ref_actual.sv:18:9: [SIM-001] (tb @ 0 ps) $finish called\\n\";")
 }
 
 fn interface_runtime_initializer_warning_oracle_matches(
