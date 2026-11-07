@@ -1806,7 +1806,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   through the formal reaches the element's readers at that store, whatever its
   form ([record_ref_write_paths](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   A run-time record element of a module record binds through one
-  specialization per element under a decision tree in statement calls
+  specialization per element under a decision tree in statement calls; a task
+  that waits on the formal stops the run when the index selects no element,
+  at any array size
   ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   Virtual-interface methods take these actuals through a bound dispatch entry
   ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).

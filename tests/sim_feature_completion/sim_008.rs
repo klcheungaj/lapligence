@@ -94,31 +94,78 @@ fn timed_record_refs_share_the_record_with_other_processes() {
     sim_cli::run_case_after_db_drop(SUITE, "timed_record_refs", expected);
 }
 
+/// A run that ends at a waited record `ref` actual selecting no element.
+fn assert_stopped_at_unselected_element(
+    label: &str,
+    output: &std::process::Output,
+    expected: &str,
+) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+    assert!(
+        stderr.contains("selects no element of a task that waits on the formal"),
+        "{label}: {stderr}"
+    );
+}
+
 #[test]
 fn run_time_record_elements_bind_ref_formals() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_008/record_ref_element_select.out");
     sim_cli::run_case_backend_parity(SUITE, "record_ref_element_select", expected, &[], &[]);
-    let expected = include_str!(
-        "../fixtures/sim/feature_completion/sim_008/record_ref_element_select_fatal.out"
-    );
     sim_cli::run_case_checked_matrix(
         SUITE,
         "record_ref_element_select_fatal",
         &[],
         &|label, output| {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
-            assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
-            assert!(
-                stderr.contains("selects no element of a task that waits on the formal"),
-                "{label}: {stderr}"
+            assert_stopped_at_unselected_element(
+                label,
+                output,
+                include_str!(
+                    "../fixtures/sim/feature_completion/sim_008/record_ref_element_select_fatal.out"
+                ),
+            );
+        },
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "record_ref_element_select_fatal_column",
+        &[],
+        &|label, output| {
+            assert_stopped_at_unselected_element(
+                label,
+                output,
+                include_str!(
+                    "../fixtures/sim/feature_completion/sim_008/record_ref_element_select_fatal_column.out"
+                ),
+            );
+        },
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "record_ref_element_select_fatal_column_nested",
+        &[],
+        &|label, output| {
+            assert_stopped_at_unselected_element(
+                label,
+                output,
+                include_str!(
+                    "../fixtures/sim/feature_completion/sim_008/record_ref_element_select_fatal_column_nested.out"
+                ),
             );
         },
     );
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_008/record_ref_element_large.out");
     sim_cli::run_case_backend_parity(SUITE, "record_ref_element_large", expected, &[], &[]);
+}
+
+/// Limits of the leaf form, which lowers a call once per element: a record
+/// with a member array of 16 cells or more selects a cell instead and has
+/// neither limit.
+#[test]
+fn leaf_form_run_time_selections_beyond_the_branch_limit_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_record_ref_element_select_product",

@@ -224,7 +224,10 @@ impl EmitCtx<'_, '_> {
                 .ok_or_else(|| format!("task `{name}` has no C name"))?,
         };
         let fidx = self.cg.dpi_open_callee(fidx, &formals, &bound)?;
-        let call = self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)?;
+        self.cg.record_ref_call_site = Some(h);
+        let call = self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver);
+        self.cg.record_ref_call_site = None;
+        let call = call?;
         // A class task's call keeps the activation only when a `disable`
         // names the task, matching its body (`emit_func_task_with`).
         if can_be_disabled
@@ -285,7 +288,7 @@ impl EmitCtx<'_, '_> {
             if waits {
                 return Ok(IrStmt::Severity {
                     level: crate::sim::ir::IrSeverityLevel::Fatal,
-                    fmt: "\"index of a record `ref` actual selects no element of a task that waits on the formal\"".to_owned(),
+                    fmt: format!("\"{}\"", crate::sim::ir::RECORD_REF_UNSELECTED_MESSAGE),
                     args: Vec::new(),
                     scope: self.path.clone(),
                     location: self.cg.source_location(h),

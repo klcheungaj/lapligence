@@ -1862,6 +1862,9 @@ struct Codegen<'a> {
     /// element, and the branches the selections so far multiply to.
     record_ref_pins: HashMap<NodeId, collection::RecordRefPin>,
     record_ref_pin_span: usize,
+    /// The statement call whose operands are being lowered: where a waited
+    /// record `ref` actual that selects no element reports its stop.
+    record_ref_call_site: Option<NodeId>,
     /// Shared access names of native leaves, by value and item path.
     native_leaf_symbols: HashMap<(usize, Vec<u32>), String>,
     /// Distinguishes the capture locals of successive native transfers.
@@ -2499,6 +2502,7 @@ impl<'a> Codegen<'a> {
             record_ref_natives: HashSet::new(),
             record_ref_pins: HashMap::new(),
             record_ref_pin_span: 1,
+            record_ref_call_site: None,
             native_leaf_symbols: HashMap::new(),
             native_copy_sequence: 0,
             element_nba_target: None,
