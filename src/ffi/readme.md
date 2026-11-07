@@ -62,7 +62,7 @@ invocation locations in configuration diagnostics.
 - Source ranges use admitted file IDs and zero-based half-open byte offsets.
   Value/unknown limbs stay paired, real and shortreal widths stay distinct, and
   SystemVerilog string constants are arbitrary bytes; every other string is
-  UTF-8.
+  UTF-8, with `?` for each invalid byte of a source that is not.
 - Sequence repetition and `SequenceConcat` cycle ranges are checked; unbounded
   `UINT32_MAX` maxima become `Option<u32>`. Optional member-default constant IDs
   are validated; fixed-array defaults cross as exact flattened bitstreams.

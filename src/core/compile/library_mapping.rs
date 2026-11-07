@@ -337,7 +337,8 @@ impl<'a> LibraryMapBuffers<'a> {
             let source = available[index].take().ok_or_else(|| {
                 StartupError::new(StartupErrorKind::Internal, "map source was published twice")
             })?;
-            let mut published = LibrarySource::new(source.name, source.text, library);
+            let mut published =
+                LibrarySource::new(source.name, source.text, library).with_raw(source.raw);
             published.is_library_map = source.is_library_map;
             self.libraries.push(published);
         }

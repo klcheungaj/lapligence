@@ -42,6 +42,7 @@ mod shadowing;
 mod slang_frontend;
 mod slang_semantics;
 mod slang_static_function_return;
+mod source_encoding;
 mod support_harness;
 mod syn003_pattern_lvalues_import;
 mod test_layout;

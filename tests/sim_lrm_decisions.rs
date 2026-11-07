@@ -5329,6 +5329,14 @@ fn s07_d8_nested_write_value_first() {
 }
 
 #[test]
+fn s05_d1_escapes_beside_non_ascii_source() {
+    run_decision(
+        "S05-D1_escapes_beside_non_ascii_source",
+        include_str!("fixtures/sim/lrm_decisions/S05-D1_escapes_beside_non_ascii_source.out"),
+    );
+}
+
+#[test]
 fn s07_d9_class_key_order() {
     run_decision(
         "S07-D9_class_key_order",

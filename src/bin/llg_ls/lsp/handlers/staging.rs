@@ -77,12 +77,24 @@ pub(super) struct InputBudgetFailure {
 pub(super) struct InputSnapshots {
     pub(super) by_path: BTreeMap<PathBuf, Arc<String>>,
     pub(super) by_identity: BTreeMap<PathBuf, Arc<String>>,
+    /// Exact bytes of the admitted files that are not UTF-8, by identity.
+    raw: BTreeMap<PathBuf, Arc<[u8]>>,
 }
 
 impl InputSnapshots {
     pub(super) fn insert(&mut self, path: &Path, text: SharedText) {
         self.by_path.insert(path.to_path_buf(), Arc::clone(&text));
         self.by_identity.insert(input_identity(path), text);
+    }
+
+    /// Keep the exact bytes of an admitted file that is not UTF-8.
+    pub(super) fn insert_raw(&mut self, path: &Path, raw: Arc<[u8]>) {
+        self.raw.insert(input_identity(path), raw);
+    }
+
+    /// The exact bytes of `path` when they are not UTF-8.
+    pub(super) fn raw(&self, path: &Path) -> Option<Arc<[u8]>> {
+        self.raw.get(&input_identity(path)).cloned()
     }
 
     /// The shared admitted text of `path`, by spelling or identity.
@@ -1066,7 +1078,7 @@ pub(super) fn resolve_include_target_with_policy(
 pub(super) fn read_closed_input_snapshot(
     path: &Path,
     max_file_bytes: u64,
-) -> std::result::Result<String, InputSizeLimit> {
+) -> std::result::Result<llg::core::compile::SourceText, InputSizeLimit> {
     let metadata_bytes = match std::fs::metadata(path) {
         Ok(metadata) => {
             let measured_bytes = metadata.len();
@@ -1111,13 +1123,7 @@ pub(super) fn read_closed_input_snapshot(
             total_bytes: None,
         });
     }
-    String::from_utf8(bytes).map_err(|error| InputSizeLimit {
-        path: path.to_path_buf(),
-        measured_bytes: error.as_bytes().len() as u64,
-        configured_limit: max_file_bytes,
-        kind: InputSizeLimitKind::Unreadable,
-        total_bytes: None,
-    })
+    Ok(llg::core::compile::SourceText::from_bytes(bytes))
 }
 
 /// Return the exact admitted text, preferring the captured snapshot over any
@@ -1177,7 +1183,12 @@ pub(super) fn enforce_input_budget(
             Arc::clone(text)
         } else {
             match read_closed_input_snapshot(&source, config.analysis.max_file_bytes) {
-                Ok(text) => Arc::new(text),
+                Ok(read) => {
+                    if let Some(raw) = read.raw {
+                        snapshots.insert_raw(&source, raw);
+                    }
+                    Arc::new(read.text)
+                }
                 Err(limit) => {
                     return Err(InputBudgetFailure {
                         limit,

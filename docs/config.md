@@ -469,7 +469,8 @@ Open UTF-8 buffer text is measured in preference to disk metadata. Discovery
 is unchanged, so files over either limit remain watched; the root analysis is
 rejected before Slang compilation and publishes an `input-size-limit`
 diagnostic while retaining the last-good snapshot. Every discovered/root
-compilation unit must also produce a bounded UTF-8 snapshot; a missing or
+compilation unit must also produce a bounded snapshot, in which a file that is
+not UTF-8 keeps its exact bytes for the frontend (S05-D1); a missing or
 unreadable root produces an `input-snapshot` diagnostic and is never passed to
 Slang on its live path. Open-buffer admission applies the same positive
 per-file bound before storing or scheduling the buffer, using the built-in

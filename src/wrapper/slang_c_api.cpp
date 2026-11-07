@@ -46,6 +46,7 @@
 #include "slang/ast/types/AllTypes.h"
 #include "slang/ast/types/Type.h"
 #include "slang/diagnostics/AnalysisDiags.h"
+#include "slang/diagnostics/LexerDiags.h"
 #include "slang/diagnostics/CompilationDiags.h"
 #include "slang/diagnostics/DeclarationsDiags.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
@@ -290,6 +291,8 @@ struct SnapshotStringHash {
 };
 
 struct CaptureOutput {
+  // Some source holds a byte above ASCII, so exported strings are checked.
+  bool sanitize_strings = false;
   uint32_t flags = 0;
   uint64_t output_bytes = 0;
   uint64_t output_byte_limit = kDefaultMaxOutputBytes;
@@ -334,7 +337,39 @@ LlgSlangError* makeError(uint32_t status, std::string_view message) noexcept {
   }
 }
 
-LlgSlangString storeString(CaptureOutput& snapshot, std::string_view value) {
+// The length of the UTF-8 sequence at `text[at]`, or 0 when it is invalid.
+size_t utf8SequenceLength(std::string_view text, size_t at) {
+  const auto byte = [&](size_t index) { return static_cast<uint8_t>(text[index]); };
+  const uint8_t first = byte(at);
+  if (first < 0x80)
+    return 1;
+  size_t length = 0;
+  uint8_t low = 0x80;
+  uint8_t high = 0xBF;
+  if (first >= 0xC2 && first <= 0xDF)
+    length = 2;
+  else if (first >= 0xE0 && first <= 0xEF) {
+    length = 3;
+    low = first == 0xE0 ? 0xA0 : 0x80;
+    high = first == 0xED ? 0x9F : 0xBF;
+  }
+  else if (first >= 0xF0 && first <= 0xF4) {
+    length = 4;
+    low = first == 0xF0 ? 0x90 : 0x80;
+    high = first == 0xF4 ? 0x8F : 0xBF;
+  }
+  if (length == 0 || at + length > text.size())
+    return 0;
+  if (byte(at + 1) < low || byte(at + 1) > high)
+    return 0;
+  for (size_t i = 2; i < length; i++)
+    if (byte(at + i) < 0x80 || byte(at + i) > 0xBF)
+      return 0;
+  return length;
+}
+
+// A SystemVerilog string constant: arbitrary bytes, not text.
+LlgSlangString storeBytes(CaptureOutput& snapshot, std::string_view value) {
   if (value.empty())
     return {nullptr, 0};
   addChecked(snapshot.output_bytes, value.size(), snapshot.output_byte_limit,
@@ -345,6 +380,26 @@ LlgSlangString storeString(CaptureOutput& snapshot, std::string_view value) {
   const auto& stored = *found;
   return {reinterpret_cast<const uint8_t*>(stored.data()),
           static_cast<uint64_t>(stored.size())};
+}
+
+LlgSlangString storeString(CaptureOutput& snapshot, std::string_view value) {
+  // Every export is UTF-8. A source that is not gives its bytes to tokens and
+  // literals; each invalid byte is a `?`, as in the Rust text of the file.
+  std::string sanitized;
+  if (snapshot.sanitize_strings) {
+    for (size_t at = 0; at < value.size();) {
+      const size_t length = utf8SequenceLength(value, at);
+      if (length == 0) {
+        if (sanitized.empty())
+          sanitized.assign(value);
+        sanitized[at] = '?';
+      }
+      at += std::max<size_t>(length, 1);
+    }
+    if (!sanitized.empty())
+      return storeBytes(snapshot, sanitized);
+  }
+  return storeBytes(snapshot, value);
 }
 
 void chargeRecord(CaptureOutput& snapshot, uint64_t bytes) {
@@ -423,6 +478,10 @@ struct Capture {
 
   CaptureOutput& output;
   const SourceManager& sourceManager;
+  // The same manager, for the lexer of `inComment`.
+  SourceManager* lexerSources = nullptr;
+  // Comment spans by buffer, sorted, of buffers that hold an invalid byte.
+  std::unordered_map<uint32_t, std::vector<std::pair<size_t, size_t>>> commentSpans;
   const LlgSlangLimits& limits;
   std::vector<std::pair<BufferID, uint64_t>> fileIds;
   std::unordered_map<const Type*, uint64_t> typeIds;
@@ -811,6 +870,60 @@ struct Capture {
     return output.diagnostics.size() - 1;
   }
 
+  // Only a comment keeps a source byte that is not UTF-8. The frontend warns
+  // in a comment and also in a string literal, so its own lexer tells them
+  // apart; other diagnostics of the buffer stay with the real lex.
+  bool inComment(SourceLocation location) {
+    const BufferID buffer = location.buffer();
+    auto found = commentSpans.find(buffer.getId());
+    if (found == commentSpans.end()) {
+      std::vector<std::pair<size_t, size_t>> spans;
+      const std::string_view text = sourceManager.getSourceText(buffer);
+      BumpAllocator allocator;
+      Diagnostics ignored;
+      parsing::Lexer lexer(SourceBuffer{text, nullptr, buffer}, allocator, ignored,
+                           *lexerSources);
+      for (parsing::Token token = lexer.lex();; token = lexer.lex()) {
+        for (const parsing::Trivia& trivia : token.trivia()) {
+          if (trivia.kind != parsing::TriviaKind::LineComment &&
+              trivia.kind != parsing::TriviaKind::BlockComment)
+            continue;
+          const std::string_view comment = trivia.getRawText();
+          const size_t start = static_cast<size_t>(comment.data() - text.data());
+          spans.emplace_back(start, start + comment.size());
+        }
+        if (token.kind == parsing::TokenKind::EndOfFile)
+          break;
+      }
+      found = commentSpans.emplace(buffer.getId(), std::move(spans)).first;
+    }
+    const size_t offset = location.offset();
+    auto next = std::upper_bound(
+        found->second.begin(), found->second.end(), offset,
+        [](size_t value, const std::pair<size_t, size_t>& span) { return value < span.first; });
+    return next != found->second.begin() && offset < std::prev(next)->second;
+  }
+
+  void addInvalidSourceByte(SourceLocation location) {
+    if (output.diagnostics.size() >= maxDiagnostics())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "diagnostic limit exceeded");
+    chargeRecord(output, sizeof(LlgSlangDiagnostic));
+    output.diagnostics.push_back({
+        LLG_SLANG_DIAG_COMPILATION,
+        LLG_SLANG_SEVERITY_ERROR,
+        LLG_SLANG_DIAG_SUBSYSTEM_COMPILATION,
+        1,
+        storeString(output, "InvalidSourceByte"),
+        {},
+        storeString(output, "invalid UTF-8 sequence in source text; only a comment may hold one"),
+        span(location, 1),
+        output.related.size(),
+        0,
+    });
+    output.flags |= LLG_SLANG_SNAPSHOT_HAS_ERRORS;
+  }
+
   void addIntegrationDiagnostic(std::string_view name, std::string message) {
     if (output.diagnostics.size() >= maxDiagnostics())
       throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
@@ -1140,7 +1253,7 @@ struct Capture {
     }
     else if (value.isString()) {
       result.kind = LLG_SLANG_VALUE_STRING;
-      result.text = storeString(output, value.str());
+      result.text = storeBytes(output, value.str());
     }
     else if (value.bad()) {
       result.kind = LLG_SLANG_VALUE_NONE;
@@ -9268,6 +9381,10 @@ public:
       : capture(capture), provider(provider) {}
 
   void issue(DiagnosticEngine& diagnosticEngine, const Diagnostic& diagnostic) {
+    if (diagnostic.code == diag::InvalidUTF8Seq && !capture.inComment(diagnostic.location)) {
+      capture.addInvalidSourceByte(diagnostic.location);
+      return;
+    }
     root = &diagnostic;
     rootIndex = LLG_SLANG_INVALID_ID;
     if (diagnostic.isError() && diagnostic.code != diag::AlwaysWithoutTimingControl &&
@@ -10124,6 +10241,12 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
       kDefaultMaxOutputBytes, kHardMaxOutputBytes);
   Capture capture{*output, sourceManager, request.limits,
                   (request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0};
+  capture.lexerSources = &sourceManager;
+  output->sanitize_strings = std::any_of(
+      sourceTexts.begin(), sourceTexts.end(), [](std::string_view text) {
+        return std::any_of(text.begin(), text.end(),
+                           [](char byte) { return static_cast<uint8_t>(byte) >= 0x80; });
+      });
   capture.givenOverrideOptions = std::move(overridePlan.givenOptions);
   capture.givenOverrideValues = std::move(overridePlan.givenValues);
   const uint64_t totalSourceCount = request.source_count + request.library_source_count;

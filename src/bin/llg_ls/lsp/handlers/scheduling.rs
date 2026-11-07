@@ -1229,10 +1229,11 @@ impl Backend {
                         .text(path)
                         .expect("source path admitted before Slang request construction");
                     let name = path.to_string_lossy().into_owned();
+                    let raw = input_snapshots.raw(path);
                     if compilation_units.contains(path) {
-                        llg::core::compile::OwnedSource::compilation_unit(name, text)
+                        llg::core::compile::OwnedSource::compilation_unit(name, text).with_raw(raw)
                     } else {
-                        llg::core::compile::OwnedSource::include(name, text)
+                        llg::core::compile::OwnedSource::include(name, text).with_raw(raw)
                     }
                 })
                 .collect();
