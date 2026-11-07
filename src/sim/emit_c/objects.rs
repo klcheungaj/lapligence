@@ -843,6 +843,16 @@ fn array_query(
 
 pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<String, String> {
     Ok(match operation {
+        IrObjectStmt::StaticEffectCheck {
+            what,
+            location,
+            subroutine,
+        } => format!(
+            "    if (llg_static_init_variable) llg_rt_static_effect({}, {}, {});\n",
+            super::constants::c_string_literal(what),
+            super::constants::c_string_literal(location),
+            super::constants::c_string_literal(subroutine)
+        ),
         IrObjectStmt::StringPrint(value) => {
             format!("    llg_string_print({});\n", string(ctx, value)?)
         }

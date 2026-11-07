@@ -2282,6 +2282,7 @@ fn collect_object_statement_effects(
     visited_calls: &mut CallVisits,
 ) {
     match statement {
+        IrObjectStmt::StaticEffectCheck { .. } => effects.push(ExecutionEffect::RuntimeService),
         IrObjectStmt::StringPrint(value)
         | IrObjectStmt::StringAssign(_, value)
         | IrObjectStmt::StringAssignLocal(_, value) => {

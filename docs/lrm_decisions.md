@@ -47,7 +47,7 @@ Each `<ID>_<name>.sv` file is:
    notices and reports (the `$finish` message, assertion and constraint
    failure reports, the open-error notice of S47-D11) and compare the lines
    the design prints.
-4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5, S22-D3, S22-D4 and S23-D2, the
+4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5, S22-D4 and S23-D2, the
    expected result is a compile error, and no simulation should run.
 
 ### In llg
@@ -74,8 +74,7 @@ dimension(s)". S41-D6, S41-D7 and A18-D3 must stop with exit status 1 after
 their first line, reporting a "DPI-C protocol violation". AA-D7 must fail to
 compile with "`$past` of a real expression is illegal", S14-D5 with
 "nonblocking assignment to class property `x`", and S23-D2 with "is an
-unpacked structure or union, which is not a singular variable". S22-D3 must
-fail with "calls `watch`, whose fork at" and S22-D4 with "`push_back` modifies
+unpacked structure or union, which is not a singular variable". S22-D4 must fail with "`push_back` modifies
 `limits`, which is declared const".
 S30-D11 must end with exit status 1 after both lines, reporting "select
 index out of range in a constraint". S29-D1 must end with exit status
@@ -972,7 +971,7 @@ input grammar is ADV-011. Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | --- | --- | --- | --- | --- |
 | S22-D1 | **Handle and string initializers run before every procedure.** Class-handle, mailbox, semaphore and string declaration initializers of module, package and `$unit` variables run in the static initialization, before any initial or always procedure, so later static initializers read the constructed object. llg orders initializers by the static declarations they read, otherwise by declaration order. | 6.8 L5286-5287; 10.5 L13286-13287 | `S22-D1_handle_initializers_before_processes` | LRM text (changed: handle initializers used to run as time-0 processes after the other initializers); the order among initializers is an llg choice the case does not depend on |
 | S22-D2 | **Static locals initialize once, before time 0.** An explicitly static local of a subroutine or block, of string, handle, queue or record-with-native-members type, is initialized once before any procedure starts, never on first call; automatic locals are initialized on each entry. | 6.21 L6900-6901, L6904-6905, L6942-6944 | `S22-D2_static_locals_initialize_once` | LRM text (changed: static string and record locals rejected and static handle initializers were dropped) |
-| S22-D3 | **A static initializer may not reach deferred work.** A static initializer whose calls (through other functions or a constructor) reach a `fork`-`join_none`, a nonblocking assignment or a nonblocking event trigger is a compile error naming both locations. | 13.4.4 L18993-18997 | `S22-D3_initializer_deferred_effect_illegal` (negative) | LRM text (the error is required); counting nonblocking assignments and triggers as such events is llg's reading |
+| S22-D3 | **Replaced by S13-D5.** A compile-time rejection on reachability gave way to the run-time error of S13-D5. | 13.4.4 L18993-18997 | `S13-D5_initializer_deferred_effect_runtime` | decision of 2026-11-06 |
 | S22-D4 | **Modifying built-in methods write a const variable.** `push_back`, `pop_*`, `insert`, `delete`, `sort`, `rsort`, `reverse`, `shuffle` on a const array or queue and `putc`, `itoa`, `hextoa`, `octtoa`, `bintoa`, `realtoa` on a const string are compile errors; read-only methods and writes through a const class handle's object stay legal. | 6.20.6 L6884-6886 | `S22-D4_const_method_write_illegal` (negative) | llg choice (the clause says a const variable "cannot be written" but does not list methods) |
 | S22-D5 | **An implicitly static initialized block variable is accepted.** `int count = 10;` inside a procedural block without `static` or `automatic` is accepted with the frontend's warning and is static: initialized once before time 0. | 6.21 L6941-6944 | `S22-D5_implicit_static_initializer` | llg extension (the text requires the keyword and calls its example illegal; a simulator that rejects the file conforms) |
 | S22-D6 | **Let names bind where the let is declared.** Free names of a let body and names in a formal's default actual resolve in the declaring scope; actual arguments resolve at the use; a formal shadows an outer name. | 11.13 L16778-16779 (examples a and b) | `S22-D6_let_name_binding` | LRM text |
@@ -1017,6 +1016,7 @@ input grammar is ADV-011. Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | S13-D2 | **Binding a `ref` creates a missing associative entry.** Binding a `ref` or `const ref` formal to a missing associative element creates the entry when the call starts, whether or not the subroutine accesses the formal; only its delete() outdates the reference, and a later entry of that key stays apart. | 13.5.2 L19138-19141, L19143-19147, L19157-19167 | `S13-D2_ref_binds_missing_entry` | llg reading (the clause leaves the binding open); industry-standard behaviour |
 | S13-D3 | **An output or inout event formal merges its actual at the return.** A task, a void function or a function called in an expression that assigns `o = g` to an output event formal leaves the actual naming `g`'s object when it returns, so `@(h)` wakes on `-> g`. Some simulators leave the actual unchanged; llg follows the clause text because copy-out has no exception for events and an event assignment merges its operands. | 13.3 L18476; 15.5.5.1 L20862 | `S13-D3_output_event_merges_actual` | clause text |
 | S13-D4 | **A store through a `ref` record formal is a store to its element.** A task writing a member of a `ref` record formal bound to an array element wakes level waits and `always_comb` readers of the element at that store, whatever the write form: assignments with or without an intra-assignment control, loop headers, operators and calls inside expressions, copy-out, string methods, system tasks and mailbox retrieval, for packed, real, string, handle and member-array leaves alike. Some simulators wake such readers only at a later string store, or never rerun `always_comb`; llg follows the clause text because the formal and the element share one representation. | 13.5.2 L19138-19141; 9.4.3 | `S13-D4_ref_record_store_wakes_readers` | clause text |
+| S13-D5 | **A deferred statement that executes under a static initializer is a run-time error.** A `fork`-`join_none`, a nonblocking assignment or a nonblocking event trigger that runs during a static declaration initializer, through any call, constructor or virtual override, stops the run before any process starts. The message names the statement, its location and subroutine, the initializer's variable and its location, and the rule. A statement reachable from an initializer that does not execute is legal. A trusted simulator accepts these forms and runs them; the text requires an error, so llg keeps it. | 13.4.4 L18993-18997 | `S13-D5_initializer_deferred_effect_runtime` | text (class c); run time chosen over compile time because reachability rejects legal designs |
 
 ## Ambiguous conditionals on unpacked aggregates (RTL-005)
 

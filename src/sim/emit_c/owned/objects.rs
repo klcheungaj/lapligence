@@ -443,6 +443,16 @@ impl Frame<'_, '_> {
     pub(super) fn object_statement(&mut self, statement: &IrObjectStmt) -> Result<(), String> {
         use IrObjectStmt::*;
         match statement {
+            StaticEffectCheck {
+                what,
+                location,
+                subroutine,
+            } => self.line(format!(
+                "if (llg_static_init_variable) llg_rt_static_effect({}, {}, {});",
+                c_string_literal(what),
+                c_string_literal(location),
+                c_string_literal(subroutine)
+            )),
             StringPrint(text) => {
                 let value = self.string(text)?;
                 self.line(format!("llg_string_print({});", value.take_string()));

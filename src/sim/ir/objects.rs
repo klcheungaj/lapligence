@@ -647,6 +647,13 @@ pub enum IrObjectQuery {
 #[derive(Clone, Debug, PartialEq)]
 /// Object mutations and output. String values are copied, not storage aliases.
 pub enum IrObjectStmt {
+    /// Stop the run when a static initializer is executing: this statement
+    /// would schedule work after its function returns (SV 13.4.4).
+    StaticEffectCheck {
+        what: String,
+        location: String,
+        subroutine: String,
+    },
     StringPrint(IrStringExpr),
     StringAssign(usize, IrStringExpr),
     StringAssignLocal(String, IrStringExpr),
@@ -1760,6 +1767,14 @@ impl IrObjectStmt {
         string_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
         match self {
+            Self::StaticEffectCheck {
+                what,
+                location,
+                subroutine,
+            } if what.is_empty() || location.is_empty() || subroutine.is_empty() => Err(
+                super::IrValidationError::new("static effect", "check must name its statement"),
+            ),
+            Self::StaticEffectCheck { .. } => Ok(()),
             Self::StringPrint(value) => value.validate(model, string_return),
             Self::StringItoa(_, _, base) if !matches!(base, 2 | 8 | 10 | 16) => Err(
                 super::IrValidationError::new("string", "invalid numeric base"),
@@ -1993,6 +2008,7 @@ impl IrObjectStmt {
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
+            Self::StaticEffectCheck { .. } => {}
             Self::StringAssign(_, value)
             | Self::StringAssignLocal(_, value)
             | Self::StringPrint(value) => value.expressions(visit),
@@ -2059,6 +2075,7 @@ impl IrObjectStmt {
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
+            Self::StaticEffectCheck { .. } => {}
             Self::StringAssign(_, value)
             | Self::StringAssignLocal(_, value)
             | Self::StringPrint(value) => value.expressions_mut(visit),

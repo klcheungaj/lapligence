@@ -2,7 +2,7 @@
 
 use super::*;
 
-mod effects;
+pub(super) mod effects;
 mod order;
 
 impl<'a> Codegen<'a> {
@@ -214,7 +214,7 @@ impl<'a> Codegen<'a> {
                 value: c.clone(),
             });
         }
-        self.validate_static_initializer_effects()?;
+        self.verify_static_effect_sites()?;
         // Value and statement initializers share one schedule: each runs
         // after the static declarations it reads (SV §§6.21, 10.5).
         // String declaration values are assignments in the same schedule.
@@ -244,6 +244,12 @@ impl<'a> Codegen<'a> {
         let statements = self.declaration_statements.len();
         let random_threads = model.random.threads;
         for entry in self.initializer_schedule(&declarations) {
+            let scope = self.static_effect_scope(declarations[entry]);
+            if let Some((variable, location)) = scope.clone() {
+                model
+                    .init_steps
+                    .push(IrInitStep::StaticScopeEnter { variable, location });
+            }
             model.init_steps.push(match entry.checked_sub(values) {
                 None => {
                     let initialization = self.declaration_inits[entry].clone();
@@ -264,6 +270,9 @@ impl<'a> Codegen<'a> {
                     }
                 }
             });
+            if scope.is_some() {
+                model.init_steps.push(IrInitStep::StaticScopeLeave);
+            }
         }
         for (net, slot, c) in &self.net_inits {
             let group = model

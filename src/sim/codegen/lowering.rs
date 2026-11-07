@@ -766,6 +766,7 @@ fn lower_model_with(
     // Covergroup sample bodies and sampling events, before any body that
     // constructs or samples an instance.
     cg.emit_covergroups()?;
+    cg.prepare_static_effect_sites();
     cg.emit_class_func_bodies()?;
     for top in &tops {
         cg.emit_func_bodies(*top)?;
@@ -2013,6 +2014,10 @@ struct Codegen<'a> {
     /// Declaration identity -> source initializer expressions, whose reads
     /// order the static initialization schedule.
     initializer_sources: HashMap<u32, Vec<NodeId>>,
+    /// Deferred statements a static initializer can reach (SV 13.4.4).
+    static_effect_sites: HashMap<NodeId, initialization::effects::StaticEffectSite>,
+    /// Subroutines with such a statement or a call that reaches one.
+    static_effect_reaching: HashSet<NodeId>,
     /// ContAssign arena nodes already collected as scalar variable
     /// declaration initializers; skipped at emission. True-net declaration
     /// assignments remain event-driven continuous-assignment processes.
@@ -2515,6 +2520,8 @@ impl<'a> Codegen<'a> {
             object_initializers: Vec::new(),
             initializer_order: HashMap::new(),
             initializer_sources: HashMap::new(),
+            static_effect_sites: HashMap::new(),
+            static_effect_reaching: HashSet::new(),
             scope_array_names: HashMap::new(),
             param_vals: HashMap::new(),
             scope_sig_names: HashMap::new(),

@@ -107,13 +107,19 @@ pub enum IrInitStep {
         value: IrConst,
     },
     /// Fill a scalar net/var declaration initializer.
-    SetScalar { sig: usize, value: IrConst },
+    SetScalar {
+        sig: usize,
+        value: IrConst,
+    },
     /// Register a source signal for its Preponed value and Observed clocking
     /// copies; reals keep their numeric snapshot. Packed history is not kept.
     RegisterSampled(usize),
     /// Register a packed clocking source whose skewed inputs read the value
     /// at most `ticks` (at least 1) simulation ticks in the past.
-    RegisterSampledHistory { sig: usize, ticks: u64 },
+    RegisterSampledHistory {
+        sig: usize,
+        ticks: u64,
+    },
     /// Register a packed source for its Preponed value only, without the
     /// per-slot history clocking skews read (procedural `$sampled`).
     RegisterSampledValue(usize),
@@ -126,6 +132,13 @@ pub enum IrInitStep {
     /// Apply a declaration initializer according to its recorded lifetime and
     /// edition-specific scheduling phase.
     Initialize(IrInitialization),
+    /// Record that the initializers until `StaticScopeLeave` run for
+    /// `variable`: a deferred statement they reach stops the run (SV 13.4.4).
+    StaticScopeEnter {
+        variable: String,
+        location: String,
+    },
+    StaticScopeLeave,
     /// Execute a static declaration initializer whose typed transport is a
     /// statement rather than one value, such as a descriptor-backed fixed
     /// array pattern. It always belongs to the SystemVerilog before-process

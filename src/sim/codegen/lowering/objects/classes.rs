@@ -1118,7 +1118,7 @@ impl Codegen<'_> {
         false
     }
 
-    fn class_constructor(&self, class: NodeId) -> Option<NodeId> {
+    pub(in super::super) fn class_constructor(&self, class: NodeId) -> Option<NodeId> {
         self.class_method_nodes(class).into_iter().find(|child| {
             matches!(
                 self.kind(*child),

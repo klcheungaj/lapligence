@@ -1016,6 +1016,14 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 frame.canonical_signal(*sig)
             ));
         }
+        IrInitStep::StaticScopeEnter { variable, location } => {
+            frame.line(format!(
+                "llg_rt_static_init_enter({}, {});",
+                super::super::super::constants::c_string_literal(variable),
+                super::super::super::constants::c_string_literal(location)
+            ));
+        }
+        IrInitStep::StaticScopeLeave => frame.line("llg_rt_static_init_leave();"),
         IrInitStep::RegisterSampledValue(index) => {
             frame.line(format!(
                 "llg_sampled_register_value({});",

@@ -1023,6 +1023,8 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
             | crate::sim::ir::IrInitStep::RegisterSampled(_)
             | crate::sim::ir::IrInitStep::RegisterSampledHistory { .. }
             | crate::sim::ir::IrInitStep::RegisterSampledValue(_)
+            | crate::sim::ir::IrInitStep::StaticScopeEnter { .. }
+            | crate::sim::ir::IrInitStep::StaticScopeLeave
             | crate::sim::ir::IrInitStep::WriteNet { .. } => {}
         }
     }

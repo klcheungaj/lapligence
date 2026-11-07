@@ -1626,20 +1626,6 @@ fn s22_d2_static_locals_initialize_once() {
 }
 
 #[test]
-fn s22_d3_initializer_deferred_effect_illegal() {
-    // Negative case: the expected stdout is empty because compilation fails.
-    assert!(include_str!(
-        "fixtures/sim/lrm_decisions/S22-D3_initializer_deferred_effect_illegal.out"
-    )
-    .is_empty());
-    sim_cli::reject_case(
-        SUITE,
-        "S22-D3_initializer_deferred_effect_illegal",
-        "calls `watch`, whose fork at ",
-    );
-}
-
-#[test]
 fn s22_d4_const_method_write_illegal() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(
@@ -4404,6 +4390,22 @@ fn s07_d11_event_entry_binding() {
     run_decision(
         "S07-D11_event_entry_binding",
         include_str!("fixtures/sim/lrm_decisions/S07-D11_event_entry_binding.out"),
+    );
+}
+
+#[test]
+fn s13_d5_initializer_deferred_effect_runtime() {
+    // The run stops before any process starts, so stdout stays empty.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/S13-D5_initializer_deferred_effect_runtime.out"
+    )
+    .is_empty());
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "S13-D5_initializer_deferred_effect_runtime",
+        &[],
+        "",
+        "fork in function 'watch' schedules work after the call returns, during the static initializer of 'started' at ",
     );
 }
 

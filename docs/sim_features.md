@@ -316,9 +316,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   object) join the same schedule, so later initializers read constructed
   objects and no value depends on first-call order
   ([sim_022](../tests/fixtures/sim/feature_completion/sim_022/readme.md);
-  decisions S22-D1, S22-D2, S22-D7). A static initializer whose calls reach a
-  `fork`-`join_none`, nonblocking assignment or nonblocking trigger is a
-  located error (SV 13.4.4, S22-D3); modifying built-in methods on `const`
+  decisions S22-D1, S22-D2, S22-D7). A `fork`-`join_none`, nonblocking assignment or
+  nonblocking trigger that executes under a static initializer is a located
+  run-time error before any process starts (SV 13.4.4, S13-D5); modifying built-in methods on `const`
   variables and properties are located errors (S22-D4); an initialized block
   variable without `static`/`automatic` is accepted with a warning as static
   (S22-D5). Unsupported native/resizable layouts, oversized records and

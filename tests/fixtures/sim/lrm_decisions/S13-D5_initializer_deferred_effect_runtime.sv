@@ -1,9 +1,8 @@
-// Decision S22-D3 (negative case; the expected output is empty because
-// compilation fails): a static declaration initializer may not call a
-// function that schedules work to happen after the function returns. Static
-// initialization runs before any process exists, so a function reached from
-// it, directly or through other calls, may contain neither a fork-join_none
-// nor a nonblocking assignment or nonblocking event trigger.
+// Decision S13-D5 (the run stops, so the expected output is empty): a
+// fork-join_none, a nonblocking assignment or a nonblocking event trigger that
+// executes under a static declaration initializer stops the run with a
+// run-time error. Static initialization runs before any process exists.
+// Reaching such a statement without executing it is legal.
 //
 // IEEE 1800-2009 13.4.4 (SystemVerilog-1800-2009.txt L18993-18997):
 //   "Calling a function that tries to schedule an event that cannot become

@@ -8,6 +8,13 @@ impl EmitCtx<'_, '_> {
     /// the pre-IR emitter decision-for-decision: same errors, warnings,
     /// sensitivity sets and wait tracking.
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        let check = self.cg.static_effect_check(h);
+        let mut statements = self.lower_checked_stmt(h)?;
+        statements.splice(0..0, check);
+        Ok(statements)
+    }
+
+    fn lower_checked_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         let outer_receivers = std::mem::take(&mut self.cg.receiver_prelude);
         let receiver_roots = self.cg.qualify_class_containers(&self.path, h);
         let receivers = std::mem::replace(&mut self.cg.receiver_prelude, outer_receivers);
