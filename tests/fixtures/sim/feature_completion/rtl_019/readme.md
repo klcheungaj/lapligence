@@ -14,7 +14,8 @@ directory for a local include) joined with the `` `include`` name. The `.out`
 files spell those paths from the suite directory; the tests name the fixtures
 by absolute path and prefix the suite directory.
 
-`macro_file/` (expected `macro_file.out`, checked against an industry-standard
+`../../directive_effects/macro_file/` (expected `macro_file.out` beside it; it
+lives outside this task directory because it is not run through `sim_cli`; checked against an industry-standard
 simulator with the same relative command) is copied and run as
 `../../src/rtl/tb.sv` with `-I ../../src/inc -I ../../src/deep/`, then with
 absolute paths: nested includes, a macro defined in a header and expanded in

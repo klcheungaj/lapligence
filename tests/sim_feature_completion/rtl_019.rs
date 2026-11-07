@@ -571,7 +571,7 @@ fn adopted_post_2009_and_static_ref_witnesses_reject() {
 fn file_macro_reports_paths_as_given() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim")
-        .join(SUITE)
+        .join("directive_effects")
         .join("macro_file");
     let directory = super::sim_harness::TempDir::new("macro-file").expect("temporary directory");
     let source = directory.path().join("src");
@@ -583,7 +583,7 @@ fn file_macro_reports_paths_as_given() {
     }
     let run_directory = directory.path().join("runs/r1");
     std::fs::create_dir_all(&run_directory).expect("create run directory");
-    let expected = include_str!("../fixtures/sim/feature_completion/rtl_019/macro_file.out");
+    let expected = include_str!("../fixtures/sim/directive_effects/macro_file.out");
     let absolute = source.to_string_lossy().into_owned();
     for (prefix, expected) in [
         ("../../src".to_owned(), expected.to_owned()),
