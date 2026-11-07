@@ -355,13 +355,15 @@ pub(crate) fn sim_time(ticks: u64, precision_fs: u64) -> String {
     format!("{value} {}", UNITS[unit])
 }
 
-/// Whether `stderr` mentions `diagnostic`: a substring of the raw stream, or
-/// of one message read as `file.sv:l:c text` (location reduced to the file
+/// Whether `stderr` mentions `diagnostic`: a substring of the raw stream, of
+/// the stream in the canonical test form, or of one message read as
+/// `file.sv:l:c text` (location reduced to the file
 /// name, then the text), so a rejection test can name a located diagnostic
 /// without the layout or the message id.
 #[allow(dead_code)]
 pub(crate) fn mentions(stderr: &str, diagnostic: &str) -> bool {
     stderr.contains(diagnostic)
+        || canonical_messages(stderr).contains(diagnostic)
         || stderr
             .lines()
             .filter_map(llg::core::report::parse)

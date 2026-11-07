@@ -436,7 +436,8 @@ fn region_zero_delay_loop_guard() {
     assert!(run.stdout.is_empty());
     let stderr = run.stderr;
     assert!(
-        stderr.contains("ERROR: [SIM-010] zero-delay loop detected at time 0"),
+        sim_harness::canonical_messages(&stderr)
+            .contains("ERROR: [SIM-010] zero-delay loop detected at time 0"),
         "stderr did not contain the zero-delay loop guard message: {stderr}"
     );
 }

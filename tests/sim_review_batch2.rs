@@ -85,7 +85,8 @@ fn blocking_mailbox_mismatch_fails_instead_of_hanging_or_skipping_fifo() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(!output.status.success(), "{fixture}: {stderr}");
             assert!(
-                stderr.contains("ERROR: [SIM-010] mailbox retrieval type mismatch"),
+                crate::sim_harness::canonical_messages(&stderr)
+                    .contains("ERROR: [SIM-010] mailbox retrieval type mismatch"),
                 "{fixture}: expected runtime type error, got {stderr}"
             );
             assert!(output.stdout.is_empty(), "{fixture}: {:?}", output.stdout);

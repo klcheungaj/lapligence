@@ -361,7 +361,12 @@ impl ParsedMessage {
 /// Split `line` into fields by the layout template, or `None` when it is not
 /// a message line (design output, tool output passed through).
 pub fn parse(line: &str) -> Option<ParsedMessage> {
-    let tokens = tokens(&layout().template).ok()?;
+    parse_with(&layout().template, line)
+}
+
+/// [`parse`] by `template` instead of the shipped layout.
+fn parse_with(template: &str, line: &str) -> Option<ParsedMessage> {
+    let tokens = tokens(template).ok()?;
     let mut fields = Vec::new();
     if !match_tokens(&tokens, line, &mut fields) {
         return None;
@@ -403,19 +408,40 @@ fn match_tokens(tokens: &[Token], input: &str, fields: &mut Vec<(String, String)
             true
         }
         Token::Field(name) => {
-            let next = rest.iter().find_map(|t| match t {
-                Token::Literal(text) => Some(text.as_str()),
-                Token::Group(inner) => match inner.first() {
-                    Some(Token::Literal(text)) => Some(text.as_str()),
-                    _ => None,
-                },
-                Token::Field(_) => None,
-            });
-            let candidates: Vec<usize> = match next {
-                Some(literal) => input.match_indices(literal).map(|(i, _)| i).collect(),
-                None => vec![input.len()],
-            };
+            // The field ends where what follows can start: the first literal
+            // of each optional group up to the next required literal (a
+            // skipped group exposes the token after it), or the end of the
+            // line when nothing required follows.
+            let mut literals: Vec<&str> = Vec::new();
+            let mut open_end = true;
+            for token in rest {
+                match token {
+                    Token::Literal(text) => {
+                        literals.push(text.as_str());
+                        open_end = false;
+                        break;
+                    }
+                    Token::Group(inner) => {
+                        if let Some(Token::Literal(text)) = inner.first() {
+                            literals.push(text.as_str());
+                        }
+                    }
+                    Token::Field(_) => break,
+                }
+            }
+            let mut candidates: Vec<usize> = literals
+                .iter()
+                .flat_map(|literal| input.match_indices(literal).map(|(i, _)| i))
+                .collect();
+            if open_end || literals.is_empty() {
+                candidates.push(input.len());
+            }
+            candidates.sort_unstable();
+            candidates.dedup();
             for end in candidates {
+                if !field_value_fits(name, &input[..end]) {
+                    continue;
+                }
                 let mark = fields.len();
                 fields.push((name.clone(), input[..end].to_owned()));
                 if match_tokens(rest, &input[end..], fields) {
@@ -435,6 +461,27 @@ fn match_tokens(tokens: &[Token], input: &str, fields: &mut Vec<(String, String)
             fields.truncate(mark);
             match_tokens(rest, input, fields)
         }
+    }
+}
+
+/// Whether `value` can fill field `name`, so a field never swallows the
+/// neighbouring field of a layout that separates them with the same literal:
+/// a severity is a severity word, and a location ends in `:line[:column]`,
+/// optionally followed by a `` (`line ...)`` origin.
+fn field_value_fits(name: &str, value: &str) -> bool {
+    match name {
+        "severity" => Severity::from_word(value).is_some(),
+        "location" => {
+            let site = match value.find(" (`line ") {
+                Some(at) if value.ends_with(')') => &value[..at],
+                _ => value,
+            };
+            let mut parts = site.rsplit(':');
+            let last = parts.next().unwrap_or("");
+            let numeric = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+            numeric(last) && parts.next().is_some_and(|before| !before.is_empty())
+        }
+        _ => !value.is_empty(),
     }
 }
 
@@ -639,5 +686,39 @@ mod tests {
             layout.template,
             "<{location}: >{severity} {id}: <{context}: >{text}"
         );
+    }
+
+    /// A field followed by optional groups ends where any of them, or the
+    /// required literal after them, starts.
+    #[test]
+    fn parse_follows_a_layout_with_trailing_optional_groups() {
+        let template = "[{id}] {severity}< {location}>< ({context})>: {text}< [{hint}]>";
+        let parsed = parse_with(
+            template,
+            "[LINT-016] ERROR /a/f.sv:5:1: process mixes (`=`) and (`<=`) [mixed-assignments]",
+        )
+        .unwrap();
+        assert_eq!(parsed.location.as_deref(), Some("/a/f.sv:5:1"));
+        assert_eq!(parsed.context, None);
+        let parsed = parse_with(
+            template,
+            "[SIM-001] INFO f.sv:6:8 (tb @ 8 ns): $finish called",
+        )
+        .unwrap();
+        assert_eq!(parsed.location.as_deref(), Some("f.sv:6:8"));
+        assert_eq!(parsed.context.as_deref(), Some("tb @ 8 ns"));
+        let parsed = parse_with(
+            template,
+            "[SIM-009] FATAL (method call at tb:15:12 @ 1 ns): null class handle access",
+        )
+        .unwrap();
+        assert_eq!(parsed.location, None);
+        assert_eq!(
+            parsed.context.as_deref(),
+            Some("method call at tb:15:12 @ 1 ns")
+        );
+        let parsed = parse_with(template, "[SIM-000] INFO: 1 error(s), 0 warning(s)").unwrap();
+        assert_eq!(parsed.location, None);
+        assert_eq!(parsed.text, "1 error(s), 0 warning(s)");
     }
 }
