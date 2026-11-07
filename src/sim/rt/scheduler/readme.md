@@ -139,10 +139,13 @@ first write of a storage something waits on opens one change record
 the head of the subscriber list, so waiters armed later are not in its range.
 A waited marker bound to the storage, or the contents marker of its array,
 gets a marker record, and the storage a record of its own that fires it
-(`change_route_markers`, one pass over the bindings). A storage only clocking
-history or a sequence clock observes gets a history record kept on its
-clocking history entry, with no row. Later writes find the record and pay
-nothing more. `change_check` settles every record, storage records before
+(`change_route_markers`, one pass over the bindings). A storage with no row
+has no waiter to walk at its check, so its record is rowless
+(`LLG_CHANGE_ROWLESS`): no row is created for it. A rowless record is found
+again through the storage's clocking history entry (the record of a storage
+only clocking history or a sequence clock observes) or through a marker
+record it opened (`owner`, `change_find_unrowed`). Later writes find the
+record and pay nothing more. `change_check` settles every record, storage records before
 marker records (a contents marker is shared by its array's cells), at the
 end of the turn, after the NBA batch, before prints and random calls, and
 after `force`/`release`, whose target publishes at once: a record whose value
@@ -161,7 +164,11 @@ Strings, container cells and reference markers publish per write, and so do
 markers bound to an unwaited marker. NBAs that mature from an earlier slot
 commit and check before the NBAs issued in this slot (`g.nba_slot_sequence`).
 Writes outside a turn publish at once. Records and freed wait-source rows are
-pooled, so a storage written in every turn allocates nothing.
+pooled, so a storage written in every turn allocates nothing. A marker that
+toggles at once reuses the row lookup that found it unwaited
+(`marker_toggle`), and on the compact backend a write of at most 64 bits
+keeps plain copies of its values instead of a registered snapshot scope
+(`sig_write_as`).
 
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.

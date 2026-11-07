@@ -520,44 +520,57 @@ processes or clock edges, at the cost of a few bytes per object.
   its first write in the turn: a waiter on its row, a deferred trigger, a
   waited bound marker or array contents marker, or clocking history. Records
   and freed wait-source rows are pooled; a value of up to 64 bits is copied
-  as a plain store on the compact backends; a storage only clocking history
-  observes keeps its record on its history entry instead of a row. Bound
-  markers are routed in one pass, a routed storage fires its marker records
+  as a plain store on the compact backends. A storage without a row gets a
+  rowless record, found through its clocking history entry or through a
+  marker record it opened, so no row is created and freed per write. Bound
+  markers are routed in one pass, a marker that toggles at once reuses the
+  lookup that found it unwaited, a routed storage fires its marker records
   directly, and clock consumers are called only when they have entries, which
-  also removes by-value `sv4_t` copies from every publication. Per-write
-  consumers (VPI, waveforms, `disable iff`, force, switches, timing checks)
-  are unchanged. Generated C changes only where a class handle store passes
-  the previous handle (`llg_handle_changed`), and an event-clock sampled
-  process calls `llg_wait_gate_at_write` before it arms.
-- **Evidence:** 5 interleaved rounds pinned to one CPU, medians, O3 models,
-  compact GMP backend; another agent was running (load 6–8), so a few
-  percent is within noise. Output identical except where T1-D11 removes
-  wakes.
+  also removes by-value `sv4_t` copies from every publication. On the compact
+  backend a write of at most 64 bits keeps plain copies of its values instead
+  of a registered snapshot scope: this speeds every narrow write, with or
+  without a record. Per-write consumers (VPI, waveforms, `disable iff`,
+  force, switches, timing checks) are unchanged. Generated C changes only
+  where a class handle store passes the previous handle
+  (`llg_handle_changed`), and an event-clock sampled process calls
+  `llg_wait_gate_at_write` before it arms.
+- **Evidence:** 7 interleaved rounds pinned to one CPU, CPU seconds (user +
+  system) of the model process, medians, O3 models, compact GMP backend,
+  load 3–6 from other agents. A second copy of the base executables measures
+  the noise: base copy against base is 0.975–1.025 by median for runs of
+  80 ms or more. Output identical except where T1-D11 removes wakes.
 
-  | Workload | Base s | T1-D11 s | Ratio |
-  | --- | ---: | ---: | ---: |
-  | many-masked-20k | 0.301 | 0.296 | 0.986 |
-  | many-registers-10k | 0.102 | 0.099 | 0.967 |
-  | tasks | 0.083 | 0.083 | 1.004 |
-  | wide-values | 0.328 | 0.334 | 1.019 |
-  | zero-delay | 0.150 | 0.145 | 0.969 |
-  | 2,000 waiters on one clock | 1.598 | 1.631 | 1.020 |
-  | Every write changes a waited variable once per turn | 0.320 | 0.348 | 1.089 |
-  | Clocking block present, 500 unwaited array cells written per cycle | 0.600 | 0.643 | 1.072 |
-  | 256 array cells, each read by an `always @*` | 0.236 | 0.253 | 1.076 |
-  | Default-then-override in 1,000 processes | 4.233 | 2.816 | 0.665 |
-  | One vector, a waiter per bit | 1.586 | 0.065 | 0.041 |
-  | Two NBAs per register per cycle | 10.956 | 9.743 | 0.889 |
-  | 100 concurrent assertions, 1,000 writes per cycle | 4.236 | 3.821 | 0.902 |
+  | Workload | Base s | T1-D11 s | Ratio | Base copy |
+  | --- | ---: | ---: | ---: | ---: |
+  | many-masked-20k | 0.283 | 0.285 | 1.009 | 1.002 |
+  | many-registers-10k | 0.096 | 0.095 | 0.998 | 0.979 |
+  | tasks | 0.080 | 0.076 | 0.957 | 1.002 |
+  | wide-values | 0.329 | 0.325 | 0.986 | 1.003 |
+  | zero-delay | 0.132 | 0.134 | 1.013 | 1.001 |
+  | 2,000 waiters on one clock | 1.551 | 1.524 | 0.983 | 1.001 |
+  | Every write changes a waited variable once per turn | 0.315 | 0.280 | 0.889 | 1.011 |
+  | Clocking block present, 500 unwaited array cells written per cycle | 0.593 | 0.605 | 1.020 | 1.025 |
+  | 256 array cells, each read by an `always @*` | 0.238 | 0.216 | 0.906 | 0.975 |
+  | Default-then-override in 1,000 processes | 3.772 | 2.509 | 0.665 | 0.995 |
+  | One vector, a waiter per bit | 1.486 | 0.062 | 0.041 | 0.996 |
+  | Two NBAs per register per cycle | 10.566 | 9.427 | 0.892 | 1.004 |
+  | 100 concurrent assertions, 1,000 writes per cycle | 4.254 | 3.862 | 0.908 | 0.998 |
 
   The first five rows are the regular corpus. The others were built for
   this change: the clock case, three worst cases where every write opens a
   record and nothing coalesces, and four where values return or repeat
-  within a turn.
-  Peak RSS is unchanged except `zero-delay` (+1.7%) and
-  `many-registers-10k` (+1.1%); a wait-source row grows from 80 to 88 B, a
-  clocking history entry from 56 to 64 B, and the process record and the
-  wait record keep their sizes. Executable size +1.4%.
+  within a turn. Without the narrow-write snapshot change the worst cases
+  cost 3–8% by minimum (every write a waited change 1.056, clocking block
+  1.076, array cells 1.059, clock 1.029): that is what the records cost, and
+  the snapshot change pays it back on narrow writes. In a model with a
+  clocking drive, `##` wait or assertion clock pulse, every published
+  signal keeps clocking history, so every written signal gets a record;
+  limiting history to the signals those readers name would remove about 45%
+  of the clocking-block row's time, with or without T1-D11, but needs
+  generated registrations and is not done. Peak RSS is unchanged; a
+  wait-source row grows from 80 to 88 B, a clocking history entry from 56 to
+  64 B, and the process record and the wait record keep their sizes.
+  Executable size +1.3–1.8%.
 
 ### Bounded retention of finished work
 
