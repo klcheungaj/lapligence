@@ -1457,6 +1457,22 @@ module tb;
 endmodule
 ```
 
+## Records of the leaf form: two errors a column does not have
+
+### Symptom
+
+Below 16 cells, two forms that a column accepts stop compilation. A constant
+select beyond a `string` or handle member array (`r.s[20] = "x"` with
+`string s[8]`) reports "cannot resolve array base of select", where SV 7.4.6
+reads the default and writes nothing. A whole record with a class handle member
+assigned to a member element (`r.a[5] = x` with `e_t a[8]`) reports "assignment
+between incompatible unpacked aggregate types".
+
+### Cause
+
+The leaf form names one object per cell, so an index outside the array names
+none, and `equivalent_copy_shape` accepts only `chandle` and `void` handles.
+
 ## Record results with real members as equality operands
 
 **Status:** open (FIN-001 G3, F07-03). Records with real members compare with

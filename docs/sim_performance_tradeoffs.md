@@ -362,23 +362,23 @@ code at `-O1` instead of 0.13×).
 
   | Operation | `string` member, 16 | 256 | 4,095 | Packed record, 16 | 256 | 4,095 |
   | --- | --- | --- | --- | --- | --- | --- |
-  | Read, constant index | 0.115 → 0.113 | 0.117 → 0.118 | 0.117 → 0.111 | 0.689 → 0.111 | 52.2 → 0.113 | 12,600 → 0.112 |
-  | Write, constant index | 0.122 → 0.102 | 0.124 → 0.103 | 0.123 → 0.102 | 2.92 → 0.108 | 41.3 → 0.102 | 2,110 → 0.102 |
-  | Read-modify-write, constant | 0.178 → 0.156 | 0.186 → 0.161 | 0.181 → 0.156 | 3.39 → 0.158 | 52.1 → 0.161 | 2,280 → 0.156 |
-  | Scalar member read-modify-write | 0.122 → 0.124 | 0.128 → 0.122 | 0.124 → 0.124 | 3.79 → 0.122 | 50.5 → 0.124 | 2,240 → 0.123 |
-  | Read, run-time index | 0.25 → 0.215 | 0.264 → 0.189 | not built → 0.182 | 0.887 → 0.219 | 51.9 → 0.186 | not built → 0.185 |
-  | Write, run-time index | 0.276 → 0.206 | 0.282 → 0.176 | not built → 0.173 | 2.98 → 0.208 | 41.5 → 0.177 | not built → 0.188 |
-  | Whole copy | 0.63 → 0.15 | 8.71 → 0.954 | 173 → 13.9 | 1.38 → 0.115 | 64.6 → 0.896 | 13,100 → 14.1 |
-  | Whole copy, all cells written | 2.13 → 1.21 | 31.6 → 16.3 | 621 → 262 | 3.67 → 1.17 | 147 → 16.1 | 24,500 → 256 |
-  | Whole compare | 0.479 → 0.269 | 4.58 → 1.13 | no build → 15.2 | 0.354 → 0.144 | 4.76 → 1.00 | 1,560 → 15.6 |
+  | Read, constant index | 0.114 → 0.112 | 0.116 → 0.111 | 0.116 → 0.112 | 0.679 → 0.111 | 51.0 → 0.112 | 12,100 → 0.112 |
+  | Write, constant index | 0.120 → 0.103 | 0.123 → 0.101 | 0.124 → 0.102 | 2.77 → 0.103 | 39.3 → 0.103 | 2,110 → 0.102 |
+  | Read-modify-write, constant | 0.178 → 0.154 | 0.181 → 0.156 | 0.184 → 0.157 | 3.29 → 0.155 | 47.8 → 0.156 | 2,230 → 0.155 |
+  | Scalar member read-modify-write | 0.121 → 0.121 | 0.123 → 0.124 | 0.123 → 0.123 | 3.38 → 0.124 | 47.6 → 0.122 | 2,250 → 0.123 |
+  | Read, run-time index | 0.239 → 0.218 | 0.238 → 0.188 | not built → 0.186 | 0.823 → 0.216 | 50.6 → 0.187 | not built → 0.183 |
+  | Write, run-time index | 0.262 → 0.204 | 0.257 → 0.174 | not built → 0.171 | 2.93 → 0.204 | 39.1 → 0.173 | not built → 0.172 |
+  | Whole copy | 0.629 → 0.149 | 8.65 → 0.752 | 173 → 10.7 | 1.36 → 0.117 | 63.4 → 0.723 | 12,400 → 10.8 |
+  | Whole copy, all cells written | 2.09 → 1.23 | 31.4 → 16.2 | 605 → 265 | 3.53 → 1.18 | 143 → 16.0 | 23,800 → 259 |
+  | Whole compare | 0.478 → 0.259 | 4.53 → 1.03 | no build → 13.6 | 0.343 → 0.147 | 4.69 → 0.917 | 1,560 → 13.5 |
 
   Per-cell packed records above 16 cells ran fewer iterations (4,096 at
-  4,095 cells); the rates are scaled to 1M. Whole compare at 4,095 `string`
-  cells has no per-cell figure: the C compiler was killed building its 266,360
-  lines, twice. Spread between rounds was 2.5% at the median on a quiet host
-  and 19% across these rounds, which ran beside other jobs. The two column
-  figures above per cell, `string` scalar member at 16 cells and read at 256,
-  are 1.1% and 1.0% off, inside it.
+  4,095 cells) and those rows two rounds; the rates are scaled to 1M. Whole
+  compare at 4,095 `string` cells has no per-cell figure: the C compiler was
+  killed building its 266,360 lines, twice. On a quiet host the spread between
+  rounds was 3% at the median, with single rounds up to 60% off. The two
+  column figures above per cell, the scalar member at 256 and 4,095 `string`
+  cells, are 0.4% and 0.5% off, inside it.
 
   Memory per cell, in heap peak and static data over a one-cell record, per
   cell → column. "Written" fills the array and "one write" touches one cell of
@@ -404,12 +404,22 @@ code at `-O1` instead of 0.13×).
   4,096 cells a hashed cell costs 58 bytes. Container cells are 40 bytes
   (`llg_value_t`), which holds a whole `string` and its change links per cell.
 
-  Container members trade constant selects for the rest. A constant index
-  builds an `sv4_t` that a runtime call decodes, so a constant `string` read goes
-  from 0.142 to 0.154 s per 1M and a handle write from 0.065 to 0.079, and a whole
-  record element written at a constant index from 0.21 to 0.32. Every run-time
-  index is faster than a leaf (`string` read 0.46 → 0.25), as is every whole copy
-  of `string` or record elements (at 256 cells, 11.6 → 1.49 and 18.3 → 4.17).
+  Container members hold their cells in the dynamic-array runtime. A constant
+  index is one bound check in the model, and a record element written from a
+  record of its type stores leaf by leaf and publishes once, so that write goes
+  from 0.21 to 0.068 s per 1M. Run-time indices and whole copies gain most
+  (`string` read at 16 cells 0.46 → 0.25, whole copy at 256 cells 11.7 → 1.50,
+  record elements 18.4 → 4.19). `real` cells copy at 0.258 from 0.582 at 256.
+
+  Eight rows of `string` and handle cells stay 0.9-3.5% above 16-cell leaves,
+  under 5 ns: `string` read 0.144 → 0.148, write 0.104 → 0.107, handle copy
+  0.103 → 0.105. Their model code differs by the bound check, and most of the
+  rest is the runtime, not the access: 15-cell leaves, whose `model.c` is
+  identical on both runtimes, moved the same way (`string` read 0.143 → 0.148,
+  handle copy 0.103 → 0.104). Function placement alone moves these rows by
+  about 4%: unswitching the whole-array cell loops took the 16-cell packed copy
+  3% down and its compare 4% up with no change to their work, so that form was
+  dropped.
 - **Threshold:** 16 cells. Columns already win on accesses at 4 cells, but
   below 16 the tree stays a few hundred lines, so small records keep their
   form.

@@ -283,7 +283,10 @@ built at the call); a container result is a trailing output formal.
 Element types may be records, fixed arrays and identity handles (events,
 processes, class-like objects, chandles). Whole record elements move through
 `IrContainerStmt::SetValue`/`GetValue` with `IrValueSlot` (element, push,
-insert, pop) and native temporaries; members are read and written in place
+insert, pop) and native temporaries, or, from a record of the element's own
+type into a dynamic array, leaf by leaf through
+`IrContainerStmt::SetElementItems`, which publishes once when a leaf changed;
+members are read and written in place
 through `IrNativeAccessKind::ElementItem` with a `ContainerElement` receiver
 (an `ItemElement` receiver selects an element of a fixed-array item with
 run-time indices, below a `ContainerElement` or a `NativeRoot`),
