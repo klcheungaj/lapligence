@@ -142,7 +142,8 @@ gets a marker record, and the storage a record of its own that fires it
 (`change_route_markers`, one pass over the bindings). A storage only clocking
 history or a sequence clock observes gets a history record kept on its
 clocking history entry, with no row. Later writes find the record and pay
-nothing more. `change_check` settles every record, in opening order, at the
+nothing more. `change_check` settles every record, storage records before
+marker records (a contents marker is shared by its array's cells), at the
 end of the turn, after the NBA batch, before prints and random calls, and
 after `force`/`release`, whose target publishes at once: a record whose value
 equals its before value is dropped; otherwise clocking history, sampled
@@ -159,7 +160,8 @@ from `sig_settle` and `history_settle` and counting what it observes in
 Strings, container cells and reference markers publish per write, and so do
 markers bound to an unwaited marker. NBAs that mature from an earlier slot
 commit and check before the NBAs issued in this slot (`g.nba_slot_sequence`).
-Writes outside a turn publish at once.
+Writes outside a turn publish at once. Records and freed wait-source rows are
+pooled, so a storage written in every turn allocates nothing.
 
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.

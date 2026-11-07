@@ -70,13 +70,21 @@ static llg_wait_source_t* wait_source_find(const void* key) {
     return NULL;
 }
 
-// A new row for a key that has none.
+// A new row for a key that has none. Freed rows are kept for reuse
+// (g.wait_source_free, linked through `next`): a storage written in each
+// turn, or waited on again after each wake, would otherwise allocate and
+// free its row every time. The pool holds at most the peak number of rows.
 static llg_wait_source_t* wait_source_insert(const void* key) {
-    llg_wait_source_t* source;
+    llg_wait_source_t* source = g.wait_source_free;
     wait_sources_reserve();
     size_t slot = wait_source_hash(key) & (g.wait_sources_capacity - 1);
-    source = (llg_wait_source_t*)llg_checked_calloc(
-        1, sizeof(*source), "wait source");
+    if (source) {
+        g.wait_source_free = source->next;
+        *source = (llg_wait_source_t){0};
+    } else {
+        source = (llg_wait_source_t*)llg_checked_calloc(
+            1, sizeof(*source), "wait source");
+    }
     source->key = key;
     source->next = g.wait_sources[slot];
     source->prev_link = &g.wait_sources[slot];
@@ -108,7 +116,8 @@ static void wait_subscription_unlink(llg_wait_subscription_t* node) {
         *source->prev_link = source->next;
         if (source->next) source->next->prev_link = source->prev_link;
         g.n_wait_sources--;
-        free(source);
+        source->next = g.wait_source_free;
+        g.wait_source_free = source;
     }
 }
 

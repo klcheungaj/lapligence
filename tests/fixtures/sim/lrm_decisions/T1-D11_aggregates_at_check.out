@@ -9,3 +9,5 @@
 60 s=
 60 q[0]=0
 60 d[0]=0
+-- 70 variable index
+70 dyn[di]=4

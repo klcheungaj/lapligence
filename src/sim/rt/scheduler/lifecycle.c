@@ -514,6 +514,12 @@ void llg_rt_cleanup(void) {
     } else {
         llg_event_generation++;
     }
+    // Rows freed by any release above wait in the pool until here.
+    while (g.wait_source_free) {
+        llg_wait_source_t* next = g.wait_source_free->next;
+        free(g.wait_source_free);
+        g.wait_source_free = next;
+    }
     memset(&g, 0, sizeof(g));
     while (llg_dependency_bindings) {
         llg_dependency_binding_t* next = llg_dependency_bindings->next;

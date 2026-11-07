@@ -12,7 +12,9 @@
 //
 // Expected output: from 10 to 50 only the step markers; at 51 the property
 // change that is kept wakes its waiter; the `always @*` run counts stay 0;
-// at 60 the string, queue cell and dynamic cell each wake once.
+// at 60 the string, queue cell and dynamic cell each wake once; at 70 a
+// waiter on a variable index wakes for the second cell even though the first
+// cell's change was undone, and at 71 not at all.
 `timescale 1ns / 1ns
 module tb;
   class C;
@@ -29,6 +31,8 @@ module tb;
   int d[];
   int idx;
   int big_runs, small_runs, rec_runs;
+  bit [7:0] dyn [0:3];
+  int di = 1;
   bit [7:0] big_seen, small_seen;
   bit [3:0] rec_seen;
 
@@ -47,6 +51,7 @@ module tb;
   always @(s) $display("%0t s=%s", $time, s);
   always @(q[0]) $display("%0t q[0]=%0d", $time, q[0]);
   always @(d[0]) $display("%0t d[0]=%0d", $time, d[0]);
+  always @(dyn[di]) $display("%0t dyn[di]=%0d", $time, dyn[di]);
 
   initial begin
     q = '{0};
@@ -67,6 +72,9 @@ module tb;
     s = "b"; s = "";
     q[0] = 1; q[0] = 0;
     d[0] = 1; d[0] = 0;
-    #10 $finish(0);
+    #10 $display("-- 70 variable index");
+    dyn[0] = 3; dyn[0] = 0; dyn[1] = 4;
+    #1 dyn[2] = 5; dyn[2] = 0;
+    #9 $finish(0);
   end
 endmodule

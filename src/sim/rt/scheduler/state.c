@@ -720,6 +720,7 @@ typedef struct {
     llg_wait_source_t** wait_sources;
     size_t wait_sources_capacity;
     size_t n_wait_sources;
+    llg_wait_source_t* wait_source_free; // Rows kept for reuse (wait_queues.c).
     uint64_t now;
     uint64_t design_precision_fs;
     llg_timeformat_state_t time_format;
@@ -760,6 +761,7 @@ typedef struct {
     size_t change_count;
     size_t change_capacity;
     size_t change_rows; // Open records on wait-source rows (not history ones).
+    uint64_t change_serial; // Last serial given to a change record.
     llg_change_t* change_free; // Recycled records, linked by cursor.next.
     // The first NBA sequence number of this time slot: an older one matured
     // from an earlier slot, and those commit as their own batch.

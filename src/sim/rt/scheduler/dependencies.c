@@ -859,6 +859,8 @@ static llg_change_t* change_take(llg_change_kind_t kind) {
     change->edge = NULL;
     change->bind_epoch = UINT64_MAX;
     change->contents_known = 0;
+    change->fires_exact = 0;
+    change->serial = ++g.change_serial;
     change->index = g.change_count;
     g.changes[g.change_count++] = change;
     return change;
@@ -1200,7 +1202,8 @@ static void publish_bound_markers(const void* target, uint8_t kind) {
 // per call on the hottest path.
 LLG_CO_INLINE void clock_consumers_changed(sv4_t* target, sv4_t old, sv4_t value,
                                           int deferred) {
-    if (g.clocking_drives) clocking_drive_signal_match(target, old, value);
+    if (g.clocking_drives && clocking_drive_source_pending(target))
+        clocking_drive_signal_match(target, old, value);
     if (g.sampled_edge_clocks) sampled_domain_clock_signal_changed(target, old, value, deferred);
     // Queue the clock event after asynchronous controls have seen the new
     // value. This keeps a clock that also changes an accept/reject condition
@@ -1261,26 +1264,14 @@ static void history_settle(llg_clocking_edge_t* edge, sv4_t* target, sv4_t old,
 // marker of its array, when no record was open: a marker something waits on
 // gets a record and so does the storage, with `before`; the others toggle at
 // once. Returns whether the storage now has a record.
-// A check settles records in opening order, and a storage's record must
-// settle before the marker records it fires: the first deferred marker opens
-// the storage's record after its own, so the two trade places.
 // `row` is the storage's row, or NULL when it has none; `bound` tells that a
 // bound marker (not only the array's contents marker) asked for the record.
 static llg_wait_source_t* change_route_open(sv4_t* target, const sv4_t* before,
-                                            llg_change_t* marker,
                                             llg_wait_source_t* row, int bound) {
     llg_wait_source_t* source = change_open_packed(row, target, before);
-    llg_change_t* storage = source->change;
     if (bound) {
-        storage->bound = 1;
-        storage->bind_epoch = dependency_bind_epoch;
-    }
-    if (marker->index < storage->index) {
-        size_t index = marker->index;
-        g.changes[index] = storage;
-        g.changes[storage->index] = marker;
-        marker->index = storage->index;
-        storage->index = index;
+        source->change->bound = 1;
+        source->change->bind_epoch = dependency_bind_epoch;
     }
     return source;
 }
@@ -1288,13 +1279,17 @@ static llg_wait_source_t* change_route_open(sv4_t* target, const sv4_t* before,
 static int change_route_markers(sv4_t* target, const sv4_t* before, sv4_t* contents,
                                 llg_wait_source_t* row) {
     llg_wait_source_t* source = NULL;
+    llg_change_t* fires[2] = {NULL, NULL};
+    int fired = 0;
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
         if (binding->key != target || binding->kind != LLG_DEPENDENCY_BINDING_PACKED)
             continue;
         llg_change_t* marker = change_marker_defer(binding->dependency);
         if (marker) {
-            if (!source) source = change_route_open(target, before, marker, row, 1);
+            if (!source) source = change_route_open(target, before, row, 1);
+            if (fired < 2) fires[fired] = marker;
+            ++fired;
         } else {
             llg_dependency_changed(binding->dependency);
         }
@@ -1302,12 +1297,27 @@ static int change_route_markers(sv4_t* target, const sv4_t* before, sv4_t* conte
     if (contents) {
         llg_change_t* marker = change_marker_defer(contents);
         if (marker) {
-            if (!source) source = change_route_open(target, before, marker, row, 0);
+            if (!source) source = change_route_open(target, before, row, 0);
+            if (fired < 2) fires[fired] = marker;
+            ++fired;
         } else {
             llg_dependency_changed(contents);
         }
     }
-    return source != NULL;
+    if (!source) return 0;
+    llg_change_t* storage = source->change;
+    storage->contents = contents;
+    storage->contents_known = 1;
+    if (fired <= 2) {
+        // The check fires these records directly instead of looking the
+        // markers up again.
+        storage->fires_exact = 1;
+        for (int i = 0; i < 2; i++) {
+            storage->fires[i] = fires[i];
+            storage->fires_serial[i] = fires[i] ? fires[i]->serial : 0;
+        }
+    }
+    return 1;
 }
 
 // `source` is the row after change_begin for a deferred write, else unused.
@@ -1610,11 +1620,21 @@ static void change_settle(llg_change_t* change) {
     if (change->kind == LLG_CHANGE_PACKED) {
         sv4_t* target = (sv4_t*)key;
         if (llg_sv4_width(change->before) != llg_sv4_width(*target) ||
-            !sv4_same(change->before, *target))
-            sig_settle(target, cursor->source, cursor, change->before, *target,
-                       change_bound(change, target) ? LLG_BOUND_FIRE : LLG_BOUND_NONE,
-                       change->contents_known ? change->contents
-                                              : fixed_array_contents_marker(target));
+            !sv4_same(change->before, *target)) {
+            if (change->fires_exact) {
+                for (int i = 0; i < 2; i++) {
+                    llg_change_t* marker = change->fires[i];
+                    if (marker && marker->serial == change->fires_serial[i]) marker->fire = 1;
+                }
+                sig_settle(target, cursor->source, cursor, change->before, *target,
+                           LLG_BOUND_NONE, NULL);
+            } else {
+                sig_settle(target, cursor->source, cursor, change->before, *target,
+                           change_bound(change, target) ? LLG_BOUND_FIRE : LLG_BOUND_NONE,
+                           change->contents_known ? change->contents
+                                                  : fixed_array_contents_marker(target));
+            }
+        }
     } else if (change->kind == LLG_CHANGE_REAL) {
         double* target = (double*)key;
         if (!real_same(change->before_real, *target))
@@ -1626,17 +1646,23 @@ static void change_settle(llg_change_t* change) {
 
 // Publishes in first-write order, with deferral off: what a walk evaluates or
 // triggers publishes at once and so cannot add a record.
+// Storage records settle first and marker records after them, so that every
+// storage a marker stands for has fired it, whatever the opening order (an
+// array's contents marker is shared by its cells). A marker firing a further
+// marker whose record already settled toggles it at once (LLG_BOUND_SETTLE).
 static void change_flush(void) {
     int deferred = change_defer_active;
     int settling = change_settling;
     change_defer_active = 0;
     change_settling = 1;
-    for (size_t i = 0; i < g.change_count; i++) {
-        llg_change_t* change = g.changes[i];
-        if (!change) continue;
-        g.changes[i] = NULL;
-        change_settle(change);
-        change_close(change);
+    for (int markers = 0; markers < 2; markers++) {
+        for (size_t i = 0; i < g.change_count; i++) {
+            llg_change_t* change = g.changes[i];
+            if (!change || (change->kind == LLG_CHANGE_MARKER) != markers) continue;
+            g.changes[i] = NULL;
+            change_settle(change);
+            change_close(change);
+        }
     }
     g.change_count = 0;
     change_settling = settling;

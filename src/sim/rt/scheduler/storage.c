@@ -364,10 +364,17 @@ typedef struct llg_change {
     // Contents marker of the array holding a packed storage, once
     // `contents_known` (set by the write that publishes it).
     sv4_t* contents;
+    // The marker records a routed storage fires at its check, each with the
+    // serial it had (a forgotten record is recycled with a new serial), when
+    // `fires_exact`; otherwise the check looks the markers up.
+    struct llg_change* fires[2];
+    uint64_t fires_serial[2];
+    uint64_t serial;
     llg_change_kind_t kind;
     uint8_t fire;
     uint8_t bound;
     uint8_t contents_known;
+    uint8_t fires_exact;
 } llg_change_t;
 
 struct llg_wait_source {
