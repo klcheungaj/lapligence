@@ -187,3 +187,7 @@ column. Expected values are derived by hand below; none were captured from
   beside an element, `fork ... join` in the task, virtual methods. The lines match
   `-D N=4` and `-D N=5000`. Checked against the text alone: industry-standard
   behaviour has this binding as a not-yet-implemented error for any array select.
+- `chosen_nested_assoc`: elements of nested associative arrays holding records with
+  member arrays in containers (§§7.8, 7.9): writes create them, reads of missing
+  entries give defaults, whole copies, `foreach`, `delete` and `ref` formals. The
+  lines match `-D N=6`.

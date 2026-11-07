@@ -586,3 +586,12 @@ fn a_waited_record_element_wakes_for_itself() {
     sim_cli::run_case_backend_parity(SUITE, "chosen_ref_wait", expected, &["-D", "N=4"], &[]);
     sim_cli::run_case_backend_parity(SUITE, "chosen_ref_wait", expected, &["-D", "N=5000"], &[]);
 }
+
+/// Records with columns as elements of nested associative arrays.
+#[test]
+fn nested_associative_elements_hold_records_of_the_column_form() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_nested_assoc.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_nested_assoc", expected, &[], &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_nested_assoc", expected, &["-D", "N=6"], &[]);
+}
