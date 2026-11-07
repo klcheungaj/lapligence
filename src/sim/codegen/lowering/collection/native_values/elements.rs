@@ -2186,9 +2186,18 @@ impl Codegen<'_> {
                 ))));
                 HoistedValue::Handle(name)
             }
+            // Only a whole element takes the value; a sub-record is written
+            // through the element's bound copy.
             Some(TypeShape::Aggregate(_))
-                if self.selection_record_depth(&nested).is_some()
-                    && matches!(self.kind(lhs), NodeKind::Expr(ExprKind::ArraySelect { .. })) =>
+                if self
+                    .selection_record_depth(&nested)
+                    .is_some_and(|(container, depth)| {
+                        matches!(self.kind(lhs), NodeKind::Expr(ExprKind::ArraySelect { .. }))
+                            && self
+                                .container_element_descriptor(container, depth)
+                                .zip(self.query_descriptor(lhs))
+                                .is_some_and(|(element, target)| element.id == target.id)
+                    }) =>
             {
                 let Some((container, depth)) = self.selection_record_depth(&nested) else {
                     return Ok(Vec::new());
