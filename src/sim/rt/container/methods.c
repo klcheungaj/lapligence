@@ -79,14 +79,26 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
                     : sv4_from_u64((uint64_t)index, 32, 1);
                 sv4_t key = llg_container_eval(
                     eval, values[index], item_index, context);
-                sv4_t comparison = method == LLG_CONTAINER_METHOD_MIN
-                    ? sv4_lt(key, best_key)
-                    : sv4_gt(key, best_key);
-                if (sv4_to_bool(comparison)) {
+                // A key with an X or Z bit orders below every known key and
+                // equal to another such key, so the extreme does not depend
+                // on the order of the elements (the first of equals wins).
+                int replace;
+                if (sv4_is_unknown(best_key)) {
+                    replace = method == LLG_CONTAINER_METHOD_MAX &&
+                              !sv4_is_unknown(key);
+                } else if (sv4_is_unknown(key)) {
+                    replace = method == LLG_CONTAINER_METHOD_MIN;
+                } else {
+                    sv4_t comparison = method == LLG_CONTAINER_METHOD_MIN
+                        ? sv4_lt(key, best_key)
+                        : sv4_gt(key, best_key);
+                    replace = sv4_to_bool(comparison);
+                    sv4_destroy(&comparison);
+                }
+                if (replace) {
                     best = index;
                     sv4_move(&best_key, &key);
                 }
-                sv4_destroy(&comparison);
                 sv4_destroy(&key);
                 sv4_destroy(&item_index);
             }

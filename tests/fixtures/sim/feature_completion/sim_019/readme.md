@@ -52,6 +52,23 @@ the legacy and compact (portable and GMP) value backends.
   also for `shuffle`, which keeps the row's sum 24 and product 504. Some
   simulators evaluate the selector of a shuffled row twice; llg captures
   selected receiver coordinates once, as for `sort` and `reverse`.
+- `minmax_unknown` (decision S07-D13): `min` and `max` when an element or a
+  `with` key has an X or Z bit. §7.12.1 L9293-9294 (the text of `min` and
+  `max` is in 7.12.1; 7.12.3 covers the reduction methods): "min() returns
+  the element with the minimum value or whose expression evaluates to a
+  minimum." and "max() returns the element with the maximum value or whose
+  expression evaluates to a maximum."; §11.4.4 L14721-14722: "If either
+  operand of a relational operator contains an unknown (x) or high-impedance
+  (z) value, then the result shall be a 1-bit unknown value (x)." The text
+  does not say which element is the extreme then, so the oracle is the
+  industry-standard result, which does not depend on the order: an element
+  with an unknown bit orders below every known value (`max` of `{x1, 5, 9}`
+  is 9 in any order; `min` returns the element with the unknown bit, the
+  first one when several have it). Cases: 100-bit elements with the unknown
+  bits in the upper limb or the lowest bit, signed bytes (`max` of
+  `{-5, x, 3}` is 3; all-negative arrays keep numeric order), a queue of
+  records keyed by a four-state member (generated loop) with exactly one
+  unknown key per array, and a two-state queue, which is unchanged.
 - `neg_*`: illegal forms rejected by the frontend: index locators and foreach
   over a wildcard index, reductions of real and string elements, `find`
   without `with`, `max` of records without a key, a string-key index result

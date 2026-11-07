@@ -14,7 +14,7 @@
 //! [`IrContainerStmt::UniquePositions`], [`IrContainerStmt::SortByKeys`]).
 
 use super::*;
-use crate::sim::ir::{IrObjectQuery, IrObjectStmt};
+use crate::sim::ir::{IrBitQuery, IrObjectQuery, IrObjectStmt, IrSysFunc};
 
 /// How a generated method loop names the current receiver element.
 #[derive(Clone, Debug)]
@@ -114,6 +114,18 @@ fn logic(op: IrBinOp, a: IrExpr, b: IrExpr) -> IrExpr {
             a: Box::new(a),
             b: Box::new(b),
         },
+        1,
+        false,
+        None,
+    )
+}
+
+fn is_unknown(value: IrExpr) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::SysFunc(Box::new(IrSysFunc::BitQuery {
+            kind: IrBitQuery::IsUnknown,
+            arg: Box::new(value),
+        })),
         1,
         false,
         None,
@@ -249,9 +261,11 @@ impl KeyLocal {
     }
 
     /// `self` strictly orders before `other` (`<`), or after it (`>`) with
-    /// `greater`. Unknown packed comparisons are false, so an X key never
-    /// replaces the current extreme.
-    fn before(&self, other: &Self, greater: bool) -> IrExpr {
+    /// `greater`. With `unknown` (a four-state packed key) an X or Z key
+    /// orders below every known key and equal to another such key, so the
+    /// extreme does not depend on the order of the elements; a real or string
+    /// key and a two-state one are always known.
+    fn before(&self, other: &Self, greater: bool, unknown: bool) -> IrExpr {
         let op = if greater { IrBinOp::Gt } else { IrBinOp::Lt };
         match (self.read(), other.read()) {
             (InlineValue::String(a), InlineValue::String(b)) => cmp_expr_ir(
@@ -264,6 +278,20 @@ impl KeyLocal {
                 ),
                 int_const(0, 32, true),
             ),
+            (InlineValue::Packed(a), InlineValue::Packed(b)) if unknown => {
+                // The key that must be known for the comparison to apply,
+                // and the one whose X or Z bit alone decides it.
+                let (known, decisive) = if greater { (&a, &b) } else { (&b, &a) };
+                logic(
+                    IrBinOp::LogAnd,
+                    not(is_unknown(known.clone())),
+                    logic(
+                        IrBinOp::LogOr,
+                        is_unknown(decisive.clone()),
+                        cmp_expr_ir(op, a, b),
+                    ),
+                )
+            }
             (InlineValue::Packed(a), InlineValue::Packed(b))
             | (InlineValue::Real(a), InlineValue::Real(b)) => cmp_expr_ir(op, a, b),
             _ => unreachable!("compared key locals share one kind"),
@@ -943,6 +971,16 @@ impl Codegen<'_> {
                 });
                 let key_name = self.inline_name("k");
                 let best_name = self.inline_name("kbest");
+                let unknown = match with_node {
+                    Some(_) => !two_state,
+                    None => !matches!(
+                        self.model.containers[container].element,
+                        IrContainerElement::Packed {
+                            two_state: true,
+                            ..
+                        }
+                    ),
+                };
                 let mut declarations = Vec::new();
                 let loop_statements =
                     self.inline_loop(path, container, iterator, false, None, |this, iterator| {
@@ -961,7 +999,7 @@ impl Codegen<'_> {
                         let mut better = logic(
                             IrBinOp::LogOr,
                             not(local_read(&have, 1, false)),
-                            key.before(&best, greater),
+                            key.before(&best, greater, unknown),
                         );
                         if let KeyKind::Real = kind {
                             // NaN is unordered: a known key replaces a NaN

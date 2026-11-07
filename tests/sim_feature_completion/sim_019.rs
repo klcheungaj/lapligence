@@ -13,6 +13,12 @@ fn locators_over_native_elements_and_sizes() {
 }
 
 #[test]
+fn min_and_max_order_unknown_elements_below_known_ones() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_019/minmax_unknown.out");
+    sim_cli::run_case_backend_parity(SUITE, "minmax_unknown", expected, &[], &[]);
+}
+
+#[test]
 fn class_keys_with_every_method_and_foreach() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_019/class_keys.out");
     sim_cli::run_case_backend_parity(SUITE, "class_keys", expected, &[], &[]);
