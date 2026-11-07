@@ -1982,7 +1982,7 @@ impl IrObjectStmt {
                         ))
                     }
                     IrProcessRandom::Seed(_) => Ok(()),
-                    IrProcessRandom::SetState(state) => state.validate(model, None),
+                    IrProcessRandom::SetState(state) => state.validate(model, string_return),
                 }
             }
             Self::ObjectRandom { target, op } => {
@@ -2001,7 +2001,7 @@ impl IrObjectStmt {
                         ))
                     }
                     IrProcessRandom::Seed(_) => Ok(()),
-                    IrProcessRandom::SetState(state) => state.validate(model, None),
+                    IrProcessRandom::SetState(state) => state.validate(model, string_return),
                 }
             }
         }
@@ -2478,7 +2478,7 @@ impl IrChandleExpr {
                     ));
                 }
                 if let Some(key) = key {
-                    key.validate(model, None)?;
+                    key.validate(model, chandle_return.map(|_| false))?;
                 }
                 Ok(())
             }
@@ -2501,7 +2501,7 @@ impl IrChandleExpr {
                         "associative chandle read requires a string-keyed handle array",
                     ));
                 }
-                key.validate(model, None)
+                key.validate(model, chandle_return.map(|_| false))
             }
             Self::Read(index) => pointer_object_type(model, *index),
             Self::Call {
