@@ -50,6 +50,14 @@ server (the same frontend → owned analysis → tower-lsp stdio features).
 - tower-lsp, tokio and dashmap stay in `llg_ls` behind default-on `lsp`
   (`required-features = ["lsp"]`); `cargo build --lib --no-default-features`
   must work.
+- Scheduling follows the time slot of IEEE 1800-2009 Figure 4-1 and 4.5:
+  Preponed, Pre-Active; then repeat Active, Inactive, Pre-NBA, NBA, Post-NBA,
+  Pre-Observed, Observed, Post-Observed until empty, then Reactive, Re-Inactive,
+  Pre-Re-NBA, Re-NBA, Post-Re-NBA until empty, returning to Active on new design
+  work; Pre-Postponed once all are empty; Postponed; advance time. Place every new
+  event, wake or callback in its region
+  ([scheduler](src/sim/rt/scheduler/readme.md),
+  [T1-D11](docs/lrm_decisions.md#changes-that-return-to-the-old-value-fin-001-follow-up)).
 - The C11 runtime, including `llg_co`, ships only with generated models, never
   linked into Rust binaries.
 - Windows on ARM ships `llg_ls` only; `llg` is unsupported there.
