@@ -426,6 +426,15 @@ fn a_write_keeps_what_the_called_value_did_to_the_array() {
     sim_cli::run_case_backend_parity(SUITE, "nested_write_arms", expected, &[], &[]);
 }
 
+/// Every value form runs before the array is selected, except the forms
+/// S07-D8 keeps.
+#[test]
+fn every_value_form_runs_before_a_nested_record_write() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_write_value_forms.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_write_value_forms", expected, &[], &[]);
+}
+
 #[test]
 fn a_task_reference_to_a_nested_queue_is_explicit() {
     sim_cli::reject_case(

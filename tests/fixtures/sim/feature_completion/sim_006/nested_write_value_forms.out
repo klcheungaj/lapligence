@@ -1,0 +1,24 @@
+call 1 1 4
+cond 1 1 4
+merge 1 1 0
+predicate 1 1 40
+nested 1 1 4
+pattern 1 1 1
+element 1 1 70
+fixed 1 1 51
+queue 1 1 51
+method 1 1 10
+virtual 1 1 11
+property 1 1 12
+handle method 1 1 10
+pop 1 2 50
+cast 1 1 4
+element arm 1 2 1
+element actual 1 1 2
+static 1 1 9
+output 1 1 6
+real conversion 1 1 0
+real conditional 1 2 0
+string 1 1 0
+string conditional 0 -1 -1
+string format 0 -1 -1

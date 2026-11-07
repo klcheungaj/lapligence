@@ -87,6 +87,30 @@ impl Codegen<'_> {
         None
     }
 
+    /// The record property `member` of the class a computed handle value
+    /// (`get().r`) names, with its storage.
+    fn computed_handle_record(&self, base: NodeId, member: &str) -> Option<(NodeId, usize)> {
+        let descriptor = self.query_descriptor(base)?;
+        if descriptor.info.kind != "class" {
+            return None;
+        }
+        let mut class = self.db.class_for_type(descriptor.id);
+        while let Some(current) = class {
+            let found = self.node(current).children.iter().find_map(|child| {
+                let value = self.class_native_fields.get(child)?;
+                (self.node(*child).name == member).then_some((*child, *value))
+            });
+            if found.is_some() {
+                return found;
+            }
+            class = self
+                .db
+                .class_metadata(current)
+                .and_then(|metadata| metadata.base);
+        }
+        None
+    }
+
     /// The container property `member` of the class a computed handle value
     /// (`get().q`) names, with its storage.
     fn computed_handle_container(&self, base: NodeId, member: &str) -> Option<(NodeId, usize)> {
@@ -389,6 +413,11 @@ impl Codegen<'_> {
                     {
                         self.computed_receiver_aliases
                             .insert(node, ReceiverAlias::UnqualifiedContainer(field, container));
+                        computed.push((node, scope));
+                    } else if let Some((field, value)) = self.computed_handle_record(*base, member)
+                    {
+                        self.computed_receiver_aliases
+                            .insert(node, ReceiverAlias::UnqualifiedNative(field, value));
                         computed.push((node, scope));
                     }
                     continue;
