@@ -576,3 +576,13 @@ fn timed_nonblocking_writes_of_records_wait_for_their_control() {
         &[],
     );
 }
+
+/// A task waiting on a record element bound at run time wakes for that element
+/// alone, whichever way the record is stored (SV 9.4.2, 13.5.2).
+#[test]
+fn a_waited_record_element_wakes_for_itself() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101/chosen_ref_wait.out");
+    sim_cli::run_case_backend_parity(SUITE, "chosen_ref_wait", expected, &[], &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_ref_wait", expected, &["-D", "N=4"], &[]);
+    sim_cli::run_case_backend_parity(SUITE, "chosen_ref_wait", expected, &["-D", "N=5000"], &[]);
+}

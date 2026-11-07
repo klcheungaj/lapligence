@@ -147,8 +147,10 @@ packed one through `llg_ref_wait_spec`/`llg_arm_ref_dependencies` (which expand
 the descriptor into the leaf markers of the storage it selects; retained
 container cells carry their container's contents marker), on a string `ref`
 formal through its `llg_string_t.dependency` and on a handle `ref` formal
-through the marker parameter `d<idx>` that follows `r<idx>`
-(`handle_marker_param`): the caller passes the module handle's
+through the marker parameter `d<idx>` that follows `r<idx>` (a native record
+formal of a watching specialization has one after its companions, from
+`llg_native_ref_watch`, its own `d<idx>` when forwarded, see
+`IrFormal::record_marker`) (`handle_marker_param`): the caller passes the module handle's
 `<name>_llg_dep`, the object's `llg_class_handle_dependency`, its own `d<idx>`
 or a fork-shared handle's `llg_frame_opaque_marker`, else NULL. Stores through
 the formal publish that marker at the store (`Frame::handle_store_marker`). A

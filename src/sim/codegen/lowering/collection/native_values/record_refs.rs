@@ -30,6 +30,12 @@
 //! image instead ([`RecordRefBinding::cell`]), so one body serves every cell
 //! and every write reaches the cell at once.
 //!
+//! A task waiting on a formal bound to any other element, or to a selection
+//! too large for that tree, keeps the formal as a native record and takes the
+//! element reference's marker (`Codegen::task_specialization_watching`); the
+//! wait re-reads the record, so one body serves every element and a change of
+//! another element ends no wait.
+//!
 //! A class method keeps its receiver in a specialization. A virtual call
 //! specializes the whole override family under a fresh virtual slot, so the
 //! ordinary dispatchers serve it and nothing changes for unbound calls. A
@@ -525,9 +531,17 @@ impl Codegen<'_> {
             return self.dpi_open_callee(template, formals, bound);
         }
         if dispatch == RecordRefDispatch::Virtual {
-            return self.record_ref_family(function, records);
+            let watched = if self.any_override_waits_on_record_ref(function, inst) {
+                let every = self.native_record_formals(formals);
+                self.unbound_record_formals(formals, &every, &records)
+            } else {
+                Vec::new()
+            };
+            return self.record_ref_family(function, records, watched);
         }
-        self.task_specialization(function, inst, Vec::new(), records)
+        let waited = self.call_shape(function, inst).static_refs;
+        let watched = self.unbound_record_formals(formals, &waited, &records);
+        self.task_specialization_watching(function, inst, Vec::new(), records, watched)
     }
 
     /// How the call node `call` reaches its method.
@@ -673,18 +687,21 @@ impl Codegen<'_> {
     /// of record bindings, joined by a fresh virtual slot, so that a call
     /// dispatches on the receiver exactly as the unbound family does and
     /// code grows with distinct actuals. Overrides name their own formals,
-    /// so a binding carries over by formal position.
-    fn record_ref_family(
+    /// so a binding carries over by formal position, and so do the formals
+    /// at `watched`, which keep their native values and take a marker.
+    pub(in crate::sim::codegen::lowering) fn record_ref_family(
         &mut self,
         function: NodeId,
         records: Vec<RecordRefBinding>,
+        watched: Vec<usize>,
     ) -> Result<usize, String> {
         let slot = *self
             .method_virtual_slots
             .get(&function)
             .ok_or_else(|| format!("method `{}` has no virtual slot", self.node(function).name))?;
         let positions = self.record_ref_positions(function, &records)?;
-        if let Some(family) = self.record_ref_families.get(&(slot, positions.clone())) {
+        let key = (slot, positions.clone(), watched.clone());
+        if let Some(family) = self.record_ref_families.get(&key) {
             if let Some(index) = family.get(&function) {
                 return Ok(*index);
             }
@@ -700,7 +717,13 @@ impl Codegen<'_> {
                     continue;
                 }
                 let bindings = self.record_ref_rebind(method, &positions)?;
-                let index = self.task_specialization(method, class, Vec::new(), bindings)?;
+                let index = self.task_specialization_watching(
+                    method,
+                    class,
+                    Vec::new(),
+                    bindings,
+                    watched.clone(),
+                )?;
                 self.model.funcs[index].virtual_slot = Some(family_slot);
                 family.insert(method, index);
             }
@@ -711,7 +734,7 @@ impl Codegen<'_> {
                 self.node(function).name
             )
         })?;
-        self.record_ref_families.insert((slot, positions), family);
+        self.record_ref_families.insert(key, family);
         Ok(index)
     }
 

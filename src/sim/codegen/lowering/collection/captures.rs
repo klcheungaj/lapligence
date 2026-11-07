@@ -467,6 +467,14 @@ impl<'a> Codegen<'a> {
                     .map(|(target, _)| target)
                     .or_else(|| cg.lexical_proc_string_local(node).map(|(target, _)| target)),
             };
+            // `r.n` names a native record formal as a path.
+            if let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = cg.kind(node) {
+                out.extend(refs.iter().flatten().copied().filter(|target| {
+                    !cg.node_is_within(*target, branch)
+                        && cg.is_ref_formal(*target)
+                        && cg.native_ref_formal_slots(*target).is_some()
+                }));
+            }
             if let Some(target) = target {
                 if !cg.node_is_within(target, branch)
                     && (cg
@@ -475,6 +483,8 @@ impl<'a> Codegen<'a> {
                         || cg.proc_string_local_name(target).is_some()
                         // A `ref` formal of the enclosing subroutine reaches
                         // a branch by reference.
+                        || cg.is_ref_formal(target)
+                            && cg.native_ref_formal_slots(target).is_some()
                         || cg.is_ref_formal(target)
                             && cg.func.as_ref().is_some_and(|function| {
                                 function.arg_ir.contains_key(&target)

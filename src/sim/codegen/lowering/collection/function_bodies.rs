@@ -46,6 +46,20 @@ impl<'a> Codegen<'a> {
         statics: Vec<StaticRef>,
         records: Vec<RecordRefBinding>,
     ) -> Result<usize, String> {
+        self.task_specialization_watching(task, inst, statics, records, Vec::new())
+    }
+
+    /// [`Self::task_specialization`] whose formals at `watched` stay native
+    /// record `ref` formals and take the change marker of their element
+    /// (`IrFormal::record_marker`).
+    pub(in super::super) fn task_specialization_watching(
+        &mut self,
+        task: NodeId,
+        inst: NodeId,
+        statics: Vec<StaticRef>,
+        records: Vec<RecordRefBinding>,
+        watched: Vec<usize>,
+    ) -> Result<usize, String> {
         let signals = statics
             .iter()
             .map(|bound| match bound.lhs {
@@ -53,7 +67,7 @@ impl<'a> Codegen<'a> {
                 _ => Err("task specialization requires a whole-signal actual".to_owned()),
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let key = (task, inst, signals, records.clone());
+        let key = (task, inst, signals, records.clone(), watched.clone());
         if let Some(index) = self.task_specializations.get(&key) {
             return Ok(*index);
         }
@@ -100,6 +114,13 @@ impl<'a> Codegen<'a> {
         );
         function.inline_expanded = false;
         function.bound_native_refs = bound_native_refs;
+        for index in &watched {
+            let formal = function
+                .formals
+                .get_mut(*index)
+                .ok_or("watched record formal is out of range")?;
+            formal.record_marker = true;
+        }
         for binding in records.iter().filter(|binding| binding.cell) {
             self.record_ref_cell_formal(&mut function, inst, &formals, binding.formal)?;
         }
@@ -112,6 +133,7 @@ impl<'a> Codegen<'a> {
             inst,
             statics,
             records,
+            watched,
         });
         Ok(ir)
     }
@@ -209,8 +231,16 @@ impl<'a> Codegen<'a> {
             || self.real_array_return(ft))
         .then_some(ft);
         self.bind_native_function(inst, ft);
+        self.record_ref_markers.clear();
         if let Some(specialization) = specialization {
             self.bind_record_refs(&specialization.records, inst)?;
+            let formals = self.func_formals(ft);
+            self.record_ref_markers.extend(
+                specialization
+                    .watched
+                    .iter()
+                    .map(|index| (formals[*index].0, *index)),
+            );
         }
         self.bind_container_function(inst, ft);
         let body = self

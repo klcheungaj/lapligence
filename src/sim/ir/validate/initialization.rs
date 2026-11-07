@@ -41,6 +41,14 @@ impl Validator<'_> {
                         if capture.storage().kind() != StorageKind::Opaque {
                             continue;
                         }
+                        // A native record formal's parameters take a slot each.
+                        if formals
+                            .get(*index)
+                            .is_some_and(|formal| formal.native_value.is_some() && formal.is_ref())
+                        {
+                            captured_formals.push(*index);
+                            continue;
+                        }
                         let repeated = captured_formals.contains(index);
                         let handle = formals
                             .get(*index)

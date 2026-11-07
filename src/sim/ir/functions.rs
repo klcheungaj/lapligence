@@ -67,6 +67,11 @@ pub struct IrFormal {
     /// when a class event property is bound to a `ref` formal and some wait
     /// reads such a property's identity; no other model pays for it.
     pub(in crate::sim) event_marker: bool,
+    /// For a native record `ref` formal a task waits on, bound to an element:
+    /// a `sv4_t* d{idx}` parameter follows the value and its companions,
+    /// naming the change marker of the element reference. It toggles when
+    /// the element's container changes, and the wait re-reads the record.
+    pub(in crate::sim) record_marker: bool,
     /// Native arbitrary-byte string formal. String formals use
     /// `llg_string_t` values/pointers rather than packed storage.
     pub(in crate::sim) string: bool,
@@ -386,6 +391,7 @@ impl IrFormal {
             chandle: false,
             event: false,
             event_marker: false,
+            record_marker: false,
             string: false,
             shared_local: None,
             shared_observed: false,

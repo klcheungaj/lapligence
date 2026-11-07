@@ -71,6 +71,10 @@ subroutine record alive through its root reference and addresses the selected
 leaf. A run-time index into a module-like record chooses among its stable leaf
 addresses at the call and needs no reference; an index selecting none binds a
 private default cell (`llg_native_ref_detached_string` and its siblings).
+A record reference a task waits on is watched (`llg_native_ref_watch`): any
+change of a container toggles its marker, since a notify carries no position, and
+the wait re-reads the record, so only that element's change ends it. Unwatched
+references cost nothing.
 A real element or member binds the same way (`llg_native_ref_real`); `real_write`
 reports each changed cell while such a reference lives, for one counter load
 otherwise, and the formal's waiters follow its `double`.

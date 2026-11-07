@@ -672,7 +672,8 @@ impl Codegen<'_> {
                     // Shared activation records and containers live in a
                     // fork frame.
                     && !self.shared_locals.contains(&target);
-                if activation && !self.node_is_within(target, branch) {
+                if activation && !self.is_ref_formal(target) && !self.node_is_within(target, branch)
+                {
                     return Some(self.node(target).name.clone());
                 }
             }

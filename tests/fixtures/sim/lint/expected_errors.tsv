@@ -66,6 +66,7 @@ feature_completion/rtl_016/wrong_tag_selects.sv	mixed-assignments	28:5
 feature_completion/rtl_099/record_array_values.sv	mixed-assignments	16:3
 feature_completion/rtl_101/chosen_event_nba.sv	mixed-assignments	23:3
 feature_completion/rtl_101/chosen_event_nba_native.sv	mixed-assignments	53:3
+feature_completion/rtl_101/chosen_ref_wait.sv	mixed-assignments	109:3
 feature_completion/rtl_101/member_columns.sv	mixed-assignments	14:3
 feature_completion/rtl_101/oversized_values.sv	mixed-assignments	50:3
 feature_completion/rtl_103/dense_patterns.sv	mixed-assignments	18:3

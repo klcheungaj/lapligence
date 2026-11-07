@@ -1589,6 +1589,9 @@ struct Codegen<'a> {
     next_virtual_slot: usize,
     /// Specializations whose bodies are lowered after all call sites exist.
     pending_specializations: Vec<PendingSpecialization>,
+    /// Record `ref` formals of the body being lowered that a wait follows
+    /// through a marker, with their indices.
+    record_ref_markers: HashMap<NodeId, usize>,
     /// Pass switches in lowering order; their networks are numbered after
     /// every process is lowered (`finish_switch_network`).
     pending_switches: Vec<collection::PendingSwitch>,
@@ -2392,6 +2395,7 @@ impl<'a> Codegen<'a> {
             record_ref_interface_methods: HashMap::new(),
             next_virtual_slot: 0,
             pending_specializations: Vec::new(),
+            record_ref_markers: HashMap::new(),
             pending_switches: Vec::new(),
             strength_nets: Default::default(),
             static_string_task_locals: HashMap::new(),
@@ -3267,12 +3271,18 @@ struct RecordRefBinding {
 
 /// Identity of one subroutine specialization; see
 /// [`Codegen::task_specializations`].
-type SpecializationKey = (NodeId, NodeId, Vec<usize>, Vec<RecordRefBinding>);
+type SpecializationKey = (
+    NodeId,
+    NodeId,
+    Vec<usize>,
+    Vec<RecordRefBinding>,
+    Vec<usize>,
+);
 
 /// Identity of one virtual family bound to records; see
 /// [`Codegen::record_ref_families`].
 type RecordRefPositions = Vec<(usize, NodeId, Vec<AggregatePathPart>, bool)>;
-type RecordRefFamilyKey = (usize, RecordRefPositions);
+type RecordRefFamilyKey = (usize, RecordRefPositions, Vec<usize>);
 
 /// A task specialization awaiting body lowering. `ir` indexes the model
 /// entry cloned from the task's template definition.
@@ -3282,6 +3292,8 @@ struct PendingSpecialization {
     inst: NodeId,
     statics: Vec<StaticRef>,
     records: Vec<RecordRefBinding>,
+    /// Formals with a change marker (`IrFormal::record_marker`).
+    watched: Vec<usize>,
 }
 
 /// How to read a formal argument (or local) in the lowered IR: width and

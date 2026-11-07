@@ -836,7 +836,12 @@ impl<'a> Codegen<'a> {
         let callee = match self.kind(call) {
             NodeKind::FuncCall { name, callee, .. } => {
                 let (name, callee) = (name.clone(), *callee);
-                self.resolve_callee_env(self.inst, &name, false, callee)?.0
+                // A built-in, such as `process::self()`, has no container result.
+                let Ok((function, _)) = self.resolve_callee_env(self.inst, &name, false, callee)
+                else {
+                    return Ok(None);
+                };
+                function
             }
             NodeKind::MethodCall {
                 callee: Some(callee),

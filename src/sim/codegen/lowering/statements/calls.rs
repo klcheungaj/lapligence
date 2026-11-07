@@ -7,6 +7,18 @@ use super::super::collection::{
 use super::*;
 
 impl EmitCtx<'_, '_> {
+    /// A waited record `ref` actual with neither a binding nor a marker.
+    fn record_wait_error(&self, call: NodeId, name: &str) -> String {
+        let node = self.cg.node(call);
+        format!(
+            "task `{name}` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record or an element of an array or container (SIM-009) at {}:{}:{} in `{}`",
+            node.file.as_deref().unwrap_or("<unknown>"),
+            node.line,
+            node.col,
+            self.cg.source_path(&self.path)
+        )
+    }
+
     /// Lower a `task_call` statement (or a function call used as a statement).
     /// Tasks and functions become IR calls with caller-side temps for output
     /// formals; timed callees are stackless coroutines and a call that may
@@ -120,11 +132,16 @@ impl EmitCtx<'_, '_> {
             if let Some(statics) =
                 self.static_ref_actuals(&formals, &bound, &shape.static_refs, &records)?
             {
-                specialized =
-                    Some(
-                        self.cg
-                            .task_specialization(ft, callee_inst, statics, records.clone())?,
-                    );
+                let watched =
+                    self.cg
+                        .unbound_record_formals(&formals, &shape.static_refs, &records);
+                specialized = Some(self.cg.task_specialization_watching(
+                    ft,
+                    callee_inst,
+                    statics,
+                    records.clone(),
+                    watched,
+                )?);
             }
         }
         if let Some(call) = call_receiver
@@ -158,17 +175,28 @@ impl EmitCtx<'_, '_> {
             RecordRefDispatch::Virtual => self.cg.any_override_waits_on_record_ref(ft, callee_inst),
             _ => self.cg.waits_on_record_ref(ft, callee_inst),
         };
+        // A waited record no specialization binds is followed through its
+        // reference's marker: an element, or a formal that has one.
         if specialized.is_none() && waits {
-            // The body reads the record's leaves, which only a module,
-            // static or procedural-block actual binds (SIM-008).
-            let node = self.cg.node(h);
-            return Err(format!(
-                "task `{name}` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record (SIM-009) at {}:{}:{} in `{}`",
-                node.file.as_deref().unwrap_or("<unknown>"),
-                node.line,
-                node.col,
-                self.cg.source_path(&self.path)
-            ));
+            let waited = match dispatch {
+                RecordRefDispatch::Direct => shape.static_refs.clone(),
+                _ => self.cg.native_record_formals(&formals),
+            };
+            let watched = self.cg.watched_record_formals(&formals, &waited);
+            if dispatch == RecordRefDispatch::Interface || watched.is_empty() {
+                return Err(self.record_wait_error(h, name));
+            }
+            specialized = Some(if dispatch == RecordRefDispatch::Virtual {
+                self.cg.record_ref_family(ft, Vec::new(), watched)?
+            } else {
+                self.cg.task_specialization_watching(
+                    ft,
+                    callee_inst,
+                    Vec::new(),
+                    Vec::new(),
+                    watched,
+                )?
+            });
         }
         for &index in &shape.native_refs {
             let actual = bound[index].expr;
@@ -415,6 +443,11 @@ impl EmitCtx<'_, '_> {
                     &mut before,
                     &mut after,
                 )?;
+                if self.cg.model.funcs[fidx].formals[idx].record_marker
+                    && !self.cg.watchable_record_argument(&argument)
+                {
+                    return Err(self.record_wait_error(h, &self.cg.node(h).name));
+                }
                 if *is_out || self.cg.is_ref_formal(*io) {
                     out_args.push(argument);
                 } else {

@@ -40,6 +40,13 @@ impl<'a> Codegen<'a> {
         ) {
             return None;
         }
+        // A waited record formal bound to an element.
+        if let Some(index) = self.record_ref_markers.get(&target) {
+            return Some(IrDependency::NativeRefFormal {
+                index: *index,
+                handle: true,
+            });
+        }
         let func = self.func.as_ref()?;
         // String and handle `ref` formals name the actual's change marker.
         if let Some(crate::sim::ir::IrStringExpr::FormalRead(index)) = func.string_read.get(&target)
@@ -2323,6 +2330,28 @@ impl<'a> Codegen<'a> {
                 .get(container)
                 .is_some_and(|container| container.class_field.is_some())
         {
+            return;
+        }
+        // A mirror of a watched record's member follows the record's marker:
+        // loading a mirror publishes nothing.
+        if let Some(index) = self.record_ref_markers.iter().find_map(|(formal, index)| {
+            self.native_roots
+                .get(formal)
+                .filter(|value| {
+                    self.model.native_values[**value]
+                        .companions
+                        .contains(&container)
+                })
+                .map(|_| *index)
+        }) {
+            self.add_dependency(
+                IrDependency::NativeRefFormal {
+                    index,
+                    handle: true,
+                },
+                seen,
+                out,
+            );
             return;
         }
         if contents {

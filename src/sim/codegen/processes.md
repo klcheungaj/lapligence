@@ -38,7 +38,11 @@ container element (its container's contents marker), member view or unpacked
 aggregate (range-precise leaves). Selects, qualifiers, named-event lists, `@*`
 and controls reading a subroutine container are process-evaluated. A task
 waiting on a native record `ref` formal is a template reached only through
-record specializations (`waits_on_record_ref`). String and handle `ref` formals
+specializations (`waits_on_record_ref`): one binding a declaration's leaves, or
+one watching an element, whose formal takes the element reference's marker
+(`IrFormal::record_marker`) and whose waits are process-evaluated, so a change of
+another element only re-reads the record. A virtual call specializes the family;
+a virtual-interface call has no such form and is an error. String and handle `ref` formals
 wait on their actual's marker (`IrDependency::NativeRefFormal`); each call
 checks its actual has one (`native_ref_actual_observable`). Keep those cases in
 that one predicate and record new ones there. A fork-shared string keeps a

@@ -129,6 +129,7 @@ impl<'a> Codegen<'a> {
                                     chandle: is_handle_kind(&ty.kind),
                                     event: ty.kind == "event",
                                     event_marker: false,
+                                    record_marker: false,
                                     string: ty.kind == "string",
                                     shared_local: None,
                                     shared_observed: false,

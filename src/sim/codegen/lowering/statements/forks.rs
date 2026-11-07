@@ -12,6 +12,9 @@ enum RefFormalBinding {
     Handle(usize),
     /// Through the actual a specialization binds statically.
     Actual,
+    /// A native record formal: its value and companion parameters, then its
+    /// change marker when it has one, in `.1` slots.
+    Record(usize, usize),
 }
 
 impl EmitCtx<'_, '_> {
@@ -168,6 +171,22 @@ impl EmitCtx<'_, '_> {
                     let binding = self.ref_formal_descriptor(*target);
                     // A statically bound formal names the actual directly.
                     if binding == Some(RefFormalBinding::Actual) {
+                        continue;
+                    }
+                    if let Some(RefFormalBinding::Record(index, slots)) = binding {
+                        for offset in 0..slots {
+                            let storage = StorageRef::new(
+                                frame,
+                                (slot + offset) as u32,
+                                StorageLifetime::Automatic,
+                                StorageOwnership::Owned,
+                            )
+                            .with_kind(StorageKind::Opaque);
+                            captures.push(IrCapture::new(
+                                storage,
+                                IrExpr::new(IrExprKind::FormalRead(index), 1, false, None),
+                            ));
+                        }
                         continue;
                     }
                     if let Some(
@@ -371,6 +390,9 @@ impl EmitCtx<'_, '_> {
     fn ref_formal_descriptor(&self, target: NodeId) -> Option<RefFormalBinding> {
         if !self.cg.is_ref_formal(target) {
             return None;
+        }
+        if let Some((index, slots)) = self.cg.native_ref_formal_slots(target) {
+            return Some(RefFormalBinding::Record(index, slots));
         }
         if self.cg.capture_source(target).is_some_and(|source| {
             matches!(source.kind, StorageKind::Container | StorageKind::Native)

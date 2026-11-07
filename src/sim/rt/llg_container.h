@@ -663,6 +663,10 @@ sv4_t* llg_native_ref_dependency(const void* reference);
 /* The change marker of one reference: it toggles when this element changes,
  * through the reference or the container, and never for other elements. */
 sv4_t* llg_native_ref_marker(void* reference);
+/* The marker of a record reference a wait follows. It toggles after any change
+ * of a container (see llg_native_refs_publish_watched) and the wait re-reads
+ * the record. */
+sv4_t* llg_native_ref_watch(void* reference);
 /* A reference marker has this width, which no other change marker has: a
  * store through a handle `ref` formal publishes only a marker, and
  * llg_dependency_changed uses the width to run llg_native_ref_stored. */

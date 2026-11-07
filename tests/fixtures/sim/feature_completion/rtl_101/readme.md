@@ -179,3 +179,11 @@ column. Expected values are derived by hand below; none were captured from
   other lines without a `#` write and without strings, handles or containers match
   industry-standard behaviour, which refuses a delay on an unpacked struct and
   a nonblocking write of a record with strings.
+- `chosen_ref_wait`: tasks waiting on `ref` formals bound to record elements at a
+  run-time index, in records with member arrays held in containers and in dynamic,
+  queue and associative arrays. §13.5.2: "both the caller and the subroutine
+  share the same representation", so each task wakes for its own element: writes
+  of other elements change nothing it reads. Forwarding, recursion, a record
+  beside an element, `fork ... join` in the task, virtual methods. The lines match
+  `-D N=4` and `-D N=5000`. Checked against the text alone: industry-standard
+  behaviour has this binding as a not-yet-implemented error for any array select.

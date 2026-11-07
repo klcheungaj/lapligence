@@ -1874,8 +1874,6 @@ Two shapes are not columns at this size:
 Members held in a container (`string`, handles, records with such members) have
 these limits, each an error at its source location unless noted:
 
-- a task that waits on a `ref` formal bound to one of their elements at a
-  run-time index.
 - a nested record whose type has the column layout on its own, inside a record
   that holds a native member array: `o.i = x` with `x` declared alone is not
   resolved.
@@ -1887,7 +1885,12 @@ limits apply to the form named:
 
 - both forms: a member array selected on a call result (`f().a[1]`), and a
   row of a multidimensional member array of a queue element at a run-time index
-  (`q[0].a[k] = '{1, 2}`); assign through a record variable first.
+  (`q[0].a[k] = '{1, 2}`); assign through a record variable first. A whole member
+  array of an element written through an event control (`m.e[1].a <= @(e) v`), and
+  a record nested in an element of a nested associative array
+  (`oa[1]["a"].e[1].t[2] = s`).
+- both forms: a virtual-interface method that waits on a record `ref` formal bound
+  to an element.
 - per-cell form, below 16 cells: a whole record assigned to or read from an
   element of a member array at a run-time index (`r.rows[i] = x`), and two
   continuous assignments to separate bits of one member of an element of an

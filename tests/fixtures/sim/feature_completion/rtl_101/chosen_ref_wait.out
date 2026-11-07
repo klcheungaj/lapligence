@@ -1,0 +1,30 @@
+2 a n 101
+3 wb 1
+5 wa 6
+7 wd 2.50
+9 ws [s1]
+11 wq 2
+13 wt [t2]
+15 wc
+16 f n 43
+17 loop 2 44
+18 loop 1 45
+-- whole
+19 w n 7
+20 x n 8
+21 y n 9
+-- two
+22 two 45 11
+23 two 45 12
+24 br1 13
+25 br2 14
+26 self 15
+27 self2 2
+-- virtual
+28 C 16
+29 D 17
+-- others
+31 dy n 21
+33 qu n 22
+34 as n 23
+36 end
