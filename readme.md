@@ -302,8 +302,13 @@ Exit status is `0` on success, `1` on compile/lint/build errors, and `2` for
 invalid command-line usage. A completed simulator's exit status is propagated.
 A model ended by a signal, or by a status outside 0-255 (a Windows crash
 status), makes `llg` exit `1` after one stderr line such as
-`llg: the model was terminated by signal 6 (SIGABRT)` or
-`llg: the model exited with status 0xC0000005`.
+`ERROR: [RUN-002] the model was terminated by signal 6 (SIGABRT)` or
+`ERROR: [RUN-003] the model exited with status 0xC0000005`.
+
+Every message `llg` and a model print has one layout,
+`SEVERITY: file:line:col: [TOOL-NNN] (scope @ time) text`, with a stable id;
+the [message catalog](docs/messages.md) lists every id, its meaning and how to
+disable it.
 
 The simulator itself exits `1` when a `$fatal` ran (IEEE 1800-2009 20.9: the
 run ends "with an error code"; any finish number, in any process or final

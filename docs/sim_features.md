@@ -2078,7 +2078,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Words are unsized unsigned numbers: a leading X/Z pads with that state, known
   digits zero-extend, and a number with a digit more than the word holds is an
   error that ends the load (S27-D2); two-state words read X/Z
-  as 0 (S27-D3). Diagnostics print as `llg: warning: memory file ...` (missing
+  as 0 (S27-D3). Diagnostics print as `WARNING: [SIM-013] memory file ...` (missing
   file, word-count mismatch, X/Z conversion, empty resizable array) or
   `llg: error: memory file ...` (malformed or too long token, address outside
   the task range or the memory, invalid range); neither changes the exit status
@@ -2127,7 +2127,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   alike. An address outside the start/finish range or the memory and a token
   that is not a number are errors that end the load (S26-D19); a `//` comment
   ends with its string and an open `/*` continues in the next (S26-D20).
-  Diagnostics print as `llg: warning: memory string `$sreadmemh at tb:<line>:<col>`: ...`
+  Diagnostics print as `WARNING: [SIM-013] memory string `$sreadmemh at tb:<line>:<col>`: ...`
   or `llg: error: memory string ...`. A data argument may be any string
   expression (variable, parameter, concatenation) or an integral value holding
   text, read when the task runs (S26-D17); literal-only data is compiled into

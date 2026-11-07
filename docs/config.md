@@ -117,13 +117,13 @@ option or key, so no precedence applies to it.
 
 A config problem stops `llg` with exit code 1 and a message naming the file
 and key, for example
-`llg: invalid config /proj/llg.toml: invalid llg.toml at line 3, key
+`ERROR: [CONFIG-002] invalid config /proj/llg.toml: invalid llg.toml at line 3, key
 `compile.topp`: unknown field `topp`, expected one of …`. Unknown keys, an
 unknown `schema_version`, wrong types and out-of-range values reject the whole
 file atomically in both tools; a misspelled key cannot silently change a run
 or an analysis. Entry-level problems (a malformed `defines` entry, an invalid
 `param_overrides` name) are dropped with a warning (`llg` prints
-`llg: warning: <file>: …` to stderr; the server publishes them against the TOML
+`WARNING: [CONFIG-003] <file>: …` to stderr; the server publishes them against the TOML
 URI). Missing configured directories also warn. The file read is bounded to
 1 MiB.
 
