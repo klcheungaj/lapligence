@@ -532,11 +532,17 @@ Macros, includes and their edition-specific behavior are counted in §11.
   the statement changes it
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
   Other expressions (an `if` condition, a loop bound, a `return`, an
-  initializer) read nested elements and record-element members from a copy
-  made at each evaluation; such an expression that changes one, selects into
-  a queue or dynamic array nested in a string-keyed
-  element, and two changed nested elements of one container in one statement
-  reject.
+  initializer) stage nested elements and record-element members at each
+  evaluation, and a changed copy is written back after the value is read.
+  An associative array nested in an element (`int aa[string][int]`,
+  `int qa[$][int]`) is not copied: a statement binds a lexical alias to the
+  element, pinned for the statement, so element access costs one lookup per
+  level; it takes every method, whole reads and writes, patterns, `foreach`,
+  `pop_front`/`pop_back` into a variable and `input` and `ref` actuals, at any
+  depth. A `ref` actual that is a nested queue or dynamic array rejects at the actual,
+  for a task or a function, as do two changed nested queues of one container
+  with selectors that are not provably distinct
+  ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
   `ref` formals of queue, dynamic and associative type alias the caller's
   container variable, including from timed tasks and fork branches
   ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
@@ -927,12 +933,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   one or several dimensions, each bounded by the size of the element its outer
   variables select
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
-  Illegal iterator writes reject. Omitted slots in nested resizable
-  traversal, several loop variables over an associative outer dimension
-  (`foreach (ad[k, j])`) and associative arrays nested in container elements
-  (`int aa[string][int]`)
-  ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)),
-  and automatic strings, records and handles declared in a loop body that a
+  Illegal iterator writes reject. Nested traversal takes associative levels
+  at any position (`foreach (ad[k, j])`, `foreach (aa[k, j])`), fixed inner
+  dimensions, omitted slots (`foreach (w[, j])`), and a selected element
+  (`foreach (aa["k"][j])`). Automatic strings, records and handles declared in a loop body that a
   `join_none` fork keeps live into the next iteration
   ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage))
   reject with explicit diagnostics. SV §§12.7.1, 12.7.3 **[SV-2005]**.
@@ -2154,9 +2158,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `$size/$left/$right/$low/$high/$increment` of a nested dynamic or queue
   element (`qq[i]`) read its runtime size
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md));
-  queries of a nested associative element reject (the elements themselves
-  have no value form,
-  [known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)),
+  so do queries of a nested associative element (`$size(aa["k"])`),
   and a dimension argument beyond the first dynamically sized dimension is a
   frontend error. Associative
   dimension bounds require integral index types; string/wildcard bounds are

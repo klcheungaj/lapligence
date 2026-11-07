@@ -14,6 +14,7 @@ mod arguments;
 mod block_natives;
 mod block_records;
 pub(super) use arguments::{CallWriteback, TargetSelectors};
+pub(in crate::sim::codegen) use native_values::HoistedValue;
 mod call_contracts;
 pub(super) use call_contracts::{EventEvaluation, PostponedEvaluation};
 pub(super) use dynamic_reads::ReportReadPlan;
@@ -192,9 +193,17 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
             dimensions: dimensions.clone(),
             element: Box::new(lower_container_element(element)?),
         }),
-        TypeShape::Container { kind, element, .. } => Ok(IrContainerElement::Container {
+        TypeShape::Container {
+            kind,
+            element,
+            array,
+        } => Ok(IrContainerElement::Container {
             type_id: element.id.0,
             kind: kind.clone(),
+            key: match aggregates::ir_container_kind(array, &descriptor.name, "") {
+                Ok(IrContainerKind::Associative { key }) => Some(key),
+                _ => None,
+            },
             element: Box::new(lower_container_element(element)?),
         }),
         TypeShape::Opaque { kind } if kind == "Chandle" || kind == "VirtualInterface" => {

@@ -57,8 +57,6 @@ the legacy and compact (portable and GMP) value backends.
   without `with`, `max` of records without a key, a string-key index result
   into an `int` queue, `sort` arguments without `with`, `shuffle` with `with`.
 
-- `neg_nested_associative` (FIN-001 G3): `int aa[string][int]` is a legal associative array of associative arrays (§7.8), but the runtime has no value form for an associative array nested in a container element, so element access and `foreach (aa[k, j])` reject with an explicit diagnostic ([known issue](../../../../../docs/known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
-
 ## llg policy (not required by IEEE 1800-2009)
 
 The standard leaves these open:

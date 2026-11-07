@@ -2475,6 +2475,11 @@ impl IrChandleExpr {
                                 ));
                             }
                         }
+                        (IrCallArg::StringVal(value), formal)
+                            if formal.string && !formal.is_address() =>
+                        {
+                            value.validate(model, chandle_return.map(|handle| !handle))?;
+                        }
                         (IrCallArg::EventVal(_), formal)
                             if formal.event && !formal.is_address() => {}
                         (IrCallArg::EventAddr(_) | IrCallArg::EventSlot(_), formal)

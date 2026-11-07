@@ -178,6 +178,13 @@ pub(super) fn render(
             super::indices(frame, owners, indices)?,
             indices.len()
         ),
+        IrContainerExpr::NestedSizeString { container, key } => {
+            let key = key_operand(frame, strings, key)?;
+            format!(
+                "sv4_from_u64((uint64_t)llg_value_container_size(llg_assoc_value_element_string(&{}, ({key}).data, ({key}).len, 0)), 32, 1)",
+                name(frame, *container)?,
+            )
+        }
         IrContainerExpr::GetString { container, key } => format!(
             "llg_owned_assoc_get_string(&{}, {})",
             name(frame, *container)?,

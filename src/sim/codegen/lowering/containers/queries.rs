@@ -347,6 +347,38 @@ impl<'a> Codegen<'a> {
                 None,
             )));
         }
+        // `ra[i]["k"]`: a string key of a staged nested array.
+        if matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) if indices.len() > 1
+        ) {
+            if let Some((container, key)) = self.associative_string_element(node) {
+                let element = self.model.containers[container].element.clone();
+                if element.is_string() || element.is_handle() {
+                    return Ok(None);
+                }
+                let key = self.lower_string(path, key)?;
+                let (operation, width, signed) = if element.is_real() {
+                    (IrContainerExpr::GetStringReal { container, key }, 0, false)
+                } else if element.is_packed() {
+                    (
+                        IrContainerExpr::GetString { container, key },
+                        element.width(),
+                        element.signed(),
+                    )
+                } else {
+                    return Err(format!(
+                        "nested container access in {path} requires a scalar value"
+                    ));
+                };
+                return Ok(Some(IrExpr::new(
+                    IrExprKind::Container(Box::new(operation)),
+                    width,
+                    signed,
+                    None,
+                )));
+            }
+        }
         let operation = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 let Some(container) = self.container_of_select(node, *base) else {
@@ -595,11 +627,31 @@ impl<'a> Codegen<'a> {
                                 key: IrAssocKey::String
                             }
                         ) {
-                            let key_object = self.object_of(path, *key).ok_or_else(|| {
-                                format!(
-                                    "string associative traversal key in `{path}` must be a string variable"
-                                )
-                            })?;
+                            let Some(key_object) = self.object_of(path, *key) else {
+                                // A local, formal or property string.
+                                let address = self.lower_string_actual_address(path, *key)?;
+                                self.ensure_string_actual_writable(path, *key)?;
+                                let key_name = address
+                                    .strip_prefix('&')
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "string associative traversal key in `{path}` must be a string variable"
+                                        )
+                                    })?
+                                    .to_owned();
+                                return Ok(Some(IrExpr::new(
+                                    IrExprKind::Container(Box::new(
+                                        IrContainerExpr::AssocTraverseStringLocal {
+                                            container: container.ir,
+                                            direction,
+                                            key_name,
+                                        },
+                                    )),
+                                    32,
+                                    true,
+                                    None,
+                                )));
+                            };
                             if self.model.objects[key_object].ty != IrObjectType::String {
                                 return Err(format!(
                                     "string associative traversal key in `{path}` must be a string variable"
@@ -629,7 +681,24 @@ impl<'a> Codegen<'a> {
                             ));
                         }
                         let (key_address, key_signal, key_width, key_signed, key_two_state) =
-                            self.container_key_address(path, *key)?;
+                            match self.container_key_address(path, *key) {
+                                Ok(address) => address,
+                                Err(error) => {
+                                    let Ok(target) = self.lower_lhs(path, *key) else {
+                                        return Err(error);
+                                    };
+                                    return self
+                                        .assoc_traverse_copied_key(
+                                            path,
+                                            node,
+                                            *key,
+                                            target,
+                                            container.ir,
+                                            direction,
+                                        )
+                                        .map(Some);
+                                }
+                            };
                         IrContainerExpr::AssocTraverse {
                             container: container.ir,
                             direction,
@@ -683,5 +752,82 @@ impl<'a> Codegen<'a> {
             signed,
             None,
         )))
+    }
+}
+
+impl Codegen<'_> {
+    /// A traversal whose key is not a plain packed variable (a `ref` formal,
+    /// a member): the runtime updates a local copy, stored back afterwards.
+    /// A method that finds nothing leaves the key's value unchanged.
+    fn assoc_traverse_copied_key(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        key: NodeId,
+        target: IrLhs,
+        container: usize,
+        direction: IrAssocTraversal,
+    ) -> Result<IrExpr, String> {
+        let IrContainerKind::Associative {
+            key:
+                IrAssocKey::Integral {
+                    width,
+                    signed,
+                    two_state,
+                },
+        } = self.model.containers[container].kind
+        else {
+            return Err(format!(
+                "associative traversal key in `{path}` must be a whole packed variable"
+            ));
+        };
+        let value = self.lower_expr(path, key)?;
+        let value = IrExpr::resize_to(value, width, signed);
+        let name = format!("_llg_key{}", node.0);
+        let status = format!("_llg_found{}", node.0);
+        let read = IrExpr::new(IrExprKind::LocalRead(name.clone()), width, signed, None);
+        let traverse = IrExpr::new(
+            IrExprKind::Container(Box::new(IrContainerExpr::AssocTraverse {
+                container,
+                direction,
+                key_address: format!("&{name}"),
+                key_signal: None,
+                key_width: width,
+                key_signed: signed,
+                key_two_state: two_state,
+            })),
+            32,
+            true,
+            None,
+        );
+        Ok(IrExpr::new(
+            IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                statements: vec![
+                    IrStmt::DeclLocal {
+                        name,
+                        width,
+                        signed,
+                        init: Some(Box::new(value)),
+                        two_state,
+                    },
+                    IrStmt::DeclLocal {
+                        name: status.clone(),
+                        width: 32,
+                        signed: true,
+                        init: Some(Box::new(traverse)),
+                        two_state: true,
+                    },
+                    IrStmt::Assign {
+                        lhs: target,
+                        rhs: read,
+                        nba: false,
+                    },
+                ],
+                value: IrExpr::new(IrExprKind::LocalRead(status), 32, true, None),
+            })),
+            32,
+            true,
+            None,
+        ))
     }
 }

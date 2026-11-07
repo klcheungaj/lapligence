@@ -302,6 +302,7 @@ mod containers;
 mod coverage;
 mod expressions;
 mod objects;
+use collection::HoistedValue;
 use objects::NativeNbaValue;
 mod randomization;
 mod statements;
@@ -1253,6 +1254,33 @@ struct ArrayInfo {
     ir: usize,
 }
 
+/// A class property path selected through a computed handle: the property
+/// (and its storage until the first alias exists).
+/// The state `Codegen::enter_call_operands` saved.
+struct CallOperands {
+    scope: Option<NodeId>,
+    prelude: Option<Vec<IrStmt>>,
+    result: Option<NodeId>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ReceiverScope {
+    /// Evaluated once with the statement.
+    Statement,
+    /// Evaluated with this operand, which the statement may skip or repeat.
+    Operand(NodeId),
+    /// Below a nested statement, which is prepared on its own.
+    Body,
+}
+
+#[derive(Clone, Copy)]
+enum ReceiverAlias {
+    UnqualifiedNative(NodeId, usize),
+    UnqualifiedContainer(NodeId, usize),
+    Native(NodeId),
+    Container(NodeId),
+}
+
 #[derive(Clone)]
 struct ContainerInfo {
     ir: usize,
@@ -1779,6 +1807,17 @@ struct Codegen<'a> {
     /// being lowered, by select node → the lexical container staging each
     /// (`stage_element_members`).
     staged_nested_elements: HashMap<NodeId, usize>,
+    /// Staged-element sets of expressions staged inside a staged statement,
+    /// innermost last.
+    inner_stagings: Vec<Vec<NodeId>>,
+    /// Whether the statement being staged left a called selector to the lazy
+    /// operand holding it.
+    deferred_selectors: std::cell::Cell<bool>,
+    /// Values evaluated before their statement's nested array is bound, by
+    /// source node (`hoist_assignment_source`).
+    hoisted_values: HashMap<NodeId, HoistedValue>,
+    /// The source node of the statement's hoisted value.
+    hoisted_source: Option<NodeId>,
     /// Whether any container element type holds a record with a queue or
     /// dynamic-array member (or nests a container), so expressions may need
     /// read-only element staging; false keeps the scan off every other
@@ -2050,6 +2089,23 @@ struct Codegen<'a> {
     /// (`get().v`) while one read-modify-write statement is lowered, so the
     /// base is evaluated once (SV 11.4.1-11.4.2).
     computed_receivers: HashMap<NodeId, IrChandleExpr>,
+    /// Property paths selected through a computed handle (`list[i].q`).
+    computed_receiver_aliases: HashMap<NodeId, ReceiverAlias>,
+    /// Declarations of the computed handles of the statement being lowered.
+    receiver_prelude: Vec<IrStmt>,
+    /// Declarations of computed handles of operands evaluated lazily or
+    /// repeatedly, run at each evaluation of the operand.
+    receiver_roots: HashMap<NodeId, Vec<IrStmt>>,
+    /// The call or select whose operands `call_operand_prelude` collects.
+    call_operand_scope: Option<NodeId>,
+    /// Statements that build operands of `call_operand_scope` no expression
+    /// can name, run where that expression is evaluated.
+    call_operand_prelude: Option<Vec<IrStmt>>,
+    /// Lexical containers holding the result of a call a method or select
+    /// applies to, while that expression is lowered.
+    call_result_containers: HashMap<NodeId, usize>,
+    /// The operands of `receiver_roots` an expression lowering reached.
+    receiver_roots_lowered: HashSet<NodeId>,
     /// Owning module-instance arena node of the current emission context;
     /// used to resolve unbound callees by name.
     inst: NodeId,
@@ -2413,6 +2469,10 @@ impl<'a> Codegen<'a> {
             mailbox_statement_prelude: None,
             staged_element_members: HashMap::new(),
             staged_nested_elements: HashMap::new(),
+            inner_stagings: Vec::new(),
+            deferred_selectors: std::cell::Cell::new(false),
+            hoisted_values: HashMap::new(),
+            hoisted_source: None,
             element_staging_possible: false,
             deferred_display_args: false,
             deferred_prelude: Vec::new(),
@@ -2502,6 +2562,13 @@ impl<'a> Codegen<'a> {
             depth_arg: "0".to_string(),
             overload_current: Vec::new(),
             computed_receivers: HashMap::new(),
+            computed_receiver_aliases: HashMap::new(),
+            receiver_prelude: Vec::new(),
+            receiver_roots: HashMap::new(),
+            call_operand_scope: None,
+            call_operand_prelude: None,
+            call_result_containers: HashMap::new(),
+            receiver_roots_lowered: HashSet::new(),
             inst: NodeId(0),
             design_name: String::new(),
             proc_seq: 0,

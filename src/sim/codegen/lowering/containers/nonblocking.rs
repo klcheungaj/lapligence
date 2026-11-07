@@ -137,6 +137,12 @@ impl Codegen<'_> {
         if self.model.containers[target].is_global_storage() {
             return Ok(());
         }
+        if self.model.containers[target].class_field.is_some() {
+            return Err(format!(
+                "nonblocking assignment to an element of a class property in `{path}` is illegal \
+                 (IEEE 1800-2009 6.21: class properties shall not be written with nonblocking assignments)"
+            ));
+        }
         Err(format!(
             "nonblocking assignment to an automatic array in `{path}` is illegal"
         ))

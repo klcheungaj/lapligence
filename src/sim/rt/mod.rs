@@ -320,6 +320,7 @@ pub fn container_sources() -> (&'static str, &'static str) {
             include_str!("container/element_references.c"),
             include_str!("container/associative_values.c"),
             include_str!("container/associative_value_queries.c"),
+            include_str!("container/nested_associative.c"),
             include_str!("container/value_elements.c"),
             include_str!("container/native_references.c"),
             include_str!("container/destinations.c"),

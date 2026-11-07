@@ -755,6 +755,14 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        if let Some(HoistedValue::Packed(name, width, signed)) = self.hoisted_value(h) {
+            return Ok(IrExpr::new(
+                IrExprKind::LocalRead(name.clone()),
+                *width,
+                *signed,
+                None,
+            ));
+        }
         if self.checker_sampling {
             if let Some(value) = self.checker_formal_read(scope_path, h)? {
                 return Ok(value);
@@ -767,15 +775,62 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_random_value(scope_path, h)? {
             return Ok(value);
         }
+        if let Some(operands) = self.enter_call_operands(scope_path, h)? {
+            let value = self.lower_expr(scope_path, h);
+            let before = self.leave_call_operands(operands);
+            let value = value?;
+            if before.is_empty() {
+                return Ok(value);
+            }
+            let (width, signed) = (value.width, value.signed);
+            return Ok(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements: before,
+                    value,
+                })),
+                width,
+                signed,
+                None,
+            ));
+        }
+        // A skipped or repeated operand evaluates its computed handles itself.
+        if let Some(before) = self.enter_receiver_root(h) {
+            let value = self.lower_expr(scope_path, h);
+            self.leave_receiver_root(h, &before);
+            let value = value?;
+            let (width, signed) = (value.width, value.signed);
+            return Ok(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements: before,
+                    value,
+                })),
+                width,
+                signed,
+                None,
+            ));
+        }
         // An expression outside a staged statement (a condition, loop bound
         // or initializer) reads element container members from copies made
         // before each evaluation.
         if self.element_staging_possible {
-            if let Some(before) = self.stage_expression_members(scope_path, h)? {
+            if let Some((mut before, after)) = self.stage_expression_members(scope_path, h)? {
                 let value = self.lower_expr(scope_path, h);
                 self.end_element_member_staging();
-                let value = value?;
+                let mut value = value?;
                 let (width, signed) = (value.width, value.signed);
+                // The value is read before the changed element is stored.
+                if !after.is_empty() {
+                    let name = format!("_llg_sv{}", h.0);
+                    before.push(IrStmt::DeclLocal {
+                        name: name.clone(),
+                        width,
+                        signed,
+                        init: Some(Box::new(value)),
+                        two_state: false,
+                    });
+                    before.extend(after);
+                    value = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+                }
                 return Ok(IrExpr::new(
                     IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
                         statements: before,

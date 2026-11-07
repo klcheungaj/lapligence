@@ -20,6 +20,7 @@ use crate::sim::ir::{
 
 mod conditionals;
 mod elements;
+pub(in crate::sim::codegen) use elements::HoistedValue;
 mod member_select;
 mod messages;
 mod nba;
@@ -2172,6 +2173,12 @@ impl Codegen<'_> {
         lowered.receiver = expression.receiver;
         lowered.virtual_dispatch = expression.virtual_dispatch;
         lowered.virtual_call = expression.virtual_call;
+        // `h.get()`: the handle is the receiver; a call in a method has it.
+        if matches!(self.kind(call), NodeKind::MethodCall { .. }) && self.is_class_method_call(call)
+        {
+            lowered.receiver = self.class_method_receiver(path, call)?;
+            lowered.virtual_dispatch = self.class_method_virtual_dispatch(call);
+        }
         Ok(lowered)
     }
 

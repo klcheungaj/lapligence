@@ -520,6 +520,22 @@ fn s13_d2_ref_binds_missing_entry() {
 }
 
 #[test]
+fn s12_d1_foreach_array_each_bound_check() {
+    run_decision(
+        "S12-D1_foreach_array_each_bound_check",
+        include_str!("fixtures/sim/lrm_decisions/S12-D1_foreach_array_each_bound_check.out"),
+    );
+}
+
+#[test]
+fn s11_d4_short_circuit_container_actual() {
+    run_decision(
+        "S11-D4_short_circuit_container_actual",
+        include_str!("fixtures/sim/lrm_decisions/S11-D4_short_circuit_container_actual.out"),
+    );
+}
+
+#[test]
 fn s13_d1_copy_out_target_at_return() {
     run_decision(
         "S13-D1_copy_out_target_at_return",
@@ -5293,6 +5309,14 @@ fn s07_d6_record_event_nba() {
     run_decision(
         "S07-D6_record_event_nba",
         include_str!("fixtures/sim/lrm_decisions/S07-D6_record_event_nba.out"),
+    );
+}
+
+#[test]
+fn s07_d8_nested_write_value_first() {
+    run_decision(
+        "S07-D8_nested_write_value_first",
+        include_str!("fixtures/sim/lrm_decisions/S07-D8_nested_write_value_first.out"),
     );
 }
 

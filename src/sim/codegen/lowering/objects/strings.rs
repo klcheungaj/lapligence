@@ -29,20 +29,56 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
+        if let Some(HoistedValue::String(name)) = self.hoisted_value(node) {
+            return Ok(IrStringExpr::LocalRead(name.clone()));
+        }
         if let Some(value) = self
             .inline_string_key_read(node)
             .or_else(|| self.inline_string_index_read(node))
         {
             return Ok(value);
         }
+        if let Some(operands) = self.enter_call_operands(path, node)? {
+            let value = self.lower_string(path, node);
+            let before = self.leave_call_operands(operands);
+            let value = value?;
+            if before.is_empty() {
+                return Ok(value);
+            }
+            return Ok(IrStringExpr::Conditional {
+                predicate: Box::new(always_after(before)),
+                then: Box::new(value),
+                otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
+            });
+        }
+        if let Some(before) = self.enter_receiver_root(node) {
+            let value = self.lower_string(path, node);
+            self.leave_receiver_root(node, &before);
+            return Ok(IrStringExpr::Conditional {
+                predicate: Box::new(always_after(before)),
+                then: Box::new(value?),
+                otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
+            });
+        }
         // Element container members read outside a staged statement are
         // copied out first; the copies run as the predicate of a conditional
         // that always selects the value.
         if self.element_staging_possible {
-            if let Some(before) = self.stage_expression_members(path, node)? {
+            if let Some((mut before, after)) = self.stage_expression_members(path, node)? {
                 let value = self.lower_string(path, node);
                 self.end_element_member_staging();
-                return Ok(Self::string_after_statements(before, value?));
+                let mut value = value?;
+                // The value is read before the changed element is stored.
+                if !after.is_empty() {
+                    let name = format!("_llg_ss{}", node.0);
+                    before.push(IrStmt::DeclString {
+                        name: name.clone(),
+                        init: Some(value),
+                    });
+                    before.extend(after);
+                    value = IrStringExpr::LocalRead(name);
+                }
+                return Ok(Self::string_after_statements(before, value));
             }
         }
         if let Some(value) = self.lower_object_random_state(path, node)? {
@@ -569,4 +605,18 @@ impl Codegen<'_> {
 fn string_literal(mut bytes: Vec<u8>) -> IrStringExpr {
     bytes.retain(|byte| *byte != 0);
     IrStringExpr::Literal(bytes)
+}
+
+/// A true predicate that runs `statements` first, for values with no
+/// sequence form of their own.
+pub(in super::super) fn always_after(statements: Vec<IrStmt>) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+            statements,
+            value: super::super::containers::pattern_key_expr(1, 1, false, false),
+        })),
+        1,
+        false,
+        None,
+    )
 }

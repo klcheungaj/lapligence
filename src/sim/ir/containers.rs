@@ -36,6 +36,8 @@ pub enum IrContainerElement {
     Container {
         type_id: u64,
         kind: String,
+        /// The index type of a nested associative array.
+        key: Option<IrAssocKey>,
         element: Box<IrContainerElement>,
     },
     Opaque {
@@ -197,15 +199,18 @@ impl IrContainerElement {
                 Self::Container {
                     type_id: dst_id,
                     kind: dst_kind,
+                    key: dst_key,
                     element: dst,
                 },
                 Self::Container {
                     type_id: src_id,
                     kind: src_kind,
+                    key: src_key,
                     element: src,
                 },
             ) => {
                 (dst_id == src_id || (dst_kind == src_kind && dst.compatible_with(src)))
+                    && dst_key == src_key
                     && dst.compatible_with(src)
             }
             (
@@ -518,6 +523,12 @@ pub enum IrContainerExpr {
     NestedSize {
         container: usize,
         indices: Vec<IrExpr>,
+    },
+    /// `size()` of the container nested in the element of string key `key`;
+    /// a missing element has size 0.
+    NestedSizeString {
+        container: usize,
+        key: IrStringExpr,
     },
     GetString {
         container: usize,
@@ -990,6 +1001,18 @@ pub enum IrContainerStmt {
         root: IrValueItemRoot,
         items: Vec<u32>,
     },
+    /// Declare lexical `container` as an alias of the associative array
+    /// nested in the element `root` locates: no copy, and operations on it
+    /// change the element in place. The alias pins the array, so it stays
+    /// valid if the element is deleted while the statement runs. A read
+    /// locator of a missing element binds an empty array.
+    BindElement {
+        root: IrValueItemRoot,
+        container: usize,
+    },
+    /// Publish a change of `container` made through an alias of one of its
+    /// nested elements.
+    TouchContents(usize),
 }
 
 /// A position of an item path that run-time indices select in a fixed array.
@@ -1193,14 +1216,14 @@ impl IrValueSlot {
             IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. } => {
                 Ok(element)
             }
-            IrContainerElement::Container { kind, .. }
-                if !kind.to_ascii_lowercase().contains("assoc") =>
+            IrContainerElement::Container { kind, key, .. }
+                if key.is_some() || !kind.to_ascii_lowercase().contains("assoc") =>
             {
                 Ok(element)
             }
             _ => Err(IrValidationError::new(
                 "container value",
-                "element locators apply to record, fixed-array and nested queue or dynamic-array elements",
+                "element locators apply to record, fixed-array and nested container elements",
             )),
         }
     }
@@ -1541,7 +1564,7 @@ impl IrContainerExpr {
                 }
                 return Ok(());
             }
-            Self::ExistsString { container, key } => {
+            Self::ExistsString { container, key } | Self::NestedSizeString { container, key } => {
                 string_container(model, *container)?;
                 key.validate(model, string_return)?;
                 return Ok(());
@@ -1680,6 +1703,7 @@ impl IrContainerExpr {
             | Self::NestedSize { indices, .. } => indices.iter().for_each(visit),
             Self::GetString { key, .. }
             | Self::GetStringReal { key, .. }
+            | Self::NestedSizeString { key, .. }
             | Self::ExistsString { key, .. } => key.expressions(visit),
             Self::Size(_)
             | Self::Reduce { .. }
@@ -1711,6 +1735,7 @@ impl IrContainerExpr {
             | Self::NestedSize { indices, .. } => indices.iter_mut().for_each(visit),
             Self::GetString { key, .. }
             | Self::GetStringReal { key, .. }
+            | Self::NestedSizeString { key, .. }
             | Self::ExistsString { key, .. } => key.expressions_mut(visit),
             Self::Size(_)
             | Self::Reduce { .. }
@@ -2020,7 +2045,9 @@ impl IrContainerStmt {
                     // nested container element staged by a statement.
                     // A fixed member array moves as one container of its items.
                     Some(
-                        IrContainerElement::Container { element, .. }
+                        IrContainerElement::Container {
+                            element, key: None, ..
+                        }
                         | IrContainerElement::FixedArray { element, .. },
                     ) if !matches!(container.kind, IrContainerKind::Associative { .. })
                         && element.compatible_with(&container.element)
@@ -2034,6 +2061,35 @@ impl IrContainerStmt {
                     )),
                 }
             }
+            Self::BindElement { root, container } => {
+                let container = container_kind(model, *container, Some("associative"))?;
+                if !container.activation {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "only activation containers alias a nested element",
+                    ));
+                }
+                match (root.element(model)?, &container.kind) {
+                    (
+                        IrContainerElement::Container {
+                            element,
+                            key: Some(key),
+                            ..
+                        },
+                        IrContainerKind::Associative { key: alias },
+                    ) if key == alias
+                        && element.compatible_with(&container.element)
+                        && container.element.compatible_with(element) =>
+                    {
+                        Ok(())
+                    }
+                    _ => Err(IrValidationError::new(
+                        "container value",
+                        "a nested element alias needs an associative element of its own type",
+                    )),
+                }
+            }
+            Self::TouchContents(container) => container_kind(model, *container, None).map(|_| ()),
             Self::CopyRange {
                 dst,
                 dst_start,
@@ -2822,18 +2878,7 @@ impl IrContainerStmt {
             Self::QueuePushFrontContainer { container, source }
             | Self::QueuePushBackContainer { container, source } => {
                 let container = container_kind(model, *container, Some("queue"))?;
-                let source = container_kind(model, *source, Some("dynamic"))?;
-                if !matches!(
-                    container.element,
-                    IrContainerElement::Container { ref element, .. }
-                        if element.compatible_with(&source.element)
-                ) {
-                    return Err(IrValidationError::new(
-                        "container",
-                        "recursive queue operation has an incompatible source container",
-                    ));
-                }
-                Ok(())
+                nested_source(container, model, *source)
             }
             Self::QueueInsertString {
                 container,
@@ -2867,20 +2912,13 @@ impl IrContainerStmt {
                 source,
             } => {
                 let container = container_kind(model, *container, Some("queue"))?;
-                let source = container_kind(model, *source, Some("dynamic"))?;
-                if index.is_real()
-                    || !matches!(
-                        container.element,
-                        IrContainerElement::Container { ref element, .. }
-                            if element.compatible_with(&source.element)
-                    )
-                {
+                if index.is_real() {
                     return Err(IrValidationError::new(
                         "container",
-                        "recursive queue insertion has an invalid index or source container",
+                        "recursive queue insertion has an invalid index",
                     ));
                 }
-                Ok(())
+                nested_source(container, model, *source)
             }
         }
     }
@@ -3022,11 +3060,13 @@ impl IrContainerStmt {
             | Self::Delete(_)
             | Self::ResetDefault(_)
             | Self::Declare(_)
-            | Self::SharedDeclare(_) => {}
+            | Self::SharedDeclare(_)
+            | Self::TouchContents(_) => {}
             Self::NbaLocateEnd => {}
             Self::ValueItemToContainer { root, .. }
             | Self::ContainerToValueItem { root, .. }
-            | Self::FixedToValueItem { root, .. } => root.expressions(visit),
+            | Self::FixedToValueItem { root, .. }
+            | Self::BindElement { root, .. } => root.expressions(visit),
             Self::RealColumnAssign { root, .. } => {
                 if let Some(root) = root {
                     root.expressions(visit);
@@ -3180,11 +3220,13 @@ impl IrContainerStmt {
             | Self::Delete(_)
             | Self::ResetDefault(_)
             | Self::Declare(_)
-            | Self::SharedDeclare(_) => {}
+            | Self::SharedDeclare(_)
+            | Self::TouchContents(_) => {}
             Self::NbaLocateEnd => {}
             Self::ValueItemToContainer { root, .. }
             | Self::ContainerToValueItem { root, .. }
-            | Self::FixedToValueItem { root, .. } => root.expressions_mut(visit),
+            | Self::FixedToValueItem { root, .. }
+            | Self::BindElement { root, .. } => root.expressions_mut(visit),
             Self::RealColumnAssign { root, .. } => {
                 if let Some(root) = root {
                     root.expressions_mut(visit);
@@ -3241,6 +3283,39 @@ fn string_container(
         ));
     }
     Ok(container)
+}
+
+/// A queue element built from `source`: a dynamic array, or an associative
+/// array of the nested type.
+fn nested_source(
+    container: &IrContainer,
+    model: &super::IrModel,
+    source: usize,
+) -> Result<(), IrValidationError> {
+    let expected = match &container.element {
+        IrContainerElement::Container { key: Some(_), .. } => "associative",
+        _ => "dynamic",
+    };
+    let source = container_kind(model, source, Some(expected))?;
+    let compatible = match &container.element {
+        IrContainerElement::Container { key, element, .. } => {
+            element.compatible_with(&source.element)
+                && (key.is_none()
+                    || matches!(
+                        &source.kind,
+                        IrContainerKind::Associative { key: source } if Some(source) == key.as_ref()
+                    ))
+        }
+        _ => false,
+    };
+    if compatible {
+        Ok(())
+    } else {
+        Err(IrValidationError::new(
+            "container",
+            "recursive queue operation has an incompatible source container",
+        ))
+    }
 }
 
 fn nested_element(container: &IrContainer, depth: usize) -> Option<&IrContainerElement> {

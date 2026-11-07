@@ -8,7 +8,10 @@ impl EmitCtx<'_, '_> {
     /// the pre-IR emitter decision-for-decision: same errors, warnings,
     /// sensitivity sets and wait tracking.
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
-        self.cg.qualify_class_containers(&self.path, h)?;
+        let outer_receivers = std::mem::take(&mut self.cg.receiver_prelude);
+        let receiver_roots = self.cg.qualify_class_containers(&self.path, h);
+        let receivers = std::mem::replace(&mut self.cg.receiver_prelude, outer_receivers);
+        let receiver_roots = receiver_roots?;
         // Container operands that cannot be built inside an expression are
         // built just before a statement that evaluates its operands once;
         // nested statements never inherit that prelude. Whole-value pattern
@@ -52,6 +55,13 @@ impl EmitCtx<'_, '_> {
                 | NodeKind::Expr(ExprKind::Operation { .. })
         ) && self.cg.staged_element_members.is_empty()
             && self.cg.staged_nested_elements.is_empty();
+        // The value of a write through a nested associative array runs
+        // before the array is bound.
+        let hoisted = if staging && self.cg.element_staging_possible {
+            self.cg.hoist_assignment_source(&self.path, h)
+        } else {
+            Ok(Vec::new())
+        };
         let staged = if staging {
             Some(self.cg.stage_element_members(&self.path, h))
         } else {
@@ -66,6 +76,8 @@ impl EmitCtx<'_, '_> {
             }
             None => (self.lower_stmt_operations(h), Default::default()),
         };
+        self.cg.end_hoisted_source();
+        let hoisted = hoisted?;
         let declarations =
             std::mem::replace(&mut self.cg.record_binding_declarations, outer).unwrap_or_default();
         let prelude = std::mem::replace(&mut self.cg.container_call_prelude, saved);
@@ -73,6 +85,17 @@ impl EmitCtx<'_, '_> {
             std::mem::replace(&mut self.cg.mailbox_statement_prelude, saved_mailbox);
         let rand_prelude = std::mem::replace(&mut self.cg.rand_prelude, saved_rand);
         let mut statements = lowered.map_err(|error| self.cg.record_located_error(h, error))?;
+        // An operand reached by another path than the expression lowering
+        // would read a handle local that was never set.
+        for root in receiver_roots {
+            self.cg.receiver_roots.remove(&root);
+            if !self.cg.receiver_roots_lowered.remove(&root) {
+                return Err(self.cg.record_located_error(h, format!(
+                    "a class property selected through a computed handle in `{}` is not supported in this operand; assign the handle to a variable first",
+                    self.path
+                )));
+            }
+        }
         if let Some((_, mut prelude)) = rand_prelude.filter(|(_, prelude)| !prelude.is_empty()) {
             prelude.append(&mut statements);
             statements = prelude;
@@ -87,13 +110,33 @@ impl EmitCtx<'_, '_> {
         }
         // Staged members are copied out before the operand prelude and back
         // after the statement, in one lexical scope.
-        if !before.is_empty() || !after.is_empty() {
+        if !hoisted.is_empty() || !before.is_empty() || !after.is_empty() {
             statements = vec![IrStmt::Block(
-                before.into_iter().chain(statements).chain(after).collect(),
+                hoisted
+                    .into_iter()
+                    .chain(before)
+                    .chain(statements)
+                    .chain(after)
+                    .collect(),
             )];
         }
         if !declarations.is_empty() {
             statements.splice(0..0, declarations);
+        }
+        // Computed handles of the statement's operands are read by every
+        // copy made above.
+        if !receivers.is_empty() {
+            if matches!(
+                self.cg.kind(h),
+                NodeKind::Var { .. } | NodeKind::Stmt(StmtKind::VariableDecl { .. })
+            ) {
+                // The declared variable outlives this statement.
+                statements.splice(0..0, receivers);
+            } else {
+                statements = vec![IrStmt::Block(
+                    receivers.into_iter().chain(statements).collect(),
+                )];
+            }
         }
         // Statement coverage counts the statement as it starts (40.2.2).
         if let Some(hit) = self.cg.statement_hit(h) {

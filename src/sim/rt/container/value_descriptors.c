@@ -60,6 +60,9 @@ static void llg_value_drop(llg_value_t* value) {
                 free(value->value.container);
             }
             break;
+        case LLG_VALUE_ASSOC:
+            if (value->value.assoc) llg_nested_assoc_release(value->value.assoc);
+            break;
         case LLG_VALUE_PROCESS:
             llg_value_handle_release(desc, value->value.handle);
             break;
@@ -129,6 +132,9 @@ static int llg_value_try_default_mode(llg_value_t* value,
             /* A nested dynamic array has the standard null-handle default. */
             value->value.container = NULL;
             return 1;
+        case LLG_VALUE_ASSOC:
+            value->value.assoc = NULL;
+            return 1;
         case LLG_VALUE_EVENT:
             value->value.handle = initial && llg_value_hooks.event_new
                 ? llg_value_hooks.event_new()
@@ -171,6 +177,12 @@ static int llg_value_desc_compatible(const llg_value_desc_t* dst,
         case LLG_VALUE_CONTAINER:
         case LLG_VALUE_OPAQUE:
             return dst->type_id != 0 && dst->type_id == src->type_id;
+        case LLG_VALUE_ASSOC:
+            return dst->type_id != 0 && dst->type_id == src->type_id &&
+                   dst->item_count == src->item_count &&
+                   dst->packed_width == src->packed_width &&
+                   dst->packed_signed == src->packed_signed &&
+                   dst->packed_two_state == src->packed_two_state;
         case LLG_VALUE_FIXED_ARRAY:
             return dst->item_count == src->item_count &&
                    llg_value_desc_compatible(dst->element, src->element);
@@ -273,6 +285,10 @@ static int llg_value_try_construct_copy(llg_value_t* target,
                                    source->value.container);
             }
             return 1;
+        case LLG_VALUE_ASSOC:
+            if (source_desc->kind == LLG_VALUE_ASSOC && source->value.assoc)
+                target->value.assoc = llg_nested_assoc_clone(source->value.assoc);
+            return 1;
         default:
             llg_container_fatal("invalid recursive container value kind");
     }
@@ -365,6 +381,8 @@ static int llg_value_equal(const llg_value_t* a, const llg_value_t* b) {
                     return 0;
             }
             return 1;
+        case LLG_VALUE_ASSOC:
+            return llg_nested_assoc_equal(a->value.assoc, b->value.assoc);
         default:
             return 0;
     }
@@ -452,6 +470,10 @@ int llg_value_equality(const llg_value_t* a, const llg_value_t* b,
                 right ? right->data : NULL, right ? right->size : 0,
                 case_equality);
         }
+        case LLG_VALUE_ASSOC:
+            return llg_nested_assoc_equal(a->value.assoc, b->value.assoc)
+                ? LLG_VALUE_EQUAL
+                : LLG_VALUE_UNEQUAL;
         default:
             return LLG_VALUE_UNEQUAL;
     }
@@ -527,6 +549,7 @@ int llg_value_desc_copy_policy(const llg_value_desc_t* desc) {
         case LLG_VALUE_AGGREGATE:
         case LLG_VALUE_FIXED_ARRAY:
         case LLG_VALUE_CONTAINER:
+        case LLG_VALUE_ASSOC:
             return LLG_VALUE_COPY_DEEP;
         case LLG_VALUE_EVENT:
         case LLG_VALUE_OPAQUE:
@@ -582,6 +605,10 @@ static int llg_value_desc_valid_at(const llg_value_desc_t* desc,
             return desc->item_count == 0 && !desc->members &&
                    desc->member_count == 0 &&
                    llg_value_desc_valid_at(desc->element, path, depth + 1);
+        case LLG_VALUE_ASSOC:
+            return desc->item_count <= 1 && !desc->members &&
+                   desc->member_count == 0 &&
+                   llg_value_desc_valid_at(desc->element, path, depth + 1);
         default:
             return 0;
     }
@@ -621,6 +648,10 @@ static void llg_value_trace_at(const llg_value_t* value,
                 for (size_t i = 0; i < value->value.container->size; ++i)
                     llg_value_trace_at(&value->value.container->data[i], visit,
                                        context);
+            break;
+        case LLG_VALUE_ASSOC:
+            if (value->value.assoc)
+                llg_nested_assoc_trace(value->value.assoc, visit, context);
             break;
         default:
             break;

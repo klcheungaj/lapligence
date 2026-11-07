@@ -348,6 +348,55 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrChandleExpr, String> {
+        if let Some(HoistedValue::Handle(name)) = self.hoisted_value(node) {
+            return Ok(IrChandleExpr::LocalRead(name.clone()));
+        }
+        if let Some(operands) = self.enter_call_operands(path, node)? {
+            let value = self.lower_chandle(path, node);
+            let before = self.leave_call_operands(operands);
+            let value = value?;
+            if before.is_empty() {
+                return Ok(value);
+            }
+            return Ok(IrChandleExpr::Conditional {
+                predicate: Box::new(super::strings::always_after(before)),
+                then: Box::new(value),
+                otherwise: Box::new(IrChandleExpr::Null),
+            });
+        }
+        // Nested container elements read outside a staged statement, as
+        // for strings: the staging runs as an always-true predicate.
+        if self.element_staging_possible {
+            if let Some((mut before, after)) = self.stage_expression_members(path, node)? {
+                let value = self.lower_chandle(path, node);
+                self.end_element_member_staging();
+                let mut value = value?;
+                // The value is read before the changed element is stored.
+                if !after.is_empty() {
+                    let name = format!("_llg_sh{}", node.0);
+                    before.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                        name.clone(),
+                        Some(value),
+                    ))));
+                    before.extend(after);
+                    value = IrChandleExpr::LocalRead(name);
+                }
+                return Ok(IrChandleExpr::Conditional {
+                    predicate: Box::new(super::strings::always_after(before)),
+                    then: Box::new(value),
+                    otherwise: Box::new(IrChandleExpr::Null),
+                });
+            }
+        }
+        if let Some(before) = self.enter_receiver_root(node) {
+            let value = self.lower_chandle(path, node);
+            self.leave_receiver_root(node, &before);
+            return Ok(IrChandleExpr::Conditional {
+                predicate: Box::new(super::strings::always_after(before)),
+                then: Box::new(value?),
+                otherwise: Box::new(IrChandleExpr::Null),
+            });
+        }
         if let Some(value) = self.native_tagged_chandle(path, node)? {
             return Ok(value);
         }
@@ -710,6 +759,10 @@ impl Codegen<'_> {
                         *formal,
                         bound[idx].expr,
                     )?));
+                } else if bound[idx].string {
+                    in_args.push(IrCallArg::StringVal(
+                        self.lower_string(path, bound[idx].expr)?,
+                    ));
                 } else {
                     let value =
                         self.lower_bound_arg(path, &meta.formals, &bound, idx, &mut arg_irs)?;

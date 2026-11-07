@@ -24,10 +24,17 @@ impl Frame<'_, '_> {
             if let Some(receiver) = &container.receiver {
                 // The property selected through an explicit handle (SIM-011),
                 // re-read at each use.
+                let required = matches!(receiver, IrChandleExpr::Required { .. });
                 let receiver = self.plain_handle_code(receiver, 0)?;
+                if required && !self.quiet_receivers {
+                    let mut checks = self.container_receivers.borrow_mut();
+                    if !checks.contains(&receiver) {
+                        checks.push(receiver.clone());
+                    }
+                }
                 let (ty, _, _) = super::super::containers::activation_storage(container, "")?;
                 return Ok(format!(
-                    "(*({ty}*)llg_class_field({receiver}, {class}, {field}, 3)->value.handle)"
+                    "(*({ty}*)llg_class_container({receiver}, {class}, {field}))"
                 ));
             }
             // Per-object storage of an instance property, reached through
@@ -378,6 +385,31 @@ impl Frame<'_, '_> {
             let target = self.new_container(*container)?;
             self.containers.insert(*container, target);
             self.vpi_auto_bind(VpiAutoKey::Container(*container));
+            return Ok(());
+        }
+        if let IrContainerStmt::BindElement { root, container } = operation {
+            let IrValueItemRoot::Element(element) = root else {
+                return Err("a nested element alias needs an element locator".to_owned());
+            };
+            let (ty, _, _) = super::super::containers::activation_storage(
+                &self.ctx.model.containers[*container],
+                "",
+            )?;
+            // The alias publishes through `TouchContents` once the change
+            // is complete, not at the locator.
+            let touches = self.pending_touches.len();
+            let element = self.chandle(element)?;
+            self.pending_touches.truncate(touches);
+            let pin = self.scalar(
+                "llg_nested_assoc_t**",
+                "(llg_nested_assoc_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_nested_assoc_t*), llg_nested_assoc_unpin))"
+                    .to_owned(),
+            );
+            let storage = self.scalar(
+                &format!("{ty}*"),
+                format!("({ty}*)llg_nested_assoc_bind((llg_value_t*){element}, {pin})"),
+            );
+            self.containers.insert(*container, format!("(*{storage})"));
             return Ok(());
         }
         if let IrContainerStmt::SharedDeclare(container) = operation {

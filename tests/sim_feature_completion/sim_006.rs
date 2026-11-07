@@ -51,6 +51,55 @@ fn nested_element_methods_and_whole_uses_stage_the_element() {
 }
 
 #[test]
+fn class_containers_are_reached_through_computed_handles() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/computed_handle_containers.out");
+    sim_cli::run_case_backend_parity(SUITE, "computed_handle_containers", expected, &[], &[]);
+}
+
+#[test]
+fn class_container_forms_of_method_bodies() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/class_container_forms.out");
+    sim_cli::run_case_backend_parity(SUITE, "class_container_forms", expected, &[], &[]);
+}
+
+#[test]
+fn call_results_are_method_receivers_and_select_bases() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/call_result_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "call_result_selects", expected, &[], &[]);
+}
+
+#[test]
+fn container_actuals_are_built_where_the_call_runs() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/call_container_operands.out");
+    sim_cli::run_case_backend_parity(SUITE, "call_container_operands", expected, &[], &[]);
+}
+
+#[test]
+fn computed_handles_with_no_evaluation_point_are_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_computed_handle_wait",
+        "class container property `q` in `tb` is selected through a handle that is not a variable, formal or property",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_computed_handle_assoc_foreach",
+        "`foreach` over `m` in `tb` calls a subroutine for its handle",
+    );
+}
+
+#[test]
+fn nested_elements_change_in_any_expression() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_element_expressions.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_element_expressions", expected, &[], &[]);
+}
+
+#[test]
 fn nested_elements_pass_whole_to_input_formals() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/nested_element_arguments.out");
@@ -198,23 +247,8 @@ fn wildcard_index_traversal_is_rejected_by_the_frontend() {
 fn unsupported_container_boundaries_are_explicit() {
     sim_cli::reject_case(
         SUITE,
-        "neg_nested_element_method",
-        "method `pop_front` of a nested container element in `tb` is not supported; only `size()` is",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_string_nested_select",
-        "elements of a queue or dynamic array nested in string-keyed associative array `sq` in `tb` are not supported",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_nested_two_changes",
         "a statement in `tb` changes two nested container elements of one container",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_container_result_select",
-        "container result of `make` in `tb` must be assigned whole to a container variable",
     );
 }
 
@@ -235,4 +269,133 @@ fn container_declarations_accept_any_whole_container_initializer() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/container_initializers.out");
     sim_cli::run_case_backend_parity(SUITE, "container_initializers", expected, &[], &[]);
+}
+
+#[test]
+fn associative_arrays_nest_in_container_elements() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative", expected, &[], &[]);
+}
+
+#[test]
+fn nested_associative_arrays_cross_boundaries() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative_forms.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative_forms", expected, &[], &[]);
+}
+
+#[test]
+fn associative_arrays_nest_at_any_depth() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative_deep.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative_deep", expected, &[], &[]);
+}
+
+#[test]
+fn foreach_walks_every_nested_dimension_kind() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_006/nested_foreach.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_foreach", expected, &[], &[]);
+}
+
+#[test]
+fn record_element_members_take_compound_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/record_element_compound.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_element_compound", expected, &[], &[]);
+}
+
+#[test]
+fn record_fields_of_every_storage_take_compound_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/record_field_compound.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_field_compound", expected, &[], &[]);
+}
+
+#[test]
+fn semaphore_try_get_is_a_statement() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/semaphore_try_get_statement.out");
+    sim_cli::run_case_backend_parity(SUITE, "semaphore_try_get_statement", expected, &[], &[]);
+}
+
+#[test]
+fn block_static_locals_wake_fork_events() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/static_block_event.out");
+    sim_cli::run_case_backend_parity(SUITE, "static_block_event", expected, &[], &[]);
+}
+
+#[test]
+fn containers_bind_ref_formals_directly() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_ref_actuals.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_ref_actuals", expected, &[], &[]);
+}
+
+#[test]
+fn subroutine_and_object_containers_wake_waits() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/subroutine_container_waits.out");
+    sim_cli::run_case_backend_parity(SUITE, "subroutine_container_waits", expected, &[], &[]);
+}
+
+#[test]
+fn nested_associative_handles_survive_rewrites() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative_handles.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative_handles", expected, &[], &[]);
+}
+
+#[test]
+fn a_task_reference_to_a_nested_queue_is_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_nested_task_ref",
+        "a queue or dynamic array nested in a container element as the ref actual of `t` is not supported; pass a variable at tb:11:10",
+    );
+}
+
+#[test]
+fn a_function_reference_to_a_nested_queue_or_dynamic_array_is_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_nested_function_ref",
+        "a queue or dynamic array nested in a container element as the ref actual of `t` is not supported; pass a variable at tb:11:9",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_nested_keyed_function_ref",
+        "a queue or dynamic array nested in a container element as the ref actual of `t` is not supported; pass a variable at tb:11:13",
+    );
+}
+
+#[test]
+fn a_called_selector_in_a_skipped_operand_does_not_run() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_lazy_called_selector.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_lazy_called_selector", expected, &[], &[]);
+}
+
+#[test]
+fn an_element_of_a_class_property_takes_no_nonblocking_write() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_class_property_element_nba",
+        "nonblocking assignment to an element of a class property in `tb` is illegal",
+    );
+}
+
+#[test]
+fn nested_writes_keep_values_that_delete_their_entry() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_write_lost_entry.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_write_lost_entry", expected, &[], &[]);
+}
+
+#[test]
+fn nested_associative_selectors_run_once_and_short_circuit() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_associative_selectors.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_associative_selectors", expected, &[], &[]);
 }

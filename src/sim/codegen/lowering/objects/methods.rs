@@ -201,6 +201,18 @@ impl Codegen<'_> {
                 "get" => Ok(IrStmt::Object(Box::new(IrObjectStmt::SemaphoreGet(
                     receiver, keys,
                 )))),
+                // `void'(s.try_get())`: the keys are taken, the status unused.
+                "try_get" => Ok(IrStmt::DeclLocal {
+                    name: format!("_llg_try_get{}", node.0),
+                    width: 32,
+                    signed: true,
+                    init: Some(Box::new(object_query(
+                        IrObjectQuery::SemaphoreTryGet(receiver, keys),
+                        32,
+                        true,
+                    ))),
+                    two_state: true,
+                }),
                 _ => Err(format!("unsupported semaphore method: {name}")),
             };
         }

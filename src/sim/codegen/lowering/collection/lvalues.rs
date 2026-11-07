@@ -34,6 +34,14 @@ impl<'a> Codegen<'a> {
                 if let Some(info) = self.signal_of(*t) {
                     return Ok((info.global.clone(), info.clone()));
                 }
+                // A static block local read from a fork branch: its storage
+                // is one signal, reached through the branch's capture view.
+                if let Some(info) = self
+                    .proc_local_info(*t)
+                    .and_then(|local| local.static_signal.as_ref())
+                {
+                    return Ok((info.global.clone(), info.clone()));
+                }
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 if let Some(info) = self.hier_path_signal(node) {

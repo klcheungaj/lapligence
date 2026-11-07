@@ -378,6 +378,16 @@ static void llg_pattern_value(llg_pattern_out_t* out,
         llg_pattern_container(out, type, LLG_PATTERN_FROM_NESTED_CONTAINER,
                               value->value.container);
         return;
+    case LLG_VALUE_ASSOC:
+        if (!value->value.assoc)
+            llg_pattern_container(out, type, LLG_PATTERN_FROM_VALUE_CONTAINER, NULL);
+        else if (desc->element->kind == LLG_VALUE_PACKED)
+            llg_pattern_container(out, type, LLG_PATTERN_FROM_PACKED_CONTAINER,
+                                  &value->value.assoc->array.packed);
+        else
+            llg_pattern_container(out, type, LLG_PATTERN_FROM_VALUE_CONTAINER,
+                                  &value->value.assoc->array.values);
+        return;
     case LLG_VALUE_EVENT:
         llg_pattern_text(out, value->value.handle ? "event" : "null");
         return;

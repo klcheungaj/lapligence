@@ -87,6 +87,32 @@ impl Codegen<'_> {
         None
     }
 
+    /// The container property `member` of the class a computed handle value
+    /// (`get().q`) names, with its storage.
+    fn computed_handle_container(&self, base: NodeId, member: &str) -> Option<(NodeId, usize)> {
+        let descriptor = self.query_descriptor(base)?;
+        if descriptor.info.kind != "class" {
+            return None;
+        }
+        let mut class = self.db.class_for_type(descriptor.id);
+        while let Some(current) = class {
+            let found = self.node(current).children.iter().find_map(|child| {
+                let info = self.container_globals.get(child)?;
+                (self.node(*child).name == member
+                    && self.model.containers[info.ir].class_field.is_some())
+                .then_some((*child, info.ir))
+            });
+            if found.is_some() {
+                return found;
+            }
+            class = self
+                .db
+                .class_metadata(current)
+                .and_then(|metadata| metadata.base);
+        }
+        None
+    }
+
     pub(in super::super) fn is_class_method_call(&self, node: NodeId) -> bool {
         let callee = match self.kind(node) {
             NodeKind::MethodCall { callee, .. } | NodeKind::FuncCall { callee, .. } => *callee,
@@ -307,15 +333,23 @@ impl Codegen<'_> {
     /// Before lowering statement `h`, give every class container property
     /// its operands select through an explicit handle (`h.q`, `n.next.q`) a
     /// receiver-qualified alias of the property's per-object container
-    /// (SIM-011). Nested statements are prepared when they are lowered.
+    /// (SIM-011). Nested statements are prepared when they are lowered. A
+    /// computed handle (`list[i].q`, `f().q`) is evaluated once into a handle
+    /// local the alias reads: before the statement, or before the evaluation
+    /// of the operand it belongs to when that operand is evaluated lazily or
+    /// repeatedly (`receiver_roots`). Returns those operands.
     pub(in super::super) fn qualify_class_containers(
         &mut self,
         path: &str,
         h: NodeId,
-    ) -> Result<(), String> {
-        let mut pending = vec![h];
+    ) -> Result<Vec<NodeId>, String> {
+        let bodies = self.statement_bodies(h);
+        let mut pending = vec![(h, ReceiverScope::Statement)];
         let mut visited = HashSet::new();
-        while let Some(node) = pending.pop() {
+        // Properties of computed handles, innermost and leftmost last: a
+        // handle may itself read such a property (`list[i].sub[j].q`).
+        let mut computed = Vec::new();
+        while let Some((node, scope)) = pending.pop() {
             // Operand expressions only: nested statements and declarations
             // are prepared in their own context.
             if !visited.insert(node)
@@ -330,13 +364,41 @@ impl Codegen<'_> {
             {
                 continue;
             }
-            pending.extend(self.node(node).children.iter().copied());
+            let lazy = self.lazy_operands(h, node);
+            let child_scope = |child: NodeId| {
+                let scope = if scope == ReceiverScope::Body || bodies.contains(&child) {
+                    ReceiverScope::Body
+                } else if lazy.contains(&child) {
+                    ReceiverScope::Operand(child)
+                } else {
+                    scope
+                };
+                (child, scope)
+            };
+            pending.extend(self.node(node).children.iter().copied().map(child_scope));
             let mut references = Vec::new();
             self.kind(node).append_references(&mut references);
-            pending.extend(references);
-            let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(node) else {
-                continue;
+            pending.extend(references.into_iter().map(child_scope));
+            let refs = match self.kind(node) {
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs,
+                NodeKind::Expr(ExprKind::MemberSelect { base, member }) => {
+                    if self.computed_receiver_aliases.contains_key(&node) {
+                        computed.push((node, scope));
+                    } else if let Some((field, container)) =
+                        self.computed_handle_container(*base, member)
+                    {
+                        self.computed_receiver_aliases
+                            .insert(node, ReceiverAlias::UnqualifiedContainer(field, container));
+                        computed.push((node, scope));
+                    }
+                    continue;
+                }
+                _ => continue,
             };
+            if self.computed_receiver_aliases.contains_key(&node) {
+                computed.push((node, scope));
+                continue;
+            }
             if self.receiver_containers.contains_key(&node)
                 || self.receiver_native_values.contains_key(&node)
             {
@@ -350,17 +412,19 @@ impl Codegen<'_> {
                 .flatten()
                 .find_map(|target| self.class_native_fields.get(target).map(|v| (*target, *v)));
             if let Some((field, value)) = native {
-                let Some(receiver) = self.explicit_class_receiver(path, node, field)? else {
-                    continue;
-                };
-                if !receiver.is_plain_receiver() {
-                    return Err(format!(
-                        "class record property `{}` in `{path}` is selected through a handle that is not a variable, formal or property; assign the handle to a variable first (SIM-011)",
-                        self.node(field).name
-                    ));
+                match self.explicit_class_receiver(path, node, field) {
+                    Ok(None) => {}
+                    Ok(Some(receiver)) if self.renders_plain(&receiver) => {
+                        let alias = self.class_native_alias(value, receiver);
+                        self.receiver_native_values.insert(node, alias);
+                    }
+                    // Lowered again once any handle it reads is qualified.
+                    _ => {
+                        self.computed_receiver_aliases
+                            .insert(node, ReceiverAlias::UnqualifiedNative(field, value));
+                        computed.push((node, scope));
+                    }
                 }
-                let alias = self.class_native_alias(value, receiver);
-                self.receiver_native_values.insert(node, alias);
                 continue;
             }
             let Some(field) = refs.last().copied().flatten() else {
@@ -374,17 +438,288 @@ impl Codegen<'_> {
             else {
                 continue;
             };
-            let Some(receiver) = self.explicit_class_receiver(path, node, field)? else {
-                continue;
-            };
-            if !receiver.is_plain_receiver() {
-                return Err(format!(
-                    "class container property `{}` in `{path}` is selected through a handle that is not a variable, formal or property; assign the handle to a variable first (SIM-011)",
-                    self.node(field).name
-                ));
+            match self.explicit_class_receiver(path, node, field) {
+                Ok(None) => {}
+                Ok(Some(receiver)) if self.renders_plain(&receiver) => {
+                    let alias = self.class_container_alias(container, receiver);
+                    self.receiver_containers.insert(node, alias);
+                }
+                _ => {
+                    self.computed_receiver_aliases
+                        .insert(node, ReceiverAlias::UnqualifiedContainer(field, container));
+                    computed.push((node, scope));
+                }
             }
-            let alias = self.class_container_alias(container, receiver);
-            self.receiver_containers.insert(node, alias);
+        }
+        let mut roots = Vec::new();
+        for (node, scope) in computed.into_iter().rev() {
+            // A statement of its own is prepared when it is lowered.
+            if scope != ReceiverScope::Body {
+                self.qualify_computed_receiver(path, h, node, scope, &mut roots)?;
+            }
+        }
+        Ok(roots)
+    }
+
+    /// Whether `receiver` is a plain handle read all the way down: a handle
+    /// property read (`a.b.c`) is one only if its own receiver is. Lookups
+    /// start at the newest access, the one just lowered.
+    fn renders_plain(&self, receiver: &IrChandleExpr) -> bool {
+        let mut current = receiver;
+        loop {
+            if !current.is_plain_receiver() {
+                return false;
+            }
+            current = match current {
+                IrChandleExpr::Required { handle, .. } => handle,
+                IrChandleExpr::LocalRead(name) => {
+                    let access = self
+                        .model
+                        .native_accesses
+                        .iter()
+                        .rev()
+                        .find(|access| &access.name == name);
+                    match access {
+                        Some(access) => &access.receiver,
+                        None => return true,
+                    }
+                }
+                _ => return true,
+            };
+        }
+    }
+
+    /// The handle declarations of operand `node` when an evaluation of it
+    /// starts. The caller lowers the operand and ends with
+    /// `leave_receiver_root`.
+    pub(in super::super) fn enter_receiver_root(&mut self, node: NodeId) -> Option<Vec<IrStmt>> {
+        if self.receiver_roots.is_empty() {
+            return None;
+        }
+        self.receiver_roots.remove(&node)
+    }
+
+    /// The operand may be lowered again (a loop condition, a specialization).
+    pub(in super::super) fn leave_receiver_root(&mut self, node: NodeId, before: &[IrStmt]) {
+        self.receiver_roots.insert(node, before.to_vec());
+        self.receiver_roots_lowered.insert(node);
+    }
+
+    /// Operands of `node` that its statement `h` may skip or evaluate more
+    /// than once, so a handle they compute cannot be evaluated before `h`.
+    fn lazy_operands(&self, h: NodeId, node: NodeId) -> Vec<NodeId> {
+        match self.kind(node) {
+            NodeKind::Stmt(StmtKind::For { cond, .. })
+            | NodeKind::Stmt(StmtKind::While { cond, .. })
+            | NodeKind::Stmt(StmtKind::DoWhile { cond, .. })
+                if node == h =>
+            {
+                vec![*cond]
+            }
+            // `foreach (get().q[i])` evaluates the array at each bound check.
+            NodeKind::Stmt(StmtKind::Foreach { .. }) if node == h => self
+                .node(h)
+                .children
+                .iter()
+                .copied()
+                .filter(|child| {
+                    matches!(
+                        self.kind(*child),
+                        NodeKind::Expr(ExprKind::HierPath { .. } | ExprKind::MemberSelect { .. })
+                    )
+                })
+                .collect(),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::LogicalAnd | Operation::LogicalOr | Operation::Conditional,
+                operands,
+                ..
+            }) => operands.get(1..).unwrap_or_default().to_vec(),
+            // An array method's `with` expression runs per element.
+            NodeKind::MethodCall { receiver, .. } if self.db.method_call_has_with_clause(node) => {
+                self.node(node)
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|child| Some(*child) != *receiver)
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The statements nested directly in statement `h`, which may be calls
+    /// that look like operands.
+    fn statement_bodies(&self, h: NodeId) -> Vec<NodeId> {
+        let NodeKind::Stmt(statement) = self.kind(h) else {
+            return Vec::new();
+        };
+        match statement {
+            StmtKind::Begin => self.node(h).children.clone(),
+            StmtKind::IfElse {
+                if_true, if_false, ..
+            } => std::iter::once(*if_true).chain(*if_false).collect(),
+            StmtKind::For {
+                init, incr, body, ..
+            } => init.iter().chain(incr).chain([body]).copied().collect(),
+            StmtKind::While { body, .. }
+            | StmtKind::DoWhile { body, .. }
+            | StmtKind::Repeat { body, .. }
+            | StmtKind::Forever { body }
+            | StmtKind::Foreach { body, .. } => vec![*body],
+            StmtKind::EventControl { body, .. } => body.iter().copied().collect(),
+            StmtKind::Case { items, .. } => items.iter().filter_map(|item| item.body).collect(),
+            StmtKind::PatternCase { items, default, .. } => {
+                items.iter().map(|item| item.body).chain(*default).collect()
+            }
+            StmtKind::RandCase { items } => items.iter().map(|item| item.body).collect(),
+            StmtKind::Fork { branches, .. } => branches.clone(),
+            StmtKind::ImmediateAssertion {
+                if_true, if_false, ..
+            }
+            | StmtKind::ConcurrentAssertion {
+                if_true, if_false, ..
+            } => if_true.iter().chain(if_false).copied().collect(),
+            StmtKind::WaitOrder {
+                if_true, if_false, ..
+            } => if_true.iter().chain(if_false).copied().collect(),
+            StmtKind::Wait { cond } => self
+                .node(h)
+                .children
+                .iter()
+                .copied()
+                .filter(|child| child != cond)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether statement `h` evaluates its operands in place. A wait, event
+    /// control or deferred report evaluates them later, or again, where a
+    /// handle local of the statement is gone.
+    fn computed_receivers_allowed(&self, h: NodeId) -> bool {
+        match self.kind(h) {
+            NodeKind::Stmt(
+                StmtKind::Assign { .. }
+                | StmtKind::IfElse { .. }
+                | StmtKind::Case { .. }
+                | StmtKind::For { .. }
+                | StmtKind::While { .. }
+                | StmtKind::DoWhile { .. }
+                | StmtKind::Repeat { .. }
+                | StmtKind::Foreach { .. }
+                | StmtKind::Return { .. }
+                | StmtKind::VariableDecl { .. },
+            )
+            | NodeKind::Var { .. }
+            | NodeKind::FuncCall { .. }
+            | NodeKind::MethodCall { .. }
+            | NodeKind::Expr(_) => true,
+            NodeKind::SysCall { name, .. } => !matches!(
+                name.as_str(),
+                "$strobe"
+                    | "$strobeb"
+                    | "$strobeh"
+                    | "$strobeo"
+                    | "$fstrobe"
+                    | "$fstrobeb"
+                    | "$fstrobeh"
+                    | "$fstrobeo"
+                    | "$monitor"
+                    | "$monitorb"
+                    | "$monitorh"
+                    | "$monitoro"
+                    | "$fmonitor"
+                    | "$fmonitorb"
+                    | "$fmonitorh"
+                    | "$fmonitoro"
+            ),
+            _ => false,
+        }
+    }
+
+    fn qualify_computed_receiver(
+        &mut self,
+        path: &str,
+        h: NodeId,
+        node: NodeId,
+        scope: ReceiverScope,
+        roots: &mut Vec<NodeId>,
+    ) -> Result<(), String> {
+        let alias = self.computed_receiver_aliases[&node];
+        let field = match alias {
+            ReceiverAlias::UnqualifiedNative(field, _)
+            | ReceiverAlias::UnqualifiedContainer(field, _)
+            | ReceiverAlias::Native(field)
+            | ReceiverAlias::Container(field) => field,
+        };
+        let receiver = self
+            .explicit_class_receiver(path, node, field)?
+            .ok_or_else(|| {
+                format!(
+                    "computed receiver of `{}` has no handle",
+                    self.node(field).name
+                )
+            })?;
+        let plain = self.renders_plain(&receiver);
+        if !plain && !self.computed_receivers_allowed(h) {
+            let what = if matches!(
+                alias,
+                ReceiverAlias::UnqualifiedNative(..) | ReceiverAlias::Native(_)
+            ) {
+                "record"
+            } else {
+                "container"
+            };
+            return Err(format!(
+                "class {what} property `{}` in `{path}` is selected through a handle that is not a variable, formal or property; assign the handle to a variable first (SIM-011)",
+                self.node(field).name
+            ));
+        }
+        let receiver = if plain {
+            receiver
+        } else {
+            let (handle, site) = match receiver {
+                IrChandleExpr::Required { handle, site } => (*handle, Some(site)),
+                other => (other, None),
+            };
+            let name = format!("_llg_cr{}", node.0);
+            let declare = IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                name.clone(),
+                Some(handle),
+            )));
+            match scope {
+                ReceiverScope::Operand(root) => {
+                    if !roots.contains(&root) {
+                        roots.push(root);
+                    }
+                    self.receiver_roots.entry(root).or_default().push(declare);
+                }
+                _ => self.receiver_prelude.push(declare),
+            }
+            let local = IrChandleExpr::LocalRead(name);
+            match site {
+                Some(site) => IrChandleExpr::Required {
+                    handle: Box::new(local),
+                    site,
+                },
+                None => local,
+            }
+        };
+        match alias {
+            ReceiverAlias::UnqualifiedNative(field, value) => {
+                let alias = self.class_native_alias(value, receiver);
+                self.receiver_native_values.insert(node, alias);
+                self.computed_receiver_aliases
+                    .insert(node, ReceiverAlias::Native(field));
+            }
+            ReceiverAlias::UnqualifiedContainer(field, container) => {
+                let alias = self.class_container_alias(container, receiver);
+                self.receiver_containers.insert(node, alias);
+                self.computed_receiver_aliases
+                    .insert(node, ReceiverAlias::Container(field));
+            }
+            // The alias reads the same local name in every lowering.
+            ReceiverAlias::Native(_) | ReceiverAlias::Container(_) => {}
         }
         Ok(())
     }

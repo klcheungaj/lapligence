@@ -154,6 +154,42 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     }
 }
 
+/// The key iterator of an associative `foreach` level.
+enum AssocKeyStorage {
+    Integral(ProcLocalInfo, u32, bool, bool),
+    StringObject(usize),
+    StringLocal(String),
+}
+
+fn foreach_local_decl(info: &ProcLocalInfo) -> IrStmt {
+    IrStmt::DeclLocal {
+        name: info.c_name.clone(),
+        width: info.width,
+        signed: info.signed,
+        two_state: info.two_state,
+        init: default_real_local_initializer(info.width),
+    }
+}
+
+fn foreach_local_read(info: &ProcLocalInfo) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::LocalRead(info.c_name.clone()),
+        info.width,
+        info.signed,
+        None,
+    )
+}
+
+fn foreach_local_lhs(info: &ProcLocalInfo) -> IrLhs {
+    IrLhs::WholeRef {
+        addr: format!("&{}", info.c_name),
+        width: info.width,
+        signed: info.signed,
+        two_state: info.two_state,
+        shortreal: false,
+    }
+}
+
 impl Codegen<'_> {
     /// The report identity of the deferred assertion a `disable` target
     /// names (SV 16.4.4). Slang wraps a labeled assertion in a named block
@@ -1007,402 +1043,263 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    /// `foreach (q[i, j, ...])` over a dynamic array or queue whose elements
-    /// are dynamic arrays or queues (SV 12.7.3): one counted loop per
-    /// dimension, each bounded by the size of the element its outer loop
-    /// variables select, re-read at every test.
+    /// `foreach` with several slots over resizable container `container`
+    /// (SV 12.7.3): one loop per named slot, outermost first. A queue or
+    /// dynamic-array level counts to the size of the element its outer loop
+    /// variables select, re-read at every test; an associative level walks
+    /// its keys, through an alias of the nested array when it is an inner
+    /// one; a fixed level counts between its declared bounds. An omitted
+    /// slot has no loop, so no dynamic level can sit below it.
     fn lower_nested_container_foreach(
         &mut self,
+        h: NodeId,
         array: NodeId,
         container: usize,
         vars: &[Option<NodeId>],
+        dimensions: &[Option<(i32, i32)>],
         body: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
-        let local_decl = |info: &ProcLocalInfo| IrStmt::DeclLocal {
-            name: info.c_name.clone(),
-            width: info.width,
-            signed: info.signed,
-            two_state: info.two_state,
-            init: default_real_local_initializer(info.width),
-        };
-        let local_read = |info: &ProcLocalInfo| {
-            IrExpr::new(
-                IrExprKind::LocalRead(info.c_name.clone()),
-                info.width,
-                info.signed,
-                None,
-            )
-        };
-        let local_lhs = |info: &ProcLocalInfo| IrLhs::WholeRef {
-            addr: format!("&{}", info.c_name),
-            width: info.width,
-            signed: info.signed,
-            two_state: info.two_state,
-            shortreal: false,
-        };
-        let name = self.cg.node(array).name.clone();
-        let outer_ok = matches!(
-            self.cg.model.containers[container].kind,
-            IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-        );
-        let nested_ok = (1..vars.len()).all(|depth| {
-            matches!(
-                self.cg.container_element_type(container, depth),
-                Some(IrContainerElement::Container { ref kind, .. }) if kind != "AssociativeArray"
-            )
-        });
-        if !outer_ok || !nested_ok {
-            return Err(format!(
-                "`foreach` over resizable container `{name}` in `{}` supports several dimensions only for nested dynamic arrays and queues",
-                self.path
-            ));
+        enum Level {
+            Counted(ProcLocalInfo, IrContainerExpr),
+            Keyed {
+                storage: usize,
+                key: AssocKeyStorage,
+                bind: Option<IrStmt>,
+                first: String,
+            },
+            Fixed(ProcLocalInfo, i32, i32),
         }
-        let mut locals = Vec::with_capacity(vars.len());
-        for variable in vars {
+        let name = self.cg.node(array).name.clone();
+        let mut declarations = Vec::new();
+        let mut levels = Vec::with_capacity(vars.len());
+        // The storage the next level selects into and its selection so far.
+        let (mut storage, mut indices, mut key) = (container, Vec::new(), None);
+        let mut omitted = false;
+        for (depth, variable) in vars.iter().enumerate() {
+            if let Some(&Some((left, right))) = dimensions.get(depth) {
+                if let Some(variable) = variable {
+                    let local = self.foreach_integral_local(*variable)?;
+                    declarations.push(foreach_local_decl(&local));
+                    levels.push(Level::Fixed(local, left, right));
+                }
+                continue;
+            }
             let Some(variable) = variable else {
+                omitted = true;
+                continue;
+            };
+            if omitted {
                 return Err(format!(
                     "`foreach` over nested container `{name}` in `{}` cannot omit a dimension",
                     self.path
                 ));
-            };
-            let local = self.cg.collect_loop_var(&self.path, *variable)?;
-            if local.width == 0 {
-                return Err(format!(
-                    "`foreach` iterator `{}` in `{}` must be an integral key",
-                    self.cg.node(*variable).name,
-                    self.path
-                ));
             }
-            locals.push(local);
-        }
-        let mut declarations: Vec<IrStmt> = locals.iter().map(local_decl).collect();
-        let (mut nested, brk) = self.lower_loop_body(body)?;
-        for depth in (0..locals.len()).rev() {
-            let local = &locals[depth];
-            let read = || local_read(local);
-            let size = if depth == 0 {
-                IrContainerExpr::Size(container)
-            } else {
-                IrContainerExpr::NestedSize {
-                    container,
-                    indices: locals[..depth]
-                        .iter()
-                        .map(|outer| IrExpr::resize_to(local_read(outer), 32, true))
-                        .collect(),
+            let selected = indices.len() + usize::from(key.is_some());
+            let mut bind = None;
+            if selected > 0 {
+                match self.cg.container_element_type(storage, selected) {
+                    Some(IrContainerElement::Container {
+                        key: Some(nested),
+                        element,
+                        ..
+                    }) => {
+                        let alias = self.cg.model.containers.len();
+                        self.cg.model.containers.push(IrContainer {
+                            c_name: format!("S_llg_container_{alias}"),
+                            element: *element,
+                            kind: IrContainerKind::Associative { key: nested },
+                            initial_size: None,
+                            activation: true,
+                            class_field: None,
+                            receiver: None,
+                        });
+                        bind = Some(IrStmt::Container(Box::new(IrContainerStmt::BindElement {
+                            root: crate::sim::ir::IrValueItemRoot::Element(IrChandleExpr::ContainerElement {
+                                container: storage,
+                                indices: std::mem::take(&mut indices),
+                                key: key.take().map(Box::new),
+                                write: false,
+                            }),
+                            container: alias,
+                        })));
+                        storage = alias;
+                    }
+                    Some(IrContainerElement::Container { .. }) => {}
+                    _ => {
+                        return Err(format!(
+                            "`foreach` over `{name}` in `{}` names a dimension its element does not have",
+                            self.path
+                        ))
+                    }
+                }
+            }
+            let keyed = (selected == 0 || bind.is_some())
+                .then(|| self.cg.model.containers[storage].kind.clone())
+                .filter(|kind| matches!(kind, IrContainerKind::Associative { .. }));
+            if let Some(kind) = keyed {
+                if kind
+                    == (IrContainerKind::Associative {
+                        key: IrAssocKey::Wildcard,
+                    })
+                {
+                    return Err(format!(
+                        "`foreach` over wildcard associative array `{name}` in `{}` has no legal key iterator",
+                        self.path
+                    ));
+                }
+                let storage_key = self.foreach_key_storage(*variable, &kind, &mut declarations)?;
+                match &storage_key {
+                    AssocKeyStorage::Integral(local, ..) => indices.push(foreach_local_read(local)),
+                    AssocKeyStorage::StringObject(object) => {
+                        key = Some(IrStringExpr::Read(*object))
+                    }
+                    AssocKeyStorage::StringLocal(local) => {
+                        key = Some(IrStringExpr::LocalRead(local.clone()))
+                    }
+                }
+                levels.push(Level::Keyed {
+                    storage,
+                    key: storage_key,
+                    bind,
+                    first: format!("_fe_first_{}_{depth}", h.0),
+                });
+                continue;
+            }
+            let local = self.foreach_integral_local(*variable)?;
+            declarations.push(foreach_local_decl(&local));
+            let size = match (&key, selected) {
+                (None, 0) => IrContainerExpr::Size(storage),
+                (None, _) => IrContainerExpr::NestedSize {
+                    container: storage,
+                    indices: indices.clone(),
+                },
+                (Some(key), 1) => IrContainerExpr::NestedSizeString {
+                    container: storage,
+                    key: key.clone(),
+                },
+                (Some(_), _) => {
+                    return Err(format!(
+                        "`foreach` over `{name}` in `{}` selects below a string key and a queue or dynamic array; assign the element to a variable first",
+                        self.path
+                    ))
                 }
             };
-            let size = IrExpr::new(IrExprKind::Container(Box::new(size)), 32, true, None);
-            nested = vec![IrStmt::For {
-                init: vec![IrStmt::Assign {
-                    lhs: local_lhs(local),
-                    rhs: IrExpr::resize_to(loop_index_expr(0), local.width, local.signed),
-                    nba: false,
-                }],
-                cond: common_bin_expr(IrBinOp::Lt, read(), size),
-                incr: vec![IrStmt::Assign {
-                    lhs: local_lhs(local),
-                    rhs: IrExpr::resize_to(
-                        common_bin_expr(IrBinOp::Add, read(), loop_index_expr(1)),
-                        local.width,
-                        local.signed,
-                    ),
-                    nba: false,
-                }],
-                body: nested,
-            }];
+            indices.push(IrExpr::resize_to(foreach_local_read(&local), 32, true));
+            levels.push(Level::Counted(local, size));
+        }
+        if levels.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (mut nested, brk) = self.lower_loop_body(body)?;
+        for level in levels.into_iter().rev() {
+            match level {
+                Level::Counted(local, size) => {
+                    let read = || foreach_local_read(&local);
+                    let size = IrExpr::new(IrExprKind::Container(Box::new(size)), 32, true, None);
+                    nested = vec![IrStmt::For {
+                        init: vec![IrStmt::Assign {
+                            lhs: foreach_local_lhs(&local),
+                            rhs: IrExpr::resize_to(loop_index_expr(0), local.width, local.signed),
+                            nba: false,
+                        }],
+                        cond: common_bin_expr(IrBinOp::Lt, read(), size),
+                        incr: vec![IrStmt::Assign {
+                            lhs: foreach_local_lhs(&local),
+                            rhs: IrExpr::resize_to(
+                                common_bin_expr(IrBinOp::Add, read(), loop_index_expr(1)),
+                                local.width,
+                                local.signed,
+                            ),
+                            nba: false,
+                        }],
+                        body: nested,
+                    }];
+                }
+                Level::Fixed(local, left, right) => {
+                    nested = self.fixed_foreach_loop(&local, left, right, nested);
+                }
+                Level::Keyed {
+                    storage,
+                    key,
+                    bind,
+                    first,
+                } => {
+                    let mut statements = bind.into_iter().collect::<Vec<_>>();
+                    statements.extend(self.keyed_foreach_loop(storage, &key, first, nested));
+                    nested = vec![IrStmt::Block(statements)];
+                }
+            }
         }
         declarations.extend(nested);
         declarations.extend(brk);
         Ok(vec![IrStmt::Block(declarations)])
     }
 
-    pub(super) fn lower_foreach(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
-        // A queue or dynamic-array member of a container record element is
-        // iterated over a copy made when the loop starts. The copy is the
-        // loop's array only: the body names the element again and stages
-        // its own copies.
-        let array_declared = match self.cg.kind(h) {
-            NodeKind::Stmt(StmtKind::Foreach {
-                array: Some(array), ..
-            }) => self.cg.container_globals.contains_key(array),
-            _ => true,
-        };
-        if !array_declared {
-            let expressions = self
-                .cg
-                .node(h)
-                .children
-                .iter()
-                .copied()
-                .filter(|child| matches!(self.cg.kind(*child), NodeKind::Expr(_)))
-                .collect::<Vec<_>>();
-            for expression in expressions {
-                if let Some(mut before) =
-                    self.cg.stage_expression_members(&self.path, expression)?
-                {
-                    let staged = self.cg.staged_element_member(expression);
-                    self.cg.end_element_member_staging();
-                    if let Some(staged) = staged {
-                        before.extend(
-                            self.lower_foreach_loops(h, Some(ContainerInfo { ir: staged }))?,
-                        );
-                        return Ok(vec![IrStmt::Block(before)]);
-                    }
-                }
-            }
+    fn foreach_integral_local(&mut self, variable: NodeId) -> Result<ProcLocalInfo, String> {
+        let local = self.cg.collect_loop_var(&self.path, variable)?;
+        if local.width == 0 {
+            return Err(format!(
+                "`foreach` iterator `{}` in `{}` must be an integral key",
+                self.cg.node(variable).name,
+                self.path
+            ));
         }
-        self.lower_foreach_loops(h, None)
+        Ok(local)
     }
 
-    fn lower_foreach_loops(
+    /// One fixed foreach dimension from `left` to `right` around `body`.
+    fn fixed_foreach_loop(
         &mut self,
-        h: NodeId,
-        staged: Option<ContainerInfo>,
-    ) -> Result<Vec<IrStmt>, String> {
-        let (array, vars, dimensions, body) = match self.cg.kind(h) {
-            NodeKind::Stmt(StmtKind::Foreach {
-                array,
-                vars,
-                dimensions,
-                body,
-            }) => (*array, vars.clone(), dimensions.clone(), *body),
-            _ => unreachable!("non-foreach passed to lower_foreach"),
+        local: &ProcLocalInfo,
+        left: i32,
+        right: i32,
+        mut body: Vec<IrStmt>,
+    ) -> Vec<IrStmt> {
+        let read = || foreach_local_read(local);
+        let init = IrStmt::Assign {
+            lhs: foreach_local_lhs(local),
+            rhs: IrExpr::resize_to(loop_index_expr(left), local.width, local.signed),
+            nba: false,
         };
-        let array = array.ok_or_else(|| {
-            format!(
-                "cannot resolve the array iterated by `foreach` in `{}`",
-                self.path
-            )
-        })?;
-        let mut declarations = Vec::new();
-
-        // A zero-length foreach list is explicitly a no-op in SystemVerilog;
-        // it is useful for generated code and must not accidentally execute
-        // the body once.  The owned DB retains the list length, including
-        // trailing omitted dimensions, so this check is unambiguous.
-        if vars.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let local_decl = |info: &ProcLocalInfo| IrStmt::DeclLocal {
-            name: info.c_name.clone(),
-            width: info.width,
-            signed: info.signed,
-            two_state: info.two_state,
-            init: default_real_local_initializer(info.width),
+        let increasing = left <= right;
+        let done = self.new_label("fe");
+        let at_endpoint = common_bin_expr(IrBinOp::Eq, read(), loop_index_expr(right));
+        let next = common_bin_expr(
+            if increasing {
+                IrBinOp::Add
+            } else {
+                IrBinOp::Sub
+            },
+            read(),
+            loop_index_expr(1),
+        );
+        let incr = IrStmt::Assign {
+            lhs: foreach_local_lhs(local),
+            rhs: IrExpr::resize_to(next, local.width, local.signed),
+            nba: false,
         };
-        let local_read = |info: &ProcLocalInfo| {
-            IrExpr::new(
-                IrExprKind::LocalRead(info.c_name.clone()),
-                info.width,
-                info.signed,
-                None,
-            )
-        };
-        let local_lhs = |info: &ProcLocalInfo| IrLhs::WholeRef {
-            addr: format!("&{}", info.c_name),
-            width: info.width,
-            signed: info.signed,
-            two_state: info.two_state,
-            shortreal: false,
-        };
+        body.push(IrStmt::If {
+            cond: at_endpoint,
+            then_: vec![IrStmt::Goto(done.clone())],
+            els: None,
+            check: IrUniquePriorityCheck::None,
+        });
+        body.push(incr);
+        vec![
+            IrStmt::Block(vec![init, IrStmt::Forever { body }]),
+            IrStmt::Label(done),
+        ]
+    }
 
-        // The owned statement retains the complete source-slot dimensions,
-        // including packed element dimensions and omitted slots. Storage arrays
-        // only retain unpacked coordinates and cannot supply this information.
-        let fixed_dimensions = dimensions.iter().copied().collect::<Option<Vec<_>>>();
-        if let Some(dimensions) = fixed_dimensions {
-            // An omitted iterator does not synthesize a loop. If every source
-            // slot is omitted, there are no traversed dimensions and the body
-            // must not run.
-            if vars.iter().all(Option::is_none) {
-                return Ok(Vec::new());
-            }
-
-            let mut locals = Vec::with_capacity(vars.len());
-            for variable in &vars {
-                let info = variable
-                    .map(|variable| self.cg.collect_loop_var(&self.path, variable))
-                    .transpose()?;
-                if let Some(info) = &info {
-                    if info.width == 0 {
-                        return Err(format!(
-                            "`foreach` iterator `{}` in `{}` must be an integral index",
-                            variable
-                                .map(|id| self.cg.node(id).name.as_str())
-                                .unwrap_or(""),
-                            self.path
-                        ));
-                    }
-                    declarations.push(local_decl(info));
-                }
-                locals.push(info);
-            }
-
-            let (source_body, brk) = self.lower_loop_body(body)?;
-            let mut nested = source_body;
-            for (local, (left, right)) in locals.iter().zip(dimensions.iter()).rev() {
-                let Some(local) = local else {
-                    // An omitted dimension is not traversed and does not
-                    // consume or synthesize an iterator local.
-                    continue;
-                };
-                let read = || local_read(local);
-                let init = IrStmt::Assign {
-                    lhs: local_lhs(local),
-                    rhs: IrExpr::resize_to(loop_index_expr(*left), local.width, local.signed),
-                    nba: false,
-                };
-                let increasing = left <= right;
-                let done = self.new_label("fe");
-                let at_endpoint = common_bin_expr(IrBinOp::Eq, read(), loop_index_expr(*right));
-                let next = common_bin_expr(
-                    if increasing {
-                        IrBinOp::Add
-                    } else {
-                        IrBinOp::Sub
-                    },
-                    read(),
-                    loop_index_expr(1),
-                );
-                let incr = IrStmt::Assign {
-                    lhs: local_lhs(local),
-                    rhs: IrExpr::resize_to(next, local.width, local.signed),
-                    nba: false,
-                };
-                nested.push(IrStmt::If {
-                    cond: at_endpoint,
-                    then_: vec![IrStmt::Goto(done.clone())],
-                    els: None,
-                    check: IrUniquePriorityCheck::None,
-                });
-                nested.push(incr);
-                nested = vec![
-                    IrStmt::Block(vec![init, IrStmt::Forever { body: nested }]),
-                    IrStmt::Label(done),
-                ];
-            }
-            nested.extend(brk);
-            declarations.extend(nested);
-            return Ok(vec![IrStmt::Block(declarations)]);
-        }
-
-        // `foreach (h.a[i])` reads the array of the object `h` names.
-        let selected = self
-            .cg
-            .node(h)
-            .children
-            .iter()
-            .copied()
-            .filter(|child| {
-                matches!(
-                    self.cg.kind(*child),
-                    NodeKind::Expr(ExprKind::HierPath { .. })
-                )
-            })
-            .find_map(|child| self.cg.container_of(child));
-        let Some(container) = staged
-            .or(selected)
-            .or_else(|| self.cg.container_globals.get(&array).cloned())
-            .or_else(|| self.cg.container_of_select(h, array))
-        else {
-            return Err(format!(
-                "`foreach` target `{}` in `{}` is not a supported fixed array or container",
-                self.cg.node(array).name,
-                self.path
-            ));
-        };
-        if vars.len() > 1 {
-            return self.lower_nested_container_foreach(array, container.ir, &vars, body);
-        }
-        if vars.len() != 1 {
-            return Err(format!(
-                "`foreach` over resizable container `{}` in `{}` supports one dimension",
-                self.cg.node(array).name,
-                self.path
-            ));
-        }
-        let Some(variable) = vars[0] else {
-            // The one supplied dimension is omitted, so the loop has no
-            // traversed dimension and its body is not executed.
-            return Ok(Vec::new());
-        };
-        let kind = self.cg.model.containers[container.ir].kind.clone();
-        let is_associative = matches!(&kind, IrContainerKind::Associative { .. });
-        if is_associative
-            && matches!(
-                &kind,
-                IrContainerKind::Associative {
-                    key: IrAssocKey::Wildcard
-                }
-            )
-        {
-            return Err(format!(
-                "`foreach` over wildcard associative array `{}` in `{}` has no legal key iterator",
-                self.cg.node(array).name,
-                self.path
-            ));
-        }
-        if !is_associative {
-            let local = self.cg.collect_loop_var(&self.path, variable)?;
-            if local.width == 0 {
-                return Err(format!(
-                    "`foreach` iterator `{}` in `{}` must be an integral key",
-                    self.cg.node(variable).name,
-                    self.path
-                ));
-            }
-            declarations.push(local_decl(&local));
-            let (source_body, brk) = self.lower_loop_body(body)?;
-            let read = || local_read(&local);
-            if !matches!(
-                &kind,
-                IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-            ) {
-                return Err(format!(
-                    "`foreach` target `{}` in `{}` has an unsupported container kind",
-                    self.cg.node(array).name,
-                    self.path
-                ));
-            }
-            let size = IrExpr::new(
-                IrExprKind::Container(Box::new(IrContainerExpr::Size(container.ir))),
-                32,
-                true,
-                None,
-            );
-            let cond = common_bin_expr(IrBinOp::Lt, read(), size);
-            let next = common_bin_expr(IrBinOp::Add, read(), loop_index_expr(1));
-            let init = IrStmt::Assign {
-                lhs: local_lhs(&local),
-                rhs: IrExpr::resize_to(loop_index_expr(0), local.width, local.signed),
-                nba: false,
-            };
-            let incr = IrStmt::Assign {
-                lhs: local_lhs(&local),
-                rhs: IrExpr::resize_to(next, local.width, local.signed),
-                nba: false,
-            };
-            declarations.push(IrStmt::For {
-                init: vec![init],
-                cond,
-                incr: vec![incr],
-                body: source_body,
-            });
-            declarations.extend(brk);
-            return Ok(vec![IrStmt::Block(declarations)]);
-        }
-
-        // Associative arrays are ordered by key.  The traversal expressions
-        // update the iterator in place and return whether a key was found;
-        // the first/next choice is guarded by a one-bit state local so first
-        // is called once and mutations made by the body are observed by next.
-        enum AssocKeyStorage {
-            Integral(ProcLocalInfo, u32, bool, bool),
-            StringObject(usize),
-            StringLocal(String),
-        }
-        let key_storage = match &kind {
+    /// The key iterator of an associative traversal; a local it needs goes
+    /// to `declarations`.
+    fn foreach_key_storage(
+        &mut self,
+        variable: NodeId,
+        kind: &IrContainerKind,
+        declarations: &mut Vec<IrStmt>,
+    ) -> Result<AssocKeyStorage, String> {
+        Ok(match kind {
             IrContainerKind::Associative {
                 key:
                     IrAssocKey::Integral {
@@ -1411,15 +1308,8 @@ impl EmitCtx<'_, '_> {
                         two_state,
                     },
             } => {
-                let local = self.cg.collect_loop_var(&self.path, variable)?;
-                if local.width == 0 {
-                    return Err(format!(
-                        "`foreach` iterator `{}` in `{}` must be an integral key",
-                        self.cg.node(variable).name,
-                        self.path
-                    ));
-                }
-                declarations.push(local_decl(&local));
+                let local = self.foreach_integral_local(variable)?;
+                declarations.push(foreach_local_decl(&local));
                 AssocKeyStorage::Integral(local, *width, *signed, *two_state)
             }
             IrContainerKind::Associative {
@@ -1450,10 +1340,27 @@ impl EmitCtx<'_, '_> {
                     AssocKeyStorage::StringLocal(name)
                 }
             }
-            _ => unreachable!("associative kind checked above"),
-        };
-        let (source_body, brk) = self.lower_loop_body(body)?;
-        let first_name = format!("_fe_first_{}", h.0);
+            _ => {
+                return Err(format!(
+                    "`foreach` key iterator in `{}` needs an associative array",
+                    self.path
+                ))
+            }
+        })
+    }
+
+    /// Walk the keys of `container` in order around `source_body`. The
+    /// traversal expressions update the iterator in place and return whether
+    /// a key was found; the first/next choice is guarded by a one-bit local
+    /// `first_name` so first is called once and mutations made by the body
+    /// are observed by next.
+    fn keyed_foreach_loop(
+        &mut self,
+        container: usize,
+        key_storage: &AssocKeyStorage,
+        first_name: String,
+        source_body: Vec<IrStmt>,
+    ) -> Vec<IrStmt> {
         let first_info = ProcLocalInfo {
             c_name: first_name.clone(),
             width: 1,
@@ -1461,18 +1368,18 @@ impl EmitCtx<'_, '_> {
             two_state: true,
             static_signal: None,
         };
-        declarations.push(IrStmt::DeclLocal {
-            name: first_name.clone(),
+        let mut statements = vec![IrStmt::DeclLocal {
+            name: first_name,
             width: 1,
             signed: false,
             two_state: true,
             init: Some(Box::new(loop_index_expr(1))),
-        });
+        }];
         let traverse = |direction: IrAssocTraversal| {
-            let operation = match &key_storage {
+            let operation = match key_storage {
                 AssocKeyStorage::Integral(local, key_width, key_signed, key_two_state) => {
                     IrContainerExpr::AssocTraverse {
-                        container: container.ir,
+                        container,
                         direction,
                         key_address: format!("&{}", local.c_name),
                         key_signal: None,
@@ -1482,13 +1389,13 @@ impl EmitCtx<'_, '_> {
                     }
                 }
                 AssocKeyStorage::StringObject(key_object) => IrContainerExpr::AssocTraverseString {
-                    container: container.ir,
+                    container,
                     direction,
                     key_object: *key_object,
                 },
                 AssocKeyStorage::StringLocal(key_name) => {
                     IrContainerExpr::AssocTraverseStringLocal {
-                        container: container.ir,
+                        container,
                         direction,
                         key_name: key_name.clone(),
                     }
@@ -1528,15 +1435,390 @@ impl EmitCtx<'_, '_> {
             els: Some(vec![select_next]),
             check: IrUniquePriorityCheck::None,
         };
-        declarations.push(IrStmt::Forever {
+        statements.push(IrStmt::Forever {
             body: {
                 let mut body = vec![select];
                 body.extend(source_body);
                 body
             },
         });
-        declarations.push(IrStmt::Label(done));
-        declarations.extend(brk);
-        Ok(vec![IrStmt::Block(declarations)])
+        statements.push(IrStmt::Label(done));
+        statements
+    }
+
+    pub(super) fn lower_foreach(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        // A queue or dynamic-array member of a container record element is
+        // iterated over a copy made when the loop starts. The copy is the
+        // loop's array only: the body names the element again and stages
+        // its own copies.
+        let array_declared = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Foreach {
+                array: Some(array), ..
+            }) => self.cg.container_globals.contains_key(array),
+            _ => true,
+        };
+        let expressions = self
+            .cg
+            .node(h)
+            .children
+            .iter()
+            .copied()
+            .filter(|child| matches!(self.cg.kind(*child), NodeKind::Expr(_)))
+            .collect::<Vec<_>>();
+        // `foreach (aa["k"][j])`: the frontend's array is the variable, and
+        // the selected element is the loop's array.
+        let nested_element = expressions
+            .iter()
+            .any(|expression| self.cg.is_nested_element(*expression));
+        if !array_declared || nested_element {
+            for expression in expressions {
+                if let Some((mut before, _)) =
+                    self.cg.stage_expression_members(&self.path, expression)?
+                {
+                    let staged = self
+                        .cg
+                        .staged_element_member(expression)
+                        .or_else(|| self.cg.staged_nested_element(expression));
+                    self.cg.end_element_member_staging();
+                    if let Some(staged) = staged {
+                        before.extend(
+                            self.lower_foreach_loops(h, Some(ContainerInfo { ir: staged }))?,
+                        );
+                        return Ok(vec![IrStmt::Block(before)]);
+                    }
+                }
+            }
+        }
+        self.lower_foreach_loops(h, None)
+    }
+
+    /// `foreach (s[i])` over a string visits each byte index (SV 6.16: a
+    /// string is an ordered collection of characters).
+    fn lower_string_foreach(
+        &mut self,
+        h: NodeId,
+        array: NodeId,
+        vars: &[Option<NodeId>],
+        body: NodeId,
+    ) -> Result<Option<Vec<IrStmt>>, String> {
+        let is_string = matches!(
+            self.cg.kind(array),
+            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } if ty.kind == "string"
+        );
+        let ([Some(variable)], true) = (vars, is_string) else {
+            return Ok(None);
+        };
+        let source = self
+            .cg
+            .node(h)
+            .children
+            .iter()
+            .copied()
+            .find(|child| matches!(self.cg.kind(*child), NodeKind::Expr(_)))
+            .unwrap_or(array);
+        let value = self.cg.lower_string(&self.path, source)?;
+        let local = self.cg.collect_loop_var(&self.path, *variable)?;
+        let (source_body, brk) = self.lower_loop_body(body)?;
+        let read = || {
+            IrExpr::new(
+                IrExprKind::LocalRead(local.c_name.clone()),
+                local.width,
+                local.signed,
+                None,
+            )
+        };
+        let lhs = || IrLhs::WholeRef {
+            addr: format!("&{}", local.c_name),
+            width: local.width,
+            signed: local.signed,
+            two_state: local.two_state,
+            shortreal: false,
+        };
+        let length = crate::sim::codegen::lowering::objects::object_query(
+            crate::sim::ir::IrObjectQuery::StringLen(value),
+            32,
+            true,
+        );
+        let mut statements = vec![
+            IrStmt::DeclLocal {
+                name: local.c_name.clone(),
+                width: local.width,
+                signed: local.signed,
+                two_state: local.two_state,
+                init: default_real_local_initializer(local.width),
+            },
+            IrStmt::For {
+                init: vec![IrStmt::Assign {
+                    lhs: lhs(),
+                    rhs: IrExpr::resize_to(loop_index_expr(0), local.width, local.signed),
+                    nba: false,
+                }],
+                cond: common_bin_expr(IrBinOp::Lt, read(), length),
+                incr: vec![IrStmt::Assign {
+                    lhs: lhs(),
+                    rhs: IrExpr::resize_to(
+                        common_bin_expr(IrBinOp::Add, read(), loop_index_expr(1)),
+                        local.width,
+                        local.signed,
+                    ),
+                    nba: false,
+                }],
+                body: source_body,
+            },
+        ];
+        statements.extend(brk);
+        Ok(Some(vec![IrStmt::Block(statements)]))
+    }
+
+    fn lower_foreach_loops(
+        &mut self,
+        h: NodeId,
+        staged: Option<ContainerInfo>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let (array, vars, dimensions, body) = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Foreach {
+                array,
+                vars,
+                dimensions,
+                body,
+            }) => (*array, vars.clone(), dimensions.clone(), *body),
+            _ => unreachable!("non-foreach passed to lower_foreach"),
+        };
+        let array = array.ok_or_else(|| {
+            format!(
+                "cannot resolve the array iterated by `foreach` in `{}`",
+                self.path
+            )
+        })?;
+        let mut declarations = Vec::new();
+
+        // A zero-length foreach list is explicitly a no-op in SystemVerilog;
+        // it is useful for generated code and must not accidentally execute
+        // the body once.  The owned DB retains the list length, including
+        // trailing omitted dimensions, so this check is unambiguous.
+        if vars.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // The owned statement retains the complete source-slot dimensions,
+        // including packed element dimensions and omitted slots. Storage arrays
+        // only retain unpacked coordinates and cannot supply this information.
+        let fixed_dimensions = dimensions.iter().copied().collect::<Option<Vec<_>>>();
+        if let Some(dimensions) = fixed_dimensions {
+            // An omitted iterator does not synthesize a loop. If every source
+            // slot is omitted, there are no traversed dimensions and the body
+            // must not run.
+            if vars.iter().all(Option::is_none) {
+                return Ok(Vec::new());
+            }
+
+            let mut locals = Vec::with_capacity(vars.len());
+            for variable in &vars {
+                let info = variable
+                    .map(|variable| self.cg.collect_loop_var(&self.path, variable))
+                    .transpose()?;
+                if let Some(info) = &info {
+                    if info.width == 0 {
+                        return Err(format!(
+                            "`foreach` iterator `{}` in `{}` must be an integral index",
+                            variable
+                                .map(|id| self.cg.node(id).name.as_str())
+                                .unwrap_or(""),
+                            self.path
+                        ));
+                    }
+                    declarations.push(foreach_local_decl(info));
+                }
+                locals.push(info);
+            }
+
+            let (source_body, brk) = self.lower_loop_body(body)?;
+            let mut nested = source_body;
+            for (local, (left, right)) in locals.iter().zip(dimensions.iter()).rev() {
+                // An omitted dimension is not traversed and does not consume
+                // or synthesize an iterator local.
+                if let Some(local) = local {
+                    nested = self.fixed_foreach_loop(local, *left, *right, nested);
+                }
+            }
+            nested.extend(brk);
+            declarations.extend(nested);
+            return Ok(vec![IrStmt::Block(declarations)]);
+        }
+
+        // `foreach (h.a[i])` reads the array of the object `h` names.
+        let paths: Vec<NodeId> = self
+            .cg
+            .node(h)
+            .children
+            .iter()
+            .copied()
+            .filter(|child| {
+                matches!(
+                    self.cg.kind(*child),
+                    NodeKind::Expr(ExprKind::HierPath { .. } | ExprKind::MemberSelect { .. })
+                )
+            })
+            .collect();
+        let selected = paths.iter().find_map(|child| self.cg.container_of(*child));
+        // The computed handles of the array: at each bound check of an
+        // indexed traversal, once before a keyed or nested one.
+        let mut handles = Vec::new();
+        let mut effects = false;
+        for path in paths {
+            if let Some(before) = self.cg.enter_receiver_root(path) {
+                self.cg.leave_receiver_root(path, &before);
+                handles.extend(before);
+                effects |= !self.cg.side_effect_free(path);
+            }
+        }
+        let Some(container) = staged
+            .or(selected)
+            .or_else(|| self.cg.container_globals.get(&array).cloned())
+            .or_else(|| self.cg.container_of_select(h, array))
+        else {
+            if let Some(statements) = self.lower_string_foreach(h, array, &vars, body)? {
+                return Ok(statements);
+            }
+            return Err(format!(
+                "`foreach` target `{}` in `{}` is not a supported fixed array or container",
+                self.cg.node(array).name,
+                self.path
+            ));
+        };
+        // Every bound check of these traversals would have to call again.
+        if effects
+            && (vars.len() > 1
+                || matches!(
+                    self.cg.model.containers[container.ir].kind,
+                    IrContainerKind::Associative { .. }
+                ))
+        {
+            return Err(format!(
+                "`foreach` over `{}` in `{}` calls a subroutine for its handle; only an indexed one-dimensional traversal supports that; assign the handle to a variable first",
+                self.cg.node(array).name,
+                self.path
+            ));
+        }
+        if vars.len() > 1 {
+            let mut statements = handles;
+            statements.extend(self.lower_nested_container_foreach(
+                h,
+                array,
+                container.ir,
+                &vars,
+                &dimensions,
+                body,
+            )?);
+            return Ok(vec![IrStmt::Block(statements)]);
+        }
+        if vars.len() != 1 {
+            return Err(format!(
+                "`foreach` over resizable container `{}` in `{}` supports one dimension",
+                self.cg.node(array).name,
+                self.path
+            ));
+        }
+        let Some(variable) = vars[0] else {
+            // The one supplied dimension is omitted, so the loop has no
+            // traversed dimension and its body is not executed.
+            return Ok(Vec::new());
+        };
+        let kind = self.cg.model.containers[container.ir].kind.clone();
+        let is_associative = matches!(&kind, IrContainerKind::Associative { .. });
+        if is_associative
+            && matches!(
+                &kind,
+                IrContainerKind::Associative {
+                    key: IrAssocKey::Wildcard
+                }
+            )
+        {
+            return Err(format!(
+                "`foreach` over wildcard associative array `{}` in `{}` has no legal key iterator",
+                self.cg.node(array).name,
+                self.path
+            ));
+        }
+        if !is_associative {
+            let local = self.cg.collect_loop_var(&self.path, variable)?;
+            if local.width == 0 {
+                return Err(format!(
+                    "`foreach` iterator `{}` in `{}` must be an integral key",
+                    self.cg.node(variable).name,
+                    self.path
+                ));
+            }
+            declarations.push(foreach_local_decl(&local));
+            let (source_body, brk) = self.lower_loop_body(body)?;
+            let read = || foreach_local_read(&local);
+            if !matches!(
+                &kind,
+                IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+            ) {
+                return Err(format!(
+                    "`foreach` target `{}` in `{}` has an unsupported container kind",
+                    self.cg.node(array).name,
+                    self.path
+                ));
+            }
+            let size = IrExpr::new(
+                IrExprKind::Container(Box::new(IrContainerExpr::Size(container.ir))),
+                32,
+                true,
+                None,
+            );
+            let mut cond = common_bin_expr(IrBinOp::Lt, read(), size);
+            if !handles.is_empty() {
+                let (width, signed) = (cond.width, cond.signed);
+                cond = IrExpr::new(
+                    IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                        statements: handles,
+                        value: cond,
+                    })),
+                    width,
+                    signed,
+                    None,
+                );
+            }
+            let next = common_bin_expr(IrBinOp::Add, read(), loop_index_expr(1));
+            let init = IrStmt::Assign {
+                lhs: foreach_local_lhs(&local),
+                rhs: IrExpr::resize_to(loop_index_expr(0), local.width, local.signed),
+                nba: false,
+            };
+            let incr = IrStmt::Assign {
+                lhs: foreach_local_lhs(&local),
+                rhs: IrExpr::resize_to(next, local.width, local.signed),
+                nba: false,
+            };
+            declarations.push(IrStmt::For {
+                init: vec![init],
+                cond,
+                incr: vec![incr],
+                body: source_body,
+            });
+            declarations.extend(brk);
+            return Ok(vec![IrStmt::Block(declarations)]);
+        }
+
+        declarations.extend(handles);
+        if let IrContainerKind::Associative { .. } = kind {
+            let key_storage = self.foreach_key_storage(variable, &kind, &mut declarations)?;
+            let (source_body, brk) = self.lower_loop_body(body)?;
+            declarations.extend(self.keyed_foreach_loop(
+                container.ir,
+                &key_storage,
+                format!("_fe_first_{}", h.0),
+                source_body,
+            ));
+            declarations.extend(brk);
+            return Ok(vec![IrStmt::Block(declarations)]);
+        }
+        Err(format!(
+            "`foreach` target `{}` in `{}` has an unsupported container kind",
+            self.cg.node(array).name,
+            self.path
+        ))
     }
 }

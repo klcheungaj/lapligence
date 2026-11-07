@@ -636,68 +636,53 @@ roots for forked automatic block records, strings and handles.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 
-**Status:** open; SIM-006 implements containers as subroutine formals,
-results and locals, procedural-block locals, class properties, record and
-handle elements and nested containers.
+**Status:** open for the forms below; every other container form at a
+subroutine, object or nesting boundary works. See
+[sim_features](sim_features.md).
 
 ### Symptom
 
-These legal forms reject with explicit diagnostics: a `ref` container formal
-whose actual is not a container variable of the formal's type; an
-instance container property selected through a handle that is not a
-variable, formal or handle property (`list[i].q`, `f().q`), or outside a
-procedural statement (a continuous assignment, for instance); a
-container-result call used other than as a whole assignment source or a
-statement (`f()[i]`, `f().size()`); a container argument in expression
-position that is neither a variable of the formal's type nor a packed/real
-assignment pattern; event controls and monitors on subroutine or object
-containers; methods of a nested container element outside assignment, call
-and system-task statements (`if (q[i].pop_front())`, `return q[i].sum()`;
-inside those statements the element is staged whole, and `q[i].size()` and
-`$size(q[i])` work everywhere); a nested element passed whole as a subroutine
-argument outside those statements or to an output, inout or `ref` formal
-(input formals of calls in them work, `sim_006/nested_element_arguments`);
-a select into a queue or dynamic array nested in a
-string-keyed associative array element (`sq["k"][1]`); one statement that
-changes two nested elements of one container
-(`sq["b"].push_back(sq["a"].pop_front())`); a nested element written from an
-associative variable; `foreach` with an omitted slot over a container of containers;
-`foreach` with several loop variables whose outer dimension is associative
-(`foreach (ad[k, j])` over `int ad[int][]`); any element access of an
-associative array nested in a queue, dynamic or associative array element
-(`int aa[string][int]`, `int qa[$][int]`: "an associative array nested in
-... has no element value form", FIN-001 F05-11) and the array queries of
-such a nested associative element (`$size(aa[1])`, F10-15); and
-compound or nonblocking writes to a record element. Reads of a
-missing nested associative element return the default without the SV 7.8.6
-warning.
+These legal forms reject with explicit diagnostics:
+
+- a class property read outside a procedural statement (`assign n = h.q.size()`);
+- a class property selected through a computed handle in a `wait`, whose
+  condition is evaluated again after the statement that read the handle ended;
+- `foreach` over a keyed or nested array whose handle comes from a call;
+- `foreach` with a dynamic level below a string key and a queue or dynamic
+  array (`foreach (s[k, i, j])` over `int s[string][$][$]`);
+- a `ref` actual that is a queue or dynamic array nested in a container
+  element, for a task or function formal, `const` or not, reported at the
+  actual (a staged copy would miss a change made through another path), and a
+  `ref` actual that is a queue or dynamic-array member of a container record
+  element;
+- one statement that changes two nested queues or dynamic arrays of one
+  container selected by selectors that are not provably distinct
+  (`sq[a].push_back(sq[b].pop_front())`); constants and associative elements
+  work;
+- a `default:` key in a pattern for a nested container element;
+- a nested queue or dynamic array selected with side effects
+  (`qq[f()].push_back(1)`), which is located twice,
+  and a `ref` formal named in a plain `fork`/`join`.
 
 ### Cause
 
-Container operations name their storage by a container index: model storage
-by a global, activation and object storage by a frame binding. A property
-selected through a plain handle read is an alias of the object's storage
-that re-reads the handle at each use (SIM-011); a handle computed by an
-element select or a call, a nested element and a call result have no binding
-the operation can name without an addressed-container operand; references
-need retained element cells and fork branches need capture pins. Nested
-storage is a dynamic-array value, so a statement stages a nested element it
-uses whole in a lexical queue or dynamic array and writes it back afterwards;
-each staged element costs a copy in and, when changed, a copy out, and
-statements without a statement-level staging point (conditions, `return`)
-have no place for that copy.
+Container operations name their storage by a container index. A property
+selected through a plain handle read is an alias that re-reads the handle at
+each use (SIM-011). A nested queue or dynamic array is a dynamic-array value,
+so a statement stages it whole in a lexical container, copied in before and
+out after. A nested associative array is bound in place to a lexical alias
+that pins it for the statement. A queue or dynamic array therefore has no
+reference a task or function could hold; nested associative arrays stay true
+references.
 
 ### Intended direction
 
-An addressed-container operand (receiver or parent container plus index
-path) for container statements and queries, which would also carry
-receivers computed by element selects or calls, retained element cells for
-`ref` (SIM-008), fork capture pins (SIM-010).
+Retained element cells for `ref` to nested queues and dynamic arrays
+(SIM-008), fork capture pins (SIM-010).
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`,
-`sim_019/neg_nested_associative.sv`.
+`tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
 ## Cell selects inside unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
 

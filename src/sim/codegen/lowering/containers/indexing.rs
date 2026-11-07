@@ -292,6 +292,13 @@ impl<'a> Codegen<'a> {
         if let Some(ir) = self.multidimensional_element(node) {
             return Some((ContainerInfo { ir }, node));
         }
+        // `sq[k][i]`: an element of the staged copy of `sq[k]`.
+        if let Some((ir, tail)) = self.select_below_staged_element(node) {
+            return match tail.as_slice() {
+                [index] => Some((ContainerInfo { ir }, *index)),
+                _ => None,
+            };
+        }
         let selected = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
                 .container_of_select(node, *base)
@@ -489,18 +496,25 @@ impl<'a> Codegen<'a> {
         if let Some(ir) = self.staged_nested_element(node) {
             return Some(ContainerInfo { ir });
         }
+        if let Some(ir) = self.call_result_containers.get(&node) {
+            return Some(ContainerInfo { ir: *ir });
+        }
         match self.kind(node) {
-            NodeKind::Array { .. }
-            | NodeKind::NamedEvent
-            | NodeKind::FuncArg { .. }
-            | NodeKind::FuncTask { .. } => self.container_declaration(node),
-            NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
-                if self.receiver_containers.contains_key(&node) =>
-            {
-                Some(ContainerInfo {
-                    ir: self.receiver_containers[&node],
-                })
+            // A subroutine's implicit result variable names its result.
+            NodeKind::Array { .. } => self.container_declaration(node).or_else(|| {
+                let parent = self.node(node).parent()?;
+                (matches!(self.kind(parent), NodeKind::FuncTask { .. })
+                    && self.node(parent).name == self.node(node).name)
+                    .then(|| self.container_declaration(parent))?
+            }),
+            NodeKind::NamedEvent | NodeKind::FuncArg { .. } | NodeKind::FuncTask { .. } => {
+                self.container_declaration(node)
             }
+            NodeKind::Expr(
+                ExprKind::Ref { .. } | ExprKind::HierPath { .. } | ExprKind::MemberSelect { .. },
+            ) if self.receiver_containers.contains_key(&node) => Some(ContainerInfo {
+                ir: self.receiver_containers[&node],
+            }),
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) => self.container_declaration(*target),
@@ -508,6 +522,8 @@ impl<'a> Codegen<'a> {
                 .first()
                 .copied()
                 .flatten()
+                // `this.q`: the enclosing method's property.
+                .filter(|target| self.node(*target).name != "this")
                 .or_else(|| refs.last().copied().flatten())
                 .and_then(|target| self.container_declaration(target))
                 .or_else(|| self.static_property_container(refs))
@@ -569,21 +585,6 @@ impl<'a> Codegen<'a> {
     ) -> Option<String> {
         let container = self.container_of(base)?;
         let mut element = &self.model.containers[container.ir].element;
-        // Only whole uses of such an element are staged (`sq[k].push_back(x)`,
-        // `sq[k] = src`); a select into it has no element path.
-        if matches!(
-            self.model.containers[container.ir].kind,
-            IrContainerKind::Associative {
-                key: IrAssocKey::String
-            }
-        ) && matches!(element, IrContainerElement::Container { kind, .. }
-            if !kind.to_ascii_lowercase().contains("assoc"))
-        {
-            return Some(format!(
-                "elements of a queue or dynamic array nested in string-keyed associative array `{}` in `{path}` are not supported; copy the element into a queue or dynamic-array variable first",
-                self.node(base).name
-            ));
-        }
         while let IrContainerElement::Container {
             kind,
             element: next,
@@ -592,7 +593,7 @@ impl<'a> Codegen<'a> {
         {
             if kind.to_ascii_lowercase().contains("assoc") {
                 return Some(format!(
-                    "elements of `{}` in `{path}` are not supported: an associative array nested in a queue, dynamic or associative array element has no element value form",
+                    "elements of `{}` in `{path}` are not supported here: a statement reaches one associative array nested in container elements, and this one sits below another or outside a procedural statement",
                     self.node(base).name
                 ));
             }
@@ -635,6 +636,17 @@ impl<'a> Codegen<'a> {
         select: NodeId,
         base: NodeId,
     ) -> Option<ContainerInfo> {
+        // An element of a call's result: the call is a child of the select.
+        if !self.call_result_containers.is_empty() {
+            if let Some(ir) = self
+                .node(select)
+                .children
+                .iter()
+                .find_map(|child| self.call_result_containers.get(child))
+            {
+                return Some(ContainerInfo { ir: *ir });
+            }
+        }
         // An element of a class container property selected through an
         // explicit handle: the select's base names only the declaration,
         // its path expression child names the receiver (SIM-011).
@@ -733,6 +745,112 @@ impl<'a> Codegen<'a> {
             .then(|| self.node(target).name.clone())
     }
 
+    /// Start lowering expression `node`, a call or select: `true` when the
+    /// caller must lower it again and close with `leave_call_operands`, which
+    /// runs the statements that build its operands where it is evaluated. A
+    /// container result used as a method receiver or select base is one.
+    pub(in super::super) fn enter_call_operands(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<CallOperands>, String> {
+        let operand = match self.kind(node) {
+            NodeKind::FuncCall { .. } => None,
+            NodeKind::MethodCall { receiver, .. } => *receiver,
+            NodeKind::Expr(
+                ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. },
+            ) => {
+                // The select's base names the function; its call is a child.
+                let call = self.container_result_base(*base).and_then(|_| {
+                    self.node(node)
+                        .children
+                        .iter()
+                        .copied()
+                        .find(|child| self.select_on_call(*child))
+                });
+                if call.is_none() {
+                    return Ok(None);
+                }
+                call
+            }
+            _ => return Ok(None),
+        };
+        if self.call_operand_scope == Some(node) {
+            return Ok(None);
+        }
+        let saved = CallOperands {
+            scope: self.call_operand_scope.replace(node),
+            prelude: self.call_operand_prelude.replace(Vec::new()),
+            result: None,
+        };
+        let mut saved = saved;
+        if let Some(call) = operand {
+            match self.call_result_temporary(call) {
+                Ok(Some(temporary)) => {
+                    let build = self.lower_container_into(path, call, temporary, call);
+                    let build = match build {
+                        Ok(build) => build,
+                        Err(error) => {
+                            self.leave_call_operands(saved);
+                            return Err(error);
+                        }
+                    };
+                    if let Some(prelude) = self.call_operand_prelude.as_mut() {
+                        prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                            temporary,
+                        ))));
+                        prelude.push(build);
+                    }
+                    self.call_result_containers.insert(call, temporary);
+                    saved.result = Some(call);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.leave_call_operands(saved);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(Some(saved))
+    }
+
+    /// Whether select base `base` is a call, not a variable.
+    fn select_on_call(&self, base: NodeId) -> bool {
+        matches!(
+            self.kind(base),
+            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. }
+        )
+    }
+
+    /// Close `enter_call_operands`, returning the statements to run first.
+    pub(in super::super) fn leave_call_operands(&mut self, saved: CallOperands) -> Vec<IrStmt> {
+        if let Some(call) = saved.result {
+            self.call_result_containers.remove(&call);
+        }
+        self.call_operand_scope = saved.scope;
+        std::mem::replace(&mut self.call_operand_prelude, saved.prelude).unwrap_or_default()
+    }
+
+    /// A lexical container for the result of `call`, when it yields one.
+    fn call_result_temporary(&mut self, call: NodeId) -> Result<Option<usize>, String> {
+        let callee = match self.kind(call) {
+            NodeKind::FuncCall { name, callee, .. } => {
+                let (name, callee) = (name.clone(), *callee);
+                self.resolve_callee_env(self.inst, &name, false, callee)?.0
+            }
+            NodeKind::MethodCall {
+                callee: Some(callee),
+                ..
+            } => *callee,
+            _ => return Ok(None),
+        };
+        if !self.container_return(callee) {
+            return Ok(None);
+        }
+        let result = self.container_formal_type(callee)?;
+        Ok(Some(self.container_temporary_like(result)))
+    }
+
     /// The name of a per-object container property selected through an
     /// explicit handle (`h.q`), which only `this`-relative accesses inside
     /// the class's own methods can address.
@@ -771,6 +889,17 @@ impl<'a> Codegen<'a> {
         // A staged nested element is a whole container of its own.
         if self.staged_nested_element(node).is_some() {
             return None;
+        }
+        // `sq[k][i]`: `sq[k]` is a staged copy; the rest selects inside it.
+        if let Some((staged, tail)) = self.select_below_staged_element(node) {
+            // A string key is no index path (`associative_string_element`).
+            return (!matches!(
+                self.model.containers[staged].kind,
+                IrContainerKind::Associative {
+                    key: IrAssocKey::String
+                }
+            ))
+            .then_some((staged, tail));
         }
         let (base, indices) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
@@ -814,7 +943,9 @@ impl<'a> Codegen<'a> {
         }
         // The frontend flattens `d[i][b]` into one select; indices beyond the
         // container depth select bits of a packed element.
-        if indices.len() > self.container_index_depth(container.ir) {
+        if indices.len() > self.container_index_depth(container.ir)
+            || self.crosses_associative(container.ir, indices.len())
+        {
             return None;
         }
         match self.model.containers[container.ir].kind {
@@ -848,6 +979,56 @@ impl<'a> Codegen<'a> {
         .then_some((container.ir, key))
     }
 
+    /// The staged nested element a flattened select sits below and the
+    /// indices left inside it: `sq[k][i]` keeps `sq[k]` as a child.
+    pub(in crate::sim::codegen) fn select_below_staged_element(
+        &self,
+        node: NodeId,
+    ) -> Option<(usize, Vec<NodeId>)> {
+        if self.staged_nested_elements.is_empty() {
+            return None;
+        }
+        let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) else {
+            return None;
+        };
+        let (staged, depth) = self.staged_select_below(node)?;
+        let tail = indices.get(depth..)?.to_vec();
+        (!self.crosses_associative(staged, tail.len())).then_some((staged, tail))
+    }
+
+    /// The nearest staged element in the chain of outer selects a flattened
+    /// select keeps as children, and how many indices it covers.
+    fn staged_select_below(&self, node: NodeId) -> Option<(usize, usize)> {
+        let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) else {
+            return None;
+        };
+        self.node(node)
+            .children
+            .iter()
+            .filter(|child| !indices.contains(child))
+            .find_map(|child| {
+                let Some(staged) = self.staged_nested_element(*child) else {
+                    return self.staged_select_below(*child);
+                };
+                let depth = match self.kind(*child) {
+                    NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => indices.len(),
+                    _ => 1,
+                };
+                Some((staged, depth))
+            })
+    }
+
+    /// Whether `depth` indices into `container` select through an associative
+    /// array nested in an element, which has no multi-index element path.
+    fn crosses_associative(&self, container: usize, depth: usize) -> bool {
+        (1..depth).any(|level| {
+            matches!(
+                self.container_element_type(container, level),
+                Some(IrContainerElement::Container { key: Some(_), .. })
+            )
+        })
+    }
+
     pub(in super::super) fn associative_string_element(
         &self,
         node: NodeId,
@@ -857,6 +1038,17 @@ impl<'a> Codegen<'a> {
         }
         if self.staged_nested_element(node).is_some() {
             return None;
+        }
+        if let Some((staged, tail)) = self.select_below_staged_element(node) {
+            return match (tail.as_slice(), &self.model.containers[staged].kind) {
+                (
+                    [key],
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String,
+                    },
+                ) => Some((staged, *key)),
+                _ => None,
+            };
         }
         let (base, key) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),

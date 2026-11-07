@@ -185,7 +185,7 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
             super::objects::render_indices(ctx, indices)?,
             indices.len()
         ),
-        IrContainerExpr::NestedSize { .. } => {
+        IrContainerExpr::NestedSize { .. } | IrContainerExpr::NestedSizeString { .. } => {
             return Err("nested container sizes require whole-model ownership emission".into())
         }
         IrContainerExpr::GetNestedReal { container, indices } => format!(
@@ -345,6 +345,8 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::ContainerToValueItem { .. }
         | IrContainerStmt::FixedToValueItem { .. }
         | IrContainerStmt::RealColumnAssign { .. }
+        | IrContainerStmt::BindElement { .. }
+        | IrContainerStmt::TouchContents(_)
         | IrContainerStmt::CopyRange { .. }
         | IrContainerStmt::Merge { .. }
         | IrContainerStmt::Nonblocking { .. }
@@ -1361,6 +1363,31 @@ pub(super) fn value_descriptor_tables(
                     )
                 })?;
                 ("LLG_VALUE_FIXED_ARRAY", 0, 0, 0, 0, 0, count)
+            }
+            IrContainerElement::Container {
+                type_id,
+                key: Some(key),
+                ..
+            } => {
+                // The descriptor's packed fields give the integral key.
+                let (width, signed, two_state, string) = match key {
+                    IrAssocKey::Wildcard => (0, false, false, false),
+                    IrAssocKey::Integral {
+                        width,
+                        signed,
+                        two_state,
+                    } => (*width, *signed, *two_state, false),
+                    IrAssocKey::String => (0, false, false, true),
+                };
+                (
+                    "LLG_VALUE_ASSOC",
+                    nominal_type_id(*type_id, container_name)?,
+                    width,
+                    u8::from(signed),
+                    u8::from(two_state),
+                    0,
+                    usize::from(string),
+                )
             }
             IrContainerElement::Container { type_id, .. } => (
                 "LLG_VALUE_CONTAINER",
