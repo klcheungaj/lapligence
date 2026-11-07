@@ -485,9 +485,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   combinations remain restricted; automatic
   procedural-block strings and handles share the fork limit of block records
   ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage));
-  a class handle declared in a `join_none` branch of a function belongs to the
-  branch, while records, strings and class containers stay limited there
-  ([known issue](known_issues.md#declarations-and-class-containers-in-a-branch-of-a-function)).
+  class handles and records declared in a `join_none` branch of a function
+  belong to the branch and its receiver's properties are reached through the
+  captured receiver, while strings declared there stay limited
+  ([known issue](known_issues.md#strings-declared-in-a-branch-of-a-function)).
   SV §6.16 **[SV-2005]**.
 - 🟨 **Events** — Scalar/fixed-array declarations, indexed/hierarchical access,
   null/default handles, reassignment and task aliases retain event identity.

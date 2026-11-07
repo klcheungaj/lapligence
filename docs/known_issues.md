@@ -2494,43 +2494,34 @@ cost matters; a `dlltool` import library if MinGW DLLs are needed.
 `tests/fixtures/sim/feature_completion/adv_018/crossing.sv`;
 `tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv`.
 
-## Declarations and class containers in a branch of a function
+## Strings declared in a branch of a function
 
 **Status:** a `fork`-`join_none` branch of a function runs after the function
-returned, so it has no activation of that function to name. Class handles
-declared in the branch are branch locals and formals are captured. Three forms
-remain.
+returned, so it has no activation of that function to name. Class handles and
+records declared in the branch are branch locals, formals are captured, and
+instance properties of `this` (containers and records included) are reached
+through the captured receiver. One form remains.
 
 ### Symptom
 
-- A record with string, handle or container members declared in the branch
-  (`packed type of signal ... has no resolved width`).
-- A string declared in the branch keeps one object per declaration, so two
-  activations share it.
-- A container property of `this` read in the branch (`class container property
-  used outside its class methods`).
+A string declared in the branch is rejected (`string/class signals are not
+supported`).
 
 ### Cause
 
-Block-level native storage is a global per declaration, chosen for procedural
-blocks with one activation. Container properties are reached through `_this`,
-which the emitted branch does not have; only the receiver capture exists.
+Block-level string storage is a global per declaration, chosen for procedural
+blocks with one activation; the detached branch has no lexical string local.
 
 ### Direction
 
-Allocate branch-local native storage in the branch frame and let the container
-access read the captured receiver. The record half depends on the record
-transport rework on `sc/record-leaf-threshold`.
+Declare the string as a branch-local native value, as records are.
 
 ### Reproduce
 
-`uvm_component::m_apply_verbosity_settings` of UVM 1.1d and 1.2, or
-
 ```systemverilog
 class c;
-  int recs[$];
-  function void f();
-    fork begin int v = recs[0]; #1 $display(v); end join_none
+  function void f(int n);
+    fork begin string s = $sformatf("v%0d", n); #1 $display(s); end join_none
   endfunction
 endclass
 ```
