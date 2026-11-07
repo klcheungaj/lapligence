@@ -71,8 +71,8 @@ impl Codegen<'_> {
         };
         let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
         let known_false = cmp_expr_ir(IrBinOp::CaseEq, read.clone(), const_bits_expr(width, false));
-        let take_true = self.native_assign_into(path, target, descriptor, if_true, nba)?;
-        let take_false = self.native_assign_into(path, target, descriptor, if_false, nba)?;
+        let take_true = self.native_arm_into(path, target, descriptor, if_true, nba)?;
+        let take_false = self.native_arm_into(path, target, descriptor, if_false, nba)?;
         let merge =
             self.native_conditional_merge(path, target, descriptor, if_true, if_false, nba)?;
         // `if` takes its else branch for an unknown condition, so the inner
@@ -114,14 +114,31 @@ impl Codegen<'_> {
             .native_layout(arm)?
             .ok_or("native conditional arm has no record layout")?;
         statements.push(IrStmt::NativeValueDeclare(temporary));
-        statements.push(self.native_assign_into(
-            path,
-            &endpoint,
-            &layout.descriptor,
-            arm,
-            false,
-        )?);
+        statements.push(self.native_arm_into(path, &endpoint, &layout.descriptor, arm, false)?);
         Ok(endpoint)
+    }
+
+    /// Assign one arm. An arm that runs only when taken stages the nested
+    /// elements it reads itself: the statement could not stage them, since a
+    /// skipped arm must not locate a missing entry.
+    fn native_arm_into(
+        &mut self,
+        path: &str,
+        target: &NativeEndpoint,
+        descriptor: &TypeDescriptor,
+        arm: NodeId,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let staged = self.stage_expression_members(path, arm)?;
+        let assign = self.native_assign_into(path, target, descriptor, arm, nba);
+        let Some((before, after)) = staged else {
+            return assign;
+        };
+        self.end_element_member_staging();
+        let mut statements = before;
+        statements.push(assign?);
+        statements.extend(after);
+        Ok(IrStmt::Block(statements))
     }
 
     fn native_conditional_merge(

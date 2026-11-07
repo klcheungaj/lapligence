@@ -347,6 +347,14 @@ fn nested_associative_handles_survive_rewrites() {
     sim_cli::run_case_backend_parity(SUITE, "nested_associative_handles", expected, &[], &[]);
 }
 
+/// A call in the value sees the array as the call left it: an input actual
+/// is read, never written back; a conditional arm stages what it reads.
+#[test]
+fn a_write_keeps_what_the_called_value_did_to_the_array() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_006/nested_write_arms.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_write_arms", expected, &[], &[]);
+}
+
 #[test]
 fn a_task_reference_to_a_nested_queue_is_explicit() {
     sim_cli::reject_case(

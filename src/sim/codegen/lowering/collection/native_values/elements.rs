@@ -1314,9 +1314,9 @@ impl Codegen<'_> {
                     self.collect_staged_members(child, false, out, nested);
                 }
             }
-            // A member passed to a subroutine may be an output, inout or
-            // ref actual, so it is copied back after the call. A nested
-            // element passed whole to an input formal is read once.
+            // A member passed to an output, inout or ref formal is copied
+            // back after the call. A nested element passed whole to an
+            // input formal is read once.
             NodeKind::FuncCall {
                 callee, is_task, ..
             } => {
@@ -1373,7 +1373,10 @@ impl Codegen<'_> {
                             }
                         }
                     }
-                    self.collect_staged_members(child, true, out, nested);
+                    // An input actual is only read: copying it back would
+                    // undo what the callee did to the array.
+                    let changes = direction != Some(DbDirection::Input);
+                    self.collect_staged_members(child, changes, out, nested);
                 }
             }
             NodeKind::Expr(ExprKind::Operation {
