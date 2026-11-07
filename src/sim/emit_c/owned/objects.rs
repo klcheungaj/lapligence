@@ -536,7 +536,7 @@ impl Frame<'_, '_> {
                 // (SIM-007); built-in semaphore handles have none.
                 if object.ty == crate::sim::ir::IrObjectType::Chandle {
                     self.line(format!(
-                        "{{ void *_llg_handle = {value}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}"
+                        "{{ void *_llg_handle = {value}; if (_llg_handle != {name}) {{ void *_llg_previous = {name}; {name} = _llg_handle; llg_handle_changed(&{name}_llg_dep, (void* const*)&{name}, _llg_previous); }} }}"
                     ));
                 } else {
                     self.line(format!("{name} = {value};"));
@@ -566,7 +566,7 @@ impl Frame<'_, '_> {
                 // wake now (SV 9.4.2, 13.5.2).
                 if let Some(marker) = self.handle_store_marker(name) {
                     self.line(format!(
-                        "{{ void *_llg_handle = {value}; if (*({address}) != _llg_handle) {{ *({address}) = _llg_handle; llg_dependency_changed({marker}); }} }}"
+                        "{{ void *_llg_handle = {value}; if (*({address}) != _llg_handle) {{ void *_llg_previous = *({address}); *({address}) = _llg_handle; llg_handle_changed({marker}, (void* const*)({address}), _llg_previous); }} }}"
                     ));
                 } else {
                     self.line(format!("*({address}) = {value};"));
@@ -589,7 +589,7 @@ impl Frame<'_, '_> {
                 let value = self.process_value(source)?;
                 let name = &self.ctx.model.objects[*index].c_name;
                 self.line(format!(
-                    "if ({value} != {name}) {{ llg_process_assign(&{name}, {value}); llg_dependency_changed(&{name}_llg_dep); }}",
+                    "if ({value} != {name}) {{ void *_llg_previous = (void*){name}; llg_process_assign(&{name}, {value}); llg_handle_changed(&{name}_llg_dep, (void* const*)&{name}, _llg_previous); }}",
                     value = value.code()
                 ));
                 self.native_discard(value);
@@ -602,7 +602,7 @@ impl Frame<'_, '_> {
                 // stores do (SV 13.5.2).
                 if let Some(marker) = self.handle_store_marker(name) {
                     self.line(format!(
-                        "if ((void*)({value}) != *(void**)({address})) {{ llg_process_assign({address}, {value}); llg_dependency_changed({marker}); }}",
+                        "if ((void*)({value}) != *(void**)({address})) {{ void *_llg_previous = *(void**)({address}); llg_process_assign({address}, {value}); llg_handle_changed({marker}, (void* const*)({address}), _llg_previous); }}",
                         value = value.code(),
                         address = binding.address
                     ));

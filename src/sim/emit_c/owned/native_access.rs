@@ -269,9 +269,16 @@ impl Frame<'_, '_> {
 pub(super) struct HandleStorePublish {
     /// The slot's value before the store.
     previous: String,
-    /// The statement that publishes a changed value.
-    publish: String,
+    /// Who publishes a changed value.
+    publisher: HandlePublisher,
     slot: String,
+}
+
+/// The change marker a handle store toggles: a marker expression, or the
+/// marker of the object holding a handle property.
+enum HandlePublisher {
+    Marker(String),
+    Property(String),
 }
 
 impl Frame<'_, '_> {
@@ -404,10 +411,10 @@ impl Frame<'_, '_> {
         address: &str,
         slot: &str,
     ) -> Result<Option<HandleStorePublish>, String> {
-        let publish = if let Some(object) = self.ctx.model.objects.iter().find(|object| {
+        let publisher = if let Some(object) = self.ctx.model.objects.iter().find(|object| {
             object.ty == IrObjectType::Chandle && slot == format!("&{}", object.c_name)
         }) {
-            format!("llg_dependency_changed(&{}_llg_dep);", object.c_name)
+            HandlePublisher::Marker(format!("&{}_llg_dep", object.c_name))
         } else if let Some(marker) = self
             .handle_ref_formal(address)
             .map(super::super::model::handle_marker_param)
@@ -418,7 +425,7 @@ impl Frame<'_, '_> {
                     .and_then(|name| self.handle_store_marker(name))
             })
         {
-            format!("llg_dependency_changed({marker});")
+            HandlePublisher::Marker(marker)
         } else {
             let Some(name) = address.strip_prefix('&') else {
                 return Ok(None);
@@ -427,12 +434,12 @@ impl Frame<'_, '_> {
             let Some(receiver) = self.class_handle_property_receiver(name)? else {
                 return Ok(None);
             };
-            format!("llg_class_handle_published({receiver});")
+            HandlePublisher::Property(receiver)
         };
         let previous = self.scalar("void*", format!("*(void**)({slot})"));
         Ok(Some(HandleStorePublish {
             previous,
-            publish,
+            publisher,
             slot: slot.to_owned(),
         }))
     }
@@ -441,9 +448,23 @@ impl Frame<'_, '_> {
     /// changed the handle.
     pub(super) fn finish_handle_store_publish(&mut self, publish: Option<HandleStorePublish>) {
         if let Some(publish) = publish {
+            let HandleStorePublish {
+                previous,
+                publisher,
+                slot,
+            } = publish;
+            // The previous value lets a check drop a change undone before it
+            // (T1-D11).
+            let publish = match publisher {
+                HandlePublisher::Marker(marker) => {
+                    format!("llg_handle_changed({marker}, (void* const*)({slot}), {previous});")
+                }
+                HandlePublisher::Property(receiver) => format!(
+                    "llg_class_handle_published({receiver}, (void* const*)({slot}), {previous});"
+                ),
+            };
             self.line(format!(
-                "if (*(void**)({}) != {}) {{ {} }}",
-                publish.slot, publish.previous, publish.publish
+                "if (*(void**)({slot}) != {previous}) {{ {publish} }}"
             ));
         }
     }

@@ -564,6 +564,7 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
                 crate::sim::ir::IrEdge::Any,
             )],
             refresh: false,
+            gate_at_write: false,
         }],
     );
     let model = IrModel::from_parts(

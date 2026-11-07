@@ -349,7 +349,14 @@ void llg_rng_initializer_scope_end(void) {
     g.rng_initializer = NULL;
 }
 
+int32_t llg_random_default(void) {
+    static int32_t seed = LLG_RANDOM_DEFAULT_SEED;
+    change_check();
+    return llg_random_next(&seed);
+}
+
 sv4_t llg_urandom(void) {
+    change_check();
     return sv4_from_u64((uint64_t)llg_rng_state_next(llg_process_rng()), 32, 0);
 }
 
@@ -362,6 +369,7 @@ sv4_t llg_urandom_seed(sv4_t seed) {
  * the seed, zero-extended whatever the variable's signedness; an X or Z among
  * them makes the whole seed 0. */
 int32_t llg_random_seed_read(sv4_t seed) {
+    change_check();
     uint32_t width = llg_sv4_width(seed);
     if (width == 0) return 0;
     uint64_t mask = width >= 32u ? UINT64_C(0xffffffff) : (UINT64_C(1) << width) - 1u;

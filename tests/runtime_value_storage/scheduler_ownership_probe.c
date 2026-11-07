@@ -4,6 +4,14 @@
 #include "probe.h"
 #include "probe_co.h"
 
+/* The scheduler keeps the before values of closed change records (T1-D11)
+ * for reuse: a cache bounded by the storages one check settles, not a leak.
+ * Drop it, when no record is pending, before counting live values. */
+static size_t probe_live_values(void) {
+    if (!g.change_count) changes_release();
+    return value_test_live();
+}
+
 LLG_PROBE_SIMPLE_PROCESS(never_run, 0) {
     LLG_PROBE_SIMPLE_BEGIN(0);
     abort();
@@ -37,7 +45,7 @@ static void check_nba_and_scopes(void) {
     sv4_t target = sv4_zero(129, 0);
     sv4_t source = sv4_from_u64(42, 129, 0);
     sv4_t mask = sv4_from_u64(255, 129, 0);
-    const size_t baseline = value_test_live();
+    const size_t baseline = probe_live_values();
     for (unsigned i = 0; i < 1000; ++i) {
         probe_set_bits(&source, 0, 42);
         llg_nba_after(&target, source, 0);
@@ -45,13 +53,13 @@ static void check_nba_and_scopes(void) {
         probe_set_bits(&source, 0, 99);
         commit_nbas(LLG_REGION_NBA);
         CHECK(PROBE_BITS(target, 0) == 42);
-        CHECK(value_test_live() == baseline);
+        CHECK(probe_live_values() == baseline);
         llg_nba_masked(&target, source, mask, 1);
         probe_set_bits(&source, 0, 7);
         ++g.now;
         commit_nbas(LLG_REGION_NBA);
         CHECK(PROBE_BITS(target, 0) == 99);
-        CHECK(value_test_live() == baseline);
+        CHECK(probe_live_values() == baseline);
     }
     llg_proc_t* proc = llg_spawn(&never_run_desc, "cancel-owner");
     // Supply current-process identity without switching the C stack.
@@ -68,20 +76,20 @@ static void check_nba_and_scopes(void) {
     llg_kill_proc(proc, 0);
     reap_retired_procs();
     CHECK(g.wait_count == 0 && g.waiters == NULL);
-    CHECK(value_test_live() == baseline);
+    CHECK(probe_live_values() == baseline);
     scope = llg_value_scope_begin(1);
     sv4_replace(llg_value_scope_values(scope), sv4_clone(&source));
     llg_value_scope_end(scope);
-    CHECK(value_test_live() == baseline);
+    CHECK(probe_live_values() == baseline);
     scope = llg_value_scope_begin(1);
     sv4_replace(llg_value_scope_values(scope), sv4_zero(65537, 0));
     llg_nba_after(&target, source, 100);
     llg_rt_cleanup();
-    CHECK(value_test_live() == baseline);
+    CHECK(probe_live_values() == baseline);
     sv4_destroy(&source);
     sv4_destroy(&target);
     sv4_destroy(&mask);
-    CHECK(value_test_live() == 0);
+    CHECK(probe_live_values() == 0);
 }
 
 static void check_nba_fifo_and_cancellation(void) {
@@ -123,7 +131,7 @@ static void check_nba_fifo_and_cancellation(void) {
     sv4_destroy(&two);
     sv4_destroy(&three);
     llg_rt_cleanup();
-    CHECK(value_test_live() == 0);
+    CHECK(probe_live_values() == 0);
 }
 
 static void check_narrow_selected_nbas(void) {
@@ -164,7 +172,7 @@ static void check_narrow_selected_nbas(void) {
     sv4_destroy(&expected);
     sv4_destroy(&target);
     llg_rt_cleanup();
-    CHECK(value_test_live() == 0);
+    CHECK(probe_live_values() == 0);
 }
 
 static void check_frames(void) {
@@ -183,11 +191,11 @@ static void check_frames(void) {
         llg_frame_write_value(child, 0, source);
         expect_number(llg_frame_read_value(child, 0), 22);
         llg_frame_release(child);
-        CHECK(value_test_live() == 1);
+        CHECK(probe_live_values() == 1);
     }
     llg_rt_cleanup();
     sv4_destroy(&source);
-    CHECK(value_test_live() == 0);
+    CHECK(probe_live_values() == 0);
 }
 
 static void check_inertial_and_force(void) {
@@ -201,7 +209,7 @@ static void check_inertial_and_force(void) {
     probe_set_bits(&source, 0, 0);
     llg_inertial_assign(&driver, &target, source, 2, 2, 2);
     CHECK(driver && !driver->pending && probe_is_empty(driver->value));
-    size_t retained = value_test_live();
+    size_t retained = probe_live_values();
     for (unsigned i = 0; i < 1000; ++i) {
         probe_set_bits(&source, 0, i % 2 ? 0xaa : 0x55);
         uint64_t expected = PROBE_BITS(source, 0);
@@ -210,23 +218,23 @@ static void check_inertial_and_force(void) {
         g.now += 2;
         commit_inertial(LLG_REGION_ACTIVE);
         CHECK(PROBE_BITS(target, 0) == expected);
-        CHECK(value_test_live() == retained);
+        CHECK(probe_live_values() == retained);
         llg_force(&target, source);
         CHECK(PROBE_BITS(target, 0) == 0);
         probe_set_bits(&source, 0, 19);
         llg_ba(&target, source);
         CHECK(PROBE_BITS(target, 0) == 0);
         llg_release(&target);
-        CHECK(value_test_live() == retained);
+        CHECK(probe_live_values() == retained);
     }
     probe_set_bits(&source, 0, 1);
     llg_inertial_assign(&driver, &target, source, 100, 100, 100);
     llg_rt_cleanup();
-    CHECK(driver == NULL && value_test_live() == 3);
+    CHECK(driver == NULL && probe_live_values() == 3);
     sv4_destroy(&source);
     sv4_destroy(&mask);
     sv4_destroy(&target);
-    CHECK(value_test_live() == 0);
+    CHECK(probe_live_values() == 0);
 }
 
 static void check_sequence_snapshots(void) {
@@ -248,11 +256,11 @@ static void check_sequence_snapshots(void) {
         sequence_token_free(token);
         sequence_attempt_discard(inherited);
         sequence_attempt_discard(attempt);
-        CHECK(value_test_live() == 1);
+        CHECK(probe_live_values() == 1);
     }
     sv4_destroy(&source);
     llg_rt_cleanup();
-    CHECK(value_test_live() == 0);
+    CHECK(probe_live_values() == 0);
 }
 
 static void check_sampling_mailboxes_and_reinit(void) {
@@ -271,7 +279,7 @@ static void check_sampling_mailboxes_and_reinit(void) {
         expect_number(sv4_clone(&snapshot), 17);
         sv4_destroy(&snapshot);
         llg_mailbox_t* mailbox = llg_mailbox_new(bound, LLG_MAILBOX_PACKED, 65, 0, 0, 0);
-        size_t retained = value_test_live();
+        size_t retained = probe_live_values();
         for (unsigned i = 0; i < 100; ++i) {
             probe_set_bits(&source, 0, 33);
             CHECK(llg_mailbox_try_put_value(mailbox, llg_mailbox_value_packed(source, 65, 0, 0)));
@@ -280,17 +288,17 @@ static void check_sampling_mailboxes_and_reinit(void) {
             CHECK(PROBE_BITS(target, 0) == 33);
             CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_packed(&target, 65, 0, 0), 0));
             CHECK(PROBE_BITS(target, 0) == 33);
-            CHECK(value_test_live() == retained);
+            CHECK(probe_live_values() == retained);
         }
         CHECK(llg_mailbox_try_put_value(mailbox, llg_mailbox_value_packed(source, 65, 0, 0)));
         // init tears down the previous runtime even with pending retained owners.
         llg_rt_init();
-        CHECK(value_test_live() == 2 * probe_owner_allocations(65) + probe_owner_allocations(32));
+        CHECK(probe_live_values() == 2 * probe_owner_allocations(65) + probe_owner_allocations(32));
         llg_rt_cleanup();
         sv4_destroy(&source);
         sv4_destroy(&target);
         sv4_destroy(&bound);
-        CHECK(value_test_live() == 0);
+        CHECK(probe_live_values() == 0);
     }
 }
 
@@ -408,11 +416,11 @@ static void check_time_and_io(void) {
         CHECK(text.len == 65537 && text.data[0] == '1');
         CHECK(probe_is_empty(arg.value.packed));
         llg_string_destroy(&text);
-        CHECK(value_test_live() == 1);
+        CHECK(probe_live_values() == 1);
     }
     sv4_destroy(&wide);
     llg_rt_cleanup();
-    CHECK(value_test_live() == 0);
+    CHECK(probe_live_values() == 0);
 }
 
 int main(void) {
@@ -425,7 +433,7 @@ int main(void) {
     check_inertial_and_force();
     check_sequence_snapshots();
     check_sampling_mailboxes_and_reinit();
-    CHECK(value_test_live() == 0 && value_test_bytes() == 0);
+    CHECK(probe_live_values() == 0 && value_test_bytes() == 0);
     puts("scheduler owners, captures, cancellation and reinit: OK");
     return 0;
 }

@@ -23,7 +23,8 @@ Rules used throughout (§16.9.3):
   and `$fell` use the least significant bit (a change to 1 or to 0).
 - An `iff` qualifier and the `$past` gating expression are evaluated with
   current values when the clocking event occurs (§9.4.2.3 "evaluated when a
-  changes"; §16.9.3 "the event ev iff expression2"). Only `$sampled`, the
+  changes"; §16.9.3 "the event ev iff expression2"); the event occurs at the
+  check that ends the writing turn (decision T1-D11). Only `$sampled`, the
   sample expression and assertion operands read Preponed values.
 
 ## Positives
@@ -31,11 +32,12 @@ Rules used throughout (§16.9.3):
 ### `procedural_history` (A01, A02)
 
 `v` is declared `4'h3`, `u` has no initializer (X), `w` is a net driven by `v`,
-`en` starts at 1. Posedges of `clk` occur at 2, 5, 7 and twice at 9; `en` is
-set to 0 in the step of the edge at 5, before that edge, and back to 1 at 6.
-Preponed `v` at each edge: 2: 5, 5: 6, 7: 7, 9: 7 (`v = 8` follows the edges at
-9). The edge at 5 fails `iff en` (current `en` is 0 although its sampled value
-is 1), so the gated clock ticks at 2, 7 and 9 only.
+`en` starts at 1. Posedges of `clk` occur at 2, 5 and 7; `en` is set to 0 in
+the step of the edge at 5, before that edge, and back to 1 at 6. The four writes
+at 9 leave `clk` at 1, its value before the turn, so the check sees no change
+and step 9 has no edge (decision T1-D11). Preponed `v` at each edge: 2: 5,
+5: 6, 7: 7. The edge at 5 fails `iff en` (current `en` is 0 although its
+sampled value is 1), so the gated clock ticks at 2 and 7 only.
 
 | Line | Time | Values |
 | --- | --- | --- |
@@ -46,19 +48,11 @@ is 1), so the gated clock ticks at 2, 7 and 9 only.
 | `E5` | 5 | `$past(v)` = 5 (tick 2); gated: tick 2, so 5 |
 | `E7` | 7 | `$past(v)` = 6 (tick 5); gated: 5 was gated off, so tick 2: 5 |
 | `B` | 8 | ungated ticks 7, 5, 2 then initial: 7 6 5 3; gated ticks 7, 2 then initial: 7 5 3; `$stable(v)`: Preponed 7 against tick 7: 1 |
-| `E9` | 9 | woken once by the first edge at 9; `$past(v)` = 7 (tick 7); gated 7 |
-| `C` | 10 | ticks 9 (counted once), 7, 5: 7 7 6; Preponed `v` = 8 against tick 9 (7): changed 1 |
+| `C` | 10 | ticks 7, 5, 2: 7 6 5; Preponed `v` = 8 against tick 7 (7): changed 1 |
 
-A twice-counted step 9 would give `C 7 7 7 1`; a sampled gate would give
+An edge seen per write at 9 would add `E9 7 7` and give `C 7 7 6 1`; a sampled gate would give
 `E7 6 6`; comparing the two newest ticks between edges
 would give `A 5 3 1 0 0 6 xxx1`.
-
-Some simulators see no edge when a variable returns to its old value within
-one blocking sequence (`clk` is 1 before and after the four writes at 9), so
-they print no `E9` line and count no tick at 9 (`C 7 6 5 1`); llg follows
-9.4.2 L11773 (`SystemVerilog-1800-2009.txt`), "A posedge shall be detected on
-the transition from 0 to x, z, or 1", and the write `clk = 1'b1` after
-`clk = 1'b0` is such a transition.
 
 ### `complex_clocks` (A01)
 

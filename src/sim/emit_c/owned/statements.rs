@@ -569,9 +569,16 @@ impl Frame<'_, '_> {
                 self.line("}");
                 self.block(body)?;
             }
-            IrStmt::WaitEvents { specs, refresh } => {
+            IrStmt::WaitEvents {
+                specs,
+                refresh,
+                gate_at_write,
+            } => {
                 if *refresh {
                     self.line("llg_wait_refresh_on_resume(self);");
+                }
+                if *gate_at_write {
+                    self.line("llg_wait_gate_at_write(self);");
                 }
                 self.wait_events(specs)?
             }
@@ -755,7 +762,7 @@ impl Frame<'_, '_> {
                 }
                 if let (Some(marker), Some(previous)) = (marker, previous) {
                     self.line(format!(
-                        "if (({target})->object != {previous}) llg_dependency_changed({marker});"
+                        "if (({target})->object != {previous}) llg_handle_changed({marker}, (void* const*)&({target})->object, {previous});"
                     ));
                 }
             }

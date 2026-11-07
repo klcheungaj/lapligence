@@ -946,6 +946,7 @@ static void llg_print_typed_to(uint32_t descriptor, const char* fmt,
 void llg_file_display_typed(uint32_t descriptor, const char* fmt,
                             llg_fmt_arg_t* args, int n, const char* scope,
                             int newline) {
+    change_check();
     llg_print_typed_to(descriptor, fmt, args, n, scope, newline);
     llg_fmt_args_destroy(args, n);
 }

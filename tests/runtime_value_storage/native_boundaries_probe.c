@@ -83,6 +83,9 @@ LLG_PROBE_SIMPLE_PROCESS(receiver, 1) {
      * that write finishes the run from inside this delivery. */
     llg_mailbox_delivery_take(
         self, llg_mailbox_target_packed(destination, 129, 0, 0));
+    /* Waiters see the write at a check (T1-D11): run it here, as a print or
+     * random call would, so the evaluator still terminates this coroutine. */
+    change_check();
     LLG_CO_EXIT_CHECK(ch);
     CHECK(0); /* finish or kill must prevent this continuation. */
     LLG_PROBE_DONE();
@@ -114,6 +117,9 @@ LLG_PROBE_SIMPLE_PROCESS(publisher, 2) {
         if (mode % 2) llg_dyn_unstream_assign(&dynamic_array, payload, 1, 0, kind, selectors[0], selectors[1]);
         else llg_queue_unstream_assign(&queue, payload, 1, 0, kind, selectors[0], selectors[1]);
     }
+    /* Waiters see the write at a check (T1-D11): run it here, as a print or
+     * random call would, so the evaluator still terminates this coroutine. */
+    change_check();
     LLG_CO_EXIT_CHECK(ch);
     CHECK(mode == 2 || mode == 3);
     LLG_PROBE_DONE();

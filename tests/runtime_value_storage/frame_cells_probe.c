@@ -30,7 +30,11 @@ LLG_PROBE_PROCESS(cells, cell_frame_t, 1) {
     sv4_replace(&F->packed[0], sv4_from_u64(19, 65, 0));
     llg_ba(&F->packed[1], F->packed[0]);
     CHECK(PROBE_BITS(F->packed[1], 0) == 19);
-    CHECK(find_clocking_edge(&F->packed[1]) != NULL);
+    /* The edge reaches clocking history at this turn's check (T1-D11); until
+     * then a history record on the cell's history entry holds it, though
+     * nothing waits on it. */
+    CHECK(find_clocking_edge(&F->packed[1]) != NULL &&
+          find_clocking_edge(&F->packed[1])->change != NULL);
     F->native = 2;
     llg_value_scope_register_object(&F->native_scope, &F->native, drop_native);
     CHECK(value_scope_index_find(&F->native) == &F->native_scope);

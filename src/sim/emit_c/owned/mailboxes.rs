@@ -296,7 +296,7 @@ impl Frame<'_, '_> {
                 let value = self.mailbox_handle(value)?;
                 let name = &self.ctx.model.objects[*index].c_name;
                 self.line(format!(
-                    "{{ void *_llg_handle = {value}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}"
+                    "{{ void *_llg_handle = {value}; if (_llg_handle != {name}) {{ void *_llg_previous = {name}; {name} = _llg_handle; llg_handle_changed(&{name}_llg_dep, (void* const*)&{name}, _llg_previous); }} }}"
                 ));
             }
             MailboxAssignLocal(name, value) if self.class_handle_property(name).is_some() => {
@@ -318,8 +318,8 @@ impl Frame<'_, '_> {
                 let value = self.mailbox_handle(value)?;
                 if let Some(marker) = self.handle_store_marker(name) {
                     self.line(format!(
-                        "{{ void *_llg_handle = {value}; if (*({}) != _llg_handle) {{ *({}) = _llg_handle; llg_dependency_changed({marker}); }} }}",
-                        target.address, target.address
+                        "{{ void *_llg_handle = {value}; if (*({0}) != _llg_handle) {{ void *_llg_previous = *({0}); *({0}) = _llg_handle; llg_handle_changed({marker}, (void* const*)({0}), _llg_previous); }} }}",
+                        target.address
                     ));
                 } else {
                     self.line(format!("*({}) = {value};", target.address));

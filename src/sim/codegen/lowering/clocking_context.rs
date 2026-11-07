@@ -624,6 +624,7 @@ impl<'a> Codegen<'a> {
             let mut body = vec![IrStmt::WaitEvents {
                 specs: event_specs,
                 refresh: false,
+                gate_at_write: false,
             }];
             for var in self.node(block).children.iter().copied() {
                 let Some(var_info) = self.db.clocking_var(var) else {

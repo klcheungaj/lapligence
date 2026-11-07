@@ -164,6 +164,7 @@ static void strobe_push(llg_strobe_t* e) {
 }
 
 void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
+    change_check();
     if (!region_can_mutate("strobe scheduling")) return;
     llg_strobe_t* e = (llg_strobe_t*)llg_checked_malloc(
         1, sizeof(llg_strobe_t), "strobe");
@@ -283,6 +284,7 @@ void llg_strobe_with_context(const char* fmt, int n, llg_display_eval_fn eval,
 void llg_file_strobe_with_context(uint32_t descriptor, const char* fmt, int n,
                                   llg_display_eval_fn eval, const char* scope,
                                   void* context) {
+    change_check();
     if (!region_can_mutate("strobe scheduling")) return;
     llg_strobe_t* e = (llg_strobe_t*)llg_checked_malloc(
         1, sizeof(llg_strobe_t), "typed strobe");
