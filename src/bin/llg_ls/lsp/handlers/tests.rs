@@ -199,7 +199,7 @@ fn a_closed_file_that_is_not_utf8_keeps_its_bytes_and_diagnostics() {
             .iter()
             .find(|diagnostic| diagnostic.message.contains("invalid UTF-8"))
             .expect("the byte is reported");
-        assert_eq!((found.severity.clone(), found.line), (severity, line));
+        assert_eq!((found.severity, found.line), (severity, line));
     }
     let _ = std::fs::remove_dir_all(root);
 }
