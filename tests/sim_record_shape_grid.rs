@@ -8,6 +8,8 @@
 //! `scripts/run-tests.sh --test-work-dir /build --test sim_record_shape_grid --run-ignored only`.
 //! The designs come from the tracked generator, which writes them to a
 //! scratch directory.
+//! Runs pass `--no-index-checks`, as `ki_record_shapes.rs` does, so both sizes
+//! give the text's result for a `ref` to an element an input actual removes.
 
 use crate::sim_harness;
 use std::path::{Path, PathBuf};
@@ -29,7 +31,7 @@ fn run(source: &Path, cells: &str, work: &Path) -> std::process::Output {
         .current_dir(directory.path())
         .arg("--config")
         .arg(&allow)
-        .args(["-D", cells, "--top", "tb"])
+        .args(["--no-index-checks", "-D", cells, "--top", "tb"])
         .arg(source)
         .env("LLG_RUNTIME_CACHE_DIR", work.join("runtime-cache"));
     sim_harness::run_command(&mut command, Duration::from_secs(300)).expect("grid model run")

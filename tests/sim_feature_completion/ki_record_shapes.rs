@@ -6,11 +6,16 @@
 //!
 //! The oracle is the other form: the same checked-in file builds with `-D N=16`
 //! and `-D N=3`, and the per-cell form is the long-validated one.
+//! The runs pass `--no-index-checks`: a row such as `rf(q[0], q.pop_back())`
+//! binds a `ref` to an element the pop removed, and the comparison is of the
+//! text's result at both sizes, not of the default stop (S07-D15).
 
 use super::sim_cli;
 use std::process::{Command, Output};
 
 const SUITE: &str = "feature_completion/ki_record_shapes";
+const WIDE: &[&str] = &["--no-index-checks", "-D", "N=16"];
+const NARROW: &[&str] = &["--no-index-checks", "-D", "N=3"];
 
 fn assert_same_at_both_sizes(fixture: &str, wide: &Output, narrow: &Output) {
     for (cells, output) in [(16, wide), (3, narrow)] {
@@ -33,15 +38,14 @@ fn assert_same_at_both_sizes(fixture: &str, wide: &Output, narrow: &Output) {
 #[test]
 fn string_member_records_print_the_same_at_16_and_3_cells() {
     for optimized in [true, false] {
-        let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_str", optimized, &["-D", "N=16"], &[]);
+        let (_dir, wide) = sim_cli::run_case_keeping_dir(SUITE, "shapes_str", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_str", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_str", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_str", &wide, &narrow);
         let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_str_nba", optimized, &["-D", "N=16"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_str_nba", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_str_nba", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_str_nba", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_str_nba", &wide, &narrow);
     }
 }
@@ -49,15 +53,14 @@ fn string_member_records_print_the_same_at_16_and_3_cells() {
 #[test]
 fn packed_member_records_print_the_same_at_16_and_3_cells() {
     for optimized in [true, false] {
-        let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_pk", optimized, &["-D", "N=16"], &[]);
+        let (_dir, wide) = sim_cli::run_case_keeping_dir(SUITE, "shapes_pk", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_pk", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_pk", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_pk", &wide, &narrow);
         let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_pk_nba", optimized, &["-D", "N=16"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_pk_nba", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_pk_nba", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_pk_nba", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_pk_nba", &wide, &narrow);
     }
 }
@@ -65,15 +68,14 @@ fn packed_member_records_print_the_same_at_16_and_3_cells() {
 #[test]
 fn mixed_member_records_print_the_same_at_16_and_3_cells() {
     for optimized in [true, false] {
-        let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_mix", optimized, &["-D", "N=16"], &[]);
+        let (_dir, wide) = sim_cli::run_case_keeping_dir(SUITE, "shapes_mix", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_mix", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_mix", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_mix", &wide, &narrow);
         let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_mix_nba", optimized, &["-D", "N=16"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_mix_nba", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_mix_nba", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_mix_nba", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_mix_nba", &wide, &narrow);
     }
 }
@@ -82,19 +84,14 @@ fn mixed_member_records_print_the_same_at_16_and_3_cells() {
 fn nested_records_print_the_same_at_16_and_3_cells() {
     for optimized in [true, false] {
         let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_nest", optimized, &["-D", "N=16"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_nest", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_nest", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_nest", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_nest", &wide, &narrow);
-        let (_dir, wide) = sim_cli::run_case_keeping_dir(
-            SUITE,
-            "shapes_nest_nba",
-            optimized,
-            &["-D", "N=16"],
-            &[],
-        );
+        let (_dir, wide) =
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_nest_nba", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_nest_nba", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_nest_nba", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_nest_nba", &wide, &narrow);
     }
 }
@@ -102,15 +99,14 @@ fn nested_records_print_the_same_at_16_and_3_cells() {
 #[test]
 fn real_member_records_print_the_same_at_16_and_3_cells() {
     for optimized in [true, false] {
-        let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_rl", optimized, &["-D", "N=16"], &[]);
+        let (_dir, wide) = sim_cli::run_case_keeping_dir(SUITE, "shapes_rl", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_rl", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_rl", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_rl", &wide, &narrow);
         let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_rl_nba", optimized, &["-D", "N=16"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_rl_nba", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_rl_nba", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_rl_nba", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_rl_nba", &wide, &narrow);
     }
 }
@@ -118,15 +114,14 @@ fn real_member_records_print_the_same_at_16_and_3_cells() {
 #[test]
 fn string_array_records_print_the_same_at_16_and_3_cells() {
     for optimized in [true, false] {
-        let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_st", optimized, &["-D", "N=16"], &[]);
+        let (_dir, wide) = sim_cli::run_case_keeping_dir(SUITE, "shapes_st", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_st", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_st", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_st", &wide, &narrow);
         let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_st_nba", optimized, &["-D", "N=16"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_st_nba", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_st_nba", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_st_nba", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_st_nba", &wide, &narrow);
     }
 }
@@ -134,15 +129,14 @@ fn string_array_records_print_the_same_at_16_and_3_cells() {
 #[test]
 fn handle_array_records_print_the_same_at_16_and_3_cells() {
     for optimized in [true, false] {
-        let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_obj", optimized, &["-D", "N=16"], &[]);
+        let (_dir, wide) = sim_cli::run_case_keeping_dir(SUITE, "shapes_obj", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_obj", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_obj", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_obj", &wide, &narrow);
         let (_dir, wide) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_obj_nba", optimized, &["-D", "N=16"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_obj_nba", optimized, WIDE, &[]);
         let (_dir, narrow) =
-            sim_cli::run_case_keeping_dir(SUITE, "shapes_obj_nba", optimized, &["-D", "N=3"], &[]);
+            sim_cli::run_case_keeping_dir(SUITE, "shapes_obj_nba", optimized, NARROW, &[]);
         assert_same_at_both_sizes("shapes_obj_nba", &wide, &narrow);
     }
 }
