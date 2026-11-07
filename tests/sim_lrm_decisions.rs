@@ -4408,6 +4408,14 @@ fn s07_d11_event_entry_binding() {
 }
 
 #[test]
+fn s07_d12_iterator_index_declared_range() {
+    run_decision(
+        "S07-D12_iterator_index_declared_range",
+        include_str!("fixtures/sim/lrm_decisions/S07-D12_iterator_index_declared_range.out"),
+    );
+}
+
+#[test]
 fn s11_d3_real_enum_cast() {
     run_decision(
         "S11-D3_real_enum_cast",
