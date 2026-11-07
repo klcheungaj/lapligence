@@ -685,6 +685,9 @@ extern size_t llg_native_real_refs_live;
 void llg_native_ref_real_stored(double* cell);
 /* The record a reference names, for a native record `ref` formal. */
 llg_value_t* llg_native_ref_value(void* reference);
+/* Whether the acquire selected an element; an unselected index binds the
+ * default of the element type, which no write ever reaches. */
+int llg_native_ref_selected(void* reference);
 /* A reference to a value that is no container element, for its members. */
 void* llg_native_ref_root(llg_value_t* value);
 /* Select one item of the record or fixed array `reference` names, taking
@@ -978,6 +981,10 @@ int llg_queue_cell_write(void* cell, sv4_t value);
  * queue's while it lives (writes to a removed element's cell publish it as
  * well), NULL for an invalid actual or after the queue was destroyed. */
 sv4_t* llg_queue_cell_dependency(const void* cell);
+/* Whether the acquire selected an element. Meaningful right after the
+ * acquire: a cell outdated later keeps its identity. An unselected index
+ * binds a default cell that no write reaches. */
+int llg_queue_cell_selected(const void* cell);
 uint64_t llg_queue_ref_identity(const llg_queue_t* queue, uint64_t index);
 sv4_t llg_queue_ref_read(const llg_queue_t* queue, uint64_t identity);
 int llg_queue_ref_write(llg_queue_t* queue, uint64_t identity, sv4_t value);
@@ -1219,6 +1226,8 @@ sv4_t llg_element_cell_read(const void* cell);
 int llg_element_cell_write(void* cell, sv4_t value);
 /* As llg_queue_cell_dependency, for dynamic and associative array cells. */
 sv4_t* llg_element_cell_dependency(const void* cell);
+/* As llg_queue_cell_selected, for dynamic and associative array cells. */
+int llg_element_cell_selected(const void* cell);
 size_t llg_assoc_count(const llg_assoc_t* array);
 sv4_t llg_assoc_value_at(const llg_assoc_t* array, size_t index);
 sv4_t llg_assoc_reduce(const llg_assoc_t* array, int operation);

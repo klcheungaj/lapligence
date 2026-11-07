@@ -1696,6 +1696,11 @@ void llg_rt_run(void);
 // True when the runtime stopped because of a configuration, nonconvergence,
 // or other controlled simulation failure.  The result survives cleanup.
 int llg_rt_failed(void);
+// True when a `$fatal` severity task ran in the last run (IEEE 1800-2009
+// 20.9: the run ends with an error code). Unlike llg_rt_failed it does not
+// mark the run as a simulator failure; a generated model's exit status is
+// nonzero when either holds. The result survives cleanup.
+int llg_rt_fatal_severity_ran(void);
 // Region currently being drained. During initialization this is PREPONED.
 llg_region_t llg_current_region(void);
 // Return a stable printable name for diagnostics and callback traces.
@@ -3301,6 +3306,9 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
 // reads, through a new context reference the wait releases (see
 // llg_expr_event_spec_t).
 llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind);
+/* Whether a `ref` descriptor names an element that exists (see
+ * reference_writes.c); generated calls test it for a formal a task waits on. */
+int llg_ref_selected(const llg_ref_t* ref);
 // Register a nonblocking trigger whose source control is evaluated at issue
 // time. The copied descriptors remain live until one source matches; the
 // target event is then submitted to the ordinary NBA queue. `repeat` is zero

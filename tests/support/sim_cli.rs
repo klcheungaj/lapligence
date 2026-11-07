@@ -485,6 +485,17 @@ fn invoke_with_runtime_args(
     })
 }
 
+/// The exit status a run must have, from the diagnostics it must print: 1
+/// after a `$fatal` report, which ends the run "with an error code"
+/// (IEEE 1800-2009 20.9, L34909 of the text extraction), else 0.
+fn status_after(expected_stderr: &str) -> i32 {
+    i32::from(
+        expected_stderr
+            .lines()
+            .any(|line| line.starts_with("llg: severity fatal:")),
+    )
+}
+
 fn assert_case_output(
     output: Output,
     label: &str,
@@ -493,7 +504,11 @@ fn assert_case_output(
     expected_warnings: &[&str],
 ) {
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "{label}: {stderr}");
+    assert_eq!(
+        output.status.code(),
+        Some(status_after(expected_stderr)),
+        "{label}: {stderr}"
+    );
     let actual = String::from_utf8_lossy(&output.stdout);
     if actual != expected {
         let line = actual
@@ -539,6 +554,12 @@ pub(crate) fn run_case_backend_parity(
     run_case_backend_parity_with_files(suite, fixture, expected, args, envs, &[]);
 }
 
+/// [`run_case_backend_parity`] for a run that ends in a `$fatal`: exit status
+/// 1 on every backend (IEEE 1800-2009 20.9, "with an error code").
+pub(crate) fn run_case_backend_parity_ending_in_fatal(suite: &str, fixture: &str, expected: &str) {
+    backend_parity(suite, fixture, expected, &[], &[], &[], 1);
+}
+
 /// [`run_case_backend_parity`] with checked-in input `files` (name, contents)
 /// written into every run's working directory.
 pub(crate) fn run_case_backend_parity_with_files(
@@ -548,6 +569,18 @@ pub(crate) fn run_case_backend_parity_with_files(
     args: &[&str],
     envs: &[(&str, &str)],
     files: &[(&str, &str)],
+) {
+    backend_parity(suite, fixture, expected, args, envs, files, 0);
+}
+
+fn backend_parity(
+    suite: &str,
+    fixture: &str,
+    expected: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    files: &[(&str, &str)],
+    status: i32,
 ) {
     let gmp = sim_harness::test_gmp_root();
     for optimized in [false, true] {
@@ -567,8 +600,9 @@ pub(crate) fn run_case_backend_parity_with_files(
         );
         let stdout = legacy.stdout.clone();
         let stderr = legacy.stderr.clone();
-        assert!(
-            legacy.status.success(),
+        assert_eq!(
+            legacy.status.code(),
+            Some(status),
             "{suite}/{fixture}, legacy: {}",
             String::from_utf8_lossy(&stderr)
         );
@@ -588,8 +622,9 @@ pub(crate) fn run_case_backend_parity_with_files(
             let compact =
                 invoke_with_env_and_files(suite, fixture, optimized, args, &controls, &[], files);
             let label = format!("{suite}/{fixture}, compact/{kernel}, optimized={optimized}");
-            assert!(
-                compact.status.success(),
+            assert_eq!(
+                compact.status.code(),
+                Some(status),
                 "{label}: {}",
                 String::from_utf8_lossy(&compact.stderr)
             );

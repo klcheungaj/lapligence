@@ -1,0 +1,16 @@
+max 1001 min 1x00 fixed 1001 1x00 dyn 1001 1x00 assoc 1001 1x00
+max 1001 min 1x00 fixed 1001 1x00 dyn 1001 1x00 assoc 1001 1x00
+max 1001 min 1x00 fixed 1001 1x00 dyn 1001 1x00 assoc 1001 1x00
+max 0010 min xxxx fixed 0010 xxxx dyn 0010 xxxx assoc 0010 xxxx
+max 0010 min xxxx fixed 0010 xxxx dyn 0010 xxxx assoc 0010 xxxx
+max 0010 min zzzz fixed 0010 zzzz dyn 0010 zzzz assoc 0010 zzzz
+max 0011 min 1x00 fixed 0011 1x00 dyn 0011 1x00 assoc 0011 xxxx
+max 0011 min xxxx fixed 0011 xxxx dyn 0011 xxxx assoc 0011 1x00
+max 0011 min z000 fixed 0011 z000 dyn 0011 z000 assoc 0011 z000
+max 0011 min x000 fixed 0011 x000 dyn 0011 x000 assoc 0011 z000
+max 1111 min xxxx fixed 1111 xxxx dyn 1111 xxxx assoc 1111 xxxx
+max 0101 min 0101 fixed 0101 0101 dyn 0101 0101 assoc 0101 0101
+max 1001 min 1x00 call 1001 1x00
+max 1001 min 1x00 call 1001 1x00
+max 1001 min z000 call 1001 z000
+max 0111 min 0010 call 0111 0010

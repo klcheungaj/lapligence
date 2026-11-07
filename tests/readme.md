@@ -287,6 +287,14 @@ mismatch, a runtime continuous row and an automatic NBA row reject. The RTL-103
 and these fixtures also run under the generated-runtime sanitizers below with
 `-E 'test(rtl_103::) | test(ki_pattern_rows::)'`.
 
+The record shape fixtures ([record shapes](fixtures/sim/feature_completion/ki_record_shapes/readme.md))
+use `-E 'binary(sim_feature_completion) & test(ki_record_shapes::)'`: a covering
+subset of every record source into every record target runs with a member array
+of 16 cells (a column) and of 3 cells (a leaf per cell) and must print the same.
+The full grid is generated into a scratch directory by the tracked generator and
+runs on demand with
+`scripts/run-tests.sh --test-work-dir /build --test sim_record_shape_grid --run-ignored only`.
+
 RTL-018's library, configuration and bind fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_018::)'`, with
 `test(/^sim_syn032_library_configs::/)` and `test(/^sim_syn033_structural_bind::/)`.

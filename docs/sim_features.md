@@ -1330,6 +1330,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   locators, min/max/unique result queues, sort/rsort/reverse/shuffle are present.
   Queue/dynamic `sort`/`rsort` evaluate each `with` key once in index order, then
   stable merge-sort in O(n log n); elements with an X/Z key stay in place.
+  `min`/`max` order an element or key with an X/Z bit below every known value,
+  so the extreme does not depend on the order of the array (S07-D13, both the
+  callback runtime and the generated loop).
   Where the packed/real callback runtime cannot express a method (string,
   record, handle or nested-container items, real or string keys, `with`
   expressions that read automatic state or call subroutines, string-keyed
@@ -1817,8 +1820,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   through the formal reaches the element's readers at that store, whatever its
   form ([record_ref_write_paths](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   A run-time record element of a module record binds through one
-  specialization per element under a decision tree in statement calls
+  specialization per element under a decision tree in statement calls; a task
+  that waits on the formal stops the run when the index selects no element,
+  at any array size
   ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  So does a task that waits on a `ref` formal bound to an index-selected element
+  of a fixed array, queue or dynamic array of records, packed structures,
+  integers, reals or strings (`ref_wait_unselected_*`, decision S13-D6); a
+  callee that does not wait keeps the default of the element type.
   Virtual-interface methods take these actuals through a bound dispatch entry
   ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   Record elements with queue or dynamic-array members bind through companion
@@ -2158,7 +2167,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   level 1; `$fatal/$error/$warning/$info` format messages once in source order
   with source/scope context. Fatal terminates through the final-block handoff;
   nonfatal levels continue. Finish/fatal numbers must be constant integral
-  0/1/2, not OS exit codes; level 2 includes severity statistics.
+  0/1/2, not OS exit codes; level 2 includes severity statistics. A run in
+  which a `$fatal` executed exits with status 1, as does one ended by a run-time
+  error; `$error`, `$warning`, failing assertions and `$finish` leave the
+  status 0 ([exit statuses](../readme.md#using-llg), decision ES-D1).
   V §17.4.1; SV §§20.2, 20.9–20.10 **[1995/SV-2005]**.
 - 🟨 **Stop/resume** — `$stop` preserves pending work, activations, output and
   time. `--stop-policy resume` is the noninteractive default; `exit` returns

@@ -142,6 +142,7 @@ fn selected_const_references_cannot_hide_a_writable_binding() {
                 const_ref: false,
                 lhs: Box::new(lhs),
                 read: Box::new(packed_const(0, 1)),
+                stop_unselected: None,
             }],
             IrDepth::PROC,
             true,

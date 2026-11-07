@@ -42,7 +42,14 @@ impl Frame<'_, '_> {
     /// formal. An invalid element index binds a call-owned scratch cell that
     /// reads the default 0.0 and absorbs writes, so the callee never
     /// dereferences null and never writes outside the array.
-    pub(super) fn real_reference_argument(&mut self, lhs: &IrLhs) -> Result<String, String> {
+    ///
+    /// With `stop`, an invalid index ends the run instead: the call's callee
+    /// waits on the formal.
+    pub(super) fn real_reference_argument(
+        &mut self,
+        lhs: &IrLhs,
+        stop: Option<&crate::sim::ir::IrRefStop>,
+    ) -> Result<String, String> {
         if let IrLhs::Ref {
             addr, bit: None, ..
         } = lhs
@@ -56,6 +63,9 @@ impl Frame<'_, '_> {
         let pointer = if target.valid == "1" {
             self.scalar("double*", target.binding.address.clone())
         } else {
+            if let Some(stop) = stop {
+                self.unselected_stop(&format!("!({})", target.valid), stop);
+            }
             let scope = self.scalar(
                 "llg_value_scope_t*",
                 "llg_value_scope_begin_object(sizeof(double), NULL)".to_owned(),

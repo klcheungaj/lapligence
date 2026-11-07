@@ -224,7 +224,10 @@ impl EmitCtx<'_, '_> {
                 .ok_or_else(|| format!("task `{name}` has no C name"))?,
         };
         let fidx = self.cg.dpi_open_callee(fidx, &formals, &bound)?;
-        let call = self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)?;
+        self.cg.record_ref_call_site = Some(h);
+        let call = self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver);
+        self.cg.record_ref_call_site = None;
+        let call = call?;
         // A class task's call keeps the activation only when a `disable`
         // names the task, matching its body (`emit_func_task_with`).
         if can_be_disabled
@@ -285,7 +288,7 @@ impl EmitCtx<'_, '_> {
             if waits {
                 return Ok(IrStmt::Severity {
                     level: crate::sim::ir::IrSeverityLevel::Fatal,
-                    fmt: "\"index of a record `ref` actual selects no element of a task that waits on the formal\"".to_owned(),
+                    fmt: format!("\"{}\"", crate::sim::ir::UNSELECTED_REF_MESSAGE),
                     args: Vec::new(),
                     scope: self.path.clone(),
                     location: self.cg.source_location(h),
@@ -360,6 +363,51 @@ impl EmitCtx<'_, '_> {
             });
         }
         Ok(Some(statics))
+    }
+
+    /// When the callee waits on `ref` formal `io`, make the actual just
+    /// pushed onto `args` stop the run if its index selects no element: a
+    /// waiter on the default such an index binds would never wake. A call
+    /// whose callee does not wait, and an actual no index selects, are left
+    /// as they are.
+    fn stop_if_waited(
+        &self,
+        args: &mut [IrCallArg],
+        io: NodeId,
+        callee_inst: NodeId,
+        index: usize,
+        call: NodeId,
+    ) {
+        let Some(last) = args.last_mut() else { return };
+        let Some(task) = self.cg.enclosing_func_task(io) else {
+            return;
+        };
+        if !self.cg.waits_on_ref_formal(task, callee_inst, index) {
+            return;
+        }
+        let stop = crate::sim::ir::IrRefStop {
+            scope: self.path.clone(),
+            location: self.cg.source_location(call),
+        };
+        match last {
+            IrCallArg::RefAddr {
+                lhs,
+                read,
+                stop_unselected,
+                ..
+            } if matches!(read.kind(), IrExprKind::Container(_))
+                || !matches!(lhs.as_ref(), IrLhs::Whole(_) | IrLhs::WholeRef { .. }) =>
+            {
+                *stop_unselected = Some(stop);
+            }
+            IrCallArg::ElementRef(reference)
+                if reference.kind != crate::sim::ir::IrElementRefKind::Record
+                    && !matches!(reference.root, crate::sim::ir::IrElementRoot::Value(_)) =>
+            {
+                reference.stop_unselected = Some(stop);
+            }
+            _ => {}
+        }
     }
 
     /// Lower a delay-free task/function statement call: caller-side temps for
@@ -556,6 +604,7 @@ impl EmitCtx<'_, '_> {
                             self.cg.handle_element_ref(&self.path, bound[idx].expr)?
                         {
                             out_args.push(argument);
+                            self.stop_if_waited(&mut out_args, *io, callee_inst, idx, h);
                             continue;
                         }
                     }
@@ -598,6 +647,7 @@ impl EmitCtx<'_, '_> {
                         self.cg.handle_element_ref(&self.path, bound[idx].expr)?
                     {
                         out_args.push(argument);
+                        self.stop_if_waited(&mut out_args, *io, callee_inst, idx, h);
                         continue;
                     }
                 }
@@ -644,6 +694,7 @@ impl EmitCtx<'_, '_> {
                             .string_element_ref(&self.path, bound[idx].expr, const_ref)?
                     {
                         out_args.push(argument);
+                        self.stop_if_waited(&mut out_args, *io, callee_inst, idx, h);
                         continue;
                     }
                     // A class string property is passed by the address of
@@ -683,6 +734,7 @@ impl EmitCtx<'_, '_> {
                         const_ref,
                         ref_static,
                     )?);
+                    self.stop_if_waited(&mut out_args, *io, callee_inst, idx, h);
                 }
                 if !bound[idx].string && !matches!(out_args.last(), Some(IrCallArg::ElementRef(_)))
                 {

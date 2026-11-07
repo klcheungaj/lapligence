@@ -651,6 +651,10 @@ llg_value_t* llg_native_ref_value(void* reference) {
     return ref->member ? ref->member : &ref->value;
 }
 
+int llg_native_ref_selected(void* reference) {
+    return ((llg_native_ref_t*)reference)->valid;
+}
+
 llg_string_t* llg_native_ref_string(void* reference) {
     return &llg_native_ref_value(reference)->value.string;
 }

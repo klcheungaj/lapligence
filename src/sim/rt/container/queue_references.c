@@ -103,6 +103,11 @@ int llg_queue_cell_write(void* ptr, sv4_t value) {
     return 1;
 }
 
+int llg_queue_cell_selected(const void* ptr) {
+    const struct llg_queue_cell* cell = ptr;
+    return cell && cell->identity != 0;
+}
+
 sv4_t* llg_queue_cell_dependency(const void* ptr) {
     const struct llg_queue_cell* cell = ptr;
     return cell ? cell->dependency : NULL;

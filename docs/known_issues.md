@@ -1878,6 +1878,17 @@ limits apply to the form named:
   into a fixed-array element, a class property, an output formal or an initializer
   (`fa[2] = q[0]`), and a whole record read from a member array of an element
   (`x = oq[0].e[1]`). The column form has none of these limits.
+- per-cell form, below 16 cells: a record element selected at run time as a `ref`
+  actual lowers the call once per element, so only statement calls can take it and
+  a call site has at most 256 branches (`neg_record_ref_element_select_value`,
+  `neg_record_ref_element_select_product`). The column form has neither limit.
+  A task waiting on the formal stops the run when the index selects no element,
+  in both forms, and so does one waiting on any `ref` formal bound to an
+  element of a fixed array, queue or dynamic array whose index selects none
+  (`ref_wait_unselected_*`). A forwarded real `ref` formal carries no
+  descriptor to test: the call that first binds it stops. A callee that does not
+  wait on the formal reads the default of the element type and drops writes,
+  where some simulators stop at any such binding (decision S13-D6).
 - column form: an event control on a member of a `ref` formal whose actual is an
   automatic record of a subroutine; a module, static or procedural-block record
   works, and so does an element of a column.

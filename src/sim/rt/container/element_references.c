@@ -183,6 +183,11 @@ static void llg_assoc_outdate_references(llg_assoc_t* array, size_t position) {
     }
 }
 
+int llg_element_cell_selected(const void* ptr) {
+    const struct llg_element_cell* cell = ptr;
+    return cell && cell->valid;
+}
+
 sv4_t* llg_element_cell_dependency(const void* ptr) {
     const struct llg_element_cell* cell = ptr;
     return cell ? cell->dependency : NULL;
