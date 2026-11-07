@@ -276,7 +276,6 @@ impl<'a> Codegen<'a> {
                 .get(&target_class_node)
                 .copied()
                 .ok_or_else(|| format!("$cast target class has no execution layout in `{path}"))?;
-            let _ = self.lower_chandle(path, destination)?;
             let Some(target) = self.chandle_slot(path, destination)? else {
                 let upcast = source_is_null || self.cast_is_upcast(*source, target_class_node);
                 let target = DynamicCastTarget::Handle { expected, upcast };
