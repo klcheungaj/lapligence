@@ -17,6 +17,17 @@ Module ownership is in the `lib.rs` crate docs; child guides own their contracts
 - `profile.rs`: opt-in `LLG_PROFILE_STAGES=1` stage markers (module docs;
   scaling runs in [perf](../perf/README.md)).
 
+## Event scheduling
+
+Scheduling follows the time slot of IEEE 1800-2009 Figure 4-1 and 4.5:
+Preponed, Pre-Active; then repeat Active, Inactive, Pre-NBA, NBA, Post-NBA,
+Pre-Observed, Observed, Post-Observed until empty, then Reactive, Re-Inactive,
+Pre-Re-NBA, Re-NBA, Post-Re-NBA until empty, returning to Active on new design
+work; Pre-Postponed once all are empty; Postponed; advance time. Place every new
+event, wake or callback in its region
+([scheduler](sim/rt/scheduler/readme.md),
+[T1-D11](../docs/lrm_decisions.md#changes-that-return-to-the-old-value-fin-001-follow-up)).
+
 ## Platform code
 
 - Platform conditionals live only in the platform layers; add a layer function
