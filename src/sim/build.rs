@@ -507,6 +507,27 @@ pub enum BuildError {
 }
 
 impl BuildError {
+    /// The catalog message this error is reported as (`core::report`).
+    pub fn message(&self) -> &'static crate::core::report::MessageDef {
+        use crate::core::report::catalog as c;
+        match self {
+            Self::Io { .. } => &c::BUILD_IO,
+            Self::InvalidCompilerFlag(_) => &c::BUILD_COMPILER_FLAG,
+            Self::InvalidModelAbi(_) => &c::BUILD_MODEL_ABI,
+            Self::InvalidValueConfig(_) => &c::BUILD_VALUE_CONFIG,
+            Self::InvalidDpiLibrary { .. } => &c::BUILD_DPI_LIBRARY,
+            Self::CmakeLaunch { .. } => &c::BUILD_CMAKE_LAUNCH,
+            Self::Configure { .. } => &c::BUILD_CONFIGURE,
+            Self::BuildProgramNotFound { .. } => &c::BUILD_PROGRAM,
+            Self::Compile { .. } => &c::BUILD_COMPILE,
+            Self::MissingDpiSymbol { .. } => &c::BUILD_DPI_SYMBOL,
+            Self::ImportLibraryUnsupported { .. } => &c::BUILD_IMPORT_LIBRARY,
+            Self::ExecutableNotFound { .. } => &c::BUILD_NO_EXECUTABLE,
+            Self::RuntimeLibraryNotFound { .. } => &c::BUILD_NO_RUNTIME,
+            Self::RuntimeCacheLock { .. } => &c::BUILD_CACHE_LOCK,
+        }
+    }
+
     /// Compatibility helper for callers that previously searched a string
     /// error. Prefer matching variants for recovery decisions.
     pub fn contains(&self, pattern: &str) -> bool {
@@ -899,7 +920,7 @@ fn directory_is_empty(directory: &Path) -> bool {
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 28] = [
+const FIXED_SOURCE_NAMES: [&str; 31] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -925,6 +946,9 @@ const FIXED_SOURCE_NAMES: [&str; 28] = [
     "llg_compiler.h",
     "llg_platform.h",
     "llg_platform_native.h",
+    "llg_msg.h",
+    "llg_msg_layout.def",
+    "llg_msg_ids.def",
     "CMakeLists.txt",
     "llg_value_build.h",
     import_library::DEF_FILE,
@@ -1727,6 +1751,7 @@ fn runtime_cache_key_with_compiler(
     }
     for (name, source) in super::rt::platform_headers()
         .iter()
+        .chain(super::rt::message_headers())
         .chain(super::rt::value_backend_sources(opts.value_config.backend))
     {
         for byte in name.bytes().chain(source.bytes()) {

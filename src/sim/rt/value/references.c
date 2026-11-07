@@ -48,26 +48,26 @@ sv4_t llg_ref_read(const llg_ref_t* ref) {
     if ((llg_ref_kind_t)ref->kind == LLG_REF_COMPOSITE) {
         const llg_ref_composite_t* composite = (const llg_ref_composite_t*)ref->retained;
         if (!composite || !composite->parts || !composite->count)
-            { fputs("llg runtime fatal: invalid composite reference\n", stderr); abort(); }
+            { llg_msg(LLG_MSG_INTERNAL, NULL, "invalid composite reference"); abort(); }
         uint32_t remaining = ref->width;
         sv4_t result = sv4_x(ref->width, ref->is_signed);
         for (size_t i = 0; i < composite->count; i++) {
             const llg_ref_t* part = composite->parts[i];
             if (!part || !part->width || part->width > remaining)
-                { fputs("llg runtime fatal: invalid composite reference width\n", stderr); abort(); }
+                { llg_msg(LLG_MSG_INTERNAL, NULL, "invalid composite reference width"); abort(); }
             remaining -= part->width;
             sv4_t value = llg_ref_read(part);
             sv4_part_select_set(&result, (int64_t)remaining + part->width - 1,
                                remaining, value);
             sv4_destroy(&value);
         }
-        if (remaining) { fputs("llg runtime fatal: incomplete composite reference\n", stderr); abort(); }
+        if (remaining) { llg_msg(LLG_MSG_INTERNAL, NULL, "incomplete composite reference"); abort(); }
         return result;
     }
     if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW ||
         (llg_ref_kind_t)ref->kind == LLG_REF_TAGGED_VIEW) {
         const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
-        if (!view || !view->parent) { fputs("llg runtime fatal: invalid reference view\n", stderr); abort(); }
+        if (!view || !view->parent) { llg_msg(LLG_MSG_INTERNAL, NULL, "invalid reference view"); abort(); }
         sv4_t parent = llg_ref_read(view->parent);
         int valid = (llg_ref_kind_t)ref->kind != LLG_REF_TAGGED_VIEW ||
                     llg_ref_view_valid(view, &parent, NULL);

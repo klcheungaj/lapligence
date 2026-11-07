@@ -30,6 +30,9 @@
 #include <string.h>
 
 #include "llg_platform_native.h"
+#include "llg_msg.h"
+
+LLG_MSG_EXPORT_COUNTS(waveform)
 
 #define LLG_WAVE_QUEUE_CAP 1024u
 #define LLG_WAVE_NO_REG UINT32_MAX
@@ -183,18 +186,10 @@ static char* wave_strdup(const char* s) {
     return copy;
 }
 
-// One stdio call per report, so a report never splits around other output.
-static void wave_format(char* line, size_t size, const char* prefix, const char* fmt,
-                        va_list ap) {
-    int used = snprintf(line, size, "%s", prefix);
-    if (used < 0) used = 0;
-    if ((size_t)used < size - 2u) {
-        int written = vsnprintf(line + used, size - 1u - (size_t)used, fmt, ap);
-        if (written > 0) used += written;
-    }
-    if ((size_t)used > size - 2u) used = (int)(size - 2u);
-    line[used] = '\n';
-    line[used + 1] = 0;
+// The message text of a report; llg_msg renders and writes it in one call.
+static void wave_format(char* line, size_t size, const char* fmt, va_list ap) {
+    int written = vsnprintf(line, size, fmt, ap);
+    if (written < 0) line[0] = 0;
 }
 
 // Only the simulation thread prints; the writer thread leaves its report for
@@ -206,7 +201,7 @@ static int on_simulation_thread(void) {
 
 static void print_deferred_report(void) {
     if (llg_atomic_int_load(&g_wave.deferred_report) != 1) return;
-    fputs(g_wave.deferred_text, stderr);
+    llg_msg(LLG_MSG_WAVEFORM, NULL, "%s", g_wave.deferred_text);
     llg_atomic_int_store(&g_wave.deferred_report, 2);
 }
 
@@ -216,13 +211,13 @@ static void wave_error(const char* fmt, ...) {
     va_start(ap, fmt);
     if (on_simulation_thread()) {
         char line[2048];
-        wave_format(line, sizeof(line), "llg: waveform: ", fmt, ap);
-        fputs(line, stderr);
+        wave_format(line, sizeof(line), fmt, ap);
+        llg_msg(LLG_MSG_WAVEFORM, NULL, "%s", line);
     } else {
         // The error CAS admits one report, so the text has a single writer;
-        // the release store publishes it to the acquire load above.
-        wave_format(g_wave.deferred_text, sizeof(g_wave.deferred_text),
-                    "llg: waveform: ", fmt, ap);
+        // the release store publishes it to the acquire load above. The
+        // simulation thread renders it (and counts it) later.
+        wave_format(g_wave.deferred_text, sizeof(g_wave.deferred_text), fmt, ap);
         llg_atomic_int_store(&g_wave.deferred_report, 1);
     }
     va_end(ap);
@@ -237,15 +232,14 @@ static void wave_warning(int* once, const char* fmt, ...) {
     char line[2048];
     va_list ap;
     va_start(ap, fmt);
-    wave_format(line, sizeof(line), "llg: waveform: warning: ", fmt, ap);
+    wave_format(line, sizeof(line), fmt, ap);
     va_end(ap);
-    fputs(line, stderr);
+    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "waveform: %s", line);
 }
 
 static int require_producer(const char* operation) {
     if (!g_wave.initialized) {
-        fprintf(stderr, "llg: waveform: %s called before llg_wave_model_init\n",
-                operation);
+        llg_msg(LLG_MSG_WAVEFORM, NULL, "%s called before llg_wave_model_init", operation);
         return 0;
     }
     if (!llg_thread_equal(g_wave.producer, llg_thread_self())) {
@@ -1316,7 +1310,7 @@ static void free_state(void) {
 
 int llg_wave_model_init(uint64_t precision_fs) {
     if (g_wave.initialized) {
-        fprintf(stderr, "llg: waveform: model initialized twice without close\n");
+        llg_msg(LLG_MSG_WAVEFORM, NULL, "model initialized twice without close");
         return -1;
     }
     memset(&g_wave, 0, sizeof(g_wave));
@@ -1332,7 +1326,7 @@ int llg_wave_model_init(uint64_t precision_fs) {
     if (file_override && file_override[0]) g_wave.file_override = wave_strdup(file_override);
     if ((out_dir && out_dir[0] && !g_wave.out_dir) ||
         (file_override && file_override[0] && !g_wave.file_override)) {
-        fprintf(stderr, "llg: waveform: out of memory reading output settings\n");
+        llg_msg(LLG_MSG_WAVEFORM, NULL, "out of memory reading output settings");
         free(g_wave.out_dir);
         free(g_wave.file_override);
         g_wave.out_dir = g_wave.file_override = NULL;

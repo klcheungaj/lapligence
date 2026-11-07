@@ -76,7 +76,7 @@ static void wake_assertion_waiter(uint64_t identity) {
 static void register_wait(void) {
     llg_proc_t* p = llg_current();
     if (!p) {
-        fprintf(stderr, "llg: wait requested outside a simulation process\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "wait requested outside a simulation process");
         llg_last_failure = 1;
         g.finish = 1;
         return;

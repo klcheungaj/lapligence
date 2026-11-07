@@ -632,7 +632,7 @@ static sv4_t llg_net_strength_levels(llg_net_t* net) {
             uint8_t s0 = net->strength0 ? net->strength0[d] : LLG_STRENGTH_STRONG;
             uint8_t s1 = net->strength1 ? net->strength1[d] : LLG_STRENGTH_STRONG;
             if (s0 > LLG_STRENGTH_SUPPLY || s1 > LLG_STRENGTH_SUPPLY) {
-                fputs("llg runtime fatal: invalid net drive strength\n", stderr);
+                llg_msg(LLG_MSG_INTERNAL, NULL, "invalid net drive strength");
                 abort();
             }
             uint64_t valid = word < llg_sv4_words(*v)
@@ -897,7 +897,7 @@ static size_t llg_net_deferred_map(uint32_t width) {
         size_t capacity = net_deferred_bits_capacity ? net_deferred_bits_capacity : 64u;
         while (capacity - net_deferred_bits_count < words) {
             if (capacity > SIZE_MAX / 2u / sizeof(uint64_t)) {
-                fputs("llg runtime fatal: deferred net bit map overflow\n", stderr);
+                llg_msg(LLG_MSG_INTERNAL, NULL, "deferred net bit map overflow");
                 abort();
             }
             capacity *= 2u;
@@ -1044,7 +1044,7 @@ void llg_net_write_driven_part(llg_net_t* net, int idx, sv4_t value, uint32_t ls
     uint32_t width = llg_sv4_width(value);
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx] || !width ||
         lsb > net->width || width > net->width - lsb) {
-        fputs("llg: fatal: invalid net start part\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid net start part");
         abort();
     }
     if (net->start_pending) llg_net_pending_mark(net, lsb, width, 0);
@@ -1238,7 +1238,7 @@ void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
     if (!net || !region_can_mutate("net write")) return;
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx] ||
         plan.storage_width != net->width) {
-        fputs("llg: fatal: invalid selected net driver\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid selected net driver");
         abort();
     }
     sv4_t selected = sv4_select_plan_slice(value, &plan, reverse);
@@ -1252,13 +1252,13 @@ void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
 static void llg_net_alias_reserve(llg_net_t* net) {
     if (net->n_aliases < net->alias_capacity) return;
     if (net->alias_capacity < 0) {
-        fputs("llg: fatal: net alias capacity is invalid\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "net alias capacity is invalid");
         abort();
     }
     int capacity = net->alias_capacity ? net->alias_capacity : 4;
     while (capacity <= net->n_aliases) {
         if (capacity > INT_MAX / 2) {
-            fputs("llg: fatal: net alias capacity overflow\n", stderr);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "net alias capacity overflow");
             abort();
         }
         capacity *= 2;
@@ -1623,7 +1623,7 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         : inertial_transition_ticks(&driver->current, &value, effective_mask,
                                     rise, fall, turn_off);
     if (ticks > UINT64_MAX - g.now) {
-        fprintf(stderr, "llg: fatal: simulation time overflow while scheduling an inertial update\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "simulation time overflow while scheduling an inertial update");
         abort();
     }
     sv4_move(&driver->value, &value);
@@ -1646,7 +1646,7 @@ void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int slot,
                       sv4_t value, uint64_t rise, uint64_t fall,
                       uint64_t turn_off) {
     if (slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) {
-        fprintf(stderr, "llg: fatal: invalid inertial net driver slot\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid inertial net driver slot");
         abort();
     }
     inertial_update(handle, net->drivers[slot], net, slot, value, NULL, rise,
@@ -1664,7 +1664,7 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
                                uint64_t rise, uint64_t fall,
                                uint64_t turn_off) {
     if (slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) {
-        fprintf(stderr, "llg: fatal: invalid inertial net driver slot\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid inertial net driver slot");
         abort();
     }
     inertial_update(handle, net->drivers[slot], net, slot, value, &mask, rise,
@@ -1676,7 +1676,7 @@ void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
                            uint64_t rise, uint64_t fall, uint64_t turn_off) {
     if (slot < 0 || slot >= net->n_drivers || !net->drivers[slot] ||
         plan.storage_width != net->width) {
-        fprintf(stderr, "llg: fatal: invalid inertial net driver slot\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid inertial net driver slot");
         abort();
     }
     // Scheduling runs no callback, so the slice needs no value scope.
@@ -1744,7 +1744,7 @@ void llg_inertial_enable_net(llg_inertial_t** handle, llg_net_t* net, int zero_s
     if (zero_slot < 0 || zero_slot >= net->n_drivers || !net->drivers[zero_slot] ||
         one_slot < 0 || one_slot >= net->n_drivers || !net->drivers[one_slot] ||
         plan.storage_width != net->width) {
-        fprintf(stderr, "llg: fatal: invalid inertial net driver slot\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid inertial net driver slot");
         abort();
     }
     if (!region_can_mutate("inertial scheduling")) return;
@@ -1784,7 +1784,7 @@ void llg_inertial_enable_net(llg_inertial_t** handle, llg_net_t* net, int zero_s
     driver->turn_off = turn_off;
     uint64_t ticks = enable_pair_ticks(&driver->current, &halves, width, rise, fall, turn_off);
     if (ticks > UINT64_MAX - g.now) {
-        fprintf(stderr, "llg: fatal: simulation time overflow while scheduling an inertial update\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "simulation time overflow while scheduling an inertial update");
         abort();
     }
     sv4_move(&driver->value, &halves);
@@ -2108,7 +2108,7 @@ static int path_choose(llg_module_path_set_t* set, llg_module_path_dest_t* dest,
     if (!chosen) return 0;
     uint64_t delay = chosen->delays[transition];
     if (delay > UINT64_MAX - latest) {
-        fprintf(stderr, "llg: fatal: simulation time overflow while scheduling a module path delay\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "simulation time overflow while scheduling a module path delay");
         abort();
     }
     choice->due = latest + delay > g.now ? latest + delay : g.now;
@@ -2137,13 +2137,13 @@ static void path_queue_push(llg_inertial_t* driver, uint64_t time,
         uint32_t capacity = queue->capacity ? queue->capacity * 2u : 4u;
         uint64_t* times = realloc(queue->times, capacity * sizeof(*times));
         if (!times) {
-            fprintf(stderr, "llg: fatal: out of memory for a module path queue\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory for a module path queue");
             abort();
         }
         queue->times = times;
         uint8_t* states = realloc(queue->states, capacity * sizeof(*states));
         if (!states) {
-            fprintf(stderr, "llg: fatal: out of memory for a module path queue\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory for a module path queue");
             abort();
         }
         queue->states = states;

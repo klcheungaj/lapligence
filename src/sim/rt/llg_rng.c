@@ -1,4 +1,5 @@
 #include "llg_rng.h"
+#include "llg_msg.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -6,8 +7,7 @@
 #include <string.h>
 
 static _Noreturn void rng_fail(const char* message) {
-    fprintf(stderr, "llg: random runtime: %s\n", message);
-    abort();
+    llg_msg_abort(LLG_MSG_INTERNAL, "random runtime: %s", message);
 }
 
 static uint64_t splitmix64(uint64_t value) {

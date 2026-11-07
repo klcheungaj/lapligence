@@ -19,10 +19,7 @@ static void llg_q_set_status(sv4_t* status, int code) {
 static int llg_q_read_integer(sv4_t value, int64_t* result,
                               const char* operation, const char* argument) {
     if (llg_sv4_width(value) == 0 || sv4_is_unknown(value) || !sv4_fits_i64(value)) {
-        fprintf(stderr,
-                "llg runtime fatal: %s %s must be a known integer "
-                "representable as int64_t\n",
-                operation, argument);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s %s must be a known integer representable as int64_t", operation, argument);
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -41,7 +38,7 @@ static llg_q_queue_t* llg_q_find(int64_t id) {
 static int llg_q_checked_add_u64(uint64_t left, uint64_t right,
                                  uint64_t* result, const char* what) {
     if (right > UINT64_MAX - left) {
-        fprintf(stderr, "llg runtime fatal: stochastic queue %s overflow\n", what);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "stochastic queue %s overflow", what);
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -62,8 +59,7 @@ static int llg_q_round_average(uint64_t total, uint64_t count,
     // comparison avoids overflowing `remainder * 2`.
     if (remainder >= count - remainder) {
         if (quotient == UINT64_MAX) {
-            fprintf(stderr,
-                    "llg runtime fatal: stochastic queue average overflow\n");
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "stochastic queue average overflow");
             llg_last_failure = 1;
             g.finish = 1;
             return 0;
@@ -77,9 +73,7 @@ static int llg_q_round_average(uint64_t total, uint64_t count,
 static int llg_q_write_stat(sv4_t* target, uint64_t value) {
     if (!target) return 1;
     if (value > (uint64_t)INT64_MAX) {
-        fprintf(stderr,
-                "llg runtime fatal: stochastic queue statistic exceeds "
-                "signed integer range\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "stochastic queue statistic exceeds signed integer range");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -90,7 +84,7 @@ static int llg_q_write_stat(sv4_t* target, uint64_t value) {
 
 static int llg_q_wait(const llg_q_entry_t* entry, uint64_t* result) {
     if (g.now < entry->arrival) {
-        fprintf(stderr, "llg runtime fatal: stochastic queue time moved backwards\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "stochastic queue time moved backwards");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -169,8 +163,7 @@ void llg_q_add(sv4_t q_id_value, sv4_t job_id_value,
     uint64_t interarrival_sum = queue->interarrival_sum;
     if (queue->has_arrival) {
         if (g.now < queue->last_arrival) {
-            fprintf(stderr,
-                    "llg runtime fatal: stochastic queue time moved backwards\n");
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "stochastic queue time moved backwards");
             llg_last_failure = 1;
             g.finish = 1;
             return;
@@ -185,7 +178,7 @@ void llg_q_add(sv4_t q_id_value, sv4_t job_id_value,
         interarrival_sum = g.now;
     }
     if (queue->arrivals == UINT64_MAX) {
-        fprintf(stderr, "llg runtime fatal: stochastic queue arrival count overflow\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "stochastic queue arrival count overflow");
         llg_last_failure = 1;
         g.finish = 1;
         return;

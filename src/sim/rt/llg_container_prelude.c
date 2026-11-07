@@ -1,6 +1,7 @@
 // llg_container.c -- scheduler-independent dynamic array, queue, and
 // associative-array storage for generated C11 models.
 #include "llg_container.h"
+#include "llg_msg.h"
 #include "llg_rng.h"
 
 #include <limits.h>
@@ -36,13 +37,16 @@ static void llg_element_cells_forget_dependency(struct llg_element_cell* cell);
  * this helper, sees abort() and reports such a statement as unreachable
  * (C4702), an error in the /W4 /WX standalone probe builds. */
 static _Noreturn void llg_container_fatal(const char* message) {
-    fprintf(stderr, "llg container fatal: %s\n", message);
-    abort();
+    llg_msg_abort(LLG_MSG_INTERNAL, "container: %s", message);
 }
 
+// Container warnings carry no source location: passing one would cost every
+// container operation (user decision 2026-11-07).
 static void llg_container_warning(const char* message) {
-    fprintf(stderr, "llg container warning: %s\n", message);
+    llg_msg(LLG_MSG_CONTAINER_WARNING, NULL, "%s", message);
 }
+
+LLG_MSG_EXPORT_COUNTS(container)
 
 /* SV 7.8.6: a read through an invalid (X/Z) key or of a nonexistent entry
  * warns and yields the default; an explicit default (SV 7.9.11) is

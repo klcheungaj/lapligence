@@ -370,7 +370,7 @@ static void mailbox_append_wait(llg_mailbox_t* mailbox, llg_wait_t* wait,
 }
 
 static void mailbox_type_error(void) {
-    fprintf(stderr, "llg: mailbox retrieval type mismatch\n");
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "mailbox retrieval type mismatch");
     llg_last_failure = 1;
     g.finish = 1;
     llg_proc_t* current = llg_current();
@@ -476,7 +476,7 @@ void llg_mailbox_trace(llg_value_visit_fn visit, void* context) {
 static llg_mailbox_t* mailbox_require(llg_mailbox_t* mailbox,
                                       const char* operation) {
     if (mailbox) return mailbox;
-    fprintf(stderr, "llg: mailbox %s on a null handle\n", operation);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "mailbox %s on a null handle", operation);
     llg_last_failure = 1;
     g.finish = 1;
     return NULL;
@@ -485,19 +485,19 @@ static llg_mailbox_t* mailbox_require(llg_mailbox_t* mailbox,
 llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
                                int is_signed, int two_state, int shortreal) {
     if (sv4_is_unknown(bound)) {
-        fprintf(stderr, "llg: mailbox bound contains X/Z\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "mailbox bound contains X/Z");
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
     }
     if (llg_sv4_width(bound) > 64) {
-        fprintf(stderr, "llg: mailbox bound exceeds 64-bit capacity\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "mailbox bound exceeds 64-bit capacity");
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
     }
     if (llg_sv4_signed(bound) && sv4_to_i64(bound) < 0) {
-        fprintf(stderr, "llg: mailbox bound must be non-negative\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "mailbox bound must be non-negative");
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
@@ -507,7 +507,7 @@ llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
         (kind != LLG_MAILBOX_PACKED && width != 0) ||
         (kind != LLG_MAILBOX_PACKED && (is_signed || two_state)) ||
         (kind != LLG_MAILBOX_REAL && shortreal)) {
-        fprintf(stderr, "llg: invalid mailbox element descriptor\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid mailbox element descriptor");
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
@@ -559,7 +559,7 @@ llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
         return LLG_CO_ARM_EXIT;
     }
     if (!mailbox_message_kind_matches(mailbox, &value)) {
-        fprintf(stderr, "llg: mailbox put value does not match its type\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "mailbox put value does not match its type");
         llg_last_failure = 1;
         g.finish = 1;
         mailbox_value_destroy(&value);

@@ -39,7 +39,7 @@ pub(super) fn assert_quiet_end(output: &Output, time: u64) {
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        format!("llg: simulation ended without $finish (no processes remain) at time {time}\n"),
+        format!("INFO: [SIM-022] simulation ended without $finish (no processes remain) at time {time}\n"),
         "{output:?}"
     );
 }

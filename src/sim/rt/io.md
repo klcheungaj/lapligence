@@ -433,8 +433,16 @@ messages (severity tasks, assertion failures, `$finish`/`$stop`, memory-file
 diagnostics, the coroutine backtrace, whose frame without a descriptor name, the
 shared root of a body class, is named after the running process) are
 assembled in an `llg_report_t`
-(`llg_rt_prelude.c`; inline buffer, heap growth, truncation instead of abort)
-and written with one `fwrite`. Error paths only; `$display` output is untouched.
+(`llg_msg.h`; inline buffer, heap growth, truncation instead of abort)
+and written with one `fwrite`. Every runtime message goes through the reporter
+in `llg_msg.h`, which renders the layout of `llg_msg_layout.def` (shared with
+the host, `src/core/report.rs`) with an id from `llg_msg_ids.def`
+([catalog](../../../docs/messages.md)); status lines, severity tasks and
+assertion failures add the design scope and time from the compile-time site
+string (scope, U+001F, `file:line:col`). Container warnings and internal aborts
+carry no location: passing one would cost every operation. Each unit counts its
+messages and `llg_rt_cleanup` prints the `SIM-000` summary when a warning or
+worse occurred. Error paths only; `$display` output is untouched.
 Separate hierarchy components with ASCII 0x1f and reversibly encode punctuation to
 avoid escaped-name collisions. Keep libfst internal parallel mode disabled;
 waveform builds require `Threads::Threads`, not C11 threads as the Windows

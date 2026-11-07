@@ -332,7 +332,7 @@ int llg_assertion_future(uint64_t identity, uint64_t global_clock, uint32_t slot
         assertion->kind == LLG_ASSERTION_EXPECT || assertion->endpoint_event ||
         (assertion->abort_condition && !assertion->abort_sync) || assertion->property_async ||
         (slots && !capture)) {
-        fprintf(stderr, "llg: invalid future global sampled-value assertion\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid future global sampled-value assertion");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -345,9 +345,7 @@ int llg_assertion_future(uint64_t identity, uint64_t global_clock, uint32_t slot
 
 static const sv4_t* future_captured_slot(uint32_t slot) {
     if (!g.assertion_lag_slots || slot >= g.assertion_lag_slot_count) {
-        fprintf(stderr, "llg runtime fatal: captured assertion operand %u read outside its"
-                        " deferred evaluation\n",
-                (unsigned)slot);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "captured assertion operand %u read outside its deferred evaluation", (unsigned)slot);
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
@@ -377,7 +375,7 @@ int llg_assertion_future_status(int kind, uint32_t slot, const sv4_t* future) {
         case 2: return sv4_same(*current, *future);
         case 3: return !sv4_same(*current, *future);
         default:
-            fprintf(stderr, "llg runtime fatal: invalid future sampled-value status %d\n", kind);
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid future sampled-value status %d", kind);
             llg_last_failure = 1;
             g.finish = 1;
             return 0;

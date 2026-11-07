@@ -296,6 +296,17 @@ pub fn platform_headers() -> &'static [(&'static str, &'static str)] {
     ]
 }
 
+/// The runtime message reporter (`llg_msg.h`) and the two tables it reads:
+/// the layout shared with the host renderer (`core::report`) and the runtime
+/// message ids. Written beside every model and every standalone runtime unit.
+pub fn message_headers() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("llg_msg.h", include_str!("llg_msg.h")),
+        ("llg_msg_layout.def", include_str!("llg_msg_layout.def")),
+        ("llg_msg_ids.def", include_str!("llg_msg_ids.def")),
+    ]
+}
+
 /// Scheduler-independent legacy `$random` and `$dist_*` implementations.
 /// Compile together with generated models or as a standalone C11 module.
 pub fn random_sources() -> (&'static str, &'static str) {

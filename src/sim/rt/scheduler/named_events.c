@@ -11,7 +11,7 @@ static void event_table_reserve(llg_proc_t*** table, size_t* capacity,
     size_t next = *capacity ? *capacity : 8u;
     while (next < (size_t)needed) {
         if (next > SIZE_MAX / 2u) {
-            fprintf(stderr, "llg runtime fatal: %s capacity overflow\n", what);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "%s capacity overflow", what);
             abort();
         }
         next *= 2u;
@@ -160,7 +160,7 @@ static int* event_wait_slot(llg_wait_t* w, llg_event_object_t* ev, int index) {
 static void event_list_add(llg_event_object_t* ev, llg_proc_t* p, int* slot) {
     if (!ev) return;
     if (ev->n_waiters == INT_MAX) {
-        fprintf(stderr, "llg runtime fatal: named-event waiter count overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "named-event waiter count overflow");
         abort();
     }
     event_table_reserve(&ev->waiters, &ev->waiters_capacity,
@@ -176,8 +176,7 @@ static void event_list_add(llg_event_object_t* ev, llg_proc_t* p, int* slot) {
 static void event_triggered_list_add(llg_event_object_t* ev, llg_proc_t* p) {
     if (!ev) return;
     if (ev->n_triggered_waiters == INT_MAX) {
-        fprintf(stderr,
-                "llg runtime fatal: named-event triggered waiter count overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "named-event triggered waiter count overflow");
         abort();
     }
     event_table_reserve(&ev->triggered_waiters, &ev->triggered_waiters_capacity,

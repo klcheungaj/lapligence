@@ -6,6 +6,7 @@
  * engine portfolio.
  */
 #include "llg_constraint.h"
+#include "llg_msg.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,8 +28,7 @@
  * this helper, sees abort() and reports such a statement as unreachable
  * (C4702), an error in the /W4 /WX standalone probe builds. */
 static _Noreturn void cr_fatal(const char* message) {
-    fprintf(stderr, "llg: constraint solver: %s\n", message);
-    abort();
+    llg_msg_abort(LLG_MSG_INTERNAL, "constraint solver: %s", message);
 }
 
 static void* cr_alloc(size_t count, size_t size) {
@@ -87,10 +87,8 @@ static uint64_t cr_env_u64(const char* name, uint64_t fallback) {
     uint64_t value = 0;
     for (const char* p = text; *p; ++p) {
         if (*p < '0' || *p > '9') {
-            fprintf(stderr,
-                    "llg: constraint solver: ignoring %s=%s (not a decimal "
-                    "count)\n",
-                    name, text);
+            llg_msg(LLG_MSG_ENVIRONMENT, NULL,
+                    "constraint solver: ignoring %s=%s (not a decimal count)", name, text);
             return fallback;
         }
         uint64_t digit = (uint64_t)(*p - '0');

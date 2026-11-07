@@ -2,6 +2,7 @@
 
 use super::super::containers::PatternAssignmentKind;
 use super::*;
+use crate::sim::codegen::error::located;
 
 #[cfg(test)]
 mod tests;
@@ -1407,12 +1408,14 @@ impl<'a> Codegen<'a> {
                         .iter()
                         .any(|candidate| self.same_storage(write, candidate))
                 }) {
-                    return Err(format!(
-                        "semantic error: multiple continuous assignments to variable storage `{}` at {} (also written by `{}` at {})",
-                        self.dependency_label(storage),
-                        self.source_location(writer.node),
-                        other.label,
-                        self.source_location(other.node),
+                    return Err(located(
+                        &self.source_location(writer.node),
+                        format!(
+                            "semantic error: multiple continuous assignments to variable storage `{}` (also written by `{}` at {})",
+                            self.dependency_label(storage),
+                            other.label,
+                            self.source_location(other.node),
+                        ),
                     ));
                 }
             }
@@ -1486,12 +1489,14 @@ impl<'a> Codegen<'a> {
                         .iter()
                         .any(|other| self.same_storage(write, other))
                 }) {
-                    return Err(format!(
-                        "semantic error: variable storage `{}` has both a continuous assignment at {} and a procedural assignment by `{}` at {}",
-                        self.dependency_label(storage),
-                        self.source_location(driver.node),
-                        writer.label,
-                        self.source_location(writer.node),
+                    return Err(located(
+                        &self.source_location(driver.node),
+                        format!(
+                            "semantic error: variable storage `{}` has both a continuous assignment and a procedural assignment by `{}` at {}",
+                            self.dependency_label(storage),
+                            writer.label,
+                            self.source_location(writer.node),
+                        ),
                     ));
                 }
             }
@@ -1543,11 +1548,13 @@ impl<'a> Codegen<'a> {
                 || self.function_has_value_return(body)
                 || self.function_assigns_return(body, function, result);
             if assigned_return {
-                return Err(format!(
-                    "semantic error: static function result `{}` has both a continuous driver at {} and a procedural write in its body at {}",
-                    self.node(function).name,
-                    self.source_location(driver.node),
-                    self.source_location(function),
+                return Err(located(
+                    &self.source_location(driver.node),
+                    format!(
+                        "semantic error: static function result `{}` has both a continuous driver and a procedural write in its body at {}",
+                        self.node(function).name,
+                        self.source_location(function),
+                    ),
                 ));
             }
         }
@@ -1572,13 +1579,15 @@ impl<'a> Codegen<'a> {
                         .iter()
                         .any(|candidate| self.same_storage(write, candidate))
                 }) {
-                    return Err(format!(
-                        "semantic error: process `{}` has multiple writers for `{}` at {} (also written by `{}` at {})",
-                        restricted.label,
-                        self.dependency_label(storage),
-                        self.source_location(restricted.node),
-                        other.label,
-                        self.source_location(other.node),
+                    return Err(located(
+                        &self.source_location(restricted.node),
+                        format!(
+                            "semantic error: process `{}` has multiple writers for `{}` (also written by `{}` at {})",
+                            restricted.label,
+                            self.dependency_label(storage),
+                            other.label,
+                            self.source_location(other.node),
+                        ),
                     ));
                 }
             }
@@ -1767,9 +1776,11 @@ impl<'a> Codegen<'a> {
                 .or_else(|| scan.fork_controls.first())
                 .copied()
                 .unwrap_or(stmt);
-            return Err(format!(
-                "semantic error: {label} process `{path}` cannot contain a blocking timing control or fork at {}",
-                self.source_location(node)
+            return Err(located(
+                &self.source_location(node),
+                format!(
+                    "semantic error: {label} process `{path}` cannot contain a blocking timing control or fork"
+                ),
             ));
         }
         if process_kind == AlwaysKind::FlipFlop {
@@ -1780,15 +1791,15 @@ impl<'a> Codegen<'a> {
                 ));
             }
             if let Some(node) = scan.blocking_timing_controls.first() {
-                return Err(format!(
-                    "semantic error: always_ff process `{path}` cannot contain a timing control at {}",
-                    self.source_location(*node)
+                return Err(located(
+                    &self.source_location(*node),
+                    format!("semantic error: always_ff process `{path}` cannot contain a timing control"),
                 ));
             }
             if let Some(node) = scan.fork_controls.first() {
-                return Err(format!(
-                    "semantic error: always_ff process `{path}` cannot contain a fork at {}",
-                    self.source_location(*node)
+                return Err(located(
+                    &self.source_location(*node),
+                    format!("semantic error: always_ff process `{path}` cannot contain a fork"),
                 ));
             }
         }

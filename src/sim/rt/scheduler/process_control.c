@@ -195,7 +195,7 @@ static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent) {
 // (SV 8.4); like a null class handle access it ends the simulation.
 static void process_handle_null(const char* method) {
     if (llg_rt_exiting()) return;
-    fprintf(stderr, "llg: null process handle access: process::%s\n", method);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "null process handle access: process::%s", method);
     llg_rt_mark_failed();
     llg_rt_fatal_typed(0, "null process handle access", NULL, 0, "", method);
 }
@@ -216,7 +216,7 @@ int llg_process_status(const llg_process_handle_t* handle) {
 void llg_process_retain(llg_process_handle_t* handle) {
     if (!handle) return;
     if (handle->refs == SIZE_MAX) {
-        fprintf(stderr, "llg: process handle reference count overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "process handle reference count overflow");
         abort();
     }
     handle->refs++;
@@ -225,7 +225,7 @@ void llg_process_retain(llg_process_handle_t* handle) {
 void llg_process_release(llg_process_handle_t* handle) {
     if (!handle) return;
     if (handle->refs == 0) {
-        fprintf(stderr, "llg: process handle reference count underflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "process handle reference count underflow");
         abort();
     }
     handle->refs--;
@@ -387,7 +387,7 @@ llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
         return LLG_CO_ARM_READY;
     if (handle->proc == self) {
         // SV 9.7: a process cannot wait for its own completion.
-        fprintf(stderr, "llg: process::await called on the current process\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "process::await called on the current process");
         llg_rt_mark_failed();
         llg_rt_fatal_typed(0, "process::await called on the current process",
                            NULL, 0, "", "process::await");
@@ -416,9 +416,7 @@ static llg_rng_state_t* process_handle_rng(const llg_process_handle_t* handle,
         return NULL;
     }
     if (!handle->proc) {
-        fprintf(stderr,
-                "llg: random runtime: process::%s on a terminated process\n",
-                method);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "random runtime: process::%s on a terminated process", method);
         llg_last_failure = 1;
         return NULL;
     }
@@ -441,7 +439,7 @@ int llg_process_handle_set_randstate(llg_process_handle_t* handle,
     llg_rng_state_t* rng = process_handle_rng(handle, "set_randstate");
     int ok = rng && llg_rng_state_set(rng, &state);
     if (rng && !ok) {
-        fprintf(stderr, "llg: random runtime: invalid randstate string\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "random runtime: invalid randstate string");
         llg_last_failure = 1;
     }
     llg_string_destroy(&state);
@@ -466,7 +464,7 @@ void llg_semaphore_put(llg_semaphore_t* semaphore, sv4_t key_count) {
     uint64_t keys = 0;
     if (!semaphore_key_count(key_count, &keys) || keys == 0) return;
     if (keys > UINT64_MAX - semaphore->available) {
-        fprintf(stderr, "llg: semaphore key count overflow in put\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore key count overflow in put");
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -483,7 +481,7 @@ llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
         !semaphore_valid(semaphore, "get"))
         return LLG_CO_ARM_READY;
     if (!self) {
-        fprintf(stderr, "llg: semaphore get requested outside a simulation process\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore get requested outside a simulation process");
         llg_last_failure = 1;
         g.finish = 1;
         return LLG_CO_ARM_READY;

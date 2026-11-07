@@ -98,6 +98,8 @@ pub fn protected_source_diagnostics(snapshot: &Snapshot) -> Vec<Diag> {
                 col,
                 message: unsupported_message(envelope),
                 logical: None,
+                id: Some(crate::core::report::catalog::ELAB_PROTECTED.id()),
+                option: None,
             }
         })
         .collect()

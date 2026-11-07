@@ -13,41 +13,32 @@ void llg_rt_note_error(int fatal, const char* message, const char* location) {
     llg_error_hook_active = 0;
 }
 
-static const char* llg_severity_name(int severity) {
-    switch (severity) {
-        case LLG_SEVERITY_INFO: return "info";
-        case LLG_SEVERITY_WARNING: return "warning";
-        case LLG_SEVERITY_ERROR: return "error";
-        case LLG_SEVERITY_FATAL: return "fatal";
-        default: return "invalid";
-    }
-}
-
 static void llg_report_severity_typed(int severity, const char* fmt,
                                       llg_fmt_arg_t* args, int n,
                                       const char* scope, const char* location) {
     if (severity < LLG_SEVERITY_INFO || severity > LLG_SEVERITY_FATAL) {
-        fprintf(stderr, "llg runtime fatal: invalid severity level %d\n", severity);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid severity level %d", severity);
         abort();
     }
     if (n < 0) {
-        fprintf(stderr, "llg runtime fatal: negative severity argument count\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "negative severity argument count");
         abort();
     }
     if (llg_severity_counts[severity] == UINT64_MAX) {
-        fprintf(stderr, "llg runtime fatal: severity counter overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "severity counter overflow");
         abort();
     }
     size_t len = 0;
     char* out = llg_typed_line_alloc(fmt, args, n, scope, &len);
     llg_severity_counts[severity]++;
+    // An empty scope marks a simulator-generated failure (the emitter
+    // passes no `%m` scope for it); user tasks always name their scope.
+    static const llg_msg_id_t task_ids[] = {LLG_MSG_TASK_INFO, LLG_MSG_TASK_WARNING,
+                                            LLG_MSG_TASK_ERROR, LLG_MSG_TASK_FATAL};
+    llg_msg_id_t id = scope && scope[0] ? task_ids[severity] : LLG_MSG_RUNTIME_FAILURE;
     llg_report_t report;
     llg_report_init(&report);
-    llg_report_printf(&report, "llg: severity %s: %s: ",
-                      llg_severity_name(severity),
-                      location && location[0] ? location : "<unknown>");
-    llg_report_bytes(&report, out, len);
-    llg_report_bytes(&report, "\n", 1);
+    llg_rt_framed(&report, id, severity, location, scope, out, len);
     llg_report_emit(&report, stderr);
     if (severity >= LLG_SEVERITY_ERROR && llg_error_hook) {
         char message[512];
@@ -67,8 +58,7 @@ void llg_rt_fatal_typed(int finish_number, const char* fmt,
                         llg_fmt_arg_t* args, int n,
                         const char* scope, const char* location) {
     if (finish_number < 0 || finish_number > 2) {
-        fprintf(stderr, "llg runtime fatal: invalid $fatal finish number %d\n",
-                finish_number);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid $fatal finish number %d", finish_number);
         llg_fmt_args_destroy(args, n);
         abort();
     }
@@ -95,7 +85,7 @@ static const char* llg_assertion_name(int kind) {
 static void assertion_record_failure(int kind) {
     if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_EXPECT ||
         llg_assertion_failure_counts[kind] == UINT64_MAX) {
-        fprintf(stderr, "llg runtime fatal: invalid assertion kind or counter overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid assertion kind or counter overflow");
         abort();
     }
     llg_assertion_failure_counts[kind]++;
@@ -104,17 +94,19 @@ static void assertion_record_failure(int kind) {
 static void assertion_report_failure(int kind, const char* label,
                                       const char* location) {
     if (llg_severity_counts[LLG_SEVERITY_ERROR] == UINT64_MAX) {
-        fprintf(stderr, "llg runtime fatal: severity counter overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "severity counter overflow");
         abort();
     }
     llg_severity_counts[LLG_SEVERITY_ERROR]++;
+    llg_report_t text;
     llg_report_t report;
+    llg_report_init(&text);
     llg_report_init(&report);
-    llg_report_printf(&report, "llg: assertion %s failed: %s",
-                      llg_assertion_name(kind),
-                      location && location[0] ? location : "<unknown>");
-    if (label && label[0]) llg_report_printf(&report, " (%s)", label);
-    llg_report_bytes(&report, "\n", 1);
+    llg_report_printf(&text, "%s failed", llg_assertion_name(kind));
+    if (label && label[0]) llg_report_printf(&text, " (%s)", label);
+    llg_rt_framed(&report, LLG_MSG_ASSERTION_FAILED, LLG_SEVERITY_ERROR, location, NULL,
+                  text.data, text.len);
+    llg_report_free(&text);
     llg_report_emit(&report, stderr);
     if (llg_error_hook) {
         char message[256];
@@ -137,7 +129,7 @@ void llg_assertion_cover(uint64_t identity, const char* label, const char* locat
     (void)label;
     (void)location;
     if (llg_assertion_cover_count == UINT64_MAX) {
-        fprintf(stderr, "llg runtime fatal: assertion coverage counter overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "assertion coverage counter overflow");
         abort();
     }
     llg_assertion_cover_count++;
@@ -214,7 +206,7 @@ static int assertion_matches_type(const llg_concurrent_assertion_t* assertion,
 }
 
 static int assertion_control_failure(const char* reason) {
-    fprintf(stderr, "llg: assertion control error: %s\n", reason);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "assertion control error: %s", reason);
     llg_last_failure = 1;
     g.finish = 1;
     return 0;

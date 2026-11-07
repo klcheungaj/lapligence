@@ -274,6 +274,8 @@ fn cached_semantic_tokens_keep_recovered_tokens_of_syntax_invalid_aliases() {
         line: 4,
         col: 1,
         message: "incomplete declaration".to_owned(),
+        id: None,
+        option: None,
     });
 
     // Act
@@ -331,6 +333,8 @@ fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fall
         line: 2,
         col: 1,
         message: "incomplete declaration".to_owned(),
+        id: None,
+        option: None,
     });
 
     // Act / Assert: the syntax-invalid left file keeps its own recovered
@@ -1196,6 +1200,8 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
         line: 0,
         col: 0,
         message: "semantic database build failed: synthetic failure".to_owned(),
+        id: None,
+        option: None,
     });
     let result = CompileResult {
         analysis: Some(analysis),
@@ -1484,6 +1490,8 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
                 line: 1,
                 col: 1,
                 message: message.to_owned(),
+                id: None,
+                option: None,
             });
         }
         analysis
@@ -1556,6 +1564,8 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
         line: 1,
         col: 1,
         message: "error in open.sv".to_owned(),
+        id: None,
+        option: None,
     });
     state
         .lock()

@@ -878,9 +878,15 @@ impl<'a> Codegen<'a> {
                 .any(|child| self.names_queue_end(*child))
     }
 
+    /// The run-time failure site of a cast: the scope `path`, the unit
+    /// separator (U+001F), then the physical `file:line:col` of `node`, as
+    /// the runtime frames a message (`llg_rt_framed`); the scope alone
+    /// without a source position.
     fn cast_location(&self, path: &str, node: NodeId) -> String {
-        let source = self.node(node);
-        format!("{path}:{}:{}", source.line, source.col)
+        if self.node(node).line == 0 {
+            return path.to_owned();
+        }
+        format!("{path}\u{1f}{}", self.source_location(node))
     }
 
     /// A checked destination binds its element before the source runs: an

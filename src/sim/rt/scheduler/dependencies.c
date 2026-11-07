@@ -76,7 +76,7 @@ static void dependency_bind(const void* key, uint8_t kind, sv4_t* dependency,
 
 void llg_dependency_bind(sv4_t* target, sv4_t* dependency) {
     if (!target || !dependency) {
-        fprintf(stderr, "llg: invalid dependency binding\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid dependency binding");
         abort();
     }
     dependency_bind(target, LLG_DEPENDENCY_BINDING_PACKED, dependency, "dependency binding");
@@ -84,7 +84,7 @@ void llg_dependency_bind(sv4_t* target, sv4_t* dependency) {
 
 void llg_dependency_bind_real(double* target, sv4_t* dependency) {
     if (!target || !dependency) {
-        fprintf(stderr, "llg: invalid real dependency binding\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid real dependency binding");
         abort();
     }
     dependency_bind(target, LLG_DEPENDENCY_BINDING_REAL, dependency, "real dependency binding");
@@ -908,7 +908,7 @@ static int sig_write_ranges(sv4_t* target,
         (has_second &&
          (!llg_sv4_width(second) || second_offset > llg_sv4_width(*target) ||
           llg_sv4_width(second) > llg_sv4_width(*target) - second_offset))) {
-        fputs("llg: fatal: invalid signal write range\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid signal write range");
         abort();
     }
     int first_changed = !sig_range_same(target, first_offset, &first);

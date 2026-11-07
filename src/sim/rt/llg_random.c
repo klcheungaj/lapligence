@@ -1,6 +1,7 @@
 // llg_random.c — IEEE Verilog probabilistic distribution algorithms.
 
 #include "llg_random.h"
+#include "llg_msg.h"
 
 #include <float.h>
 #include <math.h>
@@ -58,7 +59,7 @@ static int32_t clamp_interval_i32(int64_t value) {
 
 static int valid_seed(int32_t *seed) {
     if (seed != NULL) return 1;
-    fputs("llg random warning: seed must be a writable 32-bit value\n", stderr);
+    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "seed must be a writable 32-bit value");
     return 0;
 }
 
@@ -179,8 +180,7 @@ int32_t llg_dist_normal(int32_t *seed, int32_t mean, int32_t deviation) {
 int32_t llg_dist_exponential(int32_t *seed, int32_t mean) {
     if (!valid_seed(seed)) return 0;
     if (mean <= 0) {
-        fputs("llg random warning: exponential distribution requires a positive mean\n",
-              stderr);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "exponential distribution requires a positive mean");
         return 0;
     }
     return rounded_i32(exponential(seed, mean));
@@ -189,8 +189,7 @@ int32_t llg_dist_exponential(int32_t *seed, int32_t mean) {
 int32_t llg_dist_poisson(int32_t *seed, int32_t mean) {
     if (!valid_seed(seed)) return 0;
     if (mean <= 0) {
-        fputs("llg random warning: poisson distribution requires a positive mean\n",
-              stderr);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "poisson distribution requires a positive mean");
         return 0;
     }
     return poisson(seed, mean);
@@ -199,8 +198,7 @@ int32_t llg_dist_poisson(int32_t *seed, int32_t mean) {
 int32_t llg_dist_chi_square(int32_t *seed, int32_t degree_of_freedom) {
     if (!valid_seed(seed)) return 0;
     if (degree_of_freedom <= 0) {
-        fputs("llg random warning: chi-square distribution requires a positive degree of freedom\n",
-              stderr);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "chi-square distribution requires a positive degree of freedom");
         return 0;
     }
     return rounded_i32(chi_square(seed, degree_of_freedom));
@@ -209,8 +207,7 @@ int32_t llg_dist_chi_square(int32_t *seed, int32_t degree_of_freedom) {
 int32_t llg_dist_t(int32_t *seed, int32_t degree_of_freedom) {
     if (!valid_seed(seed)) return 0;
     if (degree_of_freedom <= 0) {
-        fputs("llg random warning: t distribution requires a positive degree of freedom\n",
-              stderr);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "t distribution requires a positive degree of freedom");
         return 0;
     }
     return rounded_i32(student_t(seed, degree_of_freedom));
@@ -219,8 +216,7 @@ int32_t llg_dist_t(int32_t *seed, int32_t degree_of_freedom) {
 int32_t llg_dist_erlang(int32_t *seed, int32_t k_stage, int32_t mean) {
     if (!valid_seed(seed)) return 0;
     if (k_stage <= 0) {
-        fputs("llg random warning: Erlang distribution requires a positive k-stage\n",
-              stderr);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "Erlang distribution requires a positive k-stage");
         return 0;
     }
     return rounded_i32(erlangian(seed, k_stage, mean));

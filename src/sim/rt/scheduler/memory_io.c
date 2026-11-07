@@ -78,28 +78,31 @@ static const char* llg_memory_noun(void) {
 // 1364-2001 17.2.8 prescribe: a word count that differs from the range is a
 // warning; an out-of-range file address or enum value is an error that
 // terminates the load. Neither ends the simulation or changes its status.
-static void llg_memory_report(const char* category, const char* path,
-                              const char* format, va_list args) {
+static void llg_memory_report(llg_msg_id_t id, const char* path, const char* format,
+                              va_list args) {
+    llg_report_t text;
     llg_report_t report;
+    llg_report_init(&text);
     llg_report_init(&report);
-    llg_report_printf(&report, "llg: %s: %s `%s`: ", category, llg_memory_noun(),
-                      path ? path : "");
-    llg_report_vprintf(&report, format, args);
-    llg_report_bytes(&report, "\n", 1);
+    llg_report_printf(&text, "%s `%s`: ", llg_memory_noun(), path ? path : "");
+    llg_report_vprintf(&text, format, args);
+    llg_msg_append(&report, id, llg_msg_default_severity(id), NULL, NULL, NULL, text.data,
+                   text.len);
+    llg_report_free(&text);
     llg_report_emit(&report, stderr);
 }
 
 static void llg_memory_warning(const char* path, const char* format, ...) {
     va_list args;
     va_start(args, format);
-    llg_memory_report("warning", path, format, args);
+    llg_memory_report(LLG_MSG_MEMORY_FILE_WARNING, path, format, args);
     va_end(args);
 }
 
 static void llg_memory_error(const char* path, const char* format, ...) {
     va_list args;
     va_start(args, format);
-    llg_memory_report("error", path, format, args);
+    llg_memory_report(LLG_MSG_MEMORY_FILE_ERROR, path, format, args);
     va_end(args);
 }
 

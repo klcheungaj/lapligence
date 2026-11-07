@@ -249,7 +249,7 @@ static void switch_own_levels(uint32_t node) {
 
 static void switch_push(uint32_t node, unsigned entry, int level) {
     if (g_sw.n_items >= (size_t)g_sw.n_nodes * LLG_SWITCH_ITEMS_PER_NODE) {
-        fputs("llg runtime fatal: switch network item bound exceeded\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "switch network item bound exceeded");
         abort();
     }
     uint32_t index = g_sw.n_items++;
@@ -543,7 +543,7 @@ static void switch_set_state(uint32_t s, uint8_t next) {
 
 void llg_switch_control(uint32_t index, sv4_t state) {
     if (index >= g_sw.n_switches) {
-        fputs("llg runtime fatal: invalid switch index\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid switch index");
         abort();
     }
     if (!region_can_mutate("switch control")) return;
@@ -656,7 +656,7 @@ void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t co
             (i && control->signal == g_sw.controls[i - 1u].signal &&
              control->bit == g_sw.controls[i - 1u].bit &&
              control->sw == g_sw.controls[i - 1u].sw)) {
-            fputs("llg runtime fatal: invalid switch control\n", stderr);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "invalid switch control");
             abort();
         }
         if (!i || control->signal != g_sw.controls[i - 1u].signal) n_watches++;
@@ -702,7 +702,7 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
     if (!nodes || !n_nodes) return;
     if (n_nodes > UINT32_MAX / LLG_SWITCH_ITEMS_PER_NODE ||
         n_switches > UINT32_MAX / 2u) {
-        fputs("llg runtime fatal: switch network is too large\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "switch network is too large");
         abort();
     }
     g_sw.nodes = nodes;
@@ -740,7 +740,7 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
     }
     for (uint32_t s = 0; s < n_switches; s++) {
         if (switches[s].a >= n_nodes || switches[s].b >= n_nodes) {
-            fputs("llg runtime fatal: invalid switch terminal\n", stderr);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "invalid switch terminal");
             abort();
         }
         g_sw.state[s] = switches[s].flags & LLG_SWITCH_CONTROLLED ? LLG_SWITCH_UNKNOWN
@@ -767,7 +767,7 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
     for (uint32_t n = 0; n < n_nodes; n++) {
         llg_net_t* net = nodes[n].net;
         if (!net || nodes[n].bit >= net->width) {
-            fputs("llg runtime fatal: invalid switch node\n", stderr);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "invalid switch node");
             abort();
         }
         if (net->switch_net) {

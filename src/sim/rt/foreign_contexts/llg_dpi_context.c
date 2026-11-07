@@ -9,6 +9,9 @@
 // to the single-threaded runtime. Only models whose generated shims call
 // llg_dpi_context_begin reference this unit, so only they need the platform
 // thread library.
+// Foreign contexts always link with the scheduler, which counts their
+// messages for the end-of-run summary.
+#define LLG_MSG_COUNT_HOOK llg_rt_count_message
 #include "llg_platform.h"
 #include "llg_vpi.h"
 
@@ -181,7 +184,7 @@ llg_dpi_context_t* llg_dpi_context_begin(llg_co_chain_t* chain, llg_dpi_body_fn 
         char error[128];
         if (llg_thread_start_sized(&context->thread, contexts_thread, context,
                                    LLG_DPI_CONTEXT_STACK_BYTES, error, sizeof(error)) != 0) {
-            fprintf(stderr, "llg: cannot start a DPI-C call context thread: %s\n", error);
+            llg_msg(LLG_MSG_DPI_ERROR, NULL, "cannot start a DPI-C call context thread: %s", error);
             llg_cond_destroy(&context->party.wake);
             free(context);
             return NULL;
@@ -225,11 +228,7 @@ llg_co_anchor_t* llg_dpi_export_begin(const llg_co_desc_t* desc, const char* c_n
         // import that runs without a context (35.8: an imported function
         // may never enable an exported task).
         if (!llg_rt_exiting()) {
-            fprintf(stderr,
-                    "llg: DPI-C exported task `%s` can consume time, but its foreign "
-                    "caller cannot suspend: only a context imported task may call it "
-                    "(SV 35.8)\n",
-                    c_name);
+            llg_msg(LLG_MSG_DPI_ERROR, NULL, "DPI-C exported task `%s` can consume time, but its foreign caller cannot suspend: only a context imported task may call it (SV 35.8)", c_name);
             llg_rt_mark_failed();
             llg_rt_fatal_typed(0, "DPI-C protocol violation", NULL, 0, "", c_name);
         }

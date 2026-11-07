@@ -23,7 +23,7 @@ static llg_proc_t* spawn_process(const llg_co_desc_t* desc,
     p->program_live = program && is_initial;
     if (p->program_live) {
         if (program->live_initials == SIZE_MAX || g.program_processes == SIZE_MAX) {
-            fprintf(stderr, "llg: program initial accounting overflow\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "program initial accounting overflow");
             abort();
         }
         program->had_initial = 1;
@@ -86,8 +86,7 @@ llg_proc_t* llg_spawn_owned_with_frame(const llg_co_desc_t* desc,
         return NULL;
     }
     if (status == LLG_CO_CALLED) {
-        fprintf(stderr,
-                "llg runtime fatal: coroutine anchor escaped llg_co_run\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "coroutine anchor escaped llg_co_run");
         abort();
     }
     return p;
@@ -98,8 +97,7 @@ llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,
                                          llg_region_t region,
                                          uint64_t instance, int is_initial) {
     if (region != LLG_REGION_REACTIVE) {
-        fprintf(stderr,
-                "llg: program process must be spawned in a reactive region\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "program process must be spawned in a reactive region");
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
@@ -113,7 +111,7 @@ llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,
         g.programs = program;
     }
     if (program->closed) {
-        fprintf(stderr, "llg: cannot spawn into a completed program\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "cannot spawn into a completed program");
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
@@ -318,9 +316,7 @@ llg_co_arm_t llg_arm_time(llg_proc_t* self, uint64_t ticks) {
     // A delay past the last 64-bit time is a fatal run-time error; the final
     // procedures still run (decision S01-D2).
     if (ticks > UINT64_MAX - g.now) {
-        fprintf(stderr,
-                "llg: error: simulation time overflow at %llu while scheduling a delay of %llu tick(s)\n",
-                (unsigned long long)g.now, (unsigned long long)ticks);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "simulation time overflow at %llu while scheduling a delay of %llu tick(s)", (unsigned long long)g.now, (unsigned long long)ticks);
         llg_rt_mark_failed();
         llg_rt_fatal_typed(0, "simulation time overflow", NULL, 0, "", "delay");
         return LLG_CO_ARM_EXIT;
@@ -357,13 +353,13 @@ static llg_region_t take_wait_resume_region(llg_proc_t* p) {
 void llg_wait_resume_in_region(llg_region_t region) {
     llg_proc_t* p = llg_current();
     if (!p) {
-        fprintf(stderr, "llg: wait region requested outside a simulation process\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "wait region requested outside a simulation process");
         llg_last_failure = 1;
         g.finish = 1;
         return;
     }
     if (!region_valid(region)) {
-        fprintf(stderr, "llg: invalid execution region %d for wait\n", (int)region);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %d for wait", (int)region);
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -470,7 +466,7 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
     }
     for (int i = 0; i < n; i++) {
         if ((deps[i].sig == NULL) == (deps[i].real == NULL)) {
-            fprintf(stderr, "llg: typed wait dependency must name one storage kind\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "typed wait dependency must name one storage kind");
             abort();
         }
         payload->dependencies[i] = deps[i];
@@ -478,7 +474,7 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
             sv4_t* value = deps[i].value ? deps[i].value : deps[i].sig;
             if (!value || deps[i].real || deps[i].lsb >= llg_sv4_width(*value) ||
                 deps[i].width > llg_sv4_width(*value) - deps[i].lsb) {
-                fprintf(stderr, "llg: invalid packed-prefix wait dependency\n"); abort();
+                llg_msg(LLG_MSG_INTERNAL, NULL, "invalid packed-prefix wait dependency"); abort();
             }
             sv4_replace(&payload->last[i], sv4_part_select(
                 *value, (int64_t)deps[i].lsb + deps[i].width - 1,

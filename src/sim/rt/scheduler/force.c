@@ -59,7 +59,7 @@ static void force_free_entry(llg_force_entry_t* entry) {
 static sv4_t force_part_mask(const llg_force_part_t* part) {
     if (!part->target || llg_sv4_width(*part->target) >= LLG_SUPPORTED_WIDTH_LIMIT ||
         part->width >= LLG_SUPPORTED_WIDTH_LIMIT) {
-        fprintf(stderr, "llg: invalid force target or width\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid force target or width");
         abort();
     }
     sv4_t mask = sv4_from_u64(0, llg_sv4_width(*part->target), 0);
@@ -94,7 +94,7 @@ static int force_find_free_slot(void) {
     for (int i = 0; i < g.force_count; i++)
         if (!g.force_table[i].active) return i;
     if (g.force_count == INT_MAX) {
-        fprintf(stderr, "llg runtime fatal: force entry count overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "force entry count overflow");
         abort();
     }
     force_table_reserve(g.force_count + 1);
@@ -106,7 +106,7 @@ static llg_force_entry_t* force_prepare_packed(
     int stream_right_to_left, llg_force_eval_fn eval,
     const llg_force_read_t* reads, int n_reads) {
     if (!parts || n_parts <= 0 || n_reads < 0) {
-        fprintf(stderr, "llg: invalid packed force descriptor\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid packed force descriptor");
         abort();
     }
     force_remove_coverage(parts, n_parts);
@@ -121,7 +121,7 @@ static llg_force_entry_t* force_prepare_packed(
     for (int i = 0; i < n_parts; i++) entry->masks[i] = force_part_mask(&parts[i]);
     if (n_reads > 0) {
         if (!reads) {
-            fprintf(stderr, "llg: force dependency count has no descriptor array\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "force dependency count has no descriptor array");
             abort();
         }
         entry->reads = (llg_force_read_t*)llg_checked_malloc(
@@ -310,7 +310,7 @@ void llg_force_real(double* target, llg_force_real_eval_fn eval,
                     const llg_force_read_t* reads, int n_reads) {
     if (!region_can_mutate("force scheduling")) return;
     if (!target || !eval || n_reads < 0 || (n_reads > 0 && !reads)) {
-        fprintf(stderr, "llg: invalid real force descriptor\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid real force descriptor");
         abort();
     }
     llg_force_entry_t* entry = NULL;

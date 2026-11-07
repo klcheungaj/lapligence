@@ -368,7 +368,7 @@ void llg_timing_checks_start(llg_timing_check_set_t* set) {
     uint64_t total = 0;
     for (uint32_t index = 0; index < set->n_terminals; index++) {
         if (total > UINT32_MAX) {
-            fprintf(stderr, "llg: fatal: timing check terminals are too wide\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "timing check terminals are too wide");
             abort();
         }
         set->offsets[index] = (uint32_t)total;
@@ -555,8 +555,10 @@ static void timing_report(llg_timing_check_set_t* set, const llg_timing_check_t*
     char unit[32];
     timing_unit(unit, sizeof(unit));
     llg_report_t report;
+    llg_report_t message;
     llg_report_init(&report);
-    llg_report_printf(&report, "llg: warning: timing violation at %s in %s at time %llu (%s): ",
+    llg_report_init(&message);
+    llg_report_printf(&report, "timing violation at %s in %s at time %llu (%s): ",
                       check->origin && check->origin[0] ? check->origin : "<unknown>",
                       set->scope ? set->scope : "<unknown>",
                       (unsigned long long)g.now, unit);
@@ -570,8 +572,10 @@ static void timing_report(llg_timing_check_set_t* set, const llg_timing_check_t*
         else
             llg_report_bytes(&report, text, 1);
     }
-    llg_report_bytes(&report, "\n", 1);
-    llg_report_emit(&report, stderr);
+    llg_msg_append(&message, LLG_MSG_TIMING_VIOLATION, LLG_SEVERITY_WARNING, NULL, NULL, NULL,
+                   report.data, report.len);
+    llg_report_free(&report);
+    llg_report_emit(&message, stderr);
 }
 
 // Table 31-13 with x becoming 0 (V Table 61, A9-D5): x -> 0, 0 -> 1,

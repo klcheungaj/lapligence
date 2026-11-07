@@ -21,7 +21,7 @@ struct llg_fixed_block {
 };
 
 static _Noreturn void fixed_bad_state(const char* reason) {
-    fprintf(stderr, "llg runtime fatal: %s\n", reason);
+    llg_msg(LLG_MSG_INTERNAL, NULL, "%s", reason);
     abort();
 }
 

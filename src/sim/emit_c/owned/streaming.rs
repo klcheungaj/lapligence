@@ -490,7 +490,7 @@ impl Frame<'_, '_> {
                         // error. Mark failure before stores can invoke callbacks;
                         // only in-bounds elements are written.
                         self.line(format!("if (!{in_bounds}) {{"));
-                        self.line("fputs(\"llg: fixed streaming target selector is unknown, empty, or outside declared bounds\\n\", stderr);");
+                        self.line("llg_msg(LLG_MSG_RUNTIME_FAILURE, NULL, \"fixed streaming target selector is unknown, empty, or outside declared bounds\");");
                         self.line("llg_rt_mark_failed();");
                         self.line("}");
                         match element {

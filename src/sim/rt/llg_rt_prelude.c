@@ -31,11 +31,11 @@ static void llg_warn_host_stack_limit(void) {
     uint64_t limit = 0;
     const uint64_t estimate = (uint64_t)LLG_HOST_STACK_ESTIMATE_BYTES;
     if (llg_host_stack_limit(&limit) && limit < estimate) {
-        fprintf(stderr,
-                "llg: warning: host stack limit is %llu bytes; at least %llu "
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL,
+                "host stack limit is %llu bytes; at least %llu "
                 "bytes is estimated for the scheduler, one polled coroutine "
                 "segment, the 256-call depth guard, runtime helpers, and "
-                "DPI/libc headroom\n",
+                "DPI/libc headroom",
                 (unsigned long long)limit,
                 (unsigned long long)estimate);
     }
@@ -45,90 +45,11 @@ static void llg_warn_host_stack_limit(void) {
 
 static _Noreturn void llg_fatal_allocation(const char* what, size_t count,
                                            size_t size) {
-    fprintf(stderr,
-            "llg: fatal: cannot allocate %zu element(s) of %zu byte(s) for %s\n",
-            count, size, what);
-    abort();
+    llg_msg_abort(LLG_MSG_ALLOCATION, "cannot allocate %zu element(s) of %zu byte(s) for %s",
+                  count, size, what);
 }
 
-// ── Whole-message diagnostics ────────────────────────────────────────────────
-//
-// A diagnostic is assembled in one buffer and written with one stdio call, so
-// a message from another thread (or a waveform report) can never land inside
-// it. Short messages stay in the inline buffer; longer ones grow on the heap.
-// An allocation failure truncates the message rather than aborting a report.
-
-typedef struct {
-    char* data;
-    size_t len;
-    size_t cap;
-    char inline_buf[512];
-} llg_report_t;
-
-static void llg_report_init(llg_report_t* report) {
-    report->data = report->inline_buf;
-    report->len = 0;
-    report->cap = sizeof(report->inline_buf);
-}
-
-// Make room for `extra` more bytes plus a terminator; returns how many of the
-// requested bytes fit.
-static size_t llg_report_reserve(llg_report_t* report, size_t extra) {
-    size_t room = report->cap - report->len - 1u;
-    if (extra <= room) return extra;
-    size_t need = report->len + extra + 1u;
-    if (need < report->len) return room;
-    size_t cap = report->cap * 2u > need ? report->cap * 2u : need;
-    char* grown = report->data == report->inline_buf ? (char*)malloc(cap)
-                                                     : (char*)realloc(report->data, cap);
-    if (!grown) return room;
-    if (report->data == report->inline_buf) memcpy(grown, report->data, report->len);
-    report->data = grown;
-    report->cap = cap;
-    return extra;
-}
-
-static void llg_report_bytes(llg_report_t* report, const char* bytes, size_t len) {
-    size_t fit = llg_report_reserve(report, len);
-    memcpy(report->data + report->len, bytes, fit);
-    report->len += fit;
-}
-
-static void llg_report_vprintf(llg_report_t* report, const char* fmt, va_list args) {
-    va_list again;
-    va_copy(again, args);
-    size_t room = report->cap - report->len;
-    int written = vsnprintf(report->data + report->len, room, fmt, args);
-    if (written < 0) {
-        va_end(again);
-        return;
-    }
-    if ((size_t)written >= room) {
-        size_t fit = llg_report_reserve(report, (size_t)written);
-        (void)vsnprintf(report->data + report->len, fit + 1u, fmt, again);
-        written = (int)fit;
-    }
-    va_end(again);
-    report->len += (size_t)written;
-}
-
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((format(printf, 2, 3)))
-#endif
-static void llg_report_printf(llg_report_t* report, const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    llg_report_vprintf(report, fmt, args);
-    va_end(args);
-}
-
-// Write the message to `stream` in one call and release it.
-static void llg_report_emit(llg_report_t* report, FILE* stream) {
-    if (report->len) (void)fwrite(report->data, 1, report->len, stream);
-    fflush(stream);
-    if (report->data != report->inline_buf) free(report->data);
-    llg_report_init(report);
-}
+// Whole-message buffers (llg_report_t) and the reporter are in llg_msg.h.
 
 typedef struct llg_rt_co_cached_chunk {
     struct llg_rt_co_cached_chunk* next;
@@ -149,6 +70,7 @@ _Noreturn void llg_rt_co_oom(size_t bytes) {
 }
 
 static llg_co_chain_t* llg_rt_current_chain(void);
+static void llg_rt_report_summary(void);
 static const char* llg_rt_current_name(void);
 
 /* A root descriptor shared by every instance of one process body has no
@@ -176,14 +98,18 @@ static void llg_rt_co_trace_frame(void* user, const llg_co_desc_t* desc,
 
 _Noreturn void llg_rt_co_bad_state(const llg_co_frame_t* co, const char* fn) {
     llg_report_t report;
+    llg_report_t text;
     llg_report_init(&report);
-    llg_report_printf(&report,
-                      "llg: fatal: invalid coroutine state in %s: frame=%p state=%lu\n",
+    llg_report_init(&text);
+    llg_report_printf(&text, "invalid coroutine state in %s: frame=%p state=%lu",
                       fn ? fn : "<unknown>", (const void*)co,
                       co ? (unsigned long)co->state : 0ul);
+    llg_msg_append(&report, LLG_MSG_INTERNAL, LLG_SEVERITY_FATAL, NULL, NULL, NULL, text.data,
+                   text.len);
+    llg_report_free(&text);
     llg_co_chain_t* chain = llg_rt_current_chain();
     if (chain) {
-        llg_report_printf(&report, "llg: coroutine HDL backtrace:\n");
+        llg_report_printf(&report, "coroutine HDL backtrace:\n");
         llg_rt_co_trace_t trace = {&report, llg_rt_current_name()};
         (void)llg_co_backtrace(chain, llg_rt_co_trace_frame, &trace);
     }

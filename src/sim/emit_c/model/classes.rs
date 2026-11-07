@@ -36,7 +36,7 @@ LLG_CLASS_RNG_MEMBER} llg_class_object_t;
  * while it is exiting stay quiet. */
 static void* llg_class_require(void* object, const char* site) {
     if (!object && !llg_rt_exiting()) {
-        fprintf(stderr, "llg: null class handle access: %s\n", site);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "null class handle access: %s", site);
         llg_rt_mark_failed();
         llg_rt_fatal_typed(0, "null class handle access", NULL, 0, "", site);
     }
@@ -51,7 +51,7 @@ static uint32_t llg_class_id(void* object) {
     if (!checked) return LLG_CLASS_NO_OBJECT;
     uint32_t id = checked->class_id;
     if (id == LLG_CLASS_RECLAIMED) {
-        fprintf(stderr, "llg: access to a reclaimed class object (missing collector root)\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "access to a reclaimed class object (missing collector root)");
         abort();
     }
     return id;
@@ -536,7 +536,7 @@ pub(super) fn render_virtual_dispatch_bodies(
             let target = &model.funcs[implementation];
             if is_coroutine(implementation) {
                 out.push_str(&format!(
-                    "    case {class}: fprintf(stderr, \"llg: suspending virtual task called without suspension\\n\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\"); break;\n"
+                    "    case {class}: llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"suspending virtual task called without suspension\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\"); break;\n"
                 ));
             } else if ret == "void" {
                 out.push_str(&format!(
@@ -552,7 +552,7 @@ pub(super) fn render_virtual_dispatch_bodies(
                 ));
             }
         }
-        out.push_str("    default: fprintf(stderr, \"llg: invalid class type in virtual call\\n\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\");\n");
+        out.push_str("    default: llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"invalid class type in virtual call\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\");\n");
         out.push_str("    }\n    _llg_dispatch_failed:\n");
         if packed_result(f) {
             out.push_str(&format!(

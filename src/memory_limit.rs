@@ -53,7 +53,14 @@ pub fn stderr_logger(level: LogLevel, message: fmt::Arguments<'_>) {
     if level == LogLevel::Debug {
         return;
     }
-    eprintln!("[{level}] {message}");
+    let def = match level {
+        LogLevel::Info => &crate::core::report::catalog::HOST_MEMORY_INFO,
+        _ => &crate::core::report::catalog::HOST_MEMORY_WARNING,
+    };
+    eprintln!(
+        "{}",
+        crate::core::report::Message::new(def, message.to_string()).render()
+    );
 }
 
 /// Enforcement state reported by the shared safeguard. `Disabled` is

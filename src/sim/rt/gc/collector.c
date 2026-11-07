@@ -155,7 +155,7 @@ static void gc_update_live_stats(void) {
 
 void* llg_gc_alloc(size_t size, const llg_gc_type_t* type) {
     if (!type || size < sizeof(llg_gc_header_t)) {
-        fputs("llg runtime fatal: invalid collected object allocation\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid collected object allocation");
         abort();
     }
     llg_gc_header_t* object =
@@ -164,12 +164,7 @@ void* llg_gc_alloc(size_t size, const llg_gc_type_t* type) {
     // Only an array with class keys compares serials; other models wrap.
     if (++llg_gc.next_serial > LLG_GC_SERIAL_MAX) {
         if (llg_gc.ordered_serials) {
-            fprintf(stderr,
-                    "llg runtime fatal: more than %llu collected objects were "
-                    "created at time %llu; an array with class keys orders "
-                    "objects by a %d-bit creation serial\n",
-                    (unsigned long long)LLG_GC_SERIAL_MAX,
-                    (unsigned long long)llg_time(), LLG_GC_SERIAL_BITS);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "more than %llu collected objects were created at time %llu; an array with class keys orders objects by a %d-bit creation serial", (unsigned long long)LLG_GC_SERIAL_MAX, (unsigned long long)llg_time(), LLG_GC_SERIAL_BITS);
             abort();
         }
         llg_gc.next_serial = 1;
@@ -404,11 +399,7 @@ int llg_gc_pin(void* handle) {
     if (slot == SIZE_MAX) return 0;
     llg_gc_header_t* object = llg_gc.index[slot];
     if (gc_pins(object) == LLG_GC_PIN_MAX) {
-        fprintf(stderr,
-                "llg runtime fatal: more than %llu covergroup or foreign pins "
-                "on one collected object of type %s at time %llu\n",
-                (unsigned long long)LLG_GC_PIN_MAX, object->type->name,
-                (unsigned long long)llg_time());
+        llg_msg(LLG_MSG_INTERNAL, NULL, "more than %llu covergroup or foreign pins on one collected object of type %s at time %llu", (unsigned long long)LLG_GC_PIN_MAX, object->type->name, (unsigned long long)llg_time());
         abort();
     }
     if (gc_pins(object) == 0) ++llg_gc.stats.pinned;
@@ -421,7 +412,7 @@ int llg_gc_unpin(void* handle) {
     if (slot == SIZE_MAX) return 0;
     llg_gc_header_t* object = llg_gc.index[slot];
     if (gc_pins(object) == 0) {
-        fputs("llg runtime fatal: unbalanced collected object unpin\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "unbalanced collected object unpin");
         abort();
     }
     object->state -= UINT64_C(1) << LLG_GC_PIN_SHIFT;
@@ -580,7 +571,7 @@ static int gc_parse_flag(const char* name, int* value) {
         *value = text[0] == '1';
         return 1;
     }
-    fprintf(stderr, "llg: invalid %s `%s` (expected 0 or 1)\n", name, text);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid %s `%s` (expected 0 or 1)", name, text);
     return 0;
 }
 
@@ -591,7 +582,7 @@ static int gc_parse_count(const char* name, uint64_t fallback, uint64_t* value) 
         return 1;
     }
     if (!parse_positive_u64(text, value)) {
-        fprintf(stderr, "llg: invalid %s (must be a positive decimal uint64)\n", name);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid %s (must be a positive decimal uint64)", name);
         return 0;
     }
     return 1;
@@ -672,18 +663,7 @@ static int gc_configure(void) {
 
 void llg_gc_teardown(void) {
     if (llg_gc.print_stats) {
-        fprintf(stderr,
-                "llg: gc: collections=%llu failed=%llu allocated=%llu freed=%llu "
-                "condemned=%llu live=%llu peak=%llu pinned=%llu mark_clears=%llu\n",
-                (unsigned long long)llg_gc.stats.collections,
-                (unsigned long long)llg_gc.stats.failed_collections,
-                (unsigned long long)llg_gc.stats.allocated,
-                (unsigned long long)llg_gc.stats.freed,
-                (unsigned long long)llg_gc.stats.condemned,
-                (unsigned long long)llg_gc.stats.live,
-                (unsigned long long)llg_gc.stats.peak_live,
-                (unsigned long long)llg_gc.stats.pinned,
-                (unsigned long long)llg_gc.stats.mark_clears);
+        llg_msg(LLG_MSG_RUNTIME_NOTE, NULL, "gc: collections=%llu failed=%llu allocated=%llu freed=%llu condemned=%llu live=%llu peak=%llu pinned=%llu mark_clears=%llu", (unsigned long long)llg_gc.stats.collections, (unsigned long long)llg_gc.stats.failed_collections, (unsigned long long)llg_gc.stats.allocated, (unsigned long long)llg_gc.stats.freed, (unsigned long long)llg_gc.stats.condemned, (unsigned long long)llg_gc.stats.live, (unsigned long long)llg_gc.stats.peak_live, (unsigned long long)llg_gc.stats.pinned, (unsigned long long)llg_gc.stats.mark_clears);
     }
     for (size_t i = 0; i < llg_gc.capacity; ++i) {
         llg_gc_header_t* object = llg_gc.index[i];

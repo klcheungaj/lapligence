@@ -701,8 +701,7 @@ static void llg_runtime_service_enter(const llg_proc_t* self,
                                       const char* service) {
 #ifdef LLG_CO_DEBUG
     if (self && self->chain.exiting) {
-        fprintf(stderr, "llg: runtime service %s called on an exiting process\n",
-                service ? service : "<unknown>");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "runtime service %s called on an exiting process", service ? service : "<unknown>");
         abort();
     }
 #else
@@ -754,7 +753,7 @@ llg_proc_t* llg_current(void);
 
 static llg_frame_slot_t* frame_slot(llg_frame_t* frame, size_t slot) {
     if (!frame || slot >= frame->nslots) {
-        fprintf(stderr, "llg: activation frame slot out of bounds\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "activation frame slot out of bounds");
         abort();
     }
     return &frame->slots[slot];
@@ -763,7 +762,7 @@ static llg_frame_slot_t* frame_slot(llg_frame_t* frame, size_t slot) {
 static const llg_frame_slot_t* frame_slot_const(const llg_frame_t* frame,
                                                 size_t slot) {
     if (!frame || slot >= frame->nslots) {
-        fprintf(stderr, "llg: activation frame slot out of bounds\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "activation frame slot out of bounds");
         abort();
     }
     return &frame->slots[slot];
@@ -793,9 +792,7 @@ static void frame_clear_alias(llg_frame_slot_t* entry) {
 
 static void frame_kind_error(llg_frame_slot_kind_t expected,
                              llg_frame_slot_kind_t actual) {
-    fprintf(stderr,
-            "llg: activation frame slot type mismatch (expected %d, got %d)\n",
-            (int)expected, (int)actual);
+    llg_msg(LLG_MSG_INTERNAL, NULL, "activation frame slot type mismatch (expected %d, got %d)", (int)expected, (int)actual);
     abort();
 }
 
@@ -821,7 +818,7 @@ llg_frame_t* llg_frame_new(size_t slots) {
 void llg_frame_retain(llg_frame_t* frame) {
     if (!frame) return;
     if (frame->refs == SIZE_MAX) {
-        fprintf(stderr, "llg: activation frame reference count overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "activation frame reference count overflow");
         abort();
     }
     frame->refs++;
@@ -830,7 +827,7 @@ void llg_frame_retain(llg_frame_t* frame) {
 void llg_frame_release(llg_frame_t* frame) {
     if (!frame) return;
     if (frame->refs == 0) {
-        fprintf(stderr, "llg: activation frame reference count underflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "activation frame reference count underflow");
         abort();
     }
     frame->refs--;
@@ -866,7 +863,7 @@ void llg_frame_capture_opaque(llg_frame_t* frame, size_t slot, void* value) {
 
 void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target) {
     if (!target) {
-        fprintf(stderr, "llg: activation frame alias target is null\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "activation frame alias target is null");
         abort();
     }
     llg_frame_slot_t* entry = frame_slot(frame, slot);
@@ -878,7 +875,7 @@ void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target) {
 
 void llg_frame_alias_real(llg_frame_t* frame, size_t slot, double* target) {
     if (!target) {
-        fprintf(stderr, "llg: activation real alias target is null\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "activation real alias target is null");
         abort();
     }
     llg_frame_slot_t* entry = frame_slot(frame, slot);
@@ -891,7 +888,7 @@ void llg_frame_alias_real(llg_frame_t* frame, size_t slot, double* target) {
 void llg_frame_alias_slot(llg_frame_t* frame, size_t slot,
                           llg_frame_t* target, size_t target_slot) {
     if (!target || frame == target) {
-        fprintf(stderr, "llg: invalid activation frame alias source\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid activation frame alias source");
         abort();
     }
     (void)frame_slot_const(target, target_slot);

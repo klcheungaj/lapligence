@@ -57,7 +57,8 @@ pub fn lsp_diagnostics_with_fallback(
             Severity::Fatal | Severity::Syntax | Severity::Error => DiagnosticSeverity::ERROR,
             Severity::Warning => DiagnosticSeverity::WARNING,
             Severity::Note => DiagnosticSeverity::INFORMATION,
-            Severity::Info => DiagnosticSeverity::HINT,
+            // Lint `Info` publishes as INFORMATION too: one word, one level.
+            Severity::Info => DiagnosticSeverity::INFORMATION,
         };
         // Core positions are 1-based; 0 means unknown → report at (0,0).
         let (line, col) = if d.line == 0 {

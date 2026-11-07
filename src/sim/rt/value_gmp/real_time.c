@@ -18,13 +18,11 @@ uint64_t llg_gmp_sv4_delay_ticks(g4_t value, uint64_t unit_ticks) {
 }
 static uint64_t unrepresentable_real_delay(double value) {
     if (isnan(value))
-        fprintf(stderr, "llg: warning: real delay is NaN; using 1 tick\n");
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "real delay is NaN; using 1 tick");
     else if (isinf(value))
-        fprintf(stderr, "llg: warning: real delay is infinite; using 1 tick\n");
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "real delay is infinite; using 1 tick");
     else
-        fprintf(stderr,
-                "llg: warning: real delay %.17g exceeds the 64-bit tick range; using 1 tick\n",
-                value);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "real delay %.17g exceeds the 64-bit tick range; using 1 tick", value);
     return 1;
 }
 uint64_t llg_gmp_sv4_real_delay_ticks(double value, uint64_t unit_ticks, uint64_t precision_ticks) {

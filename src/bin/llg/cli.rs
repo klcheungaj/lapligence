@@ -10,6 +10,21 @@ use llg::config::{PulseStyle, StopPolicy};
 use llg::core::compile;
 use llg::sim;
 
+/// Print a command-line error as catalog message `$def` (exit status is the
+/// caller's).
+macro_rules! usage_error {
+    ($def:ident, $($arg:tt)*) => {
+        eprintln!(
+            "{}",
+            llg::core::report::Message::new(
+                &llg::core::report::catalog::$def,
+                format!($($arg)*)
+            )
+            .render()
+        )
+    };
+}
+
 /// Usage printed when `llg` is run without arguments. `llg` never discovers
 /// `llg.toml`, so there is nothing else to run from.
 pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
@@ -313,12 +328,12 @@ Options:
                 Some(name) => match llg::config::validate_top_name(&name) {
                     Ok(()) => top = Some(name),
                     Err(error) => {
-                        eprintln!("llg: --top: {error}");
+                        usage_error!(CLI_OPTION_VALUE, "--top: {error}");
                         return Err(2);
                     }
                 },
                 None => {
-                    eprintln!("llg: --top requires a module name");
+                    usage_error!(CLI_OPTION_VALUE, "--top requires a module name");
                     return Err(2);
                 }
             },
@@ -326,12 +341,12 @@ Options:
                 Some(value) => match value.parse() {
                     Ok(value) => edition = Some(value),
                     Err(error) => {
-                        eprintln!("llg: {error}");
+                        usage_error!(CLI_OPTION_VALUE, "{error}");
                         return Err(2);
                     }
                 },
                 None => {
-                    eprintln!("llg: --edition requires v2001 or sv2009");
+                    usage_error!(CLI_OPTION_VALUE, "--edition requires v2001 or sv2009");
                     return Err(2);
                 }
             },
@@ -339,12 +354,15 @@ Options:
                 Some(value) => match value.parse() {
                     Ok(value) => compilation_unit_mode = Some(value),
                     Err(error) => {
-                        eprintln!("llg: {error}");
+                        usage_error!(CLI_OPTION_VALUE, "{error}");
                         return Err(2);
                     }
                 },
                 None => {
-                    eprintln!("llg: --compilation-units requires separate or merged");
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--compilation-units requires separate or merged"
+                    );
                     return Err(2);
                 }
             },
@@ -352,68 +370,74 @@ Options:
                 Some(value) => match value.parse() {
                     Ok(value) => delay_selection = Some(value),
                     Err(error) => {
-                        eprintln!("llg: --delay-select: {error}");
+                        usage_error!(CLI_OPTION_VALUE, "--delay-select: {error}");
                         return Err(2);
                     }
                 },
                 None => {
-                    eprintln!("llg: --delay-select requires min, typ or max");
+                    usage_error!(CLI_OPTION_VALUE, "--delay-select requires min, typ or max");
                     return Err(2);
                 }
             },
             "--include-dir" | "-I" => match it.next() {
                 Some(path) if !path.is_empty() => include_dirs.push(path),
                 _ => {
-                    eprintln!("llg: --include-dir requires a path");
+                    usage_error!(CLI_OPTION_VALUE, "--include-dir requires a path");
                     return Err(2);
                 }
             },
             "--define" | "-D" => match it.next() {
                 Some(define) if !define.is_empty() => defines.push(define),
                 _ => {
-                    eprintln!("llg: --define requires NAME or NAME=VALUE");
+                    usage_error!(CLI_OPTION_VALUE, "--define requires NAME or NAME=VALUE");
                     return Err(2);
                 }
             },
             "--define-system-task" => match it.next() {
                 Some(prototype) if !prototype.is_empty() => system_subroutines.push(prototype),
                 _ => {
-                    eprintln!("llg: --define-system-task requires a prototype");
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--define-system-task requires a prototype"
+                    );
                     return Err(2);
                 }
             },
             "--libmap" | "--library-map" => match it.next() {
                 Some(path) if !path.is_empty() => library_map_files.push(path),
                 _ => {
-                    eprintln!("llg: --libmap requires a file path");
+                    usage_error!(CLI_OPTION_VALUE, "--libmap requires a file path");
                     return Err(2);
                 }
             },
             "--libfile" | "-v" => match it.next() {
                 Some(path) if !path.is_empty() => library_files.push(path),
                 _ => {
-                    eprintln!("llg: --libfile requires [library=]file");
+                    usage_error!(CLI_OPTION_VALUE, "--libfile requires [library=]file");
                     return Err(2);
                 }
             },
             "--library-order" | "-L" => match it.next().as_deref().map(split_library_order) {
                 Some(Some(names)) => library_order.extend(names),
                 _ => {
-                    eprintln!("llg: --library-order requires a library name");
+                    usage_error!(CLI_OPTION_VALUE, "--library-order requires a library name");
                     return Err(2);
                 }
             },
             "--default-library" | "--defaultLibName" => match it.next() {
                 Some(value) if !value.is_empty() => default_library = Some(value),
                 _ => {
-                    eprintln!("llg: --default-library requires a library name");
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--default-library requires a library name"
+                    );
                     return Err(2);
                 }
             },
             "--config" => match it.next() {
                 Some(path) if !path.is_empty() => config_path = Some(PathBuf::from(path)),
                 _ => {
-                    eprintln!("llg: --config requires a file path");
+                    usage_error!(CLI_OPTION_VALUE, "--config requires a file path");
                     return Err(2);
                 }
             },
@@ -425,8 +449,9 @@ Options:
             "--append-param-override" => match it.next() {
                 Some(entry) if valid_param_override(&entry) => append.param_overrides.push(entry),
                 _ => {
-                    eprintln!(
-                        "llg: --append-param-override requires NAME=VALUE with an identifier NAME"
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--append-param-override requires NAME=VALUE with an identifier NAME"
                     );
                     return Err(2);
                 }
@@ -445,14 +470,17 @@ Options:
             "--append-library-order" => match it.next().as_deref().map(split_library_order) {
                 Some(Some(names)) => append.library_order.extend(names),
                 _ => {
-                    eprintln!("llg: --append-library-order requires a library name");
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--append-library-order requires a library name"
+                    );
                     return Err(2);
                 }
             },
             "--append-dpi-lib" => match it.next() {
                 Some(path) if !path.is_empty() => append.dpi_libraries.push(PathBuf::from(path)),
                 _ => {
-                    eprintln!("llg: --append-dpi-lib requires a library path");
+                    usage_error!(CLI_OPTION_VALUE, "--append-dpi-lib requires a library path");
                     return Err(2);
                 }
             },
@@ -462,42 +490,45 @@ Options:
             "--param-override" | "-G" => match it.next() {
                 Some(entry) if valid_param_override(&entry) => param_overrides.push(entry),
                 _ => {
-                    eprintln!("llg: --param-override requires NAME=VALUE with an identifier NAME");
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--param-override requires NAME=VALUE with an identifier NAME"
+                    );
                     return Err(2);
                 }
             },
             "--generator" | "-generator" => match it.next() {
                 Some(g) => generator = Some(g),
                 None => {
-                    eprintln!("llg: --generator requires a backend name");
+                    usage_error!(CLI_OPTION_VALUE, "--generator requires a backend name");
                     return Err(2);
                 }
             },
             "--dpi-lib" => match it.next() {
                 Some(path) if !path.is_empty() => dpi_libraries.push(PathBuf::from(path)),
                 _ => {
-                    eprintln!("llg: --dpi-lib requires a library path");
+                    usage_error!(CLI_OPTION_VALUE, "--dpi-lib requires a library path");
                     return Err(2);
                 }
             },
             "--dpi-import-lib" => match it.next() {
                 Some(path) if !path.is_empty() => dpi_import_lib = Some(PathBuf::from(path)),
                 _ => {
-                    eprintln!("llg: --dpi-import-lib requires an output path");
+                    usage_error!(CLI_OPTION_VALUE, "--dpi-import-lib requires an output path");
                     return Err(2);
                 }
             },
             "--launcher" => match it.next() {
                 Some(value) if !value.is_empty() => launcher = Some(value),
                 _ => {
-                    eprintln!("llg: --launcher requires a program name");
+                    usage_error!(CLI_OPTION_VALUE, "--launcher requires a program name");
                     return Err(2);
                 }
             },
             "--cc" => match it.next() {
                 Some(value) if !value.is_empty() => cc = Some(value),
                 _ => {
-                    eprintln!("llg: --cc requires a compiler program");
+                    usage_error!(CLI_OPTION_VALUE, "--cc requires a compiler program");
                     return Err(2);
                 }
             },
@@ -505,21 +536,21 @@ Options:
             "--cflags" => match it.next() {
                 Some(value) => cflags = Some(value),
                 None => {
-                    eprintln!("llg: --cflags requires a flag string");
+                    usage_error!(CLI_OPTION_VALUE, "--cflags requires a flag string");
                     return Err(2);
                 }
             },
             "--cmake" => match it.next() {
                 Some(value) if !value.is_empty() => cmake = Some(value),
                 _ => {
-                    eprintln!("llg: --cmake requires a program");
+                    usage_error!(CLI_OPTION_VALUE, "--cmake requires a program");
                     return Err(2);
                 }
             },
             "--build-jobs" => match it.next().map(|value| value.parse::<usize>()) {
                 Some(Ok(value)) if value > 0 => build_jobs = Some(value),
                 _ => {
-                    eprintln!("llg: --build-jobs requires a positive integer");
+                    usage_error!(CLI_OPTION_VALUE, "--build-jobs requires a positive integer");
                     return Err(2);
                 }
             },
@@ -527,21 +558,24 @@ Options:
             {
                 Some(Ok(value)) => model_opt_level = Some(value),
                 _ => {
-                    eprintln!("llg: --model-opt-level requires O0, O1, O2, O3 or Os");
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--model-opt-level requires O0, O1, O2, O3 or Os"
+                    );
                     return Err(2);
                 }
             },
             "--out-dir" => match it.next() {
                 Some(value) if !value.is_empty() => out_dir = Some(PathBuf::from(value)),
                 _ => {
-                    eprintln!("llg: --out-dir requires a directory");
+                    usage_error!(CLI_OPTION_VALUE, "--out-dir requires a directory");
                     return Err(2);
                 }
             },
             "--runtime-cache" => match it.next() {
                 Some(value) if !value.is_empty() => runtime_cache = Some(PathBuf::from(value)),
                 _ => {
-                    eprintln!("llg: --runtime-cache requires a directory");
+                    usage_error!(CLI_OPTION_VALUE, "--runtime-cache requires a directory");
                     return Err(2);
                 }
             },
@@ -550,19 +584,23 @@ Options:
                     wave_file = Some(Some(PathBuf::from(path)));
                 }
                 _ => {
-                    eprintln!("llg: --wave requires a file ending in .vcd or .fst");
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--wave requires a file ending in .vcd or .fst"
+                    );
                     return Err(2);
                 }
             },
-            "--wave-depth" => {
-                match it.next().map(|value| value.parse::<u32>()) {
-                    Some(Ok(depth)) => wave_depth = Some(depth),
-                    _ => {
-                        eprintln!("llg: --wave-depth requires a non-negative integer (0 dumps all levels)");
-                        return Err(2);
-                    }
+            "--wave-depth" => match it.next().map(|value| value.parse::<u32>()) {
+                Some(Ok(depth)) => wave_depth = Some(depth),
+                _ => {
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--wave-depth requires a non-negative integer (0 dumps all levels)"
+                    );
+                    return Err(2);
                 }
-            }
+            },
             "--no-wave" => wave_file = Some(None),
             "--gen-only" | "-gen-only" => gen_only = Some(true),
             "--no-gen-only" => gen_only = Some(false),
@@ -574,25 +612,25 @@ Options:
                 Some(value) => match StopPolicy::parse(&value) {
                     Ok(policy) => stop_policy = Some(policy),
                     Err(error) => {
-                        eprintln!("llg: --stop-policy {error}");
+                        usage_error!(CLI_OPTION_VALUE, "--stop-policy {error}");
                         return Err(2);
                     }
                 },
                 None => {
-                    eprintln!("llg: --stop-policy requires resume or exit");
+                    usage_error!(CLI_OPTION_VALUE, "--stop-policy requires resume or exit");
                     return Err(2);
                 }
             },
             "--pulse-reject" | "--pulse-error" => {
                 let Some(value) = it.next() else {
-                    eprintln!("llg: {a} requires an integer from 0 to 100");
+                    usage_error!(CLI_OPTION_VALUE, "{a} requires an integer from 0 to 100");
                     return Err(2);
                 };
                 match llg::config::parse_pulse_percent(&value) {
                     Ok(percent) if a == "--pulse-reject" => pulse_reject = Some(percent),
                     Ok(percent) => pulse_error = Some(percent),
                     Err(error) => {
-                        eprintln!("llg: {a}: {error}");
+                        usage_error!(CLI_OPTION_VALUE, "{a}: {error}");
                         return Err(2);
                     }
                 }
@@ -601,12 +639,15 @@ Options:
                 Some(value) => match PulseStyle::parse(&value) {
                     Ok(style) => pulse_style = Some(style),
                     Err(error) => {
-                        eprintln!("llg: --pulse-style: {error}");
+                        usage_error!(CLI_OPTION_VALUE, "--pulse-style: {error}");
                         return Err(2);
                     }
                 },
                 None => {
-                    eprintln!("llg: --pulse-style requires onevent or ondetect");
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--pulse-style requires onevent or ondetect"
+                    );
                     return Err(2);
                 }
             },
@@ -620,13 +661,16 @@ Options:
             "--no-timing-check-messages" => timing_check_messages = Some(false),
             "--sdf" => {
                 let Some(value) = it.next() else {
-                    eprintln!("llg: --sdf requires [min:|typ:|max:][scope=]file");
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--sdf requires [min:|typ:|max:][scope=]file"
+                    );
                     return Err(2);
                 };
                 match sim::codegen::SdfCommand::parse(&value) {
                     Ok(command) => sdf.push(command),
                     Err(error) => {
-                        eprintln!("llg: {error}");
+                        usage_error!(CLI_OPTION_VALUE, "{error}");
                         return Err(2);
                     }
                 }
@@ -651,7 +695,10 @@ Options:
                 }
             }
             option if option.starts_with('-') => {
-                eprintln!("llg: unknown option `{option}` (see llg --help)");
+                usage_error!(
+                    CLI_UNKNOWN_OPTION,
+                    "unknown option `{option}` (see llg --help)"
+                );
                 return Err(2);
             }
             _ => files.push(a),
@@ -720,7 +767,7 @@ fn append_value(
             Ok(())
         }
         _ => {
-            eprintln!("llg: {flag} requires a value");
+            usage_error!(CLI_OPTION_VALUE, "{flag} requires a value");
             Err(2)
         }
     }

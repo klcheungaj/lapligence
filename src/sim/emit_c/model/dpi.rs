@@ -632,7 +632,7 @@ fn render_thunk(
     } else {
         "return;".to_owned()
     };
-    out.push_str(&format!("    if (depth >= {LLG_MAX_FUNC_DEPTH}) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n"));
+    out.push_str(&format!("    if (depth >= {LLG_MAX_FUNC_DEPTH}) {{ llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"recursion limit exceeded\"); {guard} }}\n"));
     out.push_str("    llg_value_scope_t* _dpi_mark = llg_value_scope_mark();\n");
     // Exact descriptor count, independent of the model's largest packed width.
     out.push_str(&format!("    llg_value_scope_t* _dpi_scope = llg_value_scope_begin({});\n    sv4_t* _dpi_values = llg_value_scope_values(_dpi_scope);\n    (void)_dpi_values;\n", f.formals.len() + 1));

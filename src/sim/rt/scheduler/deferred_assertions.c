@@ -55,7 +55,7 @@ static llg_deferred_assertion_report_t* deferred_queue_push(
     llg_deferred_report_queue_t* queue) {
     if (queue->count == queue->capacity) {
         if (queue->capacity >= UINT32_MAX / 2u) {
-            fprintf(stderr, "llg: fatal: deferred assertion report queue overflow\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "deferred assertion report queue overflow");
             abort();
         }
         uint32_t capacity = queue->capacity ? queue->capacity * 2u : 16u;
@@ -140,7 +140,7 @@ void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
                                    llg_frame_t* frame) {
     if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_COVER ||
         (passed != 0 && passed != 1)) {
-        fprintf(stderr, "llg runtime fatal: invalid deferred assertion result\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid deferred assertion result");
         llg_frame_release(frame);
         abort();
     }
@@ -193,8 +193,7 @@ void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
 // instances until $asserton (SV 20.11).
 void llg_assertion_queue(uint32_t index) {
     if (index >= g.procedural_assertion_count) {
-        fprintf(stderr, "llg runtime fatal: invalid procedural assertion %u\n",
-                (unsigned)index);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid procedural assertion %u", (unsigned)index);
         abort();
     }
     llg_concurrent_assertion_t* assertion = g.procedural_assertions[index];

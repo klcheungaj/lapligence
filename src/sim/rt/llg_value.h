@@ -28,6 +28,7 @@
 #if !LLG_SV4_USE_GMP && LLG_SV4_GMP_KERNELS
 #error "GMP kernels require the compact value backend"
 #endif
+#include "llg_msg.h"
 #if LLG_SV4_USE_GMP
 #define LLG_SV4_GMP_PUBLIC_NAMES
 #include "value_gmp/backend.h"

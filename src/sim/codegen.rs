@@ -4,7 +4,7 @@
 //! façade small makes the supported library boundary explicit while the
 //! implementation remains free to organize semantic collection and IR lowering.
 
-mod error;
+pub(crate) mod error;
 mod lowering;
 mod timescale;
 

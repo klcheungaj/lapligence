@@ -28,7 +28,7 @@ static uint64_t* randomize_scratch(uint32_t width) {
     if (need > capacity) {
         uint64_t* grown = (uint64_t*)realloc(buffer, need * sizeof(uint64_t));
         if (!grown) {
-            fprintf(stderr, "llg: randomize: out of memory\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "randomize: out of memory");
             abort();
         }
         buffer = grown;
@@ -158,16 +158,10 @@ static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t sta
     case LLG_CR_OK:
         return 1;
     case LLG_CR_UNSAT:
-        fprintf(stderr,
-                "llg: warning: %s: the constraints cannot be satisfied; "
-                "randomize returns 0\n",
-                site);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%s: the constraints cannot be satisfied; randomize returns 0", site);
         return 0;
     case LLG_CR_RESOURCE:
-        fprintf(stderr,
-                "llg: error: %s: solver budget %s exhausted before a solution "
-                "or proof of unsatisfiability was found (raise %s); randomize returns 0\n",
-                site, report->budget, report->budget);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: solver budget %s exhausted before a solution or proof of unsatisfiability was found (raise %s); randomize returns 0", site, report->budget, report->budget);
         llg_last_failure = 1;
         llg_rt_note_error(0, "randomize solver budget exhausted", site);
         return 0;
@@ -191,9 +185,7 @@ static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t sta
         }
         int ends_run = report->reason == LLG_CR_REASON_XZ_LEAF ||
                        report->reason == LLG_CR_REASON_XZ_VAR;
-        fprintf(stderr, "llg: error: %s: %s%s%s%s%s\n", site,
-                randomize_reason_text(report->reason), name ? " (`" : "", name ? name : "",
-                name ? "`)" : "", ends_run ? "" : "; randomize returns 0");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: %s%s%s%s%s", site, randomize_reason_text(report->reason), name ? " (`" : "", name ? name : "", name ? "`)" : "", ends_run ? "" : "; randomize returns 0");
         llg_last_failure = 1;
         if (!ends_run) llg_rt_note_error(0, randomize_reason_text(report->reason), site);
         if (ends_run) {

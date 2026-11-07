@@ -23,7 +23,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         if *is_final {
             return Err(format!(
                 "final immediate assertions are not supported at {}",
-                self.finish_location(h)
+                self.text_location(h)
             ));
         }
         let condition = self.cg.lower_boolean_expr(&self.path, *cond)?;
@@ -107,7 +107,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 return Err(format!(
                     "{} at {} must be one subroutine call",
                     self.call_owner,
-                    self.finish_location(statement)
+                    self.text_location(statement)
                 ));
             }
         }) else {
@@ -137,7 +137,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             Ok(body) => body,
             Err(error) => {
                 self.pre_fns.truncate(pre_fn_start);
-                return Err(format!("{error} at {}", self.finish_location(statement)));
+                return Err(format!("{error} at {}", self.text_location(statement)));
             }
         };
         let action = IrDeferredAction::new(
@@ -192,7 +192,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             return Err(format!(
                 "{} task `{name}` cannot contain timing controls at {}",
                 self.call_owner,
-                self.finish_location(statement)
+                self.text_location(statement)
             ));
         }
         let (_, _, formals) = self.cg.func_info(callee_function, callee_inst)?;
@@ -215,7 +215,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     "{} cannot retain automatic ref argument `{}` at {}",
                     self.call_owner,
                     self.cg.node(local).name,
-                    self.finish_location(statement)
+                    self.text_location(statement)
                 ));
             }
             if let Some(local) = self.cg.nested_capture_ref(actual) {
@@ -223,7 +223,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     "{} cannot retain captured ref argument `{}` at {}",
                     self.call_owner,
                     self.cg.node(local).name,
-                    self.finish_location(statement)
+                    self.text_location(statement)
                 ));
             }
             if self.dynamic_ref_actual(actual) {
@@ -231,7 +231,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     "{} cannot pass a dynamic variable to ref argument `{}` at {} (SV 16.4)",
                     self.call_owner,
                     self.cg.node(formals[idx].0).name,
-                    self.finish_location(statement)
+                    self.text_location(statement)
                 ));
             }
         }

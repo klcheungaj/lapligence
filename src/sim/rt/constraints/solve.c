@@ -1667,11 +1667,11 @@ static void cr_warn_fallback_measure(const cr_solve_t* st, const cr_plan_t* plan
     if (!measured || s->site->fallback_warned) return;
     s->site->fallback_warned = 1;
     const char* budget = st->budget ? st->budget : "LLG_RAND_BDD_NODES";
-    fprintf(stderr,
-            "llg: warning: %s: a constraint component exceeds the exact solver budget "
+    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL,
+            "%s: a constraint component exceeds the exact solver budget "
             "(%s), so the fallback solvers ignore its dist weights and solve...before "
             "orders (IEEE 1800-2009 18.5.4, 18.5.9); the constraints still hold. Raise %s "
-            "to keep them.\n",
+            "to keep them.",
             p->name ? p->name : "randomize()", budget, budget);
 }
 
@@ -2066,10 +2066,10 @@ static void cr_prepare_classify(llg_cr_session_t* s, const uint8_t* reach) {
 static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
     static const char* names[] = {"ok", "unsat", "resource", "error"};
     const llg_cr_report_t* r = st->report;
-    fprintf(stderr,
-            "llg: randomize stats: problem=%s status=%s engines=%s%s%s%s%s%s components=%u "
+    llg_msg(LLG_MSG_RUNTIME_NOTE, NULL,
+            "randomize stats: problem=%s status=%s engines=%s%s%s%s%s%s components=%u "
             "bdd_nodes=%llu bdd_foreseen=%llu reject_tries=%llu conflicts=%llu "
-            "search_reused=%llu\n",
+            "search_reused=%llu",
             st->s->p->name ? st->s->p->name : "?", names[status],
             r->engines ? "" : "none",
             (r->engines & LLG_CR_ENGINE_DIRECT) ? "direct," : "",

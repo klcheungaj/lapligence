@@ -582,10 +582,7 @@ static int32_t llg_coverage_merge(uint64_t type, const char* name, const char* w
         if (!error) status = LLG_SV_COV_OK;
     }
     if (error) {
-        fprintf(stderr,
-                "llg: runtime error: %s: coverage database `%s` was not merged: %s; no coverage "
-                "changed\n",
-                what, name, error);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage database `%s` was not merged: %s; no coverage changed", what, name, error);
         llg_rt_mark_failed();
         llg_rt_note_error(0, "coverage database was not merged", NULL);
         status = LLG_SV_COV_ERROR;

@@ -58,7 +58,7 @@ pub(super) fn render_arena_dispatch(
                 ));
             }
         }
-        out.push_str(&format!("    default: fprintf(stderr, \"llg: invalid class type in virtual call\\n\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\"); {default} return NULL;\n    }}\n}}\n\n"));
+        out.push_str(&format!("    default: llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"invalid class type in virtual call\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\"); {default} return NULL;\n    }}\n}}\n\n"));
     }
     // Methods with a suspending implementation (SIM-012) share the helper.
     let methods = analysis

@@ -148,12 +148,12 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
 
     size_t count = (size_t)n + 1u + (size_t)m;
     if (count > SIZE_MAX / sizeof(uint32_t)) {
-        fputs("llg compact value fatal: division scratch size overflow\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "compact value: division scratch size overflow");
         abort();
     }
     uint32_t* scratch = (uint32_t*)calloc(count, sizeof(uint32_t));
     if (!scratch) {
-        fputs("llg compact value fatal: division scratch allocation failed\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "compact value: division scratch allocation failed");
         abort();
     }
     uint32_t* u = scratch;

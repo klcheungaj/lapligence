@@ -92,8 +92,7 @@ static int configure_output_files(void) {
     const char* dir = llg_output_env("LLG_SIM_OUT_DIR");
     if (dir) {
         if (!llg_output_make_dirs(dir)) {
-            fprintf(stderr, "llg: cannot create LLG_SIM_OUT_DIR `%s`: %s\n", dir,
-                    strerror(errno));
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "cannot create LLG_SIM_OUT_DIR `%s`: %s", dir, strerror(errno));
             return 0;
         }
         llg_output_dir = llg_output_strdup(dir);

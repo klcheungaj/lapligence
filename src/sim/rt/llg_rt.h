@@ -48,6 +48,7 @@
 #include <stdint.h>
 
 #include "llg_compiler.h"
+#include "llg_msg.h"
 #include "llg_value.h"
 #include "llg_string.h"
 #include "llg_rng.h"
@@ -482,12 +483,7 @@ llg_string_t llg_pattern_format(const llg_pattern_type_t* types,
                                 uint8_t storage, const void* source,
                                 int abbreviated);
 
-enum {
-    LLG_SEVERITY_INFO = 0,
-    LLG_SEVERITY_WARNING = 1,
-    LLG_SEVERITY_ERROR = 2,
-    LLG_SEVERITY_FATAL = 3,
-};
+// LLG_SEVERITY_INFO .. LLG_SEVERITY_FATAL are defined in llg_msg.h.
 
 enum {
     LLG_ASSERTION_ASSERT = 0,

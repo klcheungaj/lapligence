@@ -11,6 +11,8 @@ fn slang_diagnostics_preserve_location_and_message() {
         line: 2,
         col: 22,
         message: "expected a statement".to_owned(),
+        id: None,
+        option: None,
     };
     let a = Analysis::new(vec![raw.clone()], empty_design(), Vec::new(), Vec::new());
     let map = lsp_diagnostics(&a);
@@ -34,6 +36,8 @@ fn diagnostics_severity_mapping() {
                 line: 3,
                 col: 5,
                 message: "bad".to_owned(),
+                id: None,
+                option: None,
             },
             Diag {
                 severity: Severity::Warning,
@@ -42,6 +46,8 @@ fn diagnostics_severity_mapping() {
                 line: 4,
                 col: 1,
                 message: "warn".to_owned(),
+                id: None,
+                option: None,
             },
             Diag {
                 severity: Severity::Note,
@@ -50,6 +56,8 @@ fn diagnostics_severity_mapping() {
                 line: 0,
                 col: 0,
                 message: "note".to_owned(),
+                id: None,
+                option: None,
             },
             Diag {
                 severity: Severity::Info,
@@ -58,6 +66,8 @@ fn diagnostics_severity_mapping() {
                 line: 6,
                 col: 2,
                 message: "info".to_owned(),
+                id: None,
+                option: None,
             },
         ],
         empty_design(),
@@ -73,7 +83,7 @@ fn diagnostics_severity_mapping() {
     assert_eq!(diags[1].severity, Some(DiagnosticSeverity::WARNING));
     assert_eq!(diags[2].severity, Some(DiagnosticSeverity::INFORMATION));
     assert_eq!(diags[2].range.start.line, 0); // unknown line → (0,0)
-    assert_eq!(diags[3].severity, Some(DiagnosticSeverity::HINT));
+    assert_eq!(diags[3].severity, Some(DiagnosticSeverity::INFORMATION));
 }
 
 #[test]
@@ -104,6 +114,8 @@ fn lint_diagnostics_mapping() {
             line: 1,
             col: 1,
             message: "compile error".to_owned(),
+            id: None,
+            option: None,
         }],
         empty_design(),
         Vec::new(),

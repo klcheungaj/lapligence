@@ -235,7 +235,7 @@ static void llg_dpi_walk_from_c(const llg_dpi_type_t* type, const unsigned char*
 static svLogicVecVal* llg_dpi_scratch(size_t count) {
     svLogicVecVal* chunks = (svLogicVecVal*)calloc(count ? count : 1u, sizeof(svLogicVecVal));
     if (!chunks) {
-        fprintf(stderr, "llg: out of memory converting a DPI-C argument\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory converting a DPI-C argument");
         abort();
     }
     return chunks;
@@ -381,7 +381,7 @@ static llg_dpi_scope_t* llg_dpi_valid_scope(const void* scope) {
  * caller returns a default value and the chain finishes normally. */
 static void llg_dpi_fatal(const char* what, const char* c_name, const char* detail) {
     if (llg_rt_exiting()) return;
-    fprintf(stderr, "llg: %s%s\n", what, detail ? detail : "");
+    llg_msg(LLG_MSG_DPI_ERROR, NULL, "%s%s", what, detail ? detail : "");
     llg_rt_mark_failed();
     llg_rt_fatal_typed(0, "DPI-C protocol violation", NULL, 0, "", c_name);
 }
@@ -446,10 +446,7 @@ int llg_dpi_task_status(int status, const char* c_name) {
     int disabled = llg_activation_cancelled();
     if (status != 0 && !disabled) {
         if (!llg_rt_exiting()) {
-            fprintf(stderr,
-                    "llg: DPI-C import task `%s` returned nonzero, but nothing disabled it "
-                    "(SV 35.9: an imported task returns 1 only after a disable)\n",
-                    c_name);
+            llg_msg(LLG_MSG_DPI_ERROR, NULL, "DPI-C import task `%s` returned nonzero, but nothing disabled it (SV 35.9: an imported task returns 1 only after a disable)", c_name);
             llg_rt_mark_failed();
             llg_rt_fatal_typed(0, "DPI-C disable protocol violation", NULL, 0, "", c_name);
         }
@@ -539,8 +536,7 @@ svScope svSetScope(const svScope scope) {
     if (target) {
         llg_dpi_now.scope = target;
     } else {
-        fprintf(stderr, "llg: svSetScope: %p is not a scope; the context scope is unchanged\n",
-                scope);
+        llg_msg(LLG_MSG_DPI_ERROR, NULL, "svSetScope: %p is not a scope; the context scope is unchanged", scope);
     }
     return previous;
 }
@@ -791,10 +787,7 @@ int svSizeOfArray(const svOpenArrayHandle h) {
 static unsigned char* llg_dpi_element_at(const svOpenArrayHandle h, int count, const int* index) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (open && count != open->dims && !llg_rt_exiting()) {
-        fprintf(stderr,
-                "llg: DPI-C open array element access with %d index(es) to an array "
-                "with %d unpacked dimension(s)\n",
-                count, open->dims);
+        llg_msg(LLG_MSG_DPI_ERROR, NULL, "DPI-C open array element access with %d index(es) to an array with %d unpacked dimension(s)", count, open->dims);
         llg_rt_mark_failed();
         llg_rt_fatal_typed(0, "DPI-C open array index count", NULL, 0, "", "svdpi.h");
         llg_dpi_abandon_foreign_code();

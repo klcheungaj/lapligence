@@ -9,6 +9,9 @@
 // never pin them: the collector reports each reclaimed object and every handle
 // into it is released first.
 
+// The VPI and DPI-C bridge always links with the scheduler, which counts
+// its messages for the end-of-run summary.
+#define LLG_MSG_COUNT_HOOK llg_rt_count_message
 #include "llg_vpi.h"
 #include "sv_vpi_user.h"
 
@@ -479,7 +482,7 @@ static void vpi_enter(void) {
 static void vpi_fail_runtime(const char* message) {
     g_vpi.failed = 1;
     vpi_set_error(vpiRun, vpiError, "LLG_VPI_RUNTIME", message);
-    fprintf(stderr, "llg: VPI error: %s\n", message);
+    llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: %s", message);
     llg_rt_request_finish();
 }
 
@@ -3803,8 +3806,7 @@ static int load_one_plugin(const char* path) {
     }
     g_vpi.plugin_handles[g_vpi.plugin_count++] = module;
     if (!g_vpi.object_count && g_vpi.plugin_count == 1)
-        fprintf(stderr, "llg: warning: the model was built without the VPI object catalog; "
-                        "rebuild it with --vpi to reach design objects from `%s`\n", path);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "the model was built without the VPI object catalog; rebuild it with --vpi to reach design objects from `%s`", path);
     if (!run_startup_table((void (*const*)(void))startup, path)) return 0;
     return !g_vpi.failed;
 }
@@ -3816,7 +3818,7 @@ int llg_vpi_startup_static(void (*const* routines)(void)) {
     }
     if (g_vpi.failed) {
         /* The model metadata was rejected before any application ran. */
-        fprintf(stderr, "llg: VPI startup failed: %s\n", g_vpi.error_message);
+        llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI startup failed: %s", g_vpi.error_message);
         return 0;
     }
     if (!routines) return 1;
@@ -3844,7 +3846,7 @@ int llg_vpi_startup(void) {
             char* next = strchr(cursor, LLG_PATH_LIST_SEPARATOR);
             if (next) *next++ = '\0';
             if (!load_one_plugin(cursor)) {
-                fprintf(stderr, "llg: VPI startup failed: %s\n", g_vpi.error_message);
+                llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI startup failed: %s", g_vpi.error_message);
                 return 0;
             }
             cursor = next;
@@ -12700,7 +12702,7 @@ static llg_vpi_cb_t** collect_cbs(llg_vpi_cb_t* first, cb_match_fn match,
             size_t grown_capacity = capacity * 2u;
             llg_vpi_cb_t** grown = (llg_vpi_cb_t**)malloc(grown_capacity * sizeof(*grown));
             if (!grown) {
-                fputs("llg runtime fatal: VPI callback dispatch allocation failed\n", stderr);
+                llg_msg(LLG_MSG_INTERNAL, NULL, "VPI callback dispatch allocation failed");
                 abort();
             }
             memcpy(grown, items, *count * sizeof(*grown));
@@ -12814,7 +12816,7 @@ static llg_vpi_watch_t** collect_watches(const void* key, llg_vpi_watch_t** inli
             size_t grown_capacity = capacity * 2u;
             llg_vpi_watch_t** grown = (llg_vpi_watch_t**)malloc(grown_capacity * sizeof(*grown));
             if (!grown) {
-                fputs("llg runtime fatal: VPI callback dispatch allocation failed\n", stderr);
+                llg_msg(LLG_MSG_INTERNAL, NULL, "VPI callback dispatch allocation failed");
                 abort();
             }
             memcpy(grown, items, *count * sizeof(*grown));
@@ -13919,7 +13921,7 @@ static void site_result_shape(llg_vpi_callsite_t* site) {
             if (width <= 0 || (uint32_t)width >= LLG_SUPPORTED_WIDTH_LIMIT) {
                 vpi_set_errorf(vpiCompile, vpiError, "LLG_VPI_SIZETF",
                                "sizetf for `%s` returned invalid width %d", site->name, width);
-                fprintf(stderr, "llg: VPI error: %s\n", g_vpi.error_message);
+                llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: %s", g_vpi.error_message);
                 registration->size = 0;
             } else {
                 registration->size = (uint32_t)width;
@@ -13945,10 +13947,9 @@ static int compile_site(llg_vpi_callsite_t* site) {
         /* Name the call site: the model stops before time 0, so nothing
          * else points at the source line. */
         if (site->file)
-            fprintf(stderr, "llg: VPI error: no VPI registration for `%s` (called at %s:%d)\n",
-                    site->name, site->file, site->line);
+            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: no VPI registration for `%s` (called at %s:%d)", site->name, site->file, site->line);
         else
-            fprintf(stderr, "llg: VPI error: no VPI registration for `%s`\n", site->name);
+            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: no VPI registration for `%s`", site->name);
         return 0;
     }
     llg_vpi_call_t call;
@@ -13987,7 +13988,7 @@ static int compile_site(llg_vpi_callsite_t* site) {
         if (result != 0) {
             vpi_set_errorf(vpiCompile, vpiError, "LLG_VPI_COMPILETF", "compiletf rejected `%s`",
                            site->name);
-            fprintf(stderr, "llg: VPI error: compiletf rejected `%s`\n", site->name);
+            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: compiletf rejected `%s`", site->name);
             ok = 0;
         }
     }
@@ -14229,17 +14230,9 @@ int llg_vpi_check_builtin_overrides(const llg_vpi_builtin_call_t* calls, uint32_
         /* The model stops before time 0; name the call that would have
          * reached the application. */
         if (calls[i].file)
-            fprintf(stderr,
-                    "llg: VPI error: a VPI application registers `%s`, which llg implements "
-                    "as a built-in (called at %s:%d); llg does not support overriding built-in "
-                    "system tasks and functions (IEEE 1800-2009 36.3.2)\n",
-                    calls[i].name, calls[i].file, calls[i].line);
+            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: a VPI application registers `%s`, which llg implements as a built-in (called at %s:%d); llg does not support overriding built-in system tasks and functions (IEEE 1800-2009 36.3.2)", calls[i].name, calls[i].file, calls[i].line);
         else
-            fprintf(stderr,
-                    "llg: VPI error: a VPI application registers `%s`, which llg implements "
-                    "as a built-in; llg does not support overriding built-in system tasks and "
-                    "functions (IEEE 1800-2009 36.3.2)\n",
-                    calls[i].name);
+            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: a VPI application registers `%s`, which llg implements as a built-in; llg does not support overriding built-in system tasks and functions (IEEE 1800-2009 36.3.2)", calls[i].name);
         return 0;
     }
     return 1;

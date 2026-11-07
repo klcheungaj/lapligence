@@ -1,4 +1,5 @@
 #include "llg_string.h"
+#include "llg_msg.h"
 
 #include <float.h>
 #include <stdio.h>
@@ -6,8 +7,7 @@
 #include <string.h>
 
 static _Noreturn void string_fail(const char *message) {
-    fprintf(stderr, "llg: string runtime: %s\n", message);
-    abort();
+    llg_msg_abort(LLG_MSG_INTERNAL, "string runtime: %s", message);
 }
 
 static llg_string_t string_alloc(size_t length) {

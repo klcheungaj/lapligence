@@ -458,7 +458,7 @@ impl Frame<'_, '_> {
         let location = c_string_literal(location);
         self.line("llg_rt_mark_failed();");
         self.line(format!(
-            "fprintf(stderr, \"llg: runtime error: access to inactive tagged-union member %s at %s\\n\", {member}, {location});"
+            "llg_msg(LLG_MSG_RUNTIME_FAILURE, {location}, \"access to inactive tagged-union member %s\", {member});"
         ));
         self.line("fflush(stderr);");
     }

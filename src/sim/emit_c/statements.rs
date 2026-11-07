@@ -1082,7 +1082,9 @@ fn render_stmt_scoped(
             *level,
             fmt,
             args,
-            scope,
+            // A simulator-generated failure has no `%m` and is reported as a
+            // run-time failure: the runtime tells it by the empty scope.
+            if *runtime_failure { "" } else { scope },
             location,
             *fatal_finish_number,
         )

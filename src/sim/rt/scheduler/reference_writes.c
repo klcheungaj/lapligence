@@ -4,16 +4,14 @@ static int llg_ref_report_tag_failure(const llg_ref_view_t* view,
     size_t failed = 0;
     if (llg_ref_view_valid(view, parent, &failed)) return 1;
     const char* member = "<unknown>";
-    const char* location = "<unknown>";
+    const char* location = NULL;
     if (view && failed < view->tag_check_count && view->tag_checks) {
         if (view->tag_checks[failed].member_name)
             member = view->tag_checks[failed].member_name;
         if (view->location) location = view->location;
     }
     llg_rt_mark_failed();
-    fprintf(stderr,
-            "llg: runtime error: access to inactive tagged-union member %s at %s\n",
-            member, location);
+    llg_msg(LLG_MSG_RUNTIME_FAILURE, location, "access to inactive tagged-union member %s", member);
     fflush(stderr);
     llg_rt_note_error(0, "access to an inactive tagged-union member", location);
     return 0;
@@ -24,7 +22,7 @@ sv4_t llg_rt_ref_read(const llg_ref_t* ref) {
         return llg_ref_read(ref);
     const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
     if (!view || !view->parent) {
-        fputs("llg runtime fatal: invalid tagged reference view\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid tagged reference view");
         abort();
     }
     sv4_t parent = llg_rt_ref_read(view->parent);
@@ -358,7 +356,7 @@ llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind) {
     }
     size_t count = ref_dependencies(ref, NULL);
     if (count > INT_MAX) {
-        fprintf(stderr, "llg: `ref` wait names too many storage locations\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "`ref` wait names too many storage locations");
         abort();
     }
     llg_frame_t* frame = llg_frame_new(2);
@@ -417,7 +415,7 @@ llg_co_arm_t llg_arm_ref_dependencies(llg_proc_t* self, const llg_wait_dependenc
     size_t total = (size_t)n;
     for (int i = 0; i < n_refs; i++) total += ref_dependencies(refs[i], NULL);
     if (total > INT_MAX) {
-        fprintf(stderr, "llg: `ref` wait names too many storage locations\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "`ref` wait names too many storage locations");
         abort();
     }
     // The arm copies the list; whole descriptors fit the inline buffer.

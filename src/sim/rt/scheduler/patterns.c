@@ -596,9 +596,7 @@ llg_string_t llg_pattern_format(const llg_pattern_type_t* types,
     llg_pattern_field_t root = {NULL, type, storage};
     llg_pattern_field(&out, &root, source);
     if (out.truncated)
-        fprintf(stderr,
-                "llg: warning: %%p output truncated at %u characters\n",
-                (unsigned)LLG_PATTERN_OUTPUT_LIMIT);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%%p output truncated at %u characters", (unsigned)LLG_PATTERN_OUTPUT_LIMIT);
     llg_string_t result = llg_string_bytes(out.data, out.len);
     free(out.data);
     return result;

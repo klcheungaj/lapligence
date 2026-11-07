@@ -23,7 +23,7 @@ static int llg_registry_capacity(int current, int needed) {
     int capacity = current > 0 ? current : LLG_REGISTRY_INITIAL;
     while (capacity < needed) {
         if (capacity > INT_MAX / 2) {
-            fprintf(stderr, "llg runtime fatal: registry capacity overflow\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "registry capacity overflow");
             abort();
         }
         capacity *= 2;
@@ -116,13 +116,13 @@ static void finals_release(void) {
 
 static void register_proc(llg_proc_t* p) {
     if (!p || g.next_process_identity == UINT64_MAX) {
-        fprintf(stderr, "llg: process identity overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "process identity overflow");
         abort();
     }
     p->assertion_owner = ++g.next_process_identity;
     int slot = proc_first_free();
     if (slot == INT_MAX) {
-        fprintf(stderr, "llg runtime fatal: process registry size overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "process registry size overflow");
         abort();
     }
     all_procs_reserve(slot + 1);
@@ -167,7 +167,7 @@ static void release_program_process(llg_proc_t* process) {
     process->program_live = 0;
     if (!process->program || process->program->live_initials == 0 ||
         g.program_processes == 0) {
-        fprintf(stderr, "llg: program initial accounting underflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "program initial accounting underflow");
         abort();
     }
     process->program->live_initials--;
@@ -421,8 +421,7 @@ static int randcase_negative_weight(const sv4_t* const* weights, size_t count,
                                     const char* location) {
     for (size_t index = 0; index < count; ++index) {
         if (!random_weight_negative(weights[index])) continue;
-        fprintf(stderr, "llg: error: randcase at %s: weight %zu is negative\n",
-                randcase_where(location), index);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "randcase at %s: weight %zu is negative", randcase_where(location), index);
         random_weight_fatal("randcase weight is negative", location);
         return 1;
     }
@@ -430,10 +429,7 @@ static int randcase_negative_weight(const sv4_t* const* weights, size_t count,
 }
 
 static void randcase_warn_zero(const char* location) {
-    fprintf(stderr,
-            "llg: warning: randcase at %s: all weights are zero; no branch "
-            "is taken\n",
-            randcase_where(location));
+    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "randcase at %s: all weights are zero; no branch is taken", randcase_where(location));
 }
 
 static uint64_t randcase_weight_u64(const sv4_t* weight) {
@@ -556,10 +552,7 @@ int32_t llg_randsequence_select(const sv4_t* const* weights, size_t count,
                                 uint32_t sum_width, const char* location) {
     for (size_t index = 0; index < count; ++index) {
         if (!random_weight_negative(weights[index])) continue;
-        fprintf(stderr,
-                "llg: error: randsequence production at %s: the weight of rule %zu "
-                "is negative\n",
-                randcase_where(location), index + 1u);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "randsequence production at %s: the weight of rule %zu is negative", randcase_where(location), index + 1u);
         random_weight_fatal("randsequence weight is negative", location);
         return -1;
     }
@@ -571,10 +564,7 @@ int32_t llg_randsequence_select(const sv4_t* const* weights, size_t count,
         sv4_destroy(&known);
     }
     if (!any) {
-        fprintf(stderr,
-                "llg: warning: randsequence production at %s: all rule weights "
-                "are zero; nothing is generated\n",
-                randcase_where(location));
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "randsequence production at %s: all rule weights are zero; nothing is generated", randcase_where(location));
         return -1;
     }
     return llg_randcase_select(weights, count, sum_width, location);
@@ -652,7 +642,7 @@ llg_string_t llg_process_get_randstate(void) {
 int llg_process_set_randstate(llg_string_t state) {
     int ok = llg_rng_state_set(llg_process_rng(), &state);
     if (!ok) {
-        fprintf(stderr, "llg: random runtime: invalid randstate string\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "random runtime: invalid randstate string");
         llg_last_failure = 1;
     }
     llg_string_destroy(&state);
@@ -680,7 +670,7 @@ llg_string_t llg_object_get_randstate(const llg_rng_state_t* object) {
 
 void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state) {
     if (object && !llg_rng_state_set(object, &state)) {
-        fprintf(stderr, "llg: random runtime: invalid randstate string\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "random runtime: invalid randstate string");
         llg_last_failure = 1;
     }
     llg_string_destroy(&state);

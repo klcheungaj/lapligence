@@ -1298,6 +1298,9 @@ fn render_model(
     if model.vpi_catalog {
         out.push_str("#define LLG_VPI_CATALOG 1\n");
     }
+    // Model messages count in the scheduler's table, so the end-of-run
+    // summary (SIM-000) includes them (`llg_msg.h`).
+    out.push_str("#define LLG_MSG_COUNT_HOOK llg_rt_count_message\n");
     out.push_str("#include \"llg_rt.h\"\n");
     out.push_str("#if LLG_MODEL_PROCESS_ABI != LLG_PROCESS_ABI_VERSION\n#error \"generated model process ABI does not match llg_rt.h\"\n#endif\n");
     out.push_str("_Static_assert(LLG_MODEL_VALUE_BACKEND == LLG_SV4_USE_GMP, \"regenerate model: incompatible value backend\");\n_Static_assert(LLG_MODEL_COMPACT_KERNELS == LLG_SV4_GMP_KERNELS, \"regenerate model: incompatible compact kernels\");\n");

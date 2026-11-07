@@ -152,7 +152,7 @@ impl EmitCtx<'_, '_> {
         let source = MemorySource {
             // Run-time diagnostics name the call as `$finish` reports do.
             path: IrStringExpr::Literal(
-                format!("{name} at {}", self.finish_location(call)).into_bytes(),
+                format!("{name} at {}", self.text_location(call)).into_bytes(),
             ),
             text: Some(text),
         };

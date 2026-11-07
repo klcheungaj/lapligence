@@ -8,7 +8,7 @@ static void sv4_select_plan_check(const sv4_select_plan_t* plan) {
         plan->value_lsb > plan->width ||
         plan->count > plan->storage_width - plan->storage_lsb ||
         plan->count > plan->width - plan->value_lsb) {
-        fputs("llg runtime fatal: invalid packed selection plan\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid packed selection plan");
         abort();
     }
 }
@@ -69,7 +69,7 @@ void sv4_select_plan_step(sv4_select_plan_t* plan, sv4_t base, uint32_t width) {
     sv4_select_plan_check(plan);
     sv4_require_width(width, "packed selection");
     if (!width) {
-        fputs("llg runtime fatal: packed selection width must be positive\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "packed selection width must be positive");
         abort();
     }
     int64_t low = 0;
@@ -101,7 +101,7 @@ void sv4_select_plan_step(sv4_select_plan_t* plan, sv4_t base, uint32_t width) {
 sv4_t sv4_select_plan_read(sv4_t source, const sv4_select_plan_t* plan) {
     sv4_select_plan_check(plan);
     if (source.width != plan->storage_width) {
-        fputs("llg runtime fatal: packed selection storage width mismatch\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "packed selection storage width mismatch");
         abort();
     }
     sv4_t result = sv4_x(plan->width, 0);
@@ -113,7 +113,7 @@ sv4_t sv4_select_plan_slice(sv4_t source, const sv4_select_plan_t* plan,
                             int reverse) {
     sv4_select_plan_check(plan);
     if (source.width != plan->width) {
-        fputs("llg runtime fatal: packed selection source width mismatch\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "packed selection source width mismatch");
         abort();
     }
     sv4_t result = sv4_zero(plan->count, 0);
@@ -132,7 +132,7 @@ sv4_t sv4_select_plan_slice(sv4_t source, const sv4_select_plan_t* plan,
 void sv4_select_plan_set(sv4_t* destination, const sv4_select_plan_t* plan, sv4_t source) {
     sv4_select_plan_check(plan);
     if (!destination || destination->width != plan->storage_width || source.width != plan->width) {
-        fputs("llg runtime fatal: packed selection assignment width mismatch\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "packed selection assignment width mismatch");
         abort();
     }
     if (!plan->count) return;

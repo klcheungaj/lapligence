@@ -1,6 +1,7 @@
 #ifndef LLG_SV4_COMPACT_INTERNAL_H
 #define LLG_SV4_COMPACT_INTERNAL_H
 #include "backend.h"
+#include "../llg_msg.h"
 #include <stdlib.h>
 #include <string.h>
 

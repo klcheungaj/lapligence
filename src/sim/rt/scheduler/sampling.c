@@ -8,7 +8,7 @@ static llg_sampled_value_t* find_sampled_value(const sv4_t* signal) {
 }
 
 static void report_unregistered_sampled_signal(void) {
-    fprintf(stderr, "llg: sampled value requested for an unregistered signal\n");
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "sampled value requested for an unregistered signal");
     llg_last_failure = 1;
     g.finish = 1;
 }
@@ -49,7 +49,7 @@ static void sampled_record_write(sv4_t* signal) {
 
 static void sampled_register(sv4_t* signal, uint64_t history_ticks) {
     if (!signal) {
-        fprintf(stderr, "llg: cannot register a null sampled signal\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "cannot register a null sampled signal");
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -94,7 +94,7 @@ void llg_sampled_register_history(sv4_t* signal, uint64_t ticks) {
 
 void llg_sampled_register_value(sv4_t* signal) {
     if (!signal) {
-        fprintf(stderr, "llg: cannot register a null sampled signal\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "cannot register a null sampled signal");
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -132,7 +132,7 @@ int llg_sampled_copy(const sv4_t* signal, sv4_t* out) {
 
 void llg_sampled_register_real(double* signal) {
     if (!signal) {
-        fprintf(stderr, "llg: cannot register a null sampled signal\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "cannot register a null sampled signal");
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -162,7 +162,7 @@ static int sampled_real_image_equal(sv4_t left, sv4_t right) {
 }
 
 static void report_sampled_failure(const char* message, uint64_t identity) {
-    fprintf(stderr, "llg: %s %llu\n", message, (unsigned long long)identity);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s %llu", message, (unsigned long long)identity);
     llg_last_failure = 1;
     g.finish = 1;
 }
@@ -439,7 +439,7 @@ int llg_sampled_domain_status(uint64_t identity, int kind) {
         case 4: return sampled_real_image_equal(current, previous);
         case 5: return !sampled_real_image_equal(current, previous);
         default:
-            fprintf(stderr, "llg: invalid sampled-value status kind %d\n", kind);
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sampled-value status kind %d", kind);
             llg_last_failure = 1;
             g.finish = 1;
             return 0;
@@ -550,7 +550,7 @@ int llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
 // history entries; only the final store decodes the image.
 static int clocking_store_real(const sv4_t* image, double* sample) {
     if (!image || llg_sv4_width(*image) != 64) {
-        fprintf(stderr, "llg: real clocking sample needs a 64-bit image\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "real clocking sample needs a 64-bit image");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;

@@ -1,7 +1,7 @@
 
 static void enqueue_region(llg_proc_t* p, llg_region_t region) {
     if (!region_valid(region)) {
-        fprintf(stderr, "llg: invalid execution region %d for process\n", (int)region);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %d for process", (int)region);
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -38,7 +38,7 @@ static void wait_sources_reserve(void) {
     size_t capacity = g.wait_sources_capacity;
     if (capacity && g.n_wait_sources < capacity - capacity / 4) return;
     if (capacity > SIZE_MAX / 2) {
-        fputs("llg runtime fatal: wait source index capacity overflow\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "wait source index capacity overflow");
         abort();
     }
     capacity = capacity ? capacity * 2 : LLG_WAIT_SOURCES_INITIAL;
@@ -155,7 +155,7 @@ int llg_value_watch_add(const void* key) {
         source->watch = node;
     }
     if (source->watchers == UINT32_MAX) {
-        fputs("llg runtime fatal: value watch count overflow\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "value watch count overflow");
         abort();
     }
     source->watchers++;
@@ -199,7 +199,7 @@ static void wait_key_add(llg_wait_keys_t* keys, const void* key) {
     if (!key) return;
     if (keys->count == keys->capacity) {
         if (keys->capacity > SIZE_MAX / 2) {
-            fputs("llg runtime fatal: wait dependency count overflow\n", stderr);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "wait dependency count overflow");
             abort();
         }
         size_t capacity = keys->capacity ? keys->capacity * 2 : 8;
@@ -430,7 +430,7 @@ static llg_wait_rare_t* wait_rare_allocate(llg_wait_t* wait,
 
 static void insert_zero_wait(llg_wait_t* w, llg_region_t region) {
     if (!region_valid(region)) {
-        fprintf(stderr, "llg: invalid execution region %d for zero-delay wait\n", (int)region);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %d for zero-delay wait", (int)region);
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -505,8 +505,7 @@ static void remove_inactive_entry(llg_wait_t* w) {
 static int semaphore_key_count(sv4_t value, uint64_t* result) {
     int64_t signed_value = 0;
     if (!result || !sv4_to_index_i64(value, &signed_value) || signed_value < 0) {
-        fprintf(stderr,
-                "llg: semaphore key count must be a known nonnegative integral value\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore key count must be a known nonnegative integral value");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -517,7 +516,7 @@ static int semaphore_key_count(sv4_t value, uint64_t* result) {
 
 static int semaphore_valid(llg_semaphore_t* semaphore, const char* action) {
     if (semaphore) return 1;
-    fprintf(stderr, "llg: semaphore %s requires a live semaphore handle\n", action);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore %s requires a live semaphore handle", action);
     llg_last_failure = 1;
     g.finish = 1;
     return 0;

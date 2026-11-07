@@ -379,6 +379,7 @@ void llg_rt_cleanup(void) {
         llg_cov_end_of_run();
         llg_cov_release_all();
     }
+    llg_rt_report_summary();
     value_scopes_unwind(NULL);
     while (root_reference_top) llg_ref_scope_end(root_reference_top);
     for (int i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);
@@ -543,7 +544,7 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
     finals_release(); // a fresh run never inherits final registrations
     llg_n_finals = 0;
     if (precision_fs == 0) {
-        fprintf(stderr, "llg: runtime precision must be non-zero\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "runtime precision must be non-zero");
         llg_last_failure = 1;
         llg_last_config_error = 1;
         g.config_error = 1;

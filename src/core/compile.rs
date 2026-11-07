@@ -226,6 +226,11 @@ pub struct Diag {
     /// `file`, `line` and `col` stay physical so editors and tools address
     /// the real buffer.
     pub logical: Option<LogicalLine>,
+    /// Message id (`core::report`): `SLANG-<name>` for a frontend diagnostic,
+    /// an llg catalog id for a check llg adds, `None` when unknown.
+    pub id: Option<String>,
+    /// The frontend warning option that selects the diagnostic (`-W<name>`).
+    pub option: Option<String>,
 }
 
 /// Logical file and line that a `` `line`` directive (IEEE 1364-2001 19.7,
@@ -4915,6 +4920,10 @@ fn project_diagnostics(snapshot: &Snapshot) -> Vec<Diag> {
                 col,
                 message: diagnostic.message.clone(),
                 logical: None,
+                id: (!diagnostic.name.is_empty())
+                    .then(|| crate::core::report::named_id("SLANG", &diagnostic.name)),
+                option: (!diagnostic.option_name.is_empty())
+                    .then(|| format!("-W{}", diagnostic.option_name)),
             }
         })
         .collect()

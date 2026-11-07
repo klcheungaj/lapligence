@@ -60,6 +60,8 @@ fn compact_embedding_contains_every_private_include() {
     // The platform layer ships beside every model (`platform_headers`);
     // `llg_compiler.h` is the part generated models and backends may use.
     exported.insert(root.join("llg_compiler.h").canonicalize().unwrap());
+    // The message reporter ships beside every model (`message_headers`).
+    exported.insert(root.join("llg_msg.h").canonicalize().unwrap());
     for (name, text) in sources {
         if !name.starts_with("value_gmp/") {
             continue;

@@ -367,18 +367,27 @@ impl Frame<'_, '_> {
         let Some(location) = &cast.failure_location else {
             return;
         };
-        let location = c_string_literal(location);
+        // A failure site may carry a detail after it (`<site>: <detail>`);
+        // the detail joins the message, the site frames it.
+        let (site, message) = match location.split_once(": ") {
+            Some((site, detail)) => (
+                site,
+                format!("$cast failed to assign an incompatible value: {detail}"),
+            ),
+            None => (
+                location.as_str(),
+                "$cast failed to assign an incompatible value".to_owned(),
+            ),
+        };
+        let location = c_string_literal(site);
+        let message = c_string_literal(&message);
         self.line(format!("if (!{success}) {{"));
         self.line("llg_rt_mark_failed();");
-        self.line(format!(
-            "fprintf(stderr, \"llg: runtime error: $cast failed to assign an incompatible value at %s\\n\", {location});"
-        ));
-        self.line("fflush(stderr);");
         if class {
             self.line("llg_rt_skip_finals();");
         }
         self.line(format!(
-            "llg_rt_fatal_typed(0, \"$cast failed to assign an incompatible value\", NULL, 0, \"\", {location});"
+            "llg_rt_fatal_typed(0, {message}, NULL, 0, \"\", {location});"
         ));
         self.line("}");
     }

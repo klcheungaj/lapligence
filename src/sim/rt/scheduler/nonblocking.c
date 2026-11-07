@@ -1,7 +1,7 @@
 
 static uint64_t nba_next_sequence(void) {
     if (g.nba_sequence == UINT64_MAX) {
-        fprintf(stderr, "llg: fatal: nonblocking assignment sequence overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "nonblocking assignment sequence overflow");
         abort();
     }
     return g.nba_sequence++;
@@ -150,7 +150,7 @@ static sv4_t nba_range_slice(uint32_t target_width, sv4_t value,
                              sv4_select_plan_t plan, int reverse,
                              uint32_t* offset, uint32_t* width) {
     if (plan.storage_width != target_width) {
-        fputs("llg runtime fatal: selected NBA storage width mismatch\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "selected NBA storage width mismatch");
         abort();
     }
     *offset = plan.storage_lsb;
@@ -519,7 +519,7 @@ void llg_nba_tagged_selected_after(sv4_t* target, sv4_t value,
         return;
     }
     if (check_count > (SIZE_MAX - sizeof(llg_ref_view_t)) / sizeof(*checks)) {
-        fputs("llg: fatal: tagged nonblocking assignment check count overflow\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "tagged nonblocking assignment check count overflow");
         abort();
     }
     llg_nba_t* n = new_nba(ticks);

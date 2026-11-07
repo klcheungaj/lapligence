@@ -47,7 +47,7 @@ static void property_settle(llg_property_inst_t* inst);
 static llg_property_locals_t* property_locals_retain(llg_property_locals_t* locals) {
     if (locals) {
         if (locals->refs == SIZE_MAX) {
-            fprintf(stderr, "llg: property local reference overflow\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "property local reference overflow");
             abort();
         }
         locals->refs++;
@@ -196,7 +196,7 @@ static void property_collapse(llg_property_inst_t* inst, llg_property_inst_t* ch
 
 static int property_atom(llg_property_ctx_t* ctx, uint32_t atom) {
     if (!ctx->program->atom || atom >= ctx->program->atom_count) {
-        fprintf(stderr, "llg runtime fatal: invalid property atom %u\n", (unsigned)atom);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid property atom %u", (unsigned)atom);
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -1060,7 +1060,7 @@ int llg_assertion_register_property(
         kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_EXPECT ||
         !valid_property_program(program, clock, edge) ||
         (pass_desc && !pass_desc->fn) || (fail_desc && !fail_desc->fn)) {
-        fprintf(stderr, "llg: invalid concurrent property assertion registration\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid concurrent property assertion registration");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;

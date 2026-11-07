@@ -17,4 +17,6 @@ severity = "error"
 ```
 
 LSP roots use the same `llg.toml` `[lint]` table, reload changes automatically and
-publish findings as `llg-lint`. See [configuration](../../../docs/config.md).
+publish findings as `llg-lint`. `llg` prints a finding as message
+`LINT-NNN` with the rule name as its hint; the index of each rule is in
+`core::report::catalog::LINT_RULES` and the [message catalog](../../../docs/messages.md). See [configuration](../../../docs/config.md).

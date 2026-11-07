@@ -319,6 +319,8 @@ impl Analysis {
                 line: 0,
                 col: 0,
                 message: message.into(),
+                id: None,
+                option: None,
             }],
             empty_design(),
             Vec::new(),
@@ -844,6 +846,8 @@ pub(super) fn db_build_diagnostic(error: &str) -> Diag {
         line: 0,
         col: 0,
         message: format!("semantic database build failed: {error}"),
+        id: None,
+        option: None,
     }
 }
 
@@ -1281,6 +1285,8 @@ fn analyze_library_units_after_limit(
             "full workspace elaboration exceeded a frontend limit; serving bounded declaration-level navigation ({failure}). {}",
             crate::config::FRONTEND_LIMIT_GUIDANCE
         ),
+        id: None,
+        option: None,
     });
     analysis.lint.clear();
     crate::llg_debug!(

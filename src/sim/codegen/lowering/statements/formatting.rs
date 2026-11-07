@@ -281,15 +281,33 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    pub(super) fn finish_location(&self, node: NodeId) -> String {
+    /// `scope:line:col` of a statement, for lowering error texts.
+    pub(super) fn text_location(&self, node: NodeId) -> String {
         let source = self.cg.node(node);
-        // A hidden assertion host reports the assertion's scope, not its own
-        // synthetic name.
-        let scope = self.display_scope.as_ref().map_or(&self.path, |(s, _)| s);
+        let scope = self.message_scope();
         if source.line == 0 {
             return scope.clone();
         }
         format!("{scope}:{}:{}", source.line, source.col)
+    }
+
+    /// A hidden assertion host reports the assertion's scope, not its own
+    /// synthetic name.
+    fn message_scope(&self) -> &String {
+        self.display_scope.as_ref().map_or(&self.path, |(s, _)| s)
+    }
+
+    /// The message site the runtime frames a status line, severity task or
+    /// assertion failure with: the design scope, then the unit separator
+    /// (U+001F), then the physical `file:line:col` of `node` (see
+    /// `llg_rt_site` in the runtime prelude). Without a source position the
+    /// site is the scope alone.
+    pub(super) fn finish_location(&self, node: NodeId) -> String {
+        let scope = self.message_scope();
+        if self.cg.node(node).line == 0 {
+            return scope.clone();
+        }
+        format!("{scope}\u{1f}{}", self.cg.source_location(node))
     }
 
     /// Lower the optional diagnostic level shared by `$finish` and `$stop`.
@@ -308,19 +326,19 @@ impl EmitCtx<'_, '_> {
                 let value = self.cg.eval_bits(*argument).map_err(|error| {
                     format!(
                         "{task} argument at {} must be an integral constant 0, 1, or 2: {error}",
-                        self.finish_location(node)
+                        self.text_location(node)
                     )
                 })?;
                 if value.is_unknown() {
                     return Err(format!(
                         "{task} argument at {} must be a known integral constant 0, 1, or 2",
-                        self.finish_location(node)
+                        self.text_location(node)
                     ));
                 }
                 let value = value.to_u128().ok_or_else(|| {
                     format!(
                         "{task} argument at {} must be an integral constant 0, 1, or 2",
-                        self.finish_location(node)
+                        self.text_location(node)
                     )
                 })?;
                 u8::try_from(value)
@@ -329,13 +347,13 @@ impl EmitCtx<'_, '_> {
                     .ok_or_else(|| {
                         format!(
                             "{task} argument at {} must be 0, 1, or 2 (got {value})",
-                            self.finish_location(node)
+                            self.text_location(node)
                         )
                     })
             }
             _ => Err(format!(
                 "{task} accepts at most one argument at {}",
-                self.finish_location(node)
+                self.text_location(node)
             )),
         }
     }

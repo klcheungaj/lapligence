@@ -2,7 +2,7 @@
 static void activation_retain(llg_activation_t* activation) {
     if (!activation) return;
     if (activation->refs == SIZE_MAX) {
-        fprintf(stderr, "llg: named activation reference count overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "named activation reference count overflow");
         abort();
     }
     activation->refs++;
@@ -13,7 +13,7 @@ static void activation_release(llg_activation_t* activation) {
     // length depends on the design and must not consume native stack.
     while (activation) {
         if (activation->refs == 0) {
-            fprintf(stderr, "llg: named activation reference count underflow\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "named activation reference count underflow");
             abort();
         }
         activation->refs--;
@@ -81,7 +81,7 @@ llg_ref_scope_t* llg_ref_scope_begin(void) {
 void llg_ref_scope_end(llg_ref_scope_t* scope) {
     if (!scope) return;
     llg_ref_scope_t** top = scope->proc ? &scope->proc->reference_top : &root_reference_top;
-    if (*top != scope) { fprintf(stderr, "llg: unbalanced reference scopes\n"); abort(); }
+    if (*top != scope) { llg_msg(LLG_MSG_INTERNAL, NULL, "unbalanced reference scopes"); abort(); }
     *top = scope->parent;
     while (scope->bindings) {
         llg_ref_binding_t* binding = scope->bindings;
@@ -112,7 +112,7 @@ static llg_ref_t* reference_cell(uint32_t width, int8_t is_signed, uint8_t two_s
     llg_ref_scope_t* scope = proc ? proc->reference_top : root_reference_top;
     if (!scope) {
         release(cell);
-        fprintf(stderr, "llg: element reference without call scope\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "element reference without call scope");
         abort();
     }
     llg_ref_binding_t* binding = llg_checked_calloc(1, sizeof(*binding), "element reference");
@@ -130,7 +130,7 @@ static llg_ref_t* reference_cell(uint32_t width, int8_t is_signed, uint8_t two_s
 }
 
 llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index) {
-    if (!queue) { fprintf(stderr, "llg: queue reference without call scope\n"); abort(); }
+    if (!queue) { llg_msg(LLG_MSG_INTERNAL, NULL, "queue reference without call scope"); abort(); }
     return reference_cell(queue->element_width, queue->element_signed,
                           queue->element_two_state, llg_queue_ref_acquire(queue, index),
                           llg_queue_cell_read, llg_queue_cell_write, llg_queue_ref_release);
@@ -227,11 +227,7 @@ static void budget_abort(llg_proc_t* p, const char* location) {
     const char* where = location && location[0] != '\0'
                             ? location
                             : (p && p->name ? p->name : "<unknown process>");
-    fprintf(stderr,
-            "llg: nonconvergent zero-time execution in process `%s` at time "
-            "%llu (process step limit %llu)\n",
-            where, (unsigned long long)g.now,
-            (unsigned long long)g.process_step_limit);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "nonconvergent zero-time execution in process `%s` at time %llu (process step limit %llu)", where, (unsigned long long)g.now, (unsigned long long)g.process_step_limit);
     llg_last_failure = 1;
     g.finish = 1;
     if (p) p->chain.exiting = LLG_EXIT_ABANDON;
@@ -268,13 +264,9 @@ void llg_unique_priority_check(int check, int matched, int has_default,
     const char* where = location && location[0] != '\0' ? location : "<unknown>";
     const char* qualifier = check == 1 ? "unique" : check == 2 ? "unique0" : "priority";
     if (matched == 0 && !has_default && check != 2) {
-        fprintf(stderr,
-                "llg: warning: %s violation at %s: no matching item\n",
-                qualifier, where);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%s violation at %s: no matching item", qualifier, where);
     }
     if (matched > 1 && check != 3) {
-        fprintf(stderr,
-                "llg: warning: %s violation at %s: multiple matching items\n",
-                qualifier, where);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%s violation at %s: multiple matching items", qualifier, where);
     }
 }

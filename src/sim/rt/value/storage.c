@@ -9,14 +9,12 @@ static size_t sv4_storage_limb_count(uint32_t width) {
 
 sv4_t sv4_zero(uint32_t width, int8_t is_signed) {
     if (width >= LLG_SUPPORTED_WIDTH_LIMIT) {
-        fprintf(stderr,
-                "llg runtime fatal: packed storage width %llu reaches or exceeds supported limit %u\n",
-                (unsigned long long)width, (unsigned)LLG_SUPPORTED_WIDTH_LIMIT);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "packed storage width %llu reaches or exceeds supported limit %u", (unsigned long long)width, (unsigned)LLG_SUPPORTED_WIDTH_LIMIT);
         abort();
     }
     size_t limbs = sv4_storage_limb_count(width);
     if (limbs > SIZE_MAX / sizeof(uint64_t) / 3u) {
-        fputs("llg runtime fatal: packed storage allocation size overflow\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "packed storage allocation size overflow");
         abort();
     }
     sv4_t result = SV4_EMPTY;
@@ -27,7 +25,7 @@ sv4_t sv4_zero(uint32_t width, int8_t is_signed) {
     size_t bytes = limbs * 3u * sizeof(uint64_t);
     result.bits = (uint64_t*)malloc(bytes);
     if (!result.bits) {
-        fputs("llg runtime fatal: packed storage allocation failed\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "packed storage allocation failed");
         abort();
     }
     result.x = result.bits + limbs;
@@ -108,7 +106,7 @@ void sv4_destroy_array(sv4_t* values, size_t count) {
 sv4_t sv4_from_masks(uint64_t bits, uint64_t x, uint64_t z,
                      uint32_t width, int8_t is_signed) {
     if (width > 64u) {
-        fputs("llg runtime fatal: mask constructor requires width <= 64\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "mask constructor requires width <= 64");
         abort();
     }
     return sv4_from_limbs(&bits, &x, &z, width, is_signed);

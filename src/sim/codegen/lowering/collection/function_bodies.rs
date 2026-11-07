@@ -266,11 +266,11 @@ impl<'a> Codegen<'a> {
         };
         let guard = if has_ret {
             format!(
-                "if (depth >= {LLG_MAX_FUNC_DEPTH}) {{\n        fprintf(stderr, \"llg: recursion limit exceeded in %s\\n\", \"{c_name}\");\n        return {ret_x};\n    }}\n"
+                "if (depth >= {LLG_MAX_FUNC_DEPTH}) {{\n        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"recursion limit exceeded in %s\", \"{c_name}\");\n        return {ret_x};\n    }}\n"
             )
         } else {
             format!(
-                "if (depth >= {LLG_MAX_FUNC_DEPTH}) {{\n        fprintf(stderr, \"llg: recursion limit exceeded in %s\\n\", \"{c_name}\");\n        return;\n    }}\n"
+                "if (depth >= {LLG_MAX_FUNC_DEPTH}) {{\n        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"recursion limit exceeded in %s\", \"{c_name}\");\n        return;\n    }}\n"
             )
         };
 

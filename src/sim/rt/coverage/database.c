@@ -610,8 +610,7 @@ static int llg_cov_db_save(const char* name, uint32_t sections, const char* site
         if (!error && llg_replace_file(temporary, path) != 0) error = strerror(errno);
     }
     if (error) {
-        fprintf(stderr, "llg: runtime error: %s: coverage database `%s` was not saved: %s\n",
-                site ? site : "end of simulation", name, error);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage database `%s` was not saved: %s", site ? site : "end of simulation", name, error);
         llg_rt_mark_failed();
         llg_rt_note_error(0, "coverage database was not saved", site);
         (void)llg_remove_file(temporary);
@@ -983,10 +982,7 @@ void llg_cov_load_db(llg_string_t name, const char* site) {
             error = "the functional section has trailing data";
     }
     if (error) {
-        fprintf(stderr,
-                "llg: runtime error: %s: coverage database `%s` was not loaded: %s; no coverage "
-                "changed\n",
-                site, path, error);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage database `%s` was not loaded: %s; no coverage changed", site, path, error);
         llg_rt_mark_failed();
         llg_rt_note_error(0, "coverage database was not loaded", site);
         for (size_t i = 0; i < n_staged; ++i) llg_cov_free_record(staged[i]);

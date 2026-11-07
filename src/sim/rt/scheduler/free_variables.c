@@ -65,8 +65,7 @@ static int free_sets_resolve(void) {
                 sorted[low]->kind == LLG_ASSERTION_ASSUME)
                 found = sorted[low];
             if (!found) {
-                fprintf(stderr, "llg: free variable set names unknown assume %llu\n",
-                        (unsigned long long)set->identities[k]);
+                llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "free variable set names unknown assume %llu", (unsigned long long)set->identities[k]);
                 llg_last_failure = 1;
                 g.finish = 1;
                 ok = 0;
@@ -84,7 +83,7 @@ int llg_checker_free_set(llg_free_solve_fn solve, const uint64_t* assumes,
                          uint32_t count, const char* label) {
     if (!g.initialized || g.running || g.config_error || !solve ||
         (count && !assumes)) {
-        fprintf(stderr, "llg: invalid free variable set registration\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid free variable set registration");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;

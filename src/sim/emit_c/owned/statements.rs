@@ -1004,6 +1004,10 @@ impl Frame<'_, '_> {
                 skip_finals,
             } => {
                 let values = self.formatted_arguments(args, self.ctx.model.precision_fs)?;
+                // A simulator-generated failure has no `%m` and is reported
+                // as a run-time failure: the runtime tells it by the empty
+                // scope (the site still names the scope).
+                let scope = if *runtime_failure { "" } else { scope.as_str() };
                 let (scope, location) = (c_string_literal(scope), c_string_literal(location));
                 if *level == IrSeverityLevel::Fatal {
                     let number = fatal_finish_number

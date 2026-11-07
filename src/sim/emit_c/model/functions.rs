@@ -248,8 +248,8 @@ pub(super) fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, Str
         "return;".to_string()
     };
     out.push_str(&format!(
-        "    if (depth >= {LLG_MAX_FUNC_DEPTH}) {{\n        fprintf(stderr, \
-         \"llg: recursion limit exceeded in %s\\n\", \"{}\");\n        \
+        "    if (depth >= {LLG_MAX_FUNC_DEPTH}) {{\n        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \
+         \"recursion limit exceeded in %s\", \"{}\");\n        \
          {ret_clause}\n    }}\n",
         f.c_name
     ));

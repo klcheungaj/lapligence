@@ -25,7 +25,7 @@ static void assertion_action(llg_concurrent_assertion_t* assertion,
 
 static void assertion_vacuous(void) {
     if (llg_assertion_vacuous_total == UINT64_MAX) {
-        fprintf(stderr, "llg runtime fatal: assertion vacuity counter overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "assertion vacuity counter overflow");
         abort();
     }
     llg_assertion_vacuous_total++;
@@ -73,7 +73,7 @@ static void sequence_endpoint_matched(llg_concurrent_assertion_t* endpoint) {
 
 int llg_sequence_triggered(uint32_t endpoint) {
     if (endpoint >= g.sequence_endpoint_count || !g.sequence_endpoints[endpoint]) {
-        fprintf(stderr, "llg runtime fatal: invalid sequence endpoint %u\n", (unsigned)endpoint);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sequence endpoint %u", (unsigned)endpoint);
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -84,8 +84,7 @@ int llg_sequence_triggered(uint32_t endpoint) {
 int llg_sequence_matched(uint32_t endpoint, uint32_t slot) {
     if (endpoint >= g.sequence_endpoint_count || !g.sequence_endpoints[endpoint] ||
         slot >= g.sequence_endpoints[endpoint]->endpoint_slot_count) {
-        fprintf(stderr, "llg runtime fatal: invalid sequence endpoint %u slot %u\n",
-                (unsigned)endpoint, (unsigned)slot);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sequence endpoint %u slot %u", (unsigned)endpoint, (unsigned)slot);
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -101,7 +100,7 @@ int llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event
         assertion->identity != identity || assertion->endpoint_event ||
         (slot_count && (!clocks || !edges)) ||
         (assertion->kind != LLG_ASSERTION_COVER) || index != g.sequence_endpoint_count) {
-        fprintf(stderr, "llg: invalid sequence endpoint registration\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sequence endpoint registration");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -122,7 +121,7 @@ int llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event
         assertion->endpoint_slot_count = slot_count;
         for (uint32_t slot = 0; slot < slot_count; slot++) {
             if (!clocks[slot] || (edges[slot] != LLG_EV_POSEDGE && edges[slot] != LLG_EV_NEGEDGE)) {
-                fprintf(stderr, "llg: invalid sequence matched clock\n");
+                llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sequence matched clock");
                 llg_last_failure = 1;
                 g.finish = 1;
                 return 0;
@@ -422,7 +421,7 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                            sv4_t value) {
     if (!signal) return;
     if (llg_assertion_event_order == UINT64_MAX) {
-        fprintf(stderr, "llg: concurrent assertion event-order overflow\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "concurrent assertion event-order overflow");
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -935,7 +934,7 @@ int llg_assertion_register_control(
         (abort_sync != 0 && abort_sync != 1) ||
         ((abort_reject || abort_sync) && !abort_condition) ||
         (pass_desc && !pass_desc->fn) || (fail_desc && !fail_desc->fn)) {
-        fprintf(stderr, "llg: invalid concurrent assertion registration\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid concurrent assertion registration");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -1070,7 +1069,7 @@ int llg_assertion_register_sequence_control(
         (abort_sync != 0 && abort_sync != 1) ||
         ((abort_reject || abort_sync) && !abort_condition) ||
         (pass_desc && !pass_desc->fn) || (fail_desc && !fail_desc->fn)) {
-        fprintf(stderr, "llg: invalid concurrent sequence assertion registration\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid concurrent sequence assertion registration");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -1119,7 +1118,7 @@ int llg_assertion_single_attempt(uint64_t identity) {
     llg_concurrent_assertion_t* assertion = g.assertion_tail;
     if (!g.initialized || g.running || g.config_error || !assertion ||
         assertion->identity != identity || assertion->kind == LLG_ASSERTION_EXPECT) {
-        fprintf(stderr, "llg: invalid single-attempt concurrent assertion\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid single-attempt concurrent assertion");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -1134,7 +1133,7 @@ int llg_assertion_procedural(uint64_t identity, uint32_t index) {
         assertion->identity != identity || assertion->kind == LLG_ASSERTION_EXPECT ||
         assertion->endpoint_event || assertion->single_attempt || assertion->procedural ||
         index != g.procedural_assertion_count || index == UINT32_MAX) {
-        fprintf(stderr, "llg: invalid procedural concurrent assertion\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid procedural concurrent assertion");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -1159,7 +1158,7 @@ int llg_assertion_gate_clock(uint64_t identity, llg_sampled_gate_fn gate) {
     llg_concurrent_assertion_t* assertion = g.assertion_tail;
     if (!g.initialized || g.running || g.config_error || !gate || !assertion ||
         assertion->identity != identity || assertion->clock_gate) {
-        fprintf(stderr, "llg: invalid concurrent assertion clock gate\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid concurrent assertion clock gate");
         llg_last_failure = 1;
         g.finish = 1;
         return 0;

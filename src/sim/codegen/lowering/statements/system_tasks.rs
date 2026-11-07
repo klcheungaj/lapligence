@@ -174,19 +174,19 @@ impl EmitCtx<'_, '_> {
                         let value = self.cg.eval_bits(first).map_err(|error| {
                             format!(
                                 "$fatal finish number at {} must be an integral constant 0, 1, or 2: {error}",
-                                self.finish_location(h)
+                                self.text_location(h)
                             )
                         })?;
                         if value.is_unknown() {
                             return Err(format!(
                                 "$fatal finish number at {} must be a known integral constant 0, 1, or 2",
-                                self.finish_location(h)
+                                self.text_location(h)
                             ));
                         }
                         let value = value.to_u128().ok_or_else(|| {
                             format!(
                                 "$fatal finish number at {} must be an integral constant 0, 1, or 2",
-                                self.finish_location(h)
+                                self.text_location(h)
                             )
                         })?;
                         let finish_number = u8::try_from(value)
@@ -195,7 +195,7 @@ impl EmitCtx<'_, '_> {
                             .ok_or_else(|| {
                                 format!(
                                     "$fatal finish number at {} must be 0, 1, or 2 (got {value})",
-                                    self.finish_location(h)
+                                    self.text_location(h)
                                 )
                             })?;
                         (&args[1..], Some(finish_number))

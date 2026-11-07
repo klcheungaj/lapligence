@@ -32,8 +32,7 @@ int llg_region_is_read_only(void) {
 llg_region_t llg_current_region(void) { return g.current_region; }
 
 static void region_violation(const char* action, llg_region_t region) {
-    fprintf(stderr, "llg: illegal %s in read-only or completed %s region\n",
-            action, llg_region_name(region));
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "illegal %s in read-only or completed %s region", action, llg_region_name(region));
     llg_last_failure = 1;
     g.finish = 1;
 }
@@ -57,7 +56,7 @@ static int region_can_mutate(const char* action) {
 
 static int callback_region_allowed(llg_region_t region, uint64_t ticks) {
     if (!region_valid(region)) {
-        fprintf(stderr, "llg: invalid execution region %d for callback\n", (int)region);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %d for callback", (int)region);
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -74,9 +73,7 @@ static int callback_region_allowed(llg_region_t region, uint64_t ticks) {
     // A writable iterative region can return work to the design/reactive set;
     // the scheduler will drain that set again before reaching Postponed.
     if (region_is_design(region)) return 1;
-    fprintf(stderr, "llg: illegal callback scheduling from %s to %s at time %llu\n",
-            llg_region_name(g.current_region), llg_region_name(region),
-            (unsigned long long)g.now);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "illegal callback scheduling from %s to %s at time %llu", llg_region_name(g.current_region), llg_region_name(region), (unsigned long long)g.now);
     llg_last_failure = 1;
     g.finish = 1;
     return 0;
@@ -102,17 +99,14 @@ static int load_limit(const char* name, uint64_t fallback, uint64_t* value,
     *present = text != NULL;
     if (!text) {
         if (fallback == 0) {
-            fprintf(stderr,
-                    "llg: invalid %s default (must be a positive decimal uint64)\n",
-                    name);
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid %s default (must be a positive decimal uint64)", name);
             return 0;
         }
         *value = fallback;
         return 1;
     }
     if (!parse_positive_u64(text, value)) {
-        fprintf(stderr,
-                "llg: invalid %s (must be a positive decimal uint64)\n", name);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid %s (must be a positive decimal uint64)", name);
         return 0;
     }
     return 1;
@@ -138,9 +132,7 @@ static int configure_limits(void) {
     }
     if (process_text) {
         if (!parse_positive_u64(process_text, &g.process_step_limit)) {
-            fprintf(stderr,
-                    "llg: invalid %s (must be a positive decimal uint64)\n",
-                    process_name);
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid %s (must be a positive decimal uint64)", process_name);
             return 0;
         }
     } else if (zero_present) {
@@ -172,9 +164,7 @@ static int configure_stop_policy(void) {
         g.stop_policy = LLG_STOP_POLICY_EXIT;
         return 1;
     }
-    fprintf(stderr,
-            "llg: invalid LLG_STOP_POLICY `%s` (expected resume or exit)\n",
-            text);
+    llg_msg(LLG_MSG_ENVIRONMENT, NULL, "invalid LLG_STOP_POLICY `%s` (expected resume or exit)", text);
     return 0;
 }
 

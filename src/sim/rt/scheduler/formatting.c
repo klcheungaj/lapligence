@@ -463,8 +463,7 @@ static size_t llg_format_char(sv4_t value, char* raw, size_t cap) {
 static sv4_t llg_string_to_display_packed(const llg_string_t* value) {
     size_t max_bytes = (size_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) / 8u;
     if (value->len > max_bytes) {
-        fprintf(stderr,
-                "llg runtime fatal: string display conversion exceeds packed width\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "string display conversion exceeds packed width");
         abort();
     }
     uint32_t width = value->len ? (uint32_t)(value->len * 8u) : 8u;
@@ -747,10 +746,7 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             static int reported_missing_argument;
             if (conversion && !reported_missing_argument) {
                 reported_missing_argument = 1;
-                fprintf(stderr,
-                        "llg: warning: format specification `%.*s` has no "
-                        "argument; printed as written\n",
-                        (int)(p - start), start);
+                llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "format specification `%.*s` has no argument; printed as written", (int)(p - start), start);
             }
             llg_append_text(out, cap, &len, start, (size_t)(p - start));
             continue;

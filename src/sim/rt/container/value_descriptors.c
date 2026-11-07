@@ -621,8 +621,7 @@ int llg_value_desc_valid(const llg_value_desc_t* desc) {
 
 void llg_value_desc_check(const llg_value_desc_t* desc, const char* label) {
     if (llg_value_desc_valid(desc)) return;
-    fprintf(stderr, "llg container fatal: invalid value descriptor for %s\n",
-            label ? label : "<unnamed>");
+    llg_msg(LLG_MSG_INTERNAL, NULL, "container: invalid value descriptor for %s", label ? label : "<unnamed>");
     abort();
 }
 

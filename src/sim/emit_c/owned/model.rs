@@ -1078,7 +1078,7 @@ fn render_function(
     } else {
         String::new()
     };
-    let source = format!("{helpers}static {return_type} {name}({signature}) {{\n{coroutine_prologue}    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}");
+    let source = format!("{helpers}static {return_type} {name}({signature}) {{\n{coroutine_prologue}    if ({depth} >= 256) {{ llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"recursion limit exceeded\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}");
     Ok((source, layout, sites))
 }
 

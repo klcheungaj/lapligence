@@ -6,10 +6,7 @@ static int sv4_nlimbs(uint32_t w) { return w == 0 ? 0 : (int)((w + 63u) / 64u); 
 
 static void sv4_require_width(uint64_t width, const char* operation) {
     if (width < LLG_SUPPORTED_WIDTH_LIMIT) return;
-    fprintf(stderr,
-            "llg runtime fatal: %s width %llu reaches supported limit %u\n",
-            operation, (unsigned long long)width,
-            (unsigned)LLG_SUPPORTED_WIDTH_LIMIT);
+    llg_msg(LLG_MSG_INTERNAL, NULL, "%s width %llu reaches supported limit %u", operation, (unsigned long long)width, (unsigned)LLG_SUPPORTED_WIDTH_LIMIT);
     abort();
 }
 
@@ -195,13 +192,11 @@ uint64_t sv4_delay_ticks(sv4_t value, uint64_t unit_ticks) {
  * large after rounding and scaling) waits one tick, with a warning. */
 static uint64_t unrepresentable_real_delay(double value) {
     if (isnan(value))
-        fprintf(stderr, "llg: warning: real delay is NaN; using 1 tick\n");
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "real delay is NaN; using 1 tick");
     else if (isinf(value))
-        fprintf(stderr, "llg: warning: real delay is infinite; using 1 tick\n");
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "real delay is infinite; using 1 tick");
     else
-        fprintf(stderr,
-                "llg: warning: real delay %.17g exceeds the 64-bit tick range; using 1 tick\n",
-                value);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "real delay %.17g exceeds the 64-bit tick range; using 1 tick", value);
     return 1;
 }
 
@@ -257,7 +252,7 @@ uint32_t sv4_checked_width(sv4_t v) {
     if (sv4_is_unknown(v) ||
         (v.is_signed && v.width > 0 &&
          ((v.bits[(v.width - 1) / 64] >> ((v.width - 1) % 64)) & 1ULL))) {
-        fprintf(stderr, "llg runtime fatal: invalid dynamic packed width\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid dynamic packed width");
         abort();
     }
     for (int i = 1; i < sv4_nlimbs(v.width); i++) {
@@ -385,7 +380,7 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
             uint8_t s0 = strength0[d];
             uint8_t s1 = strength1[d];
             if (s0 > LLG_STRENGTH_SUPPLY || s1 > LLG_STRENGTH_SUPPLY) {
-                fprintf(stderr, "llg runtime fatal: invalid net drive strength\n");
+                llg_msg(LLG_MSG_INTERNAL, NULL, "invalid net drive strength");
                 abort();
             }
             uint64_t x = v->x[i] & m;
@@ -484,7 +479,7 @@ sv4_t sv4_resolve_strengths_range(const sv4_t* const* drivers,
     if ((!indices && n_indices) || n_indices < 0 ||
         range_offset > source_width ||
         range_width > source_width - range_offset) {
-        fputs("llg runtime fatal: invalid net resolution range\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid net resolution range");
         abort();
     }
     sv4_t r = sv4_zero(range_width, is_signed);
@@ -505,7 +500,7 @@ sv4_t sv4_resolve_strengths_range(const sv4_t* const* drivers,
             for (int selected = 0; selected < n_indices; selected++) {
                 int d = indices[selected];
                 if (d < 0) {
-                    fputs("llg runtime fatal: invalid net driver index\n", stderr);
+                    llg_msg(LLG_MSG_INTERNAL, NULL, "invalid net driver index");
                     abort();
                 }
                 const sv4_t* v = drivers[d];
@@ -574,7 +569,7 @@ sv4_t sv4_resolve_strengths_range(const sv4_t* const* drivers,
         for (int selected = 0; selected < n_indices; selected++) {
             int d = indices[selected];
             if (d < 0) {
-                fputs("llg runtime fatal: invalid net driver index\n", stderr);
+                llg_msg(LLG_MSG_INTERNAL, NULL, "invalid net driver index");
                 abort();
             }
             const sv4_t* v = drivers[d];
@@ -582,7 +577,7 @@ sv4_t sv4_resolve_strengths_range(const sv4_t* const* drivers,
             uint8_t s0 = strength0[d];
             uint8_t s1 = strength1[d];
             if (s0 > LLG_STRENGTH_SUPPLY || s1 > LLG_STRENGTH_SUPPLY) {
-                fputs("llg runtime fatal: invalid net drive strength\n", stderr);
+                llg_msg(LLG_MSG_INTERNAL, NULL, "invalid net drive strength");
                 abort();
             }
             uint64_t valid = source_offset >= v->width
@@ -1091,13 +1086,13 @@ static int sv4_raw_ucmp(const sv4_t* a, const sv4_t* b) {
 
 static void* sv4_scratch_alloc(size_t count) {
     if (count > SIZE_MAX / sizeof(uint64_t)) {
-        fputs("llg runtime fatal: value scratch size overflow\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "value scratch size overflow");
         abort();
     }
     if (count == 0) count = 1;
     void* allocation = calloc(count, sizeof(uint64_t));
     if (allocation) return allocation;
-    fprintf(stderr, "llg runtime fatal: value-operation allocation failed\n");
+    llg_msg(LLG_MSG_INTERNAL, NULL, "value-operation allocation failed");
     abort();
 }
 
@@ -1145,12 +1140,12 @@ static void sv4_unsigned_divmod(const sv4_t* dividend, const sv4_t* divisor,
     // Both lengths are bounded by the supported bit width. Check again here
     // so the allocation contract remains local if that boundary ever changes.
     if (count > SIZE_MAX / sizeof(uint32_t)) {
-        fputs("llg runtime fatal: division scratch size overflow\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "division scratch size overflow");
         abort();
     }
     uint32_t* scratch = (uint32_t*)calloc(count, sizeof(uint32_t));
     if (!scratch) {
-        fputs("llg runtime fatal: division scratch allocation failed\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "division scratch allocation failed");
         abort();
     }
     uint32_t* u = scratch;
@@ -1721,7 +1716,7 @@ sv4_t sv4_repeat(sv4_t pat, uint64_t n) {
 
 sv4_t sv4_stream(sv4_t value, uint32_t slice, int right_to_left) {
     if (slice == 0) {
-        fprintf(stderr, "llg runtime fatal: zero streaming slice size\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "zero streaming slice size");
         abort();
     }
     sv4_t r = sv4_zero(value.width, 0);
@@ -1924,7 +1919,7 @@ void sv4_to_dec_string(sv4_t v, char* buf, size_t cap) {
     char* digits = malloc(digit_capacity);
     if (!digits) {
         free(tmp);
-        fprintf(stderr, "llg runtime fatal: value-format allocation failed\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "value-format allocation failed");
         abort();
     }
     size_t n = 0;

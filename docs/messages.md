@@ -202,9 +202,10 @@ No messages.
 | `SIM-016` | error | a VPI application or plugin error | - |
 | `SIM-017` | error | a DPI-C bridge error | - |
 | `SIM-018` | error | the waveform writer failed | - |
-| `SIM-019` | error | the run ended without $finish: deadlock, zero-delay loop or step limit | - |
+| `SIM-019` | warning | the run ended in a deadlock: processes wait and no event remains | - |
 | `SIM-020` | warning | a model environment setting (LLG_SIM_LOG_FILE, LLG_STOP_POLICY, plusargs) is unusable | - |
 | `SIM-021` | info | runtime information (randomize statistics, stack limit notes) | - |
+| `SIM-022` | info | the run ended without $finish because no process remains | - |
 | `SIM-030` | fatal | an internal runtime invariant failed; the model aborts | - |
 | `SIM-031` | fatal | the model could not allocate memory; it aborts | - |
 

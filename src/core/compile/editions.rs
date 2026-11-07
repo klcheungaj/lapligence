@@ -1588,6 +1588,8 @@ pub(super) fn edition_diagnostics(
             severity: Severity::Error, file, line, col,
             message: format!("`{label}` is not available in IEEE {} and is rejected by the strict edition profile", edition.ieee_year()),
             logical: None,
+            id: Some(crate::core::report::catalog::ELAB_EDITION.id()),
+            option: None,
         })
     }).collect()
 }

@@ -16,10 +16,7 @@ static int nba_tag_commit_valid(const llg_ref_view_t* view, const sv4_t* target)
     if (failed < view->tag_check_count && view->tag_checks[failed].member_name)
         member = view->tag_checks[failed].member_name;
     llg_rt_mark_failed();
-    fprintf(stderr,
-            "llg: runtime error: nonblocking write to tagged-union member %s at %s "
-            "found an inactive tag at commit\n",
-            member, view->location ? view->location : "<unknown>");
+    llg_msg(LLG_MSG_RUNTIME_FAILURE, view->location, "nonblocking write to tagged-union member %s found an inactive tag at commit", member);
     fflush(stderr);
     llg_rt_note_error(0, "nonblocking write to an inactive tagged-union member", view->location);
     return 0;

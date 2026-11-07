@@ -6,7 +6,7 @@ void llg_value_require_abi(void) {}
 #include <stdio.h>
 
 void llg_gmp_sv4_fail(const char* message) {
-    fprintf(stderr, "llg compact value fatal: %s\n", message);
+    llg_msg(LLG_MSG_INTERNAL, NULL, "compact value: %s", message);
     abort();
 }
 uint64_t* llg_gmp_sv4_alloc(size_t words) {

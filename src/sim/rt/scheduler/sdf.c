@@ -55,7 +55,7 @@ static uint64_t* sdf_path_limits(llg_module_path_t* path) {
         llg_module_path_t** paths =
             tables ? realloc(sdf_limit_tables.paths, capacity * sizeof(*paths)) : NULL;
         if (!tables || !paths) {
-            fprintf(stderr, "llg: fatal: out of memory for SDF pulse limits\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory for SDF pulse limits");
             abort();
         }
         sdf_limit_tables.tables = tables;

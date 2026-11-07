@@ -6,7 +6,7 @@ sv4_t sv4_array_conditional_merge(sv4_t a, sv4_t b, sv4_t element_default) {
     const uint32_t stride = element_default.width;
     if (!a.width || a.width >= LLG_SUPPORTED_WIDTH_LIMIT || a.width != b.width ||
         !stride || stride > a.width || a.width % stride != 0) {
-        fputs("llg runtime fatal: invalid array conditional merge shape\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid array conditional merge shape");
         abort();
     }
     sv4_t result = sv4_zero(a.width, 0);
@@ -34,7 +34,7 @@ sv4_t sv4_record_conditional_merge(sv4_t a, sv4_t b, sv4_t period_default,
     if (!a.width || a.width >= LLG_SUPPORTED_WIDTH_LIMIT || a.width != b.width ||
         !period || period > a.width || a.width % period != 0 ||
         leaf_starts.width != period || sv4_lsb_bit(leaf_starts, 0) != 1) {
-        fputs("llg runtime fatal: invalid record conditional merge shape\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid record conditional merge shape");
         abort();
     }
     sv4_t result = sv4_zero(a.width, 0);

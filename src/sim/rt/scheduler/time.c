@@ -3,7 +3,7 @@ uint64_t llg_time_precision_fs(void) { return g.design_precision_fs; }
 
 uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs) {
     if (unit_fs == 0) {
-        fprintf(stderr, "llg runtime fatal: zero time unit\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "zero time unit");
         abort();
     }
     // Portable 64x64 -> 128 multiplication using 32-bit halves.
@@ -17,7 +17,7 @@ uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs) {
     high += t >> 32;
     uint64_t low = (t << 32) | (uint32_t)p0;
     if (high >= unit_fs) {
-        fprintf(stderr, "llg runtime fatal: scaled simulation time overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "scaled simulation time overflow");
         abort();
     }
     uint64_t quotient = 0, remainder = high;
@@ -32,7 +32,7 @@ uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs) {
     }
     if (remainder >= unit_fs - remainder) {
         if (quotient == UINT64_MAX) {
-            fprintf(stderr, "llg runtime fatal: scaled simulation time overflow\n");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "scaled simulation time overflow");
             abort();
         }
         ++quotient;
@@ -41,7 +41,7 @@ uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs) {
 }
 
 static void llg_timeformat_error(const char* message, llg_string_t* suffix) {
-    fprintf(stderr, "llg: $timeformat %s\n", message);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "$timeformat %s", message);
     if (suffix) llg_string_destroy(suffix);
     llg_last_failure = 1;
     g.finish = 1;

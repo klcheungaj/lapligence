@@ -4,12 +4,7 @@
 static void sequence_thread_acquire(void) {
     if (++g.sequence_threads == g.sequence_thread_limit + 1u) {
         const llg_concurrent_assertion_t* assertion = g.sequence_current;
-        fprintf(stderr,
-                "llg: sequence thread budget exhausted: more than %llu live sequence threads"
-                " at time %llu (concurrent assertion %s at %s); raise LLG_SEQUENCE_THREAD_LIMIT\n",
-                (unsigned long long)g.sequence_thread_limit, (unsigned long long)g.now,
-                assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>",
-                assertion && assertion->location ? assertion->location : "<unknown>");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "sequence thread budget exhausted: more than %llu live sequence threads at time %llu (concurrent assertion %s at %s); raise LLG_SEQUENCE_THREAD_LIMIT", (unsigned long long)g.sequence_thread_limit, (unsigned long long)g.now, assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>", assertion && assertion->location ? assertion->location : "<unknown>");
         llg_last_failure = 1;
         g.finish = 1;
     }
@@ -25,11 +20,7 @@ static void sequence_thread_release(void) {
 static void sequence_mult_overflow(void) {
     const llg_concurrent_assertion_t* assertion = g.sequence_current;
     if (g.finish) return;
-    fprintf(stderr,
-            "llg: sequence match multiplicity overflow at time %llu (concurrent assertion %s at %s)\n",
-            (unsigned long long)g.now,
-            assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>",
-            assertion && assertion->location ? assertion->location : "<unknown>");
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "sequence match multiplicity overflow at time %llu (concurrent assertion %s at %s)", (unsigned long long)g.now, assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>", assertion && assertion->location ? assertion->location : "<unknown>");
     llg_last_failure = 1;
     g.finish = 1;
 }
@@ -56,13 +47,7 @@ static int sequence_mult_enumerable(uint64_t mult) {
     if (mult <= g.sequence_thread_limit) return 1;
     const llg_concurrent_assertion_t* assertion = g.sequence_current;
     if (!g.finish) {
-        fprintf(stderr,
-                "llg: sequence thread budget exhausted: %llu matches must each run match items or"
-                " a pass statement at time %llu (concurrent assertion %s at %s); raise"
-                " LLG_SEQUENCE_THREAD_LIMIT\n",
-                (unsigned long long)mult, (unsigned long long)g.now,
-                assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>",
-                assertion && assertion->location ? assertion->location : "<unknown>");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "sequence thread budget exhausted: %llu matches must each run match items or a pass statement at time %llu (concurrent assertion %s at %s); raise LLG_SEQUENCE_THREAD_LIMIT", (unsigned long long)mult, (unsigned long long)g.now, assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>", assertion && assertion->location ? assertion->location : "<unknown>");
         llg_last_failure = 1;
         g.finish = 1;
     }
@@ -163,8 +148,7 @@ sv4_t* llg_sequence_local_addr(void* data, uint32_t slot) {
     llg_sequence_attempt_t* attempt = sequence_attempt_from_data(data);
     if (!attempt || !attempt->graph || slot >= attempt->graph->local_count ||
         !attempt->locals) {
-        fprintf(stderr, "llg runtime fatal: invalid sequence local slot %u\n",
-                (unsigned)slot);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sequence local slot %u", (unsigned)slot);
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
@@ -179,7 +163,7 @@ sv4_t llg_sequence_local_read(void* data, uint32_t slot) {
 
 void llg_sequence_local_write(sv4_t* target, sv4_t value) {
     if (!target) {
-        fprintf(stderr, "llg runtime fatal: null sequence local target\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "null sequence local target");
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -204,7 +188,7 @@ static sv4_t* sequence_locals_clone(const llg_sequence_graph_t* graph,
                                     const sv4_t* locals) {
     if (!graph || graph->local_count == 0) return NULL;
     if (!locals) {
-        fprintf(stderr, "llg runtime fatal: missing sequence thread locals\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "missing sequence thread locals");
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
@@ -218,7 +202,7 @@ static sv4_t* sequence_locals_clone(const llg_sequence_graph_t* graph,
 
 static void sequence_scope_retain(llg_sequence_scope_t* scope) {
     if (scope) {
-        if (scope->refs == SIZE_MAX) { fprintf(stderr, "llg: sequence scope reference overflow\n"); abort(); }
+        if (scope->refs == SIZE_MAX) { llg_msg(LLG_MSG_INTERNAL, NULL, "sequence scope reference overflow"); abort(); }
         scope->refs++;
     }
 }
@@ -469,7 +453,7 @@ static void sequence_match_items(const llg_sequence_graph_t* graph,
                                  uint32_t start, uint32_t count) {
     if (count == 0) return;
     if (!graph->match || start > graph->match_item_count || count > graph->match_item_count - start) {
-        fprintf(stderr, "llg runtime fatal: invalid sequence match-item range\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sequence match-item range");
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -545,7 +529,7 @@ static int sequence_choose_event(const llg_concurrent_assertion_t* assertion,
     }
     if (!((transition->min_delay == 0 && transition->max_delay == 0) ||
           (transition->min_delay == 1 && transition->max_delay == 1))) {
-        fprintf(stderr, "llg: invalid cross-clock sequence boundary\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid cross-clock sequence boundary");
         llg_last_failure = 1; g.finish = 1; return 0;
     }
     const llg_assertion_clock_event_t* candidate = NULL;
@@ -591,7 +575,7 @@ static llg_sequence_attempt_t* sequence_attempt_new(
                 const llg_sequence_local_t* from = &source->locals[j];
                 if (from->declaration != local->declaration) continue;
                 if (from->width != local->width || from->is_signed != local->is_signed || from->two_state != local->two_state) {
-                    fprintf(stderr, "llg: inconsistent assertion local type across implication\n");
+                    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "inconsistent assertion local type across implication");
                     llg_last_failure = 1; g.finish = 1; break;
                 }
                 sv4_copy(&attempt->locals[i], &values[j]);
@@ -718,7 +702,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
         if (matches && edge->exit_scope) {
             llg_sequence_scope_t* scope = destination->scope;
             if (!scope || scope->identity != edge->exit_scope) {
-                fprintf(stderr, "llg: unbalanced first_match scope\n");
+                llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "unbalanced first_match scope");
                 llg_last_failure = 1; g.finish = 1; matches = 0;
             } else if (scope->matched && (scope->time != event.time || scope->tick != event.tick ||
                        scope->clock != event.signal || scope->edge != event.edge)) matches = 0;
@@ -735,7 +719,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
             const llg_sequence_join_t* plan = edge->exit_join <= graph->join_count
                 ? &graph->joins[edge->exit_join - 1] : NULL;
             if (!plan || !frame || !frame->join || frame->join->plan != plan) {
-                fprintf(stderr, "llg: unbalanced sequence join\n");
+                llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "unbalanced sequence join");
                 llg_last_failure = 1; g.finish = 1; matches = 0;
             } else {
                 llg_sequence_join_instance_t* join = frame->join;
@@ -773,7 +757,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
             const llg_sequence_join_t* plan = edge->enter_join <= graph->join_count
                 ? &graph->joins[edge->enter_join - 1] : NULL;
             if (!plan) {
-                fprintf(stderr, "llg: invalid sequence join\n");
+                llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sequence join");
                 llg_last_failure = 1; g.finish = 1; matches = 0;
             } else {
                 // Both operands start on this tick, each in its own thread
@@ -893,7 +877,7 @@ static void sequence_attempt_discard(llg_sequence_attempt_t* attempt) {
 
 static int sequence_cycle_next(llg_concurrent_assertion_t* assertion, uint64_t* cycle) {
     if (assertion->sequence_cycle == UINT64_MAX) {
-        fprintf(stderr, "llg: concurrent assertion sequence clock-cycle counter overflow\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "concurrent assertion sequence clock-cycle counter overflow");
         llg_last_failure = 1; g.finish = 1; return 0;
     }
     *cycle = assertion->sequence_cycle++;

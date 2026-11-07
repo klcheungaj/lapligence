@@ -96,15 +96,14 @@ static int llg_system_allowed(void) {
 
 sv4_t llg_system(llg_string_t command, int has_command) {
     if (has_command != 0 && has_command != 1) {
-        fprintf(stderr, "llg: invalid internal `$system` argument marker\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid internal `$system` argument marker");
         llg_last_failure = 1;
         g.finish = 1;
         llg_string_destroy(&command);
         return sv4_from_u64(UINT32_MAX, 32, 1);
     }
     if (has_command && (!command.data && command.len != 0)) {
-        fprintf(stderr,
-                "llg: `$system` command has a nonzero length without storage\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "`$system` command has a nonzero length without storage");
         llg_last_failure = 1;
         g.finish = 1;
         llg_string_destroy(&command);
@@ -113,9 +112,7 @@ sv4_t llg_system(llg_string_t command, int has_command) {
     if (has_command) {
         for (size_t i = 0; i < command.len; ++i) {
             if (command.data[i] == '\0') {
-                fprintf(stderr,
-                        "llg: `$system` command contains an embedded NUL and "
-                        "was not executed\n");
+                llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "`$system` command contains an embedded NUL and was not executed");
                 llg_last_failure = 1;
                 g.finish = 1;
                 llg_string_destroy(&command);
@@ -124,9 +121,7 @@ sv4_t llg_system(llg_string_t command, int has_command) {
         }
     }
     if (!llg_system_allowed()) {
-        fprintf(stderr,
-                "llg: $system is disabled; set LLG_ALLOW_SYSTEM=1 for the "
-                "generated simulator process\n");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "$system is disabled; set LLG_ALLOW_SYSTEM=1 for the generated simulator process");
         llg_last_failure = 1;
         g.finish = 1;
         llg_string_destroy(&command);

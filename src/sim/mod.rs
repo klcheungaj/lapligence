@@ -125,6 +125,7 @@ pub(crate) fn write_sim_sources(
         ("svdpi.h", rt::svdpi_header()),
     ];
     files.extend_from_slice(rt::platform_headers());
+    files.extend_from_slice(rt::message_headers());
     files.extend_from_slice(rt::value_backend_sources(config.backend));
     files.extend_from_slice(extra);
 

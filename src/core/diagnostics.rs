@@ -21,6 +21,8 @@ mod tests {
             col: 1,
             message: "expected a statement".to_owned(),
             logical: None,
+            id: None,
+            option: None,
         };
         assert_eq!(user_message(&diagnostic), "expected a statement");
     }

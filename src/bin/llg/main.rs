@@ -23,11 +23,16 @@
 //! On Windows on ARM (`llg_ls` only) the driver is unsupported: it prints an
 //! "unsupported platform" error and exits 2 before parsing any argument.
 //!
+//! Every message goes to stderr in the layout of `core::report` (catalog:
+//! `docs/messages.md`), counted per tool; before the model starts (or at an
+//! earlier exit) each tool that reported a warning or worse prints its
+//! `TOOL-000` summary.
+//!
 //! Every run lints the elaborated design (`core::lint`) before codegen: each
-//! finding prints to stderr as `file:line:col: [SEVERITY] rule: message`
-//! followed by a count line. Lint errors exit 1 before codegen; warnings do
-//! not stop the run unless `-Werror` reports them as errors. `--lint-only`
-//! stops after lint (exit 0 clean or warnings only, 1 on errors).
+//! finding prints as message `LINT-NNN` with the rule name as its hint. Lint
+//! errors exit 1 before codegen; warnings do not stop the run unless
+//! `-Werror` reports them as errors. `--lint-only` stops after lint (exit 0
+//! clean or warnings only, 1 on errors) and always prints the lint summary.
 //!
 //! `--lint-json` is a report-only mode (it implies `--lint-only`): it emits one
 //! machine-readable JSON object (see `core::lint::diags_to_json`) instead of
@@ -87,6 +92,7 @@ use std::process::Command;
 
 use llg::core::compile;
 use llg::core::lint::{LintDiag, LintSeverity};
+use llg::core::report::{self, catalog, Message, Severity};
 use llg::sim;
 
 mod cli;
@@ -96,7 +102,7 @@ use settings::{DriverOptions, SettingsError};
 
 fn main() -> std::process::ExitCode {
     if let Some(reason) = llg::ffi::platform::simulator_unsupported_reason() {
-        eprintln!("llg: {reason}");
+        say(Message::new(&catalog::CLI_UNSUPPORTED_PLATFORM, reason));
         return std::process::ExitCode::from(2);
     }
     let code = match start(std::env::args().skip(1).collect()) {
@@ -123,10 +129,11 @@ fn start(args: Vec<String>) -> Result<DriverOptions, i32> {
     let options = settings::resolve(cli, &settings::Env::from_process(), config.as_ref())
         .map_err(config_failure)?;
     if options.files.is_empty() {
-        eprintln!(
-            "llg: no source files given (name them on the command line or in a --config file's \
-             `sources.files`/`sources.directories`)"
-        );
+        say(Message::new(
+            &catalog::CLI_NO_SOURCES,
+            "no source files given (name them on the command line or in a --config file's \
+             `sources.files`/`sources.directories`)",
+        ));
         return Err(2);
     }
     Ok(options)
@@ -134,12 +141,115 @@ fn start(args: Vec<String>) -> Result<DriverOptions, i32> {
 
 fn config_failure(error: SettingsError) -> i32 {
     for line in error.0.lines() {
-        eprintln!("llg: {line}");
+        let def = if line.starts_with("cannot read config") || line.ends_with("does not exist") {
+            &catalog::CONFIG_MISSING
+        } else {
+            &catalog::CONFIG_INVALID
+        };
+        say(Message::new(def, line));
     }
     1
 }
 
+/// Print one message on stderr.
+fn say(message: Message) {
+    eprintln!("{}", message.render());
+}
+
+/// Prints host messages and counts them per tool for the end-of-run summary.
+#[derive(Default)]
+struct Reporter {
+    tally: report::Tally,
+}
+
+impl Reporter {
+    fn emit(&mut self, message: Message) {
+        self.tally.count(&message);
+        say(message);
+    }
+
+    /// One summary per phase that reported a warning or worse, plus the lint
+    /// summary under `--lint-only` (the report the run was asked for).
+    fn finish(&self, lint_only: bool) {
+        let mut summaries = self.tally.summaries();
+        if lint_only && !summaries.iter().any(|m| m.id == catalog::LINT_SUMMARY.id()) {
+            summaries.push(report::summary(
+                catalog::Tool::Lint.name(),
+                &self.tally.counts(catalog::Tool::Lint.name()),
+            ));
+        }
+        for message in summaries {
+            say(message);
+        }
+    }
+}
+
+/// A frontend diagnostic (Slang, or a check llg adds to the checked compile)
+/// as a message.
+fn diag_message(d: &compile::Diag) -> Message {
+    let severity = match d.severity {
+        compile::Severity::Fatal => Severity::Fatal,
+        compile::Severity::Syntax | compile::Severity::Error => Severity::Error,
+        compile::Severity::Warning => Severity::Warning,
+        compile::Severity::Note | compile::Severity::Info => Severity::Info,
+    };
+    let text = llg::core::diagnostics::user_message(d);
+    // A by-design rejection says "not supported" itself.
+    let text = text
+        .strip_prefix("unsupported: ")
+        .unwrap_or(&text)
+        .to_owned();
+    Message {
+        severity,
+        location: d.file.is_some().then(|| d.location()),
+        id: d
+            .id
+            .clone()
+            .unwrap_or_else(|| report::named_id(catalog::Tool::Slang.name(), "Diagnostic")),
+        context: None,
+        text,
+        hint: d.option.clone(),
+    }
+}
+
+/// A by-design rejection line (`sim::legacy_unsupported::diagnostic`) as a
+/// message with its family id.
+fn legacy_message(line: &str) -> Message {
+    let (location, rest) = line.split_once(": unsupported: ").unwrap_or(("", line));
+    let family = rest
+        .strip_suffix(") is not supported by llg")
+        .and_then(|head| head.rsplit_once(" ("))
+        .map_or("", |(_, family)| family);
+    Message {
+        severity: Severity::Error,
+        location: (!location.is_empty()).then(|| location.to_owned()),
+        id: catalog::legacy_family_id(family),
+        context: None,
+        text: rest.to_owned(),
+        hint: None,
+    }
+}
+
 fn run(options: DriverOptions) -> i32 {
+    // `--lint-json` replaces the human lint report, summary included.
+    let lint_only = options.lint_only && !options.lint_json_mode;
+    let mut reporter = Reporter::default();
+    let next = generate_and_build(options, &mut reporter);
+    reporter.finish(lint_only);
+    match next {
+        Next::Exit(code) => code,
+        Next::Run(command, exe) => run_model(command, &exe),
+    }
+}
+
+/// What the driver does after its own phases.
+enum Next {
+    Exit(i32),
+    /// Run the built model.
+    Run(Command, std::path::PathBuf),
+}
+
+fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
     let DriverOptions {
         top,
         edition,
@@ -209,28 +319,17 @@ fn run(options: DriverOptions) -> i32 {
     }) {
         Ok(out) => out,
         Err(compile::CompileError::Startup(e)) => {
-            eprintln!("llg: compile failed to start: {e}");
-            return 1;
+            reporter.emit(Message::new(
+                &catalog::ELAB_FRONTEND_START,
+                format!("compile failed to start: {e}"),
+            ));
+            return Next::Exit(1);
         }
         Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
             for d in &diagnostics {
-                // Constructs rejected by design (protected source) keep the
-                // `error: <location>: unsupported: ...` shape of the
-                // simulator's other by-design rejections.
-                let located = format!("{}: {}", d.location(), d.message);
-                if sim::legacy_unsupported::is_diagnostic_list(&located) {
-                    eprintln!("error: {located}");
-                    continue;
-                }
-                eprintln!(
-                    "{:?}: {} {}",
-                    d.severity,
-                    d.location(),
-                    llg::core::diagnostics::user_message(d)
-                );
+                reporter.emit(diag_message(d));
             }
-            eprintln!("llg: Slang reported errors; aborting");
-            return 1;
+            return Next::Exit(1);
         }
     };
     drop(frontend_stage);
@@ -247,12 +346,7 @@ fn run(options: DriverOptions) -> i32 {
         }
     }
     for d in &out.diagnostics {
-        eprintln!(
-            "{:?}: {} {}",
-            d.severity,
-            d.location(),
-            llg::core::diagnostics::user_message(d)
-        );
+        reporter.emit(diag_message(d));
     }
 
     // 2. Lint gate: every run lints the owned db before codegen. Errors
@@ -260,8 +354,11 @@ fn run(options: DriverOptions) -> i32 {
     let codegen_db = match codegen_db {
         Ok(db) => db,
         Err(e) => {
-            eprintln!("llg: db build failed: {e}");
-            return 1;
+            reporter.emit(Message::new(
+                &catalog::ELAB_DB_BUILD,
+                format!("db build failed: {e}"),
+            ));
+            return Next::Exit(1);
         }
     };
     drop(out);
@@ -289,20 +386,25 @@ fn run(options: DriverOptions) -> i32 {
         match &lint_json_path {
             Some(path) => {
                 if let Err(e) = std::fs::write(path, format!("{json}\n")) {
-                    eprintln!("llg: cannot write lint JSON {}: {e}", path.display());
-                    return 1;
+                    reporter.emit(Message::new(
+                        &catalog::HOST_WRITE_FAILED,
+                        format!("cannot write lint JSON {}: {e}", path.display()),
+                    ));
+                    return Next::Exit(1);
                 }
             }
             None => println!("{json}"),
         }
-        return i32::from(lint_errors > 0);
+        return Next::Exit(i32::from(lint_errors > 0));
     }
-    print_lint_findings(&findings, lint_only);
+    for finding in &findings {
+        reporter.emit(lint_message(finding));
+    }
     if lint_errors > 0 {
-        return 1;
+        return Next::Exit(1);
     }
     if lint_only {
-        return 0;
+        return Next::Exit(0);
     }
 
     // 3. Reuse the validated owned semantic database.
@@ -314,8 +416,11 @@ fn run(options: DriverOptions) -> i32 {
     let value_config = match sim::value_backend::ValueConfig::from_env() {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("llg: {error}");
-            return 1;
+            reporter.emit(Message::new(
+                &catalog::CONFIG_ENVIRONMENT,
+                error.to_string(),
+            ));
+            return Next::Exit(1);
         }
     };
     let generated = sim::codegen::generate_from_owned_db_with_codegen_options(
@@ -337,23 +442,30 @@ fn run(options: DriverOptions) -> i32 {
         Ok(g) => g,
         Err(e) if e.is_legacy_unsupported() => {
             for line in e.detail().lines() {
-                eprintln!("error: {line}");
+                reporter.emit(legacy_message(line));
             }
-            return 1;
+            return Next::Exit(1);
         }
         Err(e) => {
-            eprintln!("llg: codegen error: {e}");
-            return 1;
+            let mut message = Message::new(catalog::codegen_family(e.detail()), e.detail());
+            if let Some(location) = e.location() {
+                message = message.location(location);
+            }
+            reporter.emit(message);
+            return Next::Exit(1);
         }
     };
     for w in &gen.warnings {
-        eprintln!("llg: warning: {w}");
+        reporter.emit(Message::new(&catalog::CODEGEN_WARNING, w.as_str()));
     }
     // `$sdf_annotate` log files describe the annotation read when the model
     // was generated.
     for (path, text) in &gen.sdf_logs {
         if let Err(error) = std::fs::write(path, text) {
-            eprintln!("llg: warning: cannot write the SDF log file `{path}`: {error}");
+            reporter.emit(Message::new(
+                &catalog::HOST_WRITE_WARNING,
+                format!("cannot write the SDF log file `{path}`: {error}"),
+            ));
         }
     }
 
@@ -363,7 +475,10 @@ fn run(options: DriverOptions) -> i32 {
     let model = gen.sources();
     if gen_only {
         if cli_build_options {
-            eprintln!("llg: warning: build options ignored with --gen-only");
+            reporter.emit(Message::new(
+                &catalog::CLI_IGNORED_OPTION,
+                "build options ignored with --gen-only",
+            ));
         }
         let opts = sim::build::CmakeBuildOpts {
             dpi_libraries,
@@ -373,11 +488,11 @@ fn run(options: DriverOptions) -> i32 {
             ..Default::default()
         };
         if let Err(e) = sim::build::generate_model_sources_with_opts(&out_dir, &model, &opts) {
-            eprintln!("llg: {e}");
-            return 1;
+            reporter.emit(Message::new(e.message(), e.to_string()));
+            return Next::Exit(1);
         }
         println!("{}", out_dir.display());
-        return 0;
+        return Next::Exit(0);
     }
 
     // 5. Build the model with CMake (the only supported builder).
@@ -404,13 +519,19 @@ fn run(options: DriverOptions) -> i32 {
         gmp_root: None,
     };
     if let Some(destination) = dpi_import_lib {
-        return write_import_library(&out_dir, &model, &opts, &destination);
+        return Next::Exit(write_import_library(
+            &out_dir,
+            &model,
+            &opts,
+            &destination,
+            reporter,
+        ));
     }
     let exe = match sim::build::build_model_cmake_with_opts(&out_dir, &model, &opts) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("llg: {e}");
-            return 1;
+            reporter.emit(Message::new(e.message(), e.to_string()));
+            return Next::Exit(1);
         }
     };
 
@@ -424,16 +545,32 @@ fn run(options: DriverOptions) -> i32 {
     if let Some(path) = dll_search_path {
         command.env("PATH", path);
     }
+    Next::Run(command, exe)
+}
+
+/// Run the built model and return the driver's exit status.
+fn run_model(mut command: Command, exe: &std::path::Path) -> i32 {
     let status = match command.status() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("llg: failed to run {}: {e}", exe.display());
+            say(Message::new(
+                &catalog::RUN_START,
+                format!("failed to run {}: {e}", exe.display()),
+            ));
             return 1;
         }
     };
-    let (code, report) = model_exit(status.code(), exit_signal(&status));
-    if let Some(report) = report {
-        eprintln!("llg: {report}");
+    let signal = exit_signal(&status);
+    let (code, report) = model_exit(status.code(), signal);
+    if let Some(text) = report {
+        let def = if signal.is_some() {
+            &catalog::RUN_SIGNAL
+        } else if status.code().is_some() {
+            &catalog::RUN_STATUS
+        } else {
+            &catalog::RUN_NO_STATUS
+        };
+        say(Message::new(def, text));
     }
     code
 }
@@ -445,19 +582,23 @@ fn write_import_library(
     model: &[(&str, &str)],
     opts: &sim::build::CmakeBuildOpts,
     destination: &std::path::Path,
+    reporter: &mut Reporter,
 ) -> i32 {
     let library = match sim::build::build_model_import_library(out_dir, model, opts) {
         Ok(library) => library,
         Err(e) => {
-            eprintln!("llg: {e}");
+            reporter.emit(Message::new(e.message(), e.to_string()));
             return 1;
         }
     };
     if let Err(e) = std::fs::copy(&library, destination) {
-        eprintln!(
-            "llg: cannot write the import library {}: {e}",
-            destination.display()
-        );
+        reporter.emit(Message::new(
+            &catalog::HOST_WRITE_FAILED,
+            format!(
+                "cannot write the import library {}: {e}",
+                destination.display()
+            ),
+        ));
         return 1;
     }
     println!("{}", destination.display());
@@ -476,46 +617,33 @@ fn exit_signal(_status: &std::process::ExitStatus) -> Option<i32> {
     None
 }
 
-/// Print lint findings to stderr as `file:line:col: [SEVERITY] rule: message`
-/// followed by a count line. A clean design prints nothing unless the run
-/// stops after lint, which confirms it with `lint: clean`.
-fn print_lint_findings(findings: &[LintDiag], lint_only: bool) {
-    let mut errors = 0usize;
-    let mut warnings = 0usize;
-    for d in findings {
-        let sev = match d.severity {
-            LintSeverity::Error => {
-                errors += 1;
-                "ERROR"
-            }
-            LintSeverity::Warning => {
-                warnings += 1;
-                "WARNING"
-            }
-            LintSeverity::Info => "INFO",
-        };
-        let mut loc = String::new();
-        if let Some(f) = &d.file {
-            loc.push_str(f);
-            if d.line > 0 {
-                loc.push_str(&format!(":{}", d.line));
-                if d.col > 0 {
-                    loc.push_str(&format!(":{}", d.col));
-                }
-            }
-            if let Some(logical) = &d.logical {
-                loc.push_str(&format!(" (`line {}:{})", logical.file, logical.line));
+/// A lint finding as a message: the rule's id, its name as the hint.
+fn lint_message(d: &LintDiag) -> Message {
+    let severity = match d.severity {
+        LintSeverity::Error => Severity::Error,
+        LintSeverity::Warning => Severity::Warning,
+        LintSeverity::Info => Severity::Info,
+    };
+    let mut location = String::new();
+    if let Some(f) = &d.file {
+        location.push_str(f);
+        if d.line > 0 {
+            location.push_str(&format!(":{}", d.line));
+            if d.col > 0 {
+                location.push_str(&format!(":{}", d.col));
             }
         }
-        if !loc.is_empty() {
-            loc.push_str(": ");
+        if let Some(logical) = &d.logical {
+            location.push_str(&format!(" (`line {}:{})", logical.file, logical.line));
         }
-        eprintln!("{loc}[{sev}] {}: {}", d.rule, d.message);
     }
-    if !findings.is_empty() {
-        eprintln!("lint: {errors} error(s), {warnings} warning(s)");
-    } else if lint_only {
-        eprintln!("lint: clean");
+    Message {
+        severity,
+        location: (!location.is_empty()).then_some(location),
+        id: catalog::lint_id(&d.rule),
+        context: None,
+        text: d.message.clone(),
+        hint: Some(d.rule.clone()),
     }
 }
 

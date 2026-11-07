@@ -61,14 +61,14 @@ static void value_scope_index_add(llg_value_scope_t* scope) {
     size_t count = value_scope_key_count(scope);
     if (!count) return;
     if (count > SIZE_MAX - value_scope_count) {
-        fputs("llg runtime fatal: value scope index size overflow\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "value scope index size overflow");
         abort();
     }
     size_t needed = value_scope_count + count;
     size_t capacity = value_scope_capacity ? value_scope_capacity : 16;
     while (needed > capacity - capacity / 4) {
         if (capacity > SIZE_MAX / 2) {
-            fputs("llg runtime fatal: value scope index capacity overflow\n", stderr);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "value scope index capacity overflow");
             abort();
         }
         capacity *= 2;
@@ -106,7 +106,7 @@ static void value_scope_index_remove(llg_value_scope_t* scope) {
         size_t slot = value_scope_hash(target) & (value_scope_capacity - 1);
         while (value_scope_index[slot].target != target) {
             if (!value_scope_index[slot].target) {
-                fputs("llg runtime fatal: value scope index entry missing\n", stderr);
+                llg_msg(LLG_MSG_INTERNAL, NULL, "value scope index entry missing");
                 abort();
             }
             slot = (slot + 1) & (value_scope_capacity - 1);
@@ -128,7 +128,7 @@ static void value_scope_index_remove(llg_value_scope_t* scope) {
 static void value_scope_release(llg_value_scope_t* scope) {
     if (!scope) return;
     if (scope->references == 0) {
-        fputs("llg runtime fatal: value scope reference underflow\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "value scope reference underflow");
         abort();
     }
     if (--scope->references != 0) return;
@@ -157,7 +157,7 @@ static llg_value_scope_t* value_scope_retain_target(const void* target) {
     llg_value_scope_t* scope = value_scope_index_find(target);
     if (scope) {
         if (scope->references == SIZE_MAX) {
-            fputs("llg runtime fatal: value scope reference overflow\n", stderr);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "value scope reference overflow");
             abort();
         }
         ++scope->references;
@@ -255,13 +255,13 @@ sv4_t* llg_value_scope_values(llg_value_scope_t* scope) {
 void llg_value_scope_end(llg_value_scope_t* scope) {
     if (!scope) return;
     if (scope->intrusive && scope->references != 1) {
-        fputs("llg runtime fatal: frame value cell escaped its scope\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "frame value cell escaped its scope");
         abort();
     }
     llg_value_scope_t** head = scope->owner ? &scope->owner->value_scopes : &root_value_scopes;
     while (*head && *head != scope) head = &(*head)->next;
     if (!scope->active || !*head) {
-        fputs("llg runtime fatal: value scope is not registered\n", stderr);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "value scope is not registered");
         abort();
     }
     *head = scope->next;
@@ -284,7 +284,7 @@ void llg_value_scopes_end_since(llg_value_scope_t* mark) {
         llg_value_scope_t* cursor = *head;
         while (cursor && cursor != mark) cursor = cursor->next;
         if (!cursor) {
-            fputs("llg runtime fatal: value scope mark is not registered\n", stderr);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "value scope mark is not registered");
             abort();
         }
     }

@@ -305,8 +305,7 @@ static llg_cov_num_t llg_cov_slot_num(const llg_cov_slot_value_t* slot) {
 static void llg_cov_value_warning(const llg_cov_item_t* item, const llg_cov_bin_t* bin,
                                   const char* what) {
     if (llg_cov_quiet) return;
-    fprintf(stderr, "llg: warning: %s: bins `%s` %s (IEEE 1800-2009 19.5.6)\n",
-            item->site ? item->site : bin->site, bin->name, what);
+    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%s: bins `%s` %s (IEEE 1800-2009 19.5.6)", item->site ? item->site : bin->site, bin->name, what);
 }
 
 // The key range of one item, resolved by 19.5.6 against the coverpoint
@@ -427,10 +426,7 @@ static uint64_t llg_cov_bin_count(const llg_cov_inst_t* inst, const llg_cov_bin_
     llg_cov_num_t value = llg_cov_slot_num(slot);
     if (slot->unknown || value.neg || value.mag == 0) {
         if (llg_cov_quiet || llg_rt_exiting()) return 0;
-        fprintf(stderr,
-                "llg: runtime error: bins `%s` at %s: the number of bins is not a positive "
-                "value\n",
-                bin->name, bin->site);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "bins `%s` at %s: the number of bins is not a positive value", bin->name, bin->site);
         llg_cov_fatal("the number of bins is not a positive value", bin->site);
         return 0;
     }
@@ -927,10 +923,7 @@ static int llg_cov_spans_hold(const llg_cov_span_t* spans, size_t n, uint64_t va
 static void llg_cov_xlayout_error(const llg_cov_inst_t* inst, const llg_cov_cross_t* cross,
                                   const char* what) {
     if (llg_cov_quiet) return;
-    fprintf(stderr,
-            "llg: runtime error: covergroup `%s` cross `%s` %s; its bins are not counted (llg "
-            "limitation)\n",
-            inst->group->name, cross->name, what);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` cross `%s` %s; its bins are not counted (llg limitation)", inst->group->name, cross->name, what);
     llg_rt_mark_failed();
     llg_rt_note_error(0, "cross bins are not counted", NULL);
 }
@@ -1279,10 +1272,7 @@ void llg_cov_cross_hit(void* record, uint32_t index, const uint8_t* guards) {
                 state->cross->stamp[b] = inst->serial;
                 if (bin->kind == LLG_COV_BIN_ILLEGAL) {
                     if (llg_rt_exiting()) continue;
-                    fprintf(stderr,
-                            "llg: runtime error: covergroup `%s` cross `%s` sampled a product of "
-                            "illegal_bins `%s` at %s (IEEE 1800-2009 19.6.3)\n",
-                            inst->group->name, cross->name, bin->name, bin->site);
+                    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` cross `%s` sampled a product of illegal_bins `%s` at %s (IEEE 1800-2009 19.6.3)", inst->group->name, cross->name, bin->name, bin->site);
                     llg_cov_fatal("illegal_bins product sampled", bin->site);
                     continue;
                 }
@@ -1371,8 +1361,7 @@ void* llg_cov_new(llg_cov_group_t* group) {
 
 static int llg_cov_option_value(sv4_t value, int64_t* out, const char* option, const char* site) {
     if (sv4_is_unknown(value)) {
-        fprintf(stderr, "llg: %s: coverage option %s is X or Z; the option keeps its value\n",
-                site, option);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage option %s is X or Z; the option keeps its value", site, option);
         llg_rt_mark_failed();
         return 0;
     }
@@ -1401,10 +1390,7 @@ void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, c
     // Table 19-1: weight is non-negative; a bin count needs at least one bin.
     if ((option == LLG_COV_OPTION_WEIGHT && number < 0) ||
         (option == LLG_COV_OPTION_AUTO_BIN_MAX && number < 1)) {
-        fprintf(stderr,
-                "llg: %s: coverage option %s value %lld is out of range; the option keeps its "
-                "value\n",
-                site, llg_cov_option_names[option], (long long)number);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage option %s value %lld is out of range; the option keeps its value", site, llg_cov_option_names[option], (long long)number);
         llg_rt_mark_failed();
         return;
     }
@@ -1573,10 +1559,7 @@ void llg_cov_type_option(llg_cov_type_t* type, int32_t point, uint32_t option, s
     int64_t number = 0;
     if (!llg_cov_option_value(value, &number, names[option], site)) return;
     if (option == LLG_COV_TYPE_OPTION_WEIGHT && number < 0) {
-        fprintf(stderr,
-                "llg: %s: coverage option %s value %lld is out of range; the option keeps its "
-                "value\n",
-                site, names[option], (long long)number);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage option %s value %lld is out of range; the option keeps its value", site, names[option], (long long)number);
         llg_rt_mark_failed();
         return;
     }
@@ -1663,10 +1646,7 @@ static int llg_cov_pair_order(const void* a, const void* b) {
 
 static void llg_cov_overlap_warning(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                                     const char* a, const char* b) {
-    fprintf(stderr,
-            "llg: warning: covergroup `%s` coverpoint `%s`: bins `%s` and `%s` overlap "
-            "(option.detect_overlap, IEEE 1800-2009 19.7)\n",
-            inst->group->name, point->name, a, b);
+    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "covergroup `%s` coverpoint `%s`: bins `%s` and `%s` overlap (option.detect_overlap, IEEE 1800-2009 19.7)", inst->group->name, point->name, a, b);
 }
 
 // option.detect_overlap (19.7): `bins` declarations whose values (after
@@ -1759,10 +1739,7 @@ LLG_NOINLINE static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_c
     const llg_cov_bin_t* bin = &point->bins[decl];
     char value[32];
     llg_cov_format_key(point, key, value, sizeof value);
-    fprintf(stderr,
-            "llg: runtime error: covergroup `%s` coverpoint `%s` sampled %s, a value of "
-            "illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)\n",
-            inst->group->name, point->name, value, bin->name, bin->site);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` coverpoint `%s` sampled %s, a value of illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)", inst->group->name, point->name, value, bin->name, bin->site);
     llg_cov_fatal("illegal_bins value sampled", bin->site);
 }
 
@@ -2006,10 +1983,7 @@ static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov
     const char* what = bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT
                            ? "ending a transition no other bin holds, which is in"
                            : "completing a transition of";
-    fprintf(stderr,
-            "llg: runtime error: covergroup `%s` coverpoint `%s` sampled %s, %s illegal_bins "
-            "`%s` at %s (IEEE 1800-2009 19.5.5)\n",
-            inst->group->name, point->name, value, what, bin->name, bin->site);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` coverpoint `%s` sampled %s, %s illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)", inst->group->name, point->name, value, what, bin->name, bin->site);
     // An illegal `default sequence` count reports and the run continues
     // (S45-D10); an explicit illegal transition ends it (S45-D3).
     if (bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) {
@@ -2674,10 +2648,7 @@ static void llg_cov_merged_cross(llg_cov_type_t* type, const llg_cov_inst_t* con
         if (!cross || !llg_cov_xlayout_same(cross->layout, xl)) {
             if (!type->merge_error) {
                 type->merge_error = 1;
-                fprintf(stderr,
-                        "llg: runtime error: covergroup `%s` cross `%s`: merged type coverage "
-                        "needs every instance to have the same cross bins (llg limitation)\n",
-                        first->group->name, first->group->crosses[index].name);
+                llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` cross `%s`: merged type coverage needs every instance to have the same cross bins (llg limitation)", first->group->name, first->group->crosses[index].name);
                 llg_rt_mark_failed();
                 llg_rt_note_error(0, "merged type coverage needs equal cross bins", NULL);
             }

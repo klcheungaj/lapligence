@@ -111,8 +111,7 @@ static int llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) 
 static int llg_file_read_source(uint32_t descriptor, llg_file_slot_t** out) {
     if (llg_file_single_ordinary(descriptor, out)) return 1;
     if (!llg_rt_exiting()) {
-        fprintf(stderr, "llg: $fread from file descriptor 0x%08x that is not open\n",
-                (unsigned)descriptor);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "$fread from file descriptor 0x%08x that is not open", (unsigned)descriptor);
         llg_rt_mark_failed();
         llg_rt_fatal_typed(0, "invalid file descriptor", NULL, 0, "", "$fread");
     }

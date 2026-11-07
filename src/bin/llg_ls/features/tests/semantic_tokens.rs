@@ -23,6 +23,8 @@ fn semantic_tokens_keep_recovered_tokens_of_a_file_with_a_syntax_error() {
         line: 1,
         col: 1,
         message: "incomplete module".to_owned(),
+        id: None,
+        option: None,
     });
 
     // Act
@@ -44,6 +46,8 @@ fn semantic_tokens_remain_available_when_another_file_has_a_syntax_error() {
         line: 1,
         col: 1,
         message: "incomplete module".to_owned(),
+        id: None,
+        option: None,
     });
 
     // Act

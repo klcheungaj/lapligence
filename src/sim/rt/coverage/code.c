@@ -176,7 +176,7 @@ static const llg_scov_item_t* llg_scov_unpack(void) {
         bad = r.bad || r.pos != r.end;
     }
     if (bad) {
-        fprintf(stderr, "llg: fatal: invalid statement coverage table\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid statement coverage table");
         abort();
     }
     return llg_scov_items;

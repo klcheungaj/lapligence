@@ -1,11 +1,7 @@
 
 static void report_zero_delay_loop(void) {
     const char* where = g.last_process_name ? g.last_process_name : "<scheduler>";
-    fprintf(stderr,
-            "llg: zero-delay loop detected at time %llu in process `%s` "
-            "(scheduler pass limit %llu)\n",
-            (unsigned long long)g.now, where,
-            (unsigned long long)g.zero_loop_limit);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "zero-delay loop detected at time %llu in process `%s` (scheduler pass limit %llu)", (unsigned long long)g.now, where, (unsigned long long)g.zero_loop_limit);
     llg_last_failure = 1;
     g.finish = 1;
 }
@@ -77,8 +73,7 @@ static int run_region_queue(llg_region_t region) {
                 proc_complete(process);
                 proc_retire_completed(process);
             } else if (status == LLG_CO_CALLED) {
-                fprintf(stderr,
-                        "llg runtime fatal: coroutine anchor escaped llg_co_run\n");
+                llg_msg(LLG_MSG_INTERNAL, NULL, "coroutine anchor escaped llg_co_run");
                 abort();
             }
             if (g.deferred_stop) {
@@ -341,7 +336,7 @@ static int run_postponed_set(void) {
 
 void llg_spawn_final(void (*fn)(void), const char* name) {
     if (llg_n_finals == INT_MAX) {
-        fprintf(stderr, "llg runtime fatal: final block registry size overflow\n");
+        llg_msg(LLG_MSG_INTERNAL, NULL, "final block registry size overflow");
         abort();
     }
     finals_reserve(llg_n_finals + 1);
@@ -396,10 +391,7 @@ void llg_rt_run_finals(void) {
         run_deferred_assertions_now();
         g.current = NULL;
         if (process.wait.kind != W_NONE) {
-            fprintf(stderr,
-                    "llg: fatal: final block `%s` suspended on a wait "
-                    "(timing controls are rejected by codegen)\n",
-                    process.name ? process.name : "final");
+            llg_msg(LLG_MSG_INTERNAL, NULL, "final block `%s` suspended on a wait (timing controls are rejected by codegen)", process.name ? process.name : "final");
             abort();
         }
         proc_complete(&process);
@@ -501,13 +493,9 @@ void llg_rt_run(void) {
             // (LLG_DESC_BLOCKABLE); parked always/continuous processes are
             // the normal state at the end of a run, not a deadlock.
             if (g.wait_count == 0) {
-                fprintf(stderr, "llg: simulation ended without $finish "
-                                "(no processes remain) at time %llu\n",
-                        (unsigned long long)g.now);
+                llg_msg(LLG_MSG_QUIESCENT, NULL, "simulation ended without $finish (no processes remain) at time %llu", (unsigned long long)g.now);
             } else {
-                fprintf(stderr, "llg: simulation deadlock at time %llu "
-                                "(waiters never woken, no future events)\n",
-                        (unsigned long long)g.now);
+                llg_msg(LLG_MSG_STALL, NULL, "simulation deadlock at time %llu (waiters never woken, no future events)", (unsigned long long)g.now);
             }
             break;
         }

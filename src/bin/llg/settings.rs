@@ -169,7 +169,14 @@ fn load_config_in(cwd: &Path, explicit: &Path) -> Result<LlgConfig, SettingsErro
         )));
     }
     for warning in &load.warnings {
-        eprintln!("llg: warning: {}: {}", load.path.display(), warning.message);
+        eprintln!(
+            "{}",
+            llg::core::report::Message::new(
+                &llg::core::report::catalog::CONFIG_WARNING,
+                format!("{}: {}", load.path.display(), warning.message),
+            )
+            .render()
+        );
     }
     load.config.ok_or_else(|| {
         SettingsError(
