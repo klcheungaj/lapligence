@@ -375,6 +375,39 @@ llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind) {
     return spec;
 }
 
+/* Whether the actual an index selected exists: an unselected index binds a
+ * descriptor that reads the default and drops writes, which a waiter on the
+ * formal would never see change. Meaningful right after the descriptor was
+ * built. */
+int llg_ref_selected(const llg_ref_t* ref) {
+    if (!ref) return 0;
+    switch ((llg_ref_kind_t)ref->kind) {
+    case LLG_REF_ARRAY:
+        return ref->base && ref->index != UINT64_MAX && ref->index < ref->array_size;
+    case LLG_REF_QUEUE:
+        if (ref->retained_read == llg_queue_cell_read)
+            return llg_queue_cell_selected(ref->retained);
+        if (ref->retained_read == llg_element_cell_read)
+            return llg_element_cell_selected(ref->retained);
+        if (ref->retained_read == llg_native_ref_packed_read)
+            return llg_native_ref_selected(ref->retained);
+        return 1;
+    case LLG_REF_VIEW:
+    case LLG_REF_TAGGED_VIEW: {
+        const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
+        return view && llg_ref_selected(view->parent);
+    }
+    case LLG_REF_COMPOSITE: {
+        const llg_ref_composite_t* composite = (const llg_ref_composite_t*)ref->retained;
+        for (size_t i = 0; composite && i < composite->count; i++)
+            if (!llg_ref_selected(composite->parts[i])) return 0;
+        return 1;
+    }
+    default:
+        return ref->base != NULL;
+    }
+}
+
 enum { REF_WAIT_INLINE_DEPENDENCIES = 8 };
 
 llg_co_arm_t llg_arm_ref_dependencies(llg_proc_t* self, const llg_wait_dependency_t* deps,

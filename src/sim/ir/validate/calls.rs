@@ -643,6 +643,7 @@ impl Validator<'_> {
                     const_ref,
                     lhs,
                     read,
+                    ..
                 } => {
                     if !formal.is_ref() {
                         return self

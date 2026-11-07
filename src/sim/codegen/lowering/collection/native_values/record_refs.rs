@@ -323,12 +323,12 @@ impl Codegen<'_> {
         if !selects_kind {
             return Ok(None);
         }
-        // An element of a record's member array that no index selects has
-        // no leaf form to stop at (`lower_record_ref_select`); a call whose
-        // callee waits stops at the reference instead, as at fewer cells.
+        // A record element that no index selects (of a member array, a fixed
+        // array, a queue or a dynamic array) has no leaf form to stop at
+        // (`lower_record_ref_select`); a call whose callee waits stops at the
+        // reference instead, as at fewer cells.
         let stop_unselected = (kind == IrElementRefKind::Record
-            && matches!(place.root, IrElementRoot::Element { .. })
-            && self.selects_member_array(node))
+            && matches!(place.root, IrElementRoot::Element { .. }))
         .then(|| IrRefStop {
             scope: path.to_owned(),
             location: self.source_location(self.record_ref_call_site.unwrap_or(node)),
@@ -341,22 +341,6 @@ impl Codegen<'_> {
             companions: Vec::new(),
             stop_unselected,
         }))))
-    }
-
-    /// Whether `node` is `r.e[k]` or `r.e[k].inner`: a select of a member
-    /// array of a record, not of an array declared on its own.
-    fn selects_member_array(&self, node: NodeId) -> bool {
-        let mut select = self.p30_unwrap_cast(node);
-        if let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(select) {
-            match refs.first().copied().flatten() {
-                Some(first) => select = first,
-                None => return false,
-            }
-        }
-        matches!(
-            self.kind(select),
-            NodeKind::Expr(ExprKind::ArraySelect { .. })
-        ) && self.db.array_select_path(select).is_some()
     }
 
     /// The record a native record `ref` formal binds to when `actual` names

@@ -3303,6 +3303,9 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
 // reads, through a new context reference the wait releases (see
 // llg_expr_event_spec_t).
 llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind);
+/* Whether a `ref` descriptor names an element that exists (see
+ * reference_writes.c); generated calls test it for a formal a task waits on. */
+int llg_ref_selected(const llg_ref_t* ref);
 // Register a nonblocking trigger whose source control is evaluated at issue
 // time. The copied descriptors remain live until one source matches; the
 // target event is then submitted to the ordinary NBA queue. `repeat` is zero

@@ -4410,6 +4410,18 @@ fn s13_d5_initializer_deferred_effect_runtime() {
 }
 
 #[test]
+fn s13_d6_ref_wait_nonexistent_element() {
+    // The run stops at the second call, so stdout ends after "selected".
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "S13-D6_ref_wait_nonexistent_element",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S13-D6_ref_wait_nonexistent_element.out"),
+        "index of a `ref` actual selects no element of a task that waits on the formal",
+    );
+}
+
+#[test]
 fn s07_d12_iterator_index_declared_range() {
     run_decision(
         "S07-D12_iterator_index_declared_range",

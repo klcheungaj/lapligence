@@ -987,6 +987,33 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// Whether a task waits on its `ref` formal number `index`, or any
+    /// override of a virtual method does. A waiter on a `ref` actual that an
+    /// index selected nothing for would never wake, so such a call stops the
+    /// run instead of binding the default (`IrRefStop`).
+    pub(in super::super) fn waits_on_ref_formal(
+        &self,
+        ft: NodeId,
+        inst: NodeId,
+        index: usize,
+    ) -> bool {
+        let waits = |function: NodeId, owner: NodeId| {
+            let shape = self.call_shape(function, owner);
+            shape.static_refs.contains(&index) || shape.native_refs.contains(&index)
+        };
+        if waits(ft, inst) {
+            return true;
+        }
+        let Some(slot) = self.method_virtual_slots.get(&ft) else {
+            return false;
+        };
+        self.db.classes().iter().any(|class| {
+            self.class_method_nodes(*class).into_iter().any(|method| {
+                self.method_virtual_slots.get(&method) == Some(slot) && waits(method, *class)
+            })
+        })
+    }
+
     /// Whether a wait can observe fork-shared native storage `declaration`
     /// through a change marker: an event control or level wait in its scope
     /// reads it, or a call there binds it to a string or handle `ref` formal

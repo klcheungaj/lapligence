@@ -1820,6 +1820,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   that waits on the formal stops the run when the index selects no element,
   at any array size
   ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  So does a task that waits on a `ref` formal bound to an index-selected element
+  of a fixed array, queue or dynamic array of records, packed structures,
+  integers, reals or strings (`ref_wait_unselected_*`, decision S13-D6); a
+  callee that does not wait keeps the default of the element type.
   Virtual-interface methods take these actuals through a bound dispatch entry
   ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   Record elements with queue or dynamic-array members bind through companion

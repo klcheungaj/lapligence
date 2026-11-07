@@ -886,14 +886,21 @@ impl Frame<'_, '_> {
                     width,
                     signed,
                     two_state,
+                    stop_unselected,
                     ..
                 } => {
                     if formal.real {
-                        parameters.push(self.real_reference_argument(lhs)?);
+                        let pointer =
+                            self.real_reference_argument(lhs, stop_unselected.as_ref())?;
+                        parameters.push(pointer);
                         continue;
                     }
-                    parameters
-                        .push(self.reference_argument(lhs, read, *width, *signed, *two_state)?);
+                    let pointer =
+                        self.reference_argument(lhs, read, *width, *signed, *two_state)?;
+                    if let Some(stop) = stop_unselected {
+                        self.unselected_stop(&format!("!llg_ref_selected({pointer})"), stop);
+                    }
+                    parameters.push(pointer);
                 }
             }
         }
@@ -1033,6 +1040,22 @@ impl Frame<'_, '_> {
             .ok_or_else(|| "a waited record `ref` actual has no change marker".to_owned())
     }
 
+    /// The run stops here, before the callee binds the default of an actual
+    /// that no index selected: the report names the call, the scope it ends
+    /// is released by the exit path, and the callee never starts.
+    pub(super) fn unselected_stop(&mut self, condition: &str, stop: &crate::sim::ir::IrRefStop) {
+        self.line(format!("if ({condition}) {{"));
+        self.line("llg_rt_mark_failed();");
+        self.line(format!(
+            "llg_rt_fatal_typed(0, {}, NULL, 0, {}, {});",
+            super::c_string_literal(crate::sim::ir::UNSELECTED_REF_MESSAGE),
+            super::c_string_literal(&stop.scope),
+            super::c_string_literal(&stop.location),
+        ));
+        self.exit_after_call(0, true);
+        self.line("}");
+    }
+
     /// `watched`: the callee follows the record through its marker.
     fn element_reference_binding(
         &mut self,
@@ -1041,7 +1064,11 @@ impl Frame<'_, '_> {
     ) -> Result<Vec<String>, String> {
         let mut acquire = match &reference.root {
             IrElementRoot::Leaves { index, leaves } => {
-                return self.leaf_choice_binding(index, leaves, reference.kind);
+                let stop = reference
+                    .stop_unselected
+                    .as_ref()
+                    .filter(|_| reference.kind != IrElementRefKind::Record);
+                return self.leaf_choice_binding(index, leaves, reference.kind, stop);
             }
             IrElementRoot::Value(value) => {
                 let address = self.native_value_read(*value)?;
@@ -1084,17 +1111,15 @@ impl Frame<'_, '_> {
         ));
         // A waiter on the default an unselected index binds never wakes, so
         // the call stops the run instead; the scope above releases the
-        // reference. Calls whose callee does not wait pay nothing.
-        if let (true, Some(stop)) = (watched, &reference.stop_unselected) {
-            self.line(format!("if (!llg_native_ref_selected({root})) {{"));
-            self.line("llg_rt_mark_failed();");
-            self.line(format!(
-                "llg_rt_fatal_typed(0, {}, NULL, 0, {}, {});",
-                super::c_string_literal(crate::sim::ir::RECORD_REF_UNSELECTED_MESSAGE),
-                super::c_string_literal(&stop.scope),
-                super::c_string_literal(&stop.location),
-            ));
-            self.line("}");
+        // reference. A record carries its stop for every call and tests the
+        // callee's marker; any other kind carries it only for a waited
+        // formal. Calls whose callee does not wait pay nothing.
+        if let Some(stop) = reference
+            .stop_unselected
+            .as_ref()
+            .filter(|_| watched || reference.kind != IrElementRefKind::Record)
+        {
+            self.unselected_stop(&format!("!llg_native_ref_selected({root})"), stop);
         }
         Ok(match reference.kind {
             IrElementRefKind::String => vec![format!("llg_native_ref_string({acquire})")],
@@ -1173,6 +1198,7 @@ impl Frame<'_, '_> {
         index: &IrExpr,
         leaves: &[(i32, crate::sim::ir::IrLeafTarget)],
         kind: IrElementRefKind,
+        stop: Option<&crate::sim::ir::IrRefStop>,
     ) -> Result<Vec<String>, String> {
         use crate::sim::ir::IrLeafTarget;
         let index = self.expression(index)?;
@@ -1187,6 +1213,9 @@ impl Frame<'_, '_> {
         );
         let chosen = self.scalar("int", tests);
         self.discard(index);
+        if let Some(stop) = stop {
+            self.unselected_stop(&format!("{chosen} < 0"), stop);
+        }
         let mut addresses = Vec::with_capacity(leaves.len());
         let mut markers = Vec::new();
         for (_, leaf) in leaves {
@@ -1208,7 +1237,7 @@ impl Frame<'_, '_> {
                     },
                 ) => self.reference_argument(lhs, read, width, signed, two_state)?,
                 (IrLeafTarget::Packed { lhs, .. }, IrElementRefKind::Real { .. }) => {
-                    self.real_reference_argument(lhs)?
+                    self.real_reference_argument(lhs, None)?
                 }
                 _ => return Err("selected leaf does not match its reference".to_owned()),
             });
