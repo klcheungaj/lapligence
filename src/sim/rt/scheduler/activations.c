@@ -221,6 +221,8 @@ int llg_activation_cancelled(void) {
 
 int llg_rt_failed(void) { return llg_last_failure != 0; }
 
+int llg_rt_fatal_severity_ran(void) { return llg_fatal_severity_ran != 0; }
+
 static void budget_abort(llg_proc_t* p, const char* location) {
     const char* where = location && location[0] != '\0'
                             ? location

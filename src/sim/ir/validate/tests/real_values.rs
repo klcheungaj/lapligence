@@ -83,6 +83,7 @@ fn real_ref_arg(lhs: IrLhs, read: IrExpr) -> IrCallArg {
         const_ref: false,
         lhs: Box::new(lhs),
         read: Box::new(read),
+        stop_unselected: None,
     }
 }
 

@@ -69,6 +69,7 @@ fn ref_and_output_call_actuals_keep_heap_identity() {
                 signed: false,
                 two_state: false,
                 const_ref: false,
+                stop_unselected: None,
             },
             IrCallArg::OutAddr("&output".into()),
         ],

@@ -1820,6 +1820,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   that waits on the formal stops the run when the index selects no element,
   at any array size
   ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  So does a task that waits on a `ref` formal bound to an index-selected element
+  of a fixed array, queue or dynamic array of records, packed structures,
+  integers, reals or strings (`ref_wait_unselected_*`, decision S13-D6); a
+  callee that does not wait keeps the default of the element type.
   Virtual-interface methods take these actuals through a bound dispatch entry
   ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   Record elements with queue or dynamic-array members bind through companion
@@ -2159,7 +2163,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   level 1; `$fatal/$error/$warning/$info` format messages once in source order
   with source/scope context. Fatal terminates through the final-block handoff;
   nonfatal levels continue. Finish/fatal numbers must be constant integral
-  0/1/2, not OS exit codes; level 2 includes severity statistics.
+  0/1/2, not OS exit codes; level 2 includes severity statistics. A run in
+  which a `$fatal` executed exits with status 1, as does one ended by a run-time
+  error; `$error`, `$warning`, failing assertions and `$finish` leave the
+  status 0 ([exit statuses](../readme.md#using-llg), decision ES-D1).
   V §17.4.1; SV §§20.2, 20.9–20.10 **[1995/SV-2005]**.
 - 🟨 **Stop/resume** — `$stop` preserves pending work, activations, output and
   time. `--stop-policy resume` is the noninteractive default; `exit` returns

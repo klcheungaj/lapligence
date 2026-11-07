@@ -128,6 +128,9 @@ pub enum IrCallArg {
         /// Caller-side read used for dependency/effect analysis. The C
         /// descriptor evaluates the address separately at the call boundary.
         read: Box<IrExpr>,
+        /// Set only for a formal the callee waits on and an actual an index
+        /// can leave unselected: the run stops there when it does.
+        stop_unselected: Option<IrRefStop>,
     },
     /// Output/inout formal bound to a registered caller-side temporary.
     /// `init` is `None` for outputs (a typed default for automatic storage)
@@ -228,15 +231,18 @@ pub struct IrElementRef {
     /// companion containers, which the call creates and keeps equal to the
     /// element's nested slots for as long as the reference lives.
     pub(in crate::sim) companions: Vec<IrRefCompanion>,
-    /// For a record element of a member array: where the run stops when the
-    /// index selects no element and the callee waits on the formal.
+    /// Where the run stops when the index selects no element and the callee
+    /// waits on the formal. A record element sets it unconditionally (the
+    /// emitter tests `IrFormal::record_marker`); any other kind carries it
+    /// only for a waited formal.
     pub(in crate::sim) stop_unselected: Option<IrRefStop>,
 }
 
-/// Message of the run-time error for a waited record `ref` formal whose
-/// actual selects no element: a waiter on a default record would never wake.
-pub const RECORD_REF_UNSELECTED_MESSAGE: &str =
-    "index of a record `ref` actual selects no element of a task that waits on the formal";
+/// Message of the run-time error for a waited `ref` formal whose actual
+/// selects no element: a waiter on the default an unselected index binds
+/// would never wake.
+pub const UNSELECTED_REF_MESSAGE: &str =
+    "index of a `ref` actual selects no element of a task that waits on the formal";
 
 /// Source context of the stop of [`IrElementRef::stop_unselected`].
 #[derive(Clone, Debug, PartialEq)]

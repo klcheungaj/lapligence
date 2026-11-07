@@ -9,6 +9,10 @@ error that skips final procedures calls `llg_rt_skip_finals` before its fatal
 report (S14-D6, S16-D3, S29-D1, S31-D4); the flag lives outside `g` and resets
 at init, and its callers' generated statements carry a Terminate effect so the
 process takes its exit check.
+A `$fatal` also sets a flag outside `g` (`llg_rt_fatal_severity_ran`), apart
+from `llg_rt_failed`: the generated model's exit status is 1 when either holds
+(SV 20.9, "with an error code"), while only a failure skips the end-of-run
+assertion settling a `$finish` still does.
 
 Semaphore service order (AB-N4) and suspended waiters (AB-N1):
 `scheduler/wait_queues.c` and `process_control.c` comments.

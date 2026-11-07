@@ -199,6 +199,7 @@ fn reference_calls_register_descriptors_and_do_not_copy_back() {
         const_ref: false,
         lhs: Box::new(IrLhs::Whole(0)),
         read: Box::new(IrExpr::new(IrExprKind::SigRead(0), 65, false, None)),
+        stop_unselected: None,
     };
     assert!(frame
         .call_values(0, &[arg], IrDepth::PROC)
@@ -258,6 +259,7 @@ fn const_ref_callback_reads_are_live_and_not_writable_calls() {
         const_ref: true,
         lhs: Box::new(IrLhs::Whole(0)),
         read: Box::new(IrExpr::new(IrExprKind::SigRead(0), 65, false, None)),
+        stop_unselected: None,
     };
     let call = IrCallExpr::new(0, vec![arg], IrDepth::PROC, false);
     let result = frame.pure_callback_call(&call).unwrap();

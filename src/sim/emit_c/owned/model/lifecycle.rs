@@ -733,7 +733,7 @@ pub(in crate::sim::emit_c) fn main(
     if model.waveform || !model.final_spawns.is_empty() {
         out.push_str("    llg_rt_run_finals();\n");
     }
-    out.push_str("    llg_vpi_end_simulation();\n    llg_model_done = 1;\n    llg_model_status = (llg_rt_failed() || llg_vpi_failed()) ? 1 : 0;\n    return llg_model_status;\n}\n\n");
+    out.push_str("    llg_vpi_end_simulation();\n    llg_model_done = 1;\n    llg_model_status = (llg_rt_failed() || llg_rt_fatal_severity_ran() || llg_vpi_failed()) ? 1 : 0;\n    return llg_model_status;\n}\n\n");
     out.push_str(
         "int llg_model_close(void) {\n    int status = 0;\n    if (!llg_model_live) return 0;\n",
     );

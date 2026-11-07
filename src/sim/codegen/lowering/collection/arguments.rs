@@ -464,6 +464,7 @@ impl<'a> Codegen<'a> {
             const_ref: actual_const,
             lhs: Box::new(lhs),
             read: Box::new(read),
+            stop_unselected: None,
         })
     }
 
@@ -556,6 +557,7 @@ impl<'a> Codegen<'a> {
             const_ref,
             lhs: Box::new(lhs),
             read: Box::new(read),
+            stop_unselected: None,
         }))
     }
 
@@ -698,6 +700,7 @@ impl<'a> Codegen<'a> {
                 const_ref,
                 lhs: Box::new(lhs),
                 read: Box::new(read),
+                stop_unselected: None,
             });
         }
 
@@ -829,6 +832,7 @@ impl<'a> Codegen<'a> {
             const_ref: actual_const,
             lhs: Box::new(lhs),
             read: Box::new(read),
+            stop_unselected: None,
         })
     }
 

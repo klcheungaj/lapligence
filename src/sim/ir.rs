@@ -107,8 +107,7 @@ mod calls;
 pub(in crate::sim) use calls::call_argument_name;
 pub use calls::{
     IrCall, IrCallArg, IrCallExpr, IrDepth, IrElementRef, IrElementRefKind, IrElementRoot,
-    IrElementStep, IrLeafTarget, IrRefCompanion, IrRefStop, IrVirtualCall,
-    RECORD_REF_UNSELECTED_MESSAGE,
+    IrElementStep, IrLeafTarget, IrRefCompanion, IrRefStop, IrVirtualCall, UNSELECTED_REF_MESSAGE,
 };
 mod coverage;
 pub(in crate::sim) use coverage::FSM_MAX_STATE_BITS;

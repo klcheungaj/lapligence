@@ -1064,6 +1064,10 @@ static size_t llg_dependency_binding_count;
 // to inspect whether that run stopped with a controlled runtime failure.
 static int llg_last_failure;
 static int llg_last_config_error;
+// A `$fatal` ran (20.9: the run ends "with an error code"). Separate from
+// llg_last_failure, which also suppresses the end-of-simulation assertion
+// settling that a `$fatal` finish still performs.
+static int llg_fatal_severity_ran;
 // A run-ending simulator error that skips the final procedures
 // (llg_rt_skip_finals); read by llg_rt_run_finals after the scheduler exit.
 static int llg_skip_final_procedures;

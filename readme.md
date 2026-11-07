@@ -305,6 +305,17 @@ status), makes `llg` exit `1` after one stderr line such as
 `llg: the model was terminated by signal 6 (SIGABRT)` or
 `llg: the model exited with status 0xC0000005`.
 
+The simulator itself exits `1` when a `$fatal` ran (IEEE 1800-2009 20.9: the
+run ends "with an error code"; any finish number, in any process or final
+block, even if a later `$finish` follows), when a run-time error ended the run
+(a null handle access, a failed `$cast`, a `ref` actual that selects no element
+for a waiting task, an illegal bin, a budget or scheduler limit) and when a
+VPI application reported a failure. It exits `0` for `$finish`, `$stop`
+(`--stop-policy exit` included), an `$error` or `$warning`, a failing assertion
+whose action is the default `$error`, and the end of the event queue: those
+report on stderr and the run goes on or ends normally. `--gen-only` and lint
+exit codes are above.
+
 ### Simulation example
 
 Create `hello.sv`:
