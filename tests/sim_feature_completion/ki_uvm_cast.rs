@@ -278,3 +278,14 @@ fn queue_end_selectors() {
         &[],
     );
 }
+
+#[test]
+fn class_destinations() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_destinations",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/class_destinations.out"),
+        &[],
+        &[],
+    );
+}
