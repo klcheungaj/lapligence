@@ -1022,6 +1022,14 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 frame.canonical_signal(*sig)
             ));
         }
+        IrInitStep::StaticScopeEnter { variable, location } => {
+            frame.line(format!(
+                "llg_rt_static_init_enter({}, {});",
+                super::super::super::constants::c_string_literal(variable),
+                super::super::super::constants::c_string_literal(location)
+            ));
+        }
+        IrInitStep::StaticScopeLeave => frame.line("llg_rt_static_init_leave();"),
         IrInitStep::RegisterSampledValue(index) => {
             frame.line(format!(
                 "llg_sampled_register_value({});",
@@ -1055,7 +1063,7 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         } => {
             // The model initialization frame is an ordinary C function, not
             // a coroutine, so a suspending body cannot be represented here.
-            if crate::sim::execution::effects_for_statements(model, std::slice::from_ref(body))
+            if crate::sim::execution::effects_for_initializer(model, std::slice::from_ref(body))
                 .contains(&crate::sim::execution::ExecutionEffect::Suspend)
             {
                 return Err("static declaration initializer cannot suspend".to_owned());

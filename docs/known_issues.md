@@ -1350,52 +1350,9 @@ path.
 
 `tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`.
 
-## `$cast` into strings and resizable-container elements
-
-**Status:** open (FIN-001 G3, F07-08). Legal (SV 6.24.2 admits any singular
-destination); other simulators run both forms.
-
-### Symptom
-
-`$cast(q[i], v)` whose destination is an element of a queue, dynamic array or
-associative array stops compilation ("cannot resolve array base of select"),
-and `$cast(s, v)` with a string destination is rejected as an unsupported
-destination type. Packed, real and enum variables, members and fixed-array
-elements, `ref` formals bound to them and class handles are served.
-
-### Cause
-
-`IrDynamicCast` writes through an `IrLhs`, which has no form for a
-resizable-container element or a string object; those writes go through the
-container and string statement families, and `$cast` is an expression.
-
-### Intended direction
-
-Lower the cast into a temporary of the destination type and store the
-temporary through the ordinary container or string assignment only when the
-cast succeeds, keeping the destination selectors evaluated once.
-
-### Reproduce
-
-```systemverilog
-module tb;
-  typedef enum { A = 1, B = 2 } e_t;
-  e_t q[$];
-  string s;
-  int ok;
-  initial begin
-    q.push_back(A);
-    ok = $cast(q[0], 2);   // expected 1, q[0] == B
-    ok = $cast(s, "abc");  // expected 1, s == "abc"
-    $finish;
-  end
-endmodule
-```
-
 ## Class-keyed associative arrays have explicit gaps
 
-**Status:** open. The forms below reject with a located diagnostic, except the
-event case, which is silent and applies to every key type.
+**Status:** open. The forms below reject with a located diagnostic.
 
 ### Symptom
 
@@ -1405,8 +1362,6 @@ event case, which is silent and applies to every key type.
   class-keyed array, and `item.index` in a `with` clause over one.
 - A VPI dynamic-array view of a class-keyed array.
 - `a[f()] += 1`, a compound write whose key calls a function, as for any key.
-- `@(ev[k])` and `-> ev[k]` on a missing key of an associative array of events
-  do not create the entry, so a later wait on the same key misses the trigger.
 
 ### Cause
 
@@ -1416,8 +1371,7 @@ packed locator path does not produce. Key order reads
 
 ### Intended direction
 
-Give locator results a handle queue form, and create the event entry at the
-first event control.
+Give locator results a handle queue form.
 
 ## Selects of properties of computed class handles
 
@@ -2539,6 +2493,38 @@ cost matters; a `dlltool` import library if MinGW DLLs are needed.
 
 `tests/fixtures/sim/feature_completion/adv_018/crossing.sv`;
 `tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv`.
+
+## Strings declared in a branch of a function
+
+**Status:** a `fork`-`join_none` branch of a function runs after the function
+returned, so it has no activation of that function to name. Class handles and
+records declared in the branch are branch locals, formals are captured, and
+instance properties of `this` (containers and records included) are reached
+through the captured receiver. One form remains.
+
+### Symptom
+
+A string declared in the branch is rejected (`string/class signals are not
+supported`).
+
+### Cause
+
+Block-level string storage is a global per declaration, chosen for procedural
+blocks with one activation; the detached branch has no lexical string local.
+
+### Direction
+
+Declare the string as a branch-local native value, as records are.
+
+### Reproduce
+
+```systemverilog
+class c;
+  function void f(int n);
+    fork begin string s = $sformatf("v%0d", n); #1 $display(s); end join_none
+  endfunction
+endclass
+```
 
 ## Constrained randomization limits (SIM-029, SIM-030)
 

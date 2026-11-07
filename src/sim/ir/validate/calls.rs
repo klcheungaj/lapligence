@@ -587,9 +587,11 @@ impl Validator<'_> {
                 }
                 IrCallArg::ChandleVal(value) => {
                     if formal.chandle && !formal.is_address() {
-                        value.validate(self.model, formals, None).map_err(|error| {
-                            IrValidationError::new(arg_path.clone(), error.to_string())
-                        })?;
+                        value
+                            .validate(self.model, formals, self.chandle_return.get())
+                            .map_err(|error| {
+                                IrValidationError::new(arg_path.clone(), error.to_string())
+                            })?;
                     } else {
                         return self.fail(arg_path, "typed chandle value requires an input formal");
                     }

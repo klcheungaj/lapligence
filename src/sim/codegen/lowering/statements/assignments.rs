@@ -44,7 +44,7 @@ impl EmitCtx<'_, '_> {
         self.lower_assignment_operands(lhs, rhs, force_blocking || blocking, op, force_blocking)
     }
 
-    pub(super) fn lower_assignment_operands(
+    pub(in super::super) fn lower_assignment_operands(
         &mut self,
         lhs: NodeId,
         rhs: NodeId,

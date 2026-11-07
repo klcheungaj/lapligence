@@ -901,7 +901,7 @@ impl<'a> Codegen<'a> {
         if let Some((_, name)) = self.lexical_proc_string_local(actual) {
             return Ok(format!("&{name}"));
         }
-        if let Some(name) = self.native_object_leaf(path, actual, true)? {
+        if let Some(name) = self.class_field_string_lvalue(path, actual)? {
             return Ok(format!("&{name}"));
         }
         let target = match self.kind(actual) {
@@ -990,6 +990,7 @@ impl<'a> Codegen<'a> {
             || self.lexical_proc_string_local(actual).is_some()
             || self.native_leaf_kind(actual) == Some(IrClassFieldType::String)
             || self.element_leaf_kind(actual) == Some(IrClassFieldType::String)
+            || self.class_field_target(actual).is_some()
         {
             Ok(())
         } else if self.container_of_ref_actual(actual) {

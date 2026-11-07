@@ -845,6 +845,12 @@ fn semaphore_constructor(db: &Db, id: NodeId) -> bool {
 fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target: NodeId) -> bool {
     let owner_node = db.node(owner);
     match owner_node.kind() {
+        // `c.constraint_mode(...)` names the constraint block; randomization
+        // lowering reads it as the mode's member, never as a value (18.9).
+        NodeKind::SysCall { name } if name == "constraint_mode" => {
+            owner_node.children().first() == Some(&reference)
+                && matches!(db.node_kind(target), NodeKind::ConstraintBlock(_))
+        }
         NodeKind::SysCall { name }
             if matches!(
                 name.as_str(),

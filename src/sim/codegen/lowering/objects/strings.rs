@@ -115,7 +115,7 @@ impl Codegen<'_> {
             return Ok(IrStringExpr::LocalRead(target));
         }
         if let Some((predicate, then, otherwise)) =
-            self.lower_native_conditional_parts(path, node, &TypeShape::String)?
+            self.lower_native_conditional_parts(path, node, |shape| *shape == TypeShape::String)?
         {
             return Ok(IrStringExpr::Conditional {
                 predicate: Box::new(predicate),
@@ -393,27 +393,28 @@ impl Codegen<'_> {
             out_args.extend(in_args);
             out_args.extend(record_in_args);
             let typed = out_args.iter().any(|arg| {
-                matches!(
-                    arg,
-                    IrCallArg::StringVal(_)
-                        | IrCallArg::FixedValue(_)
-                        | IrCallArg::FixedArray(_)
-                        | IrCallArg::EventVal(_)
-                        | IrCallArg::EventAddr(_)
-                        | IrCallArg::EventSlot(_)
-                        | IrCallArg::ChandleVal(_)
-                        | IrCallArg::ChandleAddr(_)
-                        | IrCallArg::ChandleRefAddr(_)
-                        | IrCallArg::StringOutAddr(_)
-                        | IrCallArg::StringRefAddr { .. }
-                        | IrCallArg::ElementRef(_)
-                        | IrCallArg::StringOutTemp { .. }
-                        | IrCallArg::NativeValue(_)
-                        | IrCallArg::NativeRefBound
-                        | IrCallArg::NativeCall { .. }
-                        | IrCallArg::Container(_)
-                        | IrCallArg::NativeLeaves { .. }
-                )
+                matches!(arg, IrCallArg::Val(value) if value.is_real())
+                    || matches!(
+                        arg,
+                        IrCallArg::StringVal(_)
+                            | IrCallArg::FixedValue(_)
+                            | IrCallArg::FixedArray(_)
+                            | IrCallArg::EventVal(_)
+                            | IrCallArg::EventAddr(_)
+                            | IrCallArg::EventSlot(_)
+                            | IrCallArg::ChandleVal(_)
+                            | IrCallArg::ChandleAddr(_)
+                            | IrCallArg::ChandleRefAddr(_)
+                            | IrCallArg::StringOutAddr(_)
+                            | IrCallArg::StringRefAddr { .. }
+                            | IrCallArg::ElementRef(_)
+                            | IrCallArg::StringOutTemp { .. }
+                            | IrCallArg::NativeValue(_)
+                            | IrCallArg::NativeRefBound
+                            | IrCallArg::NativeCall { .. }
+                            | IrCallArg::Container(_)
+                            | IrCallArg::NativeLeaves { .. }
+                    )
             });
             if !typed {
                 let args = out_args

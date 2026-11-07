@@ -82,9 +82,9 @@ locals, static class properties) and static native-record locals are
 processes or first-call code; a handle initializer, and in a model that
 observes a stream any declaration initializer with a call, carries its
 instance as `random_scope`, so draws and created objects use that instance's
-initialization RNG (SV 18.14.1, T1-D3). `initialization/effects.rs` rejects a static initializer whose
-calls (or constructor) reach a fork, nonblocking assignment or nonblocking
-trigger (SV 13.4.4); `collection/const_writes.rs` rejects modifying built-in
+initialization RNG (SV 18.14.1, T1-D3). `initialization/effects.rs` selects the
+deferred statements a static initializer can reach and checks them at run time (SV 13.4.4,
+S13-D5); `collection/const_writes.rs` rejects modifying built-in
 methods on `const` declarations (SV 6.20.6, `Db::is_const_variable`). A name
 redeclared in a package or `$unit` scope (a frontend warning) rejects instead
 of aliasing storage.

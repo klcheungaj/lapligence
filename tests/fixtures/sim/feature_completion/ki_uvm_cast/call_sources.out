@@ -1,0 +1,13 @@
+ok1 5 der
+fail2 5
+ok3 1
+cast 0 ok 0
+cast 1 fail
+cast 2 ok 1
+15 der
+5
+5
+5
+der
+5
+0

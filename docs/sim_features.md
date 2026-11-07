@@ -320,9 +320,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   object) join the same schedule, so later initializers read constructed
   objects and no value depends on first-call order
   ([sim_022](../tests/fixtures/sim/feature_completion/sim_022/readme.md);
-  decisions S22-D1, S22-D2, S22-D7). A static initializer whose calls reach a
-  `fork`-`join_none`, nonblocking assignment or nonblocking trigger is a
-  located error (SV 13.4.4, S22-D3); modifying built-in methods on `const`
+  decisions S22-D1, S22-D2, S22-D7). A `fork`-`join_none`, nonblocking assignment or
+  nonblocking trigger that executes under a static initializer is a located
+  run-time error before any process starts (SV 13.4.4, S13-D5); modifying built-in methods on `const`
   variables and properties are located errors (S22-D4); an initialized block
   variable without `static`/`automatic` is accepted with a warning as static
   (S22-D5). Unsupported native/resizable layouts, oversized records and
@@ -484,7 +484,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Delayed continuous drivers, automatic monitors and broader aggregate
   combinations remain restricted; automatic
   procedural-block strings and handles share the fork limit of block records
-  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)).
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage));
+  class handles and records declared in a `join_none` branch of a function
+  belong to the branch and its receiver's properties are reached through the
+  captured receiver, while strings declared there stay limited
+  ([known issue](known_issues.md#strings-declared-in-a-branch-of-a-function)).
   SV §6.16 **[SV-2005]**.
 - 🟨 **Events** — Scalar/fixed-array declarations, indexed/hierarchical access,
   null/default handles, reassignment and task aliases retain event identity.
@@ -1229,8 +1233,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   targets before comparison or storage. A real or shortreal source of an enum
   `$cast` converts as to `int` before the membership check (decision S11-D3).
   Unpacked aggregate destinations are not singular and nets are not variables
-  (SV 6.24.2); string and resizable-container-element destinations reject
-  ([known issue](known_issues.md#cast-into-strings-and-resizable-container-elements)).
+  (SV 6.24.2). A string destination takes a string and fails every other
+  source; a string source converts to a packed value. An element of a queue,
+  dynamic or associative array is written through its ordinary assignment only
+  when the cast succeeds; a class or enum element whose outcome depends on the
+  run time binds first and stops at a missing element (S11-D5, S11-D6).
   SV §6.24 **[SV-2005]**.
 - 🟨 **Mutating operators** — Prefix/postfix `++/--` and `+= -= *= /= %= &= |= ^=`
   plus shift assignments capture an admitted whole/member/selected/fixed-array
@@ -2232,7 +2239,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Leading-`+` prefix matching, first repeated match, literal `%%`,
   `%d/%h/%x/%o/%b/%f/%e/%g/%s`, wide four-state values and unchanged destinations
   on failure are represented, including packed container-element
-  destinations. `$cast` into a container element still rejects (SIM-008). V §17.10; SV §21.6 **[1995/SV-2005]**.
+  destinations. V §17.10; SV §21.6 **[1995/SV-2005]**.
 - 🟦 **Host commands** — `$system` evaluates one optional string once and
   requires generated-process `LLG_ALLOW_SYSTEM=1` (also `true/yes/on`). Denial
   diagnoses, returns signed 32-bit -1 and fails without shell execution.

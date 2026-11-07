@@ -548,7 +548,11 @@ impl<'a> Codegen<'a> {
             Operation::Concat => {
                 let mut parts = Vec::new();
                 for operand in operands {
-                    parts.push(self.lower_expr(scope_path, *operand)?);
+                    // A zero replication has size zero and is ignored
+                    // (11.4.12.1).
+                    if !self.is_zero_replication(*operand) {
+                        parts.push(self.lower_expr(scope_path, *operand)?);
+                    }
                 }
                 if reordered {
                     parts.reverse();

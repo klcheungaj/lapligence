@@ -963,7 +963,7 @@ impl EmitCtx<'_, '_> {
                     self.path
                 )
             })?;
-            return self.cg.event_ref_of(&target, &self.path).map(Some);
+            return self.cg.bound_event_ref_of(&target, &self.path).map(Some);
         }
     }
 
@@ -1463,7 +1463,7 @@ impl EmitCtx<'_, '_> {
             }
         };
         if let Some(event) = event {
-            let event = self.cg.event_ref_of(&event, &self.path)?;
+            let event = self.cg.bound_event_ref_of(&event, &self.path)?;
             return Ok((
                 match condition {
                     Some(condition) => IrWaitSrc::FilteredEvent { event, condition },

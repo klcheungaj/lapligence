@@ -491,6 +491,20 @@ impl<'a> Codegen<'a> {
         Ok(index)
     }
 
+    /// The local of a handle declared in a block of a detached function
+    /// branch, given its name; `None` for any other declaration.
+    pub(in super::super) fn collect_branch_handle(&mut self, node: NodeId) -> Option<String> {
+        if !self.detached_function_branch
+            || self.db.variable_lifetime(node) != VariableLifetime::Automatic
+            || self.block_native_type(node) != Some(IrObjectType::Chandle)
+        {
+            return None;
+        }
+        let name = format!("_lbh{}", node.index());
+        self.proc_semaphore_locals.insert(node, name.clone());
+        Some(name)
+    }
+
     pub(in super::super) fn proc_semaphore_local_name(&self, node: NodeId) -> Option<&str> {
         self.proc_semaphore_locals.get(&node).map(String::as_str)
     }

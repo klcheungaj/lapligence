@@ -163,15 +163,18 @@ impl<'a> Codegen<'a> {
         let Some(source) = source else {
             // A stored packed or real fixed array is copied once into a
             // queue; the generated loop then reports declared indices.
-            let Some(copy) = self.fixed_method_copy(path, receiver)? else {
-                return Ok(None);
-            };
-            let mut statements = copy.statements.clone();
-            statements.push(
-                self.lower_inline_method_result(path, dst, rhs, receiver, copy.queue, method)?,
-            );
+            let (queue, mut statements, range) =
+                if let Some(copy) = self.fixed_method_copy(path, receiver)? {
+                    (copy.queue, copy.statements.clone(), copy.range)
+                } else if let Some(copy) = self.fixed_value_method_copy(path, receiver)? {
+                    (copy.queue, copy.statements, copy.range)
+                } else {
+                    return Ok(None);
+                };
+            statements
+                .push(self.lower_inline_method_result(path, dst, rhs, receiver, queue, method)?);
             if super::inline_methods::index_result(method) {
-                statements.extend(self.fixed_method_indices(&copy, dst)?);
+                statements.extend(self.fixed_method_indices(range, dst)?);
             }
             return Ok(Some(IrStmt::Block(statements)));
         };

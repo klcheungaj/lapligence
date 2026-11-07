@@ -37,18 +37,13 @@ impl Frame<'_, '_> {
                     "(*({ty}*)llg_class_container({receiver}, {class}, {field}))"
                 ));
             }
-            // Per-object storage of an instance property, reached through
-            // the receiver of the enclosing method.
-            if self
-                .ctx
-                .func
-                .is_none_or(|function| function.receiver_class.is_none())
-            {
-                return Err("class container property used outside its class methods".to_owned());
-            }
+            // Per-object storage of an instance property.
+            let receiver = self
+                .implicit_receiver()
+                .map_err(|_| "class container property used outside its class methods")?;
             let (ty, _, _) = super::super::containers::activation_storage(container, "")?;
             return Ok(format!(
-                "(*({ty}*)llg_class_field(_this, {class}, {field}, 3)->value.handle)"
+                "(*({ty}*)llg_class_field({receiver}, {class}, {field}, 3)->value.handle)"
             ));
         }
         if !container.activation {
@@ -58,6 +53,13 @@ impl Frame<'_, '_> {
             .get(&index)
             .cloned()
             .ok_or_else(|| "container used before its lexical declaration".to_owned())
+    }
+
+    /// The receiver of an unqualified instance property: `this` of the
+    /// enclosing method, or the copy a detached function branch captured
+    /// under the same name.
+    pub(super) fn implicit_receiver(&self) -> Result<String, String> {
+        self.plain_handle_code(&IrChandleExpr::LocalRead("_this".to_owned()), 0)
     }
 
     /// C expression of a plain handle read (`IrChandleExpr::is_plain_receiver`)

@@ -481,10 +481,10 @@ impl EmitCtx<'_, '_> {
                 Ok(vec![self.lower_string_format_target(*target, value)?])
             }
             "$cast" => {
-                let mut status = self.cg.lower_dynamic_cast(&self.path, &args)?;
-                if let IrExprKind::DynamicCast(cast) = &mut status.kind {
-                    cast.failure_location = Some(self.finish_location(h));
-                }
+                let location = self.finish_location(h);
+                let status = self
+                    .cg
+                    .lower_dynamic_cast(&self.path, &args, Some(location))?;
                 Ok(vec![IrStmt::DeclLocal {
                     name: format!("_llg_cast_status_{}", h.0),
                     width: 1,

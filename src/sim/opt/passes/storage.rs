@@ -417,7 +417,9 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
             | crate::sim::ir::IrInitStep::RegisterSampledHistory { sig, .. }
             | crate::sim::ir::IrInitStep::RegisterSampledValue(sig) => rw.read(*sig),
             // Arrays and net groups are not signal storage.
-            crate::sim::ir::IrInitStep::FillArrayX(_)
+            crate::sim::ir::IrInitStep::StaticScopeEnter { .. }
+            | crate::sim::ir::IrInitStep::StaticScopeLeave
+            | crate::sim::ir::IrInitStep::FillArrayX(_)
             | crate::sim::ir::IrInitStep::FillArrayZ(_)
             | crate::sim::ir::IrInitStep::SetArrayElem { .. }
             | crate::sim::ir::IrInitStep::WriteNet { .. } => {}

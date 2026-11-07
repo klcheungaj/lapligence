@@ -359,6 +359,14 @@ pub enum IrChandleExpr {
         container: usize,
         key: Box<IrStringExpr>,
     },
+    /// The event of one associative array entry, created with a new event
+    /// when the entry is missing: an event control or trigger binds its
+    /// element. `key` selects the string form, otherwise `index` is the key.
+    EventEntry {
+        container: usize,
+        index: Option<Box<IrExpr>>,
+        key: Option<Box<IrStringExpr>>,
+    },
     /// Remove a queue endpoint and yield its handle (`pop_front`/
     /// `pop_back`). The identity moves out of the queue; the referenced
     /// object is not copied. An empty queue yields null.
@@ -643,6 +651,13 @@ pub enum IrObjectQuery {
 #[derive(Clone, Debug, PartialEq)]
 /// Object mutations and output. String values are copied, not storage aliases.
 pub enum IrObjectStmt {
+    /// Stop the run when a static initializer is executing: this statement
+    /// would schedule work after its function returns (SV 13.4.4).
+    StaticEffectCheck {
+        what: String,
+        location: String,
+        subroutine: String,
+    },
     StringPrint(IrStringExpr),
     StringAssign(usize, IrStringExpr),
     StringAssignLocal(String, IrStringExpr),
@@ -720,9 +735,7 @@ impl IrStringExpr {
             }
             return Ok(());
         }
-        let mut valid = true;
-        self.visit_expressions(false, &mut |expr| valid &= !expr.is_real());
-        if !valid {
+        if self.has_real_operand() {
             return Err(super::IrValidationError::new(
                 "string",
                 "string operation requires packed integral operands",
@@ -760,7 +773,7 @@ impl IrStringExpr {
                     ));
                 }
                 if let Some(receiver) = receiver {
-                    receiver.validate(model, &[], string_return.map(|_| false))?;
+                    receiver.validate_shape(model, string_return.map(|_| false))?;
                 }
                 if !callee.ret_string
                     || callee.formals.len() != args.len()
@@ -809,7 +822,7 @@ impl IrStringExpr {
                     ));
                 }
                 if let Some(receiver) = receiver {
-                    receiver.validate(model, &[], string_return.map(|_| false))?;
+                    receiver.validate_shape(model, string_return.map(|_| false))?;
                 }
                 if !callee.ret_string || callee.formals.len() != args.len() {
                     return Err(super::IrValidationError::new(
@@ -989,6 +1002,23 @@ impl IrStringExpr {
     /// Visit every packed or real operand; `typed_call_args` includes the
     /// arguments of typed calls, which may legitimately be real or carry
     /// native leaves and so are not string-operation operands.
+    /// Whether an operand of this string operation is real. A format takes
+    /// real arguments, wherever a concatenation or conditional nests one.
+    fn has_real_operand(&self) -> bool {
+        match self {
+            Self::Format { .. } => false,
+            Self::Concat(parts) => parts.iter().any(Self::has_real_operand),
+            Self::Conditional {
+                then, otherwise, ..
+            } => then.has_real_operand() || otherwise.has_real_operand(),
+            _ => {
+                let mut real = false;
+                self.visit_expressions(false, &mut |expr| real |= expr.is_real());
+                real
+            }
+        }
+    }
+
     fn visit_expressions(&self, typed_call_args: bool, visit: &mut impl FnMut(&IrExpr)) {
         match self {
             Self::Literal(_)
@@ -1756,6 +1786,14 @@ impl IrObjectStmt {
         string_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
         match self {
+            Self::StaticEffectCheck {
+                what,
+                location,
+                subroutine,
+            } if what.is_empty() || location.is_empty() || subroutine.is_empty() => Err(
+                super::IrValidationError::new("static effect", "check must name its statement"),
+            ),
+            Self::StaticEffectCheck { .. } => Ok(()),
             Self::StringPrint(value) => value.validate(model, string_return),
             Self::StringItoa(_, _, base) if !matches!(base, 2 | 8 | 10 | 16) => Err(
                 super::IrValidationError::new("string", "invalid numeric base"),
@@ -1963,7 +2001,7 @@ impl IrObjectStmt {
                         ))
                     }
                     IrProcessRandom::Seed(_) => Ok(()),
-                    IrProcessRandom::SetState(state) => state.validate(model, None),
+                    IrProcessRandom::SetState(state) => state.validate(model, string_return),
                 }
             }
             Self::ObjectRandom { target, op } => {
@@ -1982,13 +2020,14 @@ impl IrObjectStmt {
                         ))
                     }
                     IrProcessRandom::Seed(_) => Ok(()),
-                    IrProcessRandom::SetState(state) => state.validate(model, None),
+                    IrProcessRandom::SetState(state) => state.validate(model, string_return),
                 }
             }
         }
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
+            Self::StaticEffectCheck { .. } => {}
             Self::StringAssign(_, value)
             | Self::StringAssignLocal(_, value)
             | Self::StringPrint(value) => value.expressions(visit),
@@ -2055,6 +2094,7 @@ impl IrObjectStmt {
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
+            Self::StaticEffectCheck { .. } => {}
             Self::StringAssign(_, value)
             | Self::StringAssignLocal(_, value)
             | Self::StringPrint(value) => value.expressions_mut(visit),
@@ -2122,6 +2162,20 @@ impl IrObjectStmt {
 }
 
 impl IrChandleExpr {
+    /// Validate a handle in a context that does not carry the enclosing
+    /// function's formals: a formal index cannot be checked there.
+    pub(in crate::sim) fn validate_shape(
+        &self,
+        model: &super::IrModel,
+        chandle_return: Option<bool>,
+    ) -> Result<(), super::IrValidationError> {
+        match self {
+            Self::FormalRead(_) => Ok(()),
+            Self::Required { handle, .. } => handle.validate_shape(model, chandle_return),
+            _ => self.validate(model, &[], chandle_return),
+        }
+    }
+
     /// The native value a run-time item locator starts from.
     pub(in crate::sim) fn located_native_root(&self) -> Option<usize> {
         match self {
@@ -2158,7 +2212,7 @@ impl IrChandleExpr {
                     indices: indices.clone(),
                     key: key.as_deref().cloned(),
                 }
-                .located_element(container, None, model)
+                .located_shape(container)
             }
             Self::ItemElement {
                 base,
@@ -2305,7 +2359,8 @@ impl IrChandleExpr {
                     indices: indices.clone(),
                     key: key.as_deref().cloned(),
                 };
-                slot.located_element(container, None, model).map(|_| ())
+                slot.located_element(container, chandle_return.map(|_| false), model)
+                    .map(|_| ())
             }
             Self::NativeRoot(_) => self.located_value(model).map(|_| ()),
             Self::ItemElement { base, .. } => {
@@ -2419,6 +2474,35 @@ impl IrChandleExpr {
                 }
                 Ok(())
             }
+            Self::EventEntry {
+                container,
+                index,
+                key,
+            } => {
+                let valid = model.containers.get(*container).is_some_and(|container| {
+                    container.element.is_event()
+                        && match &container.kind {
+                            super::containers::IrContainerKind::Associative {
+                                key: super::containers::IrAssocKey::String,
+                            } => index.is_none() && key.is_some(),
+                            super::containers::IrContainerKind::Associative { .. } => {
+                                index.as_ref().is_some_and(|index| !index.is_real())
+                                    && key.is_none()
+                            }
+                            _ => false,
+                        }
+                });
+                if !valid {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "event entry requires an associative event array and its key",
+                    ));
+                }
+                if let Some(key) = key {
+                    key.validate(model, chandle_return.map(|_| false))?;
+                }
+                Ok(())
+            }
             Self::AssociativeGet { container, key } => {
                 let Some(container) = model.containers.get(*container) else {
                     return Err(super::IrValidationError::new(
@@ -2438,7 +2522,7 @@ impl IrChandleExpr {
                         "associative chandle read requires a string-keyed handle array",
                     ));
                 }
-                key.validate(model, None)
+                key.validate(model, chandle_return.map(|_| false))
             }
             Self::Read(index) => pointer_object_type(model, *index),
             Self::Call {
@@ -2535,6 +2619,27 @@ impl IrChandleExpr {
                                 ));
                             }
                         }
+                        (
+                            IrCallArg::OutAddr(_)
+                            | IrCallArg::OutTemp { .. }
+                            | IrCallArg::StringOutAddr(_)
+                            | IrCallArg::StringOutTemp { .. },
+                            formal,
+                        ) if formal.is_out && !formal.is_ref() => {}
+                        (IrCallArg::RefAddr { .. } | IrCallArg::StringRefAddr { .. }, formal)
+                            if formal.is_ref() => {}
+                        (
+                            IrCallArg::FixedArray(_)
+                            | IrCallArg::FixedValue(_)
+                            | IrCallArg::RealArray(_)
+                            | IrCallArg::RealArrayValues(_)
+                            | IrCallArg::RealArrayCall { .. }
+                            | IrCallArg::NativeValue(_)
+                            | IrCallArg::NativeRefBound
+                            | IrCallArg::NativeLeaves { .. }
+                            | IrCallArg::NativeCall { .. },
+                            _,
+                        ) => {}
                         _ => {
                             return Err(super::IrValidationError::new(
                                 "chandle call",
@@ -2560,6 +2665,14 @@ impl IrChandleExpr {
                 otherwise.expressions(visit);
             }
             Self::AssociativeGet { key, .. } => key.expressions(visit),
+            Self::EventEntry { index, key, .. } => {
+                if let Some(index) = index {
+                    visit(index);
+                }
+                if let Some(key) = key {
+                    key.expressions(visit);
+                }
+            }
             Self::SemaphoreNew(index)
             | Self::ContainerGet { index, .. }
             | Self::RandInstance { inst: index, .. } => visit(index),
@@ -2614,6 +2727,14 @@ impl IrChandleExpr {
                 otherwise.expressions_mut(visit);
             }
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
+            Self::EventEntry { index, key, .. } => {
+                if let Some(index) = index {
+                    visit(index);
+                }
+                if let Some(key) = key {
+                    key.expressions_mut(visit);
+                }
+            }
             Self::SemaphoreNew(index)
             | Self::ContainerGet { index, .. }
             | Self::RandInstance { inst: index, .. } => visit(index),

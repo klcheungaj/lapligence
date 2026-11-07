@@ -807,18 +807,18 @@ impl Codegen<'_> {
         self.lower_conditional_arms(scope_path, sel, if_true, if_false, merge)
     }
 
-    /// The selector and arms of a conditional operator whose result has the
-    /// native type `shape` (string or chandle). The selector is lowered with
-    /// the same predicate rules as packed conditionals.
+    /// The selector and arms of a conditional operator whose result has a
+    /// native type that `shape` accepts (a string or a handle). The selector
+    /// is lowered with the same predicate rules as packed conditionals.
     pub(in super::super) fn lower_native_conditional_parts(
         &mut self,
         scope_path: &str,
         node: NodeId,
-        shape: &TypeShape,
+        shape: fn(&TypeShape) -> bool,
     ) -> Result<Option<(IrExpr, NodeId, NodeId)>, String> {
         if self
             .query_descriptor(node)
-            .is_none_or(|descriptor| descriptor.shape != *shape)
+            .is_none_or(|descriptor| !shape(&descriptor.shape))
         {
             return Ok(None);
         }
@@ -846,8 +846,12 @@ impl Codegen<'_> {
         }
     }
 
-    /// Whether `node` is a conditional operator with native result `shape`.
-    pub(in super::super) fn is_native_conditional(&self, node: NodeId, shape: &TypeShape) -> bool {
+    /// Whether `node` is a conditional operator whose result `shape` accepts.
+    pub(in super::super) fn is_native_conditional(
+        &self,
+        node: NodeId,
+        shape: fn(&TypeShape) -> bool,
+    ) -> bool {
         matches!(
             self.kind(node),
             NodeKind::Expr(
@@ -859,7 +863,7 @@ impl Codegen<'_> {
             )
         ) && self
             .query_descriptor(node)
-            .is_some_and(|descriptor| descriptor.shape == *shape)
+            .is_some_and(|descriptor| shape(&descriptor.shape))
     }
 
     fn lower_conditional_arms(
