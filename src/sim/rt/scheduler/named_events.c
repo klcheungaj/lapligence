@@ -64,6 +64,23 @@ llg_event_object_t* llg_event_object_new(void) {
     return (llg_event_object_t*)dynamic_event_new();
 }
 
+void* llg_assoc_event_entry_integral(llg_assoc_value_t* array, sv4_t key) {
+    if (!llg_assoc_value_exists_integral(array, key)
+        && !llg_assoc_value_set_integral_chandle(array, key,
+                                                 dynamic_event_new()))
+        return NULL;
+    return llg_assoc_value_get_integral_chandle(array, key);
+}
+
+void* llg_assoc_event_entry_string(llg_assoc_value_t* array, const void* key,
+                                   size_t key_length) {
+    if (!llg_assoc_value_exists_string(array, key, key_length)
+        && !llg_assoc_value_set_string_chandle(array, key, key_length,
+                                               dynamic_event_new()))
+        return NULL;
+    return llg_assoc_value_get_string_chandle(array, key, key_length);
+}
+
 static void free_dynamic_events(void) {
     while (g.dynamic_events) {
         llg_dynamic_event_t* event = g.dynamic_events;

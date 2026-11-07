@@ -1,6 +1,7 @@
 //! Handles.
 
 use super::*;
+use crate::sim::codegen::lowering::collection::CallElementCopies;
 use crate::sim::ir::{IrContainerElement, IrElementRef, IrElementRefKind, IrElementRoot};
 
 impl Codegen<'_> {
@@ -12,8 +13,31 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<(ChandleTarget, IrChandleExpr), String> {
         let read = self.lower_chandle(path, node)?;
+        let target = self
+            .chandle_slot(path, node)?
+            .ok_or("chandle output/ref actual must be a named chandle lvalue")?;
+        Ok((target, read))
+    }
+
+    /// The pointer slot of a handle lvalue that has one. An element of an
+    /// unpacked array or container has none: it is written through the
+    /// assignment family of its storage.
+    pub(in super::super) fn chandle_slot(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<ChandleTarget>, String> {
+        // A static handle property is one model object (SV 8.9), named with
+        // or without a class scope or receiver.
+        if let Some(index) = self
+            .class_field_target(node)
+            .and_then(|field| self.class_static_objects.get(&field).copied())
+            .filter(|index| self.model.objects[*index].ty == IrObjectType::Chandle)
+        {
+            return Ok(Some(ChandleTarget::Object(index)));
+        }
         if let Some(address) = self.class_field_chandle_lvalue(path, node)? {
-            return Ok((ChandleTarget::Local(address), read));
+            return Ok(Some(ChandleTarget::Local(address)));
         }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
@@ -38,36 +62,36 @@ impl Codegen<'_> {
                 })
         });
         if let Some(target) = mapped {
-            return Ok((target, read));
+            return Ok(Some(target));
         }
         if let Some(target) = target.and_then(|target| {
             self.proc_mailbox_local_name(target)
                 .map(|name| ChandleTarget::Local(name.to_owned()))
         }) {
-            return Ok((target, read));
+            return Ok(Some(target));
         }
         if let Some(index) = target.and_then(|target| {
             self.proc_mailbox_static_objects
                 .get(&(self.inst, target))
                 .copied()
         }) {
-            return Ok((ChandleTarget::Object(index), read));
+            return Ok(Some(ChandleTarget::Object(index)));
         }
         if let Some((_, name)) = self.lexical_proc_mailbox_local(node) {
-            return Ok((ChandleTarget::Local(name.to_owned()), read));
+            return Ok(Some(ChandleTarget::Local(name.to_owned())));
         }
         if let Some(index) = self.object_of(path, node) {
             if matches!(
                 self.model.objects[index].ty,
                 IrObjectType::Chandle | IrObjectType::Semaphore
             ) {
-                return Ok((ChandleTarget::Object(index), read));
+                return Ok(Some(ChandleTarget::Object(index)));
             }
         }
         if let Some(target) = self.semaphore_lvalue_target(path, node)? {
-            return Ok((target, read));
+            return Ok(Some(target));
         }
-        Err("chandle output/ref actual must be a named chandle lvalue".to_owned())
+        Ok(None)
     }
 
     /// Resolve a procedural semaphore's pointer slot for assignments and
@@ -423,7 +447,7 @@ impl Codegen<'_> {
             }
         }
         if let Some((predicate, then, otherwise)) =
-            self.lower_native_conditional_parts(path, node, &chandle_shape())?
+            self.lower_native_conditional_parts(path, node, is_handle_shape)?
         {
             return Ok(IrChandleExpr::Conditional {
                 predicate: Box::new(predicate),
@@ -647,108 +671,40 @@ impl Codegen<'_> {
             let dispatch = self.record_ref_dispatch(node, false);
             let function =
                 self.record_ref_callee(ft, callee_inst, &meta.formals, &bound, meta.ir, dispatch)?;
-            let mut out_args = Vec::new();
-            let mut in_args = Vec::new();
-            let mut arg_irs = vec![None; meta.formals.len()];
-            for (idx, (formal, is_out)) in meta.formals.iter().enumerate() {
-                if bound[idx].is_event {
-                    let name = self.node(ft).name.clone();
-                    let (address, argument) =
-                        self.event_call_argument(path, &name, *formal, *is_out, bound[idx].expr)?;
-                    if address {
-                        out_args.push(argument);
-                    } else {
-                        in_args.push(argument);
-                    }
-                    continue;
-                }
-                if self.is_subroutine_container(*formal) {
-                    let argument =
-                        self.container_call_argument(path, *formal, bound[idx].expr, None, None)?;
-                    // `ref` formals pass by address with the outputs.
-                    if *is_out || self.is_ref_formal(*formal) {
-                        out_args.push(argument);
-                    } else {
-                        in_args.push(argument);
-                    }
-                    continue;
-                }
-                if self.is_native_declaration(*formal) {
-                    let argument =
-                        self.native_expression_argument(path, *formal, bound[idx].expr)?;
-                    if *is_out || self.is_ref_formal(*formal) {
-                        out_args.push(argument);
-                    } else {
-                        in_args.push(argument);
-                    }
-                    continue;
-                }
-                let is_chandle = matches!(
-                    self.kind(*formal),
-                    NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)
-                );
-                let is_ref = matches!(
-                    self.kind(*formal),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Ref,
-                        ..
-                    }
-                );
-                if is_ref || *is_out {
-                    if !is_chandle {
-                        return Err(format!(
-                            "chandle function `{}` does not support packed output/ref formals",
-                            self.node(ft).name
-                        ));
-                    }
-                    if is_ref {
-                        if let Some(argument) = self.handle_element_ref(path, bound[idx].expr)? {
-                            out_args.push(argument);
-                            continue;
-                        }
-                    }
-                    if self.is_process_formal(*formal) {
-                        if let Some(argument) = self.process_formal_expression_binding(
-                            path,
-                            *formal,
-                            bound[idx].expr,
-                            is_ref,
-                        )? {
-                            out_args.push(argument);
-                            continue;
-                        }
-                    }
-                    let (target, _) = self.lower_chandle_lvalue(path, bound[idx].expr)?;
-                    let address = self.chandle_target_address(&target);
-                    if is_ref {
-                        out_args.push(IrCallArg::ChandleRefAddr(address));
-                    } else {
-                        out_args.push(IrCallArg::ChandleAddr(address));
-                    }
-                } else if is_chandle {
-                    in_args.push(IrCallArg::ChandleVal(self.lower_handle_argument(
-                        path,
-                        *formal,
-                        bound[idx].expr,
-                    )?));
-                } else if bound[idx].string {
-                    in_args.push(IrCallArg::StringVal(
-                        self.lower_string(path, bound[idx].expr)?,
-                    ));
-                } else {
-                    let value =
-                        self.lower_bound_arg(path, &meta.formals, &bound, idx, &mut arg_irs)?;
-                    in_args.push(IrCallArg::Val(value));
-                }
-            }
-            out_args.extend(in_args);
-            return Ok(IrChandleExpr::Call {
+            let name = self.node(ft).name.clone();
+            let mut copies = CallElementCopies::default();
+            let args = self.lower_call_arguments(
+                path,
+                node,
+                &name,
+                callee_inst,
+                &meta.formals,
+                &bound,
+                Some(&mut copies),
+            )?;
+            let call = IrChandleExpr::Call {
                 receiver: self.class_method_receiver(path, node)?.map(Box::new),
                 virtual_dispatch: self.class_method_virtual_dispatch(node),
                 function,
-                args: out_args,
+                args,
                 depth: parse_depth(&self.depth_arg),
                 vpi_call: self.vpi_call_origin(node),
+            };
+            if copies.before.is_empty() && copies.after.is_empty() {
+                return Ok(call);
+            }
+            // The handle is read after the element copies are stored.
+            let result = format!("_llg_hret{}", node.0);
+            let mut statements = copies.before;
+            statements.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                result.clone(),
+                Some(call),
+            ))));
+            statements.extend(copies.after);
+            return Ok(IrChandleExpr::Conditional {
+                predicate: Box::new(super::strings::always_after(statements)),
+                then: Box::new(IrChandleExpr::LocalRead(result)),
+                otherwise: Box::new(IrChandleExpr::Null),
             });
         }
         Err(format!(
@@ -764,4 +720,10 @@ pub(in super::super) fn chandle_shape() -> TypeShape {
     TypeShape::Opaque {
         kind: "Chandle".to_owned(),
     }
+}
+
+/// Whether `shape` is a value kept as a native pointer: a chandle, a class
+/// handle or a virtual interface.
+pub(in super::super) fn is_handle_shape(shape: &TypeShape) -> bool {
+    matches!(shape, TypeShape::Opaque { kind } if matches!(kind.as_str(), "Chandle" | "Class" | "VirtualInterface"))
 }

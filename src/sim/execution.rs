@@ -2733,6 +2733,15 @@ fn collect_chandle_effects(
         IrChandleExpr::AssociativeGet { key, .. } => {
             collect_string_effects(ir, key, effects, visited_calls)
         }
+        IrChandleExpr::EventEntry { index, key, .. } => {
+            effects.push(ExecutionEffect::ImmediateStore);
+            if let Some(index) = index {
+                collect_expression_effects(ir, index, effects, visited_calls);
+            }
+            if let Some(key) = key {
+                collect_string_effects(ir, key, effects, visited_calls);
+            }
+        }
         IrChandleExpr::QueuePop { .. } => effects.push(ExecutionEffect::ImmediateStore),
         IrChandleExpr::Required { handle, .. } => {
             // A null handle is a fatal run-time error: the process stops
@@ -2763,6 +2772,14 @@ fn collect_chandle_effects(
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
             effects.push(ExecutionEffect::RuntimeService);
+            if args.iter().any(|arg| {
+                matches!(
+                    arg,
+                    IrCallArg::OutTemp { .. } | IrCallArg::StringOutTemp { .. }
+                )
+            }) {
+                effects.push(ExecutionEffect::ImmediateStore);
+            }
             visited_calls.record(CallTarget::of_call(*function, *virtual_dispatch, None));
             collect_callee_effects(ir, *function, *virtual_dispatch, effects, visited_calls);
             for argument in args {

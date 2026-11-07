@@ -145,6 +145,36 @@ impl Frame<'_, '_> {
                 self.discard(index);
                 return Ok(value);
             }
+            IrChandleExpr::EventEntry {
+                container,
+                index,
+                key,
+            } => {
+                if self.read_only_callback {
+                    return Err(pending("event entry creation in a read-only callback"));
+                }
+                let name = self.container_name(*container)?;
+                if let Some(index) = index {
+                    let index = self.expression(index)?;
+                    let value = self.scalar(
+                        "void*",
+                        format!("llg_assoc_event_entry_integral(&{name}, {})", index.code),
+                    );
+                    self.discard(index);
+                    return Ok(value);
+                }
+                let key = key.as_ref().ok_or("event entry has no key")?;
+                let key = self.string(key)?;
+                let value = self.scalar(
+                    "void*",
+                    format!(
+                        "llg_assoc_event_entry_string(&{name}, ({})->data, ({})->len)",
+                        key.address, key.address
+                    ),
+                );
+                self.native_discard(key);
+                return Ok(value);
+            }
             IrChandleExpr::Mailbox(mailbox) => return self.mailbox_handle(mailbox),
             IrChandleExpr::ContainerElement {
                 container,

@@ -4358,6 +4358,56 @@ fn s11_d1_task_cast_class_failure() {
 }
 
 #[test]
+fn s11_d5_cast_element_binding() {
+    run_decision(
+        "S11-D5_cast_element_binding",
+        include_str!("fixtures/sim/lrm_decisions/S11-D5_cast_element_binding.out"),
+    );
+}
+
+#[test]
+fn s11_d6_cast_element_out_of_range() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S11-D6_cast_element_out_of_range.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S11-D6_cast_element_out_of_range",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "$cast failed to assign an incompatible value at tb:28:27: the destination element does not exist",
+            );
+        },
+    );
+}
+
+#[test]
+fn s11_d7_class_conditional_ambiguous() {
+    run_decision(
+        "S11-D7_class_conditional_ambiguous",
+        include_str!("fixtures/sim/lrm_decisions/S11-D7_class_conditional_ambiguous.out"),
+    );
+}
+
+#[test]
+fn s11_d8_unformatted_class_handle() {
+    run_decision(
+        "S11-D8_unformatted_class_handle",
+        include_str!("fixtures/sim/lrm_decisions/S11-D8_unformatted_class_handle.out"),
+    );
+}
+
+#[test]
+fn s07_d11_event_entry_binding() {
+    run_decision(
+        "S07-D11_event_entry_binding",
+        include_str!("fixtures/sim/lrm_decisions/S07-D11_event_entry_binding.out"),
+    );
+}
+
+#[test]
 fn s11_d3_real_enum_cast() {
     run_decision(
         "S11-D3_real_enum_cast",

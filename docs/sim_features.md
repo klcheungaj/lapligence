@@ -1223,8 +1223,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   targets before comparison or storage. A real or shortreal source of an enum
   `$cast` converts as to `int` before the membership check (decision S11-D3).
   Unpacked aggregate destinations are not singular and nets are not variables
-  (SV 6.24.2); string and resizable-container-element destinations reject
-  ([known issue](known_issues.md#cast-into-strings-and-resizable-container-elements)).
+  (SV 6.24.2). A string destination takes a string and fails every other
+  source; a string source converts to a packed value. An element of a queue,
+  dynamic or associative array is written through its ordinary assignment only
+  when the cast succeeds; a class or enum element whose outcome depends on the
+  run time binds first and stops at a missing element (S11-D5, S11-D6).
   SV §6.24 **[SV-2005]**.
 - 🟨 **Mutating operators** — Prefix/postfix `++/--` and `+= -= *= /= %= &= |= ^=`
   plus shift assignments capture an admitted whole/member/selected/fixed-array
@@ -2226,7 +2229,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Leading-`+` prefix matching, first repeated match, literal `%%`,
   `%d/%h/%x/%o/%b/%f/%e/%g/%s`, wide four-state values and unchanged destinations
   on failure are represented, including packed container-element
-  destinations. `$cast` into a container element still rejects (SIM-008). V §17.10; SV §21.6 **[1995/SV-2005]**.
+  destinations. V §17.10; SV §21.6 **[1995/SV-2005]**.
 - 🟦 **Host commands** — `$system` evaluates one optional string once and
   requires generated-process `LLG_ALLOW_SYSTEM=1` (also `true/yes/on`). Denial
   diagnoses, returns signed 32-bit -1 and fails without shell execution.

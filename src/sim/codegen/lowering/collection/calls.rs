@@ -2,6 +2,13 @@
 
 use super::*;
 
+/// Statements around a value call for element actuals of output formals.
+#[derive(Default)]
+pub(in crate::sim::codegen) struct CallElementCopies {
+    pub(in super::super) before: Vec<IrStmt>,
+    pub(in super::super) after: Vec<IrStmt>,
+}
+
 impl<'a> Codegen<'a> {
     /// The design node of source call `call` as the `vpiOrigin` of the
     /// frame it activates (37.39); `None` in a continuous assignment, whose
@@ -157,7 +164,88 @@ impl<'a> Codegen<'a> {
         // side effects and yields all-X.
         let ret_val = meta.ret;
         let (ret_w, ret_s, _, _) = ret_val.unwrap_or((1, false, false, false));
+        let out_args =
+            self.lower_call_arguments(scope_path, h, name, callee_inst, &formals, &bound, None)?;
+        // A class method written without an explicit receiver inside another
+        // class method is represented as a plain function call by Slang. Bind
+        // that call to the current `this` (or the object under construction).
+        let (receiver, virtual_call) =
+            if let Some((descriptor, method, _, _, receiver)) = virtual_call_info {
+                (
+                    None,
+                    Some(crate::sim::ir::IrVirtualCall {
+                        interface: descriptor,
+                        method,
+                        receiver: self.lower_chandle(scope_path, receiver)?,
+                        site: self.source_site("virtual interface method call", scope_path, h),
+                    }),
+                )
+            } else if self.model.funcs[meta.ir].receiver_class.is_some()
+                && matches!(self.kind(h), NodeKind::FuncCall { .. })
+            {
+                // A constraint function of the randomized object (18.5.11).
+                let owner = self
+                    .class_method_owner(ft)
+                    .and_then(|class| self.class_nodes.get(&class).copied());
+                (
+                    self.rand_receiver_for(owner)
+                        .or_else(|| self.class_init_receiver.clone())
+                        .or_else(|| self.method_receiver()),
+                    None,
+                )
+            } else {
+                (None, None)
+            };
+        let is_class_constructor =
+            self.class_method_owner(ft).is_some() && self.node(ft).name == "new";
+        if ret_val.is_none()
+            && !self.nonflatten_function(ft)
+            && !self.record_return(ft)
+            && !self.native_return(ft)
+            && !self.container_return(ft)
+            && !self.real_array_return(ft)
+            && !is_class_constructor
+            && !self.lowering_assertion_match_item
+        {
+            self.warnings.push(format!(
+                "void function `{name}` used as a value in `{scope_path}`; result is X"
+            ));
+        }
+        let depth = parse_depth(&self.depth_arg);
+        Ok(IrExpr::new(
+            IrExprKind::CallFn(Box::new(IrCallExpr {
+                f: function,
+                args: out_args,
+                depth,
+                receiver,
+                virtual_dispatch: false,
+                virtual_call,
+                void_x: ret_val.is_none(),
+                dpi_site: self.dpi_call_site(function, h),
+                vpi_call: self.vpi_call_origin(h),
+            })),
+            ret_w,
+            ret_s,
+            None,
+        ))
+    }
 
+    /// Lower the actuals of a function call used as a value, in the C
+    /// parameter order: address arguments, then inputs. With `copies`, a
+    /// handle or string element bound to an output formal goes through a
+    /// temporary whose statements the caller runs around the call; without
+    /// them such an actual has no storage to pass.
+    #[allow(clippy::too_many_arguments)]
+    pub(in super::super) fn lower_call_arguments(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+        name: &str,
+        callee_inst: NodeId,
+        formals: &[(NodeId, bool)],
+        bound: &[BoundArg],
+        mut copies: Option<&mut CallElementCopies>,
+    ) -> Result<Vec<IrCallArg>, String> {
         let mut out_args: Vec<IrCallArg> = Vec::new();
         // Inputs are gathered by two passes below; the formal index keeps
         // them in the callee's declaration order (the C parameter order).
@@ -293,6 +381,26 @@ impl<'a> Codegen<'a> {
                             is_ref,
                         )? {
                             out_args.push(argument);
+                            continue;
+                        }
+                    }
+                    if let (Some(copies), false) = (copies.as_deref_mut(), is_ref) {
+                        let copy_in = matches!(
+                            self.kind(*io),
+                            NodeKind::FuncArg {
+                                direction: DbDirection::Inout,
+                                ..
+                            }
+                        );
+                        if let Some((prelude, address, store)) = self.handle_element_copy_out(
+                            scope_path,
+                            bound[idx].expr,
+                            copy_in,
+                            &format!("_hout_{}_{idx}", h.0),
+                        )? {
+                            copies.before.extend(prelude);
+                            copies.after.push(store);
+                            out_args.push(IrCallArg::ChandleAddr(address));
                             continue;
                         }
                     }
@@ -493,7 +601,7 @@ impl<'a> Codegen<'a> {
                     ));
                     continue;
                 }
-                let ir = self.lower_bound_arg(scope_path, &formals, &bound, idx, &mut arg_irs)?;
+                let ir = self.lower_bound_arg(scope_path, formals, bound, idx, &mut arg_irs)?;
                 arg_irs[idx] = Some(IrExpr::new(
                     IrExprKind::LocalRead(crate::sim::ir::call_argument_name(idx)),
                     ir.width,
@@ -507,67 +615,6 @@ impl<'a> Codegen<'a> {
         out_args.extend(record_out_args);
         out_args.extend(in_args.into_iter().map(|(_, argument)| argument));
         out_args.extend(record_in_args);
-        // A class method written without an explicit receiver inside another
-        // class method is represented as a plain function call by Slang. Bind
-        // that call to the current `this` (or the object under construction).
-        let (receiver, virtual_call) =
-            if let Some((descriptor, method, _, _, receiver)) = virtual_call_info {
-                (
-                    None,
-                    Some(crate::sim::ir::IrVirtualCall {
-                        interface: descriptor,
-                        method,
-                        receiver: self.lower_chandle(scope_path, receiver)?,
-                        site: self.source_site("virtual interface method call", scope_path, h),
-                    }),
-                )
-            } else if self.model.funcs[meta.ir].receiver_class.is_some()
-                && matches!(self.kind(h), NodeKind::FuncCall { .. })
-            {
-                // A constraint function of the randomized object (18.5.11).
-                let owner = self
-                    .class_method_owner(ft)
-                    .and_then(|class| self.class_nodes.get(&class).copied());
-                (
-                    self.rand_receiver_for(owner)
-                        .or_else(|| self.class_init_receiver.clone())
-                        .or_else(|| self.method_receiver()),
-                    None,
-                )
-            } else {
-                (None, None)
-            };
-        let is_class_constructor =
-            self.class_method_owner(ft).is_some() && self.node(ft).name == "new";
-        if ret_val.is_none()
-            && !self.nonflatten_function(ft)
-            && !self.record_return(ft)
-            && !self.native_return(ft)
-            && !self.container_return(ft)
-            && !self.real_array_return(ft)
-            && !is_class_constructor
-            && !self.lowering_assertion_match_item
-        {
-            self.warnings.push(format!(
-                "void function `{name}` used as a value in `{scope_path}`; result is X"
-            ));
-        }
-        let depth = parse_depth(&self.depth_arg);
-        Ok(IrExpr::new(
-            IrExprKind::CallFn(Box::new(IrCallExpr {
-                f: function,
-                args: out_args,
-                depth,
-                receiver,
-                virtual_dispatch: false,
-                virtual_call,
-                void_x: ret_val.is_none(),
-                dpi_site: self.dpi_call_site(function, h),
-                vpi_call: self.vpi_call_origin(h),
-            })),
-            ret_w,
-            ret_s,
-            None,
-        ))
+        Ok(out_args)
     }
 }

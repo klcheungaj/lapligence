@@ -359,6 +359,14 @@ pub enum IrChandleExpr {
         container: usize,
         key: Box<IrStringExpr>,
     },
+    /// The event of one associative array entry, created with a new event
+    /// when the entry is missing: an event control or trigger binds its
+    /// element. `key` selects the string form, otherwise `index` is the key.
+    EventEntry {
+        container: usize,
+        index: Option<Box<IrExpr>>,
+        key: Option<Box<IrStringExpr>>,
+    },
     /// Remove a queue endpoint and yield its handle (`pop_front`/
     /// `pop_back`). The identity moves out of the queue; the referenced
     /// object is not copied. An empty queue yields null.
@@ -2414,6 +2422,35 @@ impl IrChandleExpr {
                 }
                 Ok(())
             }
+            Self::EventEntry {
+                container,
+                index,
+                key,
+            } => {
+                let valid = model.containers.get(*container).is_some_and(|container| {
+                    container.element.is_event()
+                        && match &container.kind {
+                            super::containers::IrContainerKind::Associative {
+                                key: super::containers::IrAssocKey::String,
+                            } => index.is_none() && key.is_some(),
+                            super::containers::IrContainerKind::Associative { .. } => {
+                                index.as_ref().is_some_and(|index| !index.is_real())
+                                    && key.is_none()
+                            }
+                            _ => false,
+                        }
+                });
+                if !valid {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "event entry requires an associative event array and its key",
+                    ));
+                }
+                if let Some(key) = key {
+                    key.validate(model, None)?;
+                }
+                Ok(())
+            }
             Self::AssociativeGet { container, key } => {
                 let Some(container) = model.containers.get(*container) else {
                     return Err(super::IrValidationError::new(
@@ -2530,6 +2567,27 @@ impl IrChandleExpr {
                                 ));
                             }
                         }
+                        (
+                            IrCallArg::OutAddr(_)
+                            | IrCallArg::OutTemp { .. }
+                            | IrCallArg::StringOutAddr(_)
+                            | IrCallArg::StringOutTemp { .. },
+                            formal,
+                        ) if formal.is_out && !formal.is_ref() => {}
+                        (IrCallArg::RefAddr { .. } | IrCallArg::StringRefAddr { .. }, formal)
+                            if formal.is_ref() => {}
+                        (
+                            IrCallArg::FixedArray(_)
+                            | IrCallArg::FixedValue(_)
+                            | IrCallArg::RealArray(_)
+                            | IrCallArg::RealArrayValues(_)
+                            | IrCallArg::RealArrayCall { .. }
+                            | IrCallArg::NativeValue(_)
+                            | IrCallArg::NativeRefBound
+                            | IrCallArg::NativeLeaves { .. }
+                            | IrCallArg::NativeCall { .. },
+                            _,
+                        ) => {}
                         _ => {
                             return Err(super::IrValidationError::new(
                                 "chandle call",
@@ -2555,6 +2613,14 @@ impl IrChandleExpr {
                 otherwise.expressions(visit);
             }
             Self::AssociativeGet { key, .. } => key.expressions(visit),
+            Self::EventEntry { index, key, .. } => {
+                if let Some(index) = index {
+                    visit(index);
+                }
+                if let Some(key) = key {
+                    key.expressions(visit);
+                }
+            }
             Self::SemaphoreNew(index)
             | Self::ContainerGet { index, .. }
             | Self::RandInstance { inst: index, .. } => visit(index),
@@ -2608,6 +2674,14 @@ impl IrChandleExpr {
                 otherwise.expressions_mut(visit);
             }
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
+            Self::EventEntry { index, key, .. } => {
+                if let Some(index) = index {
+                    visit(index);
+                }
+                if let Some(key) = key {
+                    key.expressions_mut(visit);
+                }
+            }
             Self::SemaphoreNew(index)
             | Self::ContainerGet { index, .. }
             | Self::RandInstance { inst: index, .. } => visit(index),

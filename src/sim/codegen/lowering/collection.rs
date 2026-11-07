@@ -19,6 +19,7 @@ mod call_contracts;
 pub(super) use call_contracts::{EventEvaluation, PostponedEvaluation};
 pub(super) use dynamic_reads::ReportReadPlan;
 mod calls;
+pub(in crate::sim::codegen) use calls::CallElementCopies;
 mod captures;
 mod classes;
 mod const_writes;

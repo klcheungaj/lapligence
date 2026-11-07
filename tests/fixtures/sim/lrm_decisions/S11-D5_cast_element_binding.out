@@ -1,0 +1,20 @@
+mk(moves)
+7 1 1
+f(sel)
+mk(src)
+no 1
+f(sel)
+mk(src)
+0 4
+1
+mk(src)
+0 1 1
+f(val)
+0 2
+f(val)
+0 1
+0 1
+f(val)
+f(sel)
+1 5
+1 4

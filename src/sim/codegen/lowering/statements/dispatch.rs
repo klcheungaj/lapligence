@@ -470,7 +470,7 @@ impl EmitCtx<'_, '_> {
                         self.path
                     )
                 })?;
-                let event = self.cg.event_ref_of(&target, &self.path)?;
+                let event = self.cg.bound_event_ref_of(&target, &self.path)?;
                 if *blocking {
                     if let Some(timing) = timing {
                         return Err(self.unsupported_event_trigger_timing(

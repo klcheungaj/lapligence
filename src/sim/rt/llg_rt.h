@@ -3115,6 +3115,11 @@ void llg_event_object_reset(llg_event_object_t* ev);
 // new event elements of resizable containers it is owned by the scheduler
 // until model close, so handles copied out of the activation stay valid.
 llg_event_object_t* llg_event_object_new(void);
+/* The event of one associative array entry; a missing entry is created with
+ * a new event. An invalid key creates nothing and yields null. */
+void* llg_assoc_event_entry_integral(llg_assoc_value_t* array, sv4_t key);
+void* llg_assoc_event_entry_string(llg_assoc_value_t* array, const void* key,
+                                   size_t key_length);
 
 // `object` is an llg_event_object_t*, typed void* so that a `ref` event formal
 // bound to a class event property can address the property's void* handle slot

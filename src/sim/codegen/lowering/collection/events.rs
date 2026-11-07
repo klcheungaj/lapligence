@@ -409,6 +409,42 @@ impl<'a> Codegen<'a> {
     /// Lower an event target without losing a runtime array index. Constant
     /// selects retain the compact scalar handle path; variable selects carry
     /// typed index expressions to the runtime pointer table.
+    /// The event an event control or trigger binds: a missing entry of an
+    /// associative event array comes into existence here, so a later wait
+    /// or trigger of the same key names the same event. A read of the
+    /// element (`.triggered`, an assignment source) creates nothing.
+    pub(in super::super) fn bound_event_ref_of(
+        &mut self,
+        target: &EventTarget,
+        scope_path: &str,
+    ) -> Result<IrEventRef, String> {
+        let event = self.event_ref_of(target, scope_path)?;
+        let IrEventRef::Handle(handle) = event else {
+            return Ok(event);
+        };
+        let entry = match *handle {
+            IrChandleExpr::AssociativeGet { container, key } => IrChandleExpr::EventEntry {
+                container,
+                index: None,
+                key: Some(key),
+            },
+            IrChandleExpr::ContainerGet { container, index }
+                if matches!(
+                    self.model.containers[container].kind,
+                    IrContainerKind::Associative { .. }
+                ) =>
+            {
+                IrChandleExpr::EventEntry {
+                    container,
+                    index: Some(index),
+                    key: None,
+                }
+            }
+            other => other,
+        };
+        Ok(IrEventRef::Handle(Box::new(entry)))
+    }
+
     pub(in super::super) fn event_ref_of(
         &mut self,
         target: &EventTarget,

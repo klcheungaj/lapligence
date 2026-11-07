@@ -45,8 +45,8 @@ impl Codegen<'_> {
                 index += consumed + 1;
                 continue;
             }
-            self.reject_unformattable(path, name, default_radix.specifier() as u8, node)?;
-            let value = self.lower_format_arg(path, node)?;
+            let value =
+                self.lower_unformatted_arg(path, name, default_radix.specifier() as u8, node)?;
             push_default_conversion(&mut format, &value, default_radix);
             values.push(value);
             index += 1;
@@ -192,6 +192,26 @@ impl Codegen<'_> {
             format.extend_from_slice(spec);
         }
         Ok(consumed)
+    }
+
+    /// An argument no format conversion consumes. A class handle prints as
+    /// `%p`, which needs no object address (the text only says the radix of
+    /// integral values, SV 21.2.1).
+    fn lower_unformatted_arg(
+        &mut self,
+        path: &str,
+        name: &str,
+        conversion: u8,
+        node: NodeId,
+    ) -> Result<IrDisplayArg, String> {
+        let class = self.query_descriptor(node).is_some_and(
+            |descriptor| matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class"),
+        );
+        if class {
+            return self.lower_pattern_arg(path, node, false);
+        }
+        self.reject_unformattable(path, name, conversion, node)?;
+        self.lower_format_arg(path, node)
     }
 
     /// Only `%p` formats unpacked aggregates and handles (SV 21.2.1.2):

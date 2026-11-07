@@ -98,7 +98,7 @@ impl Codegen<'_> {
             return Ok(IrStringExpr::LocalRead(target));
         }
         if let Some((predicate, then, otherwise)) =
-            self.lower_native_conditional_parts(path, node, &TypeShape::String)?
+            self.lower_native_conditional_parts(path, node, |shape| *shape == TypeShape::String)?
         {
             return Ok(IrStringExpr::Conditional {
                 predicate: Box::new(predicate),

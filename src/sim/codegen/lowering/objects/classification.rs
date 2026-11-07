@@ -282,7 +282,7 @@ impl Codegen<'_> {
         {
             return true;
         }
-        if self.is_native_conditional(node, &TypeShape::String) {
+        if self.is_native_conditional(node, |shape| *shape == TypeShape::String) {
             return true;
         }
         // `r.s[k]`: a run-time element of a string member array.
@@ -397,12 +397,15 @@ impl Codegen<'_> {
             return true;
         }
         if self.native_leaf_kind(node) == Some(IrClassFieldType::Chandle)
-            || self.is_native_conditional(node, &super::handles::chandle_shape())
+            || self.is_native_conditional(node, |shape| *shape == super::handles::chandle_shape())
         {
             return true;
         }
         if self.is_mailbox_expr(path, node) {
             return false;
+        }
+        if self.is_native_conditional(node, super::handles::is_handle_shape) {
+            return true;
         }
         if matches!(self.kind(node), NodeKind::Expr(ExprKind::NewClass { .. })) {
             return true;
@@ -445,19 +448,21 @@ impl Codegen<'_> {
         if self.is_container_chandle_expr(node) {
             return true;
         }
-        if let NodeKind::FuncCall {
-            is_task: false,
-            callee,
-            ..
-        } = self.kind(node)
-        {
-            return self
-                .resolve_callee_env(self.inst, &self.node(node).name, false, *callee)
+        let callable = match self.kind(node) {
+            NodeKind::FuncCall {
+                is_task: false,
+                callee,
+                ..
+            } => Some(*callee),
+            NodeKind::MethodCall { callee, .. } if self.is_class_method_call(node) => Some(*callee),
+            _ => None,
+        };
+        callable.is_some_and(|callee| {
+            self.resolve_callee_env(self.inst, &self.node(node).name, false, callee)
                 .ok()
                 .and_then(|(function, _)| self.func_meta.get(&function))
-                .is_some_and(|meta| meta.ret_chandle);
-        }
-        false
+                .is_some_and(|meta| meta.ret_chandle)
+        })
     }
 
     /// Return whether an expression is specifically a SystemVerilog
