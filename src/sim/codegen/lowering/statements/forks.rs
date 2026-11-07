@@ -251,6 +251,10 @@ impl EmitCtx<'_, '_> {
                                 ..
                             }
                         )
+                        // A detached fork inside the branch can outlive it
+                        // and aliases its cell through the branch's frame.
+                        && !(self.cg.shared_locals.contains(target)
+                            && self.cg.holds_detached_fork(*branch))
                     {
                         StorageOwnership::Borrowed
                     } else if self.cg.shared_locals.contains(target)

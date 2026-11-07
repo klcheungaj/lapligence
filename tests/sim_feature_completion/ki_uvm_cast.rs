@@ -206,3 +206,16 @@ fn function_fork_record() {
         &[],
     );
 }
+
+#[test]
+fn join_branch_detached_fork() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "join_branch_detached_fork",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_cast/join_branch_detached_fork.out"
+        ),
+        &[],
+        &[],
+    );
+}

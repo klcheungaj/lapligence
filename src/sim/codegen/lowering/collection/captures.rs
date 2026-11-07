@@ -367,6 +367,21 @@ impl<'a> Codegen<'a> {
         self.fork_sets().1.contains(&declaration)
     }
 
+    /// Whether `node` holds a `join_none` or `join_any` fork.
+    pub(in super::super) fn holds_detached_fork(&self, node: NodeId) -> bool {
+        let mut pending = vec![node];
+        while let Some(node) = pending.pop() {
+            if matches!(
+                self.kind(node),
+                NodeKind::Stmt(StmtKind::Fork { join_kind, .. }) if *join_kind != DbJoinKind::All
+            ) {
+                return true;
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        false
+    }
+
     /// The fork-shared and fork-visible automatic variables of the design.
     fn fork_sets(&mut self) -> &(HashSet<NodeId>, HashSet<NodeId>) {
         if self.fork_sets.is_none() {
