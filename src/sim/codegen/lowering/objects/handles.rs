@@ -452,10 +452,18 @@ impl Codegen<'_> {
         if let Some((predicate, then, otherwise)) =
             self.lower_native_conditional_parts(path, node, is_handle_shape)?
         {
+            let then = self.lower_chandle(path, then)?;
+            let otherwise = self.lower_chandle(path, otherwise)?;
+            if self
+                .query_descriptor(node)
+                .is_some_and(|descriptor| descriptor.info.kind == "class")
+            {
+                return Ok(class_conditional(node, predicate, then, otherwise));
+            }
             return Ok(IrChandleExpr::Conditional {
                 predicate: Box::new(predicate),
-                then: Box::new(self.lower_chandle(path, then)?),
-                otherwise: Box::new(self.lower_chandle(path, otherwise)?),
+                then: Box::new(then),
+                otherwise: Box::new(otherwise),
             });
         }
         if let NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) = self.kind(node) {
@@ -733,4 +741,81 @@ pub(in super::super) fn chandle_shape() -> TypeShape {
 /// handle or a virtual interface.
 pub(in super::super) fn is_handle_shape(shape: &TypeShape) -> bool {
     matches!(shape, TypeShape::Opaque { kind } if matches!(kind.as_str(), "Chandle" | "Class" | "VirtualInterface"))
+}
+
+/// A conditional operator with class operands (SV 11.4.11): an ambiguous
+/// predicate gives null, even when both operands are the same handle, and
+/// evaluates neither operand. The predicate is reduced once into a local, and
+/// each arm is taken only on a known true or known false value.
+fn class_conditional(
+    node: NodeId,
+    predicate: IrExpr,
+    then: IrChandleExpr,
+    otherwise: IrChandleExpr,
+) -> IrChandleExpr {
+    let known = matches!(
+        predicate.kind(),
+        IrExprKind::Const(_)
+            | IrExprKind::Bin {
+                op: IrBinOp::CaseEq | IrBinOp::CaseNeq,
+                ..
+            }
+    );
+    if known || predicate.is_real() {
+        return IrChandleExpr::Conditional {
+            predicate: Box::new(predicate),
+            then: Box::new(then),
+            otherwise: Box::new(otherwise),
+        };
+    }
+    let name = format!("_llg_cond{}", node.0);
+    let truth = IrExpr::new(
+        IrExprKind::Un {
+            op: IrUnOp::RedOr,
+            a: Box::new(predicate),
+        },
+        1,
+        false,
+        None,
+    );
+    let local = || IrExpr::new(IrExprKind::LocalRead(name.clone()), 1, false, None);
+    let is = |value: i128| {
+        IrExpr::new(
+            IrExprKind::Bin {
+                op: IrBinOp::CaseEq,
+                a: Box::new(local()),
+                b: Box::new(super::super::containers::pattern_key_expr(
+                    value, 1, false, false,
+                )),
+            },
+            1,
+            false,
+            None,
+        )
+    };
+    let is_true = is(1);
+    let is_false = is(0);
+    IrChandleExpr::Conditional {
+        predicate: Box::new(IrExpr::new(
+            IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                statements: vec![IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width: 1,
+                    signed: false,
+                    two_state: false,
+                    init: Some(Box::new(truth)),
+                }],
+                value: is_true,
+            })),
+            1,
+            false,
+            None,
+        )),
+        then: Box::new(then),
+        otherwise: Box::new(IrChandleExpr::Conditional {
+            predicate: Box::new(is_false),
+            then: Box::new(otherwise),
+            otherwise: Box::new(IrChandleExpr::Null),
+        }),
+    }
 }
