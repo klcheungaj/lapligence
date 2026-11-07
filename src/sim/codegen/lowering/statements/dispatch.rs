@@ -19,7 +19,10 @@ impl EmitCtx<'_, '_> {
         // it, so the bound value outlives the test.
         let hoist = matches!(
             self.cg.kind(h),
-            NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::SysCall { .. }
+            NodeKind::Stmt(StmtKind::Assign { .. })
+                | NodeKind::SysCall { .. }
+                | NodeKind::FuncCall { .. }
+                | NodeKind::MethodCall { .. }
         );
         let saved = std::mem::replace(&mut self.cg.container_call_prelude, hoist.then(Vec::new));
         let mailbox_hoist =

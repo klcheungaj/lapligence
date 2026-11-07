@@ -220,9 +220,19 @@ impl Codegen<'_> {
                 // Each container member is its own storage, so no other leaf
                 // write of this copy can change the source.
                 if nba {
-                    return Err(format!(
-                        "nonblocking assignment of a record with a container member in `{path}` is not supported"
-                    ));
+                    if !self.model.containers[lhs_container.ir].is_global_storage() {
+                        return Err(format!(
+                            "nonblocking assignment to a container member of an automatic record in `{path}` is illegal (SV 6.21, 10.4.2)"
+                        ));
+                    }
+                    assignments.push(IrStmt::Container(Box::new(
+                        IrContainerStmt::ContainerNonblocking {
+                            target: Some(lhs_container.ir),
+                            src: rhs_container.ir,
+                            delay: None,
+                        },
+                    )));
+                    continue;
                 }
                 if lhs_container.ir != rhs_container.ir {
                     assignments.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {

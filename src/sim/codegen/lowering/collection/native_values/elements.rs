@@ -632,6 +632,30 @@ impl Codegen<'_> {
         Ok(Some(IrStmt::Block(statements)))
     }
 
+    /// Copy a whole record element, a sub-record of one or the record removed
+    /// by a pop into the columns of `value`; `None` for other sources.
+    pub(in crate::sim::codegen::lowering) fn element_into_record_value(
+        &mut self,
+        path: &str,
+        value: &RecordValue,
+        source: NodeId,
+        nba: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        let (element, prefix) = match self.element_subrecord(source) {
+            Some((element, _, prefix, _)) => (element, prefix),
+            None => (source, Vec::new()),
+        };
+        let Some((temporary, mut statements)) = self.element_copy(path, element)? else {
+            return Ok(None);
+        };
+        let endpoint = NativeEndpoint::Value {
+            value: temporary,
+            prefix,
+        };
+        statements.push(self.endpoint_to_record_value(path, value, &endpoint, nba)?);
+        Ok(Some(IrStmt::Block(statements)))
+    }
+
     /// The element, selection and member path of `node` when it names a whole
     /// sub-record or member array inside a record element.
     fn element_subrecord(

@@ -1344,6 +1344,17 @@ impl Codegen<'_> {
         nba: bool,
     ) -> Result<IrStmt, String> {
         match (&value, leaf) {
+            (LeafValue::Packed(_) | LeafValue::Real(_), NativeEndpointLeaf::Cell(array)) => {
+                let lhs = self.record_column_lhs(&RecordColumn::Cell(*array))?;
+                let (LeafValue::Packed(value) | LeafValue::Real(value)) = value else {
+                    return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned());
+                };
+                return Ok(IrStmt::Assign {
+                    rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+                    lhs,
+                    nba,
+                });
+            }
             (LeafValue::Slot(source, slot), NativeEndpointLeaf::Container(target)) if !nba => {
                 return Ok(IrStmt::Container(Box::new(
                     IrContainerStmt::ValueItemToContainer {
@@ -1549,9 +1560,90 @@ impl Codegen<'_> {
                 });
             }
         }
+        if let Some(statement) = self.record_cell_endpoint_transfer(path, target, source, nba)? {
+            return Ok(statement);
+        }
         let targets = self.endpoint_leaves(target)?;
         let sources = self.endpoint_leaves(source)?;
-        self.native_leaf_transfer(path, targets, sources, nba)
+        let descriptor = self.endpoint_descriptor(target)?;
+        self.native_leaf_transfer(path, &descriptor, targets, sources, nba)
+    }
+
+    /// Copy between `other` and a selection that names one record cell of a
+    /// member column, which has no leaf of its own: each leaf of `other`
+    /// takes or gives its bits of the cell.
+    fn record_cell_endpoint_transfer(
+        &mut self,
+        path: &str,
+        target: &NativeEndpoint,
+        source: &NativeEndpoint,
+        nba: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        let (selection, column, other, write) =
+            if let Some((selection, column)) = record_cell_selection(target) {
+                (selection, column, source, true)
+            } else if let Some((selection, column)) = record_cell_selection(source) {
+                (selection, column, target, false)
+            } else {
+                return Ok(None);
+            };
+        let Some(array) = column.array.as_ref().map(|array| array.ir) else {
+            return Ok(None);
+        };
+        let array = self.reference_array(array);
+        let root = self
+            .query_descriptor(selection.root)
+            .ok_or("record selection has no type")?;
+        let Some(cell) = record_cell_of(root, &column.path, &selection.prefix) else {
+            return Ok(None);
+        };
+        let within = selection.prefix[column.path.len()..].to_vec();
+        let mut leaves = Vec::new();
+        for (relative, leaf) in self.endpoint_leaves(other)? {
+            match leaf {
+                NativeEndpointLeaf::Slot(value, fixed) => {
+                    let base = fixed.path.len() - relative.len();
+                    leaves.extend(fixed_leaf_items(&fixed)?.into_iter().map(|item| {
+                        (
+                            item.path[base..].to_vec(),
+                            NativeEndpointLeaf::Value(value, item),
+                        )
+                    }));
+                }
+                leaf => leaves.push((relative, leaf)),
+            }
+        }
+        if leaves.is_empty() {
+            return Err(format!(
+                "native record transfer in `{path}` moves one record cell into another"
+            ));
+        }
+        let mut statements = Vec::with_capacity(leaves.len());
+        for (relative, leaf) in &leaves {
+            let mut position = within.clone();
+            position.extend_from_slice(relative);
+            statements.push(self.record_cell_transfer(
+                path,
+                array,
+                &cell,
+                &position,
+                leaf,
+                (write, nba),
+            )?);
+        }
+        Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// The record type at `endpoint`.
+    fn endpoint_descriptor(&self, endpoint: &NativeEndpoint) -> Result<TypeDescriptor, String> {
+        match endpoint {
+            NativeEndpoint::Value { value, prefix } => {
+                let layout = self.native_layout_of_value(*value)?;
+                Self::descriptor_at_path(&layout.descriptor, prefix)
+                    .ok_or_else(|| "native record selection has no type".to_owned())
+            }
+            NativeEndpoint::Module(selection) => Ok(selection.descriptor.clone()),
+        }
     }
 
     /// Copy the columns of record `value`, the result of a call, into
@@ -1564,41 +1656,35 @@ impl Codegen<'_> {
         nba: bool,
     ) -> Result<IrStmt, String> {
         let targets = self.endpoint_leaves(target)?;
-        let mut sources = value
-            .columns
-            .iter()
-            .map(|(member, column)| {
-                let leaf = match column {
-                    RecordColumn::Array(array) => NativeEndpointLeaf::Column(*array),
-                    RecordColumn::Cell(array) => NativeEndpointLeaf::Cell(*array),
-                    RecordColumn::Leaf(leaf) => NativeEndpointLeaf::Module(leaf.clone()),
-                    RecordColumn::Native(value, leaf) => {
-                        NativeEndpointLeaf::Value(*value, (**leaf).clone())
-                    }
-                };
-                (member.clone(), leaf)
-            })
-            .collect::<NativeLeafPairs>();
-        // Scalars pair by position, and a value lists columns in declaration
-        // order where a target lists its kinds of leaf in turn.
-        sources.sort_by_key(|(member, _)| {
-            targets
-                .iter()
-                .position(|(target, _)| target == member)
-                .unwrap_or(usize::MAX)
-        });
-        self.native_leaf_transfer(path, targets, sources, nba)
+        let sources = record_value_leaves(value, &targets);
+        self.native_leaf_transfer(path, &value.descriptor, targets, sources, nba)
+    }
+
+    /// Copy `source`, a native or module record endpoint, into the columns
+    /// of record `value`.
+    pub(super) fn endpoint_to_record_value(
+        &mut self,
+        path: &str,
+        value: &RecordValue,
+        source: &NativeEndpoint,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let sources = self.endpoint_leaves(source)?;
+        let targets = record_value_leaves(value, &sources);
+        self.native_leaf_transfer(path, &value.descriptor, targets, sources, nba)
     }
 
     /// Copy paired leaf lists, `sources` read whole before the first write.
     fn native_leaf_transfer(
         &mut self,
         path: &str,
+        descriptor: &TypeDescriptor,
         mut targets: NativeLeafPairs,
         mut sources: NativeLeafPairs,
         nba: bool,
     ) -> Result<IrStmt, String> {
-        let columns = self.native_column_transfers(path, &mut targets, &mut sources, nba)?;
+        let columns =
+            self.native_column_transfers(path, descriptor, &mut targets, &mut sources, nba)?;
         if targets.len() != sources.len()
             || (targets.is_empty() && columns.is_empty())
             || targets
@@ -1624,12 +1710,70 @@ impl Codegen<'_> {
         Ok(IrStmt::Block(captures))
     }
 
+    /// Move one leaf inside a packed record cell of column `array`: `relative`
+    /// names the cell and the leaf below the column, and `direction` holds
+    /// whether the column is written and whether the write queues.
+    fn record_cell_transfer(
+        &mut self,
+        path: &str,
+        array: usize,
+        cell: &RecordCell,
+        relative: &[AggregatePathPart],
+        leaf: &NativeEndpointLeaf,
+        direction: (bool, bool),
+    ) -> Result<IrStmt, String> {
+        let (write, nba) = direction;
+        let unsupported = || format!("native record transfer in `{path}` splits a record cell");
+        let (indices, below) = relative
+            .split_at_checked(cell.dimensions)
+            .ok_or_else(unsupported)?;
+        let indices = indices
+            .iter()
+            .map(|part| match part {
+                AggregatePathPart::Index(index) => Ok(lhs_integer_expr(i128::from(*index))),
+                AggregatePathPart::Member(_) => Err(unsupported()),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (item, lsb) =
+            Self::fixed_descriptor_path(&cell.element, below).ok_or_else(unsupported)?;
+        let width = Self::fixed_descriptor_width(&item).ok_or_else(unsupported)?;
+        let (left, right) = (i64::from(lsb) + i64::from(width) - 1, i64::from(lsb));
+        let elem_sel = IrElemSel::Part(left, right);
+        if !write {
+            let value = IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: array,
+                    indices,
+                    elem_sel,
+                },
+                width,
+                false,
+                None,
+            );
+            return self.endpoint_leaf_write(path, leaf, LeafValue::Packed(value), nba);
+        }
+        let LeafValue::Packed(value) = self.endpoint_leaf_read(leaf)? else {
+            return Err(unsupported());
+        };
+        let lhs = self.reference_lhs(IrLhs::ArrayElem {
+            arr: array,
+            indices,
+            elem_sel,
+        })?;
+        Ok(IrStmt::Assign {
+            rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+            lhs,
+            nba,
+        })
+    }
+
     /// Take each record column out of a transfer's leaf lists, with the
     /// items it pairs with on the other side, as one whole-column copy: a
     /// native value keeps a member array as one fixed-array item.
     fn native_column_transfers(
         &mut self,
         path: &str,
+        descriptor: &TypeDescriptor,
         targets: &mut NativeLeafPairs,
         sources: &mut NativeLeafPairs,
         nba: bool,
@@ -1661,6 +1805,28 @@ impl Codegen<'_> {
                     .ok_or_else(|| {
                         format!("native record transfer in `{path}` has no column source")
                     })?;
+                if let Some(cell) = record_cell_of(descriptor, &member, &items[selected].0) {
+                    let moved = items
+                        .iter()
+                        .filter(|(leaf, _)| leaf.starts_with(&member))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let member_len = member.len();
+                    for (leaf, item) in &moved {
+                        let statement = self.record_cell_transfer(
+                            path,
+                            array,
+                            &cell,
+                            &leaf[member_len..],
+                            item,
+                            (write, nba),
+                        )?;
+                        statements.push(statement);
+                    }
+                    columns.retain(|(path, _)| !path.starts_with(&member));
+                    items.retain(|(path, _)| !path.starts_with(&member));
+                    continue;
+                }
                 let slot = match &items[selected].1 {
                     NativeEndpointLeaf::Value(value, leaf) => {
                         Some((*value, leaf.items[..leaf.items.len() - 1].to_vec()))
@@ -1728,6 +1894,52 @@ impl Codegen<'_> {
         }
         Ok(statements)
     }
+}
+
+/// The cells of a member column that holds a record per cell, when the leaves
+/// of the other side of a transfer sit inside the records: `member` is the
+/// column and `leaf` the first such leaf.
+fn record_cell_of(
+    descriptor: &TypeDescriptor,
+    member: &[AggregatePathPart],
+    leaf: &[AggregatePathPart],
+) -> Option<RecordCell> {
+    let at = Codegen::descriptor_at_path(descriptor, member)?;
+    let TypeShape::FixedArray {
+        dimensions,
+        element,
+    } = at.shape
+    else {
+        return None;
+    };
+    (matches!(element.shape, TypeShape::Aggregate(_)) && leaf.len() > member.len()).then(|| {
+        RecordCell {
+            dimensions: dimensions.len(),
+            element: (*element).clone(),
+        }
+    })
+}
+
+/// The selection and the column of `endpoint` when it names something inside
+/// one cell of a member column.
+fn record_cell_selection(
+    endpoint: &NativeEndpoint,
+) -> Option<(&AggregateSelection, &AggregateMemberInfo)> {
+    let NativeEndpoint::Module(selection) = endpoint else {
+        return None;
+    };
+    let column = selection.storage.leaves.iter().find(|leaf| {
+        leaf.array.is_some()
+            && leaf.path.len() < selection.prefix.len()
+            && selection.prefix.starts_with(&leaf.path)
+    })?;
+    Some((selection, column))
+}
+
+/// The shape of a member column holding a packed record per cell.
+struct RecordCell {
+    dimensions: usize,
+    element: TypeDescriptor,
 }
 
 /// The item a constant `path` names inside a fixed member array that moves as
@@ -2403,6 +2615,10 @@ impl Codegen<'_> {
         }
         if let Some((source, _)) = self.native_endpoint(source)? {
             return self.native_transfer(path, target, &source, nba);
+        }
+        // An automatic record of the column form has no endpoint of its own.
+        if let Some(value) = self.column_record_storage(source) {
+            return self.record_value_transfer(path, target, &value, nba);
         }
         // A column-layout result arrives in columns, whatever its width.
         if let Some(function) = self.record_call_function(source)? {
@@ -3551,6 +3767,34 @@ impl Codegen<'_> {
 
 /// Leaves of a transfer endpoint with their paths below it.
 type NativeLeafPairs = Vec<(Vec<AggregatePathPart>, NativeEndpointLeaf)>;
+
+/// The leaves of record `value`, each scalar at the position of its partner
+/// in `partners`: scalars pair by position, and a value lists its columns in
+/// declaration order where an endpoint lists its kinds of leaf in turn.
+fn record_value_leaves(value: &RecordValue, partners: &NativeLeafPairs) -> NativeLeafPairs {
+    let mut leaves = value
+        .columns
+        .iter()
+        .map(|(member, column)| {
+            let leaf = match column {
+                RecordColumn::Array(array) => NativeEndpointLeaf::Column(*array),
+                RecordColumn::Cell(array) => NativeEndpointLeaf::Cell(*array),
+                RecordColumn::Leaf(leaf) => NativeEndpointLeaf::Module(leaf.clone()),
+                RecordColumn::Native(value, leaf) => {
+                    NativeEndpointLeaf::Value(*value, (**leaf).clone())
+                }
+            };
+            (member.clone(), leaf)
+        })
+        .collect::<NativeLeafPairs>();
+    leaves.sort_by_key(|(member, _)| {
+        partners
+            .iter()
+            .position(|(partner, _)| partner == member)
+            .unwrap_or(usize::MAX)
+    });
+    leaves
+}
 
 /// The descriptor column a module record leaf is, if it is one.
 /// The column of a transfer leaf, and how many path steps below the member a

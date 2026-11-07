@@ -136,9 +136,9 @@ impl Codegen<'_> {
         let mut statements = Vec::new();
         let left = self.native_conditional_arm(path, if_true, &mut statements)?;
         let right = self.native_conditional_arm(path, if_false, &mut statements)?;
-        let targets = self.endpoint_leaves(target)?;
-        let lefts = self.endpoint_leaves(&left)?;
-        let rights = self.endpoint_leaves(&right)?;
+        let mut targets = self.endpoint_leaves(target)?;
+        let mut lefts = self.endpoint_leaves(&left)?;
+        let mut rights = self.endpoint_leaves(&right)?;
         if targets.is_empty()
             || targets.len() != lefts.len()
             || targets.len() != rights.len()
@@ -151,6 +151,37 @@ impl Codegen<'_> {
             return Err(format!(
                 "native record conditional in `{path}` has incompatible leaf layouts"
             ));
+        }
+        // A fixed member array in a slot merges by element, in temporaries.
+        let mut slots = Vec::new();
+        let mut position = 0;
+        while position < targets.len() {
+            let trio = [
+                &targets[position].1,
+                &lefts[position].1,
+                &rights[position].1,
+            ];
+            let Some(fixed) = trio.iter().find_map(|leaf| match leaf {
+                NativeEndpointLeaf::Slot(_, fixed) => Some((**fixed).clone()),
+                _ => None,
+            }) else {
+                position += 1;
+                continue;
+            };
+            let left = self.slot_merge_arm(&fixed, &lefts[position].1, &mut statements)?;
+            let right = self.slot_merge_arm(&fixed, &rights[position].1, &mut statements)?;
+            let merged = self.fixed_leaf_temporary(&fixed);
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                merged,
+            ))));
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::Merge {
+                dst: merged,
+                left,
+                right,
+            })));
+            slots.push((targets.remove(position).1, merged));
+            lefts.remove(position);
+            rights.remove(position);
         }
         let sequence = self.native_copy_sequence;
         self.native_copy_sequence += 1;
@@ -216,7 +247,43 @@ impl Codegen<'_> {
                 check: IrUniquePriorityCheck::None,
             });
         }
+        for (leaf, merged) in slots {
+            statements.push(self.endpoint_leaf_write(
+                path,
+                &leaf,
+                LeafValue::Container(merged),
+                nba,
+            )?);
+        }
         Ok(IrStmt::Block(statements))
+    }
+
+    /// The elements of one arm's fixed member array as a container: a slot
+    /// is copied out, as a merge reads containers.
+    fn slot_merge_arm(
+        &mut self,
+        fixed: &NativeFixedLeaf,
+        arm: &NativeEndpointLeaf,
+        statements: &mut Vec<IrStmt>,
+    ) -> Result<usize, String> {
+        match arm {
+            NativeEndpointLeaf::Container(container) => Ok(*container),
+            NativeEndpointLeaf::Slot(value, leaf) => {
+                let temporary = self.fixed_leaf_temporary(fixed);
+                statements.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                    temporary,
+                ))));
+                statements.push(IrStmt::Container(Box::new(
+                    IrContainerStmt::ValueItemToContainer {
+                        root: IrValueItemRoot::Value(*value),
+                        items: leaf.items.clone(),
+                        container: temporary,
+                    },
+                )));
+                Ok(temporary)
+            }
+            _ => Err("native record conditional pairs a member array with a scalar".to_owned()),
+        }
     }
 
     /// A known test that two captured leaves match; container members

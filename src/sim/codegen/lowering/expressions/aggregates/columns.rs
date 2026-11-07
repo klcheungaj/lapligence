@@ -501,6 +501,11 @@ impl Codegen<'_> {
             out.extend(statements);
             return Ok(());
         }
+        // An element of container storage moves through a copy of it.
+        if let Some(statement) = self.element_into_record_value(path, dst, node, nba)? {
+            out.push(statement);
+            return Ok(());
+        }
         // Any other value of the type is its packed image: an element of an
         // array of records, a parameter, a bit-stream cast.
         let image = self.lower_expr(path, node)?;
@@ -1021,72 +1026,79 @@ impl Codegen<'_> {
             let member = layout.members.get(index).ok_or_else(|| {
                 format!("record pattern member index {index} is out of bounds in `{path}`")
             })?;
-            let key = AggregatePathPart::Member(member.name.clone());
-            let target = RecordValue {
-                descriptor: member.descriptor.clone(),
-                columns: dst
-                    .columns
-                    .iter()
-                    .filter(|(column_path, _)| column_path.first() == Some(&key))
-                    .map(|(column_path, column)| (column_path[1..].to_vec(), column.clone()))
-                    .collect(),
-            };
-            match &member.descriptor.shape {
-                TypeShape::FixedArray { element, .. } => {
-                    let Some((_, RecordColumn::Array(array))) = target.columns.first() else {
-                        return Err(format!(
-                            "record pattern array member has no column in `{path}`"
-                        ));
-                    };
-                    let array = *array;
-                    self.lower_record_array_item(
-                        path,
-                        array,
-                        &member.descriptor,
-                        element,
-                        value,
-                        out,
-                    )?;
-                }
-                TypeShape::Aggregate(nested) if nested.kind == AggregateKind::UnpackedStruct => {
-                    let item = self.p30_unwrap_cast(value);
-                    if self.assignment_pattern_operands(path, item)?.is_some() {
-                        self.lower_record_pattern_into(path, &target, item, out)?;
-                    } else {
-                        self.lower_record_value_into(path, &target, item, false, out)?;
+            let target = record_member_value(dst, member);
+            self.lower_record_pattern_member(path, &target, value, &mut captured, out)?;
+        }
+        Ok(())
+    }
+
+    /// One member item of a record pattern, into `target`, the member's
+    /// columns. A value that is no record gives every nested leaf its value:
+    /// a `default` item reaches through member structures (SV 10.9.2).
+    fn lower_record_pattern_member(
+        &mut self,
+        path: &str,
+        target: &RecordValue,
+        value: NodeId,
+        captured: &mut HashMap<NodeId, (String, u32, bool)>,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<(), String> {
+        match &target.descriptor.shape {
+            TypeShape::FixedArray { element, .. } => {
+                let Some((_, RecordColumn::Array(array))) = target.columns.first() else {
+                    return Err(format!(
+                        "record pattern array member has no column in `{path}`"
+                    ));
+                };
+                let array = *array;
+                self.lower_record_array_item(path, array, &target.descriptor, element, value, out)?;
+            }
+            TypeShape::Aggregate(nested) if nested.kind == AggregateKind::UnpackedStruct => {
+                let item = self.p30_unwrap_cast(value);
+                if self.assignment_pattern_operands(path, item)?.is_some() {
+                    self.lower_record_pattern_into(path, target, item, out)?;
+                } else if self
+                    .query_descriptor(item)
+                    .is_some_and(|item| matches!(item.shape, TypeShape::Aggregate(_)))
+                {
+                    self.lower_record_value_into(path, target, item, false, out)?;
+                } else {
+                    for member in &nested.members {
+                        let member = record_member_value(target, member);
+                        self.lower_record_pattern_member(path, &member, value, captured, out)?;
                     }
                 }
-                _ => {
-                    let Some((_, column)) = target.columns.first() else {
-                        return Err(format!("record pattern member has no column in `{path}`"));
-                    };
-                    if let Some(leaf) = Self::record_leaf_endpoint(column) {
-                        out.push(self.native_leaf_assign(path, &leaf, value, false)?);
-                        continue;
-                    }
-                    let lhs = self.record_column_lhs(column)?;
-                    let value = if let Some((name, width, signed)) = captured.get(&value) {
-                        IrExpr::new(IrExprKind::LocalRead(name.clone()), *width, *signed, None)
-                    } else {
-                        let source = self.lower_expr(path, value)?;
-                        let name = self.new_fn_name(path, "record_item");
-                        let (width, signed) = (source.width, source.signed);
-                        out.push(IrStmt::DeclLocal {
-                            name: name.clone(),
-                            width,
-                            signed,
-                            two_state: false,
-                            init: Some(Box::new(source)),
-                        });
-                        captured.insert(value, (name.clone(), width, signed));
-                        IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
-                    };
-                    out.push(IrStmt::Assign {
-                        rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
-                        lhs,
-                        nba: false,
+            }
+            _ => {
+                let Some((_, column)) = target.columns.first() else {
+                    return Err(format!("record pattern member has no column in `{path}`"));
+                };
+                if let Some(leaf) = Self::record_leaf_endpoint(column) {
+                    out.push(self.native_leaf_assign(path, &leaf, value, false)?);
+                    return Ok(());
+                }
+                let lhs = self.record_column_lhs(column)?;
+                let value = if let Some((name, width, signed)) = captured.get(&value) {
+                    IrExpr::new(IrExprKind::LocalRead(name.clone()), *width, *signed, None)
+                } else {
+                    let source = self.lower_expr(path, value)?;
+                    let name = self.new_fn_name(path, "record_item");
+                    let (width, signed) = (source.width, source.signed);
+                    out.push(IrStmt::DeclLocal {
+                        name: name.clone(),
+                        width,
+                        signed,
+                        two_state: false,
+                        init: Some(Box::new(source)),
                     });
-                }
+                    captured.insert(value, (name.clone(), width, signed));
+                    IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
+                };
+                out.push(IrStmt::Assign {
+                    rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+                    lhs,
+                    nba: false,
+                });
             }
         }
         Ok(())
@@ -2387,4 +2399,18 @@ fn binding_match() -> IrExpr {
         false,
         None,
     )
+}
+
+/// The columns of `member` of record `value`, with paths relative to it.
+fn record_member_value(value: &RecordValue, member: &AggregateMember) -> RecordValue {
+    let key = AggregatePathPart::Member(member.name.clone());
+    RecordValue {
+        descriptor: member.descriptor.clone(),
+        columns: value
+            .columns
+            .iter()
+            .filter(|(column_path, _)| column_path.first() == Some(&key))
+            .map(|(column_path, column)| (column_path[1..].to_vec(), column.clone()))
+            .collect(),
+    }
 }
