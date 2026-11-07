@@ -1,6 +1,6 @@
 // SIM-013 A02: edge detection on the least significant bit including X and Z
 // (SV 9.4.2, Table 9-2), edges of evaluated expressions, and iff qualifiers
-// evaluated when the event occurs (SV 9.4.2.3).
+// (SV 9.4.2.3) read at the check that ends the writing turn (decision T1-D11).
 `timescale 1ns / 1ns
 module tb;
   logic s = 1'b0;
