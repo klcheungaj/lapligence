@@ -52,7 +52,7 @@ fn runtime_delays_without_a_tick_count_wait_one_tick_and_integral_delays_wrap() 
         "partial_features",
         "dynamic_delay_nonfinite",
         "after 1\n",
-        "",
+        "INFO: [SIM-000] 0 error(s), 1 warning(s)\n",
         &["real delay is NaN; using 1 tick"],
     );
 }

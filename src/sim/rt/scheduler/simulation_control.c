@@ -101,27 +101,15 @@ static void llg_rt_framed_line(llg_msg_id_t id, const char* site, const char* te
     llg_report_emit(&report, stderr);
 }
 
-LLG_MSG_EXPORT_COUNTS(scheduler)
 
-// Units that define LLG_MSG_COUNT_HOOK (VPI, DPI-C contexts) count here.
-void llg_rt_count_message(int severity) {
-    if (severity >= 0 && severity < 4 && llg_msg_counts[severity] != UINT64_MAX)
-        llg_msg_counts[severity]++;
-}
-
-// The end-of-run summary over every runtime unit that reports (SIM-000),
+// The end-of-run summary over every message of the model (SIM-000),
 // printed when the run reported a warning or worse.
 static void llg_rt_report_summary(void) {
     static int printed;
     uint64_t counts[4];
     int severity;
     if (printed) return;
-    for (severity = 0; severity < 4; severity++) {
-        counts[severity] = llg_msg_count_scheduler(severity) + llg_msg_count_container(severity);
-#ifdef LLG_WAVEFORM
-        counts[severity] += llg_msg_count_waveform(severity);
-#endif
-    }
+    for (severity = 0; severity < 4; severity++) counts[severity] = llg_msg_counts[severity];
     if (!counts[LLG_SEVERITY_WARNING] && !counts[LLG_SEVERITY_ERROR] &&
         !counts[LLG_SEVERITY_FATAL])
         return;

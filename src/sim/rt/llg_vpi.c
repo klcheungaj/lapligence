@@ -9,9 +9,6 @@
 // never pin them: the collector reports each reclaimed object and every handle
 // into it is released first.
 
-// The VPI and DPI-C bridge always links with the scheduler, which counts
-// its messages for the end-of-run summary.
-#define LLG_MSG_COUNT_HOOK llg_rt_count_message
 #include "llg_vpi.h"
 #include "sv_vpi_user.h"
 

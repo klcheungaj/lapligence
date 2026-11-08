@@ -9,9 +9,6 @@
 // to the single-threaded runtime. Only models whose generated shims call
 // llg_dpi_context_begin reference this unit, so only they need the platform
 // thread library.
-// Foreign contexts always link with the scheduler, which counts their
-// messages for the end-of-run summary.
-#define LLG_MSG_COUNT_HOOK llg_rt_count_message
 #include "llg_platform.h"
 #include "llg_vpi.h"
 

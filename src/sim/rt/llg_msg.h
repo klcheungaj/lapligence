@@ -8,11 +8,12 @@
 // buffer; longer ones grow on the heap, and an allocation failure truncates a
 // message rather than aborting a report.
 //
-// The runtime is several translation units, some of which build standalone
-// (value, string, constraint and component probes), so the reporter is
-// `static inline` here and each unit counts its own messages. A unit whose
-// counts belong in the end-of-run summary exports them with
-// LLG_MSG_EXPORT_COUNTS; the scheduler adds them up.
+// The runtime is several translation units. A generated model compiles each
+// of them with LLG_MSG_SHARED (its CMake project), and llg_rt.c defines
+// LLG_MSG_IMPLEMENTATION, so the reporter and the message counts the
+// end-of-run summary reads exist once per model. A unit built alone (value,
+// string, constraint and component probes) has neither macro and gets
+// private `static inline` copies counting its own messages.
 #ifndef LLG_MSG_H
 #define LLG_MSG_H
 
@@ -36,6 +37,23 @@ typedef enum {
     LLG_MSG_ID_COUNT
 } llg_msg_id_t;
 
+#if defined(LLG_MSG_IMPLEMENTATION)
+#define LLG_MSG_API
+#define LLG_MSG_DEFINE 1
+#elif defined(LLG_MSG_SHARED)
+#define LLG_MSG_API extern
+#define LLG_MSG_DEFINE 0
+#else
+#define LLG_MSG_API static inline
+#define LLG_MSG_DEFINE 1
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define LLG_MSG_PRINTF(fmt, args) __attribute__((format(printf, fmt, args)))
+#else
+#define LLG_MSG_PRINTF(fmt, args)
+#endif
+
 // ── Whole-message buffer ─────────────────────────────────────────────────────
 
 typedef struct {
@@ -45,15 +63,41 @@ typedef struct {
     char inline_buf[512];
 } llg_report_t;
 
+// ── Reporter ─────────────────────────────────────────────────────────────────
+
+LLG_MSG_API size_t llg_report_reserve(llg_report_t* report, size_t extra);
+LLG_MSG_API void llg_report_bytes(llg_report_t* report, const char* bytes, size_t len);
+LLG_MSG_API void llg_report_vprintf(llg_report_t* report, const char* fmt, va_list args);
+LLG_MSG_PRINTF(2, 3)
+LLG_MSG_API void llg_report_printf(llg_report_t* report, const char* fmt, ...);
+// The catalog severity of message `id`.
+LLG_MSG_API int llg_msg_default_severity(llg_msg_id_t id);
+// Append message `id` with `severity` to `out` (newline included) and count
+// it. `location`, `scope` and `time` may be NULL or empty.
+LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity,
+                                const char* location, const char* scope,
+                                const char* time, const char* text, size_t text_len);
+// Report message `id` (its catalog severity) with printf-style text.
+LLG_MSG_API void llg_msg_vreport(llg_msg_id_t id, const char* location, const char* fmt,
+                                 va_list args);
+LLG_MSG_PRINTF(3, 4)
+LLG_MSG_API void llg_msg(llg_msg_id_t id, const char* location, const char* fmt, ...);
+// Report a fatal internal message and abort.
+LLG_MSG_PRINTF(2, 3)
+LLG_MSG_API _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...);
+// The end-of-run summary text for `counts` from the layout's SUMMARY template.
+LLG_MSG_API void llg_msg_summary_text(llg_report_t* out, const uint64_t counts[4]);
+
 static inline void llg_report_init(llg_report_t* report) {
     report->data = report->inline_buf;
     report->len = 0;
     report->cap = sizeof(report->inline_buf);
 }
 
+#if LLG_MSG_DEFINE
 // Make room for `extra` more bytes plus a terminator; returns how many of the
 // requested bytes fit.
-static inline size_t llg_report_reserve(llg_report_t* report, size_t extra) {
+LLG_MSG_API size_t llg_report_reserve(llg_report_t* report, size_t extra) {
     size_t room = report->cap - report->len - 1u;
     if (extra <= room) return extra;
     size_t need = report->len + extra + 1u;
@@ -68,14 +112,14 @@ static inline size_t llg_report_reserve(llg_report_t* report, size_t extra) {
     return extra;
 }
 
-static inline void llg_report_bytes(llg_report_t* report, const char* bytes, size_t len) {
+LLG_MSG_API void llg_report_bytes(llg_report_t* report, const char* bytes, size_t len) {
     size_t fit = llg_report_reserve(report, len);
     if (fit) memcpy(report->data + report->len, bytes, fit);
     report->len += fit;
     report->data[report->len] = '\0';
 }
 
-static inline void llg_report_vprintf(llg_report_t* report, const char* fmt, va_list args) {
+LLG_MSG_API void llg_report_vprintf(llg_report_t* report, const char* fmt, va_list args) {
     va_list again;
     va_copy(again, args);
     size_t room = report->cap - report->len;
@@ -93,15 +137,14 @@ static inline void llg_report_vprintf(llg_report_t* report, const char* fmt, va_
     report->len += (size_t)written;
 }
 
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((format(printf, 2, 3)))
-#endif
-static inline void llg_report_printf(llg_report_t* report, const char* fmt, ...) {
+LLG_MSG_API void llg_report_printf(llg_report_t* report, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     llg_report_vprintf(report, fmt, args);
     va_end(args);
 }
+
+#endif
 
 static inline void llg_report_free(llg_report_t* report) {
     if (report->data != report->inline_buf) free(report->data);
@@ -121,24 +164,15 @@ static inline void llg_report_emit(llg_report_t* report, FILE* stream) {
 #include "llg_msg_layout.def"
 #undef LLG_MSG_LAYOUT
 
-// This unit's message counts per severity. A unit that always links with
-// the scheduler defines LLG_MSG_COUNT_HOOK (before its first include) to count
-// in the scheduler's table instead.
-#ifdef LLG_MSG_COUNT_HOOK
-void LLG_MSG_COUNT_HOOK(int severity);
+// Message counts per severity: the model's (the end-of-run summary reads
+// them), or this unit's when it is built alone.
+#if defined(LLG_MSG_IMPLEMENTATION)
+uint64_t llg_msg_counts[4];
+#elif defined(LLG_MSG_SHARED)
+extern uint64_t llg_msg_counts[4];
 #else
 static uint64_t llg_msg_counts[4];
 #endif
-
-// The units whose counts the end-of-run summary adds up.
-uint64_t llg_msg_count_scheduler(int severity);
-uint64_t llg_msg_count_container(int severity);
-uint64_t llg_msg_count_waveform(int severity);
-
-#define LLG_MSG_EXPORT_COUNTS(unit)                                        \
-    uint64_t llg_msg_count_##unit(int severity) {                          \
-        return severity >= 0 && severity < 4 ? llg_msg_counts[severity] : 0; \
-    }
 
 typedef struct {
     const char* severity;
@@ -149,6 +183,7 @@ typedef struct {
     size_t text_len;
 } llg_msg_fields_t;
 
+#if LLG_MSG_DEFINE
 // The value of template field `name` (`len` bytes), or NULL when absent.
 static inline const char* llg_msg_field(const llg_msg_fields_t* f, const char* name,
                                         size_t len, size_t* value_len) {
@@ -233,7 +268,7 @@ static inline const char* llg_msg_severity_word(int severity) {
     }
 }
 
-static inline int llg_msg_default_severity(llg_msg_id_t id) {
+LLG_MSG_API int llg_msg_default_severity(llg_msg_id_t id) {
     static const unsigned char severities[] = {
 #define LLG_MSG_ID(name, tool, index, severity, meaning, disable) (unsigned char)(severity),
 #include "llg_msg_ids.def"
@@ -244,7 +279,7 @@ static inline int llg_msg_default_severity(llg_msg_id_t id) {
 
 // Append message `id` with `severity` to `out` (newline included) and count
 // it. `location`, `scope` and `time` may be NULL or empty.
-static inline void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity,
+LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity,
                                   const char* location, const char* scope,
                                   const char* time, const char* text, size_t text_len) {
     static const char* const tools[] = {
@@ -284,15 +319,11 @@ static inline void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severi
     llg_msg_render(out, LLG_MSG_LAYOUT_TEMPLATE, &fields);
     llg_report_bytes(out, "\n", 1);
     if (context != context_inline) free(context);
-#ifdef LLG_MSG_COUNT_HOOK
-    LLG_MSG_COUNT_HOOK(severity);
-#else
     if (llg_msg_counts[severity] != UINT64_MAX) llg_msg_counts[severity]++;
-#endif
 }
 
 // Report message `id` (its catalog severity) with printf-style text.
-static inline void llg_msg_vreport(llg_msg_id_t id, const char* location,
+LLG_MSG_API void llg_msg_vreport(llg_msg_id_t id, const char* location,
                                    const char* fmt, va_list args) {
     llg_report_t text;
     llg_report_t out;
@@ -305,10 +336,7 @@ static inline void llg_msg_vreport(llg_msg_id_t id, const char* location,
     llg_report_emit(&out, stderr);
 }
 
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((format(printf, 3, 4)))
-#endif
-static inline void llg_msg(llg_msg_id_t id, const char* location, const char* fmt, ...) {
+LLG_MSG_API void llg_msg(llg_msg_id_t id, const char* location, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     llg_msg_vreport(id, location, fmt, args);
@@ -316,10 +344,7 @@ static inline void llg_msg(llg_msg_id_t id, const char* location, const char* fm
 }
 
 // Report a fatal internal message and abort.
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((format(printf, 2, 3)))
-#endif
-static inline _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...) {
+LLG_MSG_API _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     llg_msg_vreport(id, NULL, fmt, args);
@@ -328,7 +353,7 @@ static inline _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...
 }
 
 // The end-of-run summary text for `counts` from the layout's SUMMARY template.
-static inline void llg_msg_summary_text(llg_report_t* out, const uint64_t counts[4]) {
+LLG_MSG_API void llg_msg_summary_text(llg_report_t* out, const uint64_t counts[4]) {
     char numbers[4][24];
     const char* names[4] = {"info", "warning", "error", "fatal"};
     int i;
@@ -393,5 +418,7 @@ static inline void llg_msg_summary_text(llg_report_t* out, const uint64_t counts
         p++;
     }
 }
+
+#endif // LLG_MSG_DEFINE
 
 #endif

@@ -32,8 +32,6 @@
 #include "llg_platform_native.h"
 #include "llg_msg.h"
 
-LLG_MSG_EXPORT_COUNTS(waveform)
-
 #define LLG_WAVE_QUEUE_CAP 1024u
 #define LLG_WAVE_NO_REG UINT32_MAX
 #define LLG_WAVE_HIER_SEP '\x1f'

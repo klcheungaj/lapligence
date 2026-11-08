@@ -42,7 +42,7 @@ reclaimed objects print `(reclaimed)` and output stops at
 
 | Source pair / directory | Responsibility |
 | --- | --- |
-| `llg_msg.h`, `llg_msg_layout.def`, `llg_msg_ids.def` | Header-only message reporter: renders the layout template shared with the host (`src/core/report.rs`) with a catalog id, counts messages per unit and builds the `SIM-000` summary ([messages](../../../docs/messages.md), [I/O](io.md)). |
+| `llg_msg.h`, `llg_msg_layout.def`, `llg_msg_ids.def` | Message reporter: renders the layout template shared with the host (`src/core/report.rs`) with a catalog id, counts messages and builds the `SIM-000` summary. A model compiles it once, in `llg_rt.c` (`LLG_MSG_IMPLEMENTATION`; the other units build with `LLG_MSG_SHARED`); a unit built alone keeps private `static inline` copies ([messages](../../../docs/messages.md), [I/O](io.md)). |
 | `llg_value.h/.c`, `value/` | Four-state values, arithmetic, selection, resolution, formatting and numeric conversion; scheduler-independent. |
 | `llg_random.h/.c` | Verilog random/distribution functions and explicit seed updates. |
 | `llg_rng.h/.c` | Process/object random streams, independent of scheduling. |

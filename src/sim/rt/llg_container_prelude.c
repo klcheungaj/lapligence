@@ -46,7 +46,6 @@ static void llg_container_warning(const char* message) {
     llg_msg(LLG_MSG_CONTAINER_WARNING, NULL, "%s", message);
 }
 
-LLG_MSG_EXPORT_COUNTS(container)
 
 /* Index checks (simulator.index_checks): the scheduler installs the hook
  * when they are on. These are the forms some simulators stop the run on

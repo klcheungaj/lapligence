@@ -5,6 +5,9 @@
 
 #define _GNU_SOURCE
 #define LLG_PLATFORM_CONSOLE_LOG 1
+// This unit holds the one copy of the message reporter and the message
+// counts of a model (llg_msg.h).
+#define LLG_MSG_IMPLEMENTATION 1
 
 #include "llg_platform.h"
 #include "llg_rt.h"
