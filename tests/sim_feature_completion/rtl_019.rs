@@ -35,7 +35,7 @@ fn from_suite_dir(expected: &str, stems: &[&str]) -> String {
         .lines()
         .map(|line| {
             if stems.iter().any(|stem| line.starts_with(stem)) {
-                format!("{}/{line}\n", directory.display())
+                format!("{}\n", directory.join(line).display())
             } else {
                 format!("{line}\n")
             }

@@ -323,10 +323,10 @@ pub(crate) fn has_message(stderr: &str, id: &str, at: &str, text: &str) -> bool 
             message.id == id
                 && (at.is_empty()
                     || message.location.as_deref().is_some_and(|location| {
-                        location
-                            .split(" (`line ")
-                            .next()
-                            .is_some_and(|physical| physical.ends_with(at))
+                        location.split(" (`line ").next().is_some_and(|physical| {
+                            // Windows prints its own separator in paths.
+                            physical.replace('\\', "/").ends_with(at)
+                        })
                     }))
                 && message.text.contains(text)
         })

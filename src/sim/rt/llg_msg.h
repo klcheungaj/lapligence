@@ -48,7 +48,11 @@ typedef enum {
 #define LLG_MSG_DEFINE 1
 #endif
 
-#if defined(__GNUC__) || defined(__clang__)
+// MinGW GCC checks the `printf` archetype against msvcrt, which lacks C99
+// conversions such as `%zu`; reports format through C99 `vsnprintf`.
+#if defined(__MINGW32__) && !defined(__clang__)
+#define LLG_MSG_PRINTF(fmt, args) __attribute__((format(gnu_printf, fmt, args)))
+#elif defined(__GNUC__) || defined(__clang__)
 #define LLG_MSG_PRINTF(fmt, args) __attribute__((format(printf, fmt, args)))
 #else
 #define LLG_MSG_PRINTF(fmt, args)
