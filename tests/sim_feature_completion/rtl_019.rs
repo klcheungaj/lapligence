@@ -23,19 +23,25 @@ fn fixture(name: &str) -> String {
 }
 
 /// `expected` as a run naming the fixtures by absolute path prints it: a
-/// `` `__FILE__`` line naming a checked-in file (one of `stems`, as the
-/// `.out` file spells it from the suite directory) reports the path the
-/// file was given or found by, here under the suite directory (IEEE
-/// 1800-2009 22.13). `` `line``-mapped names are unchanged.
-fn from_suite_dir(expected: &str, stems: &[&str]) -> String {
+/// `` `__FILE__`` line naming a checked-in file reports the path the file was
+/// given or found by, here under the suite directory (IEEE 1800-2009 22.13).
+/// A file named on the command line (one of `given`, as the `.out` file
+/// spells it from the suite directory) keeps the path the harness built; a
+/// header found beside its includer (one of `found`) is the includer's
+/// directory joined to the include name with `/`, as llg spells it on every
+/// host. `` `line``-mapped names are unchanged.
+fn from_suite_dir(expected: &str, given: &[&str], found: &[&str]) -> String {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim")
         .join(SUITE);
+    let named = |stems: &[&str], line: &str| stems.iter().any(|stem| line.starts_with(stem));
     expected
         .lines()
         .map(|line| {
-            if stems.iter().any(|stem| line.starts_with(stem)) {
+            if named(given, line) {
                 format!("{}\n", directory.join(line).display())
+            } else if named(found, line) {
+                format!("{}/{line}\n", directory.display())
             } else {
                 format!("{line}\n")
             }
@@ -80,7 +86,8 @@ fn mapped_file_and_line_values_follow_includes_and_line_directives() {
             &["line_map_outer.svh", "line_map_inner.svh"],
             &from_suite_dir(
                 include_str!("../fixtures/sim/feature_completion/rtl_019/line_map.out"),
-                &["line_map"],
+                &["line_map.sv"],
+                &["line_map_outer.svh"],
             ),
             LINE_MAP_STDERR,
             &[],
@@ -105,7 +112,8 @@ fn mapped_values_execute_after_snapshot_and_db_destruction() {
         },
         &from_suite_dir(
             include_str!("../fixtures/sim/feature_completion/rtl_019/line_map.out"),
-            &["line_map"],
+            &["line_map.sv"],
+            &["line_map_outer.svh"],
         ),
         LINE_MAP_STDERR,
     );
@@ -122,7 +130,8 @@ fn line_state_stays_in_its_file_in_both_unit_modes() {
             &["line_units_peer.sv"],
             &from_suite_dir(
                 include_str!("../fixtures/sim/feature_completion/rtl_019/line_units.out"),
-                &["line_units"],
+                &["line_units.sv"],
+                &[],
             ),
             "INFO: line_units.sv:9:5: [SIM-001] (tb @ 0 ps) $finish called\n",
             &["--compilation-units", mode, "line_units_peer.sv"],
