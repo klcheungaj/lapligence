@@ -250,24 +250,46 @@ fn indexed_slices_of_fixed_arrays_pass_by_value() {
     sim_cli::run_case_backend_parity(SUITE, "fixed_variable_slice_actuals", expected, &[], &[]);
 }
 
+// One test per run-time member index fixture: each builds six models, and one
+// test building all 36 took over five minutes in the sanitizer CI lane.
 #[test]
 fn run_time_member_indices_select_native_record_elements() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select", expected, &[], &[]);
+}
+
+#[test]
+fn run_time_member_indices_select_wide_member_arrays() {
     let wide =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_wide.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_wide", wide, &[], &[]);
+}
+
+#[test]
+fn run_time_member_indices_keep_their_signedness_and_width() {
     let forms = include_str!(
         "../fixtures/sim/feature_completion/sim_007/native_member_select_index_forms.out"
     );
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_index_forms", forms, &[], &[]);
+}
+
+#[test]
+fn run_time_member_indices_select_members_of_nested_record_elements() {
     let nested =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_nested.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_nested", nested, &[], &[]);
+}
+
+#[test]
+fn run_time_member_indices_select_below_nested_record_array_elements() {
     let records =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_records.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_records", records, &[], &[]);
+}
+
+#[test]
+fn run_time_member_indices_select_container_member_arrays() {
     let large =
         include_str!("../fixtures/sim/feature_completion/sim_007/native_member_select_large.out");
     sim_cli::run_case_backend_parity(SUITE, "native_member_select_large", large, &[], &[]);
