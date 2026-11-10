@@ -4,6 +4,7 @@
 #include "llg_container_prelude.c"
 #include "container/value_descriptors.c"
 #include "container/dynamic_values.c"
+#include "container/nested_sequences.c"
 #include "container/queue_values.c"
 #include "container/queue_value_mutations.c"
 #include "container/dynamic_arrays.c"

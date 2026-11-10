@@ -62,6 +62,15 @@ struct LoweredCallReceiver {
     virtual_interface: Option<crate::sim::ir::IrVirtualCall>,
 }
 
+/// Whether `name` is a display task that formats its arguments while its
+/// statement runs (`$display`, `$write`, `$fdisplay`, ...), not later.
+pub(in crate::sim::codegen) fn immediate_display_task(name: &str) -> bool {
+    matches!(
+        display_task_variant(name),
+        Some((DisplayTaskKind::Immediate { .. }, _))
+    )
+}
+
 fn display_task_variant(name: &str) -> Option<(DisplayTaskKind, IrDisplayRadix)> {
     let variant = match name {
         "$display" => (

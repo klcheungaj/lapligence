@@ -306,6 +306,23 @@ fn native_patterns_keep_key_precedence_copies_and_source_order() {
     );
 }
 
+/// Members of container record elements change in place, at both record
+/// storage forms (a member array of 16 cells is a column, of 3 cells leaves).
+#[test]
+fn record_element_container_members_change_in_place() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_member_alias.out");
+    for cells in ["N=16", "N=3"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_member_alias",
+            expected,
+            &["-D", cells],
+            &[],
+        );
+    }
+}
+
 #[test]
 fn record_container_members_behave_as_owned_containers() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_007/record_containers.out");

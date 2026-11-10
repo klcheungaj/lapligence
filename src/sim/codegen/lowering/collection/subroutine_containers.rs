@@ -287,8 +287,8 @@ impl Codegen<'_> {
             NodeKind::FuncArg { direction, .. } => *direction,
             _ => return Err(format!("container formal `{name}` is not an argument")),
         };
-        // A staged member of a container record element is a copy, which a
-        // reference must not alias (SIM-007).
+        // A member of a container record element is bound for one statement;
+        // no `ref` formal takes it (docs/known_issues.md).
         if direction == DbDirection::Ref
             && self
                 .staged_element_member(self.p30_unwrap_cast(actual))
@@ -298,11 +298,10 @@ impl Codegen<'_> {
                 "a queue or dynamic-array member of a container record element as the ref actual of `{name}` in `{path}` is not supported"
             ));
         }
-        // A nested queue or dynamic array has only staged copies, which a
-        // reference must not alias: another path to the element would miss
-        // the change, and a task could suspend on the copy. An associative
-        // array is bound in place, so it stays a true reference.
-        if direction == DbDirection::Ref && self.names_nested_copy(self.p30_unwrap_cast(actual)) {
+        // No `ref` formal takes a nested queue or dynamic array
+        // (docs/known_issues.md); a nested associative array is a reference.
+        if direction == DbDirection::Ref && self.names_nested_sequence(self.p30_unwrap_cast(actual))
+        {
             let what = format!(
                 "a queue or dynamic array nested in a container element as the ref actual of `{name}` is not supported; pass a variable"
             );

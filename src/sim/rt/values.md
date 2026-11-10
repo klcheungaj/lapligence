@@ -82,6 +82,26 @@ An associative array nested in a value (`LLG_VALUE_ASSOC`) keeps the storage a
 variable of its type has, in one counted allocation (`llg_nested_assoc_t`), so
 generated code addresses it in place. A lexical alias holds a pin: a deleted
 element stays valid until the statement ends, and its writes go nowhere.
+A queue or dynamic array nested in a value (`LLG_VALUE_CONTAINER`: an element
+of a container, or a member of a record element) is the same
+(`llg_nested_seq_t`, `container/nested_sequences.c`): `llg_dyn_array_t` or
+`llg_queue_t` for packed elements, else `llg_dyn_value_array_t` or
+`llg_queue_value_array_t`, chosen by the descriptor (`item_count` 0 is a
+dynamic array, 1 an unbounded queue, above that a queue of at most
+`item_count - 1` elements), so every queue and dynamic-array operation works
+on the alias (`llg_nested_seq_bind`, `llg_nested_seq_unpin`) and a bounded
+queue keeps its bound. The nested storage has no dependencies or `notify`:
+the writer publishes through the owning container's `*_touch`. A null slot is
+the empty sequence; an emptied one may stay allocated, and equality treats
+both alike. A whole-element store replaces the allocation, so an alias bound
+before it keeps the old sequence. Index paths through nested levels
+(`*_get_nested`, `*_set_nested`, `*_element`, `*_extend_nested`) walk
+`llg_nested_seq_value_at`; packed elements have no `llg_value_t`, so their
+last level goes through `llg_nested_seq_get_packed` and `_set_packed`, where
+a queue takes a write at its size as an append (SV 7.10.1).
+`llg_value_item_to_*`/`_from_*` convert between a slot and a standalone
+container only for whole-value moves: a native record's companion containers
+and the `llg_native_ref_mirror` of a record `ref` formal.
 
 A class key is an integral key holding the object's address with the array's
 `key_class` flag set: entries sort by the rank of the object's class, read
@@ -91,9 +111,9 @@ which only class-keyed arrays pay;
 equal keys are equal addresses. A nested array's descriptor gives the key form
 in `item_count`: 0 integral, 1 string, 2 class.
 
-A record element's queue or dynamic-array member is a nested slot of another
-representation than the formal's companion container, so `llg_native_ref_mirror`
-keeps the two equal: the companion's `notify` replaces the slot and touches the
+A record element's queue or dynamic-array member is a nested slot, not the
+formal's companion container, so `llg_native_ref_mirror`
+keeps the two equal: the companion's `notify` assigns the slot and touches the
 element's container, whose interposed notify recopies every other mirror. Each
 change costs the member's size. Every store through a record `ref` formal is followed by
 `llg_native_ref_value_stored`, which tells the element's container; it costs one

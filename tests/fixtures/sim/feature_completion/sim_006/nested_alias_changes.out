@@ -1,0 +1,5 @@
+same selector: sq[0] '{2, 3, 1} sq[1] '{9}
+different selectors: sq[0] '{2, 3, 1, 9} sq[1] '{}
+side-effect selector: calls 1 sq[0] '{2, 3, 1, 9, 7}
+side-effect selector write: calls 2 sq[0] '{2, 42, 1, 9, 7}
+done

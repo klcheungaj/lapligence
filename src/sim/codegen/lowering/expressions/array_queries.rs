@@ -208,7 +208,7 @@ impl<'a> Codegen<'a> {
         else {
             return Ok(None);
         };
-        if kind == "AssociativeArray" {
+        if &*kind == "AssociativeArray" {
             return Err(format!(
                 "{name} of a nested associative array element in `{path}` is not supported"
             ));

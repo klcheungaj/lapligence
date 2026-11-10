@@ -1123,6 +1123,7 @@ impl EmitCtx<'_, '_> {
                                 key: key.take().map(Box::new),
                                 write: false,
                             }),
+                            items: Vec::new(),
                             container: alias,
                         })));
                         storage = alias;

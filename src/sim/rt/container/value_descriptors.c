@@ -55,10 +55,8 @@ static void llg_value_drop(llg_value_t* value) {
             }
             break;
         case LLG_VALUE_CONTAINER:
-            if (value->value.container) {
-                llg_dyn_value_destroy(value->value.container);
-                free(value->value.container);
-            }
+            if (value->value.container)
+                llg_nested_seq_release(value->value.container);
             break;
         case LLG_VALUE_ASSOC:
             if (value->value.assoc) llg_nested_assoc_release(value->value.assoc);
@@ -129,7 +127,7 @@ static int llg_value_try_default_mode(llg_value_t* value,
             }
             return 1;
         case LLG_VALUE_CONTAINER:
-            /* A nested dynamic array has the standard null-handle default. */
+            /* A nested queue or dynamic array is empty: the null default. */
             value->value.container = NULL;
             return 1;
         case LLG_VALUE_ASSOC:
@@ -271,19 +269,9 @@ static int llg_value_try_construct_copy(llg_value_t* target,
             }
             return 1;
         case LLG_VALUE_CONTAINER:
-            if (source_desc->kind == LLG_VALUE_CONTAINER &&
-                source->value.container) {
-                target->value.container = llg_value_try_items(
-                    1, sizeof(*target->value.container));
-                if (!target->value.container) {
-                    target->desc = NULL;
-                    return 0;
-                }
-                llg_dyn_value_init(target->value.container,
-                                   target_desc->element);
-                llg_dyn_value_copy(target->value.container,
-                                   source->value.container);
-            }
+            if (source_desc->kind == LLG_VALUE_CONTAINER)
+                target->value.container = llg_nested_seq_clone(
+                    target_desc, source->value.container);
             return 1;
         case LLG_VALUE_ASSOC:
             if (source_desc->kind == LLG_VALUE_ASSOC && source->value.assoc)
@@ -295,10 +283,20 @@ static int llg_value_try_construct_copy(llg_value_t* target,
 }
 
 /* Move `replacement` into `target`, keeping every record's items where they
- * are: a live reference may hold their addresses (native_references.c). */
+ * are: a live reference may hold their addresses (native_references.c). A
+ * nested sequence that a statement's alias names keeps its storage too, so
+ * the alias still names the element. */
 static void llg_value_replace_in_place(llg_value_t* target,
                                        llg_value_t* replacement) {
     const llg_value_desc_t* desc = target->desc;
+    if (desc->kind == LLG_VALUE_CONTAINER && desc == replacement->desc &&
+        target->value.container && target->value.container->pins > 1) {
+        llg_nested_seq_assign(target->value.container,
+                              llg_nested_seq_view(replacement->value.container));
+        if (replacement->value.container)
+            llg_nested_seq_release(replacement->value.container);
+        return;
+    }
     if ((desc->kind == LLG_VALUE_AGGREGATE ||
          desc->kind == LLG_VALUE_FIXED_ARRAY) &&
         desc == replacement->desc && target->value.items &&
@@ -326,7 +324,7 @@ static int llg_value_try_copy(llg_value_t* target,
     llg_value_t replacement = {0};
     if (!llg_value_try_construct_copy(&replacement, target_desc, source))
         return 0;
-    if (llg_native_refs_live && target->desc) {
+    if ((llg_native_refs_live || llg_nested_seq_pins_live) && target->desc) {
         llg_value_replace_in_place(target, &replacement);
         return 1;
     }
@@ -371,16 +369,8 @@ static int llg_value_equal(const llg_value_t* a, const llg_value_t* b) {
             }
             return 1;
         case LLG_VALUE_CONTAINER:
-            if (a->value.container == b->value.container) return 1;
-            if (!a->value.container || !b->value.container ||
-                a->value.container->size != b->value.container->size)
-                return 0;
-            for (size_t i = 0; i < a->value.container->size; ++i) {
-                if (!llg_value_equal(&a->value.container->data[i],
-                                     &b->value.container->data[i]))
-                    return 0;
-            }
-            return 1;
+            return llg_nested_seq_equal(a->value.container,
+                                        b->value.container);
         case LLG_VALUE_ASSOC:
             return llg_nested_assoc_equal(a->value.assoc, b->value.assoc);
         default:
@@ -461,15 +451,9 @@ int llg_value_equality(const llg_value_t* a, const llg_value_t* b,
             return llg_value_items_equality(a->value.items, a->desc->item_count,
                                             b->value.items, b->desc->item_count,
                                             case_equality);
-        case LLG_VALUE_CONTAINER: {
-            /* A null nested container is the empty default. */
-            const llg_dyn_value_array_t* left = a->value.container;
-            const llg_dyn_value_array_t* right = b->value.container;
-            return llg_value_items_equality(
-                left ? left->data : NULL, left ? left->size : 0,
-                right ? right->data : NULL, right ? right->size : 0,
-                case_equality);
-        }
+        case LLG_VALUE_CONTAINER:
+            return llg_nested_seq_equality(a->value.container,
+                                           b->value.container, case_equality);
         case LLG_VALUE_ASSOC:
             return llg_nested_assoc_equal(a->value.assoc, b->value.assoc)
                 ? LLG_VALUE_EQUAL
@@ -602,8 +586,10 @@ static int llg_value_desc_valid_at(const llg_value_desc_t* desc,
                    !desc->members && desc->member_count == 0 &&
                    llg_value_desc_valid_at(desc->element, path, depth + 1);
         case LLG_VALUE_CONTAINER:
-            return desc->item_count == 0 && !desc->members &&
-                   desc->member_count == 0 &&
+            return (desc->item_count <= LLG_VALUE_CONTAINER_QUEUE ||
+                    desc->item_count - LLG_VALUE_CONTAINER_QUEUE <=
+                        SIZE_MAX / sizeof(llg_value_t)) &&
+                   !desc->members && desc->member_count == 0 &&
                    llg_value_desc_valid_at(desc->element, path, depth + 1);
         case LLG_VALUE_ASSOC:
             return desc->item_count <= 2 && !desc->members &&
@@ -644,9 +630,7 @@ static void llg_value_trace_at(const llg_value_t* value,
             break;
         case LLG_VALUE_CONTAINER:
             if (value->value.container)
-                for (size_t i = 0; i < value->value.container->size; ++i)
-                    llg_value_trace_at(&value->value.container->data[i], visit,
-                                       context);
+                llg_nested_seq_trace(value->value.container, visit, context);
             break;
         case LLG_VALUE_ASSOC:
             if (value->value.assoc)

@@ -200,9 +200,21 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
             array,
         } => Ok(IrContainerElement::Container {
             type_id: element.id.0,
-            kind: kind.clone(),
+            kind: kind.as_str().into(),
             key: match aggregates::ir_container_kind(array, &descriptor.name, "the element type")? {
                 IrContainerKind::Associative { key } => Some(key),
+                _ => None,
+            },
+            // A bound is a count of at least one element (`[$:0]`).
+            maximum_elements: match array {
+                ArrayKind::Queue {
+                    maximum_elements: Some(bound),
+                } => Some(std::num::NonZeroU64::new(*bound).ok_or_else(|| {
+                    format!(
+                        "queue type `{}` has no element within its bound",
+                        descriptor.name
+                    )
+                })?),
                 _ => None,
             },
             element: Box::new(lower_container_element(element)?),

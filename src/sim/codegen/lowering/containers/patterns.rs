@@ -339,17 +339,15 @@ impl<'a> Codegen<'a> {
     /// A lexical container of the type nested in `container`'s element. A
     /// queue is built as a dynamic array: element transfer copies either.
     fn nested_pattern_temporary(&mut self, element: &IrContainerElement) -> usize {
-        let (key, inner) = match element {
-            IrContainerElement::Container { key, element, .. } => (key.clone(), *element.clone()),
-            other => (None, other.clone()),
+        let inner = match element {
+            IrContainerElement::Container { element, .. } => *element.clone(),
+            other => other.clone(),
         };
         let temporary = self.model.containers.len();
         self.model.containers.push(IrContainer {
             c_name: format!("S_llg_container_{temporary}"),
             element: inner,
-            kind: key.map_or(IrContainerKind::Dynamic, |key| {
-                IrContainerKind::Associative { key }
-            }),
+            kind: element.nested_kind().unwrap_or(IrContainerKind::Dynamic),
             initial_size: None,
             activation: true,
             class_field: None,
@@ -424,28 +422,12 @@ impl<'a> Codegen<'a> {
             };
             let root = crate::sim::ir::IrValueItemRoot::Element(root);
             let temporary = self.nested_pattern_temporary(&element);
-            let associative = matches!(
-                self.model.containers[temporary].kind,
-                IrContainerKind::Associative { .. }
-            );
-            statements.push(IrStmt::Container(Box::new(if associative {
-                IrContainerStmt::BindElement {
-                    root: root.clone(),
-                    container: temporary,
-                }
-            } else {
-                IrContainerStmt::Declare(temporary)
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::BindElement {
+                root,
+                items: Vec::new(),
+                container: temporary,
             })));
             statements.push(self.lower_container_into(path, value, temporary, value)?);
-            if !associative {
-                statements.push(IrStmt::Container(Box::new(
-                    IrContainerStmt::ContainerToValueItem {
-                        container: temporary,
-                        root,
-                        items: Vec::new(),
-                    },
-                )));
-            }
         }
         statements.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
             dst: container,
@@ -494,6 +476,7 @@ impl<'a> Codegen<'a> {
                             write: true,
                         },
                     ),
+                    items: Vec::new(),
                     container: temporary,
                 })));
             }

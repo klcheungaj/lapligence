@@ -10,13 +10,18 @@ static llg_value_t* llg_dyn_value_nested_at(
     const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count) {
     if (!indices || count == 0) return NULL;
     llg_value_t* value = llg_dyn_value_at(array, indices[0]);
-    for (size_t i = 1; value && i < count; ++i) {
-        if (value->desc->kind != LLG_VALUE_CONTAINER ||
-            !value->value.container)
-            return NULL;
-        value = llg_dyn_value_at(value->value.container, indices[i]);
-    }
+    for (size_t i = 1; value && i < count; ++i)
+        value = llg_nested_seq_value_at(value, indices[i]);
     return value;
+}
+
+/* The slot holding the packed sequence that the last of `count` indices
+ * selects in, or NULL when the path ends elsewhere. */
+static llg_value_t* llg_dyn_value_packed_owner(
+    const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count) {
+    if (!indices || count < 2) return NULL;
+    llg_value_t* owner = llg_dyn_value_nested_at(array, indices, count - 1);
+    return llg_nested_seq_holds_packed(owner) ? owner : NULL;
 }
 
 static const llg_value_desc_t* llg_dyn_value_nested_desc(
@@ -220,21 +225,11 @@ static void llg_value_merge(llg_value_t* target, const llg_value_desc_t* desc,
                                 llg_value_item_desc(desc, i),
                                 &a->value.items[i], &b->value.items[i]);
             return;
-        case LLG_VALUE_CONTAINER: {
+        case LLG_VALUE_CONTAINER:
             llg_value_copy(target, desc, NULL);
-            if (!a->value.container && !b->value.container) return;
-            /* A null nested container is the empty default. */
-            llg_dyn_value_array_t empty = {0};
-            empty.element = desc->element;
-            llg_dyn_value_array_t* merged =
-                llg_alloc_items(1, sizeof(*merged));
-            llg_dyn_value_init(merged, desc->element);
-            llg_dyn_value_merge(merged,
-                                a->value.container ? a->value.container : &empty,
-                                b->value.container ? b->value.container : &empty);
-            target->value.container = merged;
+            target->value.container = llg_nested_seq_merge(
+                desc, a->value.container, b->value.container);
             return;
-        }
         default:
             llg_value_copy(target, desc,
                            llg_value_equality(a, b, 0) == LLG_VALUE_EQUAL
@@ -351,6 +346,8 @@ void* llg_dyn_value_get_chandle(const llg_dyn_value_array_t* array,
 
 sv4_t llg_dyn_value_get_nested(const llg_dyn_value_array_t* array,
                                const sv4_t* indices, size_t count) {
+    llg_value_t* owner = llg_dyn_value_packed_owner(array, indices, count);
+    if (owner) return llg_nested_seq_get_packed(owner, indices[count - 1]);
     llg_value_t* value = llg_dyn_value_nested_at(array, indices, count);
     if (value && value->desc->kind == LLG_VALUE_PACKED)
         return sv4_clone(&value->value.packed);
@@ -467,6 +464,15 @@ int llg_dyn_value_store_chandle_at(llg_dyn_value_array_t* array, llg_value_t* ta
 
 int llg_dyn_value_set_nested(llg_dyn_value_array_t* array,
                              const sv4_t* indices, size_t count, sv4_t value) {
+    llg_value_t* owner = llg_dyn_value_packed_owner(array, indices, count);
+    if (owner) {
+        int change = 0;
+        int result = llg_nested_seq_set_packed(owner, indices[count - 1],
+                                               value, &change);
+        llg_notify(array->notify, array->contents_dependency,
+                   array->shape_dependency, change);
+        return result;
+    }
     llg_value_t* target = llg_dyn_value_nested_at(array, indices, count);
     if (!target || target->desc->kind != LLG_VALUE_PACKED) return 0;
     sv4_t assigned = sv4_cast(value, target->desc->packed_width,
@@ -561,12 +567,11 @@ int llg_dyn_value_set_nested_container(
     if (!target || target->desc->kind != LLG_VALUE_CONTAINER || !source ||
         !llg_value_desc_compatible(target->desc->element, source->element))
         return 0;
-    llg_value_t source_value = {0};
-    source_value.desc = target->desc;
-    source_value.value.container = (llg_dyn_value_array_t*)source;
-    llg_value_copy(target, target->desc, &source_value);
+    int changed =
+        llg_nested_seq_store(target, llg_seq_view_of_dyn_value(source));
     llg_notify(array->notify, array->contents_dependency,
-               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+               array->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
     return 1;
 }
 
@@ -579,15 +584,9 @@ int llg_dyn_value_set_nested_container_from_packed(
         (target->desc->element->kind != LLG_VALUE_PACKED &&
          target->desc->element->kind != LLG_VALUE_REAL))
         return 0;
-    llg_dyn_value_array_t converted = {0};
-    llg_dyn_value_init(&converted, target->desc->element);
-    llg_dyn_value_replace_from_packed(&converted, source);
-    llg_value_t source_value = {0};
-    source_value.desc = target->desc;
-    source_value.value.container = &converted;
-    llg_value_copy(target, target->desc, &source_value);
-    llg_dyn_value_destroy(&converted);
+    int changed = llg_nested_seq_store(target, llg_seq_view_of_dyn(source));
     llg_notify(array->notify, array->contents_dependency,
-               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+               array->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
     return 1;
 }

@@ -211,13 +211,12 @@ static void check_trace(void) {
     value.value.items[0].value.handle = &objects[0]; /* borrowed: not traced */
     value.value.items[1].value.items[1].value.handle = &objects[1];
     value.value.items[2].value.handle = &objects[2];
-    llg_dyn_value_array_t* list = malloc(sizeof(*list));
-    CHECK(list != NULL);
-    llg_dyn_value_init(list, &opaque_desc);
+    llg_nested_seq_t* list = llg_nested_seq_new(&list_desc);
+    CHECK(list->kind == LLG_NESTED_SEQ_DYN_VALUES);
     sv4_t size = sv4_from_u64(2, 32, 0);
-    llg_dyn_value_new(list, size, NULL);
+    llg_dyn_value_new(&list->array.dyn_values, size, NULL);
     sv4_destroy(&size);
-    list->data[0].value.handle = &objects[3];
+    list->array.dyn_values.data[0].value.handle = &objects[3];
     value.value.items[3].value.container = list;
     trace_log_t log = {0};
     llg_value_trace(&value, record_handle, &log);

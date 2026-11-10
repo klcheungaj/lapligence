@@ -269,12 +269,14 @@ cleanup_key:
     return result_value;
 }
 
-static llg_value_t* llg_assoc_value_nested_at_integral(
+/* The element `count` >= 1 indices select: the entry at the key, then
+ * through the sequences nested below it. */
+static llg_value_t* llg_assoc_value_path_integral(
     const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
     sv4_t normalized = SV4_EMPTY;
     llg_value_t* result_value;
 
-    if (!indices || count < 2 || array->key_kind != LLG_ASSOC_INTEGRAL)
+    if (!indices || count == 0 || array->key_kind != LLG_ASSOC_INTEGRAL)
         do { result_value = NULL; goto cleanup_key; } while (0);
     int found = 0;
     if (!llg_assoc_value_normalize_key(array, indices[0], &normalized))
@@ -283,20 +285,35 @@ static llg_value_t* llg_assoc_value_nested_at_integral(
                                                          &found);
     if (!found) do { result_value = NULL; goto cleanup_key; } while (0);
     llg_value_t* value = &array->entries[position].value;
-    for (size_t index = 1; value && index < count; ++index) {
-        if (!value->desc || value->desc->kind != LLG_VALUE_CONTAINER ||
-            !value->value.container)
-            do { result_value = NULL; goto cleanup_key; } while (0);
-        value = llg_dyn_value_at(value->value.container, indices[index]);
-    }
+    for (size_t index = 1; value && index < count; ++index)
+        value = llg_nested_seq_value_at(value, indices[index]);
     do { result_value = value; goto cleanup_key; } while (0);
 cleanup_key:
     sv4_destroy(&normalized);
     return result_value;
 }
 
+static llg_value_t* llg_assoc_value_nested_at_integral(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    return count < 2 ? NULL
+                     : llg_assoc_value_path_integral(array, indices, count);
+}
+
+/* The slot holding the packed sequence that the last of `count` indices
+ * selects in, or NULL when the path ends elsewhere. */
+static llg_value_t* llg_assoc_value_packed_owner_integral(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    if (count < 2) return NULL;
+    llg_value_t* owner =
+        llg_assoc_value_path_integral(array, indices, count - 1);
+    return llg_nested_seq_holds_packed(owner) ? owner : NULL;
+}
+
 sv4_t llg_assoc_value_get_nested_integral(
     const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    llg_value_t* owner =
+        llg_assoc_value_packed_owner_integral(array, indices, count);
+    if (owner) return llg_nested_seq_get_packed(owner, indices[count - 1]);
     llg_value_t* value = llg_assoc_value_nested_at_integral(array, indices, count);
     return value && value->desc->kind == LLG_VALUE_PACKED
         ? sv4_clone(&value->value.packed)
@@ -506,6 +523,16 @@ cleanup_key:
 int llg_assoc_value_set_nested_integral(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     sv4_t value) {
+    llg_value_t* owner =
+        llg_assoc_value_packed_owner_integral(array, indices, count);
+    if (owner) {
+        int change = 0;
+        int result = llg_nested_seq_set_packed(owner, indices[count - 1],
+                                               value, &change);
+        llg_notify(array->notify, array->contents_dependency,
+                   array->shape_dependency, change);
+        return result;
+    }
     llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
     if (!target || target->desc->kind != LLG_VALUE_PACKED) return 0;
     sv4_t assigned = sv4_cast(value, target->desc->packed_width,

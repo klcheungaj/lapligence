@@ -422,7 +422,6 @@ enum {
     LLG_PATTERN_FROM_VALUE = 4,
     LLG_PATTERN_FROM_PACKED_CONTAINER = 5,
     LLG_PATTERN_FROM_VALUE_CONTAINER = 6,
-    LLG_PATTERN_FROM_NESTED_CONTAINER = 7,
 };
 
 // Nested class objects printed by one `%p` before `(...)` replaces deeper

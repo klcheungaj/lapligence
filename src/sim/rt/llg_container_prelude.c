@@ -32,6 +32,31 @@ static void llg_native_refs_assoc_removed(struct llg_native_ref** list,
 /* Before a container is destroyed: its retained cells stop naming its
  * contents marker, which dies with it. */
 static void llg_element_cells_forget_dependency(struct llg_element_cell* cell);
+/* The elements of a sequence, borrowed: packed payloads or values with their
+ * element descriptor. Sequences nested in values convert through it
+ * (container/nested_sequences.c): `from_view` gives a sequence of type `desc`
+ * holding converted copies (null for none), `assign` replaces the elements of
+ * a sequence in place and `store` those of the sequence in a slot, returning
+ * whether they changed. `pins_live` counts the aliases statements hold: only
+ * then must a copy over a slot keep the slot's sequence where it is. */
+typedef struct llg_seq_view_t {
+    const sv4_t* packed;
+    const llg_value_t* values;
+    size_t size;
+    const llg_value_desc_t* element;
+} llg_seq_view_t;
+static size_t llg_nested_seq_pins_live;
+static llg_seq_view_t llg_nested_seq_view(const llg_nested_seq_t* seq);
+static void llg_nested_seq_assign(llg_nested_seq_t* seq, llg_seq_view_t source);
+static llg_seq_view_t llg_seq_view_of_dyn(const llg_dyn_array_t* source);
+static llg_seq_view_t llg_seq_view_of_queue(const llg_queue_t* source);
+static llg_seq_view_t llg_seq_view_of_dyn_value(
+    const llg_dyn_value_array_t* source);
+static llg_seq_view_t llg_seq_view_of_queue_value(
+    const llg_queue_value_array_t* source);
+static llg_nested_seq_t* llg_nested_seq_from_view(const llg_value_desc_t* desc,
+                                                  llg_seq_view_t source);
+static int llg_nested_seq_store(llg_value_t* target, llg_seq_view_t source);
 
 /* _Noreturn, and no statement follows an unconditional call: MSVC /O2 inlines
  * this helper, sees abort() and reports such a statement as unreachable

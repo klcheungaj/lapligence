@@ -535,23 +535,27 @@ Macros, includes and their edition-specific behavior are counted in §11.
   queue, dynamic or associative members copy them whole, also into a selected
   record member (`w.inner = src`)
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
-  A queue or dynamic array nested in an element (`qq[i]`, `sq["k"]`) takes
+  A queue or dynamic array nested in an element (`qq[i]`, `sq["k"]`), and a
+  queue or dynamic-array member of a record element (`rq[i].m`), takes
   every method and is read or written whole (`row = qq[i]`, `sq["k"] = src`,
-  `qq.push_back(qq[0])`) in assignment, call and system-task statements; the
-  statement works on a staged copy of the element that is written back when
-  the statement changes it
-  ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
+  `qq.push_back(qq[0])`, `$display("%p", qq[i])`) in assignment, call and
+  system-task statements. It is not copied: the statement binds a lexical
+  alias to the element's own storage, pinned for the statement, so two names
+  of one element in a statement change the same array
+  (`sq[a].push_back(sq[b].pop_front())`), a selector may call a function
+  (it runs once), a bounded nested queue keeps its bound, and a write at the
+  size of a nested queue appends
+  ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md),
+  [sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)).
   Other expressions (an `if` condition, a loop bound, a `return`, an
-  initializer) stage nested elements and record-element members at each
-  evaluation, and a changed copy is written back after the value is read.
+  initializer) bind nested elements and record-element members at each
+  evaluation.
   An associative array nested in an element (`int aa[string][int]`,
-  `int qa[$][int]`) is not copied: a statement binds a lexical alias to the
-  element, pinned for the statement, so element access costs one lookup per
-  level; it takes every method, whole reads and writes, patterns, `foreach`,
+  `int qa[$][int]`) is bound the same way, so element access costs one lookup
+  per level; it takes every method, whole reads and writes, patterns, `foreach`,
   `pop_front`/`pop_back` into a variable and `input` and `ref` actuals, at any
   depth. A `ref` actual that is a nested queue or dynamic array rejects at the actual,
-  for a task or a function, as do two changed nested queues of one container
-  with selectors that are not provably distinct
+  for a task or a function
   ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
   A class handle indexes an associative array at any nesting level (`int a[C]`,
   `int n[C][string]`, `int w[string][C]`, `int q[C][$]`, `int c[C][C]`) with
@@ -1353,7 +1357,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
   A popped class handle selects its properties (`q.pop_front().v`,
   [rtl_006](../tests/fixtures/sim/feature_completion/rtl_006/readme.md)).
-  Methods on nested container elements run on a staged copy of the element
+  Methods on nested container elements run on the element in place
   in assignment, call and system-task statements, which also pass such an
   element whole to input formals (`f(qq[i])`, `nested_element_arguments`;
   §7 resizable containers);

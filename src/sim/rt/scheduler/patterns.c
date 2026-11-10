@@ -375,10 +375,32 @@ static void llg_pattern_value(llg_pattern_out_t* out,
         llg_pattern_value_items(out, array, 0, value->value.items, desc->item_count);
         return;
     }
-    case LLG_VALUE_CONTAINER:
-        llg_pattern_container(out, type, LLG_PATTERN_FROM_NESTED_CONTAINER,
-                              value->value.container);
+    case LLG_VALUE_CONTAINER: {
+        // A sequence nested in a value keeps the storage a variable has.
+        const llg_nested_seq_t* seq = value->value.container;
+        const llg_pattern_type_t* element = llg_pattern_member_type(out, type, 0);
+        size_t size = llg_nested_seq_size(seq);
+        llg_pattern_put(out, "'{", 2);
+        for (size_t i = 0; i < size && !out->truncated; ++i) {
+            if (i) llg_pattern_separator(out);
+            switch (seq->kind) {
+            case LLG_NESTED_SEQ_DYN:
+                llg_pattern_flat(out, element, seq->array.dyn.data[i], 0);
+                break;
+            case LLG_NESTED_SEQ_QUEUE:
+                llg_pattern_flat(out, element, seq->array.queue.data[i], 0);
+                break;
+            case LLG_NESTED_SEQ_DYN_VALUES:
+                llg_pattern_value(out, element, &seq->array.dyn_values.data[i]);
+                break;
+            default:
+                llg_pattern_value(out, element, &seq->array.queue_values.data[i]);
+                break;
+            }
+        }
+        llg_pattern_put(out, "}", 1);
         return;
+    }
     case LLG_VALUE_ASSOC:
         if (!value->value.assoc)
             llg_pattern_container(out, type, LLG_PATTERN_FROM_VALUE_CONTAINER, NULL);

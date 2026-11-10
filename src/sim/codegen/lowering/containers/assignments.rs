@@ -796,8 +796,9 @@ impl<'a> Codegen<'a> {
             _ => return None,
         };
         let queue = self.container_of(*receiver)?.ir;
-        let Some(IrContainerElement::Container { key, element, .. }) =
-            self.container_element_type(queue, 1)
+        let nested = self.container_element_type(queue, 1)?;
+        let (IrContainerElement::Container { element, .. }, Some(kind)) =
+            (nested.clone(), nested.nested_kind())
         else {
             return None;
         };
@@ -824,35 +825,24 @@ impl<'a> Codegen<'a> {
                 write,
             })
         };
-        let mut statements = Vec::with_capacity(3);
-        if let Some(key) = key {
-            let alias = self.model.containers.len();
-            self.model.containers.push(IrContainer {
-                c_name: format!("S_llg_container_{alias}"),
-                element: *element,
-                kind: IrContainerKind::Associative { key },
-                initial_size: None,
-                activation: true,
-                class_field: None,
-                receiver: None,
-            });
-            statements.push(IrStmt::Container(Box::new(IrContainerStmt::BindElement {
+        let alias = self.model.containers.len();
+        self.model.containers.push(IrContainer {
+            c_name: format!("S_llg_container_{alias}"),
+            element: *element,
+            kind,
+            initial_size: None,
+            activation: true,
+            class_field: None,
+            receiver: None,
+        });
+        let mut statements = vec![
+            IrStmt::Container(Box::new(IrContainerStmt::BindElement {
                 root: root(false),
+                items: Vec::new(),
                 container: alias,
-            })));
-            statements.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
-                dst,
-                src: alias,
-            })));
-        } else {
-            statements.push(IrStmt::Container(Box::new(
-                IrContainerStmt::ValueItemToContainer {
-                    root: root(false),
-                    items: Vec::new(),
-                    container: dst,
-                },
-            )));
-        }
+            })),
+            IrStmt::Container(Box::new(IrContainerStmt::Copy { dst, src: alias })),
+        ];
         statements.push(IrStmt::Container(Box::new(IrContainerStmt::DeleteIndex {
             container: queue,
             index,

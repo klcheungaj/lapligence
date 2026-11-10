@@ -64,13 +64,18 @@ static llg_value_t* llg_queue_value_nested_at(
     const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count) {
     if (!indices || count == 0) return NULL;
     llg_value_t* value = llg_queue_value_at(queue, indices[0]);
-    for (size_t i = 1; value && i < count; ++i) {
-        if (value->desc->kind != LLG_VALUE_CONTAINER ||
-            !value->value.container)
-            return NULL;
-        value = llg_dyn_value_at(value->value.container, indices[i]);
-    }
+    for (size_t i = 1; value && i < count; ++i)
+        value = llg_nested_seq_value_at(value, indices[i]);
     return value;
+}
+
+/* The slot holding the packed sequence that the last of `count` indices
+ * selects in, or NULL when the path ends elsewhere. */
+static llg_value_t* llg_queue_value_packed_owner(
+    const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count) {
+    if (!indices || count < 2) return NULL;
+    llg_value_t* owner = llg_queue_value_nested_at(queue, indices, count - 1);
+    return llg_nested_seq_holds_packed(owner) ? owner : NULL;
 }
 
 static llg_value_t llg_value_from_packed(const llg_value_desc_t* desc,
@@ -124,10 +129,8 @@ static llg_value_t llg_value_from_container(
     if (desc->kind != LLG_VALUE_CONTAINER || !source ||
         !llg_value_desc_compatible(desc->element, source->element))
         llg_container_fatal("container value used with an incompatible element");
-    result.value.container = llg_alloc_items(1, sizeof(*result.value.container));
-    memset(result.value.container, 0, sizeof(*result.value.container));
-    llg_dyn_value_init(result.value.container, desc->element);
-    llg_dyn_value_copy(result.value.container, source);
+    result.value.container =
+        llg_nested_seq_from_view(desc, llg_seq_view_of_dyn_value(source));
     return result;
 }
 
@@ -139,10 +142,8 @@ static llg_value_t llg_value_from_packed_container(
         (desc->element->kind != LLG_VALUE_PACKED &&
          desc->element->kind != LLG_VALUE_REAL))
         llg_container_fatal("packed container used with an incompatible element");
-    result.value.container = llg_alloc_items(1, sizeof(*result.value.container));
-    memset(result.value.container, 0, sizeof(*result.value.container));
-    llg_dyn_value_init(result.value.container, desc->element);
-    llg_dyn_value_replace_from_packed(result.value.container, source);
+    result.value.container =
+        llg_nested_seq_from_view(desc, llg_seq_view_of_dyn(source));
     return result;
 }
 
@@ -437,6 +438,8 @@ int llg_queue_value_set_chandle(llg_queue_value_array_t* queue, sv4_t index,
 
 sv4_t llg_queue_value_get_nested(const llg_queue_value_array_t* queue,
                                  const sv4_t* indices, size_t count) {
+    llg_value_t* owner = llg_queue_value_packed_owner(queue, indices, count);
+    if (owner) return llg_nested_seq_get_packed(owner, indices[count - 1]);
     llg_value_t* value = llg_queue_value_nested_at(queue, indices, count);
     return value && value->desc->kind == LLG_VALUE_PACKED
         ? sv4_clone(&value->value.packed)
@@ -481,6 +484,14 @@ static int llg_queue_value_set_nested_source(
 int llg_queue_value_set_nested(llg_queue_value_array_t* queue,
                                const sv4_t* indices, size_t count, sv4_t value) {
     int change = 0;
+    llg_value_t* owner = llg_queue_value_packed_owner(queue, indices, count);
+    if (owner) {
+        int result = llg_nested_seq_set_packed(owner, indices[count - 1],
+                                               value, &change);
+        llg_notify(queue->notify, queue->contents_dependency,
+                   queue->shape_dependency, change);
+        return result;
+    }
     llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
     if (!target || target->desc->kind != LLG_VALUE_PACKED) return 0;
     llg_value_t source = llg_value_from_packed(target->desc, value);
@@ -549,11 +560,9 @@ int llg_queue_value_set_nested_container(
     if (!target || target->desc->kind != LLG_VALUE_CONTAINER || !source ||
         !llg_value_desc_compatible(target->desc->element, source->element))
         return 0;
-    llg_value_t source_value = {0};
-    source_value.desc = target->desc;
-    source_value.value.container = (llg_dyn_value_array_t*)source;
-    int result = llg_queue_value_set_nested_source(queue, indices, count,
-                                                   &source_value, &change);
+    if (llg_nested_seq_store(target, llg_seq_view_of_dyn_value(source)))
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
+    int result = 1;
     /* No temporary owner may remain live across the callback. */
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency, change);
@@ -570,15 +579,9 @@ int llg_queue_value_set_nested_container_from_packed(
         (target->desc->element->kind != LLG_VALUE_PACKED &&
          target->desc->element->kind != LLG_VALUE_REAL))
         return 0;
-    llg_dyn_value_array_t converted = {0};
-    llg_dyn_value_init(&converted, target->desc->element);
-    llg_dyn_value_replace_from_packed(&converted, source);
-    llg_value_t source_value = {0};
-    source_value.desc = target->desc;
-    source_value.value.container = &converted;
-    int result = llg_queue_value_set_nested_source(queue, indices, count,
-                                                   &source_value, &change);
-    llg_dyn_value_destroy(&converted);
+    if (llg_nested_seq_store(target, llg_seq_view_of_dyn(source)))
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
+    int result = 1;
     /* No temporary owner may remain live across the callback. */
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency, change);
