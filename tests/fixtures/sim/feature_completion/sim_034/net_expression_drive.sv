@@ -1,5 +1,7 @@
+`timescale 1ns/1ns
 // SV 1800-2009 14.16: an output clockvar bound to a select of a wire drives
-// a clocking driver on that net.
+// only the selected bits through a clocking driver of its own, resolved with
+// the wire's other driver (FIN-001 K2).
 module tb;
   bit clk = 0;
   always #5 clk = ~clk;

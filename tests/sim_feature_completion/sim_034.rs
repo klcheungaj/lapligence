@@ -148,17 +148,21 @@ fn neg_vif_concat_drive() {
     );
 }
 
-// FIN-001 K2: legal drive forms outside the driver model stay located
-// rejections until they are served.
+// FIN-001 K2: drives of clockvars bound to expressions over wired nets.
+// Expected outputs are industry-standard behaviour (see the readme).
 
 #[test]
-fn neg_net_expression_drive() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_net_expression_drive",
-        "neg_net_expression_drive.sv:10:12 clocking output `x` bound to an expression over \
-         wired net `w` is not supported",
-    );
+fn clocking_driver_covers_the_selected_bits_of_a_wire() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_034/net_expression_drive.out");
+    sim_cli::run_case_backend_parity(SUITE, "net_expression_drive", expected, &[], &[]);
+}
+
+#[test]
+fn clockvar_bound_to_merged_bits_and_a_variable() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_034/net_expression_merged_mix.out");
+    sim_cli::run_case_backend_parity(SUITE, "net_expression_merged_mix", expected, &[], &[]);
 }
 
 #[test]

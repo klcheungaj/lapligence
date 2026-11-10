@@ -46,7 +46,11 @@ resolution/sensitivity, never recover an unresolved driver from source text.
 
 Give continuous/declaration/gate sites deterministic independent contribution slots,
 sized at elaboration without a fixed driver ceiling. Selected contributions restart
-from Z each evaluation. Synthetic slots have no waveform names; reads/dependencies
+from Z each evaluation. A clocking output or inout owns one strong slot on each net
+its signal or bound expression names (SV 14.16); its synchronous drives write only
+the bits the expression and the drive's select name, merging into the slot's
+previous value, and bits that port merges share reach their group through the
+net-alias bindings. Synthetic slots have no waveform names; reads/dependencies
 observe resolved cells only. Wire/wired/pull/supply resolution retains both
 strength endpoints of X; a known drive wins only when stronger than every opposite
 possibility. High-Z adds no drive. Wired-AND 0 and wired-OR 1 dominate X; all-Z

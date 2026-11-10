@@ -2420,7 +2420,7 @@ impl<'a> Codegen<'a> {
         let mut sources: HashMap<NodeId, (u8, u8)> = HashMap::new();
         for position in writers.candidates(members) {
             let id = nodes[position];
-            if let Some(site) = self.clocking_net_site(id, &member_set)? {
+            if let Some(site) = self.clocking_net_site(id, &member_set) {
                 sources.insert(id, site);
                 continue;
             }
@@ -2600,7 +2600,7 @@ impl<'a> Codegen<'a> {
         let mut sites: HashMap<NodeId, (u8, u8)> = HashMap::new();
         for position in writers.candidates(&[net]) {
             let id = &nodes[position];
-            if let Some(site) = self.clocking_net_site(*id, &member_set)? {
+            if let Some(site) = self.clocking_net_site(*id, &member_set) {
                 sites.insert(*id, site);
                 continue;
             }
@@ -2838,53 +2838,166 @@ impl<'a> Codegen<'a> {
     }
 
     /// Remember which slot a continuous assignment or a clocking output
-    /// drives, so its writes target that slot instead of the net's own.
+    /// drives, so its writes target that slot instead of the net's own. A
+    /// clockvar bound to an expression keeps only its structural slots: its
+    /// drives reach them through [`Self::clocking_expression_drive_lhs`].
     fn record_wired_driver_site(&mut self, source: NodeId, signal: usize) {
         if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
             self.wired_driver_sites.insert(source, signal);
-        } else if self.db.is_clocking_var(source) {
+        } else if self
+            .db
+            .clocking_var(source)
+            .is_some_and(|var| var.source.is_some())
+        {
             self.clocking_net_drivers.insert(source, signal);
         }
     }
 
-    /// The driver of a clocking output/inout whose signal is a member of
-    /// `member_set`. SV 14.16 creates one (strong1, strong0) driver per such
-    /// clockvar, initialized to 'z and updated only by synchronous drives,
-    /// so the net keeps resolving it against its other drivers.
-    fn clocking_net_site(
+    /// The drive target of a clockvar bound to an expression: `lhs`, the
+    /// lowered lvalue the expression names, with each wired net in it
+    /// retargeted to the clockvar's own driver slot on that net. The slot
+    /// covers the net's width and the drive writes only the bits the
+    /// expression selects, so the clocking driver resolves bitwise against
+    /// the net's other drivers (SV 14.16); variables are written directly.
+    ///
+    /// Bits a port connection merged into a shared resolved net (A21-D5)
+    /// are reached through their electrical bindings instead: each run of
+    /// bits that one such net holds in ascending order becomes a select of
+    /// the clockvar's slot on that net, MSB first.
+    pub(in super::super) fn clocking_expression_drive_lhs(
         &self,
-        node: NodeId,
-        member_set: &HashSet<NodeId>,
-    ) -> Result<Option<(u8, u8)>, String> {
-        let Some(var) = self.db.clocking_var(node) else {
+        clockvar: NodeId,
+        expression: NodeId,
+        lhs: IrLhs,
+    ) -> Result<IrLhs, String> {
+        let unsupported = || {
+            crate::sim::codegen::error::located(
+                &self.source_location(clockvar),
+                format!(
+                    "clocking output `{}` bound to this expression over port-merged net bits is \
+                     not supported",
+                    self.display_name(clockvar)
+                ),
+            )
+        };
+        let bindings = match self.alias_lvalue_bindings(clockvar, expression) {
+            Ok(Some(bindings)) => bindings,
+            Ok(None) => return Ok(self.remap_structural_lhs(lhs, clockvar)),
+            // A concatenation that mixes merged bits with other lvalues maps
+            // each operand on its own.
+            Err(_) => {
+                return self
+                    .clocking_concatenation_drive_lhs(clockvar, expression, lhs)?
+                    .ok_or_else(unsupported)
+            }
+        };
+        // Bindings list the expression's bits MSB first, one per bit.
+        let width = u32::try_from(bindings.len()).map_err(|_| unsupported())?;
+        let mut runs: Vec<(usize, u32, u32)> = Vec::new();
+        for (expected, (binding, position)) in (0..width).zip(&bindings) {
+            if *position != expected {
+                return Err(unsupported());
+            }
+            let (group, bit) = (binding.group(), binding.group_bit());
+            match runs.last_mut() {
+                Some((run_group, _, low))
+                    if *run_group == group && bit.checked_add(1) == Some(*low) =>
+                {
+                    *low = bit;
+                }
+                _ => runs.push((group, bit, bit)),
+            }
+        }
+        let mut parts = Vec::with_capacity(runs.len());
+        for (group, high, low) in runs {
+            let driver = self
+                .structural_driver_signal(clockvar, group)
+                .ok_or_else(unsupported)?;
+            parts.push((
+                IrLhs::Part(driver, i64::from(high), i64::from(low), false),
+                high - low + 1,
+            ));
+        }
+        if parts.len() == 1 {
+            return Ok(parts.remove(0).0);
+        }
+        Ok(IrLhs::Stream {
+            parts,
+            width,
+            slice: 1,
+            direction: IrStreamDirection::LeftToRight,
+        })
+    }
+
+    /// [`Self::clocking_expression_drive_lhs`] of each operand of a
+    /// concatenation `expression` and its part of the lowered `lhs`, or
+    /// `None` when `expression` is not a concatenation of `lhs`'s parts.
+    fn clocking_concatenation_drive_lhs(
+        &self,
+        clockvar: NodeId,
+        expression: NodeId,
+        lhs: IrLhs,
+    ) -> Result<Option<IrLhs>, String> {
+        let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::Concat,
+            reordered,
+            operands,
+            ..
+        }) = self.kind(expression)
+        else {
             return Ok(None);
         };
-        if !matches!(var.direction, DbDirection::Output | DbDirection::Inout) {
+        let IrLhs::Stream {
+            parts,
+            width,
+            slice,
+            direction: IrStreamDirection::LeftToRight,
+        } = lhs
+        else {
+            return Ok(None);
+        };
+        if parts.len() != operands.len() {
             return Ok(None);
         }
-        match var.source {
-            Some(source) => Ok(self
-                .nested_member_target(source, member_set)
-                .map(|_| (6, 6))),
-            None if self
-                .nested_member_target(var.expression, member_set)
-                .is_some() =>
-            {
-                Err(crate::sim::codegen::error::located(
-                    &self.source_location(node),
-                    format!(
-                        "clocking output `{}` bound to an expression over wired net `{}` is not \
-                         supported",
-                        self.display_name(node),
-                        self.display_name(
-                            self.nested_member_target(var.expression, member_set)
-                                .unwrap_or(node)
-                        )
-                    ),
-                ))
-            }
-            None => Ok(None),
+        let mut operands = operands.clone();
+        if *reordered {
+            operands.reverse();
         }
+        let mut mapped = Vec::with_capacity(parts.len());
+        for (operand, (part, part_width)) in operands.into_iter().zip(parts) {
+            match self.clocking_expression_drive_lhs(clockvar, operand, part)? {
+                IrLhs::Stream {
+                    parts: inner,
+                    direction: IrStreamDirection::LeftToRight,
+                    ..
+                } => mapped.extend(inner),
+                part => mapped.push((part, part_width)),
+            }
+        }
+        Ok(Some(IrLhs::Stream {
+            parts: mapped,
+            width,
+            slice,
+            direction: IrStreamDirection::LeftToRight,
+        }))
+    }
+
+    /// The driver of a clocking output/inout whose signal, or the
+    /// expression it is bound to, names a member of `member_set`. SV 14.16
+    /// creates one (strong1, strong0) driver per such clockvar, initialized
+    /// to 'z and updated only by synchronous drives, so the net keeps
+    /// resolving it against its other drivers.
+    fn clocking_net_site(&self, node: NodeId, member_set: &HashSet<NodeId>) -> Option<(u8, u8)> {
+        let var = self.db.clocking_var(node)?;
+        if !matches!(var.direction, DbDirection::Output | DbDirection::Inout) {
+            return None;
+        }
+        // A clockvar bound to an expression over a member drives only the
+        // member bits the expression selects, through a slot of its own on
+        // each net the expression names.
+        let target = var.source.unwrap_or(var.expression);
+        self.nested_member_target(target, member_set)
+            .map(|_| (6, 6))
     }
 
     /// Whether an assignment target names clocking members, i.e. the

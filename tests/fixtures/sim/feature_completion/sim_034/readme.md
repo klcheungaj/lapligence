@@ -169,6 +169,30 @@ FND-002 witness `virtual_clocking_drive` (L-F12-02-03, L-F12-04-05), source
 unchanged: the drive issued at 0 through `v` matures at the edge at 1, so
 `i.a` is 7 at 2.
 
+### Drives of expression-bound clockvars (FIN-001 K2)
+
+The expected outputs are industry-standard behaviour, probed with each
+fixture's source; they agree with the clauses below. A clockvar bound to an
+expression drives the lvalue the expression names; on a wired net that is a
+clocking driver of its own covering the selected bits only (14.16
+L20069-20074 above), and on a variable the variable's bits.
+
+- 14.5, L19589-19593: "In a clocking block, any expression assigned to a
+  signal in its declaration shall be an expression that would be legal in a
+  port connection to a port of appropriate direction. [...] Any expression
+  assigned to a signal in a clocking output or inout declaration shall be an
+  expression that would be legal for connection to a module's output port."
+- 14.5, L19581-19583: hierarchical expressions "can be used to declare slices
+  and concatenations (or combinations thereof) of signals in other scopes or
+  in the current scope."
+
+- `net_expression_drive`: `output x = w[3:0]` on a wire whose other driver
+  `drv` starts all `z`. The drive at the edge at 15 sets the low nibble:
+  `w=za` at 16. `drv = 5F` conflicts on the low nibble (`1010` against
+  `1111` at strong strength): `w=5X`; `drv = 5z` leaves `w=5a`.
+- `net_expression_merged_mix`: `y = {w[3:2], v}`, bits a port connection
+  merges with the parent net (A21-D5) and a variable: `w=zzzz11zz v=11` at 16.
+
 ## Negatives
 
 | Fixture | Clause | Diagnostic |
@@ -181,7 +205,6 @@ unchanged: the drive issued at 0 through `v` matures at the edge at 1, so
 | `neg_vif_input_drive` | 14.16 L20050 (outputs and inouts drive) | cannot write to input clocking signal |
 | `neg_vif_compound_drive` | 14.16 L20159-20161 | can only be written via a synchronous drive |
 | `neg_vif_concat_drive` | 14.16 L20091-20092 | cannot be part of a concatenation |
-| `neg_net_expression_drive` | 14.16 L20069-20074 (legal; not supported) | clocking output `x` bound to an expression over wired net `w` is not supported |
 | `neg_vif_expression_select_drive` | 14.16 L20087-20092 (legal; not supported) | a select of clockvar `x`, which is bound to an expression, is not supported through a virtual interface |
 
 The SIM-033 negatives `neg_compound_drive`, `neg_concat_drive`,

@@ -70,6 +70,11 @@ impl<'a> Codegen<'a> {
         if let Some(lhs) = self.class_field_lhs(path, lhs)? {
             return Ok(lhs);
         }
+        if !clocking_targets.is_empty() {
+            if let Some(lhs) = self.clocking_expression_target_lhs(path, lhs)? {
+                return Ok(lhs);
+            }
+        }
         let lh = self.analyze_lhs(path, lhs)?;
         self.lhs_to_ir(lh)
     }

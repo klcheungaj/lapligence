@@ -1,5 +1,6 @@
 //! Clocking context.
 
+use super::collection::Select;
 use super::*;
 
 /// The clockvar types llg rejects although the text permits them (K1-D1).
@@ -61,13 +62,12 @@ impl<'a> Codegen<'a> {
 
     /// The unselected write target of one concrete clockvar's synchronous
     /// drive: its dedicated net driver, its signal, or the lvalue its
-    /// clocking expression names (SV 14.5, 14.16). `selected` is the drive's
-    /// select target, when it has one.
+    /// clocking expression names, with its wired nets retargeted to the
+    /// clockvar's own driver slots (SV 14.5, 14.16).
     pub(super) fn clocking_drive_root(
         &mut self,
         path: &str,
         clockvar: NodeId,
-        selected: Option<NodeId>,
     ) -> Result<IrLhs, String> {
         if let Some(info) = self.clocking_net_driver_info(clockvar) {
             return self.lhs_to_ir(Lhs::Whole(info));
@@ -85,17 +85,59 @@ impl<'a> Codegen<'a> {
                     self.node(clockvar).name
                 )
             })?;
-        if let Some(select) = selected {
-            return Err(crate::sim::codegen::error::located(
-                &self.source_location(select),
-                format!(
-                    "a select of clockvar `{}`, which is bound to an expression, is not \
-                     supported through a virtual interface in `{path}`",
-                    self.node(clockvar).name
-                ),
-            ));
+        let lhs = self.lower_lhs(path, expression)?;
+        self.clocking_expression_drive_lhs(clockvar, expression, lhs)
+    }
+
+    /// The drive target of a direct synchronous drive of a whole clockvar
+    /// bound to an expression; `None` for every other target, which
+    /// `analyze_lhs` lowers.
+    pub(super) fn clocking_expression_target_lhs(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+    ) -> Result<Option<IrLhs>, String> {
+        let mut root = lhs;
+        let mut selects = Vec::new();
+        loop {
+            let (base, select) = match self.kind(root) {
+                NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                    (*base, Select::Elements(vec![*index]))
+                }
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                    (*base, Select::Elements(indices.clone()))
+                }
+                NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                    (*base, Select::Part(*left, *right))
+                }
+                NodeKind::Expr(ExprKind::IndexedPartSelect {
+                    base,
+                    base_expr,
+                    width_expr,
+                    neg,
+                }) => (*base, Select::Indexed(*base_expr, *width_expr, *neg)),
+                _ => break,
+            };
+            selects.push(select);
+            root = base;
         }
-        self.lower_lhs(path, expression)
+        let Some(clockvar) = self
+            .clocking_var_target(root)
+            .or_else(|| self.db.is_clocking_var(root).then_some(root))
+        else {
+            return Ok(None);
+        };
+        if self
+            .db
+            .clocking_var(clockvar)
+            .is_none_or(|var| var.source.is_some())
+        {
+            return Ok(None);
+        }
+        if !selects.is_empty() {
+            return Ok(None);
+        }
+        self.clocking_drive_root(path, clockvar).map(Some)
     }
 
     pub(super) fn clocking_var_read_source_info(

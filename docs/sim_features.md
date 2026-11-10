@@ -2536,9 +2536,12 @@ These are bounded implementations, not full verification-infrastructure support.
   interfaces (decisions S34-D1-D4,
   [sim_034](../tests/fixtures/sim/feature_completion/sim_034/readme.md)).
   Admitted signal-edge qualifiers and selected targets (element selects, then
-  a part-select) are present. A clockvar bound to an expression over a wired
-  net, and a select of an expression-bound clockvar through a virtual
-  interface, reject explicitly. String, class handle, event, unpacked or
+  a part-select) are present. An output or inout bound to an expression over
+  wired nets (selects, concatenations with variables, bits that port
+  connections merge) drives only the bits the expression names, through a
+  clocking driver of its own on each net; a concatenation drives each part.
+  A select of an expression-bound clockvar through a virtual interface
+  rejects explicitly. String, class handle, event, unpacked or
   tagged union, queue, dynamic and associative array inputs (and unpacked
   inputs with such a member) reject (decision K1-D1); unpacked inputs with a
   real leaf, `edge` skews and edge skews with a delay or under an event list

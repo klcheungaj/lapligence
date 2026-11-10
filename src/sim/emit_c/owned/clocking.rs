@@ -1,5 +1,6 @@
 //! Clocking operations capture operands before registration and borrow them
 //! during the runtime's copy/retain boundary, including selected write masks.
+use super::stores::Target;
 use super::*;
 
 impl Frame<'_, '_> {
@@ -90,20 +91,79 @@ impl Frame<'_, '_> {
             Some(cycles) => self.event_repeat(Some(cycles))?,
             None => "0ULL".to_owned(),
         };
-        let target = self.target(lhs)?;
-        if target.sequence_local || (target.binding.automatic && target.width == 0) {
-            return Err("clocking drive requires stable target storage".to_owned());
+        let IrLhs::Stream {
+            parts,
+            width,
+            direction,
+            ..
+        } = lhs
+        else {
+            let target = self.stable_clocking_target(lhs)?;
+            let value = self.convert(
+                value,
+                target.width,
+                target.signed,
+                target.binding.two_state,
+                target.binding.shortreal,
+            );
+            let ticks = self.delay(ticks)?;
+            let sources = self.clocking_sources(specs)?;
+            let tail = format!("{ticks}, {cycles}, {sources}, {}", specs.len());
+            self.clocking_drive_target(target, value, &tail);
+            return Ok(());
+        };
+        // A clockvar bound to a concatenation (SV 14.5) drives each part
+        // with its bits of the value, evaluated once, at the same clocking
+        // event, so the parts mature together.
+        if *direction != IrStreamDirection::LeftToRight {
+            return Err("clocking drive of a streaming target is not supported".to_owned());
         }
-        let value = self.convert(
-            value,
-            target.width,
-            target.signed,
-            target.binding.two_state,
-            target.binding.shortreal,
-        );
+        let value = self.convert(value, *width, false, false, false);
         let ticks = self.delay(ticks)?;
         let sources = self.clocking_sources(specs)?;
         let tail = format!("{ticks}, {cycles}, {sources}, {}", specs.len());
+        let mut high = *width;
+        for (part, part_width) in parts {
+            let low = high
+                .checked_sub(*part_width)
+                .ok_or("clocking drive concatenation parts exceed its width")?;
+            let slice = self.value(
+                format!("sv4_part_select({}, {}, {low})", value.code, high - 1),
+                *part_width,
+                false,
+            );
+            let target = self.stable_clocking_target(part)?;
+            let slice = self.convert(
+                slice,
+                target.width,
+                target.signed,
+                target.binding.two_state,
+                target.binding.shortreal,
+            );
+            self.clocking_drive_target(target, slice, &tail);
+            high = low;
+        }
+        self.discard(value);
+        Ok(())
+    }
+
+    /// The write target of a synchronous drive: storage that outlives the
+    /// drive until it matures.
+    fn stable_clocking_target(&mut self, lhs: &IrLhs) -> Result<Target, String> {
+        let target = self.target(lhs)?;
+        if target.sequence_local
+            || (target.binding.automatic && target.width == 0)
+            || target.reference.is_some()
+        {
+            return Err("clocking drive requires stable target storage".to_owned());
+        }
+        Ok(target)
+    }
+
+    /// Schedule one synchronous drive of `value`, converted to `target`
+    /// (both released here); `tail` is the skew, cycle count and clocking
+    /// event arguments.
+    fn clocking_drive_target(&mut self, target: Target, value: Value, tail: &str) {
         self.line(format!("if ({}) {{", target.valid));
         if target.width == 0 {
             self.line(format!(
@@ -142,6 +202,5 @@ impl Frame<'_, '_> {
         self.line("}");
         self.discard(value);
         self.release_target(target);
-        Ok(())
     }
 }

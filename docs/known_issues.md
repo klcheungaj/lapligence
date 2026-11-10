@@ -2159,13 +2159,10 @@ Reproduce with
 **Status:** open (SIM-034 boundary).
 
 Synchronous drives reach their target through the clockvar's signal, the
-clocking block's own net driver, or the lvalue a clocking expression names.
-Two legal forms reject explicitly:
+clocking block's own net driver, or the lvalue a clocking expression names,
+with each wired net in it retargeted to the clockvar's own driver on that net.
+One legal form rejects explicitly:
 
-- an output or inout clockvar bound to an expression over a wired net
-  (`output x = w[3:0]` on a `wire`): the clocking driver would have to cover
-  only the selected bits of a separate driver slot ("bound to an expression
-  over wired net ... is not supported");
 - a select of an expression-bound clockvar through a virtual interface
   (`v.cb.x[1] <= ...` when `x` is declared `output x = s[3:0]`): the
   per-instance arm has no unselected root to apply the select to.
@@ -2177,7 +2174,6 @@ per instance of that interface type: code size grows with the instance count
 record each until they mature.
 
 Reproduce with
-[`neg_net_expression_drive.sv`](../tests/fixtures/sim/feature_completion/sim_034/neg_net_expression_drive.sv) and
 [`neg_vif_expression_select_drive.sv`](../tests/fixtures/sim/feature_completion/sim_034/neg_vif_expression_select_drive.sv).
 
 ## Sampled-value arguments without sampled storage
