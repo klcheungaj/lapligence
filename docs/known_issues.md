@@ -2167,7 +2167,8 @@ A drive through a virtual interface dispatches on the bound instance with a
 `case` over the descriptor's instances, so each drive site carries one drive
 per instance of that interface type: code size grows with the instance count
 (execution stays a single dispatch). Off-event and `##n` drives keep one heap
-record each until they mature.
+record each until they mature; a drive of a clockvar bound to a concatenation
+keeps one per part.
 
 Reproduce with
 [`neg_concat_runtime_select.sv`](../tests/fixtures/sim/feature_completion/sim_034/neg_concat_runtime_select.sv).
