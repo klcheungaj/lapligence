@@ -2176,7 +2176,9 @@ per instance of that interface type: code size grows with the instance count
 (execution stays a single dispatch). Off-event and `##n` drives keep one heap
 record each until they mature.
 
-Reproduce with a clocking block `output x = w[3:0];` over a `wire [7:0] w`.
+Reproduce with
+[`neg_net_expression_drive.sv`](../tests/fixtures/sim/feature_completion/sim_034/neg_net_expression_drive.sv) and
+[`neg_vif_expression_select_drive.sv`](../tests/fixtures/sim/feature_completion/sim_034/neg_vif_expression_select_drive.sv).
 
 ## Sampled-value arguments without sampled storage
 

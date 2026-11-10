@@ -2870,13 +2870,17 @@ impl<'a> Codegen<'a> {
                 .nested_member_target(var.expression, member_set)
                 .is_some() =>
             {
-                Err(format!(
-                    "clocking output `{}` bound to an expression over wired net `{}` is not supported",
-                    self.display_name(node),
-                    self.display_name(
-                        self.nested_member_target(var.expression, member_set)
-                            .unwrap_or(node)
-                    )
+                Err(crate::sim::codegen::error::located(
+                    &self.source_location(node),
+                    format!(
+                        "clocking output `{}` bound to an expression over wired net `{}` is not \
+                         supported",
+                        self.display_name(node),
+                        self.display_name(
+                            self.nested_member_target(var.expression, member_set)
+                                .unwrap_or(node)
+                        )
+                    ),
                 ))
             }
             None => Ok(None),

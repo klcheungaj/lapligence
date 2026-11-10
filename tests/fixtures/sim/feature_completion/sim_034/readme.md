@@ -181,6 +181,8 @@ unchanged: the drive issued at 0 through `v` matures at the edge at 1, so
 | `neg_vif_input_drive` | 14.16 L20050 (outputs and inouts drive) | cannot write to input clocking signal |
 | `neg_vif_compound_drive` | 14.16 L20159-20161 | can only be written via a synchronous drive |
 | `neg_vif_concat_drive` | 14.16 L20091-20092 | cannot be part of a concatenation |
+| `neg_net_expression_drive` | 14.16 L20069-20074 (legal; not supported) | clocking output `x` bound to an expression over wired net `w` is not supported |
+| `neg_vif_expression_select_drive` | 14.16 L20087-20092 (legal; not supported) | a select of clockvar `x`, which is bound to an expression, is not supported through a virtual interface |
 
 The SIM-033 negatives `neg_compound_drive`, `neg_concat_drive`,
 `neg_cycle_no_default` and `neg_dynamic_skew` cover the same rules on

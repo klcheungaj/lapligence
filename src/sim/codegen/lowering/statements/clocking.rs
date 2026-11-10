@@ -333,9 +333,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         let mut rhs_ir = None;
         let mut items = Vec::with_capacity(target.instances.len());
         for (instance, clockvar) in target.instances.iter().copied().enumerate() {
-            let root = self
-                .cg
-                .clocking_drive_root(&self.path, clockvar, steps.is_some())?;
+            let root =
+                self.cg
+                    .clocking_drive_root(&self.path, clockvar, steps.as_ref().map(|_| lhs))?;
             let lh = match &steps {
                 Some(steps) => IrLhs::PackedSelect {
                     target: Box::new(root),

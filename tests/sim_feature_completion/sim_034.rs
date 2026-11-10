@@ -147,3 +147,26 @@ fn neg_vif_concat_drive() {
         "cannot be part of a concatenation or assignment pattern lvalue",
     );
 }
+
+// FIN-001 K2: legal drive forms outside the driver model stay located
+// rejections until they are served.
+
+#[test]
+fn neg_net_expression_drive() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_net_expression_drive",
+        "neg_net_expression_drive.sv:10:12 clocking output `x` bound to an expression over \
+         wired net `w` is not supported",
+    );
+}
+
+#[test]
+fn neg_vif_expression_select_drive() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_expression_select_drive",
+        "neg_vif_expression_select_drive.sv:16:8 a select of clockvar `x`, which is bound to an \
+         expression, is not supported through a virtual interface in `tb`",
+    );
+}

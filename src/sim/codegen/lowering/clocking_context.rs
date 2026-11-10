@@ -61,12 +61,13 @@ impl<'a> Codegen<'a> {
 
     /// The unselected write target of one concrete clockvar's synchronous
     /// drive: its dedicated net driver, its signal, or the lvalue its
-    /// clocking expression names (SV 14.5, 14.16).
+    /// clocking expression names (SV 14.5, 14.16). `selected` is the drive's
+    /// select target, when it has one.
     pub(super) fn clocking_drive_root(
         &mut self,
         path: &str,
         clockvar: NodeId,
-        selected: bool,
+        selected: Option<NodeId>,
     ) -> Result<IrLhs, String> {
         if let Some(info) = self.clocking_net_driver_info(clockvar) {
             return self.lhs_to_ir(Lhs::Whole(info));
@@ -84,11 +85,14 @@ impl<'a> Codegen<'a> {
                     self.node(clockvar).name
                 )
             })?;
-        if selected {
-            return Err(format!(
-                "a select of clockvar `{}`, which is bound to an expression, is not supported \
-                 through a virtual interface in `{path}`",
-                self.node(clockvar).name
+        if let Some(select) = selected {
+            return Err(crate::sim::codegen::error::located(
+                &self.source_location(select),
+                format!(
+                    "a select of clockvar `{}`, which is bound to an expression, is not \
+                     supported through a virtual interface in `{path}`",
+                    self.node(clockvar).name
+                ),
             ));
         }
         self.lower_lhs(path, expression)
