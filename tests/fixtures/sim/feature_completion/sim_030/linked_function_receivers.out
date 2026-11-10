@@ -1,0 +1,4 @@
+from the ring's first object: fails=0 bad=0
+from the object with children: fails=0 bad=0
+from the derived object: fails=0 bad=0
+inline call on a child: fails=0 bad=0

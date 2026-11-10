@@ -68,6 +68,25 @@ fn rand_mode_function_needs_a_random_variable() {
     names_source_position("neg_element_mode_queue_function");
 }
 
+/// Objects of the randomized class reached through handles, and the
+/// randomized object reached again, evaluate their own constraint functions.
+#[test]
+fn linked_objects_of_one_class_call_their_own_functions() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "linked_function_receivers",
+        include_str!("../fixtures/sim/feature_completion/sim_030/linked_function_receivers.out"),
+        &[],
+        &[],
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_call_receiver_element",
+        "a random array may be used in a constraint only through element selects",
+    );
+    names_source_position("neg_call_receiver_element");
+}
+
 /// S30-D19: a variable ordered before an array size is drawn before the
 /// sizes and keeps that value.
 #[test]

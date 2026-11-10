@@ -2584,9 +2584,11 @@ these forms remain outside them.
   is not `rand`) stops in the frontend, which reads it as the object task.
   `rand_mode` of one element of an array of packed values
   (`c.v[1].rand_mode(0)`) rejects too.
-- A constraint function reached for an object of the randomized class other
-  than the randomized object ends the run with a fatal error: its receiver is
-  fixed at the call. Objects of other classes evaluate their own functions.
+- A constraint function whose receiver is an element of a random handle
+  array (`foreach (q[i]) q[i].v >= q[i].f(x)`) rejects with a located error.
+  Every object a randomize call reaches evaluates its own functions, also
+  objects of the randomized class and the randomized object reached again
+  through a ring, and a scalar handle receiver (`next.f(x)`) works.
 - A `randomize()` call used as a value works in assignments, `if` conditions,
   `return`, declarations, system-task arguments, immediate assertions, loop
   headers and short-circuit or conditional operands of those. Elsewhere (a

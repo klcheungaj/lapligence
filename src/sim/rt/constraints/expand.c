@@ -1713,7 +1713,9 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
     }
     case LLG_CR_TCALL: {
         /* The thunk reads the root object: it cannot name another object
-         * of the same unit. */
+         * of the same unit. Generated code never registers one: every
+         * linked object, also one of the randomized class, takes its
+         * class's own unit, whose calls name it by instance. */
         if (t->inst[ex->inst].unit == 0u && ex->inst != 0u)
             cr_fatal("constraint function call of another object of the randomized class");
         const llg_cr_call_t* tc = &p->calls[nd->a];
