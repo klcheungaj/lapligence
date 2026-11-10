@@ -2,6 +2,34 @@
 
 use super::*;
 
+/// The clockvar types llg rejects although the text permits them (K1-D1).
+const UNSERVED_CLOCKVAR_TYPES: &str = "string, class handle, event, unpacked or tagged union, \
+                                       queue, dynamic array and associative array clockvars are \
+                                       not supported";
+
+/// Unions industry-standard behaviour does not accept as clockvars (unpacked)
+/// and tagged unions, whose image no fixture or probe has settled (K1-D1).
+fn unserved_union(kind: AggregateKind) -> bool {
+    matches!(
+        kind,
+        AggregateKind::UnpackedUnion | AggregateKind::TaggedUnion
+    )
+}
+
+fn contains_unserved_union(descriptor: &TypeDescriptor) -> bool {
+    match &descriptor.shape {
+        TypeShape::FixedArray { element, .. } => contains_unserved_union(element),
+        TypeShape::Aggregate(layout) => {
+            unserved_union(layout.kind)
+                || layout
+                    .members
+                    .iter()
+                    .any(|member| contains_unserved_union(&member.descriptor))
+        }
+        _ => false,
+    }
+}
+
 impl<'a> Codegen<'a> {
     pub(super) fn sampled_signal_of(&self, id: NodeId) -> Option<&SignalInfo> {
         let id = self.db.resolve_clocking_member(id).unwrap_or(id);
@@ -400,6 +428,15 @@ impl<'a> Codegen<'a> {
                 self.clocking_var_type_name(var, ty)
             )
         };
+        // IEEE 1800-2009 14.3 and 14.5 do not exclude these types, but
+        // industry-standard behaviour rejects them as clocking signals
+        // (docs/lrm_decisions.md, K1-D1); llg rejects them too.
+        let unserved_type = || {
+            format!(
+                "clocking input `{name}` in `{scope}` has type `{}`; {UNSERVED_CLOCKVAR_TYPES}",
+                self.clocking_var_type_name(var, ty)
+            )
+        };
         let descriptor = self.db.type_descriptor(var);
         match descriptor.map(|descriptor| &descriptor.shape) {
             Some(TypeShape::Real { shortreal }) => {
@@ -411,6 +448,9 @@ impl<'a> Codegen<'a> {
             Some(TypeShape::FixedArray { .. }) => {
                 return self.clocking_aggregate_value_type(var, scope);
             }
+            Some(TypeShape::Aggregate(layout)) if unserved_union(layout.kind) => {
+                return Err(unserved_type());
+            }
             Some(TypeShape::Aggregate(layout))
                 if !matches!(
                     layout.kind,
@@ -420,14 +460,7 @@ impl<'a> Codegen<'a> {
                 return self.clocking_aggregate_value_type(var, scope);
             }
             Some(TypeShape::String | TypeShape::Container { .. } | TypeShape::Opaque { .. }) => {
-                // IEEE 1800-2009 14.3 and 14.5 do not exclude these types, but
-                // industry-standard behaviour rejects them as clocking signals
-                // (docs/lrm_decisions.md, K1-D1); llg rejects them too.
-                return Err(format!(
-                    "clocking input `{name}` in `{scope}` has type `{}`; string, class handle, \
-                     event, queue, dynamic array and associative array clockvars are not supported",
-                    self.clocking_var_type_name(var, ty)
-                ));
+                return Err(unserved_type());
             }
             Some(_) => return Err(unsupported()),
         }
@@ -460,7 +493,10 @@ impl<'a> Codegen<'a> {
             .db
             .type_descriptor(var)
             .ok_or_else(|| format!("clocking input `{name}` in `{scope}` has no owned type"))?;
-        if let Some(width) = Self::fixed_descriptor_width(descriptor) {
+        let width = (!contains_unserved_union(descriptor))
+            .then(|| Self::fixed_descriptor_width(descriptor))
+            .flatten();
+        if let Some(width) = width {
             return Ok(IrType::Packed {
                 width,
                 signed: false,
@@ -468,15 +504,15 @@ impl<'a> Codegen<'a> {
             });
         }
         Err(match Self::fixed_descriptor_width_bits(descriptor) {
-            Some(width) => format!(
+            Some(width) if !contains_unserved_union(descriptor) => format!(
                 "clocking input `{name}` in `{scope}` of type `{}` has a {width}-bit payload; \
                  a sampled clockvar exceeds the packed value limit of {LLG_MAX_WIDTH} bits",
                 descriptor.name
             ),
-            None => format!(
+            _ => format!(
                 "clocking input `{name}` in `{scope}` has type `{}`; an unpacked clockvar \
-                 with a real, string, class handle, event or dynamic array element or member \
-                 is not supported",
+                 with a real, string, class handle, event, unpacked or tagged union or dynamic \
+                 array element or member is not supported",
                 descriptor.name
             ),
         })

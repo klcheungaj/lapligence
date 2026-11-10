@@ -2119,10 +2119,12 @@ its packed, real or shortreal type, or holding the whole declaration-order
 image of an unpacked fixed-size type. These legal forms reject with a located
 message instead of sampling:
 
-- string, class handle, event, queue, dynamic array and associative array
-  clockvars ("string, class handle, event, queue, dynamic array and
-  associative array clockvars are not supported"): the text does not exclude
-  them, but industry-standard behaviour rejects them and llg follows it
+- string, class handle, event, unpacked or tagged union, queue, dynamic array
+  and associative array clockvars ("string, class handle, event, unpacked or
+  tagged union, queue, dynamic array and associative array clockvars are not
+  supported"), and unpacked clockvars with such an element or member: the
+  text does not exclude them, but industry-standard behaviour rejects them
+  (unpacked unions included) and llg follows it
   ([K1-D1](lrm_decisions.md#clocking-inputs-fin-001-k1));
 - an unpacked clockvar with a real (or shortreal) element or member ("an
   unpacked clockvar with a real, ... element or member is not supported"): its
@@ -2145,6 +2147,7 @@ history entries are reused across events
 
 Reproduce with
 [`neg_string_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_string_input.sv),
+[`neg_unpacked_union_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_unpacked_union_input.sv),
 [`neg_real_array_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_real_array_input.sv) and
 [`neg_edge_skew_delay.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_edge_skew_delay.sv).
 

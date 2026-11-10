@@ -76,8 +76,8 @@ compile with "`$past` of a real expression is illegal", S14-D5 with
 "nonblocking assignment to class property `x`", and S23-D2 with "is an
 unpacked structure or union, which is not a singular variable". S22-D4 must fail with "`push_back` modifies
 `limits`, which is declared const". K1-D1 must fail with "string, class
-handle, event, queue, dynamic array and associative array clockvars are not
-supported".
+handle, event, unpacked or tagged union, queue, dynamic array and associative
+array clockvars are not supported".
 S30-D11 must end with exit status 1 after both lines, reporting "select
 index out of range in a constraint". S29-D1 must end with exit status
 1 after its first line, reporting "X or Z value in a constraint", and S29-D9 after
@@ -1128,7 +1128,7 @@ text: the clauses below favour waking at each write.
 
 | ID | Decision | Clause (SV) | Case | Kind |
 | --- | --- | --- | --- | --- |
-| K1-D1 | **String, class handle, event, queue, dynamic array and associative array clockvars reject** with their location. Unpacked fixed-size clockvars with integral leaves sample their whole value. | 14.3 L19444-19447 "The signal_identifier specifies a signal (a net or variable) in the scope enclosing the clocking block declaration ... It shall be illegal for a clocking signal to designate a variable restricted to a procedural block"; 14.5 L19590-19592 (an input expression is one legal for an input port). The text does not exclude these types. | `K1-D1_string_clockvar_rejected`; `neg_class_input`, `neg_event_input`, `neg_queue_input` in [sim_033](../tests/fixtures/sim/feature_completion/sim_033/readme.md) | industry-standard behaviour (the text permits the types; industry-standard tools reject them; llg rejects) |
+| K1-D1 | **String, class handle, event, unpacked union, queue, dynamic array and associative array clockvars reject** with their location, as does an unpacked clockvar with such an element or member; tagged unions reject too. Unpacked fixed-size arrays and structures with integral leaves sample their whole value. | 14.3 L19444-19447 "The signal_identifier specifies a signal (a net or variable) in the scope enclosing the clocking block declaration ... It shall be illegal for a clocking signal to designate a variable restricted to a procedural block"; 14.5 L19590-19592 (an input expression is one legal for an input port). The text does not exclude these types. | `K1-D1_string_clockvar_rejected`; `neg_class_input`, `neg_event_input`, `neg_queue_input`, `neg_unpacked_union_input`, `neg_union_member_input` in [sim_033](../tests/fixtures/sim/feature_completion/sim_033/readme.md) | industry-standard behaviour (the text permits the types; industry-standard tools reject them; llg rejects) |
 | K1-D2 | **An edge input skew samples at that edge of the clock signal and holds the sample from there.** `input negedge x` under `@(posedge clk)` (or `@(clk)`) takes the `#1step` sample at each negedge of `clk`; a read between the negedge and the next posedge already sees it, and `@(cb)` at the posedge reads it. A skew naming the clocking event's own edge is the `#1step` sample. Before the first skew edge a four-state clockvar is X. | 14.3 L19457-19458 "When the clocking event specifies a simple edge, instead of a number, the skew can be specified as the specific edge of the signal"; 14.13 L19949-19950 "its value is the signal's sampled value. That is, the value that the clocking block sampled at the most recent clocking event" (read literally, the sample would wait for the posedge) | `K1-D2_edge_skew_sample_at_edge` | industry-standard behaviour adopted over the literal 14.13 reading |
 
 ## Exit status of the run (small-fixes-2)

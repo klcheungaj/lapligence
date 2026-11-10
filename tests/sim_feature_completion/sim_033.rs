@@ -199,13 +199,6 @@ fn unpacked_inputs_sample_whole_values() {
 }
 
 #[test]
-fn unpacked_union_input_samples_whole_value() {
-    let expected =
-        include_str!("../fixtures/sim/feature_completion/sim_033/unpacked_union_input.out");
-    sim_cli::run_case_backend_parity(SUITE, "unpacked_union_input", expected, &[], &[]);
-}
-
-#[test]
 fn record_inputs_sample_the_same_in_both_storage_forms() {
     // 16 cells make the member array one column, 3 cells one leaf per cell
     // (LLG_RECORD_COLUMN_MIN_CELLS); both print the same.
@@ -243,8 +236,11 @@ fn shared_source_samples() {
     sim_cli::run_case_backend_parity(SUITE, "shared_source_samples", expected, &[], &[]);
 }
 
-const UNSERVED_TYPES: &str = "string, class handle, event, queue, dynamic array and \
-                              associative array clockvars are not supported";
+const UNSERVED_TYPES: &str = "string, class handle, event, unpacked or tagged union, queue, \
+                              dynamic array and associative array clockvars are not supported";
+const UNSERVED_MEMBERS: &str = "an unpacked clockvar with a real, string, class handle, event, \
+                                unpacked or tagged union or dynamic array element or member is \
+                                not supported";
 
 #[test]
 fn neg_string_input() {
@@ -290,9 +286,36 @@ fn neg_real_array_input() {
     sim_cli::reject_case(
         SUITE,
         "neg_real_array_input",
-        "neg_real_array_input.sv:7:11 clocking input `r` in `tb` has type `real$[0:1]`; an \
-         unpacked clockvar with a real, string, class handle, event or dynamic array element or \
-         member is not supported",
+        &format!(
+            "neg_real_array_input.sv:7:11 clocking input `r` in `tb` has type `real$[0:1]`; \
+             {UNSERVED_MEMBERS}"
+        ),
+    );
+}
+
+#[test]
+fn neg_unpacked_union_input() {
+    // Decision K1-D1: industry-standard behaviour does not accept an unpacked
+    // union as a clocking signal.
+    sim_cli::reject_case(
+        SUITE,
+        "neg_unpacked_union_input",
+        &format!(
+            "neg_unpacked_union_input.sv:9:11 clocking input `un` in `tb` has type \
+             `union{{int i;bit[31:0] u;}}tb.u$1`; {UNSERVED_TYPES}"
+        ),
+    );
+}
+
+#[test]
+fn neg_union_member_input() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_union_member_input",
+        &format!(
+            "neg_union_member_input.sv:11:11 clocking input `st` in `tb` has type \
+             `struct{{byte b;tb.un_t un;}}tb.s$1`; {UNSERVED_MEMBERS}"
+        ),
     );
 }
 

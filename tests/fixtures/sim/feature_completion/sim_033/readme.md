@@ -102,8 +102,8 @@ event (negedge) next occurs at 3; `inner` waits `##3` until 10 and reads the
 
 ### Unpacked inputs (K1)
 
-An unpacked fixed-size clockvar (fixed array, unpacked structure or union,
-any nesting of them with integral leaves) samples its whole value into one
+An unpacked fixed-size clockvar (fixed array or unpacked structure, any
+nesting of them with integral leaves) samples its whole value into one
 packed cell, its declaration-order image; element, member and slice reads
 select from that cell. Expected outputs are industry-standard behaviour's
 output for the same source, checked against the timelines below by hand.
@@ -118,11 +118,6 @@ output for the same source, checked against the timelines below by hand.
   of the event's own step (L19911-19912). `cb.arr[i]` follows `i`; the
   whole-value copy, the structure comparison with its source, `foreach` and
   `$size` read the sample.
-- `unpacked_union_input`: `un.i = 5` at 0, `un.u = ff` at 7, `un.i = -1` at
-  17; each read names the member last written (§7.3 L7799: "Only one of the
-  data types in the union can be used at a time"): posedge 5 reads `i` 5, 15
-  reads `u` ff, 25 reads `i` -1. Derived by hand: the tool tried does not
-  support unpacked unions.
 - `record_inputs`: a record with a member array of 16 cells (one column) and
   of 3 cells (one leaf per cell) prints the same; `#2 rk` at 15 reads step 13,
   after `r.m[N-1] = 88`.
@@ -201,10 +196,12 @@ Language rules, rejected in both optimizer modes:
 
 Forms rejected with a located diagnostic instead of a wrong sample (K1):
 
-- `neg_string_input`, `neg_class_input`, `neg_event_input`, `neg_queue_input`:
-  string, class handle, event, queue, dynamic and associative array clockvars
-  (decision K1-D1: the text does not exclude them, industry-standard
-  behaviour rejects them).
+- `neg_string_input`, `neg_class_input`, `neg_event_input`, `neg_queue_input`,
+  `neg_unpacked_union_input`: string, class handle, event, unpacked or tagged
+  union, queue, dynamic and associative array clockvars (decision K1-D1: the
+  text does not exclude them, industry-standard behaviour rejects them).
+- `neg_union_member_input`: an unpacked structure clockvar with an unpacked
+  union member rejects like the union itself (K1-D1).
 - `neg_real_array_input`: an unpacked clockvar with a real element or member
   has no packed sample image; industry-standard behaviour serves it, llg does
   not yet ([known issue](../../../../../docs/known_issues.md#clocking-input-forms-outside-the-sampled-storage-model)).

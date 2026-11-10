@@ -37,8 +37,8 @@ fn k1_d1_string_clockvar_rejected() {
     sim_cli::reject_case(
         SUITE,
         "K1-D1_string_clockvar_rejected",
-        "clocking input `s` in `tb` has type `string`; string, class handle, event, queue, \
-         dynamic array and associative array clockvars are not supported",
+        "clocking input `s` in `tb` has type `string`; string, class handle, event, unpacked or \
+         tagged union, queue, dynamic array and associative array clockvars are not supported",
     );
 }
 
