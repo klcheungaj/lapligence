@@ -193,7 +193,9 @@ static void llg_rt_report_summary(void); // simulation_control.c
  * procedures do not run and open waveform files are not completed. */
 void llg_rt_index_stop(const char* operation, const char* detail) {
     const char* process = g.current && g.current->name ? g.current->name : NULL;
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL,
+    /* An invalid access the design made: the design failure id (SIM-009),
+     * as the `$cast` and `ref` index-check stops report. */
+    llg_msg(LLG_MSG_RUNTIME_FAILURE, NULL,
             "%s%s%s%s: %s; run with --no-index-checks or set "
             "simulator.index_checks = false to apply the result IEEE 1800 "
             "gives instead",

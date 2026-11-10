@@ -424,7 +424,11 @@ impl<'a> Codegen<'a> {
             if !matches!(self.model.containers[dst.ir].kind, IrContainerKind::Dynamic) {
                 return Err(format!("new[] target in `{path}` is not a dynamic array"));
             }
-            let size = ir_to_storage(self.lower_expr(path, size)?, 64, true, true)?;
+            // The size takes the 64 signed bits of a longint (SV 7.5.1) but
+            // stays four-state: the runtime size check reports X or Z bits
+            // where a two-state conversion would size the array from 0s
+            // (S07-D17).
+            let size = ir_to_storage(self.lower_expr(path, size)?, 64, true, false)?;
             let initializer = initializer
                 .map(|node| {
                     self.container_of(node)

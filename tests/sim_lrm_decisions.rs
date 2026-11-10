@@ -5610,6 +5610,27 @@ fn s07_d15_index_checks_off() {
 }
 
 #[test]
+fn s07_d17_dynamic_array_new_invalid_size() {
+    let expected =
+        include_str!("fixtures/sim/lrm_decisions/S07-D17_dynamic_array_new_invalid_size.out");
+    let cases: [(&[&str], &str); 3] = [
+        (&[], "size -1 is negative"),
+        (&["+case=2"], "size -1 is negative"),
+        (&["+case=3"], "size has X or Z bits"),
+    ];
+    for (runtime_args, detail) in cases {
+        sim_cli::run_case_stopping_at_runtime(
+            SUITE,
+            "S07-D17_dynamic_array_new_invalid_size",
+            runtime_args,
+            expected,
+            "SIM-009",
+            &format!("new[] in process 'tb.initial': {detail}"),
+        );
+    }
+}
+
+#[test]
 fn s14_d7_event_nba_order() {
     run_decision(
         "S14-D7_event_nba_order",

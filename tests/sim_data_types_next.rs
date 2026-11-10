@@ -429,7 +429,12 @@ fn dynamic_array_negative_runtime_size_is_rejected_in_both_optimizer_modes() {
                 .map_err(|error| format!("{variant}: execute: {error}"))?;
             let stderr = String::from_utf8_lossy(&output.stderr);
             if output.status.success()
-                || !stderr.contains("dynamic-array size is unknown or negative")
+                || !sim_harness::has_message(
+                    &stderr,
+                    "SIM-009",
+                    "",
+                    "new[] in process 'tb.initial': size -1 is negative",
+                )
             {
                 return Err(format!(
                     "{variant}: expected negative-size rejection, status {:?}, stderr {stderr:?}",

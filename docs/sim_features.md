@@ -409,7 +409,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `--no-index-checks` or `simulator.index_checks = false` to turn off) stop
   the run instead at queue `insert`/`delete(index)` with an invalid index,
   associative reads and writes through an X/Z key, a checked `$cast` into a
-  missing element and a `ref` actual that selects no element.
+  missing element, a `ref` actual that selects no element and a negative or
+  X/Z `new[]` size (S07-D17; off, the array becomes empty with a warning).
   `$` may appear in an index expression
   (`q[$-1]`). The `wide-index` lint rule warns at such an index.
   Associative members of element records, class-property storage of

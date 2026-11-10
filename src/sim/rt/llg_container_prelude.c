@@ -711,12 +711,34 @@ void llg_dyn_delete(llg_dyn_array_t* array) {
                        : 0);
 }
 
+/* A `new[]` size that is negative or has X or Z bits (SV 7.5.1: "It shall be
+ * an error if the value of this operand is negative"). Index checks stop the
+ * run, as some simulators do; with them off the array becomes empty and a
+ * container warning names the size (S07-D17). Only invalid sizes reach this. */
+static uint64_t llg_invalid_dynamic_size(sv4_t value) {
+    char detail[96];
+    int64_t size = 0;
+    if (sv4_is_unknown(value))
+        snprintf(detail, sizeof(detail), "size has X or Z bits");
+    else if (sv4_to_index_i64(value, &size))
+        snprintf(detail, sizeof(detail), "size %lld is negative", (long long)size);
+    else
+        snprintf(detail, sizeof(detail), "size is negative");
+    if (llg_index_stop_hook) {
+        llg_index_stop_hook("new[]", detail);
+        return 0;
+    }
+    llg_msg(LLG_MSG_CONTAINER_WARNING, NULL, "new[] %s; the array becomes empty",
+            detail);
+    return 0;
+}
+
 static uint64_t llg_dynamic_size(sv4_t value) {
     if (llg_sv4_width(value) == 0 || llg_sv4_width(value) > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
         llg_container_fatal("malformed dynamic-array size value");
     if (sv4_is_unknown(value) || (llg_sv4_signed(value) &&
         ((llg_sv4_word(value, (llg_sv4_width(value) - 1) / 64, LLG_SV4_BITS) >> ((llg_sv4_width(value) - 1) % 64)) & 1u)))
-        llg_container_fatal("dynamic-array size is unknown or negative");
+        return llg_invalid_dynamic_size(value);
     uint64_t size = sv4_to_index(value);
     if (size == UINT64_MAX)
         llg_container_fatal("dynamic-array size is not host-representable");
