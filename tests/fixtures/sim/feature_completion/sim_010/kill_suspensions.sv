@@ -28,7 +28,7 @@ module tb;
       begin int v; box.get(v); $display("FAIL mailbox %0d", v); end
       begin nap(); $display("FAIL call"); end
       begin fork #60 $display("FAIL grandchild"); join_none wait fork; $display("FAIL wait fork"); end
-      begin wait (q.size() > 0 && r.a == 7 && s == "t") $display("FAIL natives"); end
+      begin wait (q.size() > 0 && r.q.size() > 0 && s == "t") $display("FAIL natives"); end
     join_none
     #1 disable fork;
     x = 3;
@@ -36,6 +36,7 @@ module tb;
     q.push_back(1);
     r.a = 7;
     r.s = "r";
+    r.q.push_back(7);
     $display("killed %0d", $time);
   endtask
 

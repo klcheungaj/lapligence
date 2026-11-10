@@ -355,6 +355,11 @@ fn storage_with_no_change_marker_rejects_in_waits() {
     let reason = "automatic record `r` shared with a fork at";
     sim_cli::reject_case(SUITE, "reject_wait_automatic_record", reason);
     sim_cli::reject_case(SUITE, "reject_event_automatic_record", reason);
+    // Nothing stores into the record while a branch waits: it is read as it is.
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_014/wait_automatic_record_unchanged.out"
+    );
+    sim_cli::run_case(SUITE, "wait_automatic_record_unchanged", expected, "", &[]);
 }
 
 /// FIN-001 R0: a member of an unpacked structure property with a string

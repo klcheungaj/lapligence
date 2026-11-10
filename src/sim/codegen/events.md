@@ -17,8 +17,9 @@ enter methods. A read no wait can observe rejects with its location, never
 compiles to a wait that cannot wake (a missed dependency is a hang), so a
 comparison of event variables or event formals rejects (T1-D2), as does a
 property selected through a call result and a member of an automatic native
-record a fork shares (`reject_shared_automatic_record`: one value per
-activation, no marker), while one naming a class event property is served
+record a fork shares (`reject_shared_automatic_records`: one value per
+activation, no marker; only when something can store into it while a branch
+waits), while one naming a class event property is served
 through its rebinding marker. A native record (one runtime value: a record
 with string, real, handle or container members) publishes through one contents
 marker per record, toggled by every store into it and only when some read walk

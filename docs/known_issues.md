@@ -1727,10 +1727,11 @@ Reproduce: `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`.
 
 The same rejection applies to a property selected through a call result,
 `wait (f().x == 1)`, and to a member of an automatic record with a native member
-(a string, a real, a handle, a container) that a fork shares: such a record is
-one value per activation with no change marker, and another branch of the fork
-is the only writer a waiting branch could see. An automatic record no fork
-shares cannot change while its process waits and is read as it is. Reproduce:
+(a string, a real, a handle, a container) that a fork shares and that something
+stores into inside a fork branch, or anywhere once a `join_none` or `join_any`
+fork names it: such a record is one value per activation with no change
+marker. An automatic record that nothing can store into while a branch waits
+is read as it is, and its container members have their own markers. Reproduce:
 `tests/fixtures/sim/feature_completion/sim_014/reject_wait_call_result.sv`,
 `reject_wait_automatic_record.sv`, `reject_event_automatic_record.sv`.
 

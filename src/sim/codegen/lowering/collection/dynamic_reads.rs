@@ -487,31 +487,214 @@ impl Codegen<'_> {
     }
 
     /// An automatic record with string, real, handle or container members is
-    /// one value per activation with no marker: a wait on one that a fork
-    /// shares, which is the only way it can change while the process waits,
-    /// could never resume.
-    fn reject_shared_automatic_record(&self, path: &str, node: NodeId) -> Result<(), String> {
-        let Ok(Some((value, _))) = self.native_path_of(node) else {
-            return Ok(());
-        };
-        let storage = &self.model.native_values[value];
-        if !storage.activation || storage.class_field.is_some() {
-            return Ok(());
+    /// one value per activation with no marker. A fork shares it with its
+    /// branches, and a branch that waits on a member another process can
+    /// store into while it waits could never resume: reject that wait. A
+    /// record nothing stores into once a fork names it cannot change under a
+    /// waiter and is read as it is; a container member has its own markers.
+    fn reject_shared_automatic_records(&self, path: &str, root: NodeId) -> Result<(), String> {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            let record = self
+                .native_path_of(node)
+                .ok()
+                .flatten()
+                .filter(|(value, _)| {
+                    let storage = &self.model.native_values[*value];
+                    storage.activation && storage.class_field.is_none()
+                });
+            let Some((value, member)) = record else {
+                pending.extend(self.node(node).children.iter().copied());
+                continue;
+            };
+            // Below the node only its selectors are reads of their own; the
+            // nodes that spell the record's own path are not.
+            pending.extend(self.node(node).children.iter().copied().filter(|child| {
+                !matches!(self.native_path_of(*child), Ok(Some((root, _))) if root == value)
+            }));
+            if self.container_of(node).is_some() || self.native_companion(value, &member).is_some()
+            {
+                continue;
+            }
+            let Some(declaration) = self.native_value_layouts.get(&value).copied() else {
+                continue;
+            };
+            if self.shared_locals.contains(&declaration)
+                && self.stored_while_fork_shared(declaration)
+            {
+                return Err(self.unobservable_read(
+                    path,
+                    node,
+                    &format!(
+                        "automatic record `{}` shared with a fork",
+                        self.node(declaration).name
+                    ),
+                ));
+            }
         }
-        let Some(declaration) = self.native_value_layouts.get(&value).copied() else {
-            return Ok(());
-        };
-        if !self.shared_locals.contains(&declaration) {
-            return Ok(());
+        Ok(())
+    }
+
+    /// Whether `node` selects below declaration `root` (`r`, `r.a`, `r.m[i]`).
+    fn selects_below(&self, node: NodeId, root: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target == Some(root),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.contains(&Some(root)),
+            NodeKind::Expr(
+                ExprKind::MemberSelect { base, .. }
+                | ExprKind::BitSelect { base, .. }
+                | ExprKind::ArraySelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => self.selects_below(*base, root),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                operands,
+                ..
+            }) => operands
+                .iter()
+                .any(|operand| self.selects_below(*operand, root)),
+            _ => false,
         }
-        Err(self.unobservable_read(
-            path,
-            node,
-            &format!(
-                "automatic record `{}` shared with a fork",
-                self.node(declaration).name
-            ),
-        ))
+    }
+
+    /// Whether some store into fork-shared automatic record `declaration`
+    /// can run while a fork branch waits on it: a store inside a fork branch,
+    /// or any store at all once a `join_none` or `join_any` fork names the
+    /// record (its parent goes on while the branch waits). A store is an
+    /// assignment or update target, an actual of a formal that is not an
+    /// input, or an argument of a system call other than the display family.
+    fn stored_while_fork_shared(&self, declaration: NodeId) -> bool {
+        let scope = match self.enclosing_func_task(declaration) {
+            Some(function) => function,
+            None => {
+                let mut scope = declaration;
+                while let Some(parent) = self.node(scope).parent {
+                    if matches!(self.kind(parent), NodeKind::ModuleInst { .. }) {
+                        break;
+                    }
+                    scope = parent;
+                }
+                scope
+            }
+        };
+        let mut stores = Vec::new();
+        let mut detached = false;
+        // `(node, inside a fork branch)`.
+        let mut pending = vec![(scope, false)];
+        while let Some((node, in_branch)) = pending.pop() {
+            let mut child_in_branch = in_branch;
+            match self.kind(node) {
+                NodeKind::Stmt(StmtKind::Fork { join_kind, .. }) => {
+                    child_in_branch = true;
+                    if *join_kind != crate::core::db::JoinKind::All && !detached {
+                        let mut names = vec![node];
+                        while let Some(inner) = names.pop() {
+                            if self.selects_below(inner, declaration) {
+                                detached = true;
+                                break;
+                            }
+                            names.extend(self.node(inner).children.iter().copied());
+                        }
+                    }
+                }
+                NodeKind::Stmt(StmtKind::Assign { .. } | StmtKind::ProcContAssign { .. }) => {
+                    if let Some(lhs) = self.node(node).children.first() {
+                        if self.selects_below(*lhs, declaration) {
+                            stores.push(in_branch);
+                        }
+                    }
+                }
+                NodeKind::Expr(ExprKind::Operation {
+                    op:
+                        Operation::Assignment
+                        | Operation::PostIncrement
+                        | Operation::PreIncrement
+                        | Operation::PostDecrement
+                        | Operation::PreDecrement
+                        | Operation::OverloadUpdate
+                        | Operation::OverloadPostUpdate,
+                    operands,
+                    ..
+                }) => {
+                    if operands
+                        .first()
+                        .is_some_and(|lhs| self.selects_below(*lhs, declaration))
+                    {
+                        stores.push(in_branch);
+                    }
+                }
+                NodeKind::SysCall { name } => {
+                    let display = [
+                        "$display",
+                        "$write",
+                        "$strobe",
+                        "$monitor",
+                        "$fdisplay",
+                        "$fwrite",
+                        "$fstrobe",
+                        "$fmonitor",
+                        "$error",
+                        "$warning",
+                        "$info",
+                        "$fatal",
+                        "$sformatf",
+                        "$psprintf",
+                    ]
+                    .iter()
+                    .any(|task| name.starts_with(task));
+                    if !display
+                        && self
+                            .node(node)
+                            .children
+                            .iter()
+                            .any(|argument| self.selects_below(*argument, declaration))
+                    {
+                        stores.push(in_branch);
+                    }
+                }
+                NodeKind::FuncCall {
+                    callee: Some(callee),
+                    ..
+                }
+                | NodeKind::MethodCall {
+                    callee: Some(callee),
+                    ..
+                } => {
+                    let formals = self
+                        .node(*callee)
+                        .children
+                        .iter()
+                        .copied()
+                        .filter(|child| matches!(self.kind(*child), NodeKind::FuncArg { .. }))
+                        .collect::<Vec<_>>();
+                    for (position, argument) in
+                        self.call_argument_nodes(node).into_iter().enumerate()
+                    {
+                        let input = formals.get(position).is_some_and(|formal| {
+                            matches!(
+                                self.kind(*formal),
+                                NodeKind::FuncArg {
+                                    direction: crate::core::db::Direction::Input,
+                                    ..
+                                }
+                            )
+                        });
+                        if !input && self.selects_below(argument, declaration) {
+                            stores.push(in_branch);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            pending.extend(
+                self.node(node)
+                    .children
+                    .iter()
+                    .map(|child| (*child, child_in_branch)),
+            );
+        }
+        stores.iter().any(|in_branch| *in_branch || detached)
     }
 
     /// The handle variable at the root of native access `name`'s receiver
@@ -1126,6 +1309,7 @@ impl Codegen<'_> {
     /// contributes the class storage its callee's body reads, through the
     /// handles the call binds (see [`CalleeReceivers`]).
     fn prepare_dynamic_reads(&mut self, path: &str, root: NodeId) -> Result<(), String> {
+        self.reject_shared_automatic_records(path, root)?;
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {
             pending.extend(self.node(node).children.iter().copied());
@@ -1204,7 +1388,6 @@ impl Codegen<'_> {
                 self.dynamic_reads.insert(node, dependencies);
                 continue;
             }
-            self.reject_shared_automatic_record(path, node)?;
             if let Some(callee) = self.called_subroutine(node) {
                 let receivers = self.root_call_receivers(path, node, callee)?;
                 let mut dependencies = Vec::new();

@@ -2148,7 +2148,7 @@ impl<'a> Codegen<'a> {
     /// toggle is no change of the value read, and an automatic one has no
     /// storage a wait could name: an event control on either compares
     /// values in the waiting process, which also rejects the automatic one
-    /// a fork shares (`reject_shared_automatic_record`).
+    /// a fork shares (`reject_shared_automatic_records`).
     pub(in super::super) fn reads_native_record(&self, root: NodeId) -> bool {
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {

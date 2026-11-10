@@ -212,9 +212,14 @@ final procedures).
 `reject_wait_call_result`, `reject_wait_automatic_record` and
 `reject_event_automatic_record` name storage whose changes llg cannot observe:
 a property selected through a call result, and a member of an automatic record
-with a string member that a fork shares (one value per activation, no change
-marker). A wait that could never resume rejects with its location.
-`wait_container_records` checks the neighbours that stay legal. 9.4.2
+with a string member that a fork shares and that something stores into inside
+a fork branch, or anywhere once a `join_none` or `join_any` fork names it (one
+value per activation, no change marker). A wait that could never resume rejects
+with its location. `wait_container_records` checks the neighbours that stay
+legal, and so does `wait_automatic_record_unchanged`: every store into its
+record is before the fork or after its join, so the waiting branch reads a
+record that cannot change (`3 c reached 3`, 9.4.3 L12032-12033 below; identical
+to industry-standard behaviour). 9.4.2
 L11837-11838 of `SystemVerilog-1800-2009.txt`:
 
     "Changing the value of object data members, aggregate elements, or the size
