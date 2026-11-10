@@ -145,6 +145,27 @@ variable has two ordinary records in one step (S47-D2).
   `total` = list sum + dyn size + queue size + entry count: 1+1+1+1 = 4,
   0+2+2+2 = 6 (the list is dropped at count 2), 3+3+3+3 = 12, 7+4+4+4 = 19;
   `ratio` = total/4: 1, 1.5, 3, 4.75.
+- `containers.sv` (FIN-001 C4, user decision 2026-11-10): `$dumpvars(0, tb)`
+  writes the same variables to `containers.vcd` and, with
+  `FILE="containers.fst"`, to the FST file. Derived from the declarations:
+  `count`, `ratio`, `tick`, `mem[0..1]`; the packed image of each element of
+  the fixed record arrays `fl` (4 + 3*8 = 28 bits) and `fc` (4 + 16*8 = 132
+  bits); the members of `lr` (`tag`, `m__i0..2`, one leaf per cell) and `cr`
+  (`tag`, `m__i0..15`, one column named like leaves); `one.n`, `holder.a`,
+  `nest.k`, `t3.k`, `t3.rows__i0..2__n` (3 rows are a leaf per cell) and
+  `t16.k`. Left out: the queue, dynamic and associative arrays, the queue of
+  queues, the queues and dynamic array of records, the class handle, the
+  string, every string member, the arrays of string-holding records `rows`
+  and `big`, the container members `holder.items` and `nest.inner`, and the
+  16 rows of `t16` (one container). The text is silent on these objects:
+  SV L38065-38066 "Value changes for all other variables are specified in
+  binary format by 0, 1, x, or z values" gives them no value format, so they
+  are left out (S47-D9, llg choice; industry-standard behaviour also leaves
+  them out without a message). The `.out` lines print values that show each
+  element was written.
+- `neg_container_dumpvars.sv` (C4 negative): `$dumpvars(1, q)` on a queue is
+  the same compile error at the argument (12:22) for `dump.vcd` and, with
+  `FILE="dump.fst"`, for an FST file.
 - `reject_string.sv`, `reject_handle.sv`, `reject_dynamic.sv`,
   `reject_block_variable.sv` (A03 negatives): naming such a variable in
   `$dumpvars` fails compilation with "has no VCD/FST representation".

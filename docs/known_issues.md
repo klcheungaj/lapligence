@@ -818,6 +818,12 @@ unsupported targets explicitly (decision S47-D9).
 
 ### Symptom
 
+- By decision (2026-11-10), container cells and the members of records held in
+  a container are not dumped in any format: a scope dump leaves out queues,
+  dynamic and associative arrays, strings, class handles, and record members
+  stored in one (`rows__iN__n` of a 16-row member array), without a message;
+  naming one in `$dumpvars` is an error at the argument. VCD and FST files
+  list the same variables.
 - An unpacked structure variable declared in a block appears as one packed
   vector, not as a scope of its members.
 - An unnamed block directly inside a task or function adds no
@@ -827,6 +833,8 @@ unsupported targets explicitly (decision S47-D9).
 
 ### Cause
 
+Registration happens once, before the dump starts, into one catalog both
+writers read; a container's cells come and go at run time and have none.
 Block structures live in one flattened signal, and a registration
 names a whole signal. The owned DB parents variables of such an unnamed block
 to the subroutine. libfst writes the hierarchy and block index at close.
@@ -838,7 +846,10 @@ behaviour follows the format.
 
 ### Reproduce
 
-`flush_read.sv` with `FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
+`flush_read.sv` with `FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`);
+`containers.sv` and `neg_container_dumpvars.sv`, each with a `.vcd` and a
+`.fst` file (`sim_047::vcd_and_fst_dump_the_same_variables_and_no_container_cell`,
+`sim_047::naming_a_container_is_the_same_located_error_in_both_formats`).
 
 ## Strength-only events a reader does not see
 
@@ -1864,8 +1875,8 @@ these limits, each an error at its source location unless noted:
 - a nested record whose type has the column layout on its own, inside a record
   that holds a native member array: `o.i = x` with `x` declared alone is not
   resolved.
-- not an error: a dump omits the members of an array of records held in a
-  container (`rows__iN__n`), like the other contents of a container.
+- not an error: a dump omits their members
+  ([waveform dump coverage limits](#waveform-dump-coverage-limits-sim-047)).
 
 A use the column form cannot lower is an error at its source location. These
 limits apply to the form named:
