@@ -1,0 +1,15 @@
+24 bits, pass 0: a=111111 b=111111 dup=0 bad=0
+24 bits, pass 1: a=111111 b=111111 dup=0 bad=0
+32 bits, pass 0: 1111 dup=0 bad=0
+32 bits, pass 1: 1111 dup=0 bad=0
+17 bits, whole range: distinct=131072 dup=0 next pass ok=1
+32 bits, unconstrained: dup=0 halves=11
+20 bits, one in sixteen: distinct=65536 dup=0 bad=0 next pass ok=1 legal=1
+signed, pass 0: 111111 dup=0 bad=0
+signed, pass 1: 111111 dup=0 bad=0
+enum, pass 0: 0111 dup=0 bad=0
+enum, pass 1: 0111 dup=0 bad=0
+two variables: first distinct=300 dup=0 bad=0
+static: 0111 dup=0 bad=0
+constraints changed, inactive, failed: 111111 dup=0 bad=0
+widths 17 to 32: full passes=48 dup=0 bad=0

@@ -90,6 +90,42 @@ fn randc_cycles_per_object_and_restarts_on_constraint_changes() {
     );
 }
 
+/// S30-D18: 17 to 32 bits walk a permutation of the range. The whole 17-bit
+/// range and the 65536 legal values of the walked variable are each returned
+/// once per pass.
+#[test]
+fn wide_randc_never_repeats_inside_a_pass() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "randc_wide",
+        include_str!("../fixtures/sim/feature_completion/sim_030/randc_wide.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn wide_randc_walk_budget_is_a_resource_error() {
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "rt_randc_walk_budget",
+        &[],
+        &[("LLG_RAND_CYCLIC_WALK", "0")],
+        &runtime_failure(
+            "ok=0 legal=0\n",
+            "ERROR: [SIM-010] randomize() at tb:13:10: solver budget LLG_RAND_CYCLIC_WALK exhausted before a solution or proof of unsatisfiability was found (raise LLG_RAND_CYCLIC_WALK); randomize returns 0",
+        ),
+    );
+    sim_cli::run_case_checked_matrix(SUITE, "rt_randc_walk_budget", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(0), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "ok=1 legal=1\n",
+            "{label}"
+        );
+    });
+}
+
 #[test]
 fn random_divisors_indices_and_power_exclude_erroneous_assignments() {
     sim_cli::run_case_backend_parity(
@@ -244,7 +280,7 @@ fn unsupported_and_later_edition_forms_are_located_errors() {
     sim_cli::reject_case(
         SUITE,
         "neg_randc_wide",
-        "`randc` property `r` of class `c_c` must be a packed integral value of at most 16 bits",
+        "`randc` property `r` of class `c_c` must be a packed integral value of at most 32 bits",
     );
     names_source_position("neg_randc_wide");
     sim_cli::reject_case(

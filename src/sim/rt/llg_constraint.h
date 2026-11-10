@@ -134,13 +134,19 @@ typedef struct {
     uint8_t cyclic;
 } llg_cr_var_t;
 
-/* Widest randc variable: its cycle state holds one bit per value. */
-#define LLG_CR_CYCLIC_MAX_WIDTH 16u
+/* Widest randc variable (18.4.2 permits a limit of 8 bits or more). */
+#define LLG_CR_CYCLIC_MAX_WIDTH 32u
+/* Widest randc variable whose cycle state holds one bit per value. A wider
+ * one walks a seeded permutation of its range and keeps only its place. */
+#define LLG_CR_CYCLIC_BITMAP_WIDTH 16u
 
-/* Words of a randc variable's cycle state: one "returned in this cycle" bit
- * per value, then a 64-bit signature of the constraints of the cycle. */
+/* Words of a randc variable's cycle state. Up to the bitmap width: one
+ * "returned in this cycle" bit per value, then a 64-bit signature of the
+ * constraints of the cycle. Wider: the next position in the permutation,
+ * the permutation's key, then the signature. */
 #define LLG_CR_CYCLIC_WORDS(width) \
-    ((width) >= 6u ? (1u << ((width) - 6u)) + 1u : 2u)
+    ((width) > LLG_CR_CYCLIC_BITMAP_WIDTH ? 3u \
+     : (width) >= 6u ? (1u << ((width) - 6u)) + 1u : 2u)
 
 /* One `dist` constraint (18.5.4). `expr` is the distributed expression,
  * `guard` the conjunction of the enclosing implication and if conditions
@@ -469,6 +475,8 @@ typedef struct {
     uint64_t conflicts;      /* LLG_RAND_CONFLICTS */
     uint64_t array_elements; /* LLG_RAND_ARRAY_ELEMENTS: elements per solve */
     uint64_t expand_nodes;   /* LLG_RAND_EXPAND_NODES: expanded nodes */
+    uint64_t cyclic_walk;    /* LLG_RAND_CYCLIC_WALK: permutation positions one
+                              * draw of a wide randc variable may test */
     int stats;               /* LLG_RAND_STATS */
     int overflow_memo;       /* LLG_RAND_OVERFLOW_MEMO: 0 rebuilds every
                               * overflowing exact model (never changes values) */

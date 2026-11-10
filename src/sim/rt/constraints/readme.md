@@ -181,7 +181,8 @@ which keeps the recursive BDD operations shallow on coroutine-hosted stacks),
 `LLG_RAND_REJECT_TRIES` (4096), `LLG_RAND_CONFLICTS` (100000 conflicts per
 component search; 0 disables the search), `LLG_RAND_ARRAY_ELEMENTS` (2^20
 random array elements per solve), `LLG_RAND_EXPAND_NODES` (2^22 nodes per
-expansion), `LLG_RAND_OVERFLOW_MEMO` (1; 0 turns off the foreseen overflows
+expansion), `LLG_RAND_CYCLIC_WALK` (2^26 permutation positions per draw of a
+randc variable wider than 16 bits), `LLG_RAND_OVERFLOW_MEMO` (1; 0 turns off the foreseen overflows
 below), `LLG_RAND_SEARCH_CACHE` (1; 0 re-encodes every search; neither switch
 changes a drawn value) and `LLG_RAND_STATS=1` (one stderr line per solve:
 engines, components, BDD nodes, foreseen overflows, rejection tries,
@@ -254,9 +255,25 @@ plus a 64-bit signature of its component's conjuncts (operators, widths,
 variable and call names, and the values of the known operands they read:
 state variables, inline-constraint operands and constants; never the source
 positions in state leaf names, so the same constraint at another call site
-matches), `LLG_CR_CYCLIC_WORDS(width)` words, at most 16 bits wide. The caller passes
+matches), `LLG_CR_CYCLIC_WORDS(width)` words, for variables of at most 16 bits. The caller passes
 the object's state in before solving and stores `llg_cr_cyclic` back only
 after `LLG_CR_OK`, so a failed randomize leaves it unchanged. A different
 signature (constraint blocks enabled or disabled, other constraints, a state
 value read by the component that changed since the last call) starts a new
 cycle; so does a cycle with no unused feasible value left (S30-D3).
+
+A variable of 17 to 32 bits (S30-D18) cannot keep a bit per value. It walks
+a keyed bijection of its w-bit range (`cr_cycw_*` in `sample.c`: rounds of
+`x ^= x >> k` and multiplication by an odd number modulo 2^w, so a value's
+position is computable too) and its state is three words: the next
+position, the key and the signature. A call returns the value at the first
+position from the stored one on that is legal with the earlier layers
+fixed; passing the last position, or a changed signature, draws a new key
+from the random stream. When at most 2 * 2^(w/2) values are legal the draw
+lists them from the exact model and takes the smallest position
+(one step per legal value); otherwise it tests positions in order (about
+2^w / count tests, each one BDD path), so either way a call costs at most
+about 2^17 steps for 32 bits. `LLG_RAND_CYCLIC_WALK` (2^26) bounds the
+positions one draw may test; beyond it the call is `LLG_CR_RESOURCE`. A
+component with a wide randc variable that does not fit the exact engine is
+`LLG_CR_RESOURCE` like any other randc component (S30-D9).

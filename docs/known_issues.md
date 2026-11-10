@@ -2569,7 +2569,7 @@ these forms remain outside them.
 
 - Rejected with a located `randomization:` error: nested dynamic arrays and
   queues, associative arrays, `randc` arrays and `randc` variables wider than
-  16 bits (18.4.2 lets an implementation limit them), a random untagged union
+  32 bits (18.4.2 lets an implementation limit them; S30-D18), a random untagged union
   with enum members, a `solve...before` that solves a variable before an
   array size (S30-D5 solves sizes first) or names an element at a non-constant
   index, and a row of a multidimensional array in `inside`. A whole array in

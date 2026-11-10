@@ -226,7 +226,7 @@ not convert is an error naming the override.
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
 | Process back-edges | Default 10,000,000 per process; `LLG_PROCESS_STEP_LIMIT` overrides the `LLG_NONCONVERGENCE_LIMIT` alias. An explicitly set region limit also supplies the process limit when neither process variable is set. Both require positive decimal `uint64` values. |
 | Concurrent-assertion sequence threads | Default 1,000,000 live pending sequence threads plus attempts across the model; `LLG_SEQUENCE_THREAD_LIMIT` accepts a positive decimal `uint64`. Exhaustion stops the run with an error naming the assertion and time; no attempt is dropped ([SIM-037](../tests/sim_feature_completion/sim_037.rs)). Sequence automata are limited to 1,048,576 states per assertion graph (repetition bodies unroll once per literal bound). |
-| Constraint solving per `randomize()` component | Exact BDD up to `LLG_RAND_BDD_BITS` (512) variable bits and `LLG_RAND_BDD_NODES` (1,048,576) nodes, `LLG_RAND_REJECT_TRIES` (4,096) rejection draws, then `LLG_RAND_CONFLICTS` (100,000) CDCL conflicts. Exhaustion is a run-time error naming the budget, distinct from infeasible constraints (S29-D5). |
+| Constraint solving per `randomize()` component | Exact BDD up to `LLG_RAND_BDD_BITS` (512) variable bits and `LLG_RAND_BDD_NODES` (1,048,576) nodes, `LLG_RAND_REJECT_TRIES` (4,096) rejection draws, then `LLG_RAND_CONFLICTS` (100,000) CDCL conflicts; a `randc` variable of 17 to 32 bits tests at most `LLG_RAND_CYCLIC_WALK` (67,108,864) positions of its permutation per call. Exhaustion is a run-time error naming the budget, distinct from infeasible constraints (S29-D5). |
 | Constraint expansion per `randomize()` call (arrays, objects) | `LLG_RAND_ARRAY_ELEMENTS` (1,048,576) elements of random arrays and `LLG_RAND_EXPAND_NODES` (4,194,304) expanded solver nodes. Exhaustion is a run-time error naming the budget; nothing is truncated. |
 | Driver, alias, process, final, event-waiter, procedural-driver and force registries | Size to the design or grow with checked allocation; the former 16-driver and 256-alias ceilings do not apply. |
 
@@ -3150,7 +3150,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   methods and tasks. SV 40 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and
   enum class properties (instance and static, inherited, with virtual
-  `randomize()`), random fixed arrays of any dimension count, dynamic arrays and
+  `randomize()`; `randc` up to 32 bits, S30-D18), random fixed arrays of any dimension count, dynamic arrays and
   bounded or unbounded queues of packed, enum or packed-structure elements
   with `size()` constraints solved first, arrays of class handles, `rand`
   object members randomized with their parent (global constraints, null
@@ -3172,7 +3172,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   [solver readme](../src/sim/rt/constraints/readme.md)). A failed call leaves
   every variable unchanged; infeasible constraints warn, evaluation errors and
   exhausted budgets are run-time errors (S29-D1 to S29-D10 and S30-D1 to
-  S30-D17 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays,
+  S30-D18 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays,
   associative arrays and the other forms in
   [known issues](known_issues.md#constrained-randomization-limits-sim-029-sim-030)
   are located errors; see

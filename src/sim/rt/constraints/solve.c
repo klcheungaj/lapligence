@@ -1534,7 +1534,9 @@ static llg_cr_status_t cr_pick_draw(cr_wcount_t* c, cr_solve_t* st, uint32_t roo
 }
 
 /* Draw one sample from a layered exact model (S30-D1 to S30-D3). Returns
- * LLG_CR_OK or LLG_CR_UNSAT (no value of a layer has a completion). */
+ * LLG_CR_OK, LLG_CR_UNSAT (no value of a layer has a completion) or
+ * LLG_CR_RESOURCE (a wide randc variable's walk budget, named in
+ * st->budget). */
 static llg_cr_status_t cr_layered_sample(cr_solve_t* st, const cr_exact_t* e,
                                          const cr_layout_t* lay, const uint32_t* level_var,
                                          const uint32_t* level_bit, uint64_t signature) {
@@ -1567,6 +1569,17 @@ static llg_cr_status_t cr_layered_sample(cr_solve_t* st, const cr_exact_t* e,
         } else if (var == LLG_CR_NONE) {
             cr_wcount_prepare(&c);
             if (!cr_wcount_draw(&c, root, st->rng, bits)) status = LLG_CR_UNSAT;
+        } else if (cr_cyc_wide(s, var)) {
+            cr_wcount_prepare(&c);
+            uint64_t value = 0;
+            status = cr_cycw_draw(&c, s, root, var,
+                                  cr_mix(signature ^ cr_hash_text(s->p->vars[var].name)), st->rng,
+                                  st->t->cyclic_walk, level_bit, &value);
+            if (status == LLG_CR_RESOURCE) st->budget = "LLG_RAND_CYCLIC_WALK";
+            if (status == LLG_CR_OK)
+                for (uint32_t l = 0; l < levels; ++l)
+                    if (lay->layer[l] == layer && fixed[l] < 0)
+                        bits[l] = (uint8_t)((value >> level_bit[l]) & 1u);
         } else {
             cr_wcount_prepare(&c);
             cr_cyc_check(s, var, cr_mix(signature ^ cr_hash_text(s->p->vars[var].name)));

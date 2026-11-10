@@ -881,7 +881,7 @@ int main(int argc, char** argv) {
         uint64_t stream = UINT64_C(0x9e3779b97f4a7c15) ^ ((uint64_t)i * 7919u + 1u);
         llg_cr_rng_t rng = {next_draw, &stream};
         llg_cr_session_t* s = llg_cr_session_get(p, &slots[i]);
-        size_t stride = LLG_CR_CYCLIC_WORDS(LLG_CR_CYCLIC_MAX_WIDTH);
+        size_t stride = LLG_CR_CYCLIC_WORDS(LLG_CR_CYCLIC_BITMAP_WIDTH);
         uint64_t* state = (uint64_t*)calloc((size_t)objects * p->var_count * stride, 8u);
         for (uint32_t k = 0; k < samples; ++k) {
             uint32_t object = k % objects;

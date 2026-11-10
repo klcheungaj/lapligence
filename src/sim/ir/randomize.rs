@@ -294,12 +294,18 @@ pub struct IrRandProblem {
 }
 
 /// Widest `randc` variable (`LLG_CR_CYCLIC_MAX_WIDTH`).
-pub const RAND_CYCLIC_MAX_WIDTH: u32 = 16;
+pub const RAND_CYCLIC_MAX_WIDTH: u32 = 32;
+
+/// Widest `randc` variable whose cycle state holds one bit per value
+/// (`LLG_CR_CYCLIC_BITMAP_WIDTH`).
+pub const RAND_CYCLIC_BITMAP_WIDTH: u32 = 16;
 
 /// Packed width of a `randc` variable's cycle state
 /// (`LLG_CR_CYCLIC_WORDS` 64-bit words).
 pub fn rand_cyclic_state_width(width: u32) -> u32 {
-    let words = if width >= 6 {
+    let words = if width > RAND_CYCLIC_BITMAP_WIDTH {
+        3
+    } else if width >= 6 {
         (1 << (width - 6)) + 1
     } else {
         2

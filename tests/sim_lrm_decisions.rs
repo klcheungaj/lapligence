@@ -75,6 +75,14 @@ fn s30_d17_rand_mode_function_handle_variable() {
 }
 
 #[test]
+fn s30_d18_randc_wide() {
+    run_decision(
+        "S30-D18_randc_wide",
+        include_str!("fixtures/sim/lrm_decisions/S30-D18_randc_wide.out"),
+    );
+}
+
+#[test]
 fn t1_d8_strength_only_events() {
     run_decision(
         "T1-D8_strength_only_events",
