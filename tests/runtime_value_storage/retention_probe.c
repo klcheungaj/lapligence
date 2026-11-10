@@ -163,7 +163,9 @@ static size_t history_entries(const sv4_t* signal) {
 }
 
 // Clocking input skews read the newest slot sample at or before `now - ticks`;
-// the source keeps only the slots its deepest registered skew can select.
+// the source keeps only the slots its deepest registered skew can select, and
+// a source no skew reads keeps none. A `#0` clockvar reuses one Observed copy
+// record across its clocking events.
 static void clocking_history_is_bounded(void) {
     enum { SKEW = 5, SLOTS = 1000 };
     llg_rt_init();
@@ -190,7 +192,11 @@ static void clocking_history_is_bounded(void) {
             CHECK(sv4_to_u64(sample) == 3 * (selected - selected % 2));
         }
         CHECK(history_entries(&skewed) <= SKEW + 2);
-        CHECK(history_entries(&plain) == 1);
+        CHECK(history_entries(&plain) == 0);
+        CHECK(llg_clocking_sample_observed(&plain, &sample));
+        CHECK(find_sampled_value(&plain)->observed &&
+              !find_sampled_value(&plain)->observed->next);
+        CHECK(g.callbacks && g.callbacks->data == find_sampled_value(&plain)->observed);
     }
     llg_rt_cleanup();
     sv4_destroy(&sample);
@@ -208,7 +214,10 @@ static void value_registration_is_promoted(void) {
     CHECK(g.sampled_values && !g.sampled);
     llg_sampled_register(&source);
     CHECK(!g.sampled_values && g.sampled && g.sampled->signal == &source);
-    CHECK(!g.sampled->next && g.sampled->history);
+    CHECK(!g.sampled->next && !g.sampled->history);
+    // A skew depth added later starts the history at the current value.
+    llg_sampled_register_history(&source, 2);
+    CHECK(g.sampled->history && !g.sampled->history->next);
     llg_sampled_register_value(&source);
     CHECK(!g.sampled_values);
     sv4_t copy = SV4_EMPTY;

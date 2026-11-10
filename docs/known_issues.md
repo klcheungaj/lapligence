@@ -2128,7 +2128,7 @@ message instead of sampling:
   unpacked clockvar with a real, ... element or member is not supported"): its
   value has no packed image. Industry-standard behaviour serves it;
 - an edge input skew with a delay (`input negedge #1 x`), which
-  industry-standard behaviour accepts;
+  industry-standard behaviour accepts.
 
 An `edge` input skew and an edge skew under an event list also reject; the
 first is a syntax error and the second an error in industry-standard
@@ -2138,10 +2138,10 @@ An unpacked clockvar keeps its sample image current with a synthetic process
 that rebuilds the whole image on every write to its source, so a write costs
 time linear in the aggregate's size; only designs with such clockvars pay it.
 
-Separately, `#0` (Observed) samples allocate one small callback record per
-sample event, and positive-skew history keeps one heap node per source write
-within the skew window. Both predate SIM-033; a preallocated per-clockvar slot
-would remove the per-edge allocation.
+Separately, each `#0` (Observed) sample event still allocates one entry in the
+scheduler's shared region-callback queue; its copy record and positive-skew
+history entries are reused across events
+([control](../src/sim/rt/scheduler/control.md)).
 
 Reproduce with
 [`neg_string_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_string_input.sv),

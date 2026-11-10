@@ -140,8 +140,23 @@ typedef struct llg_sampled_value {
     sv4_t value;
     struct llg_sampled_history* history; // newest first, one entry per slot
     struct llg_sampled_history* history_tail;
+    // An entry pruned from the history, reused by the next time step's entry
+    // so a steady history allocates nothing per step.
+    struct llg_sampled_history* history_spare;
     uint64_t history_ticks; // deepest clocking skew read from this history
+    // One record per `#0` clockvar of this source, queued again at each of
+    // its clocking events instead of being allocated per event.
+    struct llg_clocking_observed* observed;
 } llg_sampled_value_t;
+
+/* The Observed-region copy of one `#0` clockvar sample (SV 14.13): `sample`
+ * for a packed clockvar, else `real_sample`, decoding the 64-bit image. */
+typedef struct llg_clocking_observed {
+    struct llg_clocking_observed* next;
+    sv4_t* source;
+    sv4_t* sample;
+    double* real_sample;
+} llg_clocking_observed_t;
 
 /* Preponed snapshot of one real variable; the value is numeric, never a
  * packed bit image. */

@@ -234,6 +234,15 @@ fn edge_skew_forms() {
     sim_cli::run_case_backend_parity(SUITE, "edge_skew_forms", expected, &[], &[]);
 }
 
+#[test]
+fn shared_source_samples() {
+    // One source feeds #1step, positive-skew and two #0 clockvars, so the
+    // runtime reuses its history entries and Observed copy records per event.
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/shared_source_samples.out");
+    sim_cli::run_case_backend_parity(SUITE, "shared_source_samples", expected, &[], &[]);
+}
+
 const UNSERVED_TYPES: &str = "string, class handle, event, queue, dynamic array and \
                               associative array clockvars are not supported";
 

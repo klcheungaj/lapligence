@@ -167,6 +167,17 @@ to when the wait arms. Expected outputs are industry-standard behaviour's.
 - `vif_clocking_event_null`: a wait through a null handle stops the run
   (decision S99-D8) after `0 before`.
 
+### Shared sampled source (K1)
+
+`shared_source_samples` reads one source through a `#1step` clockvar, an
+`input #3` clockvar and two `#0` clockvars in different blocks, one of them on
+`@(clk2)` firing twice per period, over six periods. It guards the runtime's
+reuse of a source's history entries and of each `#0` clockvar's Observed copy
+record across clocking events. The `c2` display is delayed by 2 because a
+clockvar keeps its sample until the next clocking event, which keeps it from
+racing the `c3` process at the same time. The expected output is
+industry-standard behaviour's.
+
 ## Negatives
 
 Language rules, rejected in both optimizer modes:
