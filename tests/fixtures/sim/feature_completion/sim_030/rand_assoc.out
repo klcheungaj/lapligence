@@ -1,0 +1,7 @@
+keys: bad=0 aa=1 8 103 entries=3 3 2 2 3 2
+other keys: bad=0 aa=1 43 103 by_byte[-100]=2
+unconstrained: bad=0 entries=3 keys=111 changed=1
+inactive: ok=1 changed=0
+empty: ok=1 entries=0
+member and order: bad=0 lim high=1
+scope: bad=0

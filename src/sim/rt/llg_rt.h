@@ -1942,6 +1942,8 @@ void llg_cr_iset_cyclic_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t var, sv
                             uint32_t width);
 void llg_cr_set_elem_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
                          sv4_t value, uint32_t width);
+void llg_cr_set_key_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
+                         sv4_t value, uint32_t width);
 sv4_t llg_cr_ivalue_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t var, uint32_t width,
                         int8_t is_signed);
 sv4_t llg_cr_icyclic_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t var, uint32_t width);

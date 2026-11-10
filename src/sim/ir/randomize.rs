@@ -230,6 +230,9 @@ pub enum IrRandArrayKind {
     /// Only the random size of a dynamic array or queue of handles: it has
     /// no elements of its own, the slot's links are the objects.
     Size = 3,
+    /// An associative array with an integral index type: its entries in
+    /// key order; `left` is the key width, `right` 1 for a signed key.
+    Assoc = 4,
 }
 
 /// A random (or state) unpacked array of packed elements of one unit
@@ -570,7 +573,14 @@ impl IrRandProblem {
                     && is_ref(node.c)
             }
             IrRandOp::ASize => is_array(node.a) && is_ref(node.c) && node.width == 32,
-            IrRandOp::Iter => node.width == 32 && node.signed,
+            // 32-bit signed, or the index type of an associative array.
+            IrRandOp::Iter => {
+                (node.width == 32 && node.signed)
+                    || self.arrays.iter().any(|array| {
+                        array.kind == IrRandArrayKind::Assoc
+                            && (array.left as u32, array.right != 0) == (node.width, node.signed)
+                    })
+            }
             IrRandOp::IsNull => is_ref(node.a) && node.width == 1,
             IrRandOp::TCall => self
                 .calls
@@ -701,6 +711,15 @@ pub enum IrRandStmt {
         index: IrExpr,
         value: IrExpr,
     },
+    /// The key of element `index` of an associative array, in the key's
+    /// type; elements are fed in key order.
+    SetKey {
+        problem: usize,
+        inst: IrExpr,
+        array: u32,
+        index: IrExpr,
+        value: IrExpr,
+    },
     /// Handle slot `slot` of instance `inst` names `child` at `index` (none
     /// for a scalar slot), an object of class unit `unit` (`random`: the
     /// handle is `rand` and enabled).
@@ -751,6 +770,7 @@ impl IrRandStmt {
             | Self::SetSlotSize { problem, .. }
             | Self::TrimSlot { problem, .. }
             | Self::SetElem { problem, .. }
+            | Self::SetKey { problem, .. }
             | Self::Link { problem, .. } => *problem,
         }
     }
@@ -774,7 +794,8 @@ impl IrRandStmt {
             | Self::SetArray { .. }
             | Self::SetSlotSize { .. }
             | Self::TrimSlot { .. }
-            | Self::SetElem { .. } => Vec::new(),
+            | Self::SetElem { .. }
+            | Self::SetKey { .. } => Vec::new(),
         }
     }
 
@@ -796,7 +817,8 @@ impl IrRandStmt {
             | Self::SetArray { .. }
             | Self::SetSlotSize { .. }
             | Self::TrimSlot { .. }
-            | Self::SetElem { .. } => Vec::new(),
+            | Self::SetElem { .. }
+            | Self::SetKey { .. } => Vec::new(),
         }
     }
 
@@ -826,6 +848,9 @@ impl IrRandStmt {
                 inst, size, active, ..
             } => vec![inst, size, active],
             Self::SetElem {
+                inst, index, value, ..
+            }
+            | Self::SetKey {
                 inst, index, value, ..
             } => vec![inst, index, value],
             Self::Link {
@@ -865,6 +890,9 @@ impl IrRandStmt {
                 inst, size, active, ..
             } => vec![inst, size, active],
             Self::SetElem {
+                inst, index, value, ..
+            }
+            | Self::SetKey {
                 inst, index, value, ..
             } => vec![inst, index, value],
             Self::Link {

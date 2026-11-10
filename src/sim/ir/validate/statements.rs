@@ -2010,6 +2010,10 @@ impl Validator<'_> {
             IrRandStmt::SetArray { array, .. } | IrRandStmt::SetElem { array, .. } => {
                 (*array as usize) < problem.arrays.len()
             }
+            IrRandStmt::SetKey { array, .. } => problem
+                .arrays
+                .get(*array as usize)
+                .is_some_and(|array| array.kind == crate::sim::ir::IrRandArrayKind::Assoc),
             IrRandStmt::Link { slot, unit, .. } => {
                 (*slot as usize) < problem.slots.len() && (*unit as usize) < problem.units.len()
             }
@@ -2029,6 +2033,7 @@ impl Validator<'_> {
                     | IrRandStmt::ISetCyclic { .. }
                     | IrRandStmt::SetArray { .. }
                     | IrRandStmt::SetElem { .. }
+                    | IrRandStmt::SetKey { .. }
                     | IrRandStmt::Link { .. }
                     | IrRandStmt::SetSlotSize { .. }
                     | IrRandStmt::TrimSlot { .. }

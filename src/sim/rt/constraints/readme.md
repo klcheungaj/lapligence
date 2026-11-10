@@ -49,7 +49,14 @@ row-major array: selects compute the flat position (an index outside its own
 dimension makes it invalid), and `foreach` and reductions walk a dimension
 through a loop whose array operand is a declared range
 (`LLG_CR_RANGE_LOOP`). A random bounded queue carries its maximum element
-count in `right`, which bounds the domain of its size variable. Random
+count in `right`, which bounds the domain of its size variable. A random
+associative array (`LLG_CR_ARRAY_ASSOC`, S30-D20) is the entries it holds, in
+key order, with their keys (`llg_cr_set_key`): its size is never random, a
+loop index is the element's key in the index type (`ITER` has that type), and
+a select names a key, which lowering restricts to constants, loop indices
+and state, so the expansion resolves it to an element (the state values such
+a key reads, and the keys themselves, are constants of the expansion and part
+of its cache key); a key the array does not hold is an index outside it. Random
 arrays of enum or packed-structure elements add one block per array per unit
 (`<array>_legal`, enabled while the array is random) holding every element
 to its legal values; it does not name the size, so it leaves sizes alone.

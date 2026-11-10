@@ -2568,7 +2568,10 @@ these forms remain outside them.
 ### Symptom
 
 - Rejected with a located `randomization:` error: nested dynamic arrays and
-  queues, associative arrays, `randc` arrays and `randc` variables wider than
+  queues, associative arrays of class handles or with a string, class,
+  wildcard or wider than 64-bit index type, the size of a random associative
+  array, a random key and one element of an associative array as a
+  `solve...before` side (S30-D20), `randc` arrays and `randc` variables wider than
   32 bits (18.4.2 lets an implementation limit them; S30-D18), a random untagged union
   with enum members, a `solve...before` that solves a variable before an
   array size when a constraint ties that variable to elements of an array of

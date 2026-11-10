@@ -68,6 +68,53 @@ fn rand_mode_function_needs_a_random_variable() {
     names_source_position("neg_element_mode_queue_function");
 }
 
+/// S30-D20: the entries an associative array holds are its random
+/// elements; a loop index is a key and a select names one.
+#[test]
+fn associative_arrays_randomize_their_entries() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "rand_assoc",
+        include_str!("../fixtures/sim/feature_completion/sim_030/rand_assoc.out"),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "rt_assoc_missing_key",
+        &[],
+        &runtime_failure(
+            "ok=0 entries=1\nok=1 entries=2 aa[4]=9\n",
+            "ERROR: [SIM-010] randomize() at tb:12:10: select index out of range in a constraint",
+        ),
+    );
+}
+
+#[test]
+fn associative_array_forms_outside_the_entries_are_located_errors() {
+    for (fixture, message) in [
+        (
+            "neg_assoc_size",
+            "the size of a random associative array is not supported in a constraint",
+        ),
+        (
+            "neg_assoc_string_key",
+            "array `sa` is not supported in constraints: an associative array needs an integral index type of at most 64 bits",
+        ),
+        (
+            "neg_assoc_random_key",
+            "an element of an associative array in a constraint needs a key the solution does not change",
+        ),
+        (
+            "neg_assoc_solve_element",
+            "a `solve...before` order naming one element of an associative array is not supported",
+        ),
+    ] {
+        sim_cli::reject_case(SUITE, fixture, message);
+        names_source_position(fixture);
+    }
+}
+
 /// Objects of the randomized class reached through handles, and the
 /// randomized object reached again, evaluate their own constraint functions.
 #[test]

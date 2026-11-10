@@ -871,8 +871,26 @@ impl Codegen<'_> {
                     (None, None) => (IrRandArrayKind::Dynamic, 0, 0),
                 }
             }
+            // The entries in key order are the elements; a loop index is
+            // an element's key, so the key must be an integral value the
+            // solver's index arithmetic holds.
+            IrContainerKind::Associative {
+                key:
+                    crate::sim::ir::IrAssocKey::Integral {
+                        width: key_width,
+                        signed: key_signed,
+                        ..
+                    },
+            } if *key_width <= 64 => (
+                IrRandArrayKind::Assoc,
+                *key_width as i32,
+                i32::from(*key_signed),
+            ),
             IrContainerKind::Associative { .. } => {
-                return Err(unsupported(self, "associative arrays are not supported"))
+                return Err(unsupported(
+                    self,
+                    "an associative array needs an integral index type of at most 64 bits",
+                ))
             }
         };
         let domain = if random {
@@ -1591,6 +1609,18 @@ impl Codegen<'_> {
         Ok((translated, lowered))
     }
 
+    /// The index of loop `loop_index` over `array`: a 32-bit signed value,
+    /// or a key of an associative array in its index type.
+    fn loop_iter(builder: &mut ProblemBuilder, array: u32, loop_index: u32) -> u32 {
+        let key = (array & (RAND_SLOT_ARRAY | RAND_RANGE_LOOP) == 0)
+            .then(|| state(builder).arrays.get(array as usize))
+            .flatten()
+            .filter(|info| info.kind == IrRandArrayKind::Assoc)
+            .map(|info| (info.right != 0, info.left as u32));
+        let (signed, width) = key.unwrap_or((true, 32));
+        builder.template(IrRandOp::Iter, signed, width, [loop_index, 0, 0])
+    }
+
     /// An element of `array` at the template loop index `iter`.
     fn loop_element(
         &self,
@@ -1829,7 +1859,17 @@ impl Codegen<'_> {
         let Some((array, reference)) = self.template_array(path, builder, base, random)? else {
             return Ok(());
         };
+        let key_node = *index;
         let (index, _) = self.template_operand(path, builder, *index)?;
+        if state(builder).arrays[array as usize].kind == IrRandArrayKind::Assoc
+            && !builder.expansion_constant(index)
+        {
+            return Err(self.rand_error(
+                key_node,
+                path,
+                "an element of an associative array in a constraint needs a key the solution does not change: a constant, a loop index or state",
+            ));
+        }
         let element = self
             .loop_element(builder, array, reference, index)
             .map_err(|error| self.rand_error(node, path, &error))?;
@@ -2075,7 +2115,7 @@ impl Codegen<'_> {
             };
             state(builder).consumed.insert(array_node);
             let loop_index = builder.new_loop();
-            let iter = builder.template(IrRandOp::Iter, true, 32, [loop_index, 0, 0]);
+            let iter = Self::loop_iter(builder, array, loop_index);
             let element = self
                 .loop_element(builder, array, reference, iter)
                 .map_err(|error| self.rand_error(node, path, &error))?;
@@ -2193,6 +2233,15 @@ impl Codegen<'_> {
             .as_ref()
             .and_then(|view| view.dimensions.get(view.prefix.len()).copied());
         let Some(op) = op else {
+            if array & RAND_SLOT_ARRAY == 0
+                && state(builder).arrays[array as usize].kind == IrRandArrayKind::Assoc
+            {
+                return Err(self.rand_error(
+                    node,
+                    path,
+                    "the size of a random associative array is not supported in a constraint: randomize keeps its entries (18.4 constrains the size of dynamic arrays and queues only)",
+                ));
+            }
             let size = match dimension {
                 Some((left, right)) => {
                     let extent = (i64::from(left) - i64::from(right)).abs() + 1;
@@ -2218,7 +2267,7 @@ impl Codegen<'_> {
             None => array,
         };
         let loop_index = builder.new_loop();
-        let iter = builder.template(IrRandOp::Iter, true, 32, [loop_index, 0, 0]);
+        let iter = Self::loop_iter(builder, loop_array, loop_index);
         let slot = self
             .array_expr_decl(receiver)
             .and_then(|decl| state(builder).slot_of.get(&decl).copied());
@@ -2400,7 +2449,10 @@ impl Codegen<'_> {
             // Sizes are solved first (S30-D5), so a size named first orders
             // nothing, as does the constant size of a fixed array.
             let sized = array & RAND_SLOT_ARRAY == 0
-                && state(builder).arrays[array as usize].kind != IrRandArrayKind::Fixed;
+                && !matches!(
+                    state(builder).arrays[array as usize].kind,
+                    IrRandArrayKind::Fixed | IrRandArrayKind::Assoc
+                );
             if first || !sized {
                 return Ok(OrderSide::Nothing);
             }
@@ -2441,6 +2493,13 @@ impl Codegen<'_> {
         }
         let info = &state(builder).arrays[array as usize];
         let (kind, left, right) = (info.kind, info.left, info.right);
+        if kind == IrRandArrayKind::Assoc {
+            return Err(self.rand_error(
+                primary,
+                path,
+                "a `solve...before` order naming one element of an associative array is not supported",
+            ));
+        }
         let dimensions = match (self.array_dimensions(info), &info.model) {
             (Some(dimensions), _) => dimensions,
             (None, Some((_, dimensions))) => dimensions.clone(),
@@ -2523,7 +2582,7 @@ impl Codegen<'_> {
         };
         state(builder).consumed.insert(array);
         let loop_index = builder.new_loop();
-        let iter = builder.template(IrRandOp::Iter, true, 32, [loop_index, 0, 0]);
+        let iter = Self::loop_iter(builder, array_index, loop_index);
         let binding = builder.template_placeholder(iter);
         if let (Some(var), Some(lowering)) = (loop_vars[0], self.rand_lowering.as_mut()) {
             lowering.bindings.insert(var, binding);
@@ -2617,7 +2676,7 @@ impl Codegen<'_> {
                 continue;
             };
             let loop_index = builder.new_loop();
-            let iter = builder.template(IrRandOp::Iter, true, 32, [loop_index, 0, 0]);
+            let iter = Self::loop_iter(builder, array, loop_index);
             let element = self
                 .loop_element(builder, array, RAND_NONE, iter)
                 .and_then(|element| self.value_domain(builder, element, &domain))
@@ -2903,7 +2962,8 @@ impl Codegen<'_> {
                 return false;
             }
             st.arrays.get(operand as usize).is_some_and(|array| {
-                array.kind != IrRandArrayKind::Fixed && random_decl(array.decl)
+                !matches!(array.kind, IrRandArrayKind::Fixed | IrRandArrayKind::Assoc)
+                    && random_decl(array.decl)
             })
         };
         // Whether the node itself needs an element of an array of open size.
@@ -3334,6 +3394,122 @@ impl Codegen<'_> {
                     size: size.clone(),
                     active,
                 }));
+                if array.kind == IrRandArrayKind::Assoc {
+                    // Entries are fed and written back in key order; the
+                    // call changes no key.
+                    let (key_width, key_signed) = (array.left as u32, array.right != 0);
+                    let key_two_state = matches!(
+                        self.model.containers[array.container].kind,
+                        IrContainerKind::Associative {
+                            key: crate::sim::ir::IrAssocKey::Integral {
+                                two_state: true,
+                                ..
+                            }
+                        }
+                    );
+                    let key_name = format!("{tag}_a{index}_{array_index}");
+                    let found_name = format!("{key_name}_f");
+                    let key = || local_read(&key_name, key_width, key_signed);
+                    let at = || local_read(&counter, 32, true);
+                    let traverse = |direction| {
+                        container_read(
+                            IrContainerExpr::AssocTraverse {
+                                container,
+                                direction,
+                                key_address: format!("&{key_name}"),
+                                key_signal: None,
+                                key_width,
+                                key_signed,
+                                key_two_state,
+                            },
+                            32,
+                            true,
+                        )
+                    };
+                    let entries = |mut body: Vec<IrStmt>| {
+                        body.push(assign32(&counter, bin32(IrBinOp::Add, at(), int_const(1))));
+                        body.push(assign32(
+                            &found_name,
+                            traverse(crate::sim::ir::IrAssocTraversal::Next),
+                        ));
+                        IrStmt::Block(vec![
+                            IrStmt::DeclLocal {
+                                name: key_name.clone(),
+                                width: key_width,
+                                signed: key_signed,
+                                init: Some(Box::new(packed_const(0, key_width, key_signed))),
+                                two_state: key_two_state,
+                            },
+                            decl32(
+                                &found_name,
+                                traverse(crate::sim::ir::IrAssocTraversal::First),
+                            ),
+                            assign32(&counter, int_const(0)),
+                            IrStmt::While {
+                                cond: bin32(
+                                    IrBinOp::Neq,
+                                    local_read(&found_name, 32, true),
+                                    int_const(0),
+                                ),
+                                body,
+                            },
+                        ])
+                    };
+                    feed.push(entries(vec![
+                        rand(IrRandStmt::SetKey {
+                            problem,
+                            inst: inst(),
+                            array: array_index,
+                            index: at(),
+                            value: key(),
+                        }),
+                        rand(IrRandStmt::SetElem {
+                            problem,
+                            inst: inst(),
+                            array: array_index,
+                            index: at(),
+                            value: container_read(
+                                IrContainerExpr::Get {
+                                    container,
+                                    index: Box::new(key()),
+                                },
+                                array.width,
+                                array.signed,
+                            ),
+                        }),
+                    ]));
+                    let element = query(
+                        problem,
+                        IrRandQuery::Elem(array_index),
+                        Some(committed()),
+                        Some(at()),
+                        array.width,
+                        array.signed,
+                    );
+                    let element = if array.two_state {
+                        IrExpr::to_two_state(element)
+                    } else {
+                        element
+                    };
+                    commit.push(when(
+                        query(
+                            problem,
+                            IrRandQuery::ArrayActive(array_index),
+                            Some(committed()),
+                            None,
+                            1,
+                            false,
+                        ),
+                        vec![entries(vec![IrStmt::Container(Box::new(
+                            IrContainerStmt::Set {
+                                container,
+                                index: key(),
+                                value: element,
+                            },
+                        ))])],
+                    ));
+                    continue;
+                }
                 if array.kind == IrRandArrayKind::Size {
                     let body =
                         self.resize_handle_array(problem, &st, array_index, container, committed());
@@ -3411,7 +3587,9 @@ impl Codegen<'_> {
                     IrRandArrayKind::Queue => {
                         vec![container_stmt(IrContainerStmt::Delete(container))]
                     }
-                    IrRandArrayKind::Fixed | IrRandArrayKind::Size => Vec::new(),
+                    IrRandArrayKind::Fixed | IrRandArrayKind::Size | IrRandArrayKind::Assoc => {
+                        Vec::new()
+                    }
                 };
                 body.push(counted(&counter, chosen, vec![store]));
                 commit.push(when(

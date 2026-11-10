@@ -1,0 +1,3 @@
+keys: bad=0 aa=5 8 103 entries=3 3
+other keys: bad=0 aa=5 43 103 by_nibble[11]=12
+unconstrained: bad=0 entries=3 keys=111 changed=1

@@ -95,8 +95,10 @@ enum {
     LLG_CR_ASIZE,       /* 32-bit signed size of array a (LLG_CR_SLOT_ARRAY
                            | slot: of a handle array) of the object ref c
                            names */
-    LLG_CR_ITER,        /* 32-bit signed index of loop a's current element
-                           (the declared index for fixed arrays) */
+    LLG_CR_ITER,        /* index of loop a's current element in the node's
+                           type, 32-bit signed but for the key type of an
+                           associative array (the declared index for fixed
+                           arrays, the key for associative ones) */
     LLG_CR_FOREACH,     /* args[b .. b+4) = {array, body, ref, loop}: the
                            conjunction of body over the elements (array as
                            for ASIZE) */
@@ -202,7 +204,14 @@ typedef struct {
 /* Array kinds. A fixed array's position i has the declared index
  * left + i (left <= right) or left - i (left > right). */
 enum { LLG_CR_ARRAY_FIXED = 0, LLG_CR_ARRAY_DYNAMIC = 1, LLG_CR_ARRAY_QUEUE = 2,
-       LLG_CR_ARRAY_SIZE = 3 /* only the random size of a handle array */ };
+       LLG_CR_ARRAY_SIZE = 3 /* only the random size of a handle array */,
+       /* An associative array with an integral index type of at most 64
+        * bits: its entries, in key order, are the elements. Its size is
+        * never random, `left` is the key width and `right` is 1 for a
+        * signed key. Positions come from the keys (llg_cr_set_key): a loop
+        * index is the element's key, and an element select names a key,
+        * which must be known when the problem is expanded. */
+       LLG_CR_ARRAY_ASSOC = 4 };
 
 /* Bit marking a handle-array slot in LLG_CR_ASIZE / LLG_CR_FOREACH. */
 #define LLG_CR_SLOT_ARRAY 0x80000000u
@@ -462,6 +471,10 @@ void llg_cr_set_array(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32
                       int active);
 void llg_cr_set_elem(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
                      const uint64_t* words, int input_state);
+/* The key of element `index` of an associative array, in the key's width;
+ * elements are fed in ascending key order. */
+void llg_cr_set_key(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
+                    const uint64_t* words);
 const uint64_t* llg_cr_ivalue(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
 /* Whether variable `var` (array `array`) of `inst` took part as random. */
 int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var);

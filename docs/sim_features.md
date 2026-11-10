@@ -3152,7 +3152,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   enum class properties (instance and static, inherited, with virtual
   `randomize()`; `randc` up to 32 bits, S30-D18), random fixed arrays of any dimension count, dynamic arrays and
   bounded or unbounded queues of packed, enum or packed-structure elements
-  with `size()` constraints solved first, arrays of class handles, `rand`
+  with `size()` constraints solved first, associative arrays with an integral
+  index type (the entries they hold, S30-D20), arrays of class handles, `rand`
   object members randomized with their parent (global constraints, null
   guards, per-object `pre_randomize`/`post_randomize`), named, external,
   `pure` and static constraint blocks with derived-class overrides,
@@ -3172,8 +3173,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   [solver readme](../src/sim/rt/constraints/readme.md)). A failed call leaves
   every variable unchanged; infeasible constraints warn, evaluation errors and
   exhausted budgets are run-time errors (S29-D1 to S29-D10 and S30-D1 to
-  S30-D19 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays,
-  associative arrays and the other forms in
+  S30-D20 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays
+  and the other forms in
   [known issues](known_issues.md#constrained-randomization-limits-sim-029-sim-030)
   are located errors; see
   [sim_029](../tests/fixtures/sim/feature_completion/sim_029/readme.md) and

@@ -91,6 +91,14 @@ fn s30_d19_solve_before_size() {
 }
 
 #[test]
+fn s30_d20_rand_associative_array() {
+    run_decision(
+        "S30-D20_rand_associative_array",
+        include_str!("fixtures/sim/lrm_decisions/S30-D20_rand_associative_array.out"),
+    );
+}
+
+#[test]
 fn t1_d8_strength_only_events() {
     run_decision(
         "T1-D8_strength_only_events",

@@ -427,6 +427,24 @@ impl Frame<'_, '_> {
                 ));
                 self.discard(value);
             }
+            IrRandStmt::SetKey {
+                inst,
+                array,
+                index,
+                value,
+                ..
+            } => {
+                // `left` of an associative array is its key width.
+                let width = self.ctx.model.rand_problems[problem].arrays[*array as usize].left;
+                let inst = self.rand_index(inst)?;
+                let index = self.rand_index(index)?;
+                let value = self.expression(value)?;
+                self.line(format!(
+                    "llg_cr_set_key_sv4({s}, {inst}, {array}u, {index}, {}, {width}u);",
+                    value.code
+                ));
+                self.discard(value);
+            }
             IrRandStmt::Link {
                 inst,
                 slot,
