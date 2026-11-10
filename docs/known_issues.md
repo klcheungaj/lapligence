@@ -2571,8 +2571,11 @@ these forms remain outside them.
   queues, associative arrays, `randc` arrays and `randc` variables wider than
   32 bits (18.4.2 lets an implementation limit them; S30-D18), a random untagged union
   with enum members, a `solve...before` that solves a variable before an
-  array size (S30-D5 solves sizes first) or names an element at a non-constant
-  index, and a row of a multidimensional array in `inside`. A whole array in
+  array size when a constraint ties that variable to elements of an array of
+  random size (`x == a.sum()`; S30-D19 fixes the variable before any element
+  exists, so the order would be circular), that solves array elements before
+  an array size or a variable before the array size of another object, or that
+  names an element at a non-constant index, and a row of a multidimensional array in `inside`. A whole array in
   a constraint is also rejected, as 18.3 requires (S30-D15).
 - `rand_mode` of one element of a dynamic array or queue of class handles
   rejects, as a task and as a function: only fixed arrays keep a mode per

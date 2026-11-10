@@ -68,6 +68,19 @@ fn rand_mode_function_needs_a_random_variable() {
     names_source_position("neg_element_mode_queue_function");
 }
 
+/// S30-D19: a variable ordered before an array size is drawn before the
+/// sizes and keeps that value.
+#[test]
+fn solve_before_an_array_size_draws_the_variable_first() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "solve_before_size",
+        include_str!("../fixtures/sim/feature_completion/sim_030/solve_before_size.out"),
+        &[],
+        &[],
+    );
+}
+
 #[test]
 fn solve_before_orders_the_draws() {
     sim_cli::run_case_backend_parity(
@@ -256,12 +269,26 @@ fn unsupported_array_and_object_forms_are_located_errors() {
         "array `m` is not supported in constraints: its elements are not packed integral values",
     );
     names_source_position("neg_foreach_2d");
+    for fixture in ["neg_solve_size_sum", "neg_solve_size_foreach"] {
+        sim_cli::reject_case(
+            SUITE,
+            fixture,
+            "a variable solved before an array size is constrained together with elements of an array whose size is random: the order is circular",
+        );
+        names_source_position(fixture);
+    }
     sim_cli::reject_case(
         SUITE,
-        "neg_solve_size_after",
-        "a `solve...before` order that solves a variable before an array size is not supported",
+        "neg_solve_elements_before_size",
+        "a `solve...before` order that solves array elements before an array size is not supported",
     );
-    names_source_position("neg_solve_size_after");
+    names_source_position("neg_solve_elements_before_size");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_solve_size_other_object",
+        "a `solve...before` order that solves a variable before the array size of another object is not supported",
+    );
+    names_source_position("neg_solve_size_other_object");
 }
 
 /// A located rejection names the fixture's source position.

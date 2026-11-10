@@ -182,6 +182,9 @@ struct llg_cr_session {
     uint8_t* var_active;
     uint8_t* var_input;
     uint8_t* var_fixed;
+    /* Per variable, in the size phase of an expansion only (else NULL): a
+     * live order places it before an array size (S30-D19). */
+    uint8_t* presize;
     uint32_t total_var_words;
     /* Blocks, leaves and calls. */
     uint8_t* block_enabled;

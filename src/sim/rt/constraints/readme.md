@@ -85,6 +85,14 @@ direct element. With random dynamic arrays or queues, a first expansion
 solves the sizes before every other variable and drops the conjuncts that
 need elements of arrays of unknown size; the second fixes those sizes
 (S30-D5). A size no kept conjunct of an enabled block names keeps its value.
+An order whose later side is a size (`LLG_CR_ORDER_SIZE`, `solve x before
+a.size()`, S30-D19) reverses this for the variables before it: in the first
+expansion the solver marks every variable a live order places before a size
+(`cr_order_presize`), the sizes-first orders skip them, so their layers come
+before the sizes, and their values are kept: the second expansion reads them
+as state while the caller still commits them as random. Lowering rejects a
+conjunct that reads such a variable together with elements of an array of
+random size, which the first expansion would have dropped.
 Expanded problems and their sessions are cached by structure (sixteen per
 call site, least recently used replaced first), so repeated randomization of
 the same graph reuses the exact-engine caches. Random sizes give one graph

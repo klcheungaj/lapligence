@@ -25,6 +25,10 @@
  */
 
 #define CR_TPL_FLATS 16u
+/* A variable's `active` input: random, or random and already solved by the
+ * size phase (S30-D19: a variable solved before a size). */
+#define CR_VAR_RANDOM 1u
+#define CR_VAR_SOLVED 2u
 #define CR_X_NULL 0xFFFFFFFEu /* a ref that names no object */
 #define CR_X_DROP 0xFFFFFFFDu /* needs elements of an array of unknown size */
 /* leaf_idx of an object-less leaf that stands for an and/or/xor reduction of
@@ -232,8 +236,9 @@ static int cr_tpl_loop_ok(const llg_cr_problem_t* p, uint32_t a) {
     return cr_tpl_array_ok(p, a);
 }
 
-static int cr_tpl_side_ok(const llg_cr_problem_t* p, uint32_t side) {
+static int cr_tpl_side_ok(const llg_cr_problem_t* p, uint32_t side, int after) {
     if (side & LLG_CR_ORDER_ARRAY) return (side & ~LLG_CR_ORDER_ARRAY) < p->array_count;
+    if (side & LLG_CR_ORDER_SIZE) return after && (side & ~LLG_CR_ORDER_SIZE) < p->array_count;
     if (side & LLG_CR_ORDER_ELEM) {
         uint32_t first = side & ~LLG_CR_ORDER_ELEM;
         return (size_t)first + 2u <= p->arg_count && p->args[first] < p->array_count;
@@ -344,8 +349,8 @@ static void cr_tpl_validate(const llg_cr_problem_t* p) {
     for (uint32_t b = 0; b < p->block_count; ++b)
         if (p->blocks[b].root >= p->node_count) cr_fatal("block root out of range");
     for (uint32_t o = 0; o < p->order_count; ++o)
-        if (p->orders[o].block >= p->block_count || !cr_tpl_side_ok(p, p->orders[o].before) ||
-            !cr_tpl_side_ok(p, p->orders[o].after))
+        if (p->orders[o].block >= p->block_count || !cr_tpl_side_ok(p, p->orders[o].before, 0) ||
+            !cr_tpl_side_ok(p, p->orders[o].after, 1))
             cr_fatal("solve-before order out of range");
     for (uint32_t v = 0; v < p->var_count; ++v) {
         if (p->vars[v].bit_width == 0u) cr_fatal("zero-width variable");
@@ -1948,6 +1953,15 @@ static void cr_fx_order_side(const cr_flat_t* f, const cr_tpl_t* t, uint32_t i, 
                              cr_u32vec_t* out) {
     const llg_cr_problem_t* p = t->p;
     const cr_inst_t* in = &t->inst[i];
+    if (side & LLG_CR_ORDER_SIZE) {
+        /* The size variable exists in the size phase, when a constraint
+         * reads the random size; a known size orders nothing. */
+        uint32_t pos = t->arr_pos[(size_t)in->unit * t->ac + (side & ~LLG_CR_ORDER_SIZE)];
+        if (pos == LLG_CR_NONE) return;
+        uint32_t v = f->arr_svar[f->arr_base[i] + pos];
+        if (v != LLG_CR_NONE) cr_u32_push(out, v);
+        return;
+    }
     if (side & (LLG_CR_ORDER_ARRAY | LLG_CR_ORDER_ELEM)) {
         int whole = (side & LLG_CR_ORDER_ARRAY) != 0u;
         const uint32_t* x = whole ? NULL : p->args + (side & ~LLG_CR_ORDER_ELEM);
@@ -2181,7 +2195,8 @@ static void cr_flat_feed(cr_tpl_t* t, cr_flat_t* f) {
         uint32_t kind = f->var_kind.data[v], inst = f->var_inst.data[v];
         uint32_t idx = f->var_idx.data[v];
         if (kind == CR_FV_GLOBAL) {
-            llg_cr_set_var(fs, (uint32_t)v, t->g_cur + t->g_off[idx], t->g_active[idx], t->g_input[idx]);
+            llg_cr_set_var(fs, (uint32_t)v, t->g_cur + t->g_off[idx], t->g_active[idx] == CR_VAR_RANDOM,
+                           t->g_input[idx]);
             if (p->vars[idx].cyclic) llg_cr_set_cyclic(fs, (uint32_t)v, t->g_cyc + t->g_cyc_off[idx]);
             continue;
         }
@@ -2190,7 +2205,7 @@ static void cr_flat_feed(cr_tpl_t* t, cr_flat_t* f) {
             uint32_t pos = cr_inst_var(t, in, idx);
             uint32_t base = t->var_off_base[in->unit];
             llg_cr_set_var(fs, (uint32_t)v, in->var_cur + t->var_off[base + pos],
-                           in->random && in->var_active[pos], in->var_input[pos]);
+                           in->random && in->var_active[pos] == CR_VAR_RANDOM, in->var_input[pos]);
             if (p->vars[idx].cyclic)
                 llg_cr_set_cyclic(fs, (uint32_t)v, in->cyc + t->cyc_off[base + pos]);
             continue;
@@ -2349,6 +2364,26 @@ static llg_cr_status_t cr_tpl_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
                 uint32_t pos = t->arr_pos[(size_t)in->unit * t->ac + f->var_idx.data[v]];
                 in->arrays[pos].chosen = (uint32_t)llg_cr_value(f->session, (uint32_t)v)[0];
             }
+            /* A variable solved before a size keeps the value that size was
+             * drawn for: the second expansion reads it as state (S30-D19). */
+            const uint8_t* presize = f->session->presize;
+            for (size_t v = 0; presize && v < f->vars_len; ++v) {
+                uint32_t kind = f->var_kind.data[v], idx = f->var_idx.data[v];
+                if (!presize[v] || !f->session->var_active[v]) continue;
+                const uint64_t* value = llg_cr_value(f->session, (uint32_t)v);
+                uint32_t w = t->p->vars[idx].bit_width;
+                if (kind == CR_FV_GLOBAL) {
+                    cr_store_words(t->g_cur + t->g_off[idx], value, w);
+                    t->g_active[idx] = CR_VAR_SOLVED;
+                    t->g_input[idx] = LLG_CR_INPUT_KNOWN;
+                } else if (kind == CR_FV_UNIT) {
+                    cr_inst_t* in = &t->inst[f->var_inst.data[v]];
+                    uint32_t pos = cr_inst_var(t, in, idx);
+                    cr_store_words(in->var_cur + t->var_off[t->var_off_base[in->unit] + pos], value, w);
+                    in->var_active[pos] = CR_VAR_SOLVED;
+                    in->var_input[pos] = LLG_CR_INPUT_KNOWN;
+                }
+            }
             if (!cr_elements_ok(t)) {
                 report->budget = "LLG_RAND_ARRAY_ELEMENTS";
                 status = LLG_CR_RESOURCE;
@@ -2400,9 +2435,9 @@ const uint64_t* llg_cr_ivalue(const llg_cr_session_t* s, uint32_t inst, uint32_t
 int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var) {
     const cr_tpl_t* t = s->tpl;
     if (!t || var >= t->vc) cr_fatal("variable out of range");
-    if (inst == LLG_CR_NONE || t->global[var]) return t->g_active[var];
+    if (inst == LLG_CR_NONE || t->global[var]) return t->g_active[var] != 0u;
     const cr_inst_t* in = cr_inst_get(s, inst);
-    return in->random && in->var_active[cr_inst_var(t, in, var)];
+    return in->random && in->var_active[cr_inst_var(t, in, var)] != 0u;
 }
 
 int llg_cr_array_active(const llg_cr_session_t* s, uint32_t inst, uint32_t array) {

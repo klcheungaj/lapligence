@@ -174,9 +174,13 @@ typedef struct {
 
 /* `solve before before after` from constraint block `block` (18.5.9).
  * In a problem with units a side is a variable, LLG_CR_ORDER_ARRAY | array
- * (every element) or LLG_CR_ORDER_ELEM | index of args {array, position}. */
+ * (every element), LLG_CR_ORDER_ELEM | index of args {array, position} or,
+ * as the `after` side only, LLG_CR_ORDER_SIZE | array (the random size of a
+ * dynamic array or queue: the variables before it are solved before the
+ * sizes and keep that value, S30-D19). */
 #define LLG_CR_ORDER_ARRAY 0x80000000u
 #define LLG_CR_ORDER_ELEM 0x40000000u
+#define LLG_CR_ORDER_SIZE 0x20000000u
 typedef struct {
     uint32_t block;
     uint32_t before;

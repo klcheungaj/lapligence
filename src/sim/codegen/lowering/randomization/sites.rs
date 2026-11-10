@@ -431,6 +431,7 @@ impl Codegen<'_> {
                 .filter(|var| !matches!(var.direct, DirectRead::Signal(_)))
                 .map(|var| var.index)
                 .collect::<Vec<_>>();
+            self.check_presize_orders(path, &builder)?;
             self.finish_units(&mut builder, own);
         }
         let pre = self.randomize_hook(class, "pre_randomize");
@@ -1144,6 +1145,7 @@ impl Codegen<'_> {
             blocks.extend(self.array_domain_blocks(path, node, &mut builder, None)?);
             // std::randomize arguments are global variables.
             self.lower_units(path, node, &mut builder, &mut vars)?;
+            self.check_presize_orders(path, &builder)?;
             self.finish_units(&mut builder, Vec::new());
         }
         let plan = ProblemPlan {

@@ -98,6 +98,10 @@ pub const RAND_ORDER_ARRAY: u32 = 0x8000_0000;
 /// args holding `{array, position}`.
 pub const RAND_ORDER_ELEM: u32 = 0x4000_0000;
 
+/// `LLG_CR_ORDER_SIZE`: the `after` side of an order naming the random size
+/// of an array (`solve x before a.size()`, S30-D19).
+pub const RAND_ORDER_SIZE: u32 = 0x2000_0000;
+
 /// `LLG_CR_RANGE_LOOP`: marks the array operand of a `Foreach`/`Reduce` as
 /// a declared range; the rest indexes args holding `{left, right}`.
 pub const RAND_RANGE_LOOP: u32 = 0x4000_0000;
@@ -318,6 +322,53 @@ fn words(width: u32) -> usize {
 }
 
 impl IrRandProblem {
+    /// The nodes `node` reads (operands, list items, call arguments, dist
+    /// items, references and loop bodies); absent operands are left out.
+    pub(in crate::sim) fn operands(&self, node: u32) -> Vec<u32> {
+        let Some(n) = self.nodes.get(node as usize) else {
+            return Vec::new();
+        };
+        let list = |first: u32, len: usize| {
+            self.args
+                .get(first as usize..first as usize + len)
+                .map(<[u32]>::to_vec)
+                .unwrap_or_default()
+        };
+        let mut operands = match n.op {
+            IrRandOp::Const | IrRandOp::Var | IrRandOp::State | IrRandOp::Iter | IrRandOp::Elem => {
+                Vec::new()
+            }
+            IrRandOp::Call | IrRandOp::TCall => self
+                .calls
+                .get(n.a as usize)
+                .map(|call| call.args.clone())
+                .unwrap_or_default(),
+            IrRandOp::Concat | IrRandOp::All => list(n.b, n.c as usize),
+            IrRandOp::Dist => {
+                let mut operands = Vec::new();
+                if let Some(dist) = self.dists.get(n.a as usize) {
+                    operands.push(dist.expr);
+                    operands.extend(dist.guard);
+                    for item in &dist.items {
+                        operands.extend([item.matches, item.lo, item.hi]);
+                        operands.extend(item.weight);
+                    }
+                }
+                operands
+            }
+            IrRandOp::Ref => vec![n.b, n.c],
+            IrRandOp::HVar | IrRandOp::IsNull => vec![n.a],
+            IrRandOp::AElem => vec![n.b, n.c],
+            IrRandOp::ASize => vec![n.c],
+            // {array, body, ref, loop[, operation]}
+            IrRandOp::Foreach | IrRandOp::Reduce => list(n.b, 3).split_off(1),
+            IrRandOp::DynSlice => vec![n.a, n.b],
+            op => [n.a, n.b, n.c][..op.fixed_operands()].to_vec(),
+        };
+        operands.retain(|operand| *operand != RAND_NONE);
+        operands
+    }
+
     /// Check the invariants the C solver also enforces, so a malformed
     /// problem fails at model construction rather than at run time.
     pub(in crate::sim) fn validate(&self, path: &str) -> Result<(), IrValidationError> {
@@ -462,18 +513,20 @@ impl IrRandProblem {
             }
         }
         for (index, order) in self.orders.iter().enumerate() {
-            let side_ok = |side: u32| {
+            let side_ok = |side: u32, after: bool| {
                 if side & RAND_ORDER_ARRAY != 0 {
                     ((side & !RAND_ORDER_ARRAY) as usize) < self.arrays.len()
                 } else if side & RAND_ORDER_ELEM != 0 {
                     ((side & !RAND_ORDER_ELEM) as usize) + 2 <= self.args.len()
+                } else if side & RAND_ORDER_SIZE != 0 {
+                    after && ((side & !RAND_ORDER_SIZE) as usize) < self.arrays.len()
                 } else {
                     side < vars
                 }
             };
             if order.block as usize >= self.blocks.len()
-                || !side_ok(order.before)
-                || !side_ok(order.after)
+                || !side_ok(order.before, false)
+                || !side_ok(order.after, true)
             {
                 return fail(format!("solve-before order {index} is out of range"));
             }

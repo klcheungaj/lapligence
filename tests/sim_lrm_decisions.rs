@@ -83,6 +83,14 @@ fn s30_d18_randc_wide() {
 }
 
 #[test]
+fn s30_d19_solve_before_size() {
+    run_decision(
+        "S30-D19_solve_before_size",
+        include_str!("fixtures/sim/lrm_decisions/S30-D19_solve_before_size.out"),
+    );
+}
+
+#[test]
 fn t1_d8_strength_only_events() {
     run_decision(
         "T1-D8_strength_only_events",

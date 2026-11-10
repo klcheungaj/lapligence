@@ -44,6 +44,10 @@ array read directly. The generated code walks the instances the runtime
 registers (`pre_randomize`, variables, blocks, leaves, arrays, links), then
 commits arrays and member objects and runs `post_randomize` in registration
 order (S30-D7). Problems without these forms keep the flat SIM-029 shape.
+A `solve...before` whose later side is a random array size becomes an order
+side `RAND_ORDER_SIZE | array` (S30-D19); `check_presize_orders` rejects the
+variables it orders first when a conjunct reads them with elements of an array
+of random size.
 
 ## Functional coverage
 
