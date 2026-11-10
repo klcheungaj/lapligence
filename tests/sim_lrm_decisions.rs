@@ -5516,6 +5516,14 @@ fn s07_d14_nonblocking_trigger_missing_entry() {
 }
 
 #[test]
+fn s07_d16_nested_array_selected_once() {
+    run_decision(
+        "S07-D16_nested_array_selected_once",
+        include_str!("fixtures/sim/lrm_decisions/S07-D16_nested_array_selected_once.out"),
+    );
+}
+
+#[test]
 fn s07_d15_index_checks_stop() {
     // Each case stops at its first statement, so stdout stays empty.
     let cases: [(&str, &str); 13] = [
