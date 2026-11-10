@@ -1977,6 +1977,12 @@ void llg_dependency_changed(sv4_t* dependency);
 // check and is dropped if the slot holds `previous` again (T1-D11); the marker
 // and the slot must live until then. Otherwise this is llg_dependency_changed.
 void llg_handle_changed(sv4_t* dependency, void* const* slot, void* previous);
+// A store changed a native record whose contents marker is `dependency`. In a
+// process turn or an NBA region a marker something waits on toggles once, at
+// the check, however many stores the turn made (T1-D11); the marker must live
+// until then. Otherwise this is llg_dependency_changed. The toggle says only
+// that the record changed: a waiter evaluates what it reads again.
+void llg_record_changed(sv4_t* dependency);
 // `dependency`, or a marker that is never written when it is NULL (an
 // activation container no other process can change).
 sv4_t* llg_dependency_or_never(sv4_t* dependency);
@@ -3621,6 +3627,9 @@ void llg_nba_locate_element(struct llg_dyn_value_array_t* array,
                             const uint32_t* items, size_t item_count);
 void llg_nba_locate_value(struct llg_value_t* root, const uint32_t* items,
                           size_t item_count);
+// The NBA located by the call before this one also toggles the contents
+// marker of the record it writes into when it commits (llg_record_changed).
+void llg_nba_locate_marker(sv4_t* marker);
 void llg_nba_locate_end(void);
 void llg_dyn_value_nba(struct llg_dyn_value_array_t* target, sv4_t dst_start,
                        const struct llg_dyn_value_array_t* src, sv4_t src_start,

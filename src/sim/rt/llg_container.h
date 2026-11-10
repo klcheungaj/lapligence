@@ -727,8 +727,26 @@ static inline uint32_t llg_native_item_step(int64_t position) {
 
 int llg_native_ref_selects(sv4_t index, int64_t declared);
 /* A store through a record `ref` formal finished; `value` is the formal.
-   Tells a container element's readers, and does nothing for other actuals. */
+   Tells a container element's readers and a watched record's marker, and
+   does nothing for other actuals. */
 void llg_native_ref_value_stored(llg_value_t* value);
+/* A record some wait observes, while a call binds it, or one of its members,
+ * to a `ref` formal: a store through the formal reaches
+ * llg_native_ref_value_stored with the record's address, and `changed` then
+ * runs on the record's contents marker. The watch is a value-scope object of
+ * the call, zeroed by the scope, with llg_record_watch_end as its destroy
+ * hook; `value` and `marker` must outlive the call. */
+typedef struct llg_record_watch {
+    const llg_value_t* value;
+    sv4_t* marker;
+    void (*changed)(sv4_t* marker);
+    struct llg_record_watch* prev;
+    struct llg_record_watch* next;
+    uint8_t linked;
+} llg_record_watch_t;
+void llg_record_watch_begin(llg_record_watch_t* watch, const llg_value_t* value,
+                                sv4_t* marker, void (*changed)(sv4_t* marker));
+void llg_record_watch_end(void* watch);
 int64_t llg_native_ref_position(sv4_t index);
 /* Retained-cell accessors of an `llg_ref_t` naming a packed member. */
 sv4_t llg_native_ref_packed_read(const void* reference);

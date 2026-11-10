@@ -488,7 +488,37 @@ void llg_native_ref_mirror_scope_release(void* object) {
     llg_native_ref_release(ref);
 }
 
+static llg_record_watch_t* llg_record_watches;
+
+void llg_record_watch_begin(llg_record_watch_t* watch, const llg_value_t* value,
+                                sv4_t* marker, void (*changed)(sv4_t* marker)) {
+    watch->value = value;
+    watch->marker = marker;
+    watch->changed = changed;
+    watch->prev = NULL;
+    watch->next = llg_record_watches;
+    if (watch->next) watch->next->prev = watch;
+    llg_record_watches = watch;
+    watch->linked = 1;
+}
+
+void llg_record_watch_end(void* object) {
+    llg_record_watch_t* watch = object;
+    if (!watch || !watch->linked) return;
+    if (watch->prev) watch->prev->next = watch->next;
+    else llg_record_watches = watch->next;
+    if (watch->next) watch->next->prev = watch->prev;
+    watch->linked = 0;
+}
+
 void llg_native_ref_value_stored(llg_value_t* value) {
+    /* Two calls may bind one record: its marker toggles once. */
+    for (const llg_record_watch_t* watch = llg_record_watches; watch;
+         watch = watch->next) {
+        if (watch->value != value) continue;
+        watch->changed(watch->marker);
+        break;
+    }
     if (!llg_native_refs_live) return;
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;
          ref = ref->all_next) {

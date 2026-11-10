@@ -118,6 +118,7 @@ static void apply_located_nba(llg_nba_t* next) {
         default: break;
         }
         if (locator->array) llg_dyn_value_touch(locator->array);
+        if (locator->marker) llg_record_changed(locator->marker);
         return;
     }
     if (next->is_string) next->native.string.target = &item->value.string;
@@ -126,6 +127,7 @@ static void apply_located_nba(llg_nba_t* next) {
     else next->target = &item->value.packed;
     apply_nba_target(next);
     if (locator->array) llg_dyn_value_touch(locator->array);
+    if (locator->marker) llg_record_changed(locator->marker);
 }
 
 static void apply_nba(llg_nba_t* next) {

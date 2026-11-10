@@ -49,6 +49,9 @@ typedef struct llg_nba_locator {
     size_t index_count;
     uint32_t* items;
     size_t item_count;
+    // The contents marker of the record `root` belongs to, when a wait
+    // observes that record; the commit toggles it.
+    sv4_t* marker;
 } llg_nba_locator_t;
 
 typedef struct llg_nba {

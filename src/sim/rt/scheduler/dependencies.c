@@ -1076,6 +1076,21 @@ void llg_handle_changed(sv4_t* dependency, void* const* slot, void* previous) {
     llg_dependency_changed(dependency);
 }
 
+void llg_record_changed(sv4_t* dependency) {
+    if (!dependency) return;
+    if (change_defer_active) {
+        llg_wait_source_t* source = wait_source_find(dependency);
+        llg_change_t* change = source ? source->change : NULL;
+        if (!change) change = change_marker_defer(dependency, NULL, NULL);
+        if (change && change->kind == LLG_CHANGE_MARKER) {
+            // Every store of the turn settles as one toggle at the check.
+            change->fire = 1;
+            return;
+        }
+    }
+    llg_dependency_changed(dependency);
+}
+
 // The check of changed storage: its deferred markers will toggle.
 // A marker whose record is open toggles at its check.
 static void fire_marker(sv4_t* marker) {

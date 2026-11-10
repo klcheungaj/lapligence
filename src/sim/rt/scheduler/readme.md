@@ -161,7 +161,11 @@ walked through `write_walkers`); moving one to the check means calling it
 from `sig_settle` and `history_settle` and counting what it observes in
 `change_begin`. Ordered change logs (`llg_wait_changes`) also log per write.
 Strings, container cells and reference markers publish per write, and so do
-markers bound to an unwaited marker. NBAs that mature from an earlier slot
+markers bound to an unwaited marker. The contents marker of a native record
+(`llg_record_changed`, called after each statement that stores into a record a
+wait observes, and by the commit of a located NBA that carries the marker,
+`llg_nba_locate_marker`) follows the check instead: a waited marker gets a
+marker record that fires once, and its waiters compare the values they read. NBAs that mature from an earlier slot
 commit and check before the NBAs issued in this slot (`g.nba_slot_sequence`).
 Writes outside a turn publish at once. Records and freed wait-source rows are
 pooled, so a storage written in every turn allocates nothing. A marker that

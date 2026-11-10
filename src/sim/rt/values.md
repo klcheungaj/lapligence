@@ -75,6 +75,11 @@ A record reference a task waits on is watched (`llg_native_ref_watch`): any
 change of a container toggles its marker, since a notify carries no position, and
 the wait re-reads the record, so only that element's change ends it. Unwatched
 references cost nothing.
+A record some wait observes that a call binds to a `ref` formal, whole or by a
+member, registers a `llg_record_watch_t` for the call (a value-scope object):
+`llg_native_ref_value_stored` then also runs the watch's function on the
+record's contents marker, so stores made inside the callee wake the record's
+waiters when they are made. No watch, no cost beyond one list-head test.
 A real element or member binds the same way (`llg_native_ref_real`); `real_write`
 reports each changed cell while such a reference lives, for one counter load
 otherwise, and the formal's waiters follow its `double`.
