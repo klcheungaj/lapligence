@@ -598,6 +598,12 @@ fn container_elements_hold_records_with_container_members() {
         "bad_record_element_member_ref",
         "a queue or dynamic-array member of a container record element as the ref actual of `q` in `tb` is not supported",
     );
+    // FIN-001 R0 (e): kept for the run-time select of C1, now with its location.
+    sim_cli::reject_case(
+        SUITE,
+        "bad_module_record_element_queue",
+        "bad_module_record_element_queue.sv:11:9 unsupported object method receiver",
+    );
 }
 
 /// A record with a queue member keeps the queue of the issue until its event.

@@ -273,7 +273,12 @@ impl Codegen<'_> {
                     "class container property `{property}` in `{path}` selected through a handle is supported only in procedural statements (SIM-011)"
                 ));
             }
-            return Err("unsupported object method receiver".to_owned());
+            // Among others a queue member of a module record element chosen
+            // at run time (`m.e[k].q`): each element owns its own container.
+            return Err(crate::sim::codegen::error::located(
+                &self.source_location(receiver),
+                "unsupported object method receiver",
+            ));
         }
         if let Some(index) = index {
             if self.model.objects[index].ty != IrObjectType::String {

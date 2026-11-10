@@ -561,7 +561,7 @@ the formal stops the run if the index selects no element); an event control on
 a member of a native record `ref` formal when the actual is a subroutine record
 (a generic lowering
 diagnostic); a queue, dynamic or associative member of a module record element selected at
-run time (`m.e[k].q`, a generic lowering diagnostic; a constant `m.e[1].q` works,
+run time (`m.e[k].q`, "unsupported object method receiver" at the select; a constant `m.e[1].q` works,
 as does a run-time element of a fixed array of records, `a[k].q`, because each
 element of a module record owns its own container and the select would need a
 run-time choice among them, about three days); sub-record, member-array or handle selects of a native call
@@ -631,6 +631,7 @@ roots for forked automatic block records, strings and handles.
 `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
+`sim_007/bad_module_record_element_queue.sv`,
 `sim_011/neg_record_container_property.sv`, `sim_007/bad_multidim_row_*.sv` and `sim_007/bad_tagged_*.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
