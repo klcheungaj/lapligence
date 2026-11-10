@@ -2631,7 +2631,7 @@ lowering does not have.
 
 ### Intended direction
 
-Multidimensional arrays if a workload needs them; near-uniform sampling for the search fallback (hashing-based).
+Nested dynamic arrays and queues (each row an object of a row unit, row sizes in a further size phase), `randc` arrays (a cycle state per element) and element modes of dynamic arrays and queues if a workload needs them; near-uniform sampling for the search fallback (hashing-based).
 
 ### Reproduce
 

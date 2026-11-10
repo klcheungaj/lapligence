@@ -56,10 +56,18 @@ fn rand_mode_function_reads_the_handle_variable() {
 
 #[test]
 fn rand_mode_function_needs_a_random_variable() {
-    for fixture in ["neg_mode_function_handle", "neg_mode_function_not_rand"] {
-        sim_cli::reject_case(SUITE, fixture, "too few arguments for 'rand_mode'");
-        names_source_position(fixture);
-    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_mode_function_handle",
+        "too few arguments for 'rand_mode'",
+    );
+    names_source_position("neg_mode_function_handle");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_mode_function_not_rand",
+        "too few arguments for 'rand_mode'",
+    );
+    names_source_position("neg_mode_function_not_rand");
     sim_cli::reject_case(
         SUITE,
         "neg_element_mode_queue_function",
@@ -92,27 +100,30 @@ fn associative_arrays_randomize_their_entries() {
 
 #[test]
 fn associative_array_forms_outside_the_entries_are_located_errors() {
-    for (fixture, message) in [
-        (
-            "neg_assoc_size",
-            "the size of a random associative array is not supported in a constraint",
-        ),
-        (
-            "neg_assoc_string_key",
-            "array `sa` is not supported in constraints: an associative array needs an integral index type of at most 64 bits",
-        ),
-        (
-            "neg_assoc_random_key",
-            "an element of an associative array in a constraint needs a key the solution does not change",
-        ),
-        (
-            "neg_assoc_solve_element",
-            "a `solve...before` order naming one element of an associative array is not supported",
-        ),
-    ] {
-        sim_cli::reject_case(SUITE, fixture, message);
-        names_source_position(fixture);
-    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_size",
+        "the size of a random associative array is not supported in a constraint",
+    );
+    names_source_position("neg_assoc_size");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_string_key",
+        "array `sa` is not supported in constraints: an associative array needs an integral index type of at most 64 bits",
+    );
+    names_source_position("neg_assoc_string_key");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_random_key",
+        "an element of an associative array in a constraint needs a key the solution does not change",
+    );
+    names_source_position("neg_assoc_random_key");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_solve_element",
+        "a `solve...before` order naming one element of an associative array is not supported",
+    );
+    names_source_position("neg_assoc_solve_element");
 }
 
 /// Objects of the randomized class reached through handles, and the
@@ -325,6 +336,12 @@ fn unsupported_array_and_object_forms_are_located_errors() {
     names_source_position("neg_element_mode_queue");
     sim_cli::reject_case(
         SUITE,
+        "neg_randc_array",
+        "`randc` array `a` is not supported",
+    );
+    names_source_position("neg_randc_array");
+    sim_cli::reject_case(
+        SUITE,
         "neg_handle_index",
         "a handle array element in a constraint needs a constant, state or loop index",
     );
@@ -335,14 +352,18 @@ fn unsupported_array_and_object_forms_are_located_errors() {
         "array `m` is not supported in constraints: its elements are not packed integral values",
     );
     names_source_position("neg_foreach_2d");
-    for fixture in ["neg_solve_size_sum", "neg_solve_size_foreach"] {
-        sim_cli::reject_case(
-            SUITE,
-            fixture,
-            "a variable solved before an array size is constrained together with elements of an array whose size is random: the order is circular",
-        );
-        names_source_position(fixture);
-    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_solve_size_sum",
+        "a variable solved before an array size is constrained together with elements of an array whose size is random: the order is circular",
+    );
+    names_source_position("neg_solve_size_sum");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_solve_size_foreach",
+        "a variable solved before an array size is constrained together with elements of an array whose size is random: the order is circular",
+    );
+    names_source_position("neg_solve_size_foreach");
     sim_cli::reject_case(
         SUITE,
         "neg_solve_elements_before_size",
