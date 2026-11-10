@@ -269,12 +269,14 @@ cleanup_key:
     return result_value;
 }
 
-static llg_value_t* llg_assoc_value_nested_at_integral(
+/* The element `count` >= 1 indices select: the entry at the key, then
+ * through the sequences nested below it. */
+static llg_value_t* llg_assoc_value_path_integral(
     const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
     sv4_t normalized = SV4_EMPTY;
     llg_value_t* result_value;
 
-    if (!indices || count < 2 || array->key_kind != LLG_ASSOC_INTEGRAL)
+    if (!indices || count == 0 || array->key_kind != LLG_ASSOC_INTEGRAL)
         do { result_value = NULL; goto cleanup_key; } while (0);
     int found = 0;
     if (!llg_assoc_value_normalize_key(array, indices[0], &normalized))
@@ -283,20 +285,47 @@ static llg_value_t* llg_assoc_value_nested_at_integral(
                                                          &found);
     if (!found) do { result_value = NULL; goto cleanup_key; } while (0);
     llg_value_t* value = &array->entries[position].value;
-    for (size_t index = 1; value && index < count; ++index) {
-        if (!value->desc || value->desc->kind != LLG_VALUE_CONTAINER ||
-            !value->value.container)
-            do { result_value = NULL; goto cleanup_key; } while (0);
-        value = llg_dyn_value_at(value->value.container, indices[index]);
-    }
+    for (size_t index = 1; value && index < count; ++index)
+        value = llg_nested_seq_value_at(value, indices[index]);
     do { result_value = value; goto cleanup_key; } while (0);
 cleanup_key:
     sv4_destroy(&normalized);
     return result_value;
 }
 
+static llg_value_t* llg_assoc_value_nested_at_integral(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    return count < 2 ? NULL
+                     : llg_assoc_value_path_integral(array, indices, count);
+}
+
+/* The element a whole write through `count` >= 2 indices stores into: a
+ * nested queue takes a write at its size as an append
+ * (llg_nested_seq_write_at). */
+static llg_value_t* llg_assoc_value_nested_target_integral(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    int* change) {
+    if (count < 2) return NULL;
+    return llg_nested_seq_write_at(
+        llg_assoc_value_path_integral(array, indices, count - 1),
+        indices[count - 1], change);
+}
+
+/* The slot holding the packed sequence that the last of `count` indices
+ * selects in, or NULL when the path ends elsewhere. */
+static llg_value_t* llg_assoc_value_packed_owner_integral(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    if (count < 2) return NULL;
+    llg_value_t* owner =
+        llg_assoc_value_path_integral(array, indices, count - 1);
+    return llg_nested_seq_holds_packed(owner) ? owner : NULL;
+}
+
 sv4_t llg_assoc_value_get_nested_integral(
     const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    llg_value_t* owner =
+        llg_assoc_value_packed_owner_integral(array, indices, count);
+    if (owner) return llg_nested_seq_get_packed(owner, indices[count - 1]);
     llg_value_t* value = llg_assoc_value_nested_at_integral(array, indices, count);
     return value && value->desc->kind == LLG_VALUE_PACKED
         ? sv4_clone(&value->value.packed)
@@ -418,7 +447,8 @@ int llg_assoc_value_set_nested_integral_container(
         do { llg_invalid_key_access("associative-array write", "invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t* target = count == 1
         ? NULL
-        : llg_assoc_value_nested_at_integral(array, indices, count);
+        : llg_assoc_value_nested_target_integral(array, indices, count,
+                                                 &change);
     const llg_value_desc_t* target_desc = count == 1
         ? array->element
         : target && target->desc->kind == LLG_VALUE_CONTAINER
@@ -465,8 +495,8 @@ int llg_assoc_value_set_nested_integral_container_from_packed(
     if (count == 1) {
         target_desc = array->element;
     } else {
-        llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices,
-                                                                  count);
+        llg_value_t* target = llg_assoc_value_nested_target_integral(
+            array, indices, count, &change);
         if (!target || target->desc->kind != LLG_VALUE_CONTAINER)
             do { result_value = 0; goto cleanup_key; } while (0);
         target_desc = target->desc;
@@ -483,8 +513,8 @@ int llg_assoc_value_set_nested_integral_container_from_packed(
         result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &value, &change);
     } else {
         result = 0;
-        llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices,
-                                                                  count);
+        llg_value_t* target = llg_assoc_value_nested_target_integral(
+            array, indices, count, &change);
         if (target && target->desc->kind == LLG_VALUE_CONTAINER) {
             result = 1;
             if (!llg_value_equal(target, &value)) {
@@ -506,6 +536,16 @@ cleanup_key:
 int llg_assoc_value_set_nested_integral(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     sv4_t value) {
+    llg_value_t* owner =
+        llg_assoc_value_packed_owner_integral(array, indices, count);
+    if (owner) {
+        int change = 0;
+        int result = llg_nested_seq_set_packed(owner, indices[count - 1],
+                                               value, &change);
+        llg_notify(array->notify, array->contents_dependency,
+                   array->shape_dependency, change);
+        return result;
+    }
     llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
     if (!target || target->desc->kind != LLG_VALUE_PACKED) return 0;
     sv4_t assigned = sv4_cast(value, target->desc->packed_width,
@@ -524,20 +564,26 @@ int llg_assoc_value_set_nested_integral(
 int llg_assoc_value_set_nested_integral_real(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     double value) {
-    llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
+    int change = 0;
+    llg_value_t* target =
+        llg_assoc_value_nested_target_integral(array, indices, count, &change);
     if (!target || target->desc->kind != LLG_VALUE_REAL) return 0;
     value = llg_value_real_convert(target->desc, value);
-    if (llg_value_real_same(target->value.real, value)) return 1;
-    target->value.real = value;
+    if (!llg_value_real_same(target->value.real, value)) {
+        target->value.real = value;
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
+    }
     llg_notify(array->notify, array->contents_dependency,
-               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+               array->shape_dependency, change);
     return 1;
 }
 
 int llg_assoc_value_set_nested_integral_string(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     llg_string_t value) {
-    llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
+    int change = 0;
+    llg_value_t* target =
+        llg_assoc_value_nested_target_integral(array, indices, count, &change);
     if (!target || target->desc->kind != LLG_VALUE_STRING) {
         llg_string_destroy(&value);
         return 0;
@@ -548,22 +594,26 @@ int llg_assoc_value_set_nested_integral_string(
     if (changed) {
         llg_string_destroy(&target->value.string);
         target->value.string = value;
-        llg_notify(array->notify, array->contents_dependency,
-                   array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
     } else {
         llg_string_destroy(&value);
     }
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency, change);
     return 1;
 }
 
 int llg_assoc_value_set_nested_integral_chandle(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     void* value) {
-    llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
+    int change = 0;
+    llg_value_t* target =
+        llg_assoc_value_nested_target_integral(array, indices, count, &change);
     if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
-    if (!llg_value_store_handle(target, value)) return 1;
+    if (llg_value_store_handle(target, value))
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
     llg_notify(array->notify, array->contents_dependency,
-               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+               array->shape_dependency, change);
     return 1;
 }

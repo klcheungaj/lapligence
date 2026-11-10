@@ -250,11 +250,15 @@ static void llg_bitstream_append_item(llg_bitstream_t* stream,
             return;
         }
         case LLG_VALUE_CONTAINER: {
-            const llg_dyn_value_array_t* items = value ? value->value.container : NULL;
-            if (items)
-                for (size_t index = 0; index < items->size; ++index)
-                    llg_bitstream_append_item(stream, &items->data[index],
+            llg_seq_view_t items =
+                llg_nested_seq_view(value ? value->value.container : NULL);
+            for (size_t index = 0; index < items.size; ++index) {
+                if (items.values)
+                    llg_bitstream_append_item(stream, &items.values[index],
                                               desc->element);
+                else
+                    llg_bitstream_append_value(stream, items.packed[index]);
+            }
             return;
         }
         default:

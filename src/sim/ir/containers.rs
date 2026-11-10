@@ -35,9 +35,12 @@ pub enum IrContainerElement {
     },
     Container {
         type_id: u64,
-        kind: String,
+        kind: Box<str>,
         /// The index type of a nested associative array.
         key: Option<IrAssocKey>,
+        /// The bound of a nested queue: its maximum element count, as
+        /// `IrContainerKind::Queue` has it.
+        maximum_elements: Option<std::num::NonZeroU64>,
         element: Box<IrContainerElement>,
     },
     Opaque {
@@ -45,6 +48,10 @@ pub enum IrContainerElement {
         kind: String,
     },
 }
+
+/// `IrContainerElement::Container` kind of a nested queue; any other kind
+/// without a key is a dynamic array.
+pub const NESTED_QUEUE_KIND: &str = "Queue";
 
 /// `IrContainerElement::Opaque` kind of a built-in `process` class handle.
 pub const PROCESS_ELEMENT_KIND: &str = "Process";
@@ -128,6 +135,27 @@ impl IrContainerElement {
             .unwrap_or(false)
     }
 
+    /// The kind of a lexical container holding the storage of a nested
+    /// container of this type: what `IrContainerStmt::BindElement` aliases.
+    pub fn nested_kind(&self) -> Option<IrContainerKind> {
+        let Self::Container {
+            kind,
+            key,
+            maximum_elements,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        Some(match key {
+            Some(key) => IrContainerKind::Associative { key: key.clone() },
+            None if **kind == *NESTED_QUEUE_KIND => IrContainerKind::Queue {
+                maximum_elements: maximum_elements.map(std::num::NonZeroU64::get),
+            },
+            None => IrContainerKind::Dynamic,
+        })
+    }
+
     pub fn is_packed(&self) -> bool {
         matches!(self, Self::Packed { .. })
     }
@@ -199,12 +227,14 @@ impl IrContainerElement {
                     kind: dst_kind,
                     key: dst_key,
                     element: dst,
+                    ..
                 },
                 Self::Container {
                     type_id: src_id,
                     kind: src_kind,
                     key: src_key,
                     element: src,
+                    ..
                 },
             ) => {
                 (dst_id == src_id || (dst_kind == src_kind && dst.compatible_with(src)))
@@ -980,11 +1010,12 @@ pub enum IrContainerStmt {
         value: usize,
     },
     /// Replace `container` with the queue or dynamic-array member at item
-    /// path `items` of `root` (SIM-007). A record element of container
-    /// storage keeps such a member as a nested dynamic array in its value; a
-    /// native record keeps it in a companion container, so a whole-element
-    /// read moves it into the temporary's companion, and a member operation
-    /// on an element stages it in a lexical container.
+    /// path `items` of the native value `root` (SIM-007). A record element
+    /// of container storage keeps such a member as a nested sequence in its
+    /// value; a native record keeps it in a companion container, so a
+    /// whole-element read moves it into the temporary's companion. The root
+    /// is never a container element: a statement naming a member of an
+    /// element binds it in place (`BindElement`).
     ValueItemToContainer {
         root: IrValueItemRoot,
         items: Vec<u32>,
@@ -1006,22 +1037,25 @@ pub enum IrContainerStmt {
         items: Vec<u32>,
         nba: bool,
     },
-    /// Replace the queue or dynamic-array member slot at `items` of `root`
-    /// with a deep copy of `container`: before a whole-element write stores
-    /// a native value, or after a member operation on an element changed
-    /// its staged copy (SIM-007).
+    /// Replace the queue or dynamic-array member slot at `items` of the
+    /// native value `root` with a deep copy of `container`, before a
+    /// whole-element write stores that value (SIM-007). The root is never a
+    /// container element.
     ContainerToValueItem {
         container: usize,
         root: IrValueItemRoot,
         items: Vec<u32>,
     },
-    /// Declare lexical `container` as an alias of the associative array
-    /// nested in the element `root` locates: no copy, and operations on it
-    /// change the element in place. The alias pins the array, so it stays
-    /// valid if the element is deleted while the statement runs. A read
-    /// locator of a missing element binds an empty array.
+    /// Declare lexical `container` as an alias of the queue, dynamic or
+    /// associative array nested in the element `root` locates, or in the
+    /// member at item path `items` of that record element: no copy, and
+    /// operations on it change the element in place. The alias pins the
+    /// array, so it stays valid if the element is deleted or replaced while
+    /// the statement runs. A read locator of a missing element binds an
+    /// empty array.
     BindElement {
         root: IrValueItemRoot,
+        items: Vec<u32>,
         container: usize,
     },
     /// Publish a change of `container` made through an alias of one of its
@@ -2073,6 +2107,13 @@ impl IrContainerStmt {
                 items,
             } => {
                 let container = container_kind(model, *container, None)?;
+                // An element's container is bound, never copied through.
+                if matches!(root, IrValueItemRoot::Element(_)) {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "record container member transfer needs a native value, not a container element",
+                    ));
+                }
                 let mut item = Some(root.element(model, string_return)?);
                 for step in items {
                     item = match item {
@@ -2087,8 +2128,7 @@ impl IrContainerStmt {
                 }
                 match item {
                     // An empty path names a whole native value of container
-                    // type, such as a mailbox message (SIM-017), or a whole
-                    // nested container element staged by a statement.
+                    // type, such as a mailbox message (SIM-017).
                     // A fixed member array moves as one container of its items.
                     Some(
                         IrContainerElement::Container {
@@ -2107,31 +2147,44 @@ impl IrContainerStmt {
                     )),
                 }
             }
-            Self::BindElement { root, container } => {
-                let container = container_kind(model, *container, Some("associative"))?;
+            Self::BindElement {
+                root,
+                items,
+                container,
+            } => {
+                let container = container_kind(model, *container, None)?;
                 if !container.activation {
                     return Err(IrValidationError::new(
                         "container",
                         "only activation containers alias a nested element",
                     ));
                 }
-                match (root.element(model, string_return)?, &container.kind) {
-                    (
-                        IrContainerElement::Container {
-                            element,
-                            key: Some(key),
-                            ..
-                        },
-                        IrContainerKind::Associative { key: alias },
-                    ) if key == alias
-                        && element.compatible_with(&container.element)
-                        && container.element.compatible_with(element) =>
+                let mut item = Some(root.element(model, string_return)?);
+                for step in items {
+                    item = match item {
+                        Some(IrContainerElement::Aggregate { members, .. }) => members
+                            .get(*step as usize)
+                            .map(|member| member.element.as_ref()),
+                        Some(IrContainerElement::FixedArray { element, .. }) => {
+                            Some(element.as_ref())
+                        }
+                        _ => None,
+                    };
+                }
+                // The alias is the element's own storage: its kind, bound
+                // and element type are the element's.
+                match item {
+                    Some(nested @ IrContainerElement::Container { element, .. })
+                        if nested.nested_kind().as_ref() == Some(&container.kind)
+                            && element.compatible_with(&container.element)
+                            && container.element.compatible_with(element)
+                            && (!element.is_packed() || **element == container.element) =>
                     {
                         Ok(())
                     }
                     _ => Err(IrValidationError::new(
                         "container value",
-                        "a nested element alias needs an associative element of its own type",
+                        "a nested element alias needs a container element of its own type",
                     )),
                 }
             }

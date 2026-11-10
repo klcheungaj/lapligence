@@ -46,6 +46,10 @@ enum {
     LLG_VALUE_EVENT = 4,
     LLG_VALUE_AGGREGATE = 5,
     LLG_VALUE_FIXED_ARRAY = 6,
+    /* A queue or dynamic array nested in a value: `item_count` is
+     * LLG_VALUE_CONTAINER_DYNAMIC for a dynamic array,
+     * LLG_VALUE_CONTAINER_QUEUE for an unbounded queue, and that plus the
+     * maximum element count for a bounded queue. */
     LLG_VALUE_CONTAINER = 7,
     LLG_VALUE_OPAQUE = 8,
     /* A `process` handle: an identity whose element owns one reference. */
@@ -53,6 +57,10 @@ enum {
     /* An associative array nested in a value: `item_count` is 1 for a string
      * key, 2 for a class key, and `packed_*` give an integral key. */
     LLG_VALUE_ASSOC = 10,
+};
+enum {
+    LLG_VALUE_CONTAINER_DYNAMIC = 0,
+    LLG_VALUE_CONTAINER_QUEUE = 1,
 };
 
 /* First member of every collected object; owned by the collector. `state`
@@ -111,6 +119,7 @@ typedef struct llg_dyn_value_array_t llg_dyn_value_array_t;
 typedef struct llg_queue_value_array_t llg_queue_value_array_t;
 typedef struct llg_assoc_value_t llg_assoc_value_t;
 typedef struct llg_nested_assoc_t llg_nested_assoc_t;
+typedef struct llg_nested_seq_t llg_nested_seq_t;
 typedef struct llg_value_t llg_value_t;
 struct llg_queue_source_t;
 
@@ -138,7 +147,7 @@ struct llg_value_t {
         double real;
         llg_string_t string;
         void* handle;
-        llg_dyn_value_array_t* container;
+        llg_nested_seq_t* container;
         llg_nested_assoc_t* assoc;
         llg_value_t* items;
     } value;
@@ -658,10 +667,10 @@ void* llg_assoc_value_ref_acquire_string(llg_assoc_value_t* array,
                                          const void* key, size_t length);
 void llg_native_ref_release(void* reference);
 void llg_native_ref_scope_release(void* object);
-/* A record element's queue or dynamic-array member lives in a nested slot of
- * another representation than the standalone container its `ref` formal
- * addresses. A mirror keeps the two equal while the formal lives: changes of
- * `container` (a call-owned companion) replace the slot `item`, whole, and
+/* A record element's queue or dynamic-array member lives in a nested slot,
+ * not in the standalone container its `ref` formal addresses. A mirror keeps
+ * the two equal while the formal lives: changes of
+ * `container` (a call-owned companion) assign the slot `item`, whole, and
  * tell the element's container; changes of the element's container recopy the
  * slot. Each direction costs the member's size. The holder's value scope
  * object ends it through llg_native_ref_mirror_scope_release, before the
@@ -745,12 +754,15 @@ void llg_native_ref_stored(sv4_t* marker);
 size_t llg_value_container_size(const llg_value_t* value);
 void llg_value_element_read(llg_value_t* dst, const llg_value_t* element);
 /* Queue and dynamic-array members of records (SIM-007). A container element
- * keeps such a member as a nested dynamic array in the member's slot `item`
- * (LLG_VALUE_CONTAINER); a native record value keeps a null slot and one
- * companion container instead. `to` replaces initialized `dst` with a
- * converted copy of the slot's elements (a null slot is empty; a bounded
- * queue keeps its head and warns); `from` replaces the slot with a deep copy
- * of `src`, null when `src` is empty. Neither notifies the slot's owner. */
+ * keeps such a member as a nested sequence in the member's slot `item`
+ * (LLG_VALUE_CONTAINER, llg_nested_seq_t); a native record value keeps a null
+ * slot and one companion container instead. These move a whole value between
+ * the two forms: `to` replaces initialized `dst` with a converted copy of the
+ * slot's elements (a null slot is empty; a bounded queue keeps its head and
+ * warns); `from` gives the slot's sequence a deep copy of the elements of
+ * `src`, in place, so an alias of it stays bound; an empty one no alias names
+ * is null. Neither notifies the slot's owner. A statement that names such a
+ * member of an element binds it in place instead (llg_nested_seq_bind). */
 void llg_value_item_to_dyn(llg_dyn_array_t* dst, const llg_value_t* item);
 void llg_value_item_to_queue(llg_queue_t* dst, const llg_value_t* item);
 void llg_value_item_to_dyn_value(llg_dyn_value_array_t* dst,
@@ -1214,6 +1226,75 @@ void llg_nested_assoc_trace(const llg_nested_assoc_t* nested,
  * the address of the pin). */
 void* llg_nested_assoc_bind(llg_value_t* value, llg_nested_assoc_t** pin);
 void llg_nested_assoc_unpin(void* pin);
+/* A queue or dynamic array nested in a value: an element of a container or
+ * a member of a record element. It keeps the storage a variable of its type
+ * has (`llg_dyn_array_t` or `llg_queue_t` for packed elements, else
+ * `llg_dyn_value_array_t` or `llg_queue_value_array_t`) in one stable
+ * allocation, so container operations address it in place and a bounded
+ * queue keeps its bound. The owning value holds one pin and a lexical alias
+ * another: an element deleted or replaced while a statement uses it stays
+ * valid until the statement ends. A null value is the empty sequence. The
+ * storage publishes nothing itself; its owner does (`llg_*_value_touch`). */
+enum {
+    LLG_NESTED_SEQ_DYN = 0,
+    LLG_NESTED_SEQ_QUEUE = 1,
+    LLG_NESTED_SEQ_DYN_VALUES = 2,
+    LLG_NESTED_SEQ_QUEUE_VALUES = 3,
+};
+struct llg_nested_seq_t {
+    size_t pins;
+    const llg_value_desc_t* desc;
+    uint8_t kind;
+    union {
+        llg_dyn_array_t dyn;
+        llg_queue_t queue;
+        llg_dyn_value_array_t dyn_values;
+        llg_queue_value_array_t queue_values;
+    } array;
+};
+
+llg_nested_seq_t* llg_nested_seq_new(const llg_value_desc_t* desc);
+/* A converted deep copy of `source` as a sequence of type `desc`; null for an
+ * empty one. A bounded queue keeps its head and warns. */
+llg_nested_seq_t* llg_nested_seq_clone(const llg_value_desc_t* desc,
+                                       const llg_nested_seq_t* source);
+void llg_nested_seq_release(llg_nested_seq_t* seq);
+size_t llg_nested_seq_size(const llg_nested_seq_t* seq);
+/* Whether two sequences hold identical elements; null is empty. */
+int llg_nested_seq_equal(const llg_nested_seq_t* a, const llg_nested_seq_t* b);
+/* SystemVerilog equality (LLG_VALUE_EQUAL and friends); null is empty. */
+int llg_nested_seq_equality(const llg_nested_seq_t* a,
+                            const llg_nested_seq_t* b, int case_equality);
+void llg_nested_seq_trace(const llg_nested_seq_t* seq, llg_value_visit_fn visit,
+                          void* context);
+/* The ambiguous-condition merge of two sequences (`llg_dyn_value_merge`) as
+ * a sequence of type `desc`; null when both are empty. */
+llg_nested_seq_t* llg_nested_seq_merge(const llg_value_desc_t* desc,
+                                       const llg_nested_seq_t* a,
+                                       const llg_nested_seq_t* b);
+/* Pin the sequence of the initialized slot `value`, allocating a null one,
+ * and return the storage to bind. `*pin` receives the pin the lexical owner
+ * gives back through llg_nested_seq_unpin (a value-scope destructor taking
+ * the address of the pin). */
+void* llg_nested_seq_bind(llg_value_t* value, llg_nested_seq_t** pin);
+void llg_nested_seq_unpin(void* pin);
+/* One level of an index path below slot `owner`. `value_at` gives the
+ * element of a sequence of values, NULL for an invalid index, a null or
+ * packed sequence or another kind of slot. A sequence of packed elements
+ * has no element values: `get_packed` reads one (the Table 7-1 default for
+ * an invalid index) and `set_packed` stores one, where a queue takes a write
+ * at its size as an append (SV 7.10.1); it returns 0 without writing for
+ * any other invalid index and adds what the owner must publish to `*change`. */
+llg_value_t* llg_nested_seq_value_at(const llg_value_t* owner, sv4_t index);
+/* The element a whole write at `index` stores into: as `value_at`, and at
+ * the size of a queue a new element holding its initial value (a bounded
+ * queue at its bound takes none and warns). */
+llg_value_t* llg_nested_seq_write_at(llg_value_t* owner, sv4_t index,
+                                     int* change);
+int llg_nested_seq_holds_packed(const llg_value_t* owner);
+sv4_t llg_nested_seq_get_packed(const llg_value_t* owner, sv4_t index);
+int llg_nested_seq_set_packed(llg_value_t* owner, sv4_t index, sv4_t value,
+                              int* change);
 /* Push or insert a copy of `source`, storage of the queue's element type. */
 void llg_queue_value_push_assoc(llg_queue_value_array_t* queue, int back,
                                 const void* source);

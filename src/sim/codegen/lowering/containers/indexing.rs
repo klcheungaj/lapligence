@@ -907,11 +907,11 @@ impl<'a> Codegen<'a> {
         if let Some((container, iterator, string_key)) = self.inline_element_path(node) {
             return (!string_key).then(|| (container, vec![iterator]));
         }
-        // A staged nested element is a whole container of its own.
+        // A bound nested element is a whole container of its own.
         if self.staged_nested_element(node).is_some() {
             return None;
         }
-        // `sq[k][i]`: `sq[k]` is a staged copy; the rest selects inside it.
+        // `sq[k][i]`: `sq[k]` is bound to an alias; the rest selects inside it.
         if let Some((staged, tail)) = self.select_below_staged_element(node) {
             // A string key is no index path (`associative_string_element`).
             return (!matches!(
@@ -1000,7 +1000,7 @@ impl<'a> Codegen<'a> {
         .then_some((container.ir, key))
     }
 
-    /// The staged nested element a flattened select sits below and the
+    /// The bound nested element a flattened select sits below and the
     /// indices left inside it: `sq[k][i]` keeps `sq[k]` as a child.
     pub(in crate::sim::codegen) fn select_below_staged_element(
         &self,
@@ -1017,7 +1017,7 @@ impl<'a> Codegen<'a> {
         (!self.crosses_associative(staged, tail.len())).then_some((staged, tail))
     }
 
-    /// The nearest staged element in the chain of outer selects a flattened
+    /// The nearest bound element in the chain of outer selects a flattened
     /// select keeps as children, and how many indices it covers.
     fn staged_select_below(&self, node: NodeId) -> Option<(usize, usize)> {
         let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) else {

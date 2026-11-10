@@ -321,6 +321,7 @@ pub fn container_sources() -> (&'static str, &'static str) {
             include_str!("llg_container_prelude.c"),
             include_str!("container/value_descriptors.c"),
             include_str!("container/dynamic_values.c"),
+            include_str!("container/nested_sequences.c"),
             include_str!("container/queue_values.c"),
             include_str!("container/queue_value_mutations.c"),
             include_str!("container/dynamic_arrays.c"),

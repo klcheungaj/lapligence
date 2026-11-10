@@ -1,0 +1,5 @@
+same element: 2 3 1 size 3
+called selector: calls 1 size 4 last 7
+assigned by the argument: size 4 first 7 last 4
+assigned by the callee: size 2 5 6
+deleted by the argument: outer 1 size 1 first 9

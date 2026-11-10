@@ -1218,7 +1218,10 @@ impl<'a> Codegen<'a> {
                 } else {
                     size
                 };
-                (i128::from(kind == "Queue"), size)
+                (
+                    i128::from(*kind == *crate::sim::ir::NESTED_QUEUE_KIND),
+                    size,
+                )
             };
             statements.push(self.cast_range_stop(lowered[level].clone(), size, limit_extra, check));
         }

@@ -1,7 +1,8 @@
 /* SIM-006 recursive container values: whole record elements, in-place
  * element locators, identity-handle elements and their lifecycle hooks,
- * repeated deletion and (SIM-007) record container members moving between
- * nested slots and containers, with tracked packed-owner accounting. */
+ * repeated deletion, (SIM-007) record container members moving between
+ * nested slots and containers, and queues and dynamic arrays nested in
+ * values bound in place, with tracked packed-owner accounting. */
 #include "llg_container.c"
 #include "probe.h"
 #include <string.h>
@@ -194,9 +195,11 @@ static const llg_value_member_desc_t holder_members[] = {{&text_desc}, {&ints_de
 static const llg_value_desc_t holder_desc = {
     LLG_VALUE_AGGREGATE, 10, 0, 0, 0, 0, 3, NULL, holder_members, 3};
 
-static int64_t packed_item(const llg_dyn_value_array_t* nested, size_t index) {
+/* `ints_desc` is a dynamic array of packed elements: variable storage. */
+static int64_t packed_item(const llg_nested_seq_t* nested, size_t index) {
     int64_t value = 0;
-    CHECK(sv4_to_index_i64(nested->data[index].value.packed, &value));
+    CHECK(nested->kind == LLG_NESTED_SEQ_DYN);
+    CHECK(sv4_to_index_i64(nested->array.dyn.data[index], &value));
     return value;
 }
 
@@ -253,7 +256,8 @@ static void check_record_container_members(void) {
     llg_native_value_destroy(&word);
     llg_value_item_from_queue_value(texts, &words);
     CHECK(llg_value_container_size(texts) == 2);
-    CHECK(texts->value.container->data[1].value.string.len == 3);
+    CHECK(texts->value.container->kind == LLG_NESTED_SEQ_DYN_VALUES);
+    CHECK(texts->value.container->array.dyn_values.data[1].value.string.len == 3);
     llg_dyn_value_array_t words_dyn;
     llg_dyn_value_init(&words_dyn, &text_desc);
     llg_value_item_to_dyn_value(&words_dyn, texts);
@@ -285,11 +289,211 @@ static void check_record_container_members(void) {
     CHECK(value_test_live() == 0);
 }
 
+/* A queue or dynamic array nested in a value keeps the storage a variable
+ * has, in one pinned allocation: an alias changes the element in place,
+ * outlives its deletion, and a bounded queue keeps its bound. */
+static const llg_value_desc_t int_queue_desc = {
+    LLG_VALUE_CONTAINER, 11, 0, 0, 0, 0, LLG_VALUE_CONTAINER_QUEUE, &int_desc, NULL, 0};
+static const llg_value_desc_t int_queue2_desc = {
+    LLG_VALUE_CONTAINER, 11, 0, 0, 0, 0, LLG_VALUE_CONTAINER_QUEUE + 2, &int_desc, NULL, 0};
+static const llg_value_desc_t text_queue_desc = {
+    LLG_VALUE_CONTAINER, 12, 0, 0, 0, 0, LLG_VALUE_CONTAINER_QUEUE, &text_desc, NULL, 0};
+
+static int64_t queue_item(const llg_queue_t* queue, uint64_t index) {
+    sv4_t position = sv4_from_u64(index, 32, 0);
+    sv4_t item = llg_queue_get(queue, position);
+    int64_t value = 0;
+    CHECK(sv4_to_index_i64(item, &value));
+    sv4_destroy(&item);
+    sv4_destroy(&position);
+    return value;
+}
+
+static void check_nested_sequences(void) {
+    CHECK(llg_value_desc_valid(&int_queue_desc));
+    CHECK(llg_value_desc_valid(&int_queue2_desc));
+    sv4_t zero = sv4_from_u64(0, 32, 0);
+    sv4_t one = sv4_from_u64(1, 32, 0);
+    sv4_t two = sv4_from_u64(2, 32, 0);
+    sv4_t three = sv4_from_u64(3, 32, 0);
+    sv4_t five = sv4_from_u64(5, 32, 1);
+    sv4_t nine = sv4_from_u64(9, 32, 1);
+
+    /* `int qq[$][$]` with two empty elements. */
+    llg_queue_value_array_t outer;
+    llg_queue_value_init(&outer, &int_queue_desc, UINT64_MAX);
+    llg_value_t empty = {0};
+    llg_native_value_init(&empty, &int_queue_desc);
+    llg_queue_value_push_value(&outer, 1, &empty);
+    llg_queue_value_push_value(&outer, 1, &empty);
+    llg_value_t* first = llg_queue_value_element(&outer, &zero, 1);
+    CHECK(first && first->value.container == NULL);
+
+    /* Two aliases of one element share its storage: no change is lost. */
+    llg_nested_seq_t* pin_a = NULL;
+    llg_nested_seq_t* pin_b = NULL;
+    llg_queue_t* a = llg_nested_seq_bind(first, &pin_a);
+    llg_queue_t* b = llg_nested_seq_bind(first, &pin_b);
+    CHECK(a == b && pin_a == pin_b && pin_a->pins == 3);
+    CHECK(pin_a->kind == LLG_NESTED_SEQ_QUEUE);
+    llg_queue_push_back(a, five);
+    llg_queue_push_back(b, nine);
+    CHECK(llg_value_container_size(first) == 2);
+    CHECK(queue_item(a, 0) == 5 && queue_item(a, 1) == 9);
+
+    /* A write at the size appends; one further is ignored with a warning. */
+    sv4_t path[2];
+    path[0] = zero;
+    path[1] = two;
+    CHECK(llg_queue_value_set_nested(&outer, path, 2, five));
+    CHECK(llg_value_container_size(first) == 3 && queue_item(a, 2) == 5);
+    path[1] = sv4_from_u64(4, 32, 0);
+    CHECK(!llg_queue_value_set_nested(&outer, path, 2, five));
+    CHECK(llg_value_container_size(first) == 3);
+    sv4_destroy(&path[1]);
+    /* The null default of an empty element takes position 0 the same way. */
+    path[0] = one;
+    path[1] = zero;
+    CHECK(llg_queue_value_set_nested(&outer, path, 2, nine));
+    sv4_t read = llg_queue_value_get_nested(&outer, path, 2);
+    CHECK(sv4_same(read, nine));
+    sv4_destroy(&read);
+    /* An invalid position reads the element default (x: four-state). */
+    path[1] = three;
+    read = llg_queue_value_get_nested(&outer, path, 2);
+    CHECK(sv4_is_unknown(read));
+    sv4_destroy(&read);
+
+    /* A whole store while an alias is bound assigns in place: the alias
+     * still names the element, through a nested store and through a value
+     * copy over the slot. */
+    llg_dyn_array_t replacement;
+    llg_dyn_init(&replacement, 32, 1, 0);
+    llg_dyn_assign_values(&replacement, &nine, 1);
+    CHECK(llg_queue_value_set_nested_container_from_packed(&outer, &zero, 1,
+                                                          &replacement));
+    CHECK(first->value.container == pin_a && llg_queue_size(a) == 1);
+    CHECK(queue_item(a, 0) == 9);
+    llg_value_t other = {0};
+    llg_native_value_init(&other, &int_queue_desc);
+    llg_nested_seq_t* other_pin = NULL;
+    llg_queue_t* other_queue = llg_nested_seq_bind(&other, &other_pin);
+    llg_queue_push_back(other_queue, five);
+    llg_queue_push_back(other_queue, five);
+    llg_nested_seq_unpin(&other_pin);
+    CHECK(llg_queue_value_set_element(&outer, &zero, 1, &other));
+    CHECK(first->value.container == pin_a && llg_queue_size(a) == 2);
+    CHECK(queue_item(a, 1) == 5);
+    llg_native_value_destroy(&other);
+    llg_dyn_destroy(&replacement);
+
+    /* A deleted element stays valid for its aliases until they unpin. */
+    llg_queue_value_delete(&outer);
+    CHECK(pin_a->pins == 2 && llg_queue_size(a) == 2);
+    llg_nested_seq_unpin(&pin_a);
+    CHECK(pin_a == NULL && pin_b->pins == 1);
+    llg_nested_seq_unpin(&pin_b);
+    llg_nested_seq_unpin(&pin_b);
+
+    /* A bounded queue keeps its bound through its alias and through a
+     * converted copy from an unbounded one. */
+    llg_value_t bounded = {0};
+    llg_native_value_init(&bounded, &int_queue2_desc);
+    llg_nested_seq_t* pin = NULL;
+    llg_queue_t* limited = llg_nested_seq_bind(&bounded, &pin);
+    llg_queue_push_back(limited, five);
+    llg_queue_push_back(limited, nine);
+    llg_queue_push_back(limited, five);
+    CHECK(llg_queue_size(limited) == 2);
+    llg_nested_seq_unpin(&pin);
+    llg_value_t source = {0};
+    llg_native_value_init(&source, &int_queue_desc);
+    llg_queue_t* unlimited = llg_nested_seq_bind(&source, &pin);
+    for (int i = 0; i < 4; ++i) llg_queue_push_back(unlimited, nine);
+    llg_nested_seq_unpin(&pin);
+    llg_native_value_copy(&bounded, &source);
+    CHECK(llg_value_container_size(&bounded) == 2);
+    CHECK(bounded.value.container->array.queue.limit == 2);
+
+    /* Queue and dynamic array of one element type convert on a copy, and an
+     * emptied sequence equals the null default. */
+    llg_value_t dynamic = {0};
+    llg_native_value_init(&dynamic, &ints_desc);
+    llg_native_value_copy(&dynamic, &source);
+    CHECK(dynamic.value.container->kind == LLG_NESTED_SEQ_DYN);
+    CHECK(llg_value_container_size(&dynamic) == 4);
+    CHECK(llg_value_equality(&dynamic, &source, 0) == LLG_VALUE_EQUAL);
+    CHECK(llg_value_equality(&dynamic, &bounded, 0) == LLG_VALUE_UNEQUAL);
+    unlimited = llg_nested_seq_bind(&source, &pin);
+    llg_queue_delete(unlimited);
+    llg_nested_seq_unpin(&pin);
+    CHECK(source.value.container != NULL);
+    CHECK(llg_value_equality(&source, &empty, 1) == LLG_VALUE_EQUAL);
+    CHECK(llg_nested_seq_equal(source.value.container, NULL));
+
+    /* Elements that are values keep value storage. */
+    llg_value_t texts = {0};
+    llg_native_value_init(&texts, &text_queue_desc);
+    llg_queue_value_array_t* words = llg_nested_seq_bind(&texts, &pin);
+    CHECK(pin->kind == LLG_NESTED_SEQ_QUEUE_VALUES);
+    llg_value_t word = {0};
+    llg_native_value_init(&word, &text_desc);
+    word.value.string = llg_string_bytes("ab", 2);
+    llg_queue_value_push_value(words, 1, &word);
+    llg_nested_seq_unpin(&pin);
+    CHECK(llg_value_container_size(&texts) == 1);
+    llg_value_t* stored = llg_nested_seq_value_at(&texts, zero);
+    CHECK(stored && stored->value.string.len == 2);
+    CHECK(llg_nested_seq_value_at(&texts, one) == NULL);
+
+    /* Whole writes at a queue's size append, for value elements one level
+     * down and for a nested queue at the outer queue's own size; a write
+     * further out stores nothing. */
+    llg_queue_value_array_t lines;
+    llg_queue_value_init(&lines, &text_queue_desc, UINT64_MAX);
+    path[0] = zero;
+    path[1] = zero;
+    CHECK(!llg_queue_value_set_nested_string(&lines, path, 2, llg_string_bytes("x", 1)));
+    llg_dyn_value_array_t no_words;
+    llg_dyn_value_init(&no_words, &text_desc);
+    CHECK(llg_queue_value_set_nested_container(&lines, &zero, 1, &no_words));
+    CHECK(llg_queue_value_size(&lines) == 1);
+    CHECK(!llg_queue_value_set_nested_container(&lines, &two, 1, &no_words));
+    CHECK(llg_queue_value_size(&lines) == 1);
+    CHECK(llg_queue_value_set_nested_string(&lines, path, 2, llg_string_bytes("x", 1)));
+    path[1] = one;
+    CHECK(llg_queue_value_set_nested_string(&lines, path, 2, llg_string_bytes("yz", 2)));
+    path[1] = three;
+    CHECK(!llg_queue_value_set_nested_string(&lines, path, 2, llg_string_bytes("w", 1)));
+    stored = llg_queue_value_element(&lines, &zero, 1);
+    CHECK(stored && llg_value_container_size(stored) == 2);
+    stored = llg_nested_seq_value_at(stored, one);
+    CHECK(stored && stored->value.string.len == 2);
+    llg_dyn_value_destroy(&no_words);
+    llg_queue_value_destroy(&lines);
+
+    llg_native_value_destroy(&word);
+    llg_native_value_destroy(&texts);
+    llg_native_value_destroy(&dynamic);
+    llg_native_value_destroy(&source);
+    llg_native_value_destroy(&bounded);
+    llg_native_value_destroy(&empty);
+    llg_queue_value_destroy(&outer);
+    sv4_destroy(&zero);
+    sv4_destroy(&one);
+    sv4_destroy(&two);
+    sv4_destroy(&three);
+    sv4_destroy(&five);
+    sv4_destroy(&nine);
+    CHECK(value_test_live() == 0);
+}
+
 int main(void) {
     check_record_queue();
     check_assoc_records();
     check_identity_handles();
     check_record_container_members();
+    check_nested_sequences();
     puts("container value probe passed");
     return 0;
 }

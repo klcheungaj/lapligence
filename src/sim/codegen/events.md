@@ -197,23 +197,26 @@ actual in expression position becomes `ContainerValues`, other non-variable
 actuals need a statement prelude. Record elements go through
 `collection/native_values/elements.rs` (whole-element transfers via native
 temporaries, member leaves via element accesses). An element keeps a queue
-or dynamic-array member as a nested dynamic array inside its value, unlike a
+or dynamic-array member as a nested sequence inside its value, unlike a
 module record (own container) or native value (companion container): element
 temporaries get companions, filled after `GetValue` and copied back before
-`SetValue` (`IrContainerStmt::{ValueItemToContainer, ContainerToValueItem}`);
-an assignment, call or system-task statement naming an element's member
-stages it in a lexical container (`stage_element_members`), copied out before
-the statement and back after it when the statement can change it, so every
-container operation applies unchanged. An associative array nested in an
-element is staged without a copy: `IrContainerStmt::BindElement` makes the
-lexical container an alias of the element and pins it for the statement, and
-`TouchContents` publishes the change to the owner; deeper levels resolve once
-the level above has its alias (`stage_below_aliases`). An expression outside such a
+`SetValue` (`IrContainerStmt::{ValueItemToContainer, ContainerToValueItem}`,
+which take native value roots only);
+an assignment, call or system-task statement naming an element's member, or
+a queue, dynamic or associative array nested in an element, binds it to a
+lexical container without a copy (`stage_element_members`):
+`IrContainerStmt::BindElement` makes the lexical container an alias of the
+element's own storage and pins it for the statement, so every container
+operation applies unchanged, each element is located once and two names of
+one element share its storage; `TouchContents` publishes a change to the
+owner after the statement. Deeper levels resolve once the level above has
+its alias (`stage_below_aliases`). An expression outside such a
 statement (a condition, loop bound, `foreach` array, declaration initializer
-or timed assignment value) reads the member from a copy made before each
+or timed assignment value) binds the member before each
 evaluation (`stage_expression_members`, an `IrExprKind::Sequence`), gated by
-`element_staging_possible` so other designs pay no scan; such an expression
-that would change the member rejects, as do associative members. A read-modify-write of one
+`element_staging_possible` so other designs pay no scan; an operand that is
+evaluated lazily and selects with a call binds its own. Associative members
+of record elements reject. A read-modify-write of one
 element (`c[k] op= v`, `c[k]++`) needs an index free of side effects; an
 implicit conversion around a container index is stripped so X/Z bits reach the
 runtime's invalid-index check. Reject `ref` container formals (SIM-008), fork

@@ -389,27 +389,39 @@ impl Frame<'_, '_> {
             self.vpi_auto_bind(VpiAutoKey::Container(*container));
             return Ok(());
         }
-        if let IrContainerStmt::BindElement { root, container } = operation {
-            let IrValueItemRoot::Element(element) = root else {
+        if let IrContainerStmt::BindElement {
+            root,
+            items,
+            container,
+        } = operation
+        {
+            if !matches!(root, IrValueItemRoot::Element(_)) {
                 return Err("a nested element alias needs an element locator".to_owned());
+            }
+            let storage = &self.ctx.model.containers[*container];
+            let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
+            let nested = if matches!(storage.kind, IrContainerKind::Associative { .. }) {
+                "llg_nested_assoc"
+            } else {
+                "llg_nested_seq"
             };
-            let (ty, _, _) = super::super::containers::activation_storage(
-                &self.ctx.model.containers[*container],
-                "",
-            )?;
             // The alias publishes through `TouchContents` once the change
             // is complete, not at the locator.
             let touches = self.pending_touches.len();
-            let element = self.chandle(element)?;
+            let slot = match root {
+                IrValueItemRoot::Element(element) if items.is_empty() => {
+                    format!("(llg_value_t*){}", self.chandle(element)?)
+                }
+                _ => self.value_item_root(root, items)?,
+            };
             self.pending_touches.truncate(touches);
             let pin = self.scalar(
-                "llg_nested_assoc_t**",
-                "(llg_nested_assoc_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_nested_assoc_t*), llg_nested_assoc_unpin))"
-                    .to_owned(),
+                &format!("{nested}_t**"),
+                format!("({nested}_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof({nested}_t*), {nested}_unpin))"),
             );
             let storage = self.scalar(
                 &format!("{ty}*"),
-                format!("({ty}*)llg_nested_assoc_bind((llg_value_t*){element}, {pin})"),
+                format!("({ty}*){nested}_bind({slot}, {pin})"),
             );
             self.containers.insert(*container, format!("(*{storage})"));
             return Ok(());

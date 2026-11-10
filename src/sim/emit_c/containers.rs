@@ -1402,15 +1402,37 @@ pub(super) fn value_descriptor_tables(
                     kind,
                 )
             }
-            IrContainerElement::Container { type_id, .. } => (
-                "LLG_VALUE_CONTAINER",
-                nominal_type_id(*type_id, container_name)?,
-                0,
-                0,
-                0,
-                0,
-                0,
-            ),
+            IrContainerElement::Container {
+                type_id,
+                kind,
+                maximum_elements,
+                ..
+            } => {
+                // `item_count` tells a dynamic array (0) from a queue (1)
+                // and carries a queue's bound above that.
+                let count = if **kind == *crate::sim::ir::NESTED_QUEUE_KIND {
+                    maximum_elements
+                        .map_or(Some(1), |bound| {
+                            usize::try_from(bound.get()).ok()?.checked_add(1)
+                        })
+                        .ok_or_else(|| {
+                            format!(
+                                "container {container_name} nested queue bound is not host-representable"
+                            )
+                        })?
+                } else {
+                    0
+                };
+                (
+                    "LLG_VALUE_CONTAINER",
+                    nominal_type_id(*type_id, container_name)?,
+                    0,
+                    0,
+                    0,
+                    0,
+                    count,
+                )
+            }
             IrContainerElement::Opaque { type_id, kind } => (
                 if kind == crate::sim::ir::PROCESS_ELEMENT_KIND {
                     "LLG_VALUE_PROCESS"

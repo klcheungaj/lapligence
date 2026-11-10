@@ -651,33 +651,28 @@ These legal forms reject with explicit diagnostics:
   array (`foreach (s[k, i, j])` over `int s[string][$][$]`);
 - a `ref` actual that is a queue or dynamic array nested in a container
   element, for a task or function formal, `const` or not, reported at the
-  actual (a staged copy would miss a change made through another path), and a
-  `ref` actual that is a queue or dynamic-array member of a container record
-  element;
-- one statement that changes two nested queues or dynamic arrays of one
-  container selected by selectors that are not provably distinct
-  (`sq[a].push_back(sq[b].pop_front())`); constants and associative elements
-  work;
+  actual, and a `ref` actual that is a queue or dynamic-array member of a
+  container record element;
+- `%p` of a nested queue or dynamic array in a report formatted after its
+  statement (`$strobe`, `$monitor`);
 - a `default:` key in a pattern for a nested container element;
-- a nested queue or dynamic array selected with side effects
-  (`qq[f()].push_back(1)`), which is located twice,
-  and a `ref` formal named in a plain `fork`/`join`.
+- a `ref` formal named in a plain `fork`/`join`.
 
 ### Cause
 
 Container operations name their storage by a container index. A property
 selected through a plain handle read is an alias that re-reads the handle at
-each use (SIM-011). A nested queue or dynamic array is a dynamic-array value,
-so a statement stages it whole in a lexical container, copied in before and
-out after. A nested associative array is bound in place to a lexical alias
-that pins it for the statement. A queue or dynamic array therefore has no
-reference a task or function could hold; nested associative arrays stay true
-references.
+each use (SIM-011). A nested queue, dynamic or associative array is bound in
+place to a lexical alias that pins it for one statement, so a report
+formatted later has no alias. A `ref` formal takes a nested associative
+array; for a nested queue or dynamic array the binding of a reference that
+outlives the statement (a task that suspends, a change of the element through
+another name) is not decided, and the actual rejects.
 
 ### Intended direction
 
-Retained element cells for `ref` to nested queues and dynamic arrays
-(SIM-008), fork capture pins (SIM-010).
+A `ref` to a nested queue or dynamic array through the in-place alias, with
+the pin held by the formal (SIM-008); fork capture pins (SIM-010).
 
 ### Reproduce
 

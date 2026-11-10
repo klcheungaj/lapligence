@@ -364,6 +364,7 @@ fn native_companion_containers_follow_their_values() {
                     type_id: 6,
                     kind: "Queue".into(),
                     key: None,
+                    maximum_elements: None,
                     element: Box::new(packed(32)),
                 },
             ),
@@ -537,6 +538,7 @@ fn mailbox_aggregate_messages_name_a_native_value_and_a_type() {
         type_id: 5,
         kind: "Queue".into(),
         key: None,
+        maximum_elements: None,
         element: Box::new(packed(8)),
     };
     model.validate().unwrap();

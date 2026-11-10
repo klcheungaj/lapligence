@@ -318,12 +318,95 @@ fn wildcard_index_traversal_is_rejected_by_the_frontend() {
     );
 }
 
+/// Two names of one nested queue change the same storage, and a selector
+/// that calls a function runs once.
 #[test]
-fn unsupported_container_boundaries_are_explicit() {
+fn nested_queues_change_in_place_through_any_selectors() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_alias_changes.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_alias_changes", expected, &[], &[]);
+}
+
+#[test]
+fn nested_queues_and_dynamic_arrays_keep_variable_semantics() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_alias_forms.out");
+    sim_cli::run_case_checked_matrix(SUITE, "nested_alias_forms", &[], &|label, output| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "{label}: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        // The bounded nested queue warns once, as a bounded variable does.
+        assert_eq!(
+            warnings(&stderr, "bounded queue push_back discarded new element"),
+            1,
+            "{label}: {stderr}"
+        );
+    });
+}
+
+#[test]
+fn nested_selectors_run_once_and_not_in_a_skipped_operand() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_alias_selectors.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_alias_selectors", expected, &[], &[]);
+}
+
+/// A whole store to an element while a statement holds its alias (by a
+/// callee of the statement) changes the element the alias names.
+#[test]
+fn stores_under_a_bound_nested_alias_keep_the_alias_attached() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_alias_stores.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_alias_stores", expected, &[], &[]);
+}
+
+/// Container warnings (`SIM-012`) in `stderr` whose text contains `text`.
+fn warnings(stderr: &str, text: &str) -> usize {
+    stderr
+        .lines()
+        .filter_map(llg::core::report::parse)
+        .filter(|message| message.id == "SIM-012" && message.text.contains(text))
+        .count()
+}
+
+/// A whole write at the size of a nested queue appends, for every element
+/// kind; one further is ignored (a packed element with the warning a queue
+/// variable gives), with and without index checks.
+#[test]
+fn a_nested_queue_write_at_its_size_appends() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_queue_write_at_size.out");
+    for args in [&[][..], &["--no-index-checks"][..]] {
+        sim_cli::run_case_checked_matrix(
+            SUITE,
+            "nested_queue_write_at_size",
+            args,
+            &|label, output| {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert_eq!(output.status.code(), Some(0), "{label}: {stderr}");
+                assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+                // One for the nested queue, one for the variable.
+                assert_eq!(
+                    warnings(&stderr, "invalid queue write index"),
+                    2,
+                    "{label}: {stderr}"
+                );
+                assert_eq!(
+                    warnings(&stderr, "bounded queue write discarded new element"),
+                    1,
+                    "{label}: {stderr}"
+                );
+            },
+        );
+    }
+}
+
+#[test]
+fn a_nested_queue_in_a_postponed_report_is_explicit() {
     sim_cli::reject_case(
         SUITE,
-        "neg_nested_two_changes",
-        "a statement in `tb` changes two nested container elements of one container",
+        "neg_nested_strobe_pattern",
+        "%p of a value of type `int$[$]` in `tb` is not supported: only a whole queue, dynamic or associative array variable can be printed",
     );
 }
 
