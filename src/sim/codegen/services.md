@@ -17,7 +17,9 @@ problem cannot express is a located error, never silently dropped.
 
 `rand_mode`/`constraint_mode` state is hidden one-bit two-state storage per
 random property and per root constraint block (overriding blocks share the
-root's bit; static members use a static signal), invisible to `%p`. The
+root's bit; static members use a static signal), invisible to `%p`. A fixed
+array of `rand` handles whose element a `rand_mode` call names also keeps
+one off bit per element (S30-D16, S30-D17). The
 dynamic class is resolved through `DynamicCast` cases, most derived first; the
 most-derived user `pre_randomize`/`post_randomize` (declared line != 0) runs
 before modes and state are read and after the commit. A value-form randomize

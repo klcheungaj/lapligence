@@ -1,0 +1,12 @@
+slot modes a0 1 a1 0 a2 1
+object variable mode a1.v 1
+c.randomize changed a[1].v 0 of 10 times
+e.randomize changed e.v 10 of 10 times
+outside the array 1
+handle property 1
+handle property off 0, its variable 1
+object on: 1 1 1 h 1
+object off: 0 0 0 h 0
+one slot on: 0 0 1
+array on: 1 1 1
+done

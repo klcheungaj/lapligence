@@ -2575,9 +2575,12 @@ these forms remain outside them.
   index, and a row of a multidimensional array in `inside`. A whole array in
   a constraint is also rejected, as 18.3 requires (S30-D15).
 - `rand_mode` of one element of a dynamic array or queue of class handles
-  rejects: only fixed arrays keep a mode per element (S30-D16). The function
-  form on a handle variable (`c.a[1].rand_mode()`) stops in the frontend, which
-  reads it as the object task.
+  rejects, as a task and as a function: only fixed arrays keep a mode per
+  element (S30-D16, S30-D17). The function form on a handle that is not a
+  random variable (`e.rand_mode()` of a module variable or of a property that
+  is not `rand`) stops in the frontend, which reads it as the object task.
+  `rand_mode` of one element of an array of packed values
+  (`c.v[1].rand_mode(0)`) rejects too.
 - A constraint function reached for an object of the randomized class other
   than the randomized object ends the run with a fatal error: its receiver is
   fixed at the call. Objects of other classes evaluate their own functions.

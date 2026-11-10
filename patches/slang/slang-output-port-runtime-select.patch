@@ -17,7 +17,7 @@ index b00c007df..b64acd47a 100644
  /// Various flags that can be applied to a constant expression evaluation.
  enum class SLANG_EXPORT EvalFlags : uint8_t {
 diff --git a/source/ast/expressions/SelectExpressions.cpp b/source/ast/expressions/SelectExpressions.cpp
-index 412ab537a..75de5eb97 100644
+index 412ab537a..9632bc146 100644
 --- a/source/ast/expressions/SelectExpressions.cpp
 +++ b/source/ast/expressions/SelectExpressions.cpp
 @@ -80,6 +80,33 @@ static void checkForVectoredSelect(const Expression& value, SourceRange range,
@@ -76,6 +76,26 @@ index 412ab537a..75de5eb97 100644
          if constexpr (std::is_same_v<T, RangeSelectExpression>) {
              if (!context.eval(expr.left()) || !context.eval(expr.right()))
                  return false;
+@@ -926,6 +966,19 @@ Expression& MemberAccessExpression::fromSelector(
+             if (auto base = ct.getBaseClass(); base && base->isError())
+                 return badExpr(comp, &expr);
+ 
++            // The function form of 'rand_mode' on a random class handle
++            // property, or on one element of it, reads the mode of that
++            // variable (IEEE 1800-2009 18.8). The class's own 'rand_mode' is
++            // the task that sets every random variable of the object.
++            if (selector.name == "rand_mode"sv && !context.flags.has(ASTFlags::TopLevelStatement) &&
++                !(invocation && invocation->arguments &&
++                  !invocation->arguments->parameters.empty())) {
++                if (auto result = tryBindSpecialMethod(comp, expr, selector, invocation,
++                                                       withClause, context)) {
++                    return *result;
++                }
++            }
++
+             scope = &ct;
+             break;
+         }
 diff --git a/tests/unittests/ast/MemberTests.cpp b/tests/unittests/ast/MemberTests.cpp
 index a84550224..c12de195b 100644
 --- a/tests/unittests/ast/MemberTests.cpp

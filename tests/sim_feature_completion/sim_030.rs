@@ -44,6 +44,31 @@ fn rand_mode_of_a_handle_variable_leaves_its_object() {
 }
 
 #[test]
+fn rand_mode_function_reads_the_handle_variable() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "rand_mode_function",
+        include_str!("../fixtures/sim/feature_completion/sim_030/rand_mode_function.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn rand_mode_function_needs_a_random_variable() {
+    for fixture in ["neg_mode_function_handle", "neg_mode_function_not_rand"] {
+        sim_cli::reject_case(SUITE, fixture, "too few arguments for 'rand_mode'");
+        names_source_position(fixture);
+    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_element_mode_queue_function",
+        "`rand_mode` of an element of a dynamic array or queue of class handles is not supported",
+    );
+    names_source_position("neg_element_mode_queue_function");
+}
+
+#[test]
 fn solve_before_orders_the_draws() {
     sim_cli::run_case_backend_parity(
         SUITE,
