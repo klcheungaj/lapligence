@@ -1072,6 +1072,17 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   functions through formals, module handles or handle properties wake waits
   and event controls; a container property publishes its changes on its
   object's handle marker only in classes whose property some wait observes.
+  Members of an unpacked structure with a string, real, handle or container
+  member that is a class property (`wait (h.r.a == 1)`, `@(posedge d.c.r.a)`,
+  in methods, through called functions and inherited) or a static subroutine
+  variable (`@(r.s)`, hierarchical names, nonblocking stores) are waited on
+  through one contents marker per record, which every store into the record
+  toggles (blocking, nonblocking at commit, output and `ref` actuals, system
+  task targets); the waiter evaluates its expression again and resumes when
+  its value changed ([S07-D18](lrm_decisions.md),
+  [sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)). Only
+  records some wait, event control, `always @*` or `$monitor` reads get a
+  marker.
   Reads whose changes no wait can observe still reject with their location
   instead of never waking: semaphore and other mailbox methods, callee reads
   through locals bound to different handles or other expressions (container
@@ -2006,9 +2017,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   and a null handle on the path when the report evaluates stops the run
   (S25-D9). Arguments that call a method or a function reading class storage,
   or select a virtual-interface member, make a `$monitor` re-evaluate every
-  slot. Automatic variables stay illegal (SV 13.3.2); `final` blocks and a
-  `$monitor` of a member of an unpacked structure property reject; pending
-  reports are dropped at `$finish`
+  slot. A `$monitor` of a member of an unpacked structure property or static
+  subroutine record with a string, real or handle member follows the record's
+  contents marker exactly. Automatic variables stay illegal (SV 13.3.2);
+  `final` blocks reject; pending reports are dropped at `$finish`
   ([known issue](known_issues.md#deferred-reports-that-name-class-state-or-activation-storage)).
   Helpers may keep their own static state or take descriptor arrays; visible
   helper writes reject (§9). Hand-derived oracles:

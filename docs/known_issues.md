@@ -1488,12 +1488,12 @@ or `semaphore s = new; initial $display("%p", s);`.
 Postponed region. Class properties, reports in class methods and static string
 and handle variables work ([S25-D9](lrm_decisions.md),
 [sim_025](../tests/fixtures/sim/feature_completion/sim_025/readme.md)). What is
-left:
+A `$monitor` of a member of an unpacked structure property or of a static
+subroutine record follows the record's contents marker
+([`monitor_record_property.sv`](../tests/fixtures/sim/feature_completion/sim_025/monitor_record_property.sv)):
+it evaluates its list after a store into any member of that record and prints
+when a listed value changed. What is left:
 
-- **`$monitor` of a member of an unpacked structure property**
-  ([`neg_monitor_record_property.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_monitor_record_property.sv)):
-  such a store publishes no change, so the report could never fire; it rejects
-  with its location. `$strobe` reads it.
 - **`$monitor` through a computed handle** (`f().v`) rejects: nothing can name the
   storage without calling the function again.
 - **Reads through a method, a function with a handle formal, a virtual-interface
@@ -1725,17 +1725,28 @@ rejects these in `wait` conditions as well). Direction: bind callee locals
 to every handle they can hold (a dependency set instead of one receiver).
 Reproduce: `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`.
 
-The same rejection applies to a member of an unpacked structure property that
-holds a native member (a string, a handle, a container): `wait (h.r.a == 1)`,
-`@(h.r.a)`, also through a chain of handles or `this`; and to a property selected
-through a call result, `wait (f().x == 1)`. Such a store publishes no change. A
-structure of packed members only and a structure in a queue or array property
-wait normally. `always_comb` and `@*` are not affected: they add no class storage
-(9.2.2.2.1). The real fix is a change marker for native record stores (see
-"Native record values outside by-value subroutine storage"). Reproduce:
-`tests/fixtures/sim/feature_completion/sim_014/reject_wait_record_property.sv`,
-`reject_event_record_property.sv`, `reject_method_wait_record_property.sv`,
-`reject_wait_call_result.sv`.
+The same rejection applies to a property selected through a call result,
+`wait (f().x == 1)`, and to a member of an automatic record with a native member
+(a string, a real, a handle, a container) that a fork shares: such a record is
+one value per activation with no change marker, and another branch of the fork
+is the only writer a waiting branch could see. An automatic record no fork
+shares cannot change while its process waits and is read as it is. Reproduce:
+`tests/fixtures/sim/feature_completion/sim_014/reject_wait_call_result.sv`,
+`reject_wait_automatic_record.sv`, `reject_event_automatic_record.sv`.
+
+A member of an unpacked structure with a native member that is a class property
+or a static subroutine variable is waited on through the record's contents
+marker ([S07-D18](lrm_decisions.md)): `wait (h.r.a == 1)`, `@(h.r.a)`,
+`@(posedge h.r.a)`, `$monitor` and `always @*` evaluate what they read again
+after a store into any member and resume only when its value changed. The cost
+is that evaluation: a waiter on `h.r.a` runs its comparison when `h.r.s`
+changes, and, for a class property, when a handle or container property of the
+same object changes (they share the object's marker). A change undone before
+the writer suspends wakes nobody, a string member's included
+([T1-D11](lrm_decisions.md)). A run-time index into a member array of a record
+property (`h.r.arr[k]`) still rejects with its location ("runtime index into a
+native record array member"), and so does one in a `wait` condition on a static
+subroutine record below 16 cells; an event control on the latter works.
 
 ## Native stack frames grow with a statement's format-argument count
 

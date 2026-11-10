@@ -1,0 +1,7 @@
+-- 10 one member at a time
+11 h.r.a=1
+12 h.r.s=s
+13 keep.r.a=2
+14 keep.r.s=t
+-- 20 changes undone before the check
+-- 30 end

@@ -5618,6 +5618,14 @@ fn s07_d15_index_checks_off() {
 }
 
 #[test]
+fn s07_d18_record_member_waits() {
+    run_decision(
+        "S07-D18_record_member_waits",
+        include_str!("fixtures/sim/lrm_decisions/S07-D18_record_member_waits.out"),
+    );
+}
+
+#[test]
 fn s07_d17_dynamic_array_new_invalid_size() {
     let expected =
         include_str!("fixtures/sim/lrm_decisions/S07-D17_dynamic_array_new_invalid_size.out");
