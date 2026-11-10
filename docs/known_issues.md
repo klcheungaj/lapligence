@@ -2901,9 +2901,10 @@ walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
 ### Symptom
 
 With index checks on (S07-D15), a queue `insert` or `delete(index)` with an
-invalid index and an associative-array access through an X or Z key stop the
-run with a message that names the operation, the index or key, the valid
-range and the current process, but not the array or the source line. The run
+invalid index, an associative-array access through an X or Z key and a
+`new[]` with a negative or X/Z size (S07-D17) stop the run with a message that
+names the operation, the index, key or size, the valid range and the current
+process, but not the array or the source line. The run
 ends at once with status 1: final procedures do not run and an open waveform
 file is not completed.
 

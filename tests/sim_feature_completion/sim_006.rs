@@ -168,6 +168,70 @@ fn associative_defaults_and_invalid_indices_follow_7_8_6() {
     );
 }
 
+/// F2: a `new[]` size that is negative or has X or Z bits stops the run under
+/// index checks, naming `new[]`, the size and the process; with them off the
+/// array becomes empty and a container warning names the size (S07-D17).
+#[test]
+fn dynamic_array_new_with_an_invalid_size_stops_the_run() {
+    let cases = [
+        ("1", "size -1 is negative"),
+        ("2", "size -1 is negative"),
+        ("3", "size has X or Z bits"),
+        ("4", "size has X or Z bits"),
+        ("5", "size -5000000000 is negative"),
+    ];
+    for (case, detail) in cases {
+        let plusarg = format!("+case={case}");
+        let text = format!(
+            "new[] in process 'tb.initial': {detail}; run with --no-index-checks or set simulator.index_checks = false"
+        );
+        sim_cli::run_case_stopping_at_runtime(
+            SUITE,
+            "dyn_new_invalid_size",
+            &[plusarg.as_str()],
+            "",
+            "SIM-009",
+            &text,
+        );
+    }
+    // `new[0]` empties the array and a later `new[2](d)` regrows it.
+    sim_cli::run_case_with_runtime_args(
+        SUITE,
+        "dyn_new_invalid_size",
+        "zero size 0\nregrow size 2 0\n",
+        "",
+        &["+case=6"],
+    );
+}
+
+#[test]
+fn dynamic_array_new_with_an_invalid_size_empties_without_index_checks() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/dyn_new_invalid_size.out");
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "dyn_new_invalid_size",
+        expected,
+        &["--no-index-checks"],
+        &[],
+    );
+    sim_cli::run_case_with_args(
+        SUITE,
+        "dyn_new_invalid_size",
+        expected,
+        concat!(
+            "WARNING: [SIM-012] new[] size -1 is negative; the array becomes empty\n",
+            "WARNING: [SIM-012] new[] size -1 is negative; the array becomes empty\n",
+            "WARNING: [SIM-012] new[] size has X or Z bits; the array becomes empty\n",
+            "WARNING: [SIM-012] new[] size has X or Z bits; the array becomes empty\n",
+            "WARNING: [SIM-012] new[] size -5000000000 is negative; the array becomes empty\n",
+            "INFO: [SIM-000] 0 error(s), 5 warning(s)\n",
+        ),
+        &[],
+        &["--no-index-checks"],
+    );
+}
+
 #[test]
 fn adopted_container_and_handle_witnesses() {
     sim_cli::run_case_backend_parity(

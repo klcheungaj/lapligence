@@ -1032,6 +1032,34 @@ pub(crate) fn run_case_failing_at_runtime(
     }
 }
 
+/// [`run_case_failing_at_runtime`] that requires the message with id `id`
+/// (`SIM-009`) whose text contains `text`, at any location
+/// ([`sim_harness::has_message`]).
+pub(crate) fn run_case_stopping_at_runtime(
+    suite: &str,
+    fixture: &str,
+    runtime_args: &[&str],
+    expected: &str,
+    id: &str,
+    text: &str,
+) {
+    for optimized in [false, true] {
+        let output = invoke_with_runtime_args(suite, fixture, optimized, &[], runtime_args);
+        let seen = observed_output(&output);
+        let label = format!("{fixture} {runtime_args:?}, optimized={optimized}");
+        assert_eq!(output.status.code(), Some(1), "{label}: {seen}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "{label}: {seen}"
+        );
+        assert!(
+            sim_harness::has_message(&String::from_utf8_lossy(&output.stderr), id, "", text),
+            "{label}: {seen}"
+        );
+    }
+}
+
 pub(crate) fn reject_case_with_runtime_args(
     suite: &str,
     fixture: &str,

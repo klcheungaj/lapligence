@@ -35,7 +35,7 @@ build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dp
 output:   --out-dir <dir>  --runtime-cache <dir>
 append:   --append-<list> <value>  # adds to the list instead of replacing it; see --help
 stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)
-index:    --[no-]index-checks  # stop on an invalid index or key (default: on)
+index:    --[no-]index-checks  # stop on an invalid index, key or new[] size (default: on)
 pulse:    --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled
 timing:   --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --[no-]neg-timing-checks
 sdf:      --sdf [min:|typ:|max:][<scope>=]<file.sdf>...  # annotate before simulation starts
@@ -126,8 +126,9 @@ pub(crate) struct Cli {
     /// limits and `$nochange` offsets through delayed signals (default off:
     /// they count as 0).
     pub neg_timing_checks: Option<bool>,
-    /// `--[no-]index-checks`: stop the run on an invalid index or key where
-    /// some simulators stop it (default on); off applies the text's result.
+    /// `--[no-]index-checks`: stop the run on an invalid index, key or `new[]`
+    /// size where some simulators stop it (default on); off applies the
+    /// text's result, or an empty array for a `new[]` size.
     pub index_checks: Option<bool>,
     /// `--sdf [min:|typ:|max:][scope=]file`, repeatable: SDF files annotated
     /// before simulation starts, in order (IEEE 1800-2009 32).
@@ -290,7 +291,9 @@ Options:
                               (overrides llg.toml)
       --no-index-checks      Apply the IEEE 1800 result of an invalid queue
                               index, X/Z associative key or missing `ref`
-                              element instead of stopping (default: stop)
+                              element, and empty the array at a negative or
+                              X/Z new[] size, instead of stopping (default:
+                              stop)
       --index-checks         Stop on those accesses (overrides llg.toml)
       --sdf [min:|typ:|max:][<scope>=]<file.sdf>
                               Annotate the SDF file into <scope> (default: the
