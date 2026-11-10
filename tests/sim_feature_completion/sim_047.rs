@@ -489,6 +489,118 @@ fn naming_storage_without_a_vcd_encoding_is_rejected() {
     sim_cli::reject_case(SUITE, "reject_block_array", reason);
 }
 
+/// The variables of `containers.sv` a scope dump writes, derived from the
+/// declarations: plain signals, fixed arrays of packed elements, the packed
+/// image of each element of a fixed array of records, and the record members
+/// outside a container. Leaf and column member arrays name their cells alike.
+fn container_design_paths() -> Vec<String> {
+    let mut paths: Vec<String> = vec![
+        "tb.count".into(),
+        path(&["tb", "fc[0]"]),
+        path(&["tb", "fc[1]"]),
+        path(&["tb", "fl[0]"]),
+        path(&["tb", "fl[1]"]),
+        "tb.holder.a".into(),
+        path(&["tb", "mem[0]"]),
+        path(&["tb", "mem[1]"]),
+        "tb.nest.k".into(),
+        "tb.one.n".into(),
+        "tb.ratio".into(),
+        "tb.t16.k".into(),
+        "tb.t3.k".into(),
+        "tb.tick".into(),
+        "tb.cr.tag".into(),
+        "tb.lr.tag".into(),
+    ];
+    paths.extend((0..16).map(|cell| format!("tb.cr.m__i{cell}")));
+    paths.extend((0..3).map(|cell| format!("tb.lr.m__i{cell}")));
+    paths.extend((0..3).map(|cell| format!("tb.t3.rows__i{cell}__n")));
+    sorted(paths)
+}
+
+/// Container storage of `containers.sv`: no dumped path is one of these or
+/// lies below one. The 3 rows of `t3` are a leaf per cell, so only their
+/// string members (`rows__iN__t`) are containers; the 16 rows of `t16` are one
+/// container.
+const CONTAINER_PATHS: &[&str] = &[
+    "tb.q",
+    "tb.da",
+    "tb.aa",
+    "tb.qq",
+    "tb.rq",
+    "tb.lq",
+    "tb.cd",
+    "tb.rows",
+    "tb.big",
+    "tb.h",
+    "tb.s",
+    "tb.holder.items",
+    "tb.nest.inner",
+    "tb.one.t",
+    "tb.t16.rows",
+];
+
+fn is_container_cell(dumped: &str) -> bool {
+    dumped.ends_with("__t")
+        || CONTAINER_PATHS.iter().any(|container| {
+            dumped
+                .strip_prefix(container)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '$', '_']))
+        })
+}
+
+/// FIN-001 C4 (user decision 2026-11-10): one catalog serves both writers, so
+/// a scope dump of the same design declares the same variables in VCD and
+/// FST, and neither holds a container cell.
+#[test]
+fn vcd_and_fst_dump_the_same_variables_and_no_container_cell() {
+    let expected = container_design_paths();
+    assert!(expected.iter().all(|path| !is_container_cell(path)));
+    let stdout = include_str!("../fixtures/sim/feature_completion/sim_047/containers.out");
+    for optimized in [true, false] {
+        let label = format!("containers, optimized={optimized}");
+        let (dir, output) = sim_cli::run_case_keeping_dir(SUITE, "containers", optimized, &[], &[]);
+        assert_success(&label, &output, stdout);
+        let vcd = read_vcd(&label, &dir, "containers.vcd");
+        let vcd_paths: Vec<String> = vcd.paths().into_iter().map(str::to_owned).collect();
+        let (dir, output) = sim_cli::run_case_keeping_dir(
+            SUITE,
+            "containers",
+            optimized,
+            &["--define", "FILE=\"containers.fst\""],
+            &[],
+        );
+        assert_success(&label, &output, stdout);
+        let fst = fst_dump(dir.path(), "containers.fst")
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+        let fst_paths = sorted(fst.vars.iter().map(|var| var.0.clone()).collect());
+        assert_eq!(vcd_paths, fst_paths, "{label}: VCD and FST variables");
+        assert_eq!(vcd_paths, expected, "{label}");
+        for dumped in &fst_paths {
+            assert!(
+                !is_container_cell(dumped),
+                "{label}: container cell `{dumped}`"
+            );
+        }
+    }
+}
+
+/// Naming a container in `$dumpvars` is the same located error for a VCD and
+/// an FST file.
+#[test]
+fn naming_a_container_is_the_same_located_error_in_both_formats() {
+    let diagnostic = "neg_container_dumpvars.sv:12:22 `$dumpvars` argument `tb.q` in `tb` \
+                      has no VCD/FST representation";
+    for file in ["FILE=\"dump.vcd\"", "FILE=\"dump.fst\""] {
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "neg_container_dumpvars",
+            diagnostic,
+            &["--define", file],
+        );
+    }
+}
+
 /// The dumped static variables of `block_statics.sv`, as `(path, kind, width)`.
 const BLOCK_STATICS: &[(&str, &str, u32)] = &[
     ("tb.accumulate.accumulate", "reg", 32),

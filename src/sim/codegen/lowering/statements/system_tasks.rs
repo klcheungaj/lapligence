@@ -30,9 +30,13 @@ impl EmitCtx<'_, '_> {
                 // Checked against the finished storage catalog: a variable
                 // without a VCD/FST representation is rejected, never
                 // silently dumped as nothing (S47-D9).
-                self.cg
-                    .wave_variable_targets
-                    .push((name.clone(), display, self.path.clone()));
+                let location = self.cg.source_location(*argument);
+                self.cg.wave_variable_targets.push(WaveVariableTarget {
+                    name: name.clone(),
+                    text: display,
+                    scope: self.path.clone(),
+                    location,
+                });
             }
             names.push(name);
         }

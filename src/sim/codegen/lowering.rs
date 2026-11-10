@@ -941,6 +941,18 @@ fn lower_model_with(
     })
 }
 
+/// One `$dumpvars` argument that names a variable, net or array element.
+struct WaveVariableTarget {
+    /// Waveform name, as the storage catalog spells it.
+    name: String,
+    /// Dotted source path, for the diagnostic.
+    text: String,
+    /// Calling scope.
+    scope: String,
+    /// `file:line:col` of the argument.
+    location: String,
+}
+
 /// A `$dumpvars` variable argument must name waveform storage: a packed or
 /// real signal, a static block or subroutine variable, an event, a record or
 /// union whose members are such signals, or a fixed array or one of its
@@ -948,7 +960,7 @@ fn lower_model_with(
 /// and activation storage have no registration; naming one is an error
 /// rather than a silently empty selection (S47-D9).
 fn check_wave_variable_targets(
-    targets: &[(String, String, String)],
+    targets: &[WaveVariableTarget],
     model: &IrModel,
 ) -> Result<(), String> {
     let under = |candidate: &str, name: &str| {
@@ -956,7 +968,13 @@ fn check_wave_variable_targets(
             .strip_prefix(name)
             .is_some_and(|rest| rest.is_empty() || rest.starts_with(['\u{1f}', '[']))
     };
-    for (name, text, scope) in targets {
+    for WaveVariableTarget {
+        name,
+        text,
+        scope,
+        location,
+    } in targets
+    {
         let signal = model
             .signals
             .iter()
@@ -969,14 +987,17 @@ fn check_wave_variable_targets(
                 && (under(&array.hdl_name, name) || under(name, &array.hdl_name))
         });
         if !signal && !array {
-            return Err(format!(
-                "`$dumpvars` argument `{text}` in `{scope}` has no VCD/FST representation: \
-                 llg dumps packed and real variables and nets, their fixed unpacked \
-                 arrays and unpacked structure members, single events, and the static \
-                 packed, real and unpacked structure variables of blocks and \
-                 non-automatic subroutines; strings, class handles, automatic \
-                 variables, event arrays, block-level unpacked arrays and dynamic, \
-                 queue and associative arrays are not dumped"
+            return Err(super::error::located(
+                location,
+                format!(
+                    "`$dumpvars` argument `{text}` in `{scope}` has no VCD/FST representation: \
+                     llg dumps packed and real variables and nets, their fixed unpacked \
+                     arrays and unpacked structure members, single events, and the static \
+                     packed, real and unpacked structure variables of blocks and \
+                     non-automatic subroutines; strings, class handles, automatic \
+                     variables, event arrays, block-level unpacked arrays and dynamic, \
+                     queue and associative arrays are not dumped"
+                ),
             ));
         }
     }
@@ -2192,10 +2213,9 @@ struct Codegen<'a> {
     /// (`always @(e) s`), in emission order. They start before every other
     /// time-zero process so they already wait when time-zero values settle.
     armed_procs: HashSet<String>,
-    /// `$dumpvars` arguments naming a variable, net or array element:
-    /// (waveform name, dotted source path, calling scope). Checked against the
-    /// finished storage catalog.
-    wave_variable_targets: Vec<(String, String, String)>,
+    /// `$dumpvars` arguments naming a variable, net or array element, checked
+    /// against the finished storage catalog.
+    wave_variable_targets: Vec<WaveVariableTarget>,
     /// Static subroutine locals and results with signal storage, by
     /// declaration, for the waveform table.
     wave_subroutine_statics: Vec<(NodeId, usize)>,
