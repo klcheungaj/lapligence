@@ -390,6 +390,109 @@ impl Codegen<'_> {
         Ok(Some(projection))
     }
 
+    /// An unpacked fixed-size clockvar (`cb.arr`, `cb.st`) samples into one
+    /// packed cell holding its whole payload; its selects and members project
+    /// from that read-only cell.
+    fn clocking_sample_projection(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<Projection>, String> {
+        // A member path through the clockvar (`cb.st.a`) projects from the
+        // clockvar root in the hierarchical-path walk.
+        let clockvar = match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .last()
+                .copied()
+                .flatten()
+                .filter(|target| self.db.is_clocking_var(*target)),
+            _ => self
+                .clocking_var_target(node)
+                .or_else(|| self.db.is_clocking_var(node).then_some(node)),
+        };
+        let Some(clockvar) = clockvar else {
+            return Ok(None);
+        };
+        let Some(descriptor) =
+            self.db
+                .type_descriptor(clockvar)
+                .filter(|descriptor| match &descriptor.shape {
+                    TypeShape::FixedArray { .. } => true,
+                    TypeShape::Aggregate(layout) => !matches!(
+                        layout.kind,
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                    ),
+                    _ => false,
+                })
+        else {
+            return Ok(None);
+        };
+        let descriptor = descriptor.clone();
+        // Through a virtual interface the cell is the bound instance's
+        // sample, selected by the handle at each access.
+        let root = if self
+            .virtual_interface_member_path(path, node, false)?
+            .is_some()
+        {
+            let read = self
+                .virtual_interface_member_expr(path, node)?
+                .ok_or_else(|| format!("virtual interface clockvar has no member in `{path}`"))?;
+            FixedRoot::ReadOnly(read)
+        } else {
+            let Some(sample) = self.sampled_signal_of(clockvar) else {
+                return Ok(None);
+            };
+            FixedRoot::Cell {
+                read: self.signal_read_expr(sample)?,
+                target: IrLhs::Whole(sample.ir),
+            }
+        };
+        Ok(Some(Projection {
+            root,
+            signed: false,
+            descriptor,
+            steps: Vec::new(),
+            element_states: Vec::new(),
+            ref_legal: false,
+        }))
+    }
+
+    /// The base of an element select of a clockvar, and the indices of the
+    /// select that remain to apply to it. Through a virtual interface
+    /// (`v.cb.arr[i]`, `v.cb.g[i][j]`) the frontend binds the base to the
+    /// clockvar itself and keeps the handle only in the select's children:
+    /// the member path, or the inner select of a multidimensional one, whose
+    /// indices lead the outer select's. That child must be the base so the
+    /// access follows the bound instance.
+    fn clocking_select_base(
+        &self,
+        node: NodeId,
+        base: NodeId,
+        indices: Vec<NodeId>,
+    ) -> (NodeId, Vec<NodeId>) {
+        if !self.db.is_clocking_var(base) {
+            return (base, indices);
+        }
+        for child in self.node(node).children.iter().copied() {
+            match self.kind(child) {
+                NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                    if refs.last().copied().flatten() == Some(base) =>
+                {
+                    return (child, indices);
+                }
+                NodeKind::Expr(ExprKind::ArraySelect {
+                    base: inner,
+                    indices: leading,
+                }) if *inner == base && indices.starts_with(leading) => {
+                    let remaining = indices[leading.len()..].to_vec();
+                    return (child, remaining);
+                }
+                _ => {}
+            }
+        }
+        (base, indices)
+    }
+
     /// A module or static signal holding a finite tagged union is one packed
     /// owner. Member arrays inside it (`u.member[i]`) project from that
     /// owner with the member's tag guard rather than from separate storage.
@@ -953,6 +1056,9 @@ impl Codegen<'_> {
     }
 
     fn fixed_projection(&mut self, path: &str, node: NodeId) -> Result<Option<Projection>, String> {
+        if let Some(root) = self.clocking_sample_projection(path, node)? {
+            return Ok(Some(root));
+        }
         if let Some(root) = self.native_leaf_projection(node)? {
             return Ok(Some(root));
         }
@@ -1030,8 +1136,7 @@ impl Codegen<'_> {
                 Ok(None)
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                let base = *base;
-                let indices = indices.clone();
+                let (base, indices) = self.clocking_select_base(node, *base, indices.clone());
                 let projection = if let Some((root, members)) = self.db.array_select_path(node) {
                     let mut members = members.to_vec();
                     // A member array of a packed class property: the select's

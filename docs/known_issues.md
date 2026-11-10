@@ -2107,33 +2107,47 @@ t_t [1:0] tp; initial $display("%h", tp[0].a);`.
 
 ## Clocking input forms outside the sampled storage model
 
-**Status:** open (SIM-033 boundary).
+**Status:** open (SIM-033 boundary, K1).
 
 Clocking inputs sample into one static storage cell per clockvar, sized from
-its packed, real or shortreal type. Four legal forms reject explicitly instead
-of sampling:
+its packed, real or shortreal type, or holding the whole declaration-order
+image of an unpacked fixed-size type. These legal forms reject with a located
+message instead of sampling:
 
-- unpacked, string, class and event clockvar types ("sampled clockvars are
-  limited to packed integral, real and shortreal values"), which would need
-  typed whole-value sample copies (and, for strings and handles, ownership);
-- edge-qualified input skews (`input negedge x`), whose sample point SV 14.3
-  does not define; they are not silently treated as `#1step`;
-- `@(vif.cb)` through a virtual interface handle or view ("clocking block
-  event `cb` is not supported through virtual interface"): a descriptor has
-  member slots for clockvars but no per-instance clocking-block event object.
-  Wait on the clocking event (`@(posedge vif.clk)`) or use the concrete
-  instance; `vif.cb.x` reads work.
+- string, class handle, event, unpacked or tagged union, queue, dynamic array
+  and associative array clockvars ("string, class handle, event, unpacked or
+  tagged union, queue, dynamic array and associative array clockvars are not
+  supported"), and unpacked clockvars with such an element or member: the
+  text does not exclude them, but industry-standard behaviour rejects them
+  (unpacked unions included) and llg follows it
+  ([K1-D1](lrm_decisions.md#clocking-inputs-fin-001-k1));
+- an unpacked clockvar with a real (or shortreal) element or member ("an
+  unpacked clockvar with a real, ... element or member is not supported"): its
+  value has no packed image. Industry-standard behaviour serves it;
+- an edge input skew with a delay (`input negedge #1 x`), which
+  industry-standard behaviour accepts.
 
-Separately, `#0` (Observed) samples allocate one small callback record per
-sample event, and positive-skew history keeps one heap node per source write
-within the skew window. Both predate SIM-033; a preallocated per-clockvar slot
-would remove the per-edge allocation.
+An `edge` input skew and an edge skew under an event list also reject; the
+first is a syntax error and the second an error in industry-standard
+behaviour.
+
+An unpacked clockvar keeps its sample image current with a synthetic process
+that rebuilds the whole image on every write to its source, so a write costs
+time linear in the aggregate's size; only designs with such clockvars pay it.
+
+Separately, every sampled clocking source keeps a slot history even when no
+positive skew reads it (one heap entry per time step with activity), and each
+`#0` (Observed) sample event allocates a copy record plus a region-callback
+entry. Reusing a per-source spare entry, skipping the unread history and
+reusing one copy record per clockvar halve the allocations, but a pinned A/B
+showed wall-time regressions of up to 10% on some forms (with equal or fewer
+instructions), so the runtime keeps the allocating form.
 
 Reproduce with
-[`neg_unpacked_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_unpacked_input.sv),
 [`neg_string_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_string_input.sv),
-[`neg_input_edge_skew.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_input_edge_skew.sv) and
-[`neg_vif_clocking_event.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_vif_clocking_event.sv).
+[`neg_unpacked_union_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_unpacked_union_input.sv),
+[`neg_real_array_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_real_array_input.sv) and
+[`neg_edge_skew_delay.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_edge_skew_delay.sv).
 
 ## Synchronous drive forms outside the driver model
 

@@ -16,14 +16,30 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
         .max()
         .unwrap_or(1)
         .max(1);
+    // Clocking-block event slots exist only when a wait names one through a
+    // handle, so other models keep the environment layout unchanged.
+    let max_events = model
+        .virtual_interfaces
+        .iter()
+        .map(|interface| interface.events.len())
+        .max()
+        .unwrap_or(0);
+    let (event_define, event_field) = if max_events == 0 {
+        (String::new(), "")
+    } else {
+        (
+            format!("#define LLG_VIF_MAX_EVENTS {max_events}\n"),
+            "void *events[LLG_VIF_MAX_EVENTS];\n",
+        )
+    };
     out.push_str(&format!(
-        "#define LLG_VIF_MAX_MEMBERS {max_members}\n\n\
+        "#define LLG_VIF_MAX_MEMBERS {max_members}\n{event_define}\n\
          typedef struct {{\n\
              uint32_t interface_id;\n\
              uint32_t instance_id;\n\
              uint32_t member_count;\n\
              sv4_t *members[LLG_VIF_MAX_MEMBERS];\n\
-         }} llg_vif_env_t;\n\n\
+         {event_field}}} llg_vif_env_t;\n\n\
          static sv4_t llg_vif_invalid = SV4_EMPTY;\n\n\
          /* A null virtual interface access ends the run without the final\n\
           * procedures (decision S99-D8; a null class handle runs them). */\n\
@@ -84,6 +100,27 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
                                width, is_signed);\n\
          }}\n\n"
     ));
+    if max_events > 0 {
+        out.push_str(
+            "/* The event object of a clocking block of the bound instance; a\n\
+             * failed access yields a slot holding no event. */\n\
+             static void *llg_vif_invalid_event;\n\n\
+             static void **llg_vif_event_quiet(void *raw, uint32_t interface_id,\n\
+                                               uint32_t slot) {\n\
+                 llg_vif_env_t *env = (llg_vif_env_t *)raw;\n\
+                 if (!env || env->interface_id != interface_id || slot >= LLG_VIF_MAX_EVENTS ||\n\
+                     !env->events[slot])\n\
+                     return &llg_vif_invalid_event;\n\
+                 return &env->events[slot];\n\
+             }\n\n\
+             static void **llg_vif_event(void *raw, uint32_t interface_id, uint32_t slot,\n\
+                                         const char *site) {\n\
+                 void **event = llg_vif_event_quiet(raw, interface_id, slot);\n\
+                 if (event == &llg_vif_invalid_event) llg_vif_fail(site);\n\
+                 return event;\n\
+             }\n\n",
+        );
+    }
     for (interface_id, interface) in model.virtual_interfaces.iter().enumerate() {
         for (instance_id, instance) in interface.instances.iter().enumerate() {
             let mut members = instance
@@ -102,8 +139,23 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
                 })
                 .collect::<Vec<_>>();
             members.resize(max_members, "NULL".to_owned());
+            let events = if max_events == 0 {
+                String::new()
+            } else {
+                let mut events = instance
+                    .events
+                    .iter()
+                    .map(|event| {
+                        event
+                            .map(|index| format!("&{}__object", model.events[index].c_name()))
+                            .unwrap_or_else(|| "NULL".to_owned())
+                    })
+                    .collect::<Vec<_>>();
+                events.resize(max_events, "NULL".to_owned());
+                format!(", {{ {} }}", events.join(", "))
+            };
             out.push_str(&format!(
-                "static llg_vif_env_t {} = {{ {}, {}, {}, {{ {} }} }};\n",
+                "static llg_vif_env_t {} = {{ {}, {}, {}, {{ {} }}{events} }};\n",
                 instance.c_name,
                 interface_id,
                 instance_id,

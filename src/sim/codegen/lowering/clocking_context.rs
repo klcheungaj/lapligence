@@ -2,6 +2,34 @@
 
 use super::*;
 
+/// The clockvar types llg rejects although the text permits them (K1-D1).
+const UNSERVED_CLOCKVAR_TYPES: &str = "string, class handle, event, unpacked or tagged union, \
+                                       queue, dynamic array and associative array clockvars are \
+                                       not supported";
+
+/// Unions industry-standard behaviour does not accept as clockvars (unpacked)
+/// and tagged unions, whose image no fixture or probe has settled (K1-D1).
+fn unserved_union(kind: AggregateKind) -> bool {
+    matches!(
+        kind,
+        AggregateKind::UnpackedUnion | AggregateKind::TaggedUnion
+    )
+}
+
+fn contains_unserved_union(descriptor: &TypeDescriptor) -> bool {
+    match &descriptor.shape {
+        TypeShape::FixedArray { element, .. } => contains_unserved_union(element),
+        TypeShape::Aggregate(layout) => {
+            unserved_union(layout.kind)
+                || layout
+                    .members
+                    .iter()
+                    .any(|member| contains_unserved_union(&member.descriptor))
+        }
+        _ => false,
+    }
+}
+
 impl<'a> Codegen<'a> {
     pub(super) fn sampled_signal_of(&self, id: NodeId) -> Option<&SignalInfo> {
         let id = self.db.resolve_clocking_member(id).unwrap_or(id);
@@ -341,7 +369,9 @@ impl<'a> Codegen<'a> {
                     );
                     (source, sample)
                 } else {
-                    let ty = self.clocking_var_value_type(var, &scope)?;
+                    let ty = self.clocking_var_value_type(var, &scope).map_err(|error| {
+                        crate::sim::codegen::error::located(&self.source_location(var), error)
+                    })?;
                     let real = matches!(ty, IrType::Real { .. });
                     // A real value travels through the packed sampler as its
                     // exact IEEE image; a shortreal widens to real exactly.
@@ -394,23 +424,44 @@ impl<'a> Codegen<'a> {
         let unsupported = || {
             format!(
                 "clocking input `{name}` in `{scope}` has type `{}`; sampled clockvars are \
-                 limited to packed integral, real and shortreal values",
-                self.db
-                    .type_descriptor(var)
-                    .map_or(ty.kind.as_str(), |descriptor| descriptor.name.as_str())
+                 limited to integral, real, shortreal and unpacked fixed-size values",
+                self.clocking_var_type_name(var, ty)
             )
         };
-        match self
-            .db
-            .type_descriptor(var)
-            .map(|descriptor| &descriptor.shape)
-        {
+        // IEEE 1800-2009 14.3 and 14.5 do not exclude these types, but
+        // industry-standard behaviour rejects them as clocking signals
+        // (docs/lrm_decisions.md, K1-D1); llg rejects them too.
+        let unserved_type = || {
+            format!(
+                "clocking input `{name}` in `{scope}` has type `{}`; {UNSERVED_CLOCKVAR_TYPES}",
+                self.clocking_var_type_name(var, ty)
+            )
+        };
+        let descriptor = self.db.type_descriptor(var);
+        match descriptor.map(|descriptor| &descriptor.shape) {
             Some(TypeShape::Real { shortreal }) => {
                 return Ok(IrType::Real {
                     shortreal: *shortreal,
                 })
             }
             Some(TypeShape::PackedAtom { .. }) | None => {}
+            Some(TypeShape::FixedArray { .. }) => {
+                return self.clocking_aggregate_value_type(var, scope);
+            }
+            Some(TypeShape::Aggregate(layout)) if unserved_union(layout.kind) => {
+                return Err(unserved_type());
+            }
+            Some(TypeShape::Aggregate(layout))
+                if !matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ) =>
+            {
+                return self.clocking_aggregate_value_type(var, scope);
+            }
+            Some(TypeShape::String | TypeShape::Container { .. } | TypeShape::Opaque { .. }) => {
+                return Err(unserved_type());
+            }
             Some(_) => return Err(unsupported()),
         }
         if is_real_kind(&ty.kind) {
@@ -429,6 +480,48 @@ impl<'a> Codegen<'a> {
             signed: ty.signed,
             two_state: self.db.is_two_state_type(var) || is_two_state_kind(&ty.kind),
         })
+    }
+
+    /// The sampled storage type of an unpacked fixed-size clockvar (fixed
+    /// array, unpacked struct or union): one packed cell holding its
+    /// declaration-order payload, the same image a whole-value read of the
+    /// aggregate yields, so every skew mode copies it whole. Projections of
+    /// the clockvar (`cb.arr[i]`, `cb.st.a`) select from that cell.
+    fn clocking_aggregate_value_type(&self, var: NodeId, scope: &str) -> Result<IrType, String> {
+        let name = &self.node(var).name;
+        let descriptor = self
+            .db
+            .type_descriptor(var)
+            .ok_or_else(|| format!("clocking input `{name}` in `{scope}` has no owned type"))?;
+        let width = (!contains_unserved_union(descriptor))
+            .then(|| Self::fixed_descriptor_width(descriptor))
+            .flatten();
+        if let Some(width) = width {
+            return Ok(IrType::Packed {
+                width,
+                signed: false,
+                two_state: descriptor.two_state,
+            });
+        }
+        Err(match Self::fixed_descriptor_width_bits(descriptor) {
+            Some(width) if !contains_unserved_union(descriptor) => format!(
+                "clocking input `{name}` in `{scope}` of type `{}` has a {width}-bit payload; \
+                 a sampled clockvar exceeds the packed value limit of {LLG_MAX_WIDTH} bits",
+                descriptor.name
+            ),
+            _ => format!(
+                "clocking input `{name}` in `{scope}` has type `{}`; an unpacked clockvar \
+                 with a real, string, class handle, event, unpacked or tagged union or dynamic \
+                 array element or member is not supported",
+                descriptor.name
+            ),
+        })
+    }
+
+    fn clocking_var_type_name<'t>(&'t self, var: NodeId, ty: &'t TypeInfo) -> &'t str {
+        self.db
+            .type_descriptor(var)
+            .map_or(ty.kind.as_str(), |descriptor| descriptor.name.as_str())
     }
 
     /// Register one hidden clocking storage cell in the model.
@@ -562,34 +655,90 @@ impl<'a> Codegen<'a> {
     fn clocking_sample_mode(
         &mut self,
         skew: &ClockingSkew,
+        block_specs: &[EventSpec],
         variable: NodeId,
         path: &str,
-    ) -> Result<IrClockingSampleMode, String> {
-        if !matches!(skew.edge, ClockingEdge::None) {
-            // SV §14.3 allows an edge skew but does not define which sample
-            // an input takes at it; reject rather than silently use #1step.
-            return Err(format!(
-                "edge-qualified input skew of clocking input `{}` in `{path}` is not supported",
-                self.node(variable).name
-            ));
+    ) -> Result<ClockingInputSample, String> {
+        let posedge = match skew.edge {
+            ClockingEdge::None => None,
+            ClockingEdge::Posedge => Some(true),
+            ClockingEdge::Negedge => Some(false),
+            ClockingEdge::BothEdges => {
+                return Err(crate::sim::codegen::error::located(
+                    &self.source_location(variable),
+                    format!(
+                        "an `edge` input skew of clocking input `{}` in `{path}` is not \
+                         supported; use `posedge` or `negedge`",
+                        self.node(variable).name
+                    ),
+                ));
+            }
+        };
+        if let Some(posedge) = posedge {
+            return self.clocking_edge_sample(skew, block_specs, posedge, variable, path);
         }
         let Some(delay) = skew.delay else {
-            return Ok(IrClockingSampleMode::OneStep);
+            return Ok(ClockingInputSample::Mode(IrClockingSampleMode::OneStep));
         };
         if matches!(self.kind(delay), NodeKind::Other)
             && self.db.semantic_detail(delay) == Some("OneStepDelay")
         {
-            return Ok(IrClockingSampleMode::OneStep);
+            return Ok(ClockingInputSample::Mode(IrClockingSampleMode::OneStep));
         }
         let expression = skew.delay_expression.ok_or_else(|| {
             format!("clocking skew in `{path}` has unsupported non-constant timing control")
         })?;
         let ticks = self.procedural_delay_ticks(delay, expression)?;
-        if ticks == 0 {
-            Ok(IrClockingSampleMode::Observed)
+        Ok(ClockingInputSample::Mode(if ticks == 0 {
+            IrClockingSampleMode::Observed
         } else {
-            Ok(IrClockingSampleMode::History(ticks))
+            IrClockingSampleMode::History(ticks)
+        }))
+    }
+
+    /// An edge input skew names an edge of the clocking event's signal
+    /// (IEEE 1800-2009 14.3: "When the clocking event specifies a simple
+    /// edge, instead of a number, the skew can be specified as the specific
+    /// edge of the signal"). Industry-standard behaviour samples the input as
+    /// `#1step` does, but at each such edge, and the clockvar holds that
+    /// sample from the edge on; the edge of the clocking event itself is the
+    /// `#1step` sample.
+    fn clocking_edge_sample(
+        &self,
+        skew: &ClockingSkew,
+        block_specs: &[EventSpec],
+        posedge: bool,
+        variable: NodeId,
+        path: &str,
+    ) -> Result<ClockingInputSample, String> {
+        let name = &self.node(variable).name;
+        if skew.delay.is_some() {
+            return Err(crate::sim::codegen::error::located(
+                &self.source_location(variable),
+                format!(
+                    "an edge input skew with a delay of clocking input `{name}` in `{path}` is \
+                     not supported"
+                ),
+            ));
         }
+        let (clock, block_edge) = match block_specs {
+            [EventSpec::Edge { sig, posedge }] => (*sig, Some(*posedge)),
+            [EventSpec::AnyChange { sig }] => (*sig, None),
+            _ => {
+                return Err(crate::sim::codegen::error::located(
+                    &self.source_location(variable),
+                    format!(
+                        "an edge input skew of clocking input `{name}` in `{path}` needs a \
+                         clocking event on one signal (`@(posedge clk)`, `@(negedge clk)` or \
+                         `@(clk)`); this clocking event is not supported with it"
+                    ),
+                ));
+            }
+        };
+        if block_edge == Some(posedge) {
+            return Ok(ClockingInputSample::Mode(IrClockingSampleMode::OneStep));
+        }
+        Ok(ClockingInputSample::Edge { clock, posedge })
     }
 
     /// Emit one synthetic sampler process per clocking block. The process
@@ -626,8 +775,9 @@ impl<'a> Codegen<'a> {
                 refresh: false,
                 gate_at_write: false,
             }];
+            let mut edge_samples: Vec<(NodeId, bool, Vec<IrStmt>)> = Vec::new();
             for var in self.node(block).children.iter().copied() {
-                let Some(var_info) = self.db.clocking_var(var) else {
+                let Some(var_info) = self.db.clocking_var(var).cloned() else {
                     continue;
                 };
                 if !matches!(var_info.direction, DbDirection::Input | DbDirection::Inout) {
@@ -643,7 +793,28 @@ impl<'a> Codegen<'a> {
                 } else {
                     &block_info.default_input
                 };
-                let mode = self.clocking_sample_mode(skew, var, &path)?;
+                let mode =
+                    match self.clocking_sample_mode(skew, &block_info.event_specs, var, &path)? {
+                        ClockingInputSample::Mode(mode) => mode,
+                        ClockingInputSample::Edge { clock, posedge } => {
+                            // Industry-standard behaviour publishes the sample at
+                            // the skew edge itself (docs/lrm_decisions.md,
+                            // K1-D2), so the clockvar's own cell takes it there.
+                            let sample = IrStmt::ClockingSample {
+                                source: storage.source.ir,
+                                sample: storage.sample.ir,
+                                mode: IrClockingSampleMode::OneStep,
+                            };
+                            match edge_samples
+                                .iter_mut()
+                                .find(|(at, edge, _)| *at == clock && *edge == posedge)
+                            {
+                                Some((_, _, samples)) => samples.push(sample),
+                                None => edge_samples.push((clock, posedge, vec![sample])),
+                            }
+                            continue;
+                        }
+                    };
                 let source = storage.source.ir;
                 if let IrClockingSampleMode::History(ticks) = mode {
                     let deepest = self.clocking_history_ticks.entry(source).or_default();
@@ -668,7 +839,64 @@ impl<'a> Codegen<'a> {
                     reason: format!("clocking input sampler for {}", self.node(block).full_name),
                 },
             ));
+            for (clock, posedge, samples) in edge_samples {
+                self.emit_clocking_edge_process(block, parent, &path, clock, posedge, samples)?;
+            }
         }
         Ok(())
     }
+
+    /// The process that takes the `#1step` sample of every edge-skewed input
+    /// of one block at each `posedge`/`negedge` of its clock signal.
+    fn emit_clocking_edge_process(
+        &mut self,
+        block: NodeId,
+        parent: NodeId,
+        path: &str,
+        clock: NodeId,
+        posedge: bool,
+        samples: Vec<IrStmt>,
+    ) -> Result<(), String> {
+        let edge = if posedge { "posedge" } else { "negedge" };
+        let block_name = self.node(block).name.clone();
+        let process_name = self.new_fn_name(path, &format!("clocking_{block_name}_{edge}"));
+        let (event_specs, pre_fns) = {
+            let mut ctx = EmitCtx::new(self, path.to_owned(), parent, "0", None, false);
+            let event_specs = ctx.lower_event_specs(&[EventSpec::Edge {
+                sig: clock,
+                posedge,
+            }])?;
+            (event_specs, std::mem::take(&mut ctx.pre_fns))
+        };
+        let mut body = vec![IrStmt::WaitEvents {
+            specs: event_specs,
+            refresh: false,
+            gate_at_write: false,
+        }];
+        body.extend(samples);
+        self.model.processes.push(IrProcess::new_with_origin(
+            process_name,
+            format!("{path}.clocking"),
+            IrShape::Loop,
+            pre_fns,
+            body,
+            crate::sim::semantic::Origin::Synthetic {
+                reason: format!(
+                    "clocking {edge} input sampler for {}",
+                    self.node(block).full_name
+                ),
+            },
+        ));
+        Ok(())
+    }
+}
+
+/// When one clocking input is sampled.
+enum ClockingInputSample {
+    Mode(IrClockingSampleMode),
+    /// At each `posedge`/`negedge` of the clocking event's signal `clock`.
+    Edge {
+        clock: NodeId,
+        posedge: bool,
+    },
 }

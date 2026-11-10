@@ -112,6 +112,16 @@ impl<'a> Codegen<'a> {
                 access: None,
             });
         }
+        // A clocking block through a virtual interface (`@(vif.cb)`): the
+        // bound instance's block event, read from the handle when the wait
+        // arms.
+        if self.virtual_clocking_event_member(node).is_some() {
+            return Some(EventTarget {
+                declaration: node,
+                indices: Vec::new(),
+                access: Some(node),
+            });
+        }
         if let Some(field) = self
             .class_field_target(node)
             .filter(|field| self.is_class_event_field(*field))
@@ -451,6 +461,9 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
     ) -> Result<IrEventRef, String> {
         if let Some(access) = target.access {
+            if let Some(event) = self.virtual_clocking_event_ref(scope_path, access)? {
+                return Ok(event);
+            }
             if !target.indices.is_empty() {
                 return Err(format!(
                     "event property `{}` cannot be indexed in `{scope_path}`",

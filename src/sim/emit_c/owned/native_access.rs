@@ -164,6 +164,22 @@ impl Frame<'_, '_> {
                     },
                 )
             }
+            // The descriptor slot holding the bound instance's clocking
+            // block event object, read as an event handle.
+            IrNativeAccessKind::InterfaceEvent { interface, event } => {
+                let site = access.site.as_deref().unwrap_or(name);
+                (
+                    if self.quiet_receivers {
+                        format!("llg_vif_event_quiet({receiver}, {interface}, {event})")
+                    } else {
+                        format!(
+                            "llg_vif_event({receiver}, {interface}, {event}, {})",
+                            c_string_literal(site)
+                        )
+                    },
+                    IrClassFieldType::Chandle,
+                )
+            }
             IrNativeAccessKind::ValueItem { .. }
             | IrNativeAccessKind::ElementItem { .. }
             | IrNativeAccessKind::ClassContainer { .. }
@@ -186,6 +202,9 @@ impl Frame<'_, '_> {
                 "&llg_vif_invalid"
             };
             self.exit_on_failed_access(&format!("{address} == {invalid}"));
+        }
+        if matches!(access.kind, IrNativeAccessKind::InterfaceEvent { .. }) {
+            self.exit_on_failed_access(&format!("{address} == &llg_vif_invalid_event"));
         }
         Ok(Some((address, ty)))
     }

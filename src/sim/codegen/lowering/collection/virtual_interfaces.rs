@@ -523,6 +523,7 @@ impl<'a> Codegen<'a> {
                     path: self.vpi_full_name(interface),
                     members: member_slots,
                     methods: method_slots,
+                    events: Vec::new(),
                 });
                 self.virtual_interface_instances
                     .insert(interface, (descriptor_index, instance_index));
@@ -539,6 +540,7 @@ impl<'a> Codegen<'a> {
                 members,
                 instances: entries,
                 methods,
+                events: Vec::new(),
             });
             for (view, members) in view_members {
                 self.virtual_interface_views

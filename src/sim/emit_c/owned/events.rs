@@ -326,6 +326,9 @@ impl Frame<'_, '_> {
                 false,
                 format!("llg_mailbox_dependency((llg_mailbox_t*){receiver})"),
             ),
+            IrNativeAccessKind::InterfaceEvent { .. } => {
+                return Err("a virtual interface clocking event is no wait dependency".to_owned())
+            }
             IrNativeAccessKind::ValueItem { .. } | IrNativeAccessKind::ElementItem { .. } => {
                 return Err(pending("native value item wait dependencies"))
             }

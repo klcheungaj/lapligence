@@ -100,6 +100,78 @@ event (negedge) next occurs at 3; `inner` waits `##3` until 10 and reads the
 (L-F12-04-01: 1.25), `cross_clock_cycle_witness` (L-F06-07-02, L-F12-04-05:
 `##1` on the default clock, then a drive of another block's output, 7).
 
+### Unpacked inputs (K1)
+
+An unpacked fixed-size clockvar (fixed array or unpacked structure, any
+nesting of them with integral leaves) samples its whole value into one
+packed cell, its declaration-order image; element, member and slice reads
+select from that cell. Expected outputs are industry-standard behaviour's
+output for the same source, checked against the timelines below by hand.
+
+- `unpacked_inputs`: `arr` is `{1, 2}`, `grid[j][k] = 3j + k`, `st = {3, 5}`,
+  `recs[1] = {6, 7}` at 0; at 7 `arr[1] = 20`, `st.a = 30`, `grid[1][2] = f`,
+  `recs[1].a = 66`; `arr[0] = 11` at 12; `arr = {5, 6}`, `st.b = 9` at 20;
+  `arr[0] = 44` at 24; `i = 0` at 26. Posedges at 5, 15, 25, 35. The #1step
+  inputs read the end of the previous step (14.13 L19909-19911), so at 15
+  `arr` is `{11, 20}` and at 25 `{44, 6}`; `#2 sk` reads step 23 at 25
+  (`{5, 6}`) and step 33 at 35 (`{44, 6}`); `#0 a0` reads the Observed region
+  of the event's own step (L19911-19912). `cb.arr[i]` follows `i`; the
+  whole-value copy, the structure comparison with its source, `foreach` and
+  `$size` read the sample.
+- `record_inputs`: a record with a member array of 16 cells (one column) and
+  of 3 cells (one leaf per cell) prints the same; `#2 rk` at 15 reads step 13,
+  after `r.m[N-1] = 88`.
+- `vif_unpacked_inputs`: elements, a multidimensional element, a `#0`
+  expression-bound input and a whole-array copy through a virtual interface
+  follow the handle, rebound from `b1` to `b2` at 17.
+
+### Edge input skews (K1)
+
+§14.3 L19457-19458: "When the clocking event specifies a simple edge,
+instead of a number, the skew can be specified as the specific edge of the
+signal." An `input negedge x` under `@(posedge clk)` takes the `#1step`
+sample at each negedge of `clk` and holds it from that edge on (decision
+K1-D2, industry-standard behaviour); a skew naming the clocking event's own
+edge is the `#1step` sample. Expected outputs are industry-standard
+behaviour's.
+
+- `edge_skews` (the plan's probe): `x`, `y`, `z` take 1 at 7, 2 at 12, 3 at
+  22, 4 at 24; the clock toggles every 5. `cb.x` reads the negedge samples
+  (10: 1, 20: 2, 30: 4) at 15, 25, 35; `posedge y` and `#1step z` read 2, 4, 4.
+- `edge_skew_forms`: a negedge skew under a posedge event (four-state `w`
+  is X before its first negedge, real `r` 0.0), a posedge skew under a
+  negedge event, a negedge skew under `@(clk)` (at a negedge event it is the
+  `#1step` sample), a block default edge skew, an unpacked edge-skewed input,
+  and a read at 12, between the negedge at 10 and the posedge at 15, that
+  already sees the negedge sample.
+
+### Clocking block events through virtual interfaces (K1)
+
+`@(vif.cb)` resumes at the clocking block event (§14.13 L19921-19922: "a
+clocking block shall update its sampled values before triggering the event
+associated with the clocking block name") of the instance the handle is bound
+to when the wait arms. Expected outputs are industry-standard behaviour's.
+
+- `vif_clocking_event`: the former `neg_vif_clocking_event`, through a modport
+  view: the edge at 5 reads `11`.
+- `vif_clocking_events`: `@(v.cn)` (a negedge block) resumes at 10; `@(v.cb
+  iff en)` with `en` set at 12 at 15; `@(vp.cb or posedge en)` through a view
+  of `b2` at 25 (`en` no longer rises); a class property handle bound to `b2`
+  and a second wait on `v` (bound to `b1`, whose `data` became 33 at 21) wait
+  in parallel, resuming at 35 and 45.
+- `vif_clocking_event_null`: a wait through a null handle stops the run
+  (decision S99-D8) after `0 before`.
+
+### Shared sampled source (K1)
+
+`shared_source_samples` reads one source through a `#1step` clockvar, an
+`input #3` clockvar and two `#0` clockvars in different blocks, one of them on
+`@(clk2)` firing twice per period, over six periods, so one source's history
+and Observed copies serve several clockvars and blocks at once. The `c2`
+display is delayed by 2 because a clockvar keeps its sample until the next
+clocking event, which keeps it from racing the `c3` process at the same time. The expected output is
+industry-standard behaviour's.
+
 ## Negatives
 
 Language rules, rejected in both optimizer modes:
@@ -121,13 +193,23 @@ Language rules, rejected in both optimizer modes:
 - `neg_chandle_input`: ports cannot have the chandle type (§6.14), so a
   chandle cannot be a clocking input (§14.5).
 
-Legal forms that remain unsupported and are rejected with an explicit
-diagnostic instead of a wrong sample: `neg_unpacked_input` and
-`neg_string_input` (non-packed, non-real sample types) and
-`neg_input_edge_skew` (an edge input skew, whose sample point §14.3 leaves
-undefined).
+Forms rejected with a located diagnostic instead of a wrong sample (K1):
 
-`neg_vif_clocking_event`: `@(vp.cb)` through a virtual interface handle is
-rejected explicitly (the clocking block has no per-instance event object in
-the virtual-interface descriptor); its clockvars remain readable through the
-handle, as `interfaces` shows.
+- `neg_string_input`, `neg_class_input`, `neg_event_input`, `neg_queue_input`,
+  `neg_unpacked_union_input`: string, class handle, event, unpacked or tagged
+  union, queue, dynamic and associative array clockvars (decision K1-D1: the
+  text does not exclude them, industry-standard behaviour rejects them).
+- `neg_union_member_input`: an unpacked structure clockvar with an unpacked
+  union member rejects like the union itself (K1-D1).
+- `neg_real_array_input`: an unpacked clockvar with a real element or member
+  has no packed sample image; industry-standard behaviour serves it, llg does
+  not yet ([known issue](../../../../../docs/known_issues.md#clocking-input-forms-outside-the-sampled-storage-model)).
+- `neg_input_both_edges_skew`: an `edge` input skew; industry-standard
+  behaviour treats it as a syntax error.
+- `neg_edge_skew_delay`: an edge skew with a delay (`negedge #1`), which
+  industry-standard behaviour accepts and llg does not serve.
+- `neg_edge_skew_event`: an edge skew under an event list; §14.3 allows an
+  edge skew "When the clocking event specifies a simple edge", and
+  industry-standard behaviour rejects it too.
+
+

@@ -29,6 +29,28 @@ fn t1_d2_event_compare_wait_rejected() {
 }
 
 #[test]
+fn k1_d1_string_clockvar_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/K1-D1_string_clockvar_rejected.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "K1-D1_string_clockvar_rejected",
+        "clocking input `s` in `tb` has type `string`; string, class handle, event, unpacked or \
+         tagged union, queue, dynamic array and associative array clockvars are not supported",
+    );
+}
+
+#[test]
+fn k1_d2_edge_skew_sample_at_edge() {
+    run_decision(
+        "K1-D2_edge_skew_sample_at_edge",
+        include_str!("fixtures/sim/lrm_decisions/K1-D2_edge_skew_sample_at_edge.out"),
+    );
+}
+
+#[test]
 fn s30_d16_rand_mode_handle_variable() {
     run_decision(
         "S30-D16_rand_mode_handle_variable",

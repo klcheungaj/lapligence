@@ -1,7 +1,7 @@
 //! SIM-033: clocking input expressions and legal sample types. Oracles are
 //! derived by hand in the fixture readme from IEEE 1800-2009 §§3.14.3,
 //! 14.3-14.15.
-use super::sim_cli;
+use super::{sim_cli, sim_harness};
 
 const SUITE: &str = "feature_completion/sim_033";
 
@@ -189,43 +189,195 @@ fn neg_chandle_input() {
     );
 }
 
-// Legal clocking inputs whose sampled storage is not implemented are
-// rejected, never sampled as packed values.
+// K1: unpacked fixed-size clockvars and edge input skews. Expected outputs
+// are industry-standard behaviour's (readme), checked against the clauses.
 
 #[test]
-fn neg_unpacked_input() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_unpacked_input",
-        "clocking input `arr` in `tb` has type `int$[0:1]`; sampled clockvars are limited to \
-         packed integral, real and shortreal values",
-    );
+fn unpacked_inputs_sample_whole_values() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_033/unpacked_inputs.out");
+    sim_cli::run_case_backend_parity(SUITE, "unpacked_inputs", expected, &[], &[]);
 }
+
+#[test]
+fn record_inputs_sample_the_same_in_both_storage_forms() {
+    // 16 cells make the member array one column, 3 cells one leaf per cell
+    // (LLG_RECORD_COLUMN_MIN_CELLS); both print the same.
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_033/record_inputs.out");
+    for cells in ["N=16", "N=3"] {
+        sim_cli::run_case_backend_parity(SUITE, "record_inputs", expected, &["-D", cells], &[]);
+    }
+}
+
+#[test]
+fn unpacked_inputs_read_through_virtual_interface() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/vif_unpacked_inputs.out");
+    sim_cli::run_case_backend_parity(SUITE, "vif_unpacked_inputs", expected, &[], &[]);
+}
+
+#[test]
+fn edge_skews_sample_at_the_clock_edge() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_033/edge_skews.out");
+    sim_cli::run_case_backend_parity(SUITE, "edge_skews", expected, &[], &[]);
+}
+
+#[test]
+fn edge_skew_forms() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_033/edge_skew_forms.out");
+    sim_cli::run_case_backend_parity(SUITE, "edge_skew_forms", expected, &[], &[]);
+}
+
+#[test]
+fn shared_source_samples() {
+    // One source feeds #1step, positive-skew and two #0 clockvars in
+    // separate blocks, so its history and Observed copies serve them all.
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/shared_source_samples.out");
+    sim_cli::run_case_backend_parity(SUITE, "shared_source_samples", expected, &[], &[]);
+}
+
+const UNSERVED_TYPES: &str = "string, class handle, event, unpacked or tagged union, queue, \
+                              dynamic array and associative array clockvars are not supported";
+const UNSERVED_MEMBERS: &str = "an unpacked clockvar with a real, string, class handle, event, \
+                                unpacked or tagged union or dynamic array element or member is \
+                                not supported";
 
 #[test]
 fn neg_string_input() {
+    // Decision K1-D1.
     sim_cli::reject_case(
         SUITE,
         "neg_string_input",
-        "clocking input `s` in `tb` has type `string`; sampled clockvars are limited to \
-         packed integral, real and shortreal values",
+        &format!("neg_string_input.sv:7:11 clocking input `s` in `tb` has type `string`; {UNSERVED_TYPES}"),
     );
 }
 
 #[test]
-fn neg_input_edge_skew() {
+fn neg_class_input() {
     sim_cli::reject_case(
         SUITE,
-        "neg_input_edge_skew",
-        "edge-qualified input skew of clocking input `x` in `tb` is not supported",
+        "neg_class_input",
+        &format!(
+            "neg_class_input.sv:9:11 clocking input `h` in `tb` has type `C`; {UNSERVED_TYPES}"
+        ),
     );
 }
 
 #[test]
-fn neg_vif_clocking_event() {
+fn neg_event_input() {
     sim_cli::reject_case(
         SUITE,
-        "neg_vif_clocking_event",
-        "clocking block event `cb` is not supported through virtual interface `bus.tb_mp` in `tb`",
+        "neg_event_input",
+        &format!("neg_event_input.sv:6:11 clocking input `ev` in `tb` has type `event`; {UNSERVED_TYPES}"),
     );
+}
+
+#[test]
+fn neg_queue_input() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_queue_input",
+        &format!("neg_queue_input.sv:7:11 clocking input `q` in `tb` has type `int$[$]`; {UNSERVED_TYPES}"),
+    );
+}
+
+#[test]
+fn neg_real_array_input() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_array_input",
+        &format!(
+            "neg_real_array_input.sv:7:11 clocking input `r` in `tb` has type `real$[0:1]`; \
+             {UNSERVED_MEMBERS}"
+        ),
+    );
+}
+
+#[test]
+fn neg_unpacked_union_input() {
+    // Decision K1-D1: industry-standard behaviour does not accept an unpacked
+    // union as a clocking signal.
+    sim_cli::reject_case(
+        SUITE,
+        "neg_unpacked_union_input",
+        &format!(
+            "neg_unpacked_union_input.sv:9:11 clocking input `un` in `tb` has type \
+             `union{{int i;bit[31:0] u;}}tb.u$1`; {UNSERVED_TYPES}"
+        ),
+    );
+}
+
+#[test]
+fn neg_union_member_input() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_union_member_input",
+        &format!(
+            "neg_union_member_input.sv:11:11 clocking input `st` in `tb` has type \
+             `struct{{byte b;tb.un_t un;}}tb.s$1`; {UNSERVED_MEMBERS}"
+        ),
+    );
+}
+
+#[test]
+fn neg_input_both_edges_skew() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_input_both_edges_skew",
+        "neg_input_both_edges_skew.sv:7:16 an `edge` input skew of clocking input `x` in `tb` is \
+         not supported",
+    );
+}
+
+#[test]
+fn neg_edge_skew_delay() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_edge_skew_delay",
+        "neg_edge_skew_delay.sv:6:22 an edge input skew with a delay of clocking input `x` in \
+         `tb` is not supported",
+    );
+}
+
+#[test]
+fn neg_edge_skew_event() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_edge_skew_event",
+        "neg_edge_skew_event.sv:7:19 an edge input skew of clocking input `x` in `tb` needs a \
+         clocking event on one signal",
+    );
+}
+
+#[test]
+fn vif_clocking_event() {
+    // The former neg_vif_clocking_event: `@(vp.cb)` through a view.
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/vif_clocking_event.out");
+    sim_cli::run_case_backend_parity(SUITE, "vif_clocking_event", expected, &[], &[]);
+}
+
+#[test]
+fn vif_clocking_events_follow_the_bound_instance() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/vif_clocking_events.out");
+    sim_cli::run_case_backend_parity(SUITE, "vif_clocking_events", expected, &[], &[]);
+}
+
+#[test]
+fn vif_clocking_event_through_null_handle_stops() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/vif_clocking_event_null.out");
+    sim_cli::run_case_checked_matrix(SUITE, "vif_clocking_event_null", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert!(
+            sim_harness::mentions(
+                &String::from_utf8_lossy(&output.stderr),
+                "virtual interface access failed: virtual interface clocking block event at \
+                 tb:18:7"
+            ),
+            "{label}: {output:?}"
+        );
+    });
 }

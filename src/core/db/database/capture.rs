@@ -956,6 +956,10 @@ impl Db {
             let is_array = matches!(semantic.kind, SemanticKind::Variable | SemanticKind::Net)
                 && semantic.subkind != 229
                 && semantic.subkind != SEMANTIC_VARIABLE_CLOCKING
+                // A clockvar bound through a virtual interface keeps only the
+                // `ClockVar` detail (see the clocking metadata reuse below);
+                // an unpacked clockvar is still a variable, not array storage.
+                && semantic.detail != "ClockVar"
                 && projection
                     .as_ref()
                     .is_some_and(|projection| projection.array.is_some())
