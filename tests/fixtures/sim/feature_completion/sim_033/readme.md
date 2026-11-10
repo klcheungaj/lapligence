@@ -166,11 +166,10 @@ to when the wait arms. Expected outputs are industry-standard behaviour's.
 
 `shared_source_samples` reads one source through a `#1step` clockvar, an
 `input #3` clockvar and two `#0` clockvars in different blocks, one of them on
-`@(clk2)` firing twice per period, over six periods. It guards the runtime's
-reuse of a source's history entries and of each `#0` clockvar's Observed copy
-record across clocking events. The `c2` display is delayed by 2 because a
-clockvar keeps its sample until the next clocking event, which keeps it from
-racing the `c3` process at the same time. The expected output is
+`@(clk2)` firing twice per period, over six periods, so one source's history
+and Observed copies serve several clockvars and blocks at once. The `c2`
+display is delayed by 2 because a clockvar keeps its sample until the next
+clocking event, which keeps it from racing the `c3` process at the same time. The expected output is
 industry-standard behaviour's.
 
 ## Negatives

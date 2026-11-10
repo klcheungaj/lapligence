@@ -44,13 +44,9 @@ sample.
 `llg_sampled_register_value` keeps only a signal's Preponed value (procedural
 `$sampled`, every concurrent-assertion read) in a separate list, so it adds no
 history and no per-write lookup. `llg_sampled_register` adds Observed clocking
-copies and keeps no history; `llg_sampled_register_history` keeps the slots the
-deepest declared input skew can select (the newest at or before `now - ticks`
-and everything newer), promoting an earlier value-only entry. A pruned history
-entry is kept as the source's spare for the next step, and each `#0` clockvar
-owns one Observed copy record on its source, queued again at every clocking
-event, so steady clocking allocates neither a history entry nor a copy record
-per step (the region-callback entry that queues the copy still is). Sampled-value clocks and domains use
+copies; `llg_sampled_register_history` keeps the slots the deepest declared input
+skew can select (the newest at or before `now - ticks` and everything newer),
+promoting an earlier value-only entry. Sampled-value clocks and domains use
 dense model-assigned identities (O(1) lookup). An edge clock is matched at the
 signal write, its gate read with current values; an event clock ticks only
 through `llg_sampled_clock_tick` from a generated waiting process. Each domain

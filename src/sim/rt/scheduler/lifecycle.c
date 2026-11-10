@@ -41,11 +41,13 @@ static void free_proc_storage(llg_proc_t* p) {
     free_proc_record(p);
 }
 
-// A queued clocking Observed copy points at a record its sampled value owns
-// (free_sampled_values releases it).
+static void clocking_copy_observed(void* data);
+
 static void free_region_callbacks(void) {
     while (g.callbacks) {
         llg_region_callback_t* next = g.callbacks->next;
+        if (g.callbacks->callback == clocking_copy_observed)
+            free(g.callbacks->data);
         free(g.callbacks);
         g.callbacks = next;
     }
@@ -70,15 +72,6 @@ static void free_sampled_values(void) {
             g.sampled->history = history->next;
             sv4_destroy(&history->value);
             free(history);
-        }
-        if (g.sampled->history_spare) {
-            sv4_destroy(&g.sampled->history_spare->value);
-            free(g.sampled->history_spare);
-        }
-        while (g.sampled->observed) {
-            llg_clocking_observed_t* observed = g.sampled->observed;
-            g.sampled->observed = observed->next;
-            free(observed);
         }
         sv4_destroy(&g.sampled->value);
         free(g.sampled);

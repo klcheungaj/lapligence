@@ -2140,10 +2140,13 @@ An unpacked clockvar keeps its sample image current with a synthetic process
 that rebuilds the whole image on every write to its source, so a write costs
 time linear in the aggregate's size; only designs with such clockvars pay it.
 
-Separately, each `#0` (Observed) sample event still allocates one entry in the
-scheduler's shared region-callback queue; its copy record and positive-skew
-history entries are reused across events
-([control](../src/sim/rt/scheduler/control.md)).
+Separately, every sampled clocking source keeps a slot history even when no
+positive skew reads it (one heap entry per time step with activity), and each
+`#0` (Observed) sample event allocates a copy record plus a region-callback
+entry. Reusing a per-source spare entry, skipping the unread history and
+reusing one copy record per clockvar halve the allocations, but a pinned A/B
+showed wall-time regressions of up to 10% on some forms (with equal or fewer
+instructions), so the runtime keeps the allocating form.
 
 Reproduce with
 [`neg_string_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_string_input.sv),

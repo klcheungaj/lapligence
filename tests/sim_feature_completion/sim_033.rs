@@ -229,8 +229,8 @@ fn edge_skew_forms() {
 
 #[test]
 fn shared_source_samples() {
-    // One source feeds #1step, positive-skew and two #0 clockvars, so the
-    // runtime reuses its history entries and Observed copy records per event.
+    // One source feeds #1step, positive-skew and two #0 clockvars in
+    // separate blocks, so its history and Observed copies serve them all.
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_033/shared_source_samples.out");
     sim_cli::run_case_backend_parity(SUITE, "shared_source_samples", expected, &[], &[]);

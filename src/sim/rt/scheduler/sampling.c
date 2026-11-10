@@ -15,26 +15,17 @@ static void report_unregistered_sampled_signal(void) {
 
 // Record `value` as the slot's newest sample. A skewed read selects the
 // newest entry at or before `now - ticks`, so everything older than the newest
-// entry at or before `now - history_ticks` can never be selected again. A
-// source no skew reads (`history_ticks` 0) keeps no history: its `#1step` and
-// `#0` samples read `value` and the live signal.
+// entry at or before `now - history_ticks` can never be selected again.
 static void sampled_history_record(llg_sampled_value_t* item, const sv4_t* value) {
-    if (!item->history_ticks) return;
     llg_sampled_history_t* last = item->history;
     if (last && last->time == g.now) {
         sv4_copy(&last->value, value);
         return;
     }
-    llg_sampled_history_t* history = item->history_spare;
-    if (history) {
-        item->history_spare = NULL;
-        sv4_copy(&history->value, value);
-    } else {
-        history = (llg_sampled_history_t*)llg_checked_malloc(1, sizeof(*history),
-                                                             "sampled history");
-        history->value = sv4_clone(value);
-    }
+    llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
+        1, sizeof(*history), "sampled history");
     history->time = g.now;
+    history->value = sv4_clone(value);
     history->prev = NULL;
     history->next = last;
     if (last) last->prev = history;
@@ -46,10 +37,6 @@ static void sampled_history_record(llg_sampled_value_t* item, const sv4_t* value
         llg_sampled_history_t* oldest = item->history_tail;
         item->history_tail = oldest->prev;
         item->history_tail->next = NULL;
-        if (!item->history_spare) {
-            item->history_spare = oldest;
-            continue;
-        }
         sv4_destroy(&oldest->value);
         free(oldest);
     }
@@ -69,13 +56,7 @@ static void sampled_register(sv4_t* signal, uint64_t history_ticks) {
     }
     for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
         if (item->signal == signal) {
-            if (item->history_ticks < history_ticks) {
-                // A source without history so far starts it at this value,
-                // as a first registration with this depth would.
-                const int start = item->history_ticks == 0;
-                item->history_ticks = history_ticks;
-                if (start) sampled_history_record(item, signal);
-            }
+            if (item->history_ticks < history_ticks) item->history_ticks = history_ticks;
             return;
         }
     }
@@ -97,9 +78,7 @@ static void sampled_register(sv4_t* signal, uint64_t history_ticks) {
     item->value = sv4_clone(signal);
     item->history = NULL;
     item->history_tail = NULL;
-    item->history_spare = NULL;
     item->history_ticks = history_ticks;
-    item->observed = NULL;
     sampled_history_record(item, signal);
     item->next = g.sampled;
     g.sampled = item;
@@ -129,10 +108,6 @@ void llg_sampled_register_value(sv4_t* signal) {
     item->signal = signal;
     item->value = sv4_clone(signal);
     item->history = NULL;
-    item->history_tail = NULL;
-    item->history_spare = NULL;
-    item->history_ticks = 0;
-    item->observed = NULL;
     item->next = g.sampled_values;
     g.sampled_values = item;
 }
@@ -531,40 +506,33 @@ int llg_clocking_sample(const sv4_t* source, sv4_t* sample) {
     return 1;
 }
 
+typedef struct {
+    sv4_t* source;
+    sv4_t* sample;
+} llg_clocking_observed_t;
+
 static void clocking_copy_observed(void* data) {
     llg_clocking_observed_t* copy = (llg_clocking_observed_t*)data;
     clocking_publish(copy->sample, copy->source);
-}
-
-// The reusable Observed copy record of `sample` (or `real_sample`) from the
-// registered `source`, created at the clockvar's first event. Queuing it
-// twice in one time step (two events before Observed) copies twice, which
-// the second copy makes no different.
-static llg_clocking_observed_t* clocking_observed_record(sv4_t* source, sv4_t* sample,
-                                                         double* real_sample) {
-    llg_sampled_value_t* item = find_sampled_value(source);
-    if (!item) {
-        report_unregistered_sampled_signal();
-        return NULL;
-    }
-    for (llg_clocking_observed_t* record = item->observed; record; record = record->next) {
-        if (record->sample == sample && record->real_sample == real_sample) return record;
-    }
-    llg_clocking_observed_t* record = (llg_clocking_observed_t*)llg_checked_malloc(
-        1, sizeof(*record), "clocking observed sample");
-    record->source = source;
-    record->sample = sample;
-    record->real_sample = real_sample;
-    record->next = item->observed;
-    item->observed = record;
-    return record;
+    free(copy);
 }
 
 int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample) {
     if (!source || !sample) return 0;
-    llg_clocking_observed_t* copy = clocking_observed_record(source, sample, NULL);
-    return copy && llg_schedule_region_callback(LLG_REGION_OBSERVED, clocking_copy_observed,
-                                                copy);
+    if (!find_sampled_value(source)) {
+        report_unregistered_sampled_signal();
+        return 0;
+    }
+    llg_clocking_observed_t* copy = (llg_clocking_observed_t*)llg_checked_malloc(
+        1, sizeof(*copy), "clocking observed sample");
+    copy->source = source;
+    copy->sample = sample;
+    if (!llg_schedule_region_callback(LLG_REGION_OBSERVED,
+                                      clocking_copy_observed, copy)) {
+        free(copy);
+        return 0;
+    }
+    return 1;
 }
 
 // The newest retained value at or before `ticks` in the past.
@@ -611,16 +579,34 @@ int llg_clocking_sample_real(const sv4_t* source, double* sample) {
     return clocking_store_real(llg_sampled_value(source), sample);
 }
 
+typedef struct {
+    sv4_t* source;
+    double* sample;
+} llg_clocking_observed_real_t;
+
 static void clocking_copy_observed_real(void* data) {
-    llg_clocking_observed_t* copy = (llg_clocking_observed_t*)data;
-    (void)clocking_store_real(copy->source, copy->real_sample);
+    llg_clocking_observed_real_t* copy = (llg_clocking_observed_real_t*)data;
+    (void)clocking_store_real(copy->source, copy->sample);
+    free(copy);
 }
 
 int llg_clocking_sample_observed_real(sv4_t* source, double* sample) {
     if (!source || !sample) return 0;
-    llg_clocking_observed_t* copy = clocking_observed_record(source, NULL, sample);
-    return copy && llg_schedule_region_callback(LLG_REGION_OBSERVED,
-                                                clocking_copy_observed_real, copy);
+    if (!find_sampled_value(source)) {
+        report_unregistered_sampled_signal();
+        return 0;
+    }
+    llg_clocking_observed_real_t* copy =
+        (llg_clocking_observed_real_t*)llg_checked_malloc(
+            1, sizeof(*copy), "clocking observed sample");
+    copy->source = source;
+    copy->sample = sample;
+    if (!llg_schedule_region_callback(LLG_REGION_OBSERVED,
+                                      clocking_copy_observed_real, copy)) {
+        free(copy);
+        return 0;
+    }
+    return 1;
 }
 
 int llg_clocking_sample_history_real(sv4_t* source, double* sample,
