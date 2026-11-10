@@ -843,7 +843,6 @@ fn lower_model_with(
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
             .expect("the default timescale has non-zero precision"),
     );
-    cg.mark_observed_records(&mut model);
     let first_declaration_init = model.processes.len();
     cg.build_init_steps(&mut model)?;
     // Every driver site and delayed-driver start now exists.
@@ -922,6 +921,8 @@ fn lower_model_with(
         &assertion_action_procs,
     );
     model.final_spawns = final_names;
+    // Every read walk has run: the records they named get their markers.
+    cg.mark_observed_records(&mut model);
     model.validate().map_err(|error| error.to_string())?;
     let design_name = std::mem::take(&mut cg.design_name);
     let warnings = std::mem::take(&mut cg.warnings);

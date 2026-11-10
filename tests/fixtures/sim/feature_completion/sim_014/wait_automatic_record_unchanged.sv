@@ -16,7 +16,7 @@ module tb;
         wait (cnt == cfg.limit);
         $display("%0t %s reached %0d", $time, cfg.name, cfg.limit);
       end
-      begin repeat (n) #1 cnt++; end
+      begin for (int i = 0; i < n; i++) #1 cnt++; end
     join
     cfg.limit = 0;
   endtask
