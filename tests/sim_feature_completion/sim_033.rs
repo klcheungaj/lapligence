@@ -189,26 +189,89 @@ fn neg_chandle_input() {
     );
 }
 
-// Legal clocking inputs whose sampled storage is not implemented are
-// rejected, never sampled as packed values.
+// K1: unpacked fixed-size clockvars. Expected outputs
+// are industry-standard behaviour's (readme), checked against the clauses.
 
 #[test]
-fn neg_unpacked_input() {
+fn unpacked_inputs_sample_whole_values() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_033/unpacked_inputs.out");
+    sim_cli::run_case_backend_parity(SUITE, "unpacked_inputs", expected, &[], &[]);
+}
+
+#[test]
+fn unpacked_union_input_samples_whole_value() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/unpacked_union_input.out");
+    sim_cli::run_case_backend_parity(SUITE, "unpacked_union_input", expected, &[], &[]);
+}
+
+#[test]
+fn record_inputs_sample_the_same_in_both_storage_forms() {
+    // 16 cells make the member array one column, 3 cells one leaf per cell
+    // (LLG_RECORD_COLUMN_MIN_CELLS); both print the same.
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_033/record_inputs.out");
+    for cells in ["N=16", "N=3"] {
+        sim_cli::run_case_backend_parity(SUITE, "record_inputs", expected, &["-D", cells], &[]);
+    }
+}
+
+#[test]
+fn unpacked_inputs_read_through_virtual_interface() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/vif_unpacked_inputs.out");
+    sim_cli::run_case_backend_parity(SUITE, "vif_unpacked_inputs", expected, &[], &[]);
+}
+
+const UNSERVED_TYPES: &str = "string, class handle, event, queue, dynamic array and \
+                              associative array clockvars are not supported";
+
+#[test]
+fn neg_string_input() {
+    // Decision K1-D1.
     sim_cli::reject_case(
         SUITE,
-        "neg_unpacked_input",
-        "clocking input `arr` in `tb` has type `int$[0:1]`; sampled clockvars are limited to \
-         packed integral, real and shortreal values",
+        "neg_string_input",
+        &format!("neg_string_input.sv:7:11 clocking input `s` in `tb` has type `string`; {UNSERVED_TYPES}"),
     );
 }
 
 #[test]
-fn neg_string_input() {
+fn neg_class_input() {
     sim_cli::reject_case(
         SUITE,
-        "neg_string_input",
-        "clocking input `s` in `tb` has type `string`; sampled clockvars are limited to \
-         packed integral, real and shortreal values",
+        "neg_class_input",
+        &format!(
+            "neg_class_input.sv:9:11 clocking input `h` in `tb` has type `C`; {UNSERVED_TYPES}"
+        ),
+    );
+}
+
+#[test]
+fn neg_event_input() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_event_input",
+        &format!("neg_event_input.sv:6:11 clocking input `ev` in `tb` has type `event`; {UNSERVED_TYPES}"),
+    );
+}
+
+#[test]
+fn neg_queue_input() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_queue_input",
+        &format!("neg_queue_input.sv:7:11 clocking input `q` in `tb` has type `int$[$]`; {UNSERVED_TYPES}"),
+    );
+}
+
+#[test]
+fn neg_real_array_input() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_array_input",
+        "neg_real_array_input.sv:7:11 clocking input `r` in `tb` has type `real$[0:1]`; an \
+         unpacked clockvar with a real, string, class handle, event or dynamic array element or \
+         member is not supported",
     );
 }
 

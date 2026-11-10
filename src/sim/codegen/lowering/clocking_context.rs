@@ -341,7 +341,9 @@ impl<'a> Codegen<'a> {
                     );
                     (source, sample)
                 } else {
-                    let ty = self.clocking_var_value_type(var, &scope)?;
+                    let ty = self.clocking_var_value_type(var, &scope).map_err(|error| {
+                        crate::sim::codegen::error::located(&self.source_location(var), error)
+                    })?;
                     let real = matches!(ty, IrType::Real { .. });
                     // A real value travels through the packed sampler as its
                     // exact IEEE image; a shortreal widens to real exactly.
@@ -394,23 +396,39 @@ impl<'a> Codegen<'a> {
         let unsupported = || {
             format!(
                 "clocking input `{name}` in `{scope}` has type `{}`; sampled clockvars are \
-                 limited to packed integral, real and shortreal values",
-                self.db
-                    .type_descriptor(var)
-                    .map_or(ty.kind.as_str(), |descriptor| descriptor.name.as_str())
+                 limited to integral, real, shortreal and unpacked fixed-size values",
+                self.clocking_var_type_name(var, ty)
             )
         };
-        match self
-            .db
-            .type_descriptor(var)
-            .map(|descriptor| &descriptor.shape)
-        {
+        let descriptor = self.db.type_descriptor(var);
+        match descriptor.map(|descriptor| &descriptor.shape) {
             Some(TypeShape::Real { shortreal }) => {
                 return Ok(IrType::Real {
                     shortreal: *shortreal,
                 })
             }
             Some(TypeShape::PackedAtom { .. }) | None => {}
+            Some(TypeShape::FixedArray { .. }) => {
+                return self.clocking_aggregate_value_type(var, scope);
+            }
+            Some(TypeShape::Aggregate(layout))
+                if !matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ) =>
+            {
+                return self.clocking_aggregate_value_type(var, scope);
+            }
+            Some(TypeShape::String | TypeShape::Container { .. } | TypeShape::Opaque { .. }) => {
+                // IEEE 1800-2009 14.3 and 14.5 do not exclude these types, but
+                // industry-standard behaviour rejects them as clocking signals
+                // (docs/lrm_decisions.md, K1-D1); llg rejects them too.
+                return Err(format!(
+                    "clocking input `{name}` in `{scope}` has type `{}`; string, class handle, \
+                     event, queue, dynamic array and associative array clockvars are not supported",
+                    self.clocking_var_type_name(var, ty)
+                ));
+            }
             Some(_) => return Err(unsupported()),
         }
         if is_real_kind(&ty.kind) {
@@ -429,6 +447,45 @@ impl<'a> Codegen<'a> {
             signed: ty.signed,
             two_state: self.db.is_two_state_type(var) || is_two_state_kind(&ty.kind),
         })
+    }
+
+    /// The sampled storage type of an unpacked fixed-size clockvar (fixed
+    /// array, unpacked struct or union): one packed cell holding its
+    /// declaration-order payload, the same image a whole-value read of the
+    /// aggregate yields, so every skew mode copies it whole. Projections of
+    /// the clockvar (`cb.arr[i]`, `cb.st.a`) select from that cell.
+    fn clocking_aggregate_value_type(&self, var: NodeId, scope: &str) -> Result<IrType, String> {
+        let name = &self.node(var).name;
+        let descriptor = self
+            .db
+            .type_descriptor(var)
+            .ok_or_else(|| format!("clocking input `{name}` in `{scope}` has no owned type"))?;
+        if let Some(width) = Self::fixed_descriptor_width(descriptor) {
+            return Ok(IrType::Packed {
+                width,
+                signed: false,
+                two_state: descriptor.two_state,
+            });
+        }
+        Err(match Self::fixed_descriptor_width_bits(descriptor) {
+            Some(width) => format!(
+                "clocking input `{name}` in `{scope}` of type `{}` has a {width}-bit payload; \
+                 a sampled clockvar exceeds the packed value limit of {LLG_MAX_WIDTH} bits",
+                descriptor.name
+            ),
+            None => format!(
+                "clocking input `{name}` in `{scope}` has type `{}`; an unpacked clockvar \
+                 with a real, string, class handle, event or dynamic array element or member \
+                 is not supported",
+                descriptor.name
+            ),
+        })
+    }
+
+    fn clocking_var_type_name<'t>(&'t self, var: NodeId, ty: &'t TypeInfo) -> &'t str {
+        self.db
+            .type_descriptor(var)
+            .map_or(ty.kind.as_str(), |descriptor| descriptor.name.as_str())
     }
 
     /// Register one hidden clocking storage cell in the model.

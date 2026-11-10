@@ -1,4 +1,5 @@
-// A legal string clocking input whose sampled storage is not implemented.
+// A string clocking input is rejected (decision K1-D1): IEEE 1800-2009 14.3
+// does not exclude the type, but industry-standard behaviour rejects it.
 module tb;
   logic clk = 1'b0;
   string s = "hi";

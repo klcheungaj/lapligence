@@ -1,0 +1,16 @@
+5 arr 1 2 grid 1 5 st 3 5 ren 2 el 6 7
+5 sk 1 2 a0 1 2 dyn 2 copy 1 2 3 5 eq 1 size 3
+5 foreach 0 1
+5 foreach 1 2
+15 arr 11 20 grid 1 f st 30 5 ren 20 el 66 7
+15 sk 11 20 a0 11 20 dyn 20 copy 11 20 30 5 eq 1 size 3
+15 foreach 0 11
+15 foreach 1 20
+25 arr 44 6 grid 1 f st 30 9 ren 6 el 66 7
+25 sk 5 6 a0 44 6 dyn 6 copy 44 6 30 9 eq 1 size 3
+25 foreach 0 44
+25 foreach 1 6
+35 arr 44 6 grid 1 f st 30 9 ren 6 el 66 7
+35 sk 44 6 a0 44 6 dyn 44 copy 44 6 30 9 eq 1 size 3
+35 foreach 0 44
+35 foreach 1 6

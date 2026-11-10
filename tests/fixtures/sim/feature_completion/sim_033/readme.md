@@ -100,6 +100,36 @@ event (negedge) next occurs at 3; `inner` waits `##3` until 10 and reads the
 (L-F12-04-01: 1.25), `cross_clock_cycle_witness` (L-F06-07-02, L-F12-04-05:
 `##1` on the default clock, then a drive of another block's output, 7).
 
+### Unpacked inputs (K1)
+
+An unpacked fixed-size clockvar (fixed array, unpacked structure or union,
+any nesting of them with integral leaves) samples its whole value into one
+packed cell, its declaration-order image; element, member and slice reads
+select from that cell. Expected outputs are industry-standard behaviour's
+output for the same source, checked against the timelines below by hand.
+
+- `unpacked_inputs`: `arr` is `{1, 2}`, `grid[j][k] = 3j + k`, `st = {3, 5}`,
+  `recs[1] = {6, 7}` at 0; at 7 `arr[1] = 20`, `st.a = 30`, `grid[1][2] = f`,
+  `recs[1].a = 66`; `arr[0] = 11` at 12; `arr = {5, 6}`, `st.b = 9` at 20;
+  `arr[0] = 44` at 24; `i = 0` at 26. Posedges at 5, 15, 25, 35. The #1step
+  inputs read the end of the previous step (14.13 L19909-19911), so at 15
+  `arr` is `{11, 20}` and at 25 `{44, 6}`; `#2 sk` reads step 23 at 25
+  (`{5, 6}`) and step 33 at 35 (`{44, 6}`); `#0 a0` reads the Observed region
+  of the event's own step (L19911-19912). `cb.arr[i]` follows `i`; the
+  whole-value copy, the structure comparison with its source, `foreach` and
+  `$size` read the sample.
+- `unpacked_union_input`: `un.i = 5` at 0, `un.u = ff` at 7, `un.i = -1` at
+  17; each read names the member last written (§7.3 L7799: "Only one of the
+  data types in the union can be used at a time"): posedge 5 reads `i` 5, 15
+  reads `u` ff, 25 reads `i` -1. Derived by hand: the tool tried does not
+  support unpacked unions.
+- `record_inputs`: a record with a member array of 16 cells (one column) and
+  of 3 cells (one leaf per cell) prints the same; `#2 rk` at 15 reads step 13,
+  after `r.m[N-1] = 88`.
+- `vif_unpacked_inputs`: elements, a multidimensional element, a `#0`
+  expression-bound input and a whole-array copy through a virtual interface
+  follow the handle, rebound from `b1` to `b2` at 17.
+
 ## Negatives
 
 Language rules, rejected in both optimizer modes:
@@ -121,11 +151,17 @@ Language rules, rejected in both optimizer modes:
 - `neg_chandle_input`: ports cannot have the chandle type (§6.14), so a
   chandle cannot be a clocking input (§14.5).
 
-Legal forms that remain unsupported and are rejected with an explicit
-diagnostic instead of a wrong sample: `neg_unpacked_input` and
-`neg_string_input` (non-packed, non-real sample types) and
-`neg_input_edge_skew` (an edge input skew, whose sample point §14.3 leaves
-undefined).
+Forms rejected with a located diagnostic instead of a wrong sample (K1):
+
+- `neg_string_input`, `neg_class_input`, `neg_event_input`, `neg_queue_input`:
+  string, class handle, event, queue, dynamic and associative array clockvars
+  (decision K1-D1: the text does not exclude them, industry-standard
+  behaviour rejects them).
+- `neg_real_array_input`: an unpacked clockvar with a real element or member
+  has no packed sample image; industry-standard behaviour serves it, llg does
+  not yet ([known issue](../../../../../docs/known_issues.md#clocking-input-forms-outside-the-sampled-storage-model)).
+- `neg_input_edge_skew`: an edge input skew, not yet served; it is not
+  silently sampled as `#1step`.
 
 `neg_vif_clocking_event`: `@(vp.cb)` through a virtual interface handle is
 rejected explicitly (the clocking block has no per-instance event object in
