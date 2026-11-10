@@ -76,7 +76,15 @@ impl<'a> Codegen<'a> {
             }
         }
         let lh = self.analyze_lhs(path, lhs)?;
-        self.lhs_to_ir(lh)
+        let lh = self.lhs_to_ir(lh)?;
+        // A select of a clockvar whose signal is a wired net names the net;
+        // the drive belongs in the clockvar's own driver slot (SV 14.16).
+        if let [target] = clocking_targets.as_slice() {
+            if self.clocking_net_driver_info(*target).is_some() {
+                return Ok(self.clocking_net_drive_lhs(*target, lh));
+            }
+        }
+        Ok(lh)
     }
 
     pub(in super::super) fn lower_packed_aggregate_pattern(

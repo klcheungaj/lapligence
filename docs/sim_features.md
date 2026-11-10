@@ -2538,10 +2538,13 @@ These are bounded implementations, not full verification-infrastructure support.
   Admitted signal-edge qualifiers and selected targets (element selects, then
   a part-select) are present. An output or inout bound to an expression over
   wired nets (selects, concatenations with variables, bits that port
-  connections merge) drives only the bits the expression names, through a
-  clocking driver of its own on each net; a concatenation drives each part.
-  A select of an expression-bound clockvar through a virtual interface
-  rejects explicitly. String, class handle, event, unpacked or
+  connections merge, `wand` and `tri0` nets) drives only the bits the
+  expression names, through a clocking driver of its own on each net; a
+  concatenation drives each part. Selects of a clockvar bound to an expression,
+  directly or through a virtual interface, drive those bits of the expression;
+  a clockvar bound to a part-select keeps its range (decision K2-D1). A
+  runtime select of a clockvar bound to a concatenation rejects explicitly.
+  String, class handle, event, unpacked or
   tagged union, queue, dynamic and associative array inputs (and unpacked
   inputs with such a member) reject (decision K1-D1); unpacked inputs with a
   real leaf, `edge` skews and edge skews with a delay or under an event list

@@ -2163,9 +2163,10 @@ clocking block's own net driver, or the lvalue a clocking expression names,
 with each wired net in it retargeted to the clockvar's own driver on that net.
 One legal form rejects explicitly:
 
-- a select of an expression-bound clockvar through a virtual interface
-  (`v.cb.x[1] <= ...` when `x` is declared `output x = s[3:0]`): the
-  per-instance arm has no unselected root to apply the select to.
+- a runtime select of a clockvar bound to a concatenation (`cb.y[i] <= ...`
+  when `y` is declared `output y = {a, b}`): the select would have to pick
+  the concatenation part at run time ("a runtime select of clockvar `y`,
+  which is bound to a concatenation, is not supported").
 
 A drive through a virtual interface dispatches on the bound instance with a
 `case` over the descriptor's instances, so each drive site carries one drive
@@ -2174,7 +2175,7 @@ per instance of that interface type: code size grows with the instance count
 record each until they mature.
 
 Reproduce with
-[`neg_vif_expression_select_drive.sv`](../tests/fixtures/sim/feature_completion/sim_034/neg_vif_expression_select_drive.sv).
+[`neg_concat_runtime_select.sv`](../tests/fixtures/sim/feature_completion/sim_034/neg_concat_runtime_select.sv).
 
 ## Sampled-value arguments without sampled storage
 

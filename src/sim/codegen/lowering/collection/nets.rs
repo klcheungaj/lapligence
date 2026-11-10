@@ -2853,6 +2853,12 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// `lhs`, a drive target of a clockvar whose signal is a wired net, in
+    /// the clockvar's own driver slot on that net.
+    pub(in super::super) fn clocking_net_drive_lhs(&self, clockvar: NodeId, lhs: IrLhs) -> IrLhs {
+        self.remap_structural_lhs(lhs, clockvar)
+    }
+
     /// The drive target of a clockvar bound to an expression: `lhs`, the
     /// lowered lvalue the expression names, with each wired net in it
     /// retargeted to the clockvar's own driver slot on that net. The slot

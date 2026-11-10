@@ -51,6 +51,14 @@ fn k1_d2_edge_skew_sample_at_edge() {
 }
 
 #[test]
+fn k2_d1_clockvar_select_keeps_bound_range() {
+    run_decision(
+        "K2-D1_clockvar_select_keeps_bound_range",
+        include_str!("fixtures/sim/lrm_decisions/K2-D1_clockvar_select_keeps_bound_range.out"),
+    );
+}
+
+#[test]
 fn s30_d16_rand_mode_handle_variable() {
     run_decision(
         "S30-D16_rand_mode_handle_variable",

@@ -2,6 +2,7 @@
 
 use super::collection::Select;
 use super::*;
+use crate::sim::ir::IrPackedSelect;
 
 /// The clockvar types llg rejects although the text permits them (K1-D1).
 const UNSERVED_CLOCKVAR_TYPES: &str = "string, class handle, event, unpacked or tagged union, \
@@ -29,6 +30,33 @@ fn contains_unserved_union(descriptor: &TypeDescriptor) -> bool {
         }
         _ => false,
     }
+}
+
+/// The value of a select base that lowering folded to a known constant.
+fn constant_select_base(base: &IrExpr) -> Option<i128> {
+    let IrExprKind::Const(constant) = &base.kind else {
+        return None;
+    };
+    let width = constant.width();
+    if base.fill.is_some()
+        || constant.fill().is_some()
+        || width == 0
+        || width > 64
+        || constant
+            .x_mask()
+            .iter()
+            .chain(constant.z_mask())
+            .any(|word| *word != 0)
+    {
+        return None;
+    }
+    let bits = constant.bits().first().copied().unwrap_or(0);
+    let shift = 64 - width;
+    Some(if constant.signed() {
+        i128::from(((bits << shift) as i64) >> shift)
+    } else {
+        i128::from((bits << shift) >> shift)
+    })
 }
 
 impl<'a> Codegen<'a> {
@@ -89,9 +117,167 @@ impl<'a> Codegen<'a> {
         self.clocking_expression_drive_lhs(clockvar, expression, lhs)
     }
 
-    /// The drive target of a direct synchronous drive of a whole clockvar
-    /// bound to an expression; `None` for every other target, which
-    /// `analyze_lhs` lowers.
+    /// Apply a clockvar select's packed `steps` (relative to the clockvar's
+    /// value) to the drive `root` of that clockvar. A clockvar bound to a
+    /// select keeps the selected range of its signal (`output x = s[5:2]`
+    /// has range `[5:2]`), so its steps continue the root's own selection
+    /// and the drive writes only those bits of the signal (K2-D1); an
+    /// unpacked element root selects within the element. A concatenation
+    /// root takes constant selects of its parts. Any other root (a reversed
+    /// or indexed part-select) rejects at `location`.
+    pub(super) fn clocking_select_lhs(
+        &self,
+        root: IrLhs,
+        steps: Vec<IrPackedSelect>,
+        two_state: bool,
+        clockvar: NodeId,
+        location: &str,
+    ) -> Result<IrLhs, String> {
+        let unsupported = || {
+            crate::sim::codegen::error::located(
+                location,
+                format!(
+                    "a select of clockvar `{}` is not supported for the expression it is bound to",
+                    self.node(clockvar).name
+                ),
+            )
+        };
+        let (target, mut chain, root_two_state) = match root {
+            IrLhs::PackedSelect {
+                target,
+                steps: prefix,
+                two_state,
+                ..
+            } => (target, prefix, two_state),
+            IrLhs::Part(signal, left, right, two_state) if left >= right => (
+                Box::new(IrLhs::Whole(signal)),
+                vec![IrPackedSelect {
+                    base: lhs_integer_expr(i128::from(right)),
+                    width: u32::try_from(left - right + 1)
+                        .map_err(|_| format!("clockvar select at {location} is too wide"))?,
+                }],
+                two_state,
+            ),
+            IrLhs::Bit(signal, index, two_state) => (
+                Box::new(IrLhs::Whole(signal)),
+                vec![IrPackedSelect {
+                    base: *index,
+                    width: 1,
+                }],
+                two_state,
+            ),
+            root @ IrLhs::Whole(_) => (Box::new(root), Vec::new(), false),
+            IrLhs::ArrayElem {
+                arr,
+                indices,
+                elem_sel,
+            } => {
+                let mut chain = match elem_sel {
+                    IrElemSel::Whole => Vec::new(),
+                    IrElemSel::PackedChain(prefix) => prefix,
+                    IrElemSel::Part(left, right) if left >= right => vec![IrPackedSelect {
+                        base: lhs_integer_expr(i128::from(right)),
+                        width: u32::try_from(left - right + 1)
+                            .map_err(|_| format!("clockvar select at {location} is too wide"))?,
+                    }],
+                    _ => return Err(unsupported()),
+                };
+                chain.extend(steps);
+                return Ok(IrLhs::ArrayElem {
+                    arr,
+                    indices,
+                    elem_sel: IrElemSel::PackedChain(chain),
+                });
+            }
+            IrLhs::Stream {
+                parts,
+                width,
+                slice,
+                direction: IrStreamDirection::LeftToRight,
+            } => {
+                return self.clocking_concatenation_select(
+                    parts, width, slice, &steps, two_state, clockvar, location,
+                )
+            }
+            _ => return Err(unsupported()),
+        };
+        chain.extend(steps);
+        Ok(IrLhs::PackedSelect {
+            target,
+            steps: chain,
+            signed: false,
+            two_state: two_state || root_two_state,
+        })
+    }
+
+    /// The parts of a concatenation drive root (MSB first) that a
+    /// clockvar select's constant `steps` cover, each part selected to its
+    /// covered bits. A runtime or out-of-range select rejects at `location`.
+    #[allow(clippy::too_many_arguments)]
+    fn clocking_concatenation_select(
+        &self,
+        parts: Vec<(IrLhs, u32)>,
+        width: u32,
+        slice: u32,
+        steps: &[IrPackedSelect],
+        two_state: bool,
+        clockvar: NodeId,
+        location: &str,
+    ) -> Result<IrLhs, String> {
+        let unsupported = |what: &str| {
+            crate::sim::codegen::error::located(
+                location,
+                format!(
+                    "a {what} select of clockvar `{}`, which is bound to a concatenation, is not \
+                     supported",
+                    self.node(clockvar).name
+                ),
+            )
+        };
+        let mut low = 0i128;
+        let mut selected = width;
+        for step in steps {
+            low += constant_select_base(&step.base).ok_or_else(|| unsupported("runtime"))?;
+            selected = step.width;
+        }
+        let high = low + i128::from(selected);
+        if low < 0 || high > i128::from(width) {
+            return Err(unsupported("partly or wholly out-of-range"));
+        }
+        let mut covered = Vec::new();
+        let mut part_high = i128::from(width);
+        for (part, part_width) in parts {
+            let part_low = part_high - i128::from(part_width);
+            let (from, to) = (low.max(part_low), high.min(part_high));
+            if from < to {
+                let span = u32::try_from(to - from).map_err(|_| unsupported("wide"))?;
+                let part = if span == part_width {
+                    part
+                } else {
+                    let step = IrPackedSelect {
+                        base: lhs_integer_expr(from - part_low),
+                        width: span,
+                    };
+                    self.clocking_select_lhs(part, vec![step], two_state, clockvar, location)?
+                };
+                covered.push((part, span));
+            }
+            part_high = part_low;
+        }
+        if covered.len() == 1 {
+            return Ok(covered.remove(0).0);
+        }
+        Ok(IrLhs::Stream {
+            parts: covered,
+            width: selected,
+            slice,
+            direction: IrStreamDirection::LeftToRight,
+        })
+    }
+
+    /// The drive target of a direct synchronous drive whose clockvar is
+    /// bound to an expression, with any selects of the clockvar applied;
+    /// `None` for every other target, which `analyze_lhs` lowers.
     pub(super) fn clocking_expression_target_lhs(
         &mut self,
         path: &str,
@@ -134,10 +320,33 @@ impl<'a> Codegen<'a> {
         {
             return Ok(None);
         }
-        if !selects.is_empty() {
-            return Ok(None);
+        let drive_root = self.clocking_drive_root(path, clockvar)?;
+        if selects.is_empty() {
+            return Ok(Some(drive_root));
         }
-        self.clocking_drive_root(path, clockvar).map(Some)
+        selects.reverse();
+        let descriptor = self.query_descriptor(clockvar);
+        let width = descriptor
+            .as_ref()
+            .and_then(|descriptor| descriptor.info.width)
+            .ok_or_else(|| {
+                format!(
+                    "clockvar `{}` in `{path}` has no packed width",
+                    self.node(clockvar).name
+                )
+            })?;
+        let two_state = descriptor
+            .as_ref()
+            .is_some_and(|descriptor| descriptor.two_state);
+        let dimensions = self
+            .db
+            .packed_dimensions(clockvar)
+            .map(<[_]>::to_vec)
+            .unwrap_or_default();
+        let steps = self.packed_selection_steps_over(path, &dimensions, selects, width)?;
+        let location = self.source_location(lhs);
+        self.clocking_select_lhs(drive_root, steps, two_state, clockvar, &location)
+            .map(Some)
     }
 
     pub(super) fn clocking_var_read_source_info(

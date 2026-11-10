@@ -185,13 +185,41 @@ L20069-20074 above), and on a variable the variable's bits.
 - 14.5, L19581-19583: hierarchical expressions "can be used to declare slices
   and concatenations (or combinations thereof) of signals in other scopes or
   in the current scope."
+- The text gives such a clockvar no declared range; a clockvar bound to a
+  part-select keeps the selected range (decision K2-D1).
 
 - `net_expression_drive`: `output x = w[3:0]` on a wire whose other driver
   `drv` starts all `z`. The drive at the edge at 15 sets the low nibble:
   `w=za` at 16. `drv = 5F` conflicts on the low nibble (`1010` against
   `1111` at strong strength): `w=5X`; `drv = 5z` leaves `w=5a`.
-- `net_expression_merged_mix`: `y = {w[3:2], v}`, bits a port connection
-  merges with the parent net (A21-D5) and a variable: `w=zzzz11zz v=11` at 16.
+- `net_expression_concat`: `y = {w[7:6], w[1:0]}`, `m = {w2, v}` (a wire and
+  a variable), `inout z = w3[3:0]` and `output #2 k = w[3:2]`. At 16 `y` and
+  `m` have landed and `k` waits for 17. At 17 `hi` drives `w[7:4]` (`0110`
+  against `10` on `w[7:6]`: `xx10`) and `d3 = 31` conflicts with `z`. At 26
+  `cb.z` samples `0xxx`. The drives `y[2]` (`w[6]`), `m[5:2]` (`w2[1:0]` and
+  `v[3:2]`) and `z[3]` land at 35: `w=x1101101 w2=1001 v=1001
+  w3=0011xxxx`.
+- `net_expression_ports`: `c1` and `c2` drive `w[3:0]` and `u[3:0]`, which
+  their ports merge with the parent nets (A21-D5). `x = w[5:2]`, `g = {w[7:6],
+  u[3:2]}` (two merged nets), `a = wa[2:1]` on a `wand` net and `t = t0[1:0]`
+  on a `tri0` net. At 16 `w=101010zz u=zzzz01zz`, `wa=1011` (`1111 & z01z`)
+  and `t0=0001` (the `z` bit pulls to 0). At 17 `d = 0000` conflicts with `x`
+  on `w[3:2]` and `e = 1111` with `g` on `u[3]`. At 26 `g[2:1] <= 10` drives
+  `w[6]` and `u[3]`: `w=1110x000 u=zzzzx111`.
+- `net_expression_merged_mix`: `y = {w[3:2], v}`, merged bits and a variable:
+  `w=zzzz11zz v=11` at 16.
+- `expression_selects`: `x = s[5:2]` has range `[5:2]`, so `x[3]` is `s[3]`
+  and `x[5:4]` is `s[5:4]`; `e = mem[1]` selects within the element; `cb.n[1:0]`
+  and `cb.n[3]` of a whole wire `n` (other driver `o = 00zz`) go to the
+  clocking driver: `n=0010`, then `x010` (bit 3: `0` against `1`), then
+  `1z10` once `o` is all `z`.
+- `vif_expression_select_drive`: `x = s[3:0]` through `v`; `x[1]` lands at 15
+  (`s=00000010` at 16) and `x[3:2]` at 25 (`00001110` at 30).
+- `vif_expression_selects`: through handles to a wire interface (`x = w[5:2]`,
+  other driver `drv`) and a variable interface (`x = s[5:2]`): `x[3:2]` is
+  `w[3:2]`, `x[4]` is `s[4]` (`w=zzzz10zz s=00010000` at 16); a whole drive and
+  `x[2]` at 25; `drv = f0` at 26 conflicts on `w[5]` and `w[2]`; `x[5] <= z`
+  releases `w[5]` to `drv`, `x[5:4] <= 10` (`w=11110x00 s=00100100` at 36).
 
 ## Negatives
 
@@ -205,7 +233,7 @@ L20069-20074 above), and on a variable the variable's bits.
 | `neg_vif_input_drive` | 14.16 L20050 (outputs and inouts drive) | cannot write to input clocking signal |
 | `neg_vif_compound_drive` | 14.16 L20159-20161 | can only be written via a synchronous drive |
 | `neg_vif_concat_drive` | 14.16 L20091-20092 | cannot be part of a concatenation |
-| `neg_vif_expression_select_drive` | 14.16 L20087-20092 (legal; not supported) | a select of clockvar `x`, which is bound to an expression, is not supported through a virtual interface |
+| `neg_concat_runtime_select` | 14.16 L20091-20092 (legal; not supported) | a runtime select of clockvar `y`, which is bound to a concatenation, is not supported |
 
 The SIM-033 negatives `neg_compound_drive`, `neg_concat_drive`,
 `neg_cycle_no_default` and `neg_dynamic_skew` cover the same rules on

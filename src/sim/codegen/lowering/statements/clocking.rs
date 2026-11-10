@@ -333,31 +333,18 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         let mut rhs_ir = None;
         let mut items = Vec::with_capacity(target.instances.len());
         for (instance, clockvar) in target.instances.iter().copied().enumerate() {
-            if steps.is_some()
-                && self
-                    .cg
-                    .db
-                    .clocking_var(clockvar)
-                    .is_some_and(|var| var.source.is_none())
-            {
-                return Err(crate::sim::codegen::error::located(
-                    &self.cg.source_location(lhs),
-                    format!(
-                        "a select of clockvar `{}`, which is bound to an expression, is not \
-                         supported through a virtual interface in `{}`",
-                        self.cg.node(clockvar).name,
-                        self.path
-                    ),
-                ));
-            }
             let root = self.cg.clocking_drive_root(&self.path, clockvar)?;
             let lh = match &steps {
-                Some(steps) => IrLhs::PackedSelect {
-                    target: Box::new(root),
-                    steps: steps.clone(),
-                    signed: false,
-                    two_state: target.two_state,
-                },
+                Some(steps) => {
+                    let location = self.cg.source_location(lhs);
+                    self.cg.clocking_select_lhs(
+                        root,
+                        steps.clone(),
+                        target.two_state,
+                        clockvar,
+                        &location,
+                    )?
+                }
                 None => root,
             };
             let value = match &rhs_ir {

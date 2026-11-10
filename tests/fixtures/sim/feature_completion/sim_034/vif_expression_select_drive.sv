@@ -1,5 +1,7 @@
+`timescale 1ns/1ns
 // SV 1800-2009 14.16: a select of a clockvar bound to an expression, driven
-// through a virtual interface.
+// through a virtual interface, drives the selected bits of the expression at
+// the next clocking event and leaves the other bits (FIN-001 K2).
 interface ifc (input bit clk);
   logic [7:0] s;
   clocking cb @(posedge clk);

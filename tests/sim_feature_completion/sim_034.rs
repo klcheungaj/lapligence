@@ -148,14 +148,29 @@ fn neg_vif_concat_drive() {
     );
 }
 
-// FIN-001 K2: drives of clockvars bound to expressions over wired nets.
-// Expected outputs are industry-standard behaviour (see the readme).
+// FIN-001 K2: drives of clockvars bound to expressions over wired nets and
+// selects of expression-bound clockvars. Expected outputs are industry-standard
+// behaviour (see the readme).
 
 #[test]
 fn clocking_driver_covers_the_selected_bits_of_a_wire() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_034/net_expression_drive.out");
     sim_cli::run_case_backend_parity(SUITE, "net_expression_drive", expected, &[], &[]);
+}
+
+#[test]
+fn clockvars_bound_to_concatenations_drive_each_part() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_034/net_expression_concat.out");
+    sim_cli::run_case_backend_parity(SUITE, "net_expression_concat", expected, &[], &[]);
+}
+
+#[test]
+fn clocking_drivers_on_port_merged_wand_and_tri0_bits() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_034/net_expression_ports.out");
+    sim_cli::run_case_backend_parity(SUITE, "net_expression_ports", expected, &[], &[]);
 }
 
 #[test]
@@ -166,11 +181,32 @@ fn clockvar_bound_to_merged_bits_and_a_variable() {
 }
 
 #[test]
-fn neg_vif_expression_select_drive() {
+fn selects_of_expression_bound_and_net_clockvars() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_034/expression_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "expression_selects", expected, &[], &[]);
+}
+
+#[test]
+fn vif_select_of_an_expression_bound_clockvar() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_034/vif_expression_select_drive.out");
+    sim_cli::run_case_backend_parity(SUITE, "vif_expression_select_drive", expected, &[], &[]);
+}
+
+#[test]
+fn vif_selects_of_clockvars_bound_to_wire_and_variable_selects() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_034/vif_expression_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "vif_expression_selects", expected, &[], &[]);
+}
+
+#[test]
+fn neg_concat_runtime_select() {
     sim_cli::reject_case(
         SUITE,
-        "neg_vif_expression_select_drive",
-        "neg_vif_expression_select_drive.sv:16:8 a select of clockvar `x`, which is bound to an \
-         expression, is not supported through a virtual interface in `tb`",
+        "neg_concat_runtime_select",
+        "neg_concat_runtime_select.sv:13:8 a runtime select of clockvar `y`, which is bound to \
+         a concatenation, is not supported",
     );
 }
