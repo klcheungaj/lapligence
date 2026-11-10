@@ -305,8 +305,9 @@ fn warnings(stderr: &str, text: &str) -> usize {
         .count()
 }
 
-/// A write at the size of a nested queue appends; one further is ignored
-/// with the warning a queue variable gives, with and without index checks.
+/// A whole write at the size of a nested queue appends, for every element
+/// kind; one further is ignored (a packed element with the warning a queue
+/// variable gives), with and without index checks.
 #[test]
 fn a_nested_queue_write_at_its_size_appends() {
     let expected =
@@ -324,6 +325,11 @@ fn a_nested_queue_write_at_its_size_appends() {
                 assert_eq!(
                     warnings(&stderr, "invalid queue write index"),
                     2,
+                    "{label}: {stderr}"
+                );
+                assert_eq!(
+                    warnings(&stderr, "bounded queue write discarded new element"),
+                    1,
                     "{label}: {stderr}"
                 );
             },

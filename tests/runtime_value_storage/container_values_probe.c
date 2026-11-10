@@ -446,6 +446,32 @@ static void check_nested_sequences(void) {
     CHECK(stored && stored->value.string.len == 2);
     CHECK(llg_nested_seq_value_at(&texts, one) == NULL);
 
+    /* Whole writes at a queue's size append, for value elements one level
+     * down and for a nested queue at the outer queue's own size; a write
+     * further out stores nothing. */
+    llg_queue_value_array_t lines;
+    llg_queue_value_init(&lines, &text_queue_desc, UINT64_MAX);
+    path[0] = zero;
+    path[1] = zero;
+    CHECK(!llg_queue_value_set_nested_string(&lines, path, 2, llg_string_bytes("x", 1)));
+    llg_dyn_value_array_t no_words;
+    llg_dyn_value_init(&no_words, &text_desc);
+    CHECK(llg_queue_value_set_nested_container(&lines, &zero, 1, &no_words));
+    CHECK(llg_queue_value_size(&lines) == 1);
+    CHECK(!llg_queue_value_set_nested_container(&lines, &two, 1, &no_words));
+    CHECK(llg_queue_value_size(&lines) == 1);
+    CHECK(llg_queue_value_set_nested_string(&lines, path, 2, llg_string_bytes("x", 1)));
+    path[1] = one;
+    CHECK(llg_queue_value_set_nested_string(&lines, path, 2, llg_string_bytes("yz", 2)));
+    path[1] = three;
+    CHECK(!llg_queue_value_set_nested_string(&lines, path, 2, llg_string_bytes("w", 1)));
+    stored = llg_queue_value_element(&lines, &zero, 1);
+    CHECK(stored && llg_value_container_size(stored) == 2);
+    stored = llg_nested_seq_value_at(stored, one);
+    CHECK(stored && stored->value.string.len == 2);
+    llg_dyn_value_destroy(&no_words);
+    llg_queue_value_destroy(&lines);
+
     llg_native_value_destroy(&word);
     llg_native_value_destroy(&texts);
     llg_native_value_destroy(&dynamic);

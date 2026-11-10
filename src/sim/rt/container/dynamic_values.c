@@ -15,6 +15,19 @@ static llg_value_t* llg_dyn_value_nested_at(
     return value;
 }
 
+/* The element a whole write through `count` indices stores into: below the
+ * array's own level a nested queue takes a write at its size as an append
+ * (llg_nested_seq_write_at). */
+static llg_value_t* llg_dyn_value_nested_target(
+    const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count,
+    int* change) {
+    if (!indices || count < 2)
+        return llg_dyn_value_nested_at(array, indices, count);
+    return llg_nested_seq_write_at(
+        llg_dyn_value_nested_at(array, indices, count - 1), indices[count - 1],
+        change);
+}
+
 /* The slot holding the packed sequence that the last of `count` indices
  * selects in, or NULL when the path ends elsewhere. */
 static llg_value_t* llg_dyn_value_packed_owner(
@@ -492,20 +505,26 @@ int llg_dyn_value_set_nested(llg_dyn_value_array_t* array,
 int llg_dyn_value_set_nested_real(llg_dyn_value_array_t* array,
                                   const sv4_t* indices, size_t count,
                                   double value) {
-    llg_value_t* target = llg_dyn_value_nested_at(array, indices, count);
+    int change = 0;
+    llg_value_t* target =
+        llg_dyn_value_nested_target(array, indices, count, &change);
     if (!target || target->desc->kind != LLG_VALUE_REAL) return 0;
     value = llg_value_real_convert(target->desc, value);
-    if (llg_value_real_same(target->value.real, value)) return 1;
-    target->value.real = value;
+    if (!llg_value_real_same(target->value.real, value)) {
+        target->value.real = value;
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
+    }
     llg_notify(array->notify, array->contents_dependency,
-               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+               array->shape_dependency, change);
     return 1;
 }
 
 int llg_dyn_value_set_nested_string(llg_dyn_value_array_t* array,
                                     const sv4_t* indices, size_t count,
                                     llg_string_t value) {
-    llg_value_t* target = llg_dyn_value_nested_at(array, indices, count);
+    int change = 0;
+    llg_value_t* target =
+        llg_dyn_value_nested_target(array, indices, count, &change);
     if (!target || target->desc->kind != LLG_VALUE_STRING) {
         llg_string_destroy(&value);
         return 0;
@@ -516,23 +535,27 @@ int llg_dyn_value_set_nested_string(llg_dyn_value_array_t* array,
     if (changed) {
         llg_string_destroy(&target->value.string);
         target->value.string = value;
-        llg_notify(array->notify, array->contents_dependency,
-                   array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
     } else {
         llg_string_destroy(&value);
     }
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency, change);
     return 1;
 }
 
 int llg_dyn_value_set_nested_chandle(llg_dyn_value_array_t* array,
                                      const sv4_t* indices, size_t count,
                                      void* value) {
-    llg_value_t* target = llg_dyn_value_nested_at(array, indices, count);
+    int change = 0;
+    llg_value_t* target =
+        llg_dyn_value_nested_target(array, indices, count, &change);
     if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
-    if (!llg_value_store_handle(target, value)) return 1;
+    if (llg_value_store_handle(target, value))
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
     llg_notify(array->notify, array->contents_dependency,
-               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+               array->shape_dependency, change);
     return 1;
 }
 
@@ -563,30 +586,35 @@ static void llg_dyn_value_replace_from_packed(
 int llg_dyn_value_set_nested_container(
     llg_dyn_value_array_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_value_array_t* source) {
-    llg_value_t* target = llg_dyn_value_nested_at(array, indices, count);
-    if (!target || target->desc->kind != LLG_VALUE_CONTAINER || !source ||
-        !llg_value_desc_compatible(target->desc->element, source->element))
+    const llg_value_desc_t* desc = llg_dyn_value_nested_desc(array->element, count);
+    if (!desc || desc->kind != LLG_VALUE_CONTAINER || !source ||
+        !llg_value_desc_compatible(desc->element, source->element))
         return 0;
-    int changed =
-        llg_nested_seq_store(target, llg_seq_view_of_dyn_value(source));
+    int change = 0;
+    llg_value_t* target =
+        llg_dyn_value_nested_target(array, indices, count, &change);
+    if (target && llg_nested_seq_store(target, llg_seq_view_of_dyn_value(source)))
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
     llg_notify(array->notify, array->contents_dependency,
-               array->shape_dependency,
-               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
-    return 1;
+               array->shape_dependency, change);
+    return target != NULL;
 }
 
 int llg_dyn_value_set_nested_container_from_packed(
     llg_dyn_value_array_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_array_t* source) {
-    llg_value_t* target = llg_dyn_value_nested_at(array, indices, count);
-    if (!target || target->desc->kind != LLG_VALUE_CONTAINER || !source ||
-        !target->desc->element ||
-        (target->desc->element->kind != LLG_VALUE_PACKED &&
-         target->desc->element->kind != LLG_VALUE_REAL))
+    const llg_value_desc_t* desc = llg_dyn_value_nested_desc(array->element, count);
+    if (!desc || desc->kind != LLG_VALUE_CONTAINER || !source ||
+        !desc->element ||
+        (desc->element->kind != LLG_VALUE_PACKED &&
+         desc->element->kind != LLG_VALUE_REAL))
         return 0;
-    int changed = llg_nested_seq_store(target, llg_seq_view_of_dyn(source));
+    int change = 0;
+    llg_value_t* target =
+        llg_dyn_value_nested_target(array, indices, count, &change);
+    if (target && llg_nested_seq_store(target, llg_seq_view_of_dyn(source)))
+        change |= LLG_CONTAINER_CHANGED_CONTENTS;
     llg_notify(array->notify, array->contents_dependency,
-               array->shape_dependency,
-               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
-    return 1;
+               array->shape_dependency, change);
+    return target != NULL;
 }

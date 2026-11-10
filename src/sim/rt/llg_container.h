@@ -1286,6 +1286,11 @@ void llg_nested_seq_unpin(void* pin);
  * at its size as an append (SV 7.10.1); it returns 0 without writing for
  * any other invalid index and adds what the owner must publish to `*change`. */
 llg_value_t* llg_nested_seq_value_at(const llg_value_t* owner, sv4_t index);
+/* The element a whole write at `index` stores into: as `value_at`, and at
+ * the size of a queue a new element holding its initial value (a bounded
+ * queue at its bound takes none and warns). */
+llg_value_t* llg_nested_seq_write_at(llg_value_t* owner, sv4_t index,
+                                     int* change);
 int llg_nested_seq_holds_packed(const llg_value_t* owner);
 sv4_t llg_nested_seq_get_packed(const llg_value_t* owner, sv4_t index);
 int llg_nested_seq_set_packed(llg_value_t* owner, sv4_t index, sv4_t value,

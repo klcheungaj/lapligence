@@ -83,6 +83,36 @@ llg_value_t* llg_assoc_value_element_string(llg_assoc_value_t* array,
     return found ? &array->entries[position].value : NULL;
 }
 
+llg_value_t* llg_nested_seq_write_at(llg_value_t* owner, sv4_t index,
+                                     int* change) {
+    if (!owner || !owner->desc || owner->desc->kind != LLG_VALUE_CONTAINER ||
+        owner->desc->element->kind == LLG_VALUE_PACKED)
+        return NULL;
+    llg_nested_seq_t* seq = owner->value.container;
+    size_t size = llg_nested_seq_size(seq);
+    int queue = owner->desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
+    size_t native;
+    if (!llg_index(index, size, queue, &native)) return NULL;
+    if (native == size) {
+        /* An empty nested sequence has no storage of its own yet. */
+        if (!seq) seq = owner->value.container = llg_nested_seq_new(owner->desc);
+        llg_value_t initial = {0};
+        if (!llg_value_try_default_mode(&initial,
+                                        seq->array.queue_values.element, 1))
+            llg_container_fatal("container allocation failed");
+        /* The queue's own write appends; at its bound it warns instead. */
+        int appended = 0;
+        int written = llg_queue_value_set_source(&seq->array.queue_values,
+                                                 index, &initial, &appended);
+        llg_value_drop(&initial);
+        if (!written) return NULL;
+        *change |= LLG_CONTAINER_CHANGED_CONTENTS;
+    }
+    return seq->kind == LLG_NESTED_SEQ_QUEUE_VALUES
+        ? &seq->array.queue_values.data[native]
+        : &seq->array.dyn_values.data[native];
+}
+
 /* The inner levels of `llg_*_extend_nested`, below the outer element. Only
  * a queue level takes a position one past its end. */
 static int llg_value_extend_path(llg_value_t* value, const sv4_t* indices,
@@ -90,45 +120,30 @@ static int llg_value_extend_path(llg_value_t* value, const sv4_t* indices,
     for (size_t level = 0; level < count; ++level) {
         if (!value || !value->desc || value->desc->kind != LLG_VALUE_CONTAINER)
             return 0;
-        /* An empty nested sequence has no storage of its own yet. */
-        if (!value->value.container)
-            value->value.container = llg_nested_seq_new(value->desc);
-        llg_nested_seq_t* seq = value->value.container;
-        size_t size = llg_nested_seq_size(seq);
-        int queue = seq->kind == LLG_NESTED_SEQ_QUEUE ||
-                    seq->kind == LLG_NESTED_SEQ_QUEUE_VALUES;
-        size_t native;
-        if (!llg_index(indices[level], size, queue, &native)) return 0;
-        if (native == size) {
-            if (seq->kind == LLG_NESTED_SEQ_QUEUE) {
-                sv4_t initial = llg_element_default(
-                    seq->array.queue.element_width,
-                    seq->array.queue.element_signed,
-                    seq->array.queue.element_two_state);
-                llg_queue_push_back(&seq->array.queue, initial);
-                sv4_destroy(&initial);
-            } else {
-                llg_value_t initial = {0};
-                if (!llg_value_try_default_mode(
-                        &initial, seq->array.queue_values.element, 1))
-                    llg_container_fatal("container allocation failed");
-                int appended = 0;
-                llg_queue_value_append(&seq->array.queue_values, &initial,
-                                       &appended);
-                llg_value_drop(&initial);
-            }
-            /* A bounded queue at its bound takes no element. */
-            if (llg_nested_seq_size(seq) == size) return 0;
-            *change |= LLG_CONTAINER_CHANGED_CONTENTS;
+        if (!llg_nested_seq_holds_packed(value)) {
+            value = llg_nested_seq_write_at(value, indices[level], change);
+            continue;
         }
         /* Packed elements are the last level: nothing lies below one. */
-        if (seq->kind == LLG_NESTED_SEQ_DYN || seq->kind == LLG_NESTED_SEQ_QUEUE)
-            return level + 1 == count;
-        value = seq->kind == LLG_NESTED_SEQ_QUEUE_VALUES
-            ? &seq->array.queue_values.data[native]
-            : &seq->array.dyn_values.data[native];
+        if (level + 1 != count) return 0;
+        llg_nested_seq_t* seq = value->value.container;
+        size_t size = llg_nested_seq_size(seq);
+        int queue = value->desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
+        size_t native;
+        if (!llg_index(indices[level], size, queue, &native)) return 0;
+        if (native < size) return 1;
+        if (!seq) seq = value->value.container = llg_nested_seq_new(value->desc);
+        sv4_t initial = llg_element_default(seq->array.queue.element_width,
+                                            seq->array.queue.element_signed,
+                                            seq->array.queue.element_two_state);
+        llg_queue_push_back(&seq->array.queue, initial);
+        sv4_destroy(&initial);
+        /* A bounded queue at its bound takes no element. */
+        if (llg_nested_seq_size(seq) == size) return 0;
+        *change |= LLG_CONTAINER_CHANGED_CONTENTS;
+        return 1;
     }
-    return 1;
+    return value != NULL;
 }
 
 int llg_dyn_value_extend_nested(llg_dyn_value_array_t* array,
@@ -279,7 +294,8 @@ int llg_dyn_value_set_element(llg_dyn_value_array_t* array,
                               const llg_value_t* value) {
     int change = 0;
     int result = llg_value_element_store(
-        llg_dyn_value_nested_at(array, indices, count), value, &change);
+        llg_dyn_value_nested_target(array, indices, count, &change), value,
+        &change);
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, change);
     return result;
@@ -298,7 +314,8 @@ int llg_queue_value_set_element(llg_queue_value_array_t* queue,
         result = llg_queue_value_set_source(queue, indices[0], value, &change);
     } else {
         result = llg_value_element_store(
-            llg_queue_value_nested_at(queue, indices, count), value, &change);
+            llg_queue_value_nested_target(queue, indices, count, &change),
+            value, &change);
         if (result) llg_queue_value_invalidate_refs(queue);
     }
     llg_notify(queue->notify, queue->contents_dependency,
@@ -347,8 +364,9 @@ int llg_assoc_value_set_element_integral(llg_assoc_value_t* array,
         sv4_destroy(&normalized);
     } else {
         result = llg_value_element_store(
-            llg_assoc_value_nested_at_integral(array, indices, count), value,
-            &change);
+            llg_assoc_value_nested_target_integral(array, indices, count,
+                                                   &change),
+            value, &change);
     }
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, change);

@@ -97,8 +97,10 @@ both alike. A whole-element store replaces the allocation, so an alias bound
 before it keeps the old sequence. Index paths through nested levels
 (`*_get_nested`, `*_set_nested`, `*_element`, `*_extend_nested`) walk
 `llg_nested_seq_value_at`; packed elements have no `llg_value_t`, so their
-last level goes through `llg_nested_seq_get_packed` and `_set_packed`, where
-a queue takes a write at its size as an append (SV 7.10.1).
+last level goes through `llg_nested_seq_get_packed` and `_set_packed`. A
+whole write locates its element with `llg_nested_seq_write_at` (and the
+`*_nested_target` helpers of each container kind), so a queue at any level
+takes a write at its size as an append (SV 7.10.1).
 `llg_value_item_to_*`/`_from_*` convert between a slot and a standalone
 container only for whole-value moves: a native record's companion containers
 and the `llg_native_ref_mirror` of a record `ref` formal.
