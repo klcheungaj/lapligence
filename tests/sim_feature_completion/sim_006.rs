@@ -305,6 +305,32 @@ fn warnings(stderr: &str, text: &str) -> usize {
         .count()
 }
 
+/// A write at the size of a nested queue appends; one further is ignored
+/// with the warning a queue variable gives, with and without index checks.
+#[test]
+fn a_nested_queue_write_at_its_size_appends() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_queue_write_at_size.out");
+    for args in [&[][..], &["--no-index-checks"][..]] {
+        sim_cli::run_case_checked_matrix(
+            SUITE,
+            "nested_queue_write_at_size",
+            args,
+            &|label, output| {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert_eq!(output.status.code(), Some(0), "{label}: {stderr}");
+                assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+                // One for the nested queue, one for the variable.
+                assert_eq!(
+                    warnings(&stderr, "invalid queue write index"),
+                    2,
+                    "{label}: {stderr}"
+                );
+            },
+        );
+    }
+}
+
 #[test]
 fn a_nested_queue_in_a_postponed_report_is_explicit() {
     sim_cli::reject_case(
