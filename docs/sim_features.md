@@ -2519,7 +2519,10 @@ These are bounded implementations, not full verification-infrastructure support.
   expressions of packed, real or shortreal type, or of unpacked fixed-size
   type (fixed arrays, unpacked structures and unions with integral leaves, in
   both record storage forms), which sample their whole value; `@(cb.x)` and
-  edges on clockvars see sampled-value changes
+  edges on clockvars see sampled-value changes. An edge input skew
+  (`input negedge x` under `@(posedge clk)`, `@(negedge clk)` or `@(clk)`)
+  samples as `#1step` at each such edge of the clock signal and holds that
+  sample from the edge on (decision K1-D2)
   ([sim_033](../tests/fixtures/sim/feature_completion/sim_033/readme.md)).
   Synchronous drives capture their value (and `##n` count) when they execute
   and commit in Re-NBA after the constant output skew; off-event drives act at
@@ -2536,7 +2539,8 @@ These are bounded implementations, not full verification-infrastructure support.
   net, and a select of an expression-bound clockvar through a virtual
   interface, reject explicitly. String, class handle, event, queue, dynamic
   and associative array inputs reject (decision K1-D1); unpacked inputs with a
-  real leaf, edge-qualified input skews and `@(vif.cb)` reject explicitly; chandle inputs are illegal (SV §§6.14, 14.5). Clockvars are written only by synchronous
+  real leaf, `edge` skews, edge skews with a delay or under an event list, and
+  `@(vif.cb)` reject explicitly; chandle inputs are illegal (SV §§6.14, 14.5). Clockvars are written only by synchronous
   drives: blocking, compound, concatenated and `#d`-delayed writes are
   prohibited by SV §14.16. Skews must be constant expressions (SV §14.4);
   runtime skews are language-illegal.

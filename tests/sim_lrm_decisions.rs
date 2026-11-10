@@ -43,6 +43,14 @@ fn k1_d1_string_clockvar_rejected() {
 }
 
 #[test]
+fn k1_d2_edge_skew_sample_at_edge() {
+    run_decision(
+        "K1-D2_edge_skew_sample_at_edge",
+        include_str!("fixtures/sim/lrm_decisions/K1-D2_edge_skew_sample_at_edge.out"),
+    );
+}
+
+#[test]
 fn s30_d16_rand_mode_handle_variable() {
     run_decision(
         "S30-D16_rand_mode_handle_variable",

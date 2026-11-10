@@ -619,34 +619,90 @@ impl<'a> Codegen<'a> {
     fn clocking_sample_mode(
         &mut self,
         skew: &ClockingSkew,
+        block_specs: &[EventSpec],
         variable: NodeId,
         path: &str,
-    ) -> Result<IrClockingSampleMode, String> {
-        if !matches!(skew.edge, ClockingEdge::None) {
-            // SV §14.3 allows an edge skew but does not define which sample
-            // an input takes at it; reject rather than silently use #1step.
-            return Err(format!(
-                "edge-qualified input skew of clocking input `{}` in `{path}` is not supported",
-                self.node(variable).name
-            ));
+    ) -> Result<ClockingInputSample, String> {
+        let posedge = match skew.edge {
+            ClockingEdge::None => None,
+            ClockingEdge::Posedge => Some(true),
+            ClockingEdge::Negedge => Some(false),
+            ClockingEdge::BothEdges => {
+                return Err(crate::sim::codegen::error::located(
+                    &self.source_location(variable),
+                    format!(
+                        "an `edge` input skew of clocking input `{}` in `{path}` is not \
+                         supported; use `posedge` or `negedge`",
+                        self.node(variable).name
+                    ),
+                ));
+            }
+        };
+        if let Some(posedge) = posedge {
+            return self.clocking_edge_sample(skew, block_specs, posedge, variable, path);
         }
         let Some(delay) = skew.delay else {
-            return Ok(IrClockingSampleMode::OneStep);
+            return Ok(ClockingInputSample::Mode(IrClockingSampleMode::OneStep));
         };
         if matches!(self.kind(delay), NodeKind::Other)
             && self.db.semantic_detail(delay) == Some("OneStepDelay")
         {
-            return Ok(IrClockingSampleMode::OneStep);
+            return Ok(ClockingInputSample::Mode(IrClockingSampleMode::OneStep));
         }
         let expression = skew.delay_expression.ok_or_else(|| {
             format!("clocking skew in `{path}` has unsupported non-constant timing control")
         })?;
         let ticks = self.procedural_delay_ticks(delay, expression)?;
-        if ticks == 0 {
-            Ok(IrClockingSampleMode::Observed)
+        Ok(ClockingInputSample::Mode(if ticks == 0 {
+            IrClockingSampleMode::Observed
         } else {
-            Ok(IrClockingSampleMode::History(ticks))
+            IrClockingSampleMode::History(ticks)
+        }))
+    }
+
+    /// An edge input skew names an edge of the clocking event's signal
+    /// (IEEE 1800-2009 14.3: "When the clocking event specifies a simple
+    /// edge, instead of a number, the skew can be specified as the specific
+    /// edge of the signal"). Industry-standard behaviour samples the input as
+    /// `#1step` does, but at each such edge, and the clockvar holds that
+    /// sample from the edge on; the edge of the clocking event itself is the
+    /// `#1step` sample.
+    fn clocking_edge_sample(
+        &self,
+        skew: &ClockingSkew,
+        block_specs: &[EventSpec],
+        posedge: bool,
+        variable: NodeId,
+        path: &str,
+    ) -> Result<ClockingInputSample, String> {
+        let name = &self.node(variable).name;
+        if skew.delay.is_some() {
+            return Err(crate::sim::codegen::error::located(
+                &self.source_location(variable),
+                format!(
+                    "an edge input skew with a delay of clocking input `{name}` in `{path}` is \
+                     not supported"
+                ),
+            ));
         }
+        let (clock, block_edge) = match block_specs {
+            [EventSpec::Edge { sig, posedge }] => (*sig, Some(*posedge)),
+            [EventSpec::AnyChange { sig }] => (*sig, None),
+            _ => {
+                return Err(crate::sim::codegen::error::located(
+                    &self.source_location(variable),
+                    format!(
+                        "an edge input skew of clocking input `{name}` in `{path}` needs a \
+                         clocking event on one signal (`@(posedge clk)`, `@(negedge clk)` or \
+                         `@(clk)`); this clocking event is not supported with it"
+                    ),
+                ));
+            }
+        };
+        if block_edge == Some(posedge) {
+            return Ok(ClockingInputSample::Mode(IrClockingSampleMode::OneStep));
+        }
+        Ok(ClockingInputSample::Edge { clock, posedge })
     }
 
     /// Emit one synthetic sampler process per clocking block. The process
@@ -683,8 +739,9 @@ impl<'a> Codegen<'a> {
                 refresh: false,
                 gate_at_write: false,
             }];
+            let mut edge_samples: Vec<(NodeId, bool, Vec<IrStmt>)> = Vec::new();
             for var in self.node(block).children.iter().copied() {
-                let Some(var_info) = self.db.clocking_var(var) else {
+                let Some(var_info) = self.db.clocking_var(var).cloned() else {
                     continue;
                 };
                 if !matches!(var_info.direction, DbDirection::Input | DbDirection::Inout) {
@@ -700,7 +757,28 @@ impl<'a> Codegen<'a> {
                 } else {
                     &block_info.default_input
                 };
-                let mode = self.clocking_sample_mode(skew, var, &path)?;
+                let mode =
+                    match self.clocking_sample_mode(skew, &block_info.event_specs, var, &path)? {
+                        ClockingInputSample::Mode(mode) => mode,
+                        ClockingInputSample::Edge { clock, posedge } => {
+                            // Industry-standard behaviour publishes the sample at
+                            // the skew edge itself (docs/lrm_decisions.md,
+                            // K1-D2), so the clockvar's own cell takes it there.
+                            let sample = IrStmt::ClockingSample {
+                                source: storage.source.ir,
+                                sample: storage.sample.ir,
+                                mode: IrClockingSampleMode::OneStep,
+                            };
+                            match edge_samples
+                                .iter_mut()
+                                .find(|(at, edge, _)| *at == clock && *edge == posedge)
+                            {
+                                Some((_, _, samples)) => samples.push(sample),
+                                None => edge_samples.push((clock, posedge, vec![sample])),
+                            }
+                            continue;
+                        }
+                    };
                 let source = storage.source.ir;
                 if let IrClockingSampleMode::History(ticks) = mode {
                     let deepest = self.clocking_history_ticks.entry(source).or_default();
@@ -725,7 +803,64 @@ impl<'a> Codegen<'a> {
                     reason: format!("clocking input sampler for {}", self.node(block).full_name),
                 },
             ));
+            for (clock, posedge, samples) in edge_samples {
+                self.emit_clocking_edge_process(block, parent, &path, clock, posedge, samples)?;
+            }
         }
         Ok(())
     }
+
+    /// The process that takes the `#1step` sample of every edge-skewed input
+    /// of one block at each `posedge`/`negedge` of its clock signal.
+    fn emit_clocking_edge_process(
+        &mut self,
+        block: NodeId,
+        parent: NodeId,
+        path: &str,
+        clock: NodeId,
+        posedge: bool,
+        samples: Vec<IrStmt>,
+    ) -> Result<(), String> {
+        let edge = if posedge { "posedge" } else { "negedge" };
+        let block_name = self.node(block).name.clone();
+        let process_name = self.new_fn_name(path, &format!("clocking_{block_name}_{edge}"));
+        let (event_specs, pre_fns) = {
+            let mut ctx = EmitCtx::new(self, path.to_owned(), parent, "0", None, false);
+            let event_specs = ctx.lower_event_specs(&[EventSpec::Edge {
+                sig: clock,
+                posedge,
+            }])?;
+            (event_specs, std::mem::take(&mut ctx.pre_fns))
+        };
+        let mut body = vec![IrStmt::WaitEvents {
+            specs: event_specs,
+            refresh: false,
+            gate_at_write: false,
+        }];
+        body.extend(samples);
+        self.model.processes.push(IrProcess::new_with_origin(
+            process_name,
+            format!("{path}.clocking"),
+            IrShape::Loop,
+            pre_fns,
+            body,
+            crate::sim::semantic::Origin::Synthetic {
+                reason: format!(
+                    "clocking {edge} input sampler for {}",
+                    self.node(block).full_name
+                ),
+            },
+        ));
+        Ok(())
+    }
+}
+
+/// When one clocking input is sampled.
+enum ClockingInputSample {
+    Mode(IrClockingSampleMode),
+    /// At each `posedge`/`negedge` of the clocking event's signal `clock`.
+    Edge {
+        clock: NodeId,
+        posedge: bool,
+    },
 }

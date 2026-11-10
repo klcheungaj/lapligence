@@ -1,0 +1,5 @@
+5 cb.x 0 cb.y 0 cb.z 0 (x now 0)
+15 cb.x 1 cb.y 2 cb.z 2 (x now 2)
+25 cb.x 2 cb.y 4 cb.z 4 (x now 4)
+35 cb.x 4 cb.y 4 cb.z 4 (x now 4)
+40 end

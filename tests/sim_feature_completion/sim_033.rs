@@ -189,7 +189,7 @@ fn neg_chandle_input() {
     );
 }
 
-// K1: unpacked fixed-size clockvars. Expected outputs
+// K1: unpacked fixed-size clockvars and edge input skews. Expected outputs
 // are industry-standard behaviour's (readme), checked against the clauses.
 
 #[test]
@@ -220,6 +220,18 @@ fn unpacked_inputs_read_through_virtual_interface() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_033/vif_unpacked_inputs.out");
     sim_cli::run_case_backend_parity(SUITE, "vif_unpacked_inputs", expected, &[], &[]);
+}
+
+#[test]
+fn edge_skews_sample_at_the_clock_edge() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_033/edge_skews.out");
+    sim_cli::run_case_backend_parity(SUITE, "edge_skews", expected, &[], &[]);
+}
+
+#[test]
+fn edge_skew_forms() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_033/edge_skew_forms.out");
+    sim_cli::run_case_backend_parity(SUITE, "edge_skew_forms", expected, &[], &[]);
 }
 
 const UNSERVED_TYPES: &str = "string, class handle, event, queue, dynamic array and \
@@ -276,11 +288,32 @@ fn neg_real_array_input() {
 }
 
 #[test]
-fn neg_input_edge_skew() {
+fn neg_input_both_edges_skew() {
     sim_cli::reject_case(
         SUITE,
-        "neg_input_edge_skew",
-        "edge-qualified input skew of clocking input `x` in `tb` is not supported",
+        "neg_input_both_edges_skew",
+        "neg_input_both_edges_skew.sv:7:16 an `edge` input skew of clocking input `x` in `tb` is \
+         not supported",
+    );
+}
+
+#[test]
+fn neg_edge_skew_delay() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_edge_skew_delay",
+        "neg_edge_skew_delay.sv:6:22 an edge input skew with a delay of clocking input `x` in \
+         `tb` is not supported",
+    );
+}
+
+#[test]
+fn neg_edge_skew_event() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_edge_skew_event",
+        "neg_edge_skew_event.sv:7:19 an edge input skew of clocking input `x` in `tb` needs a \
+         clocking event on one signal",
     );
 }
 

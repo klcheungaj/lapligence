@@ -1,0 +1,9 @@
+1 before x 0 w x r 0.0 arr 0 p 0 q 0 dy 0
+5 clk 1 x 0 w x r 0.0 arr 0 0 p 0 q 0 dy 0
+10 clk 0 x 1 w x r 1.5 arr 1 2 p 0 q 1 dy 1
+12 between x 1 w x r 1.5 arr 2 dy 1
+15 clk 1 x 1 w x r 1.5 arr 1 2 p 2 q 1 dy 1
+20 clk 0 x 2 w 3 r 2.5 arr 1 20 p 2 q 2 dy 2
+25 clk 1 x 2 w 3 r 2.5 arr 1 20 p 4 q 2 dy 2
+30 clk 0 x 4 w 4 r 3.5 arr 10 20 p 4 q 4 dy 4
+35 clk 1 x 4 w 4 r 3.5 arr 10 20 p 4 q 4 dy 4

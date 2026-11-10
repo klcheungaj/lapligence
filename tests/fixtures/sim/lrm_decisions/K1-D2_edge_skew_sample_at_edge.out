@@ -1,0 +1,9 @@
+1 cb.x x cb.w x cb.r 0.0 cn.x x
+5 cb x=x w=x r=0.0
+10 cn x=5
+12 cb.x 6 cb.w 3 cb.r 2.5
+15 cb x=6 w=3 r=2.5
+20 cn x=6
+25 cb x=7 w=4 r=3.5
+30 cn x=7
+35 cb x=7 w=4 r=3.5

@@ -130,6 +130,26 @@ output for the same source, checked against the timelines below by hand.
   expression-bound input and a whole-array copy through a virtual interface
   follow the handle, rebound from `b1` to `b2` at 17.
 
+### Edge input skews (K1)
+
+§14.3 L19457-19458: "When the clocking event specifies a simple edge,
+instead of a number, the skew can be specified as the specific edge of the
+signal." An `input negedge x` under `@(posedge clk)` takes the `#1step`
+sample at each negedge of `clk` and holds it from that edge on (decision
+K1-D2, industry-standard behaviour); a skew naming the clocking event's own
+edge is the `#1step` sample. Expected outputs are industry-standard
+behaviour's.
+
+- `edge_skews` (the plan's probe): `x`, `y`, `z` take 1 at 7, 2 at 12, 3 at
+  22, 4 at 24; the clock toggles every 5. `cb.x` reads the negedge samples
+  (10: 1, 20: 2, 30: 4) at 15, 25, 35; `posedge y` and `#1step z` read 2, 4, 4.
+- `edge_skew_forms`: a negedge skew under a posedge event (four-state `w`
+  is X before its first negedge, real `r` 0.0), a posedge skew under a
+  negedge event, a negedge skew under `@(clk)` (at a negedge event it is the
+  `#1step` sample), a block default edge skew, an unpacked edge-skewed input,
+  and a read at 12, between the negedge at 10 and the posedge at 15, that
+  already sees the negedge sample.
+
 ## Negatives
 
 Language rules, rejected in both optimizer modes:
@@ -160,8 +180,13 @@ Forms rejected with a located diagnostic instead of a wrong sample (K1):
 - `neg_real_array_input`: an unpacked clockvar with a real element or member
   has no packed sample image; industry-standard behaviour serves it, llg does
   not yet ([known issue](../../../../../docs/known_issues.md#clocking-input-forms-outside-the-sampled-storage-model)).
-- `neg_input_edge_skew`: an edge input skew, not yet served; it is not
-  silently sampled as `#1step`.
+- `neg_input_both_edges_skew`: an `edge` input skew; industry-standard
+  behaviour treats it as a syntax error.
+- `neg_edge_skew_delay`: an edge skew with a delay (`negedge #1`), which
+  industry-standard behaviour accepts and llg does not serve.
+- `neg_edge_skew_event`: an edge skew under an event list; §14.3 allows an
+  edge skew "When the clocking event specifies a simple edge", and
+  industry-standard behaviour rejects it too.
 
 `neg_vif_clocking_event`: `@(vp.cb)` through a virtual interface handle is
 rejected explicitly (the clocking block has no per-instance event object in
