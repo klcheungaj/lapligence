@@ -1,0 +1,4 @@
+1 own wait woke
+2 own @ woke a=4
+3 derived wait woke
+3 end

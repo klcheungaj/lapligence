@@ -143,6 +143,17 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
   second. A failed evaluation prints nothing.
 - `neg_method_formal_strobe`: a method's formals are automatic (L18646-18652);
   its properties are not.
-- Limits, not LRM rules: `neg_monitor_record_property` (a member of an unpacked
-  structure property publishes no change) rejects with a located diagnostic. It
-  is listed in `docs/known_issues.md`.
+- `monitor_record_property` (FIN-001 R0, decision S07-D18): L36516-36519 "each
+  time a variable or an expression in the argument list changes value ... the
+  entire argument list is displayed at the end of the time step". A member of an
+  unpacked structure with a string member, in a class property and in a static
+  subroutine variable, is watched through its record's contents marker. The
+  first list carries an evaluation counter: nothing evaluates at 1 (another
+  variable), 2 (a packed property of the same object) or 3 (another object's
+  record); each store into the record evaluates once (4, 5, and 6 for the
+  member `x` the list does not name). The second list prints at once (7), not
+  for `x` (8) nor for a change undone in the step (9), then for `a` (10) and
+  for the rebinding of `h` (11). The third names the static record: at once
+  (12), the task's own store (13), not `x` (14), the string (15). The `$strobe`
+  at 1 reads the member at the end of its step. Some simulators reject a
+  `$monitor` of such a member.

@@ -1,0 +1,5 @@
+5 wait h.r.a == 1 woke
+10 @(h.r.s) woke with 's'
+15 @(h.r.a) woke with 2
+20 wait m.e[k].q.size() woke
+25 end

@@ -236,6 +236,10 @@ impl Frame<'_, '_> {
                 self.ctx.model.containers[*index].c_name
             ),
             IrDependency::NativeAccess(name) => self.native_access_dependency(name)?,
+            IrDependency::NativeValue(value) => format!(
+                "{{ .sig = &{}_llg_dep }}",
+                self.ctx.model.native_values[*value].c_name
+            ),
             IrDependency::InterfaceInstance {
                 handle,
                 interface,
@@ -321,6 +325,12 @@ impl Frame<'_, '_> {
             IrNativeAccessKind::ClassContainer { class, field } => (
                 false,
                 format!("llg_class_container_dependency({receiver}, {class}, {field})"),
+            ),
+            // A record property publishes on its object's marker, as a
+            // container property does.
+            IrNativeAccessKind::ClassRecord { class, field } => (
+                false,
+                format!("llg_class_record_dependency({receiver}, {class}, {field})"),
             ),
             IrNativeAccessKind::MailboxCount => (
                 false,

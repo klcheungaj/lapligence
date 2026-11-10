@@ -1358,6 +1358,7 @@ impl<'a> Codegen<'a> {
                 IrDependency::ContainerContents(_)
                 | IrDependency::ContainerShape(_)
                 | IrDependency::Object(_)
+                | IrDependency::NativeValue(_)
                 | IrDependency::SharedCell { .. }
                 | IrDependency::SharedNative { .. }
                 | IrDependency::RefFormal { .. }
@@ -2039,6 +2040,12 @@ impl<'a> Codegen<'a> {
                 return Ok(());
             }
         }
+        if let Some(dependency) = self.static_record_dependency(node, visited) {
+            self.add_dependency(dependency, seen, out);
+        }
+        for dependency in self.static_column_dependencies(node, visited) {
+            self.add_dependency(dependency, seen, out);
+        }
         self.add_node_read(node, seen, out);
         for c in &self.node(node).children {
             self.walk_read_signals_bound(
@@ -2052,6 +2059,107 @@ impl<'a> Codegen<'a> {
             )?;
         }
         Ok(())
+    }
+
+    /// The model-lifetime native record `node` reads below: a static
+    /// subroutine record with string, real, handle or container members is
+    /// one runtime value, whose leaves have no storage a wait could name.
+    pub(in super::super) fn static_record_read(&self, node: NodeId) -> Option<usize> {
+        let (value, _) = self.native_path_of(node).ok().flatten()?;
+        let storage = self.model.native_values.get(value)?;
+        (!storage.activation && storage.class_field.is_none()).then_some(value)
+    }
+
+    /// Whether `declaration` belongs to a subroutine whose body the walk is
+    /// in (`callees`). Such storage adds nothing: the callee's own stores
+    /// would wake its caller again, as for the storage
+    /// `collect_evaluator_sensitivity` leaves out.
+    fn declared_in_callee(&self, declaration: NodeId, callees: &HashSet<NodeId>) -> bool {
+        let owner = if matches!(self.kind(declaration), NodeKind::FuncTask { .. }) {
+            Some(declaration)
+        } else {
+            self.enclosing_func_task(declaration)
+        };
+        owner.is_some_and(|owner| callees.contains(&owner))
+    }
+
+    /// The contents marker of the static record `node` reads below, which
+    /// every store into the record toggles.
+    fn static_record_dependency(
+        &self,
+        node: NodeId,
+        callees: &HashSet<NodeId>,
+    ) -> Option<IrDependency> {
+        let value = self.static_record_read(node)?;
+        let declaration = self.native_value_layouts.get(&value).copied()?;
+        if self.declared_in_callee(declaration, callees) {
+            return None;
+        }
+        self.native_value_markers.borrow_mut().insert(value);
+        Some(IrDependency::NativeValue(value))
+    }
+
+    /// The storage a read of a column-layout static subroutine record names
+    /// at `node` beyond its member-array columns, which the select walk
+    /// adds: the one-cell column of each scalar member and the contents
+    /// marker of the native value that holds the string, real and handle
+    /// members. An automatic record's columns live in its activation and
+    /// publish nothing.
+    fn static_column_dependencies(
+        &self,
+        node: NodeId,
+        callees: &HashSet<NodeId>,
+    ) -> Vec<IrDependency> {
+        let Some((root, path)) = self.activation_record_path(node) else {
+            return Vec::new();
+        };
+        let Some(record) = self.activation_records.get(&root) else {
+            return Vec::new();
+        };
+        if self.declared_in_callee(root, callees) {
+            return Vec::new();
+        }
+        let mut dependencies = Vec::new();
+        for (column_path, column) in &record.columns {
+            if !column_path.starts_with(&path) && !path.starts_with(column_path) {
+                continue;
+            }
+            match column {
+                super::RecordColumn::Cell(array) => {
+                    let dependency = IrDependency::ArrayContents(self.reference_array(*array));
+                    if !self.activation_dependency(&dependency) {
+                        dependencies.push(dependency);
+                    }
+                }
+                super::RecordColumn::Native(value, _)
+                    if !self.model.native_values[*value].activation =>
+                {
+                    self.native_value_markers.borrow_mut().insert(*value);
+                    dependencies.push(IrDependency::NativeValue(*value));
+                }
+                _ => {}
+            }
+        }
+        dependencies
+    }
+
+    /// Whether evaluating `root` reads a native record value of a subroutine
+    /// or block. A static one publishes through one contents marker, whose
+    /// toggle is no change of the value read, and an automatic one has no
+    /// storage a wait could name: an event control on either compares
+    /// values in the waiting process, which also rejects the automatic one
+    /// a fork shares (`reject_shared_automatic_record`).
+    pub(in super::super) fn reads_native_record(&self, root: NodeId) -> bool {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            if matches!(self.native_path_of(node), Ok(Some(_)))
+                || self.record_native_leaf(node).is_some()
+            {
+                return true;
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        false
     }
 
     /// Walk only the index/bounds expressions of an assignment LHS.

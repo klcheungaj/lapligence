@@ -166,6 +166,7 @@ impl Codegen<'_> {
             | IrDependency::ContainerContents(_)
             | IrDependency::ContainerShape(_)
             | IrDependency::Object(_)
+            | IrDependency::NativeValue(_)
             | IrDependency::SharedCell { .. }
             | IrDependency::SharedNative { .. }
             | IrDependency::RefFormal { .. }

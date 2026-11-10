@@ -651,6 +651,7 @@ impl<'a> Codegen<'a> {
                 companions: Vec::new(),
                 class_field: Some((class_index, field_index)),
                 receiver: None,
+                marker: false,
             });
         self.native_value_layouts.insert(value, child);
         self.class_native_fields.insert(child, value);

@@ -460,6 +460,13 @@ pub enum IrDependency {
     /// next wait to the new storage. A null or invalid receiver selects
     /// storage that never changes.
     NativeAccess(String),
+    /// The contents marker of model-lifetime native value `.0` (a static
+    /// subroutine record with string, real, handle or container members,
+    /// [`IrNativeValue::marker`]): one toggle says that some store changed
+    /// the value, so only consumers that evaluate what they read again may
+    /// name it (level waits, process-evaluated event plans, sensitivity
+    /// loops and reports).
+    NativeValue(usize),
     /// The storage of the interface instance that virtual-interface variable
     /// `handle` (an object index) binds when the wait arms: `arms[i]` names
     /// instance `i` of descriptor `interface` (an element or contents marker

@@ -95,6 +95,7 @@ impl Codegen<'_> {
             companions,
             class_field: None,
             receiver: None,
+            marker: false,
         });
         self.native_value_layouts.insert(index, site);
         Ok(index)

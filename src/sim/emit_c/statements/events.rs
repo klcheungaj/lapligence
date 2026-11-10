@@ -83,6 +83,9 @@ fn dependency_pointer(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
         IrDependency::Object(object) => {
             format!("&{}_llg_dep", ctx.model.objects[*object].c_name)
         }
+        IrDependency::NativeValue(value) => {
+            format!("&{}_llg_dep", ctx.model.native_values[*value].c_name)
+        }
         IrDependency::SharedCell { .. }
         | IrDependency::SharedNative { .. }
         | IrDependency::RefFormal { .. }
@@ -155,6 +158,10 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
                 ctx.model.objects[*object].c_name
             )
         }
+        IrDependency::NativeValue(value) => format!(
+            "{{ .sig = &{}_llg_dep }}",
+            ctx.model.native_values[*value].c_name
+        ),
         IrDependency::SharedCell { .. }
         | IrDependency::SharedNative { .. }
         | IrDependency::RefFormal { .. }

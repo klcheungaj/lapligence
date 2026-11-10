@@ -152,6 +152,25 @@ fn handle_array_records_print_the_same_at_16_and_3_cells() {
     }
 }
 
+/// FIN-001 R0: waits on members of a static subroutine record and of a record
+/// property, whose stores publish through a contents marker. The static
+/// record is one runtime value at 3 cells; at 16 its member array and its
+/// integral members are columns and only the string stays in that value.
+/// Both sizes print the same, in both optimizer modes, and the printed rows
+/// are the expected ones.
+#[test]
+fn waits_on_record_members_resume_the_same_at_16_and_3_cells() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_record_shapes/waits_str.out");
+    for optimized in [true, false] {
+        let (_dir, wide) = sim_cli::run_case_keeping_dir(SUITE, "waits_str", optimized, WIDE, &[]);
+        let (_dir, narrow) =
+            sim_cli::run_case_keeping_dir(SUITE, "waits_str", optimized, NARROW, &[]);
+        assert_same_at_both_sizes("waits_str", &wide, &narrow);
+        assert_eq!(String::from_utf8_lossy(&wide.stdout), expected);
+    }
+}
+
 #[test]
 fn component_record_shapes_are_generated() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

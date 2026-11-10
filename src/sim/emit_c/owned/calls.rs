@@ -433,6 +433,9 @@ impl Frame<'_, '_> {
                     // companion containers (SIM-008). Its callee publishes
                     // its own stores through that alias.
                     if formal.is_ref() {
+                        if !formal.is_const_ref() {
+                            self.watch_ref_record(*value)?;
+                        }
                         parameters.push(actual);
                         for container in self.ctx.model.native_values[*value].companions.clone() {
                             parameters.push(format!("(void*)&{}", self.container_name(container)?));
@@ -1086,6 +1089,7 @@ impl Frame<'_, '_> {
                 return self.leaf_choice_binding(index, leaves, reference.kind, stop);
             }
             IrElementRoot::Value(value) => {
+                self.watch_ref_record(*value)?;
                 let address = self.native_value_read(*value)?;
                 self.scalar("void*", format!("llg_native_ref_root({address})"))
             }

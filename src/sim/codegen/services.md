@@ -124,8 +124,11 @@ runtime passes it to the evaluators as their context and keeps it reachable.
 exact (`report_dependencies`): `with_dynamic_reads` names the storage, the handle
 markers and the root handle, and the native accesses among them go to an
 `IrPreFn::MonitorReads` resolver the runtime runs after each evaluation, so a
-rebinding moves the triggers. A path no dependency can follow (a member of an
-unpacked structure property) rejects with its location. An argument that calls
+rebinding moves the triggers. A member of a native record property is exact
+too, through its record's contents marker
+(`IrNativeAccessKind::ClassRecord`), and a static subroutine record's through
+`IrDependency::NativeValue`. A path no dependency can follow rejects with its
+location. An argument that calls
 into class storage, selects a virtual-interface member or `%p`s a class object sets
 `IrStmt::MonitorSet::poll`: the runtime then re-evaluates it at every settled slot
 (`LLG_MONITOR_READ_POLL`). An

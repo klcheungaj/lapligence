@@ -255,6 +255,27 @@ static sv4_t* llg_class_container_dependency(void* handle, uint32_t expected, si
 "#,
         );
     }
+    if model
+        .native_values
+        .iter()
+        .any(|value| value.marker && value.class_field.is_some())
+    {
+        out.push_str(
+            r#"/* A record property some wait observes publishes on its object's handle
+ * marker: stores into it toggle the marker once one exists, which is from
+ * the first wait that arms on the object. */
+static sv4_t* llg_class_record_marker(void* handle) {
+    llg_class_object_t* object = (llg_class_object_t*)handle;
+    return object ? object->handle_dependency : NULL;
+}
+static sv4_t* llg_class_record_dependency(void* handle, uint32_t expected, size_t index) {
+    llg_class_field_t* field = llg_class_field_lookup(handle, expected, index);
+    if (!field || field->kind != 4) return llg_dependency_or_never(NULL);
+    return llg_class_handle_dependency(handle);
+}
+"#,
+        );
+    }
     // The rank of a class key's object is its class's, through its type.
     if keyed {
         out.push_str("static const llg_gc_type_t llg_class_gc_types[] = {\n");

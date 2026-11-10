@@ -164,6 +164,12 @@ impl Validator<'_> {
                         .get(class)
                         .and_then(|class| class.fields.get(field))
                         .is_some_and(|field| field.container.is_some()),
+                    crate::sim::ir::IrNativeAccessKind::ClassRecord { class, field } => self
+                        .model
+                        .classes
+                        .get(class)
+                        .and_then(|class| class.fields.get(field))
+                        .is_some_and(|field| field.native_value.is_some()),
                     crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
                     | crate::sim::ir::IrNativeAccessKind::MailboxCount => true,
                     _ => false,
@@ -173,6 +179,13 @@ impl Validator<'_> {
                 .objects
                 .get(*object)
                 .is_some_and(|object| object.ty.has_change_marker()),
+            // Only model-lifetime storage has a marker beside it; a class
+            // record property is named through its object.
+            IrDependency::NativeValue(value) => {
+                self.model.native_values.get(*value).is_some_and(|value| {
+                    value.marker && !value.activation && value.class_field.is_none()
+                })
+            }
             IrDependency::InterfaceInstance { .. } => {
                 crate::sim::execution::valid_interface_instance(self.model, dependency)
             }

@@ -97,6 +97,14 @@ impl Validator<'_> {
                         "native-access dependency must name a class property or interface member",
                     );
                 }
+                if matches!(dependency, IrDependency::NativeValue(_))
+                    && !self.valid_dependency(dependency)
+                {
+                    return self.fail(
+                        format!("{path}.sens[{index}]"),
+                        "native-value dependency must name a model-lifetime value with a marker",
+                    );
+                }
             }
         }
         let mut delays: Vec<&IrDelay> = Vec::new();

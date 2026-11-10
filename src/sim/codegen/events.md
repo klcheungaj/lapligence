@@ -15,10 +15,24 @@ lowered actuals and `this` to the receiver (`CalleeReceivers`); a method body's
 module storage reads are added there, since the ordinary read walk does not
 enter methods. A read no wait can observe rejects with its location, never
 compiles to a wait that cannot wake (a missed dependency is a hang), so a
-comparison of event variables or event formals rejects (T1-D2), as does a member
-of a native record property (`reject_record_property_reads`; stores publish no
-change) and a property selected through a call result, while one naming a class
-event property is served through its rebinding marker. Only waits that
+comparison of event variables or event formals rejects (T1-D2), as does a
+property selected through a call result and a member of an automatic native
+record a fork shares (`reject_shared_automatic_record`: one value per
+activation, no marker), while one naming a class event property is served
+through its rebinding marker. A native record (one runtime value: a record
+with string, real, handle or container members) publishes through one contents
+marker per record, toggled by every store into it and only when some read walk
+names it (S07-D18): a member of a record class property is an
+`IrNativeAccessKind::ClassRecord` access, resolved to the object's handle
+marker (`class_record_dependencies`, also in callee bodies), and a static
+subroutine record is `IrDependency::NativeValue`, added by the read walk itself
+(`static_record_dependency`; a column-layout record adds the one-cell columns
+of its scalar members and the marker of the native value holding the rest,
+`static_column_dependencies`), so `always @*` and reports get it too. A record
+declared in a callee the walk is in adds nothing, like the storage
+`collect_evaluator_sensitivity` leaves out. A toggle is no change of the value
+read, so event controls on such members take the process plan
+(`reads_native_record`), which compares values. Only waits that
 re-arm after every wake (`wait`, process-evaluated event plans) may use it, so
 such event controls, foreign functions and `ref`-formal selects take the
 process plan. always_comb/always_latch add nothing for a class property path or

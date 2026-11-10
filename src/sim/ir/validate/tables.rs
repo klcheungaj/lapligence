@@ -1103,6 +1103,20 @@ impl Validator<'_> {
                         );
                     }
                 }
+                IrNativeAccessKind::ClassRecord { class, field } => {
+                    if !self
+                        .model
+                        .classes
+                        .get(class)
+                        .and_then(|class| class.fields.get(field))
+                        .is_some_and(|field| field.native_value.is_some())
+                    {
+                        return self.fail(
+                            &path,
+                            "class record reference is not a native record property",
+                        );
+                    }
+                }
                 IrNativeAccessKind::MailboxCount => {}
                 IrNativeAccessKind::ValueItem { value, ty } => {
                     self.validate_native_leaf(value, &access.item_path, ty, &path)?;

@@ -75,3 +75,17 @@ sim_record_shape_grid --run-ignored only`.
 Not covered, by design: shapes that build only at 16 cells have no second form
 to compare with. A new transfer shape belongs in the tables of the script; run
 `survey` once and regenerate.
+
+## Waits (FIN-001 R0)
+
+`waits_str.sv` is hand-written, not part of the generated grid (the generator's
+`check` covers `shapes_*.sv` only). A record with a string member and a member
+array of `N` cells is held in a static task variable and in a class property;
+ten waiters each resume for one store at its own time (`row K <time> <value>`).
+At 3 cells the static record is one runtime value and every store toggles its
+contents marker; at 16 its member array and integral members are columns with
+their own markers and only the string stays in that value. A class property is
+one value at both sizes. `waits_str.out` is the expected output at both sizes
+and in both optimizer modes; it is identical to industry-standard behaviour.
+9.4.2 L11807 of `SystemVerilog-1800-2009.txt`: "An implicit event shall be
+detected on any change in the value of the expression."

@@ -52,6 +52,7 @@ fn native_model() -> IrModel {
         companions: Vec::new(),
         class_field: None,
         receiver: None,
+        marker: false,
     });
     model.native_values.push(IrNativeValue {
         c_name: "S_llg_native_1".into(),
@@ -60,6 +61,7 @@ fn native_model() -> IrModel {
         companions: Vec::new(),
         class_field: None,
         receiver: None,
+        marker: false,
     });
     model
 }
@@ -173,6 +175,7 @@ fn native_value_identities_and_leaf_paths_must_resolve() {
         companions: Vec::new(),
         class_field: None,
         receiver: None,
+        marker: false,
     };
     model.validate().unwrap();
 
@@ -380,6 +383,7 @@ fn native_companion_containers_follow_their_values() {
         companions: vec![0],
         class_field: None,
         receiver: None,
+        marker: false,
     });
     model.native_values.push(IrNativeValue {
         c_name: "S_llg_native_1".into(),
@@ -388,6 +392,7 @@ fn native_companion_containers_follow_their_values() {
         companions: vec![1],
         class_field: None,
         receiver: None,
+        marker: false,
     });
     let mut formal = native_formal(1, false);
     formal.native_companions = vec![1];
@@ -542,4 +547,99 @@ fn mailbox_aggregate_messages_name_a_native_value_and_a_type() {
         element: Box::new(packed(8)),
     };
     model.validate().unwrap();
+}
+
+#[test]
+fn record_marker_dependencies_name_observed_records() {
+    let mut model = native_model();
+    let wait = |sens| IrStmt::WaitAny {
+        sens,
+        refresh: false,
+    };
+    model.processes.push(IrProcess::new(
+        "proc".into(),
+        "top.initial".into(),
+        IrShape::RunOnce,
+        Vec::new(),
+        vec![wait(vec![IrDependency::NativeValue(0)])],
+    ));
+    model.spawns.push("proc".into());
+    // Only a value flagged as observed has a marker to wait on.
+    assert!(model
+        .validate()
+        .unwrap_err()
+        .detail()
+        .contains("native-value dependency"));
+    model.native_values[0].marker = true;
+    model
+        .validate()
+        .expect("a wait may name the marker of an observed static record");
+    // An activation value has no marker of its own.
+    model.native_values[1].marker = true;
+    model.processes[0].body = vec![wait(vec![IrDependency::NativeValue(1)])];
+    assert!(model
+        .validate()
+        .unwrap_err()
+        .detail()
+        .contains("native-value dependency"));
+    model.processes[0].body = vec![wait(vec![IrDependency::NativeValue(9)])];
+    assert!(model.validate().is_err());
+
+    // A record class property is named through its object.
+    model.classes.push(IrClass {
+        c_name: "C".into(),
+        base: None,
+        fields: vec![
+            IrClassField {
+                c_name: "r".into(),
+                ty: IrClassFieldType::Chandle,
+                container: None,
+                native_value: Some(2),
+                event: false,
+            },
+            IrClassField {
+                c_name: "x".into(),
+                ty: IrClassFieldType::Chandle,
+                container: None,
+                native_value: None,
+                event: false,
+            },
+        ],
+        rank: 0,
+    });
+    model.native_values.push(IrNativeValue {
+        c_name: "S_llg_class_native_0_0".into(),
+        ty: 0,
+        activation: false,
+        companions: Vec::new(),
+        class_field: Some((0, 0)),
+        receiver: None,
+        marker: true,
+    });
+    model.native_accesses.push(IrNativeAccess {
+        name: "_llg_access_0".into(),
+        receiver: IrChandleExpr::Null,
+        kind: IrNativeAccessKind::ClassRecord { class: 0, field: 0 },
+        site: None,
+        item_path: Vec::new(),
+        function: None,
+    });
+    model.processes[0].body = vec![wait(vec![IrDependency::NativeAccess(
+        "_llg_access_0".into(),
+    )])];
+    model
+        .validate()
+        .expect("a wait may name the marker of a record property");
+    // The property's own value is not model storage.
+    model.processes[0].body = vec![wait(vec![IrDependency::NativeValue(2)])];
+    assert!(model.validate().is_err());
+    model.processes[0].body = vec![wait(vec![IrDependency::NativeAccess(
+        "_llg_access_0".into(),
+    )])];
+    model.native_accesses[0].kind = IrNativeAccessKind::ClassRecord { class: 0, field: 1 };
+    assert!(model
+        .validate()
+        .unwrap_err()
+        .detail()
+        .contains("class record reference is not a native record property"));
 }

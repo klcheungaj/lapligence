@@ -39,6 +39,12 @@ pub struct IrNativeValue {
     /// The property selected through an explicit handle, re-read at each use
     /// (a plain handle read, as for [`super::IrContainer::receiver`]).
     pub(in crate::sim) receiver: Option<IrChandleExpr>,
+    /// Some wait, event control, report or sensitivity in the model reads
+    /// this model-lifetime value ([`super::IrDependency::NativeValue`]): the
+    /// model keeps one contents marker beside it, which every store into the
+    /// value toggles. A class record property publishes on its object's
+    /// marker instead ([`super::IrNativeAccessKind::ClassRecord`]).
+    pub(in crate::sim) marker: bool,
 }
 
 impl IrNativeValue {

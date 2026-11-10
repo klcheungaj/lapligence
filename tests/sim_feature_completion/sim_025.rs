@@ -78,6 +78,17 @@ fn monitor_over_a_property_path_evaluates_only_on_change() {
     sim_cli::run_case(SUITE, "exact_class_triggers", expected, "", &[]);
 }
 
+/// FIN-001 R0: a `$monitor` of a member of a record with a string member
+/// follows the record's contents marker, for a class property and a static
+/// subroutine record.
+#[test]
+fn monitor_follows_record_members_exactly() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/monitor_record_property.out");
+    sim_cli::run_case(SUITE, "monitor_record_property", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "monitor_record_property", expected, &[], &[]);
+}
+
 #[test]
 fn reports_in_class_methods_keep_their_receiver() {
     let expected =
@@ -203,11 +214,6 @@ fn neg_postponed_helpers_cannot_write_design_state() {
 
 #[test]
 fn neg_class_storage_limits_are_diagnosed() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_monitor_record_property",
-        "has no dependency that sees it change",
-    );
     sim_cli::reject_case(
         SUITE,
         "neg_method_formal_strobe",

@@ -988,6 +988,7 @@ impl Codegen<'_> {
                 companions: Vec::new(),
                 class_field: None,
                 receiver: None,
+                marker: false,
             });
         Ok(Some(index))
     }

@@ -249,6 +249,14 @@ container-formal copy-in/copy-out protocol. Leaves are read and
 written through `IrNativeAccessKind::ValueItem` accesses with a constant
 `item_path` and the existing local/string/chandle statement forms, so effects,
 optimization and stack sizing see ordinary named reads and writes.
+A native value some wait reads has `IrNativeValue::marker` set (FIN-001 R0):
+the emitter then toggles one contents marker after every statement that stores
+into the value (leaf accesses, whole-value copies, output actuals, located
+nonblocking writes at commit, stores through a `ref` formal bound to it). A
+model-lifetime value owns the marker and waits name it as
+`IrDependency::NativeValue`; a record class property publishes on its object's
+handle marker and waits name it through an `IrNativeAccessKind::ClassRecord`
+access. Values without the flag emit nothing.
 
 ## Native nonblocking writes and conditionals (SIM-004)
 

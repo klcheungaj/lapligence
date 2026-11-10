@@ -350,10 +350,46 @@ fn event_variable_comparisons_in_waits_reject() {
 #[test]
 fn storage_with_no_change_marker_rejects_in_waits() {
     let reason = "cannot be observed by a wait or event expression";
-    sim_cli::reject_case(SUITE, "reject_wait_record_property", reason);
-    sim_cli::reject_case(SUITE, "reject_event_record_property", reason);
-    sim_cli::reject_case(SUITE, "reject_method_wait_record_property", reason);
     sim_cli::reject_case(SUITE, "reject_wait_call_result", reason);
+    // An automatic record a fork shares has no marker (FIN-001 R0).
+    let reason = "automatic record `r` shared with a fork at";
+    sim_cli::reject_case(SUITE, "reject_wait_automatic_record", reason);
+    sim_cli::reject_case(SUITE, "reject_event_automatic_record", reason);
+}
+
+/// FIN-001 R0: a member of an unpacked structure property with a string
+/// member is waited on through the record's contents marker.
+#[test]
+fn waits_on_record_property_members_resume() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_014/wait_record_property.out");
+    sim_cli::run_case(SUITE, "wait_record_property", expected, "", &[]);
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_014/event_record_property.out");
+    sim_cli::run_case(SUITE, "event_record_property", expected, "", &[]);
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_014/method_wait_record_property.out");
+    sim_cli::run_case(SUITE, "method_wait_record_property", expected, "", &[]);
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_014/callee_wait_record_property.out");
+    sim_cli::run_case(SUITE, "callee_wait_record_property", expected, "", &[]);
+}
+
+#[test]
+fn every_store_into_a_record_property_reaches_its_waiters() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_014/record_property_stores.out");
+    sim_cli::run_case(SUITE, "record_property_stores", expected, "", &[]);
+}
+
+#[test]
+fn waits_on_static_subroutine_record_members_resume() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_014/static_record_waits.out");
+    sim_cli::run_case(SUITE, "static_record_waits", expected, "", &[]);
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_014/static_record_nba_waits.out");
+    sim_cli::run_case(SUITE, "static_record_nba_waits", expected, "", &[]);
 }
 
 #[test]

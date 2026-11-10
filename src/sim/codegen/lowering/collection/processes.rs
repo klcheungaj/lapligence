@@ -1670,6 +1670,7 @@ impl<'a> Codegen<'a> {
             }
             IrDependency::ContainerShape(container) => format!("container[{container}] shape"),
             IrDependency::Object(object) => format!("object[{object}] contents"),
+            IrDependency::NativeValue(value) => format!("native value[{value}] contents"),
             IrDependency::SharedCell { local, .. } => format!("shared cell {local}"),
             IrDependency::SharedNative { local, .. } => format!("shared native {local}"),
             IrDependency::RefFormal { index, .. } | IrDependency::NativeRefFormal { index, .. } => {

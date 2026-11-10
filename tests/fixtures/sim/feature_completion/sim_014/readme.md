@@ -209,14 +209,42 @@ final procedures).
 
 ## Waits on storage with no change marker
 
-`reject_wait_record_property`, `reject_event_record_property`,
-`reject_method_wait_record_property` and `reject_wait_call_result` name storage
-whose changes llg cannot observe: a member of an unpacked structure property
-with a native member, and a property selected through a call result. A wait
-that could never resume rejects with its location. `wait_container_records`
-checks the neighbours that stay legal. 9.4.2 L11837-11838 of
-`SystemVerilog-1800-2009.txt`:
+`reject_wait_call_result`, `reject_wait_automatic_record` and
+`reject_event_automatic_record` name storage whose changes llg cannot observe:
+a property selected through a call result, and a member of an automatic record
+with a string member that a fork shares (one value per activation, no change
+marker). A wait that could never resume rejects with its location.
+`wait_container_records` checks the neighbours that stay legal. 9.4.2
+L11837-11838 of `SystemVerilog-1800-2009.txt`:
 
     "Changing the value of object data members, aggregate elements, or the size
     of a dynamically sized array referenced by a method or function shall cause
     the event expression to be reevaluated."
+
+## Waits on members of records with a string member (FIN-001 R0, S07-D18)
+
+An unpacked structure with a string, real, handle or container member is one
+runtime value when it is a class property or a static subroutine variable. A
+store into it toggles the record's contents marker; a waiter evaluates its
+expression again and resumes when the value changed. The clauses, all in
+`SystemVerilog-1800-2009.txt`:
+
+- 9.4.2 L11807: "An implicit event shall be detected on any change in the value
+  of the expression. An edge event shall be detected only on the least
+  significant bit of the expression."
+- 9.4.2 L11822-11824: "The variable can be either a simple variable or a ref
+  argument (variable passed by reference); it can be a member of an array,
+  associative array, or object (class instance) of the aforementioned types."
+- 9.4.3 L12032-12033: "The wait statement shall evaluate a condition; and, if
+  it is false, the procedural statements following the wait statement shall
+  remain blocked until that condition becomes true before continuing."
+
+| Fixture | Expected output |
+| --- | --- |
+| `wait_record_property` | `h.r.a = 1` at 5 completes `wait (h.r.a == 1)`. `h.r.s = "s"` at 10 resumes `@(h.r.s)` and not `@(h.r.a)`, whose value did not change (L11807). `h.r.a = 2` at 15 resumes `@(h.r.a)`. The push into the queue of record element `m.e[k]` at 20 completes the wait on its size. Identical to industry-standard behaviour. |
+| `event_record_property` | Through the chain `d.c.r`: `posedge` at 1 (0 to 1, L11807 least significant bit); the store into `s` at 2 and into another object's record at 3 resume nothing; `negedge` at 4; `x` changes at 6; `a or s` at 7 (the store into `s`); `posedge` at 8 (2 to 3); `d.c = other` at 9 rebinds the handle, and `other.r.a` is 1 where the old object's was 3, so `@(d.c.r.a)` resumes with 1. Identical to industry-standard behaviour. |
+| `method_wait_record_property` | A method waits on its own record by bare name (1) and through `this` (2, after `set(4)` stores from another method); a derived class's method waits on the inherited record and the store goes through a base-class handle (3). Identical to industry-standard behaviour. |
+| `callee_wait_record_property` | L11837-11838 above (decision B2): `ready()` reads `r.s` through its receiver, `has(c, v)` reads `c.r.a` through a handle formal and `both` calls both. `h.r.a = 7` at 1 makes `has(h, 7)` true and changes it (`has=1 event=1`); `h.r.s = "go"` at 2 makes `ready()` and `both(h)` true (`ready=2 both=2`). Each waiter records its own time, so same-step order does not show. Some simulators follow only a call's arguments and never resume these waits. |
+| `record_property_stores` | One line per store: member and whole-record assignment (1, 2), an output record and an output member (3, 4: 13.5 L18754 "output // copy value out at end"), `++` and `+=` (5, 6), a string concatenation (7), `$sscanf` and `$sformat` targets (8, 9), a method of the object (10), the real member (11), stores through `ref` formals inside time-consuming tasks, seen when they are made (13, 14 the record; 16 an `int` member; 18 the string member: 13.5.2 L19140-19141 "changes are seen outside the subroutine immediately (before the subroutine returns)"), an assignment pattern (19) and the same pattern again (20: no value changes, no line). Identical to industry-standard behaviour. |
+| `static_record_waits` | A static task's record, named from the module by its hierarchical name: the task's own stores (1, 2), member stores (3, 4), `ref` actuals (6, 8) and a pattern (9); the `wait`s complete at 3 and 8. Identical to industry-standard behaviour. |
+| `static_record_nba_waits` | 4.9.4 L3536-3539 (a nonblocking assignment "always computes the updated value and schedules the update as an NBA update event"): each nonblocking store resumes the waiter in its own step (1, 2, 3). At 4 two nonblocking stores leave `a` at 7, which it already was: no line (decision T1-D11). At 5 only `x` changes. `a <= #2 9` issued at 6 commits at 8, after the line at 7 still shows 7. `always @*` (9.4.2.2 L11892-11894: "adding all nets and variables that are read by the statement") keeps `y` at `a + 1`: 8, then 10. Some simulators reject nonblocking stores into such a record, so this output follows the text. |

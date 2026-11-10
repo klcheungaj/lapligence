@@ -53,6 +53,16 @@ pub enum IrNativeAccessKind {
         class: usize,
         field: usize,
     },
+    /// The contents marker of the native record property `field` of the
+    /// object the receiver names; only a wait dependency, never storage.
+    /// Every store into a leaf of the record, and every whole-record store,
+    /// toggles the object's marker once some wait in the model observes the
+    /// property: a toggle says that something in the record changed, so the
+    /// waiter evaluates what it reads again (SV 9.4.2).
+    ClassRecord {
+        class: usize,
+        field: usize,
+    },
     /// The count change marker of the mailbox the receiver names, allocated
     /// when a wait first observes it; only a wait dependency (SV 15.4.2).
     MailboxCount,

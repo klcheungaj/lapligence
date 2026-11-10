@@ -238,6 +238,10 @@ impl<'a> Codegen<'a> {
             IrDependency::NativeAccess(_) | IrDependency::InterfaceInstance { .. } => {
                 "class property or interface member storage".to_owned()
             }
+            IrDependency::NativeValue(value) => self.native_value_layouts.get(value).map_or_else(
+                || "static record storage".to_owned(),
+                |node| self.storage_source_name(*node),
+            ),
             IrDependency::Object(object) => self
                 .aggregate_storage_label(|leaf| leaf.object == Some(*object))
                 .or_else(|| {

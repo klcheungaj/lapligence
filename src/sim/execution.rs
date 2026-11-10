@@ -532,6 +532,10 @@ impl<'a> TriggerStorage<'a> {
                 .objects
                 .get(*object)
                 .is_some_and(|object| object.ty.has_change_marker()),
+            IrDependency::NativeValue(value) => ir
+                .native_values
+                .get(*value)
+                .is_some_and(|value| value.marker),
             // A virtual-interface member is resolved through its handle each
             // time a sensitivity loop arms (SV 9.2.2.2.1, 25.9).
             IrDependency::NativeAccess(name) => ir.native_accesses.iter().any(|access| {

@@ -843,6 +843,7 @@ fn lower_model_with(
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
             .expect("the default timescale has non-zero precision"),
     );
+    cg.mark_observed_records(&mut model);
     let first_declaration_init = model.processes.len();
     cg.build_init_steps(&mut model)?;
     // Every driver site and delayed-driver start now exists.
@@ -1525,6 +1526,11 @@ struct Codegen<'a> {
     /// (the handle variables included).
     /// Waits and `@*` walk them normally.
     comb_excludes_class_references: std::cell::Cell<bool>,
+    /// Model-lifetime native values (static subroutine records) some read
+    /// walk named as a dependency: each gets a contents marker
+    /// ([`crate::sim::ir::IrNativeValue::marker`], set when the model is finished). Read
+    /// walks borrow the lowering state, hence the cell.
+    native_value_markers: std::cell::RefCell<std::collections::BTreeSet<usize>>,
     warnings: Vec<String>,
     /// The typed IR being built (signals/arrays/functions/processes); the C
     /// renderers in `emit_c` consume it.  During the seam transition the
@@ -2393,6 +2399,7 @@ impl<'a> Codegen<'a> {
             vpi_return_signals: false,
             user_system_functions: HashSet::new(),
             comb_excludes_class_references: std::cell::Cell::new(false),
+            native_value_markers: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             warnings: Vec::new(),
             model: IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
                 .expect("the default timescale has non-zero precision"),

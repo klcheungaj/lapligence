@@ -1,0 +1,11 @@
+0 a=0 s= e=1
+1 strobe a=0
+4 a=1 s= e=2
+5 a=1 s=s e=3
+6 a=1 s=s e=4
+7 a=1 s=s
+10 a=3 s=s
+11 a=9 s=
+12 static a=0 s=
+13 static a=4 s=
+15 static a=4 s=k

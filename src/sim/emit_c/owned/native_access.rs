@@ -4,11 +4,71 @@ use super::*;
 
 impl Frame<'_, '_> {
     /// Note that the statement being rendered stores through native value
-    /// `value`. When that is a writable `ref` record formal, its bound
-    /// element's readers must learn of it as the store finishes
-    /// (`publish_touches`): the formal's address is all the store has, and
-    /// what it is bound to is known only at run time.
+    /// `value`: a record some wait observes toggles its contents marker, and
+    /// a writable `ref` record formal tells its bound element's readers, both
+    /// as the store finishes (`publish_touches`).
     pub(super) fn note_ref_store(&mut self, value: usize) -> Result<(), String> {
+        self.note_record_store(value)?;
+        self.note_formal_store(value)
+    }
+
+    /// The contents marker of native value `value` when some wait observes
+    /// it ([`crate::sim::ir::IrNativeValue::marker`]): its own for model
+    /// storage; for a class record property the marker of the object it
+    /// belongs to, created on demand when `create`.
+    pub(super) fn record_marker(
+        &self,
+        value: usize,
+        create: bool,
+    ) -> Result<Option<String>, String> {
+        let storage = &self.ctx.model.native_values[value];
+        if !storage.marker {
+            return Ok(None);
+        }
+        Ok(Some(if storage.class_field.is_some() {
+            let receiver = self.class_record_receiver(value)?;
+            if create {
+                format!("llg_class_handle_dependency({receiver})")
+            } else {
+                format!("llg_class_record_marker({receiver})")
+            }
+        } else {
+            format!("&{}_llg_dep", storage.c_name)
+        }))
+    }
+
+    /// While a call binds observed record `value`, or a member of it, to a
+    /// `ref` formal, stores through the formal toggle the record's marker:
+    /// the callee has only the formal's address, which the runtime matches
+    /// to this watch (`llg_native_ref_value_stored`). The call's value
+    /// scope ends the watch.
+    pub(super) fn watch_ref_record(&mut self, value: usize) -> Result<(), String> {
+        let Some(marker) = self.record_marker(value, true)? else {
+            return Ok(());
+        };
+        let root = self.native_value_read(value)?;
+        self.line(format!(
+            "llg_record_watch_begin((llg_record_watch_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_record_watch_t), llg_record_watch_end)), {root}, {marker}, llg_record_changed);"
+        ));
+        Ok(())
+    }
+
+    /// Toggle the contents marker of an observed record as the statement
+    /// that stores into it finishes. The toggle settles at the check
+    /// (`llg_record_changed`), so a statement that stores several leaves, or
+    /// several statements of one turn, wake a waiter once (T1-D11).
+    fn note_record_store(&mut self, value: usize) -> Result<(), String> {
+        if let Some(marker) = self.record_marker(value, false)? {
+            self.pending_touches
+                .push(format!("llg_record_changed({marker});"));
+        }
+        Ok(())
+    }
+
+    /// When `value` is a writable `ref` record formal, its bound element's
+    /// readers must learn of a store through it: the formal's address is all
+    /// the store has, and what it is bound to is known only at run time.
+    pub(super) fn note_formal_store(&mut self, value: usize) -> Result<(), String> {
         let Some(function) = self.formal_function() else {
             return Ok(());
         };
@@ -104,7 +164,9 @@ impl Frame<'_, '_> {
         }
         if matches!(
             access.kind,
-            IrNativeAccessKind::ClassContainer { .. } | IrNativeAccessKind::MailboxCount
+            IrNativeAccessKind::ClassContainer { .. }
+                | IrNativeAccessKind::ClassRecord { .. }
+                | IrNativeAccessKind::MailboxCount
         ) {
             return Err("a change-marker access is a wait dependency, not storage".to_owned());
         }
@@ -183,6 +245,7 @@ impl Frame<'_, '_> {
             IrNativeAccessKind::ValueItem { .. }
             | IrNativeAccessKind::ElementItem { .. }
             | IrNativeAccessKind::ClassContainer { .. }
+            | IrNativeAccessKind::ClassRecord { .. }
             | IrNativeAccessKind::MailboxCount => {
                 unreachable!("value items, element items and change markers resolve above")
             }

@@ -1,0 +1,7 @@
+1 posedge a=1
+4 negedge a=0
+6 x=0.5
+7 a or s: a=2 s=y
+8 posedge a=3
+9 a=1
+11 end

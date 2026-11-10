@@ -39,6 +39,17 @@ pub(in crate::sim::emit_c) fn native_type_tables(
             value.c_name,
             native_type_descriptor(value.ty)
         ));
+        // The contents marker of a value some wait observes.
+        if value.marker {
+            declarations.push_str(&format!(
+                "static sv4_t {}_llg_dep = SV4_EMPTY;\n",
+                value.c_name
+            ));
+            checks.push_str(&format!(
+                "    sv4_from_u64_to(&{}_llg_dep, 0, 1, 0);\n",
+                value.c_name
+            ));
+        }
     }
     Ok((declarations, checks))
 }
@@ -49,7 +60,13 @@ pub(in crate::sim::emit_c) fn native_value_teardown(model: &IrModel) -> String {
         .native_values
         .iter()
         .filter(|value| is_model_storage(value))
-        .map(|value| format!("    llg_native_root_destroy(&{});\n", value.c_name))
+        .map(|value| {
+            let mut teardown = format!("    llg_native_root_destroy(&{});\n", value.c_name);
+            if value.marker {
+                teardown.push_str(&format!("    sv4_destroy(&{}_llg_dep);\n", value.c_name));
+            }
+            teardown
+        })
         .collect()
 }
 
@@ -202,6 +219,17 @@ impl Frame<'_, '_> {
         self.native_value_read(index)
     }
 
+    /// The object holding class record property `index` (SIM-011): the
+    /// explicit handle, or the enclosing method's `this`.
+    pub(super) fn class_record_receiver(&self, index: usize) -> Result<String, String> {
+        match &self.ctx.model.native_values[index].receiver {
+            Some(receiver) => self.plain_handle_code(receiver, 0),
+            None => self
+                .implicit_receiver()
+                .map_err(|_| "class record property used outside its class methods".to_owned()),
+        }
+    }
+
     /// Address of native value `index` for an operation that only reads it.
     pub(super) fn native_value_read(&self, index: usize) -> Result<String, String> {
         let value = self
@@ -211,14 +239,7 @@ impl Frame<'_, '_> {
             .get(index)
             .ok_or("native value reference is out of bounds")?;
         if let Some((class, field)) = value.class_field {
-            // A record class property (SIM-011): the object's value through
-            // the explicit handle, or through the enclosing method's `this`.
-            let receiver = match &value.receiver {
-                Some(receiver) => self.plain_handle_code(receiver, 0)?,
-                None => self
-                    .implicit_receiver()
-                    .map_err(|_| "class record property used outside its class methods")?,
-            };
+            let receiver = self.class_record_receiver(index)?;
             return Ok(format!(
                 "(&((llg_native_root_t*)llg_class_field({receiver}, {class}, {field}, 3)->value.handle)->value)"
             ));

@@ -1366,10 +1366,17 @@ pub(super) fn render(
             let list = list.join(", ");
             let items = format!("(const uint32_t[]){{ {list} }}, {}", items.len());
             match root {
-                IrValueItemRoot::Value(value) => format!(
-                    "    llg_nba_locate_value({}, {items});\n",
-                    frame.native_value_address(*value)?
-                ),
+                IrValueItemRoot::Value(value) => {
+                    // An observed record's marker toggles when the write
+                    // commits, not now: nothing has changed yet.
+                    frame.note_formal_store(*value)?;
+                    let root = frame.native_value_read(*value)?;
+                    let mut locate = format!("    llg_nba_locate_value({root}, {items});\n");
+                    if let Some(marker) = frame.record_marker(*value, true)? {
+                        locate.push_str(&format!("    llg_nba_locate_marker({marker});\n"));
+                    }
+                    locate
+                }
                 IrValueItemRoot::Element(crate::sim::ir::IrChandleExpr::ContainerElement {
                     container,
                     indices,

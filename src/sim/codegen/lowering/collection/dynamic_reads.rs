@@ -454,6 +454,66 @@ impl Codegen<'_> {
         dependencies
     }
 
+    /// The native record property `node` names (`h.r`, `h.r.a`, or `r` in a
+    /// method of its class): one value per object, whose leaves have no
+    /// storage a wait could name.
+    fn class_record_property(&self, node: NodeId) -> Option<NodeId> {
+        self.class_storage_field(node)
+            .filter(|field| self.class_native_fields.contains_key(field))
+    }
+
+    /// The contents marker of the record property `field` of the object
+    /// `receiver` names, with the handle properties it is selected through.
+    /// Every store below the record toggles it, so the waiter evaluates
+    /// what it reads again.
+    fn class_record_dependencies(
+        &mut self,
+        receiver: IrChandleExpr,
+        field: NodeId,
+    ) -> Vec<IrDependency> {
+        let Some((class, field)) = self
+            .class_native_fields
+            .get(&field)
+            .and_then(|value| self.model.native_values[*value].class_field)
+        else {
+            return Vec::new();
+        };
+        let access =
+            self.native_access_symbol(receiver, IrNativeAccessKind::ClassRecord { class, field });
+        let mut dependencies = vec![IrDependency::NativeAccess(access.clone())];
+        self.handle_property_receivers(&access, &mut dependencies);
+        self.root_handle_dependency(&access, &mut dependencies);
+        dependencies
+    }
+
+    /// An automatic record with string, real, handle or container members is
+    /// one value per activation with no marker: a wait on one that a fork
+    /// shares, which is the only way it can change while the process waits,
+    /// could never resume.
+    fn reject_shared_automatic_record(&self, path: &str, node: NodeId) -> Result<(), String> {
+        let Ok(Some((value, _))) = self.native_path_of(node) else {
+            return Ok(());
+        };
+        let storage = &self.model.native_values[value];
+        if !storage.activation || storage.class_field.is_some() {
+            return Ok(());
+        }
+        let Some(declaration) = self.native_value_layouts.get(&value).copied() else {
+            return Ok(());
+        };
+        if !self.shared_locals.contains(&declaration) {
+            return Ok(());
+        }
+        Err(self.unobservable_read(
+            path,
+            node,
+            &format!(
+                "automatic record `{}` shared with a fork",
+                self.node(declaration).name
+            ),
+        ))
+    }
+
     /// The handle variable at the root of native access `name`'s receiver
     /// chain (`h` in `h.n.q`): rebinding it moves the access. A method or
     /// built-in call on the property does not read the receiver path, so the
@@ -871,11 +931,24 @@ impl Codegen<'_> {
         out: &mut Vec<IrDependency>,
     ) -> Result<(), String> {
         let name = self.node(field).name.clone();
+        if self.class_native_fields.contains_key(&field) {
+            let Some(receiver) = self.callee_property_receiver(node, field, receivers) else {
+                return Err(self.unobservable_read(
+                    path,
+                    node,
+                    &format!(
+                        "record class property `{name}` read by a called subroutine through a handle other than a class-handle input formal, `this`, a handle property or a static handle"
+                    ),
+                ));
+            };
+            out.extend(self.class_record_dependencies(receiver, field));
+            return Ok(());
+        }
         if self.direct_field_type(field).is_none() {
             return Err(self.unobservable_read(
                 path,
                 node,
-                &format!("record class property `{name}` read by a called subroutine"),
+                &format!("class property `{name}` read by a called subroutine has no storage a wait can name"),
             ));
         }
         let Some(receiver) = self.callee_property_receiver(node, field, receivers) else {
@@ -1112,6 +1185,26 @@ impl Codegen<'_> {
                 self.dynamic_reads.insert(node, dependencies);
                 continue;
             }
+            if let Some(field) = self.class_record_property(node) {
+                let receiver = self
+                    .class_receiver_for(path, node, field)
+                    .ok()
+                    .filter(Self::rearmable_handle);
+                let Some(receiver) = receiver else {
+                    return Err(self.unobservable_read(
+                        path,
+                        node,
+                        &format!(
+                            "record class property `{}` selected through a handle the wait cannot evaluate again",
+                            self.node(field).name
+                        ),
+                    ));
+                };
+                let dependencies = self.class_record_dependencies(receiver, field);
+                self.dynamic_reads.insert(node, dependencies);
+                continue;
+            }
+            self.reject_shared_automatic_record(path, node)?;
             if let Some(callee) = self.called_subroutine(node) {
                 let receivers = self.root_call_receivers(path, node, callee)?;
                 let mut dependencies = Vec::new();
@@ -1243,29 +1336,7 @@ impl Codegen<'_> {
         root: NodeId,
         collect: impl FnOnce(&Self) -> Result<T, String>,
     ) -> Result<T, String> {
-        self.reject_record_property_reads(path, root)?;
         self.with_prepared_reads(path, root, collect)
-    }
-
-    /// A store to a record property publishes no change (it has no marker
-    /// to resolve), so a wait on it would never resume: reject it where the
-    /// wait is written. A report rejects the same read with its own words.
-    fn reject_record_property_reads(&self, path: &str, root: NodeId) -> Result<(), String> {
-        let mut pending = vec![root];
-        while let Some(node) = pending.pop() {
-            pending.extend(self.node(node).children.iter().copied());
-            let Some(field) = self.class_storage_field(node) else {
-                continue;
-            };
-            if self.class_native_fields.contains_key(&field) {
-                return Err(self.unobservable_read(
-                    path,
-                    node,
-                    &format!("record class property `{}`", self.node(field).name),
-                ));
-            }
-        }
-        Ok(())
     }
 
     fn with_prepared_reads<T>(

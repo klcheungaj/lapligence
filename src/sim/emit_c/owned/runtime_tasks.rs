@@ -691,6 +691,10 @@ impl Frame<'_, '_> {
                             format!("&{}_llg_dep", self.ctx.model.objects[*index].c_name),
                         )
                     }
+                    IrDependency::NativeValue(index) => (
+                        "LLG_FMT_PACKED",
+                        format!("&{}_llg_dep", self.ctx.model.native_values[*index].c_name),
+                    ),
                     _ => return Err(pending("this monitor dependency")),
                 };
                 pointers.push(format!("{{ {kind}, {address} }}"));

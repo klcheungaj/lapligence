@@ -388,6 +388,7 @@ impl EmitCtx<'_, '_> {
             }
             EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => {
                 self.cg.reads_dynamic_storage(*sig)
+                    || self.cg.reads_native_record(*sig)
                     || self.expression_needs_process(*sig)
                     || self.native_element_event(*sig)
             }

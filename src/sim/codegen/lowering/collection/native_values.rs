@@ -539,6 +539,7 @@ impl Codegen<'_> {
             companions,
             class_field: None,
             receiver: None,
+            marker: false,
         });
         self.native_storage.insert((inst, node), index);
         Ok(Some(index))
@@ -631,6 +632,7 @@ impl Codegen<'_> {
             companions,
             class_field: None,
             receiver: None,
+            marker: false,
         });
         self.native_value_layouts.insert(index, node);
         Ok(index)
@@ -773,6 +775,55 @@ impl Codegen<'_> {
                 .map(|(node, value)| (*node, *value))
                 .collect::<Vec<_>>();
             self.native_roots.extend(properties);
+        }
+    }
+
+    /// Give every native value a wait observes its marker flag: the
+    /// model-lifetime values read walks named, and every record property a
+    /// wait names through a [`IrNativeAccessKind::ClassRecord`] access, in
+    /// each class that shares the property (a derived layout starts with its
+    /// base's fields, so the property keeps its index down the family and a
+    /// store through a handle of any of those classes may be the observed
+    /// one).
+    pub(in super::super) fn mark_observed_records(&self, model: &mut crate::sim::ir::IrModel) {
+        for value in self.native_value_markers.borrow().iter() {
+            if let Some(value) = model.native_values.get_mut(*value) {
+                value.marker = true;
+            }
+        }
+        let mut observed = HashSet::new();
+        for access in &model.native_accesses {
+            let IrNativeAccessKind::ClassRecord { class, field } = access.kind else {
+                continue;
+            };
+            // The class furthest up that declares the property.
+            let mut root = class;
+            for _ in 0..model.classes.len() {
+                match model.classes.get(root).and_then(|class| class.base) {
+                    Some(base) if model.classes[base].fields.len() > field => root = base,
+                    _ => break,
+                }
+            }
+            observed.insert((root, field));
+        }
+        if observed.is_empty() {
+            return;
+        }
+        for value in &mut model.native_values {
+            let Some((class, field)) = value.class_field else {
+                continue;
+            };
+            let mut current = Some(class);
+            for _ in 0..=model.classes.len() {
+                let Some(ancestor) = current else {
+                    break;
+                };
+                if observed.contains(&(ancestor, field)) {
+                    value.marker = true;
+                    break;
+                }
+                current = model.classes.get(ancestor).and_then(|class| class.base);
+            }
         }
     }
 
