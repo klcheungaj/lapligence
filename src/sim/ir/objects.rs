@@ -75,6 +75,9 @@ pub struct IrVirtualInterfaceInstance {
     pub(in crate::sim) path: String,
     pub(in crate::sim) members: Vec<Option<usize>>,
     pub(in crate::sim) methods: Vec<Option<usize>>,
+    /// The [`IrModel::events`] index of each clocking-block event the
+    /// descriptor exposes, by `IrVirtualInterface::events` slot.
+    pub(in crate::sim) events: Vec<Option<usize>>,
 }
 
 /// One interface method dispatch entry. The first function is the signature
@@ -96,6 +99,11 @@ pub struct IrVirtualInterface {
     pub(in crate::sim) members: Vec<IrVirtualInterfaceMember>,
     pub(in crate::sim) instances: Vec<IrVirtualInterfaceInstance>,
     pub(in crate::sim) methods: Vec<IrVirtualInterfaceMethod>,
+    /// Names of the clocking blocks whose event is waited on through a
+    /// handle (`@(vif.cb)`, SV 14.13, 25.9). A slot is added only when a
+    /// wait names the block, so descriptors without such waits are
+    /// unchanged.
+    pub(in crate::sim) events: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -46,7 +46,14 @@ identity and atomic registration. An instance `event` class property
 (`IrClassField::event`) is a handle slot of its object: `EventTarget::access`
 keeps the selecting expression, operations read the slot as an
 `IrEventRef::Handle` when issued, and assignment stores the source's object
-identity into the slot; a static one is an ordinary model event. `->>` captures delay at issue and queues NBA;
+identity into the slot; a static one is an ordinary model event. A clocking
+block through a virtual interface (`@(vif.cb)`, `objects/virtual_interfaces.rs`)
+is a target of the same kind: the descriptor gains an event slot for that block
+name on the first such wait (`IrVirtualInterface::events`, each instance's
+block event in `IrVirtualInterfaceInstance::events`), and the wait reads the
+bound instance's event object through an `IrNativeAccessKind::InterfaceEvent`
+access when it arms; a null handle is the S99-D8 failure. Descriptors no wait
+names this way keep their layout. `->>` captures delay at issue and queues NBA;
 event/repeat timing uses an independent detached waiter, whose final trigger is
 still NBA. Every repeat count (loop, intra-assignment, `->>`) goes through
 `lower_repeat_count`: real counts convert by rounding (SV 6.12.2) and the

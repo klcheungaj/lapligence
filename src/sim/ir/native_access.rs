@@ -24,6 +24,13 @@ pub enum IrNativeAccessKind {
         interface: usize,
         member: usize,
     },
+    /// The event object of the clocking block `event` of the interface
+    /// instance the receiver (a virtual-interface handle) is bound to,
+    /// readable as an event handle (SV 14.13, 25.9).
+    InterfaceEvent {
+        interface: usize,
+        event: usize,
+    },
     /// One leaf of a descriptor-backed native value. The receiver is unused
     /// (`Null`); the value slot is resolved from the enclosing frame.
     ValueItem {

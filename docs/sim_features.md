@@ -2539,8 +2539,9 @@ These are bounded implementations, not full verification-infrastructure support.
   net, and a select of an expression-bound clockvar through a virtual
   interface, reject explicitly. String, class handle, event, queue, dynamic
   and associative array inputs reject (decision K1-D1); unpacked inputs with a
-  real leaf, `edge` skews, edge skews with a delay or under an event list, and
-  `@(vif.cb)` reject explicitly; chandle inputs are illegal (SV §§6.14, 14.5). Clockvars are written only by synchronous
+  real leaf, `edge` skews and edge skews with a delay or under an event list
+  reject explicitly. `@(vif.cb)` waits on the clocking block event of the
+  instance the handle or view is bound to when the wait arms; chandle inputs are illegal (SV §§6.14, 14.5). Clockvars are written only by synchronous
   drives: blocking, compound, concatenated and `#d`-delayed writes are
   prohibited by SV §14.16. Skews must be constant expressions (SV §14.4);
   runtime skews are language-illegal.

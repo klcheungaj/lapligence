@@ -132,8 +132,8 @@ impl Codegen<'_> {
             .copied()
             .ok_or_else(|| {
                 // A clocking block has no member storage of its own, only
-                // its clockvars (`cb.x`); its event would need a
-                // per-instance event object in the descriptor.
+                // its clockvars (`cb.x`); its event is reached by an event
+                // control alone (`virtual_clocking_event_ref`).
                 let prefix = format!("{member}.");
                 if self
                     .virtual_interface_members
@@ -141,7 +141,7 @@ impl Codegen<'_> {
                     .any(|(owner, name)| *owner == descriptor && name.starts_with(&prefix))
                 {
                     format!(
-                        "clocking block event `{member}` is not supported through virtual interface `{spelling}` in `{path}`; read its clockvars or wait on its clocking event instead"
+                        "clocking block `{member}` is not supported as a value through virtual interface `{spelling}` in `{path}`; wait on it with an event control or read its clockvars"
                     )
                 } else if self
                     .virtual_interface_array_members(descriptor, &member)
@@ -593,6 +593,101 @@ impl Codegen<'_> {
             );
         }
         Ok(Some(value))
+    }
+}
+
+impl Codegen<'_> {
+    /// The member path of `node` when it names a clocking block through a
+    /// virtual-interface handle or view (`vif.cb`, SV 14.13, 25.9): some
+    /// interface instance the descriptor can bind declares a block of that
+    /// name.
+    pub(in super::super) fn virtual_clocking_event_member(
+        &self,
+        node: NodeId,
+    ) -> Option<VirtualInterfaceMemberPath> {
+        let target = self
+            .virtual_interface_member_path("", node, false)
+            .ok()
+            .flatten()?;
+        self.virtual_interface_instances
+            .iter()
+            .filter(|(_, (descriptor, _))| *descriptor == target.descriptor)
+            .any(|(interface, _)| {
+                self.virtual_interface_clocking_block(*interface, &target.member)
+                    .is_some()
+            })
+            .then_some(target)
+    }
+
+    fn virtual_interface_clocking_block(&self, interface: NodeId, name: &str) -> Option<NodeId> {
+        self.node(interface)
+            .children
+            .iter()
+            .copied()
+            .find(|child| self.db.is_clocking_block(*child) && self.node(*child).name == name)
+    }
+
+    /// The event of the clocking block `node` names through a virtual
+    /// interface: the handle selects the descriptor's event slot of the
+    /// bound instance when the wait arms.
+    pub(in super::super) fn virtual_clocking_event_ref(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrEventRef>, String> {
+        let Some(target) = self.virtual_clocking_event_member(node) else {
+            return Ok(None);
+        };
+        let slot = self.virtual_interface_event_slot(target.descriptor, &target.member)?;
+        let handle = self.virtual_interface_handle(path, node, &target)?;
+        let site = self.source_site("virtual interface clocking block event", path, node);
+        let name = self.native_access_symbol_at(
+            handle,
+            crate::sim::ir::IrNativeAccessKind::InterfaceEvent {
+                interface: target.descriptor,
+                event: slot,
+            },
+            Some(site),
+        );
+        Ok(Some(IrEventRef::Handle(Box::new(
+            IrChandleExpr::LocalRead(name),
+        ))))
+    }
+
+    /// The descriptor event slot of the clocking block `block`, added with
+    /// each bound instance's block event on first use.
+    fn virtual_interface_event_slot(
+        &mut self,
+        descriptor: usize,
+        block: &str,
+    ) -> Result<usize, String> {
+        let interface = self
+            .model
+            .virtual_interfaces
+            .get(descriptor)
+            .ok_or("virtual interface descriptor is out of bounds")?;
+        if let Some(slot) = interface.events.iter().position(|name| name == block) {
+            return Ok(slot);
+        }
+        let mut events = vec![None; interface.instances.len()];
+        for (node, (owner, instance)) in &self.virtual_interface_instances {
+            if *owner != descriptor {
+                continue;
+            }
+            let event = self
+                .virtual_interface_clocking_block(*node, block)
+                .and_then(|block| self.event_globals.get(&block))
+                .map(|event| event.ir);
+            if let Some(entry) = events.get_mut(*instance) {
+                *entry = event;
+            }
+        }
+        let interface = &mut self.model.virtual_interfaces[descriptor];
+        interface.events.push(block.to_owned());
+        for (instance, event) in interface.instances.iter_mut().zip(events) {
+            instance.events.push(event);
+        }
+        Ok(interface.events.len() - 1)
     }
 }
 

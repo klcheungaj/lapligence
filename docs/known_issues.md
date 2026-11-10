@@ -2129,11 +2129,6 @@ message instead of sampling:
   value has no packed image. Industry-standard behaviour serves it;
 - an edge input skew with a delay (`input negedge #1 x`), which
   industry-standard behaviour accepts;
-- `@(vif.cb)` through a virtual interface handle or view ("clocking block
-  event `cb` is not supported through virtual interface"): a descriptor has
-  member slots for clockvars but no per-instance clocking-block event object.
-  Wait on the clocking event (`@(posedge vif.clk)`) or use the concrete
-  instance; `vif.cb.x` reads work.
 
 An `edge` input skew and an edge skew under an event list also reject; the
 first is a syntax error and the second an error in industry-standard
@@ -2150,9 +2145,8 @@ would remove the per-edge allocation.
 
 Reproduce with
 [`neg_string_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_string_input.sv),
-[`neg_real_array_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_real_array_input.sv),
-[`neg_edge_skew_delay.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_edge_skew_delay.sv) and
-[`neg_vif_clocking_event.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_vif_clocking_event.sv).
+[`neg_real_array_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_real_array_input.sv) and
+[`neg_edge_skew_delay.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_edge_skew_delay.sv).
 
 ## Synchronous drive forms outside the driver model
 

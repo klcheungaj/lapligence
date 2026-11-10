@@ -1,7 +1,7 @@
 //! SIM-033: clocking input expressions and legal sample types. Oracles are
 //! derived by hand in the fixture readme from IEEE 1800-2009 §§3.14.3,
 //! 14.3-14.15.
-use super::sim_cli;
+use super::{sim_cli, sim_harness};
 
 const SUITE: &str = "feature_completion/sim_033";
 
@@ -318,10 +318,34 @@ fn neg_edge_skew_event() {
 }
 
 #[test]
-fn neg_vif_clocking_event() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_vif_clocking_event",
-        "clocking block event `cb` is not supported through virtual interface `bus.tb_mp` in `tb`",
-    );
+fn vif_clocking_event() {
+    // The former neg_vif_clocking_event: `@(vp.cb)` through a view.
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/vif_clocking_event.out");
+    sim_cli::run_case_backend_parity(SUITE, "vif_clocking_event", expected, &[], &[]);
+}
+
+#[test]
+fn vif_clocking_events_follow_the_bound_instance() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/vif_clocking_events.out");
+    sim_cli::run_case_backend_parity(SUITE, "vif_clocking_events", expected, &[], &[]);
+}
+
+#[test]
+fn vif_clocking_event_through_null_handle_stops() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_033/vif_clocking_event_null.out");
+    sim_cli::run_case_checked_matrix(SUITE, "vif_clocking_event_null", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert!(
+            sim_harness::mentions(
+                &String::from_utf8_lossy(&output.stderr),
+                "virtual interface access failed: virtual interface clocking block event at \
+                 tb:18:7"
+            ),
+            "{label}: {output:?}"
+        );
+    });
 }

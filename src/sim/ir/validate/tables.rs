@@ -1069,6 +1069,23 @@ impl Validator<'_> {
                         return self.fail(&path, "interface member reference is out of bounds");
                     }
                 }
+                IrNativeAccessKind::InterfaceEvent { interface, event } => {
+                    let Some(interface) = self.model.virtual_interfaces.get(interface) else {
+                        return self.fail(&path, "interface event reference is out of bounds");
+                    };
+                    if event >= interface.events.len()
+                        || interface.instances.iter().any(|instance| {
+                            instance.events.len() != interface.events.len()
+                                || instance
+                                    .events
+                                    .iter()
+                                    .flatten()
+                                    .any(|index| *index >= self.model.events.len())
+                        })
+                    {
+                        return self.fail(&path, "interface event reference is out of bounds");
+                    }
+                }
                 IrNativeAccessKind::ElementItem { ty } => {
                     self.validate_element_leaf(&access.receiver, &access.item_path, ty, &path)?;
                 }

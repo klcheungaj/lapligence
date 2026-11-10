@@ -150,6 +150,23 @@ behaviour's.
   and a read at 12, between the negedge at 10 and the posedge at 15, that
   already sees the negedge sample.
 
+### Clocking block events through virtual interfaces (K1)
+
+`@(vif.cb)` resumes at the clocking block event (§14.13 L19921-19922: "a
+clocking block shall update its sampled values before triggering the event
+associated with the clocking block name") of the instance the handle is bound
+to when the wait arms. Expected outputs are industry-standard behaviour's.
+
+- `vif_clocking_event`: the former `neg_vif_clocking_event`, through a modport
+  view: the edge at 5 reads `11`.
+- `vif_clocking_events`: `@(v.cn)` (a negedge block) resumes at 10; `@(v.cb
+  iff en)` with `en` set at 12 at 15; `@(vp.cb or posedge en)` through a view
+  of `b2` at 25 (`en` no longer rises); a class property handle bound to `b2`
+  and a second wait on `v` (bound to `b1`, whose `data` became 33 at 21) wait
+  in parallel, resuming at 35 and 45.
+- `vif_clocking_event_null`: a wait through a null handle stops the run
+  (decision S99-D8) after `0 before`.
+
 ## Negatives
 
 Language rules, rejected in both optimizer modes:
@@ -188,7 +205,4 @@ Forms rejected with a located diagnostic instead of a wrong sample (K1):
   edge skew "When the clocking event specifies a simple edge", and
   industry-standard behaviour rejects it too.
 
-`neg_vif_clocking_event`: `@(vp.cb)` through a virtual interface handle is
-rejected explicitly (the clocking block has no per-instance event object in
-the virtual-interface descriptor); its clockvars remain readable through the
-handle, as `interfaces` shows.
+

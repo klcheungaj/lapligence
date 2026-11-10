@@ -1666,6 +1666,7 @@ fn collect_native_access_effects(
     if matches!(
         access.kind,
         crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
+            | crate::sim::ir::IrNativeAccessKind::InterfaceEvent { .. }
     ) {
         effects.push(ExecutionEffect::Terminate);
     }
