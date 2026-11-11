@@ -1291,6 +1291,14 @@ fn s40_d4_invalid_element_access() {
     );
 }
 
+#[test]
+fn s40_d7_time_services() {
+    run_dpi_decision(
+        "S40-D7_time_services",
+        include_str!("fixtures/sim/lrm_decisions/S40-D7_time_services.out"),
+    );
+}
+
 /// A wrong number of indices ends the run when the import returns; the
 /// final procedures run.
 #[test]

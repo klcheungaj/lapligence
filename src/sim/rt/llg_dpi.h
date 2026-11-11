@@ -106,6 +106,10 @@ typedef struct llg_dpi_scope {
     const char* name;                     /* fully qualified scope name */
     const llg_dpi_export_slot_t* exports; /* ascending `id` */
     uint32_t export_count;
+    /* Time unit and precision of the scope as powers of ten in seconds
+     * (2 to -15, like vpiTimeUnit), for the svdpi.h time services. */
+    int8_t time_unit;
+    int8_t time_precision;
     llg_dpi_user_t* user;                 /* svPutUserData entries */
 } llg_dpi_scope_t;
 

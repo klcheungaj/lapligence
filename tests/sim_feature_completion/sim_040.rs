@@ -341,6 +341,23 @@ fn one_c_function_imported_from_several_scopes() {
     );
 }
 
+/// The time services answer for the calling scope, a scope found by name and
+/// the simulation time unit, each with its own time scale (S40-D7).
+#[test]
+fn time_services_scale_to_the_scope() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "time_services") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "time_services",
+        include_str!("../fixtures/sim/feature_completion/sim_040/time_services.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
 #[test]
 fn unsupported_actuals_and_formal_types_are_explicit_errors() {
     sim_cli::reject_case(SUITE, "neg_dynamic_actual", "a dynamic array, queue or associative array actual of DPI-C open-array formal `a` is not supported (SIM-040)");
@@ -409,8 +426,8 @@ fn unprovided_svdpi_routine_is_named() {
         return;
     };
     if cfg!(windows) {
-        let error = built.expect_err("the DLL link must not resolve svGetTime");
-        assert!(error.contains("svGetTime"), "{error}");
+        let error = built.expect_err("the DLL link must not resolve svGetSelectBit");
+        assert!(error.contains("svGetSelectBit"), "{error}");
         return;
     }
     let library = built
@@ -421,7 +438,7 @@ fn unprovided_svdpi_routine_is_named() {
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
+        "a DPI-C library calls svdpi.h routine `svGetSelectBit`, which llg does not provide",
         &["--dpi-lib", &library],
     );
 }
@@ -472,14 +489,14 @@ fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
     let library = directory.path().join("libneg_unprovided_routine.dylib");
     std::fs::write(
         &library,
-        dynamic_lookup_dylib(&["svGetTime", "svGetArrayPtr", "neg_helper"]),
+        dynamic_lookup_dylib(&["svGetSelectBit", "svGetArrayPtr", "neg_helper"]),
     )
     .expect("write Mach-O library");
     let library = library.to_string_lossy().into_owned();
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
+        "a DPI-C library calls svdpi.h routine `svGetSelectBit`, which llg does not provide",
         &["--dpi-lib", &library],
     );
     // `neg_helper` is defined by nothing, so it is named too, as the ELF
@@ -493,7 +510,7 @@ fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "imports neg_helper, svGetTime for dyld to resolve when the model runs",
+        "imports neg_helper, svGetSelectBit for dyld to resolve when the model runs",
         &["--dpi-lib", &library],
     );
 }
@@ -525,7 +542,7 @@ fn model_import_library_is_explicit_about_the_toolchain() {
         assert!(contains(b"sim.exe"), "the import library must name sim.exe");
         assert!(contains(b"svGetArrElemPtr1"), "missing svdpi.h routine");
         assert!(contains(b"vpi_register_systf"), "missing VPI routine");
-        assert!(!contains(b"svGetTime"), "unprovided routine exported");
+        assert!(!contains(b"svGetSelectBit"), "unprovided routine exported");
     } else {
         assert_eq!(output.status.code(), Some(1), "{stderr}");
         assert!(

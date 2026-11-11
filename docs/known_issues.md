@@ -2425,9 +2425,8 @@ These legal imports reject with explicit diagnostics:
   formal ... is not supported (SIM-040)";
 - an unpacked aggregate formal wider than 1048575 payload bits.
 
-A library that calls `svGetTime`, `svGetTimeUnit`, `svGetTimePrecision` or a
-deprecated SV3.1a routine (H.13) fails the model link with an error naming
-the routine. A Mach-O library (macOS) is rejected with the same error before
+A library that calls a deprecated SV3.1a routine (H.13) fails the model link
+with an error naming the routine. A Mach-O library (macOS) is rejected with the same error before
 the build, from its symbol table, because ld64 does not check a dylib's
 undefined symbols. On Windows a DPI DLL links against the model's import
 library (`llg --dpi-import-lib`), which lacks these routines, so the DLL's own
@@ -2439,14 +2438,14 @@ link fails and names the routine (see
 The thunk moves each aggregate through the packed payload, which has no
 representation for owned strings, doubles or handles inside a record. Open
 formals are specialized per actual shape at compile time, so a runtime-sized
-actual has no fixed shape. Scope, user-data and disable services need the
-time services need a defined simulation-time view for foreign code.
+actual has no fixed shape. H.13 lets an implementation leave the SV3.1a
+routines out.
 
 ### Intended direction
 
 Give aggregate leaves of native types their own C-layout slots in the layout
 tables; specialize open formals on container actuals by element type with a
-runtime-sized handle; provide the time services.
+runtime-sized handle.
 
 ### Reproduce
 

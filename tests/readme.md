@@ -380,7 +380,7 @@ backend; `scopes` also links its companion as a static archive and `chains`
 also runs with `-funsigned-char` (MSVC `/J`). On Windows every shared companion
 is a DLL built with `/std:c11 /W4 /WX /LD` against the design's import library
 (`sim_cli::model_import_library`, `llg --dpi-import-lib`; see
-`c_compiler::shared_library`), and the undeclared-export and `svGetTime`
+`c_compiler::shared_library`), and the undeclared-export and `svGetSelectBit`
 negatives check the DLL link's error instead of the model link's. The
 runtime negatives share `errors.c` and must stop with a "DPI-C protocol
 violation". Decisions S41-D1-D8 are in `sim_lrm_decisions`; the component

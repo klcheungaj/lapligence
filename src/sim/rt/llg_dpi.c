@@ -612,6 +612,68 @@ void svAckDisabledState(void) {
     if (llg_dpi_now.chain != LLG_DPI_CHAIN_NONE) llg_dpi_now.acked = 1;
 }
 
+/* ---- Time services ----
+ *
+ * svdpi.h gives each routine one sentence and Annex H none, so decision
+ * S40-D7 fixes the rest: units are powers of ten in seconds, as
+ * vpiTimeUnit reports them; a NULL scope means the simulation time unit
+ * (the design's finest precision, the scheduler tick); svGetTime neither
+ * reads nor writes `type` and fills both forms of the time, the 64-bit
+ * integer as $time rounds it and the real as $realtime scales it. */
+
+/* Femtoseconds of the unit `exponent` (2 to -15) names. */
+static uint64_t llg_dpi_unit_fs(int exponent) {
+    uint64_t fs = 1u;
+    for (int i = -15; i < exponent; ++i) fs *= 10u;
+    return fs;
+}
+
+/* The scope a time service asked about: 1 with `*target` NULL for the
+ * simulation time unit, 0 for a value that is no scope. */
+static int llg_dpi_time_scope(const svScope scope, llg_dpi_scope_t** target) {
+    *target = NULL;
+    if (!scope) return 1;
+    *target = llg_dpi_valid_scope(scope);
+    return *target != NULL;
+}
+
+int svGetTime(const svScope scope, svTimeVal* time) {
+    llg_dpi_scope_t* target;
+    if (!time || !llg_dpi_time_scope(scope, &target)) return -1;
+    uint64_t precision = llg_time_precision_fs();
+    if (!precision) precision = 1u;
+    uint64_t unit = target ? llg_dpi_unit_fs(target->time_unit) : precision;
+    uint64_t scaled = llg_time_scaled(precision, unit);
+    time->high = (uint32_t)(scaled >> 32);
+    time->low = (uint32_t)scaled;
+    time->real = (double)llg_time() * (double)precision / (double)unit;
+    return 0;
+}
+
+int svGetTimeUnit(const svScope scope, int32_t* time_unit) {
+    llg_dpi_scope_t* target;
+    if (!time_unit || !llg_dpi_time_scope(scope, &target)) return -1;
+    if (target) {
+        *time_unit = target->time_unit;
+    } else {
+        uint64_t precision = llg_time_precision_fs();
+        int exponent = -15;
+        for (; precision >= 10u; precision /= 10u) ++exponent;
+        *time_unit = exponent;
+    }
+    return 0;
+}
+
+int svGetTimePrecision(const svScope scope, int32_t* time_precision) {
+    llg_dpi_scope_t* target;
+    if (!time_precision || !llg_dpi_time_scope(scope, &target)) return -1;
+    if (target) {
+        *time_precision = target->time_precision;
+        return 0;
+    }
+    return svGetTimeUnit(NULL, time_precision);
+}
+
 const char* svDpiVersion(void) {
     return "1800-2005";
 }

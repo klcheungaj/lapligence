@@ -1,9 +1,9 @@
-/* SIM-040 negative companion: calls a time routine llg does not provide. */
+/* SIM-040 negative companion: calls a deprecated SV3.1a routine (H.13) llg
+ * does not provide. */
 #include "svdpi.h"
 #include <stddef.h>
 
 DPI_DLLESPEC int neg_scope(void)
 {
-    svTimeVal now;
-    return svGetTime(NULL, &now);
+    return (int)svGetSelectBit(NULL, 0);
 }

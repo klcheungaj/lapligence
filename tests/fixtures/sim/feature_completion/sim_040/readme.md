@@ -155,6 +155,11 @@ Where the text leaves a result open, llg's choice has a portable case in
 - S40-D6: an element access with a wrong number of indices is a fatal error;
   the import's C code is abandoned at the access, nothing is copied out and
   the run ends.
+- S40-D7: `svGetTime` fills `high`/`low` with the scope's `$time` and `real`
+  with its `$realtime` and leaves `type` alone; `svGetTimeUnit` and
+  `svGetTimePrecision` store powers of ten in seconds; a NULL scope is the
+  simulation time unit; an invalid scope or a NULL result pointer returns -1
+  and stores nothing.
 
 ## Fixtures and oracles
 
@@ -170,7 +175,8 @@ companion's arithmetic, then compared with llg.
 | `svdpi_access` | Every `svdpi.h` routine llg provides: `svDpiVersion`, bit and part selects, all array queries for dims 0..4 and invalid dims, `svGetArrayPtr`, `svSizeOfArray`, `svGetArrElemPtr{,1,2,3}`, `svGet/Put{Bit,Logic}ArrElem{,1,2,3}[VecVal]` with in-range and out-of-range indices (A03). | H.11, H.12; decisions S40-D3 and S40-D4. |
 | `svdpi_index_count` | Element pointer, get and put accesses with a wrong number of indices: the first reports one error and abandons the C function, so the later accesses and its last `printf` do not run, `after the call` never prints, the final procedure shows the arrays unchanged; exit status 1 (A03). | H.12.4 L73337-73340; decision S40-D6. |
 | `scopes_types` | One C function imported from two scopes, including an open-array import whose actual shape differs per scope; `pure` imports; enum, packed-struct and `integer` formals. | 35.5.4: one C function per C name. |
-| `neg_*` | Explicit errors: dynamic actuals of open formals, string or real elements in aggregates, aggregates over 1048575 payload bits, packed results, `ref`/`event`/class/unpacked-union formals, open arrays in exports, conflicting signatures, a missing import symbol (with `neg_missing_symbol.c`) and an unprovided routine `svGetTime` (with `neg_unprovided_routine.c`) (A03). | 35.5.5, 35.5.6, 35.5.6.1; llg limits in docs/known_issues.md. |
+| `time_services` | `svGetTime`, `svGetTimeUnit` and `svGetTimePrecision` from module scopes at 1 ns/1 ps, 1 us/10 ns and 100 ps/1 fs and a package at 10 ps/1 ps, from a noncontext import (no scope, and a scope found by name), with a NULL scope, an invalid scope and NULL result pointers; a time above 32 bits of simulation time units. | Decision S40-D7; 20.3.1 and 20.3.3 for the scaled values (1234000 fs is 1.234 ns, 123.4 units of 10 ps, 0.001234 us; 1234568 fs is 12.34568 units of 100 ps; 5 ms is 5000000000000 fs = 1164 * 2^32 + 658067456). |
+| `neg_*` | Explicit errors: dynamic actuals of open formals, string or real elements in aggregates, aggregates over 1048575 payload bits, packed results, `ref`/`event`/class/unpacked-union formals, open arrays in exports, conflicting signatures, a missing import symbol (with `neg_missing_symbol.c`) and an unprovided routine `svGetSelectBit` of the deprecated H.13 set (with `neg_unprovided_routine.c`) (A03). | 35.5.5, 35.5.6, 35.5.6.1; llg limits in docs/known_issues.md. |
 
 ## Other implementations
 

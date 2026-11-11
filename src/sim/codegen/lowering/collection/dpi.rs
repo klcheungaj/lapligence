@@ -468,8 +468,11 @@ impl Codegen<'_> {
             .get(&function)
             .cloned()
             .unwrap_or_else(|| self.source_path(&self.instance_path_of(inst)));
+        let scale = self.timescale_of_node(inst);
         let index = self.model.dpi_scopes.len();
-        self.model.dpi_scopes.push(IrDpiScope::new(name));
+        self.model
+            .dpi_scopes
+            .push(IrDpiScope::new(name, scale.unit_fs, scale.precision_fs));
         self.dpi_scope_ids.insert(inst, index);
         index
     }

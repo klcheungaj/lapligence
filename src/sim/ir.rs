@@ -756,15 +756,31 @@ pub struct IrModel {
 pub struct IrDpiScope {
     /// Fully qualified scope name, as `svGetNameFromScope` returns it.
     pub(in crate::sim) name: String,
+    /// Time unit of the scope in femtoseconds (`svGetTime`, `svGetTimeUnit`).
+    pub(in crate::sim) unit_fs: u64,
+    /// Time precision of the scope in femtoseconds (`svGetTimePrecision`).
+    pub(in crate::sim) precision_fs: u64,
 }
 
 impl IrDpiScope {
-    pub fn new(name: String) -> Self {
-        Self { name }
+    pub fn new(name: String, unit_fs: u64, precision_fs: u64) -> Self {
+        Self {
+            name,
+            unit_fs,
+            precision_fs,
+        }
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn unit_fs(&self) -> u64 {
+        self.unit_fs
+    }
+
+    pub fn precision_fs(&self) -> u64 {
+        self.precision_fs
     }
 }
 
