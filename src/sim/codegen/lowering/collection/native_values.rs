@@ -1013,6 +1013,11 @@ impl Codegen<'_> {
         if let Some(leaf) = self.record_native_leaf(node) {
             return Ok(Some(leaf));
         }
+        // A cell selected at run time is no single leaf; the member select
+        // locates it.
+        if self.selects_at_run_time(node) {
+            return Ok(None);
+        }
         let Some((value, path)) = self.native_path_of(node)? else {
             return Ok(None);
         };
@@ -3471,6 +3476,26 @@ impl Codegen<'_> {
         Ok(())
     }
 
+    /// Whether comparison operand `node` names native storage. A cell
+    /// selected at run time (`r.arr[k]`) is a scalar the expression lowering
+    /// reads; only an aggregate needs a constant path.
+    fn native_record_operand(&self, node: NodeId) -> Result<bool, String> {
+        match self.native_path_of(node) {
+            Ok(rooted) => Ok(rooted.is_some()),
+            Err(_)
+                if !self.query_descriptor(node).is_some_and(|descriptor| {
+                    matches!(
+                        descriptor.shape,
+                        TypeShape::Aggregate(_) | TypeShape::FixedArray { .. }
+                    )
+                }) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Member-wise `==`/`!=`/`===`/`!==` when either record operand is
     /// native subroutine storage. Packed leaves keep four-state comparison,
     /// reals compare numerically, strings by contents and chandles by
@@ -3493,8 +3518,7 @@ impl Codegen<'_> {
         let (left, right) = (self.p30_unwrap_cast(*left), self.p30_unwrap_cast(*right));
         let (left_node, right_node) = (left, right);
         let element = self.is_container_record(left) || self.is_container_record(right);
-        if !element && self.native_path_of(left)?.is_none() && self.native_path_of(right)?.is_none()
-        {
+        if !element && !self.native_record_operand(left)? && !self.native_record_operand(right)? {
             return Ok(None);
         }
         let mut setup = Vec::new();

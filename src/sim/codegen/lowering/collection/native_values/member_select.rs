@@ -289,6 +289,16 @@ impl Codegen<'_> {
 
     /// The root and steps of the selection `node`, however its frontend
     /// shape nests detached arrays, member paths and bit selects.
+    /// Whether `node` selects into a native value with an index that is not
+    /// constant (`h.r.arr[k]`), which no constant item path names.
+    pub(in crate::sim::codegen::lowering::collection) fn selects_at_run_time(
+        &self,
+        node: NodeId,
+    ) -> bool {
+        self.selected_steps(node)
+            .is_some_and(|(_, steps)| steps.iter().any(|step| matches!(step, SelectStep::Run(_))))
+    }
+
     pub(in crate::sim::codegen::lowering::collection) fn selected_steps(
         &self,
         node: NodeId,
@@ -332,7 +342,23 @@ impl Codegen<'_> {
                 }
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some((_, selection, trailing)) = self.element_cell_select(node) {
+                    let steps = trailing.iter().map(|index| step(*index)).collect();
+                    return Some((SelectRoot::Element(selection), steps));
+                }
+                // A member array through an explicit handle (`h.r.arr[k]`)
+                // is named by the select's path child (see `native_path_of`).
+                let aliased = self
+                    .node(node)
+                    .children
+                    .iter()
+                    .find(|child| self.receiver_native_values.contains_key(*child))
+                    .copied();
                 let (root, mut steps) = match self.db.array_select_path(node) {
+                    Some(_) if aliased.is_some() => {
+                        let (value, path) = self.native_path_of(aliased?).ok().flatten()?;
+                        (SelectRoot::Value(value), path_steps(path))
+                    }
                     Some((owner, members)) => {
                         let (root, mut steps) = self.selected_steps(owner)?;
                         steps.extend(members.iter().cloned().map(SelectStep::Member));
@@ -497,7 +523,12 @@ impl Codegen<'_> {
         let Some((root, steps)) = self.selected_steps(leaf_node) else {
             return Ok(None);
         };
-        if !steps.iter().any(|step| matches!(step, SelectStep::Run(_))) {
+        // Below a container element a constant index outside its dimension
+        // also takes the located form, which reads the default and drops a
+        // write (SV 7.4.6); an in-range one is a constant item path.
+        if !steps.iter().any(|step| matches!(step, SelectStep::Run(_)))
+            && !matches!(root, SelectRoot::Element(_))
+        {
             return Ok(None);
         }
         // A member column is one lookup at any size.
@@ -1226,6 +1257,35 @@ impl Codegen<'_> {
                 })
             }
         })
+    }
+
+    /// The leaf of a located selection as a store target addressed at each
+    /// use (`t(da[k][j])` with an output formal); `None` when an index has
+    /// side effects, a packed select follows the leaf or the write is queued.
+    pub(in crate::sim::codegen) fn native_member_select_target(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<(String, IrClassFieldType)>, String> {
+        if self.native_select_at_issue || self.element_nba_target.is_some() {
+            return Ok(None);
+        }
+        let Some(select) = self.native_member_select(path, node)? else {
+            return Ok(None);
+        };
+        let NativeSelectForm::Located { root, levels, ty } = &select.form else {
+            return Ok(None);
+        };
+        if !select.selects.is_empty() {
+            return Ok(None);
+        }
+        let mut prelude = Vec::new();
+        let lowered = self.lower_select_indices(path, &select, &mut prelude)?;
+        if !prelude.is_empty() {
+            return Ok(None);
+        }
+        let name = self.item_access(root, levels, *ty, &lowered, true)?;
+        Ok(Some((name, *ty)))
     }
 
     /// The kind of value the selected leaf holds.

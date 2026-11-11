@@ -428,6 +428,10 @@ impl<'a> Codegen<'a> {
                     return Ok(None);
                 };
                 if indices.len() != 1 {
+                    // A cell of a fixed-array element (`da[k][j]`).
+                    if self.element_cell_select(node).is_some() {
+                        return self.element_leaf_read(path, node);
+                    }
                     return Err(format!(
                         "multidimensional resizable container access in `{path}` is not supported"
                     ));

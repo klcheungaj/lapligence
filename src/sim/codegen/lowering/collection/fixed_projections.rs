@@ -521,6 +521,10 @@ impl Codegen<'_> {
     /// A packed leaf of a native record value roots member, bit and part
     /// projections exactly like packed activation storage.
     fn native_leaf_projection(&mut self, node: NodeId) -> Result<Option<Projection>, String> {
+        // A cell selected at run time is located by the member select.
+        if self.selects_at_run_time(node) {
+            return Ok(None);
+        }
         let Some((value, leaf, remaining, descriptor)) = self.native_packed_leaf_prefix(node)?
         else {
             return Ok(None);

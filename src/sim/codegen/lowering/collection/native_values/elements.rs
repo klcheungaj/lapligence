@@ -171,6 +171,50 @@ impl Codegen<'_> {
         self.record_element_of(node).is_some() || self.record_queue_pop(node).is_some()
     }
 
+    /// `da[k][j]`, `aa[s][j]`, `q[k].a[j]` flattened: the frontend imports a
+    /// select below a whole record or fixed-array element of container
+    /// storage as one select of every index, and keeps the select of the
+    /// element itself as a child. Returns that child, its selection and the
+    /// indices left below it, outermost first.
+    pub(in crate::sim::codegen) fn element_cell_select(
+        &self,
+        node: NodeId,
+    ) -> Option<(NodeId, ElementSelection, Vec<NodeId>)> {
+        let NodeKind::Expr(ExprKind::ArraySelect { base, indices }) = self.kind(node) else {
+            return None;
+        };
+        let mut current = node;
+        loop {
+            let NodeKind::Expr(ExprKind::ArraySelect { indices: inner, .. }) = self.kind(current)
+            else {
+                return None;
+            };
+            // The element select shares the flattened select's base; a
+            // member array below a record element (`q[i].a[j]`) does not.
+            let (child, consumed) =
+                self.node(current)
+                    .children
+                    .iter()
+                    .find_map(|child| match self.kind(*child) {
+                        NodeKind::Expr(ExprKind::ArraySelect {
+                            base: child_base,
+                            indices,
+                        }) if child_base == base && !inner.contains(child) => {
+                            Some((*child, indices.len()))
+                        }
+                        NodeKind::Expr(ExprKind::BitSelect {
+                            base: child_base, ..
+                        }) if child_base == base && !inner.contains(child) => Some((*child, 1)),
+                        _ => None,
+                    })?;
+            if let Some(selection) = self.record_element_of(child) {
+                let trailing = indices.get(consumed..)?.to_vec();
+                return (!trailing.is_empty()).then_some((child, selection, trailing));
+            }
+            current = child;
+        }
+    }
+
     /// A `pop_front()`/`pop_back()` of a queue of records.
     fn record_queue_pop(&self, node: NodeId) -> Option<(usize, bool)> {
         self.queue_pop_call(self.p30_unwrap_cast(node))
@@ -837,6 +881,7 @@ impl Codegen<'_> {
                 self.db
                     .array_select_path(node)
                     .is_some_and(|(owner, _)| self.record_element_of(owner).is_some())
+                    || self.element_cell_select(node).is_some()
                     || self.names_element_member(*base)
             }
             NodeKind::Expr(
@@ -886,6 +931,17 @@ impl Codegen<'_> {
                 Some((element, selection, path))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some((element, selection, trailing)) = self.element_cell_select(node) {
+                    let path = trailing
+                        .iter()
+                        .map(|index| {
+                            Some(AggregatePathPart::Index(
+                                i32::try_from(self.eval_bound_i128(*index).ok()?).ok()?,
+                            ))
+                        })
+                        .collect::<Option<Vec<_>>>()?;
+                    return Some((element, selection, path));
+                }
                 // A member array is named by a detached array node; the
                 // captured select path gives its element owner.
                 let (element, selection, mut path) = match self.db.array_select_path(node) {
@@ -2436,7 +2492,11 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrLhs>, String> {
-        let Some((name, ty)) = self.element_leaf_symbol(path, node, true)? else {
+        let symbol = match self.element_leaf_symbol(path, node, true)? {
+            Some(symbol) => Some(symbol),
+            None => self.native_member_select_target(path, node)?,
+        };
+        let Some((name, ty)) = symbol else {
             return Ok(None);
         };
         let (width, signed, two_state, shortreal) = match ty {

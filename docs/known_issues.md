@@ -1757,9 +1757,8 @@ changes, and, for a class property, when a handle or container property of the
 same object changes (they share the object's marker). A change undone before
 the writer suspends wakes nobody, a string member's included
 ([T1-D11](lrm_decisions.md)). A run-time index into a member array of a record
-property (`h.r.arr[k]`) still rejects with its location ("runtime index into a
-native record array member"), and so does one in a `wait` condition on a static
-subroutine record below 16 cells; an event control on the latter works.
+property (`h.r.arr[k]`) or of a static subroutine record is served, also in a
+`wait` condition.
 
 ## Native stack frames grow with a statement's format-argument count
 

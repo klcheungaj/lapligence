@@ -658,11 +658,6 @@ fn neg_memory_names_that_are_not_variable_memories() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_container_element_select",
-        "multidimensional resizable container access in `tb` is not supported",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_wide_variable_slice",
         "$readmemh indexed memory slice is wider than its dimension in `tb`",
     );
@@ -692,4 +687,21 @@ fn neg_verilog_2001_memory_file_limits() {
         "$readmemh multidimensional memory views require SystemVerilog-2009 in `tb`",
         &["--edition", "v2001"],
     );
+}
+
+/// FIN-001 C1 (a) below record members, in both record storage forms: the
+/// same file prints the same at 3 cells (one leaf each) and at 16 (a column).
+#[test]
+fn record_member_cells_are_selected_at_run_time() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_027/record_member_cells.out");
+    for cells in ["N=3", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_member_cells",
+            expected,
+            &["-D", cells],
+            &[],
+        );
+    }
 }
