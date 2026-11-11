@@ -2410,20 +2410,31 @@ assertion instance.
 ## DPI-C import limits (SIM-040)
 
 **Status:** open. SIM-040 marshals packed, sized unpacked and open-array
-formals of DPI-C imports; these forms remain outside it.
+formals of DPI-C imports and aggregates with `real`, `shortreal`, `string`
+and `chandle` leaves; these forms remain outside it.
 
 ### Symptom
 
-These legal imports reject with explicit diagnostics:
+These imports reject with explicit diagnostics:
 
-- an unpacked array or structure formal (sized or open) with `real`,
-  `shortreal`, `string` or `chandle` elements or members: "unpacked aggregates
-  with real, shortreal, string or chandle elements are not supported
-  (SIM-040)";
 - a dynamic array, queue or associative array actual of an open-array formal:
   "a dynamic array, queue or associative array actual of DPI-C open-array
   formal ... is not supported (SIM-040)";
-- an unpacked aggregate formal wider than 1048575 payload bits.
+- an open-array actual with `real`, `shortreal`, `string` or `chandle`
+  elements that is not a whole array variable (a slice, a concatenation, a
+  function result): "... must be a whole array variable (SIM-040)";
+- an unpacked aggregate formal with packed leaves only that is wider than
+  1048575 payload bits;
+- an exported subroutine with an unpacked aggregate formal that has `real`,
+  `shortreal`, `string` or `chandle` leaves: "unpacked aggregates with real,
+  shortreal, string or chandle elements are not supported (SIM-040)".
+
+The output and inout actuals of one call are copied back in declaration order
+within one kind of formal storage (packed values and strings; real arrays;
+containers; native records) and kind by kind in that order, as for any
+subroutine call, so an actual named twice through formals of different kinds
+(a structure and one of its `real` members) keeps the value of the kind
+copied later.
 
 A library that calls a deprecated SV3.1a routine (H.13) fails the model link
 with an error naming the routine. A Mach-O library (macOS) is rejected with the same error before
@@ -2435,21 +2446,23 @@ link fails and names the routine (see
 
 ### Cause
 
-The thunk moves each aggregate through the packed payload, which has no
-representation for owned strings, doubles or handles inside a record. Open
-formals are specialized per actual shape at compile time, so a runtime-sized
-actual has no fixed shape. H.13 lets an implementation leave the SV3.1a
-routines out.
+Open formals are specialized per actual shape at compile time, so a
+runtime-sized actual has no fixed shape. A formal outside the packed payload
+is storage of the actual's own type that the caller copies as a whole, which
+takes a variable. The packed payload transport ends at the runtime's width
+limit. The export thunks convert only packed payloads. H.13 lets an
+implementation leave the SV3.1a routines out.
 
 ### Intended direction
 
-Give aggregate leaves of native types their own C-layout slots in the layout
-tables; specialize open formals on container actuals by element type with a
-runtime-sized handle.
+Specialize open formals on container actuals by element type with a
+runtime-sized handle. Build the copy of a non-variable actual at the call
+site. Give the export thunks the import's conversions for native leaves.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_040/neg_*.sv`.
+`tests/fixtures/sim/feature_completion/sim_040/neg_*.sv` and
+`tests/fixtures/sim/dpi/unsupported_native_member.sv` (export).
 
 ## DPI-C export limits (SIM-041)
 

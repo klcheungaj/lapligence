@@ -358,12 +358,43 @@ fn time_services_scale_to_the_scope() {
     );
 }
 
+/// Real, shortreal, string and chandle leaves of structures and sized arrays
+/// keep the C layout in every direction.
+#[test]
+fn native_leaves_of_aggregates_use_the_c_layout() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "native_aggregates") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "native_aggregates",
+        include_str!("../fixtures/sim/feature_completion/sim_040/native_aggregates.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
+#[test]
+fn open_arrays_take_native_elements() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "native_open_arrays") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "native_open_arrays",
+        include_str!("../fixtures/sim/feature_completion/sim_040/native_open_arrays.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
 #[test]
 fn unsupported_actuals_and_formal_types_are_explicit_errors() {
     sim_cli::reject_case(SUITE, "neg_dynamic_actual", "a dynamic array, queue or associative array actual of DPI-C open-array formal `a` is not supported (SIM-040)");
-    sim_cli::reject_case(SUITE, "neg_string_array", "DPI-C import `neg_strings` formal 0 (`a`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)");
-    sim_cli::reject_case(SUITE, "neg_real_open", "DPI-C import `neg_reals` formal 0 (`a`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)");
     sim_cli::reject_case(SUITE, "neg_wide_aggregate", "DPI-C import `neg_big` formal 0 (`a`): an unpacked aggregate wider than 1048575 payload bits is not supported (SIM-040)");
+    sim_cli::reject_case(SUITE, "neg_native_open_slice", "the actual of DPI-C open-array formal `a` with real, shortreal, string or chandle elements must be a whole array variable (SIM-040)");
 }
 
 #[test]

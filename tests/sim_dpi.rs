@@ -338,8 +338,9 @@ fn dpi_conflicting_aliases_fail_before_codegen() {
     );
 }
 
+/// An import marshals such an aggregate (SIM-040); the export thunks do not.
 #[test]
-fn dpi_aggregate_with_native_members_is_rejected_before_codegen() {
+fn dpi_export_aggregate_with_native_members_is_rejected_before_codegen() {
     let directory = sim_harness::TempDir::new("dpi-native-member").expect("temporary directory");
     let output = run_llg(
         directory.path(),
@@ -352,7 +353,7 @@ fn dpi_aggregate_with_native_members_is_rejected_before_codegen() {
     assert!(output.stdout.is_empty());
     assert!(
         stderr.contains(
-            "unpacked aggregates with real, shortreal, string or chandle elements are not supported"
+            "DPI-C export `sample_sum` formal 0 (`value`): unpacked aggregates with real, shortreal, string or chandle elements are not supported"
         ),
         "aggregate rejection missing: {stderr}"
     );

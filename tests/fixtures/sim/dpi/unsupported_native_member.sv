@@ -1,13 +1,10 @@
 module tb;
     typedef struct { int count; real scale; } sample_t;
-    import "DPI-C" sample_sum = function int sample_sum(input sample_t value);
+    export "DPI-C" function sample_sum;
 
-    sample_t sample;
+    function int sample_sum(input sample_t value);
+        return value.count;
+    endfunction
 
-    initial begin
-        sample.count = 1;
-        sample.scale = 0.5;
-        $display("%0d", sample_sum(sample));
-        $finish;
-    end
+    initial $finish;
 endmodule

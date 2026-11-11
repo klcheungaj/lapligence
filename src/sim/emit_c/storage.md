@@ -202,6 +202,11 @@ imported task is a coroutine shim (ADV-018, `model/dpi.rs`
 call context and returns right after the foreign call when the process was
 killed; the waiting export's thunk fills the task's (possibly shared) frame
 type on the chain arena and the shim runs it with `LLG_CO_CALL_ARENA`.
+A DPI import formal outside the packed payload (an aggregate with real,
+shortreal, string or chandle leaves) is the native value, real cell array or container the caller made for the
+call (`model/dpi.rs` `Transport`); the thunk converts it to its C-layout
+buffer and, for an output or inout, back at its publication step, and the
+caller's ordinary copy-out writes the actual.
 DPI input strings remain borrowed for the call. Snapshot the foreign return and
 all string outputs before the first copy-out or input destruction, preserving
 aliased foreign pointers. VPI argument arrays borrow registered slots only for

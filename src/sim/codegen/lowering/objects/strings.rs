@@ -245,6 +245,15 @@ impl Codegen<'_> {
                     }
                     continue;
                 }
+                // See `lower_call_stmts`: storage of the actual's own type.
+                if let Some(argument) = self.dpi_open_storage_argument(*io, bound[idx].expr)? {
+                    if *is_out {
+                        out_args.push(argument);
+                    } else {
+                        in_args.push(argument);
+                    }
+                    continue;
+                }
                 if self.is_subroutine_container(*io) {
                     let argument =
                         self.container_call_argument(path, *io, bound[idx].expr, None, None)?;

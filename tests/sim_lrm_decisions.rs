@@ -1292,6 +1292,14 @@ fn s40_d4_invalid_element_access() {
 }
 
 #[test]
+fn s40_d8_native_aggregate_leaves() {
+    run_dpi_decision(
+        "S40-D8_native_aggregate_leaves",
+        include_str!("fixtures/sim/lrm_decisions/S40-D8_native_aggregate_leaves.out"),
+    );
+}
+
+#[test]
 fn s40_d7_time_services() {
     run_dpi_decision(
         "S40-D7_time_services",

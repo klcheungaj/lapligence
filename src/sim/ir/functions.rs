@@ -93,8 +93,9 @@ pub struct IrFormal {
 ///
 /// The generated wrapper keeps this metadata separate from the internal
 /// simulator calling convention: each formal still travels as its internal
-/// value (a packed payload for aggregates), and the thunk converts it to the
-/// foreign representation in [`Self::formals`]. `pure` and `context` remain
+/// value (a packed payload for aggregates, or the native value, real array
+/// or container of an aggregate outside the payload), and the thunk converts
+/// it to the foreign representation in [`Self::formals`]. `pure` and `context` remain
 /// available to effect analysis and diagnostics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrDpiImport {
@@ -309,6 +310,12 @@ pub enum IrDpiType {
     OpenPacked {
         logic: bool,
     },
+    /// An open-array formal specialized for a dynamic array or queue actual
+    /// (SV 7.7): its one dimension is the container's, `[0:size-1]` with the
+    /// size it has at the call.
+    OpenDynamic {
+        element: Box<IrDpiType>,
+    },
 }
 
 impl IrDpiType {
@@ -319,14 +326,15 @@ impl IrDpiType {
             Self::Open { dims, element } => {
                 dims.iter().any(Option::is_none) || element.is_unsized()
             }
-            Self::Array { element, .. } => element.is_unsized(),
+            Self::Array { element, .. } | Self::OpenDynamic { element, .. } => element.is_unsized(),
             Self::Struct(members) => members.iter().any(Self::is_unsized),
             _ => false,
         }
     }
 
     /// Bits of this value in the internal packed payload, or `None` for a
-    /// type outside the payload (real, string, chandle) or still unsized.
+    /// type outside the payload (real, string, chandle, a container's
+    /// run-time size) or still unsized.
     pub fn payload_width(&self) -> Option<u64> {
         match self {
             Self::Bit | Self::Logic => Some(1),
@@ -354,7 +362,8 @@ impl IrDpiType {
             | Self::ShortReal
             | Self::Chandle
             | Self::String
-            | Self::OpenPacked { .. } => None,
+            | Self::OpenPacked { .. }
+            | Self::OpenDynamic { .. } => None,
         }
     }
 }

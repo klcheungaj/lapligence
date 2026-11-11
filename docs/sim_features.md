@@ -2731,9 +2731,11 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   chandle and string signatures; packed vectors of any width as canonical
   `svBitVecVal`/`svLogicVecVal` chunks (integer, `time`, packed structures,
   unions and enums included); sized unpacked arrays and structures in the C
-  compiler's layout (H.7.8); and open arrays with any number of open unpacked
-  dimensions, a sized or unsized packed part and structure elements, passed
-  as `svOpenArrayHandle` with the actual's ranges (35.5.6.1, H.12). Every
+  compiler's layout (H.7.8), their `real`, `shortreal`, `string` and
+  `chandle` leaves included (Table H.1, H.8.10.1; S40-D8); and open arrays
+  with any number of open unpacked dimensions, a sized or unsized packed part
+  and structure, real, string or chandle elements, passed as
+  `svOpenArrayHandle` with the actual's ranges (35.5.6.1, H.12). Every
   `svdpi.h` canonical-access, bit/part-select, array-query and open-array
   element routine of H.11-H.12 is provided, plus `svDpiVersion`
   ("1800-2005") and the time services `svGetTime`, `svGetTimeUnit` and

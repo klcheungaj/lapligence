@@ -158,6 +158,128 @@ fn dpi_byte_is_plain_char_and_sign_extended_explicitly() {
     );
 }
 
+/// A queue is to the thunk what a dynamic array is, with the queue's own
+/// runtime type; the frontend admits no queue actual yet, so only this
+/// component test reaches the form.
+#[test]
+fn component_dpi_open_array_over_a_queue_uses_the_queue_cells() {
+    use crate::sim::ir::{
+        IrContainer, IrContainerElement, IrContainerKind, IrDpiImport, IrDpiType, IrFormal,
+        IrFormalMode,
+    };
+
+    let mut model = IrModel::new("t".to_owned(), 1).unwrap();
+    let element = IrContainerElement::Packed {
+        width: 32,
+        signed: true,
+        two_state: true,
+    };
+    for (name, kind, element) in [
+        (
+            "q",
+            IrContainerKind::Queue {
+                maximum_elements: None,
+            },
+            element.clone(),
+        ),
+        ("d", IrContainerKind::Dynamic, IrContainerElement::String),
+    ] {
+        model.containers.push(IrContainer {
+            c_name: name.to_owned(),
+            element,
+            kind,
+            initial_size: None,
+            activation: true,
+            class_field: None,
+            receiver: None,
+        });
+    }
+    let mut queue = IrFormal::new(true, 1, false).unwrap();
+    queue.mode = IrFormalMode::Inout;
+    queue.width = 0;
+    queue.container = Some(0);
+    let mut strings = IrFormal::new(false, 1, false).unwrap();
+    strings.width = 0;
+    strings.container = Some(1);
+    let int = IrDpiType::Int {
+        bytes: 4,
+        signed: true,
+    };
+    let mut function = IrFunc::new(
+        "open_thunk".to_owned(),
+        None,
+        vec![queue, strings],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    function.is_task = false;
+    function.dpi = Some(IrDpiImport::new(
+        "foreign_open".to_owned(),
+        false,
+        false,
+        vec![
+            IrDpiType::OpenDynamic {
+                element: Box::new(int.clone()),
+            },
+            IrDpiType::OpenDynamic {
+                element: Box::new(IrDpiType::String),
+            },
+        ],
+        None,
+    ));
+    let prototype = dpi_external_prototype(&function).unwrap();
+    assert!(
+        prototype.contains(
+            "extern void foreign_open(const svOpenArrayHandle p0, const svOpenArrayHandle p1);"
+        ),
+        "{prototype}"
+    );
+    let thunk = render_dpi_thunk(&model, &function).unwrap();
+    for expected in [
+        "llg_queue_t* _dpi_q0 = (llg_queue_t*)o0;",
+        "llg_dpi_dynamic_level(&_dpi_t0, &llg_dpi_open_thunk_t0, _dpi_q0->size);",
+        "llg_value_scope_begin_object(_dpi_t0.size ? _dpi_t0.size : 1u, NULL)",
+        "llg_dpi_cells_to_c(&_dpi_t0, _dpi_q0->data, _dpi_q0->size, _dpi_b0);",
+        "llg_dpi_open_t _dpi_h0 = { &_dpi_t0, 1, _dpi_b0 };",
+        "const llg_dyn_value_array_t* _dpi_q1 = (const llg_dyn_value_array_t*)a1;",
+        "llg_dpi_cells_from_c(&_dpi_t0, _dpi_b0, _dpi_q0->data, _dpi_q0->size);",
+        "setjmp(_dpi_guard.jump)",
+    ] {
+        assert!(thunk.contains(expected), "missing `{expected}`: {thunk}");
+    }
+    assert!(
+        thunk.contains(
+            "llg_dpi_items_to_c(&_dpi_t1, _dpi_q1->element, _dpi_q1->data, _dpi_q1->size, _dpi_b1);"
+        ) && thunk.contains(".kind = LLG_DPI_STRING, .size = sizeof(llg_dpi_open_thunk_c1)"),
+        "{thunk}"
+    );
+    // The input is not read back.
+    assert!(!thunk.contains("llg_dpi_items_from_c"), "{thunk}");
+
+    // A layout that does not describe the formal's storage is an error, not
+    // a table the runtime would have to refuse.
+    function.dpi = Some(IrDpiImport::new(
+        "foreign_open".to_owned(),
+        false,
+        false,
+        vec![
+            IrDpiType::OpenDynamic {
+                element: Box::new(int),
+            },
+            IrDpiType::OpenDynamic {
+                element: Box::new(IrDpiType::Real),
+            },
+        ],
+        None,
+    ));
+    let error = render_dpi_thunk(&model, &function).unwrap_err();
+    assert!(
+        error.contains("DPI-C import `foreign_open` formal 1: DPI-C type Real does not match the storage of its formal"),
+        "{error}"
+    );
+}
+
 #[test]
 fn only_catalog_models_mark_their_header() {
     let header = |model: IrModel| {

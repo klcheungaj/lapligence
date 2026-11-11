@@ -369,9 +369,10 @@ builds its checked-in C companion into a shared library (strict C11, with
 optimizer modes on every backend; negatives cover frontend, codegen and
 link-time errors, and `model_import_library_is_explicit_about_the_toolchain`
 checks `llg --dpi-import-lib` (an import library naming `sim.exe` under MSVC,
-an explicit error elsewhere). Decisions S40-D1-D5,
+an explicit error elsewhere). Decisions S40-D1-D8,
 with `.c` companions, are in `sim_lrm_decisions`; component checks are the
-`sim::build::dpi_link::tests` unit tests.
+`sim::build::dpi_link::tests` unit tests and
+`sim::emit_c::model::tests::component_dpi_open_array_over_a_queue_uses_the_queue_cells`.
 
 SIM-041's DPI-C export and context call-chain fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_041::)'`. Positives build their

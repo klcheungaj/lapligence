@@ -284,6 +284,367 @@ void llg_dpi_init_c(const llg_dpi_type_t* type, void* out) {
     llg_dpi_walk_init(type, (unsigned char*)out);
 }
 
+/* ---- Aggregates outside the payload: native values, real cells and
+ * container elements <-> C layout (H.7.8, H.8.10.1) ---- */
+
+static void llg_dpi_bad_shape(void) {
+    llg_msg(LLG_MSG_INTERNAL, NULL, "a DPI-C layout table does not match the value it converts");
+    abort();
+}
+
+static int llg_dpi_is_leaf(const llg_dpi_type_t* type) {
+    return type->kind != LLG_DPI_ARRAY && type->kind != LLG_DPI_STRUCT;
+}
+
+/* Storage position of the element at C index `k` of an array level: storage
+ * lists elements in declaration order (left bound first), the C layout the
+ * lowest index first (H.7.3). */
+static size_t llg_dpi_position(const llg_dpi_type_t* type, size_t k) {
+    return type->left <= type->right ? k : type->count - 1u - k;
+}
+
+/* Flat items below one element of array level `type`: the elements of its
+ * joined inner dimensions, or of every inner dimension when `all`. */
+static size_t llg_dpi_stride(const llg_dpi_type_t* type, int all) {
+    size_t stride = 1u;
+    for (const llg_dpi_type_t* inner = type->element;
+         inner->kind == LLG_DPI_ARRAY && (all || inner->joined); inner = inner->element)
+        stride *= inner->count;
+    return stride;
+}
+
+/* One packed cell holding the payload of `type`. A leaf of at most 64 bits,
+ * the usual element, converts without a scratch allocation. */
+static void llg_dpi_cell_to_c(const llg_dpi_type_t* type, const sv4_t* cell, unsigned char* out) {
+    if (llg_dpi_is_leaf(type) && type->width <= 64u) {
+        llg_sv4_vpi_word_t word = llg_sv4_vpi_word(*cell, 0);
+        svLogicVecVal chunks[2];
+        chunks[0].aval = (uint32_t)word.aval;
+        chunks[0].bval = (uint32_t)word.bval;
+        chunks[1].aval = (uint32_t)(word.aval >> 32);
+        chunks[1].bval = (uint32_t)(word.bval >> 32);
+        llg_dpi_leaf_to_c(type, chunks, 0, out);
+        return;
+    }
+    llg_dpi_to_c(type, cell, out);
+}
+
+static void llg_dpi_cell_from_c(const llg_dpi_type_t* type, const unsigned char* in, sv4_t* cell) {
+    if (llg_dpi_is_leaf(type) && type->width <= 64u) {
+        svLogicVecVal chunks[2] = {{0, 0}, {0, 0}};
+        llg_sv4_vpi_word_t word;
+        llg_dpi_leaf_from_c(type, in, chunks, 0);
+        word.aval = (uint64_t)chunks[0].aval | ((uint64_t)chunks[1].aval << 32);
+        word.bval = (uint64_t)chunks[0].bval | ((uint64_t)chunks[1].bval << 32);
+        llg_sv4_set_vpi_word(cell, 0, word);
+        return;
+    }
+    llg_dpi_from_c(type, in, cell);
+}
+
+/* String leaves read back from C. Every changed pointer is copied before
+ * any leaf is replaced: foreign code may have stored one leaf's characters,
+ * which the value still owns, in another leaf. */
+typedef struct llg_dpi_strings {
+    struct llg_dpi_string_store {
+        llg_string_t* target;
+        llg_string_t fresh;
+    }* stores;
+    size_t count;
+    size_t capacity;
+} llg_dpi_strings_t;
+
+static void llg_dpi_string_read(llg_dpi_strings_t* strings, const unsigned char* in,
+                                llg_string_t* target) {
+    const char* text;
+    memcpy(&text, in, sizeof(text));
+    /* The unchanged pointer of an inout leaf keeps its string (H.8.10). */
+    if (text && text == target->data) return;
+    if (strings->count == strings->capacity) {
+        size_t capacity = strings->capacity ? strings->capacity * 2u : 8u;
+        void* grown = realloc(strings->stores, capacity * sizeof(*strings->stores));
+        if (!grown) {
+            llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory converting a DPI-C argument");
+            abort();
+        }
+        strings->stores = (struct llg_dpi_string_store*)grown;
+        strings->capacity = capacity;
+    }
+    strings->stores[strings->count].target = target;
+    strings->stores[strings->count].fresh = llg_string_bytes(text ? text : "", text ? strlen(text) : 0u);
+    ++strings->count;
+}
+
+static void llg_dpi_strings_store(llg_dpi_strings_t* strings) {
+    for (size_t i = 0; i < strings->count; ++i)
+        llg_string_move_take(strings->stores[i].target, &strings->stores[i].fresh);
+    free(strings->stores);
+}
+
+static void llg_dpi_native_to_c(const llg_dpi_type_t* type, const llg_value_desc_t* desc,
+                                const llg_value_t* value, unsigned char* out);
+
+/* The flat `items` of array level `type`, each of type `element`. */
+static void llg_dpi_level_to_c(const llg_dpi_type_t* type, const llg_value_desc_t* element,
+                               const llg_value_t* items, unsigned char* out) {
+    size_t stride = llg_dpi_stride(type, 0);
+    int joined = type->element->kind == LLG_DPI_ARRAY && type->element->joined;
+    for (size_t k = 0; k < type->count; ++k) {
+        const llg_value_t* item = items + llg_dpi_position(type, k) * stride;
+        unsigned char* at = out + k * type->element->size;
+        if (joined) {
+            llg_dpi_level_to_c(type->element, element, item, at);
+        } else {
+            llg_dpi_native_to_c(type->element, element, item, at);
+        }
+    }
+}
+
+static void llg_dpi_native_to_c(const llg_dpi_type_t* type, const llg_value_desc_t* desc,
+                                const llg_value_t* value, unsigned char* out) {
+    if (!desc) llg_dpi_bad_shape();
+    switch (type->kind) {
+    case LLG_DPI_ARRAY:
+        if (desc->kind != LLG_VALUE_FIXED_ARRAY ||
+            desc->item_count != type->count * llg_dpi_stride(type, 0))
+            llg_dpi_bad_shape();
+        llg_dpi_level_to_c(type, desc->element, value->value.items, out);
+        break;
+    case LLG_DPI_STRUCT:
+        if (desc->kind != LLG_VALUE_AGGREGATE || desc->member_count != type->count)
+            llg_dpi_bad_shape();
+        for (size_t m = 0; m < type->count; ++m)
+            llg_dpi_native_to_c(type->members[m].type, desc->members[m].value,
+                                &value->value.items[m], out + type->members[m].offset);
+        break;
+    case LLG_DPI_REAL: {
+        double real = value->value.real;
+        if (desc->kind != LLG_VALUE_REAL) llg_dpi_bad_shape();
+        memcpy(out, &real, sizeof(real));
+        break;
+    }
+    case LLG_DPI_SHORTREAL: {
+        float real = (float)value->value.real;
+        if (desc->kind != LLG_VALUE_REAL) llg_dpi_bad_shape();
+        memcpy(out, &real, sizeof(real));
+        break;
+    }
+    case LLG_DPI_STRING: {
+        const char* text = value->value.string.data ? value->value.string.data : "";
+        if (desc->kind != LLG_VALUE_STRING) llg_dpi_bad_shape();
+        memcpy(out, &text, sizeof(text));
+        break;
+    }
+    case LLG_DPI_CHANDLE: {
+        void* handle = value->value.handle;
+        if (desc->kind != LLG_VALUE_CHANDLE) llg_dpi_bad_shape();
+        memcpy(out, &handle, sizeof(handle));
+        break;
+    }
+    default:
+        if (desc->kind != LLG_VALUE_PACKED) llg_dpi_bad_shape();
+        llg_dpi_cell_to_c(type, &value->value.packed, out);
+        break;
+    }
+}
+
+static void llg_dpi_native_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+                                  const llg_value_desc_t* desc, llg_value_t* value,
+                                  llg_dpi_strings_t* strings);
+
+static void llg_dpi_level_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+                                 const llg_value_desc_t* element, llg_value_t* items,
+                                 llg_dpi_strings_t* strings) {
+    size_t stride = llg_dpi_stride(type, 0);
+    int joined = type->element->kind == LLG_DPI_ARRAY && type->element->joined;
+    for (size_t k = 0; k < type->count; ++k) {
+        llg_value_t* item = items + llg_dpi_position(type, k) * stride;
+        const unsigned char* at = in + k * type->element->size;
+        if (joined) {
+            llg_dpi_level_from_c(type->element, at, element, item, strings);
+        } else {
+            llg_dpi_native_from_c(type->element, at, element, item, strings);
+        }
+    }
+}
+
+static void llg_dpi_native_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+                                  const llg_value_desc_t* desc, llg_value_t* value,
+                                  llg_dpi_strings_t* strings) {
+    if (!desc) llg_dpi_bad_shape();
+    switch (type->kind) {
+    case LLG_DPI_ARRAY:
+        if (desc->kind != LLG_VALUE_FIXED_ARRAY ||
+            desc->item_count != type->count * llg_dpi_stride(type, 0))
+            llg_dpi_bad_shape();
+        llg_dpi_level_from_c(type, in, desc->element, value->value.items, strings);
+        break;
+    case LLG_DPI_STRUCT:
+        if (desc->kind != LLG_VALUE_AGGREGATE || desc->member_count != type->count)
+            llg_dpi_bad_shape();
+        for (size_t m = 0; m < type->count; ++m)
+            llg_dpi_native_from_c(type->members[m].type, in + type->members[m].offset,
+                                  desc->members[m].value, &value->value.items[m], strings);
+        break;
+    case LLG_DPI_REAL: {
+        double real;
+        if (desc->kind != LLG_VALUE_REAL) llg_dpi_bad_shape();
+        memcpy(&real, in, sizeof(real));
+        value->value.real = real;
+        break;
+    }
+    case LLG_DPI_SHORTREAL: {
+        float real;
+        if (desc->kind != LLG_VALUE_REAL) llg_dpi_bad_shape();
+        memcpy(&real, in, sizeof(real));
+        value->value.real = (double)real;
+        break;
+    }
+    case LLG_DPI_STRING:
+        if (desc->kind != LLG_VALUE_STRING) llg_dpi_bad_shape();
+        llg_dpi_string_read(strings, in, &value->value.string);
+        break;
+    case LLG_DPI_CHANDLE: {
+        void* handle;
+        if (desc->kind != LLG_VALUE_CHANDLE) llg_dpi_bad_shape();
+        memcpy(&handle, in, sizeof(handle));
+        value->value.handle = handle;
+        break;
+    }
+    default:
+        if (desc->kind != LLG_VALUE_PACKED) llg_dpi_bad_shape();
+        llg_dpi_cell_from_c(type, in, &value->value.packed);
+        break;
+    }
+}
+
+void llg_dpi_value_to_c(const llg_dpi_type_t* type, const llg_value_t* value, void* out) {
+    llg_dpi_native_to_c(type, value->desc, value, (unsigned char*)out);
+}
+
+void llg_dpi_value_from_c(const llg_dpi_type_t* type, const void* in, llg_value_t* value) {
+    llg_dpi_strings_t strings = {NULL, 0, 0};
+    llg_dpi_native_from_c(type, (const unsigned char*)in, value->desc, value, &strings);
+    llg_dpi_strings_store(&strings);
+}
+
+void llg_dpi_items_to_c(const llg_dpi_type_t* type, const llg_value_desc_t* element,
+                        const llg_value_t* items, size_t count, void* out) {
+    if (type->kind != LLG_DPI_ARRAY || count != type->count * llg_dpi_stride(type, 0))
+        llg_dpi_bad_shape();
+    llg_dpi_level_to_c(type, element, items, (unsigned char*)out);
+}
+
+void llg_dpi_items_from_c(const llg_dpi_type_t* type, const void* in,
+                          const llg_value_desc_t* element, llg_value_t* items, size_t count) {
+    llg_dpi_strings_t strings = {NULL, 0, 0};
+    if (type->kind != LLG_DPI_ARRAY || count != type->count * llg_dpi_stride(type, 0))
+        llg_dpi_bad_shape();
+    llg_dpi_level_from_c(type, (const unsigned char*)in, element, items, &strings);
+    llg_dpi_strings_store(&strings);
+}
+
+void llg_dpi_cells_to_c(const llg_dpi_type_t* type, const sv4_t* cells, size_t count, void* out) {
+    if (type->kind != LLG_DPI_ARRAY || count != type->count) llg_dpi_bad_shape();
+    for (size_t k = 0; k < count; ++k)
+        llg_dpi_cell_to_c(type->element, &cells[llg_dpi_position(type, k)],
+                          (unsigned char*)out + k * type->element->size);
+}
+
+void llg_dpi_cells_from_c(const llg_dpi_type_t* type, const void* in, sv4_t* cells, size_t count) {
+    if (type->kind != LLG_DPI_ARRAY || count != type->count) llg_dpi_bad_shape();
+    for (size_t k = 0; k < count; ++k)
+        llg_dpi_cell_from_c(type->element, (const unsigned char*)in + k * type->element->size,
+                            &cells[llg_dpi_position(type, k)]);
+}
+
+/* Real cells lie flat over every dimension, whatever array types nest. */
+static void llg_dpi_real_level_to_c(const llg_dpi_type_t* type, const double* cells,
+                                    unsigned char* out) {
+    if (type->kind == LLG_DPI_ARRAY) {
+        size_t stride = llg_dpi_stride(type, 1);
+        for (size_t k = 0; k < type->count; ++k)
+            llg_dpi_real_level_to_c(type->element, cells + llg_dpi_position(type, k) * stride,
+                                    out + k * type->element->size);
+    } else if (type->kind == LLG_DPI_REAL) {
+        memcpy(out, cells, sizeof(double));
+    } else if (type->kind == LLG_DPI_SHORTREAL) {
+        float real = (float)*cells;
+        memcpy(out, &real, sizeof(real));
+    } else {
+        llg_dpi_bad_shape();
+    }
+}
+
+static void llg_dpi_real_level_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+                                      double* cells) {
+    if (type->kind == LLG_DPI_ARRAY) {
+        size_t stride = llg_dpi_stride(type, 1);
+        for (size_t k = 0; k < type->count; ++k)
+            llg_dpi_real_level_from_c(type->element, in + k * type->element->size,
+                                      cells + llg_dpi_position(type, k) * stride);
+    } else if (type->kind == LLG_DPI_REAL) {
+        memcpy(cells, in, sizeof(double));
+    } else if (type->kind == LLG_DPI_SHORTREAL) {
+        float real;
+        memcpy(&real, in, sizeof(real));
+        *cells = (double)real;
+    } else {
+        llg_dpi_bad_shape();
+    }
+}
+
+void llg_dpi_reals_to_c(const llg_dpi_type_t* type, const double* cells, void* out) {
+    llg_dpi_real_level_to_c(type, cells, (unsigned char*)out);
+}
+
+void llg_dpi_reals_from_c(const llg_dpi_type_t* type, const void* in, double* cells) {
+    llg_dpi_real_level_from_c(type, (const unsigned char*)in, cells);
+}
+
+void llg_dpi_dynamic_level(llg_dpi_type_t* level, const llg_dpi_type_t* element, size_t count) {
+    /* svSize and svHigh report an int (H.12.2). */
+    if (count > (size_t)INT32_MAX || (element->size && count > SIZE_MAX / element->size)) {
+        llg_msg(LLG_MSG_INTERNAL, NULL,
+                "a dynamic array or queue of %llu elements is too large for a DPI-C open array",
+                (unsigned long long)count);
+        abort();
+    }
+    memset(level, 0, sizeof(*level));
+    level->kind = LLG_DPI_ARRAY;
+    level->dynamic = 1u;
+    level->size = count * element->size;
+    level->left = 0;
+    level->right = (int32_t)count - 1;
+    level->count = count;
+    level->element = element;
+}
+
+static void llg_dpi_walk_empty_strings(const llg_dpi_type_t* type, unsigned char* out) {
+    switch (type->kind) {
+    case LLG_DPI_ARRAY:
+        for (size_t k = 0; k < type->count; ++k)
+            llg_dpi_walk_empty_strings(type->element, out + k * type->element->size);
+        break;
+    case LLG_DPI_STRUCT:
+        for (size_t m = 0; m < type->count; ++m)
+            llg_dpi_walk_empty_strings(type->members[m].type, out + type->members[m].offset);
+        break;
+    case LLG_DPI_STRING: {
+        const char* text = "";
+        memcpy(out, &text, sizeof(text));
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+void llg_dpi_init_native(const llg_dpi_type_t* type, void* out) {
+    memset(out, 0, type->size);
+    llg_dpi_walk_empty_strings(type, (unsigned char*)out);
+}
+
 /* ---- svdpi.h: version and canonical bit/part selects (H.10.1.3, H.11.5) */
 
 /* ---- Context call chains: svScope, user data, caller and disable state
@@ -787,7 +1148,9 @@ static int llg_dpi_range(const svOpenArrayHandle h, int d, int* left, int* right
     if (!level) return 0;
     *left = level->left;
     *right = level->right;
-    return 1;
+    /* A dynamic array or queue dimension is [0:size-1], [0:-1] when empty,
+     * and its increment is -1 whatever its size (SV 20.7). */
+    return level->dynamic ? 2 : 1;
 }
 
 int svLeft(const svOpenArrayHandle h, int d) {
@@ -802,25 +1165,30 @@ int svRight(const svOpenArrayHandle h, int d) {
 
 int svLow(const svOpenArrayHandle h, int d) {
     int left = 0, right = 0;
-    if (!llg_dpi_range(h, d, &left, &right)) return 0;
-    return left < right ? left : right;
+    int kind = llg_dpi_range(h, d, &left, &right);
+    if (!kind) return 0;
+    return kind == 2 || left < right ? left : right;
 }
 
 int svHigh(const svOpenArrayHandle h, int d) {
     int left = 0, right = 0;
-    if (!llg_dpi_range(h, d, &left, &right)) return 0;
-    return left > right ? left : right;
+    int kind = llg_dpi_range(h, d, &left, &right);
+    if (!kind) return 0;
+    return kind == 2 || left <= right ? right : left;
 }
 
 int svIncrement(const svOpenArrayHandle h, int d) {
     int left = 0, right = 0;
-    if (!llg_dpi_range(h, d, &left, &right)) return 0;
-    return left >= right ? 1 : -1;
+    int kind = llg_dpi_range(h, d, &left, &right);
+    if (!kind) return 0;
+    return kind != 2 && left >= right ? 1 : -1;
 }
 
 int svSize(const svOpenArrayHandle h, int d) {
     int left = 0, right = 0;
-    if (!llg_dpi_range(h, d, &left, &right)) return 0;
+    int kind = llg_dpi_range(h, d, &left, &right);
+    if (!kind) return 0;
+    if (kind == 2) return right + 1;
     return (left > right ? left - right : right - left) + 1;
 }
 
@@ -858,10 +1226,12 @@ static unsigned char* llg_dpi_element_at(const svOpenArrayHandle h, int count, c
     const llg_dpi_type_t* level = open->type;
     unsigned char* address = (unsigned char*)open->data;
     for (int i = 0; i < count; ++i) {
-        int64_t low = level->left < level->right ? level->left : level->right;
-        int64_t high = level->left > level->right ? level->left : level->right;
-        if (index[i] < low || index[i] > high) return NULL;
-        address += (size_t)(index[i] - low) * level->element->size;
+        /* A dynamic dimension is [0:count-1]: empty, [0:-1], it has no
+         * element. */
+        int64_t low = level->dynamic || level->left < level->right ? level->left : level->right;
+        int64_t offset = (int64_t)index[i] - low;
+        if (offset < 0 || (uint64_t)offset >= level->count) return NULL;
+        address += (size_t)offset * level->element->size;
         level = level->element;
     }
     return address;

@@ -270,11 +270,23 @@ impl<'a> Codegen<'a> {
         // order their trailing IR formals were declared.
         let mut record_out_args = Vec::new();
         let mut record_in_args = Vec::new();
+        // Open-array formals bound below to storage of the actual's type.
+        let mut open_storage = vec![false; formals.len()];
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if bound[idx].is_event {
                 let (address, argument) =
                     self.event_call_argument(scope_path, name, *io, *is_out, bound[idx].expr)?;
                 if address {
+                    out_args.push(argument);
+                } else {
+                    in_args.push((idx, argument));
+                }
+                continue;
+            }
+            // See `lower_call_stmts`: storage of the actual's own type.
+            if let Some(argument) = self.dpi_open_storage_argument(*io, bound[idx].expr)? {
+                open_storage[idx] = true;
+                if *is_out {
                     out_args.push(argument);
                 } else {
                     in_args.push((idx, argument));
@@ -585,6 +597,7 @@ impl<'a> Codegen<'a> {
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if bound[idx].is_event
+                || open_storage[idx]
                 || self.fixed_formal_array(*io).is_some()
                 || self.is_native_declaration(*io)
                 || self.is_subroutine_container(*io)
