@@ -15,11 +15,13 @@ public CLI in edition 2009. The source is rejected in edition 2001.
 7.3.2. `nested_inactive_read.sv` and `nested_inactive_write.sv` check both
 levels of the tag guard with exact source-addressed runtime errors, preserved
 active payloads and one receiver evaluation. `nba_wrong_at_issue.sv` checks
-the issue-time target rule even when a later blocking assignment changes the
-tag before the NBA update. These runtime cases run in both optimizer modes.
+`llg`'s issue-time tag check even when a later blocking assignment makes the
+issued member active before the NBA update; the text also allows that write to
+commit (Q03 in [RTL-016](../feature_completion/rtl_016/readme.md)). These
+runtime cases run in both optimizer modes.
 
 The companion `sim_tagged_union_access` and `sim_data_types_next` suites cover
 other wrong-tag diagnostics, nested tagged payloads, value/port contexts and
-unsupported unpacked tagged storage. Q03 remains open only for a valid issue
-target whose tag changes before NBA publication; no commit-time recheck oracle
-is asserted for that case.
+unsupported unpacked tagged storage. Q03, a valid issue target whose tag
+changes before NBA publication, is resolved with a commit-time tag check in
+[RTL-016](../feature_completion/rtl_016/readme.md).

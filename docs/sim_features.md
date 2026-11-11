@@ -62,19 +62,20 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 3. Modules/ports/elaboration | 4 | 5 | 0 | 0 | 0 | 0 | 9 |
 | 4. Scheduling/processes | 4 | 3 | 0 | 0 | 0 | 1 | 8 |
 | 5. Procedural statements | 5 | 7 | 0 | 1 | 0 | 0 | 13 |
-| 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 0 | 7 |
+| 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 1 | 8 |
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
 | 8. Continuous/structural | 5 | 11 | 0 | 1 | 0 | 1 | 18 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
 | 10. System tasks/functions | 13 | 8 | 1 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 2 | 0 | 0 | 9 |
 | 12. Verification/foreign interfaces | 1 | 18 | 0 | 1 | 0 | 0 | 20 |
-| **Total** | **50** | **88** | **2** | **9** | **0** | **2** | **151** |
+| **Total** | **50** | **88** | **2** | **9** | **0** | **3** | **152** |
 
-**140 rows have some source implementation; 88 of those remain partial and two
-are accepted.** The accepted rows (`always_ff` and writer rules; combined and
-negative timing checks) carry post-change HDL execution evidence from RTL-013
-and RTL-099, and from ADV-010; other rows have no
+**141 rows have some source implementation; 88 of those remain partial and
+three are accepted.** The accepted rows (`always_ff` and writer rules; combined
+and negative timing checks; event controls on string expressions) carry
+post-change HDL execution evidence from RTL-013 and RTL-099, from ADV-010 and
+from the SIM-014 `string_element_events` fixture; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
 
 These are **grouped capability rows**, not individual grammar productions or a
@@ -128,13 +129,23 @@ unsized-literal rules (SV §§21.4, 5.7.1), two-state words read X/Z as 0
 same-slot readers are tested against the allowed interleavings (V §§5.3–5.4;
 SV §§4.3–4.7) in the
 [sim_027 conformance fixtures](../tests/fixtures/sim/feature_completion/sim_027/readme.md).
-Enum words are not checked for membership (S27-D4, industry-standard
-behaviour); malformed-token recovery remains an llg choice (S27-D5). Q03
-member-NBA retagging is resolved from SV §§4.9.4, 10.4.2, 7.3.2 and 11.9: the
-member write is checked against the tag at commit (§2). Comparisons with
-other simulators are corroboration, not a normative resolution. Their
-[characterization fixtures](../tests/fixtures/sim/undefined_behavior/readme.md)
-are not independent conformance oracles.
+Two Q02 corners stay open and are classified by the results the text allows.
+SV §21.4.2 sits under "Reading 2-state types" and does not say whether "out of
+range" for an enum means the base width or the member set, so a fitting
+non-member word (also an X/Z word of a four-state enum) may be stored or end
+the load with an error; llg stores it (S27-D4, industry-standard behaviour).
+SV §21.4 and V §17.2.8 list the legal file contents but give no consequence
+for a malformed token; llg ends the load there (S27-D5, llg choice). The
+[Q02 characterization goldens](../tests/fixtures/sim/undefined_behavior/readme.md)
+record only what llg does today and list the allowed results per source; they
+are not conformance oracles. Q03 member-NBA retagging is resolved from SV
+§§4.9.4, 10.4.2, 7.3.2 and 11.9: a member write whose member is inactive at
+commit is a run-time error and stores nothing, and one whose member is active
+at commit publishes its issue-time value (§2). Reporting a member NBA issued
+under another tag at issue, and dropping it even when its member is active
+again at commit, is llg's reading, and continuing after either error is owner
+policy (§2). Comparisons with other simulators are corroboration, not a
+normative resolution.
 
 The six SYN-034 optional target uses remain outside this selected profile:
 elaboration-only static class methods/constant objects; operator overloading;
@@ -463,11 +474,15 @@ Macros, includes and their edition-specific behavior are counted in §11.
   issue and perform the member assignment at commit; SV §11.9 requires that
   assignment to be consistent with the tag current then, and SV §7.3.2 never
   stores one member's value under another member's tag. A wrong tag at issue
-  reports at issue. A valid issue whose member is inactive at commit (another
-  member, void, a narrower member, another nested tag, an earlier-committed
-  whole-variable NBA or another process's retag) reports `nonblocking write to
-  tagged-union member M ... found an inactive tag at commit` and leaves the
-  retagged value unchanged (owner policy for the post-error state); a
+  reports at issue and queues nothing, also when the member is active again
+  at commit: §4.9.4 fixes the values that compute the target, not when its
+  tag is checked, so the text also allows that write to commit; reporting at
+  issue is llg's reading. A valid issue whose member is inactive at commit
+  (another member, void, a narrower member, another nested tag, an
+  earlier-committed whole-variable NBA or another process's retag) reports
+  `nonblocking write to tagged-union member M ... found an inactive tag at
+  commit` and leaves the retagged value unchanged (continuing after the error
+  is owner policy; §7.3.2 then allows only the retagged value); a
   same-member or away-and-back retag publishes the issue-time RHS.
   Interprocess races are tested as allowed result sets (SV §§4.6–4.7).
   Pattern matching is covered in §5.

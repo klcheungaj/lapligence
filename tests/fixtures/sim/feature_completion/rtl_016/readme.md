@@ -40,7 +40,16 @@ inconsistent one is a run-time error (§11.9); a member assignment never
 changes the tag, and a value of one member is never stored under another
 member's tag (§7.3.2). Therefore:
 
-- a wrong tag at issue is reported at issue and nothing is queued;
+- a wrong tag at issue is reported at issue and nothing is queued. This is
+  `llg`'s reading, not a result the clauses fix: §4.9.4 says only that "the
+  values in effect when the update is placed in the event region are used to
+  compute both the right-hand value and the left-hand target"
+  (`SystemVerilog-1800-2009.txt` L3538-3539), and §11.9 checks "the value read
+  or assigned" against "the current tag" (L16338-16341). When the tag stays
+  wrong until commit, an error is required and only its time is open; when
+  the issued member is active again at commit
+  (`syn021_tagged_union/nba_wrong_at_issue`), the text also allows the write
+  to commit without an error;
 - a valid issue whose member is active again at commit (same-member retag,
   retag away and back, no retag) publishes the issue-time value
   (`q03_same_tag_witness`, `q03_stable`);
@@ -50,8 +59,13 @@ member's tag (§7.3.2). Therefore:
   `nonblocking write to tagged-union member M at <source> found an inactive
   tag at commit` and stores nothing (`q03_retag_witness`, `q03_retag_kinds`).
 
-Leaving the retagged value unchanged after the report is the owner policy for
-the post-error state; the clauses fix only that the access is an error.
+Continuing after the report is the owner policy for the post-error state; the
+clauses fix only that the access is an error (§11.9 L16340-16341: "An attempt
+to read or assign a value whose type is inconsistent with the tag results in a
+run-time error"). Once the run continues, §7.3.2 (L7898-7899: "The tag and
+value can only be updated together consistently using a statically
+type-checked tagged union expression") leaves the retagged value unchanged as
+the only result.
 `q03_race` races processes woken by one event. Every blocking retag in the
 Active region precedes the NBA region, so the member write fails either at
 issue or at commit; a racing whole-variable NBA either commits before the
