@@ -491,6 +491,96 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// `o.a[i].m = v`, `o.a[i].m op= v`, `o.a[i].m++` and selects below the
+    /// member: a write into a member of a packed element of a class array
+    /// property. The element is read once, the member replaced in that copy
+    /// and the element written back; an index that selects no element reads
+    /// the default and the write does nothing (SV 7.4.6). `value` gives the
+    /// member's new value from its current one. `None` for other targets.
+    pub(in super::super) fn lower_class_packed_member_write(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        value: &mut dyn FnMut(&mut Self, IrExpr) -> Result<IrExpr, String>,
+    ) -> Result<Option<IrStmt>, String> {
+        let mut member = lhs;
+        while let NodeKind::Expr(
+            ExprKind::BitSelect { base, .. }
+            | ExprKind::ArraySelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. },
+        ) = self.kind(member)
+        {
+            member = *base;
+        }
+        if !self
+            .packed_element_member_select(member)
+            .is_some_and(|select| self.class_packed_select(select))
+        {
+            return Ok(None);
+        }
+        let Some((root, selectors)) = self.packed_value_selectors(lhs) else {
+            return Ok(None);
+        };
+        let Some((container, _)) = self.element_select(root) else {
+            return Ok(None);
+        };
+        let Some((width, signed, two_state)) = self.model.containers[container.ir].element.packed()
+        else {
+            return Ok(None);
+        };
+        let Some(steps) = self.packed_value_steps(path, root, selectors, width)? else {
+            return Ok(None);
+        };
+        let name = format!("_llg_packed_element_{}", self.native_copy_sequence);
+        self.native_copy_sequence += 1;
+        let element = IrExpr::new(IrExprKind::LocalRead(name.clone()), width, signed, None);
+        let member = steps
+            .iter()
+            .cloned()
+            .fold(element.clone(), super::packed_formals::packed_step_read);
+        let target = IrLhs::PackedSelect {
+            target: Box::new(IrLhs::WholeRef {
+                addr: format!("&{name}"),
+                width,
+                signed,
+                two_state,
+                shortreal: false,
+            }),
+            steps,
+            signed: false,
+            two_state,
+        };
+        let stored = value(self, member)?;
+        let stored = super::super::apply_lhs_assignment_context(&self.model, &target, stored);
+        let statements = vec![IrStmt::Assign {
+            lhs: target,
+            rhs: stored,
+            nba: false,
+        }];
+        let mut statements = Some(statements);
+        self.lower_container_element_update(path, root, &mut |_, current| {
+            let mut body = vec![IrStmt::DeclLocal {
+                name: name.clone(),
+                width,
+                signed,
+                two_state: false,
+                init: Some(Box::new(current)),
+            }];
+            body.extend(statements.take().unwrap_or_default());
+            Ok(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements: body,
+                    value: element.clone(),
+                })),
+                width,
+                signed,
+                None,
+            ))
+        })
+        .map(Some)
+    }
+
     /// Whether node `select` is a select of a class array property of packed
     /// elements.
     pub(in super::super) fn class_packed_select(&self, select: NodeId) -> bool {

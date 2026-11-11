@@ -290,6 +290,25 @@ fn multidimensional_property_row_boundaries_reject() {
     );
 }
 
+/// FIN-001 C1 (e): a member of a packed element of a class array property is
+/// written by reading the element, replacing the member's bits and writing
+/// the element back.
+#[test]
+fn packed_element_members_of_class_arrays_are_written() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_packed_member_write",
+        include_str!("../fixtures/sim/feature_completion/sim_011/class_packed_member_write.out"),
+        &[],
+        &[],
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_class_packed_member_actual",
+        "neg_class_packed_member_actual.sv:14:10: writing a member of an element of a class array property other than by an assignment statement (as an output or inout actual, for example) is not supported in `tb`; assign it with `=` or assign the whole element",
+    );
+}
+
 #[test]
 fn multidimensional_property_elements_select_through_handles() {
     sim_cli::run_case_backend_parity(

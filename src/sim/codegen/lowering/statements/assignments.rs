@@ -410,6 +410,20 @@ impl EmitCtx<'_, '_> {
         {
             return Ok(aggregate_assignment);
         }
+        let path = self.path.clone();
+        if let Some(write) =
+            self.cg
+                .lower_class_packed_member_write(&path, lhs, &mut |cg, current| {
+                    let value = cg.lower_expr(&path, rhs)?;
+                    if op == Operation::Assignment {
+                        Ok(value)
+                    } else {
+                        super::super::lower_compound_expr_ir(&path, op, current, value)
+                    }
+                })?
+        {
+            return Ok(write);
+        }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         if op != Operation::Assignment
             && matches!(
@@ -693,8 +707,15 @@ impl EmitCtx<'_, '_> {
                     Ok(inc_dec_value(current, increment))
                 });
         }
+        let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
+        if let Some(write) = self.cg.lower_class_packed_member_write(
+            &self.path.clone(),
+            operand,
+            &mut |_, current| Ok(inc_dec_value(current, increment)),
+        )? {
+            return Ok(write);
+        }
         if self.cg.is_container_element(operand) {
-            let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
             return self.cg.lower_container_element_update(
                 &self.path,
                 operand,
