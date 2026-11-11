@@ -2431,6 +2431,12 @@ These imports reject with explicit diagnostics:
   function result): "... must be a whole array variable (SIM-040)";
 - an unpacked aggregate formal with packed leaves only that is wider than
   1048575 payload bits;
+- a structure formal (not an array of structures) with `real`, `shortreal`,
+  `string` or `chandle` members that also holds a member array of 16 or more
+  packed cells, the size from which a structure is stored as columns
+  ([record columns](#unpacked-records-with-dense-member-arrays-emit-per-cell-code)): "an unpacked
+  structure with real, shortreal, string or chandle members and a member
+  array of 16 or more packed cells is not supported (SIM-040)";
 - an exported subroutine with an unpacked aggregate formal that has `real`,
   `shortreal`, `string` or `chandle` leaves: "unpacked aggregates with real,
   shortreal, string or chandle elements are not supported (SIM-040)".
@@ -2462,7 +2468,9 @@ fixed-size or dynamic array, so a queue never reaches lowering. llg has no
 element access for a dynamic array of unpacked arrays. A formal outside the
 packed payload is storage of the actual's own type that the caller copies as
 a whole, which takes a variable. The packed payload transport ends at the
-runtime's width limit. The export thunks convert only packed payloads. H.13
+runtime's width limit. A column-layout structure passes its packed members as
+columns and the others in a native value beside them, and the thunk converts
+one storage form per formal. The export thunks convert only packed payloads. H.13
 lets an implementation leave the SV3.1a routines out.
 
 ### Intended direction
@@ -2470,7 +2478,8 @@ lets an implementation leave the SV3.1a routines out.
 Admit a queue for an unsized dimension in the frontend's open-array matching
 (a vendored-frontend patch); the lowering and thunk already treat a queue
 like a dynamic array. Build the copy of a non-variable actual at the call
-site. Give the export thunks the import's conversions for native leaves.
+site. Convert a column-layout structure from its columns and its native value
+together. Give the export thunks the import's conversions for native leaves.
 
 ### Reproduce
 

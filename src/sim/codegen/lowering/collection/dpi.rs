@@ -164,6 +164,19 @@ impl Codegen<'_> {
                             || ir.real_array.is_some()
                             || ir.container.is_some());
                     if !marshalled {
+                        // A structure with a member array at the column
+                        // threshold keeps its packed members in columns and
+                        // the others in a native value beside them; no thunk
+                        // joins the two.
+                        if role == "import"
+                            && (!self.record_formal_columns(*io).is_empty()
+                                || self.record_formal_native(*io).is_some())
+                        {
+                            return Err(format!(
+                                "DPI-C import `{name}` formal {index} (`{formal_name}`): an unpacked structure with real, shortreal, string or chandle members and a member array of {} or more packed cells is not supported (SIM-040)",
+                                crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS
+                            ));
+                        }
                         return Err(format!(
                             "DPI-C {role} `{name}` formal {index} (`{formal_name}`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)"
                         ));

@@ -442,6 +442,7 @@ fn a_disabled_import_copies_no_native_formal_back() {
 #[test]
 fn unsupported_actuals_and_formal_types_are_explicit_errors() {
     sim_cli::reject_case(SUITE, "neg_wide_aggregate", "DPI-C import `neg_big` formal 0 (`a`): an unpacked aggregate wider than 1048575 payload bits is not supported (SIM-040)");
+    sim_cli::reject_case(SUITE, "neg_native_record_columns", "DPI-C import `neg_wide` formal 0 (`v`): an unpacked structure with real, shortreal, string or chandle members and a member array of 16 or more packed cells is not supported (SIM-040)");
     sim_cli::reject_case(SUITE, "neg_dynamic_output", "a dynamic array or queue cannot be the actual of output open-array formal `a` (SV 7.7); declare the formal inout or pass a fixed-size array");
     sim_cli::reject_case(SUITE, "neg_dynamic_rows", "a dynamic array or queue of unpacked arrays as the actual of DPI-C open-array formal `a` is not supported (SIM-040)");
     sim_cli::reject_case(SUITE, "neg_dynamic_sized_first", "a dynamic array or queue actual of DPI-C open-array formal `a` needs an unsized first dimension of the formal (SIM-040)");
