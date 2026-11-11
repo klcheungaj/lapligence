@@ -165,7 +165,11 @@ markers bound to an unwaited marker. The contents marker of a native record
 (`llg_record_changed`, called after each statement that stores into a record a
 wait observes, and by the commit of a located NBA that carries the marker,
 `llg_nba_locate_marker`) follows the check instead: a waited marker gets a
-marker record that fires once, and its waiters compare the values they read. NBAs that mature from an earlier slot
+marker record that fires once, and its waiters compare the values they read.
+Both entry points and the tail of a located NBA's commit
+(`nba_located_committed`) are `LLG_OUTLYING` (`llg_compiler.h`): only a model
+that observes a record runs them, and they take no place among the functions
+of the others. NBAs that mature from an earlier slot
 commit and check before the NBAs issued in this slot (`g.nba_slot_sequence`).
 Writes outside a turn publish at once. Records and freed wait-source rows are
 pooled, so a storage written in every turn allocates nothing. A marker that

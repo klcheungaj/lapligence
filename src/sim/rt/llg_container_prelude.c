@@ -1,5 +1,6 @@
 // llg_container.c -- scheduler-independent dynamic array, queue, and
 // associative-array storage for generated C11 models.
+#include "llg_compiler.h"
 #include "llg_container.h"
 #include "llg_msg.h"
 #include "llg_rng.h"
@@ -15,8 +16,9 @@
 static void llg_dyn_outdate_references(llg_dyn_array_t* array);
 static void llg_assoc_outdate_references(llg_assoc_t* array, size_t position);
 /* Native element references (container/native_references.c). `live` counts
- * every reference: only then can a record slot be aliased, so copies keep
- * their fast replacing form otherwise. */
+ * every reference and every record watch: only then can a record slot be
+ * aliased or a store be followed, so copies keep their fast replacing form
+ * and llg_native_ref_value_stored returns at once otherwise. */
 static size_t llg_native_refs_live;
 static void llg_native_refs_opened(struct llg_native_ref* list, size_t at);
 static void llg_native_refs_removed(struct llg_native_ref** list, size_t at);

@@ -613,7 +613,7 @@ void llg_nba_locate_value(llg_value_t* root, const uint32_t* items,
     nba_locator_set(NULL, root, NULL, 0, items, item_count);
 }
 
-void llg_nba_locate_marker(sv4_t* marker) {
+LLG_OUTLYING void llg_nba_locate_marker(sv4_t* marker) {
     if (g.nba_locator) g.nba_locator->marker = marker;
 }
 

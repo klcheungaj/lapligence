@@ -94,6 +94,13 @@ static void apply_nba_target(llg_nba_t* next) {
     }
 }
 
+// What follows the commit of a located NBA: the readers of the array it
+// wrote into and the contents marker of an observed record.
+static LLG_OUTLYING void nba_located_committed(const llg_nba_locator_t* locator) {
+    if (locator->array) llg_dyn_value_touch(locator->array);
+    if (locator->marker) llg_record_changed(locator->marker);
+}
+
 // A write to an item of a native value finds the item now: a whole write
 // since issue may have replaced the value tree. The element position was
 // fixed at issue; one out of range writes nothing (SV 7.4.6).
@@ -117,8 +124,7 @@ static void apply_located_nba(llg_nba_t* next) {
         case LLG_NBA_CONTAINER_QUEUE_VALUE: llg_value_item_from_queue_value(item, payload); break;
         default: break;
         }
-        if (locator->array) llg_dyn_value_touch(locator->array);
-        if (locator->marker) llg_record_changed(locator->marker);
+        nba_located_committed(locator);
         return;
     }
     if (next->is_string) next->native.string.target = &item->value.string;
@@ -126,8 +132,7 @@ static void apply_located_nba(llg_nba_t* next) {
     else if (next->is_real) next->real_target = &item->value.real;
     else next->target = &item->value.packed;
     apply_nba_target(next);
-    if (locator->array) llg_dyn_value_touch(locator->array);
-    if (locator->marker) llg_record_changed(locator->marker);
+    nba_located_committed(locator);
 }
 
 static void apply_nba(llg_nba_t* next) {

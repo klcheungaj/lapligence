@@ -710,6 +710,16 @@ pub(crate) fn run_sim(sv: &str, top: &str, tag: &str) -> Result<String, String> 
     run_generated_sim(sv, top, tag).map(|run| run.stdout)
 }
 
+/// Write `llg_compiler.h`, the compiler attribute header a runtime unit may
+/// include without the rest of the platform layer (the container unit does).
+pub fn write_compiler_header(dir: &std::path::Path) {
+    for (name, source) in llg::sim::rt::platform_headers() {
+        if *name == "llg_compiler.h" {
+            std::fs::write(dir.join(name), source).expect("write compiler header");
+        }
+    }
+}
+
 /// Write the selected value facade's nested dependencies for standalone probes.
 pub fn write_value_backend_sources(dir: &std::path::Path) {
     for (name, source) in

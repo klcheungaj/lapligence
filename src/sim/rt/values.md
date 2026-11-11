@@ -79,7 +79,9 @@ A record some wait observes that a call binds to a `ref` formal, whole or by a
 member, registers a `llg_record_watch_t` for the call (a value-scope object):
 `llg_native_ref_value_stored` then also runs the watch's function on the
 record's contents marker, so stores made inside the callee wake the record's
-waiters when they are made. No watch, no cost beyond one list-head test.
+waiters when they are made. A watch counts as a live reference
+(`llg_native_refs_live`), so without one a store through a `ref` formal pays
+what it paid before, and the watch code is `LLG_OUTLYING` (`llg_compiler.h`).
 A real element or member binds the same way (`llg_native_ref_real`); `real_write`
 reports each changed cell while such a reference lives, for one counter load
 otherwise, and the formal's waiters follow its `double`.

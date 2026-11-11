@@ -1076,7 +1076,7 @@ void llg_handle_changed(sv4_t* dependency, void* const* slot, void* previous) {
     llg_dependency_changed(dependency);
 }
 
-void llg_record_changed(sv4_t* dependency) {
+LLG_OUTLYING void llg_record_changed(sv4_t* dependency) {
     if (!dependency) return;
     if (change_defer_active) {
         llg_wait_source_t* source = wait_source_find(dependency);

@@ -41,6 +41,28 @@
 #define LLG_NOINLINE
 #endif
 
+// A runtime function only some designs reach, added to a unit whose hot paths
+// are already laid out: out of line and, on ELF targets, in a section of its
+// own that the linker puts behind the model's other code, so no other
+// function moves. Hot paths are sensitive to where their functions sit
+// relative to each other, and a function added among them shifts the ones
+// behind it. Other object formats name sections differently; there the
+// function is only out of line.
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__ELF__)
+#define LLG_OUTLYING __attribute__((noinline, section("llg_outlying")))
+#else
+#define LLG_OUTLYING LLG_NOINLINE
+#endif
+
+// A function that runs rarely: optimized for size and, on GCC, left out of
+// the unit size its inliner budgets from, so adding one to a unit that sits
+// at that budget does not change what is inlined elsewhere in the unit.
+#if defined(__GNUC__) || defined(__clang__)
+#define LLG_COLD __attribute__((cold))
+#else
+#define LLG_COLD
+#endif
+
 // A model definition that may be unreferenced, such as the descriptor of a
 // process that only hosts runtime-called callbacks.
 #if defined(__GNUC__) || defined(__clang__)

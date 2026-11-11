@@ -2,7 +2,7 @@
 //! Oracles are derived by hand in the fixture readme from V2001 §§9.6,
 //! 9.7.7 and IEEE 1800-2009 §§4.9.3, 4.9.4, 6.12.2, 6.21, 9.4.5, 10.4,
 //! 12.7.2, 13.3.2, 13.4 and 15.5.
-use super::sim_cli;
+use super::{sim_cli, sim_harness};
 
 const SUITE: &str = "feature_completion/sim_014";
 
@@ -402,4 +402,54 @@ fn waits_on_records_in_containers_resume() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_014/wait_container_records.out");
     sim_cli::run_case(SUITE, "wait_container_records", expected, "", &[]);
+}
+
+/// Only a model that observes a record calls the record marker entry points:
+/// the same design registers a record watch for a `ref` actual when a wait
+/// reads the record, and emits none of the calls when nothing does, so a
+/// design without such a wait keeps the code it had.
+#[test]
+fn only_a_model_that_observes_a_record_emits_record_marker_calls() {
+    let source = |observer: &str| {
+        format!(
+            "module tb;\n\
+             timeunit 1ns; timeprecision 1ns;\n\
+             typedef struct {{ int a; string s; }} rec_t;\n\
+             task automatic rf(ref rec_t o); #1 o.s = \"rf\"; endtask\n\
+             task keep(input int v);\n\
+             static rec_t r;\n\
+             r.a = v;\n\
+             endtask\n\
+             {observer}\n\
+             initial begin\n\
+             #1 keep(1);\n\
+             #1 rf(keep.r);\n\
+             #1 $display(\"%0t s=%s\", $time, keep.r.s);\n\
+             $finish(0);\n\
+             end\n\
+             endmodule\n"
+        )
+    };
+    let observed = sim_harness::run_generated_sim(
+        &source("initial begin wait (keep.r.s == \"rf\"); $display(\"%0t woke\", $time); end"),
+        "tb",
+        "sim014_record_marker_observed",
+    )
+    .expect("observed record");
+    assert_eq!(observed.stdout, "3 woke\n4 s=rf\n");
+    for call in ["llg_record_watch_begin(", "llg_record_changed("] {
+        assert!(observed.model_c.contains(call), "missing {call}");
+    }
+    let unobserved =
+        sim_harness::run_generated_sim(&source(""), "tb", "sim014_record_marker_unobserved")
+            .expect("unobserved record");
+    assert_eq!(unobserved.stdout, "4 s=rf\n");
+    assert!(unobserved.model_c.contains("llg_native_ref_value_stored("));
+    for call in [
+        "llg_record_watch",
+        "llg_record_changed",
+        "llg_nba_locate_marker",
+    ] {
+        assert!(!unobserved.model_c.contains(call), "unexpected {call}");
+    }
 }

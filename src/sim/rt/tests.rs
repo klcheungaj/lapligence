@@ -110,3 +110,50 @@ fn runtime_reports_write_stderr_in_one_call() {
         );
     }
 }
+
+/// The record marker entry points (S07-D18) run only in a model that observes
+/// a record. They stay `LLG_OUTLYING`, so the functions every other model
+/// runs keep the placement, and with it the timing, they had before these
+/// were added; the commit of a located NBA and a store through a record `ref`
+/// formal reach them through one out-of-line call.
+#[test]
+fn record_marker_entry_points_are_outlying() {
+    let (_, scheduler) = runtime_sources();
+    let (_, container) = container_sources();
+    for (unit, definition) in [
+        (scheduler, "void llg_record_changed(sv4_t* dependency) {"),
+        (scheduler, "void llg_nba_locate_marker(sv4_t* marker) {"),
+        (
+            scheduler,
+            "void nba_located_committed(const llg_nba_locator_t* locator) {",
+        ),
+        (
+            container,
+            "void llg_record_watch_begin(llg_record_watch_t* watch,",
+        ),
+        (container, "void llg_record_watch_end(void* object) {"),
+        (
+            container,
+            "void llg_record_watch_stored(const llg_value_t* value) {",
+        ),
+    ] {
+        let at = unit
+            .find(definition)
+            .unwrap_or_else(|| panic!("missing `{definition}`"));
+        let line = unit[..at].rfind('\n').map_or(0, |start| start + 1);
+        assert!(
+            unit[line..at].contains("LLG_OUTLYING "),
+            "`{definition}` is not LLG_OUTLYING"
+        );
+    }
+    for (unit, inline_work) in [
+        (scheduler, "if (locator->marker) llg_record_changed"),
+        (container, "watch->changed(watch->marker)"),
+    ] {
+        assert_eq!(
+            unit.matches(inline_work).count(),
+            1,
+            "`{inline_work}` belongs to one outlying function"
+        );
+    }
+}

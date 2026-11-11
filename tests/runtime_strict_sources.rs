@@ -75,6 +75,7 @@ fn probe_built_runtime_sources_have_no_code_after_fatal_helpers() {
     };
     let dir = sim_harness::TempDir::new("runtime-strict-sources").expect("create temp directory");
     sim_harness::write_value_backend_sources(dir.path());
+    sim_harness::write_compiler_header(dir.path());
     let (value_header, value_source) = llg::sim::rt::value_sources();
     let (rng_header, rng_source) = llg::sim::rt::rng_sources();
     let (string_header, string_source) = llg::sim::rt::string_sources();
