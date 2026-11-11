@@ -19,10 +19,12 @@ llg_value_t* llg_queue_value_element(llg_queue_value_array_t* queue,
 }
 
 /* An index of a queue or dynamic array of unpacked arrays that selects no
- * element; `size` is the array's. Out of line: no other path calls it. */
-static LLG_OUTLYING void llg_value_cell_invalid(const char* operation,
-                                                const char* kind, sv4_t index,
-                                                size_t size, int queue_write) {
+ * element; `size` is the array's. Out of line: no other path calls it. These
+ * functions are cold too (LLG_COLD), so they stay out of the inliner budget of
+ * the container unit and the functions other models run keep their code. */
+static LLG_COLD LLG_OUTLYING void llg_value_cell_invalid(
+    const char* operation, const char* kind, sv4_t index, size_t size,
+    int queue_write) {
     int64_t value = 0;
     if (llg_index_stop_hook) {
         char detail[160];
@@ -44,7 +46,7 @@ static LLG_OUTLYING void llg_value_cell_invalid(const char* operation,
     if (queue_write) llg_container_warning("invalid queue write index");
 }
 
-LLG_OUTLYING llg_value_t* llg_dyn_value_cell_miss(
+LLG_COLD LLG_OUTLYING llg_value_t* llg_dyn_value_cell_miss(
     const llg_dyn_value_array_t* array, sv4_t index, int write) {
     llg_value_cell_invalid(write ? "dynamic-array element write"
                                  : "dynamic-array element read",
@@ -52,7 +54,7 @@ LLG_OUTLYING llg_value_t* llg_dyn_value_cell_miss(
     return NULL;
 }
 
-LLG_OUTLYING llg_value_t* llg_queue_value_cell_miss(
+LLG_COLD LLG_OUTLYING llg_value_t* llg_queue_value_cell_miss(
     llg_queue_value_array_t* queue, sv4_t index, int write) {
     int64_t value = 0;
     if (write && queue && sv4_to_index_i64(index, &value) && value >= 0 &&
@@ -68,7 +70,7 @@ LLG_OUTLYING llg_value_t* llg_queue_value_cell_miss(
     return NULL;
 }
 
-LLG_OUTLYING void llg_queue_value_store_miss(
+LLG_COLD LLG_OUTLYING void llg_queue_value_store_miss(
     const llg_queue_value_array_t* queue, sv4_t index) {
     int64_t value = 0;
     if (sv4_to_index_i64(index, &value) && value >= 0 &&

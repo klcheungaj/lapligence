@@ -289,10 +289,13 @@ sv4_t llg_dyn_get(const llg_dyn_array_t* array, sv4_t index) {
 }
 
 /* Out of line (LLG_OUTLYING) so the container functions other models run
- * keep their placement. */
-LLG_OUTLYING void llg_dyn_copy_range(llg_dyn_array_t* dst, sv4_t dst_start,
-                                     const llg_dyn_array_t* src,
-                                     sv4_t src_start, uint64_t count) {
+ * keep their placement, and cold (LLG_COLD) so the unit's inliner budget, and
+ * with it what is inlined into those functions, stays as it was. */
+LLG_COLD LLG_OUTLYING void llg_dyn_copy_range(llg_dyn_array_t* dst,
+                                              sv4_t dst_start,
+                                              const llg_dyn_array_t* src,
+                                              sv4_t src_start,
+                                              uint64_t count) {
     int64_t to = 0;
     if (!sv4_to_index_i64(dst_start, &to)) return;
     int64_t from = 0;
@@ -329,11 +332,12 @@ LLG_OUTLYING void llg_dyn_copy_range(llg_dyn_array_t* dst, sv4_t dst_start,
                changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
 }
 
-/* Out of line (LLG_OUTLYING) like `llg_dyn_copy_range`. The values are
+/* Out of line and cold like `llg_dyn_copy_range`. The values are
  * borrowed and already evaluated, so writing them in order is the snapshot
  * semantics of one assignment. */
-LLG_OUTLYING void llg_dyn_set_range(llg_dyn_array_t* dst, sv4_t start,
-                                    const sv4_t* values, size_t count) {
+LLG_COLD LLG_OUTLYING void llg_dyn_set_range(llg_dyn_array_t* dst,
+                                             sv4_t start, const sv4_t* values,
+                                             size_t count) {
     int64_t to = 0;
     if (!sv4_to_index_i64(start, &to) || to < 0) return;
     int changed = 0;
