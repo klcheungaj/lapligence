@@ -67,6 +67,38 @@ fn s30_d16_rand_mode_handle_variable() {
 }
 
 #[test]
+fn s30_d17_rand_mode_function_handle_variable() {
+    run_decision(
+        "S30-D17_rand_mode_function_handle_variable",
+        include_str!("fixtures/sim/lrm_decisions/S30-D17_rand_mode_function_handle_variable.out"),
+    );
+}
+
+#[test]
+fn s30_d18_randc_wide() {
+    run_decision(
+        "S30-D18_randc_wide",
+        include_str!("fixtures/sim/lrm_decisions/S30-D18_randc_wide.out"),
+    );
+}
+
+#[test]
+fn s30_d19_solve_before_size() {
+    run_decision(
+        "S30-D19_solve_before_size",
+        include_str!("fixtures/sim/lrm_decisions/S30-D19_solve_before_size.out"),
+    );
+}
+
+#[test]
+fn s30_d20_rand_associative_array() {
+    run_decision(
+        "S30-D20_rand_associative_array",
+        include_str!("fixtures/sim/lrm_decisions/S30-D20_rand_associative_array.out"),
+    );
+}
+
+#[test]
 fn t1_d8_strength_only_events() {
     run_decision(
         "T1-D8_strength_only_events",
@@ -1256,6 +1288,43 @@ fn s40_d4_invalid_element_access() {
     run_dpi_decision(
         "S40-D4_invalid_element_access",
         include_str!("fixtures/sim/lrm_decisions/S40-D4_invalid_element_access.out"),
+    );
+}
+
+#[test]
+fn s40_d8_native_aggregate_leaves() {
+    run_dpi_decision(
+        "S40-D8_native_aggregate_leaves",
+        include_str!("fixtures/sim/lrm_decisions/S40-D8_native_aggregate_leaves.out"),
+    );
+}
+
+#[test]
+fn s40_d9_dynamic_array_actual() {
+    run_dpi_decision(
+        "S40-D9_dynamic_array_actual",
+        include_str!("fixtures/sim/lrm_decisions/S40-D9_dynamic_array_actual.out"),
+    );
+}
+
+#[test]
+fn s40_d10_dynamic_output_illegal() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S40-D10_dynamic_output_illegal.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S40-D10_dynamic_output_illegal",
+        "a dynamic array or queue cannot be the actual of output open-array formal `a` (SV 7.7)",
+    );
+}
+
+#[test]
+fn s40_d7_time_services() {
+    run_dpi_decision(
+        "S40-D7_time_services",
+        include_str!("fixtures/sim/lrm_decisions/S40-D7_time_services.out"),
     );
 }
 

@@ -341,12 +341,128 @@ fn one_c_function_imported_from_several_scopes() {
     );
 }
 
+/// The time services answer for the calling scope, a scope found by name and
+/// the simulation time unit, each with its own time scale (S40-D7).
+#[test]
+fn time_services_scale_to_the_scope() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "time_services") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "time_services",
+        include_str!("../fixtures/sim/feature_completion/sim_040/time_services.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
+/// Real, shortreal, string and chandle leaves of structures and sized arrays
+/// keep the C layout in every direction.
+#[test]
+fn native_leaves_of_aggregates_use_the_c_layout() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "native_aggregates") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "native_aggregates",
+        include_str!("../fixtures/sim/feature_completion/sim_040/native_aggregates.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
+#[test]
+fn open_arrays_take_native_elements() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "native_open_arrays") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "native_open_arrays",
+        include_str!("../fixtures/sim/feature_completion/sim_040/native_open_arrays.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
+/// A dynamic array actual gives the open array its size at the call; the
+/// formal is a copy, whatever an exported function does to the actual.
+#[test]
+fn open_arrays_take_dynamic_array_actuals() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "dynamic_actuals") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "dynamic_actuals",
+        include_str!("../fixtures/sim/feature_completion/sim_040/dynamic_actuals.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
+/// The copies outlive a wait of the foreign code in an exported task.
+#[test]
+fn a_waiting_context_task_keeps_its_native_copies() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "native_context_task") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "native_context_task",
+        include_str!("../fixtures/sim/feature_completion/sim_040/native_context_task.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
+/// A disabled import leaves every actual as it was (S41-D5).
+#[test]
+fn a_disabled_import_copies_no_native_formal_back() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "native_disabled") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "native_disabled",
+        include_str!("../fixtures/sim/feature_completion/sim_040/native_disabled.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
 #[test]
 fn unsupported_actuals_and_formal_types_are_explicit_errors() {
-    sim_cli::reject_case(SUITE, "neg_dynamic_actual", "a dynamic array, queue or associative array actual of DPI-C open-array formal `a` is not supported (SIM-040)");
-    sim_cli::reject_case(SUITE, "neg_string_array", "DPI-C import `neg_strings` formal 0 (`a`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)");
-    sim_cli::reject_case(SUITE, "neg_real_open", "DPI-C import `neg_reals` formal 0 (`a`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)");
     sim_cli::reject_case(SUITE, "neg_wide_aggregate", "DPI-C import `neg_big` formal 0 (`a`): an unpacked aggregate wider than 1048575 payload bits is not supported (SIM-040)");
+    sim_cli::reject_case(SUITE, "neg_native_record_columns", "DPI-C import `neg_wide` formal 0 (`v`): an unpacked structure with real, shortreal, string or chandle members and a member array of 16 or more packed cells is not supported (SIM-040)");
+    sim_cli::reject_case(SUITE, "neg_dynamic_output", "a dynamic array or queue cannot be the actual of output open-array formal `a` (SV 7.7); declare the formal inout or pass a fixed-size array");
+    sim_cli::reject_case(SUITE, "neg_dynamic_rows", "a dynamic array or queue of unpacked arrays as the actual of DPI-C open-array formal `a` is not supported (SIM-040)");
+    sim_cli::reject_case(SUITE, "neg_dynamic_sized_first", "a dynamic array or queue actual of DPI-C open-array formal `a` needs an unsized first dimension of the formal (SIM-040)");
+    sim_cli::reject_case(SUITE, "neg_native_open_slice", "the actual of DPI-C open-array formal `a` with real, shortreal, string or chandle elements must be a whole array variable (SIM-040)");
+}
+
+/// The frontend matches an unsized formal dimension only with a fixed-size
+/// or dynamic array.
+#[test]
+fn queue_and_associative_actuals_are_frontend_errors() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_queue_actual",
+        "value of type 'int$[$]' cannot be assigned to type 'int$[]'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_actual",
+        "value of type 'int$[int]' cannot be assigned to type 'int$[]'",
+    );
 }
 
 #[test]
@@ -409,8 +525,8 @@ fn unprovided_svdpi_routine_is_named() {
         return;
     };
     if cfg!(windows) {
-        let error = built.expect_err("the DLL link must not resolve svGetTime");
-        assert!(error.contains("svGetTime"), "{error}");
+        let error = built.expect_err("the DLL link must not resolve svGetSelectBit");
+        assert!(error.contains("svGetSelectBit"), "{error}");
         return;
     }
     let library = built
@@ -421,7 +537,7 @@ fn unprovided_svdpi_routine_is_named() {
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
+        "a DPI-C library calls svdpi.h routine `svGetSelectBit`, which llg does not provide",
         &["--dpi-lib", &library],
     );
 }
@@ -472,14 +588,14 @@ fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
     let library = directory.path().join("libneg_unprovided_routine.dylib");
     std::fs::write(
         &library,
-        dynamic_lookup_dylib(&["svGetTime", "svGetArrayPtr", "neg_helper"]),
+        dynamic_lookup_dylib(&["svGetSelectBit", "svGetArrayPtr", "neg_helper"]),
     )
     .expect("write Mach-O library");
     let library = library.to_string_lossy().into_owned();
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
+        "a DPI-C library calls svdpi.h routine `svGetSelectBit`, which llg does not provide",
         &["--dpi-lib", &library],
     );
     // `neg_helper` is defined by nothing, so it is named too, as the ELF
@@ -493,7 +609,7 @@ fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "imports neg_helper, svGetTime for dyld to resolve when the model runs",
+        "imports neg_helper, svGetSelectBit for dyld to resolve when the model runs",
         &["--dpi-lib", &library],
     );
 }
@@ -525,7 +641,7 @@ fn model_import_library_is_explicit_about_the_toolchain() {
         assert!(contains(b"sim.exe"), "the import library must name sim.exe");
         assert!(contains(b"svGetArrElemPtr1"), "missing svdpi.h routine");
         assert!(contains(b"vpi_register_systf"), "missing VPI routine");
-        assert!(!contains(b"svGetTime"), "unprovided routine exported");
+        assert!(!contains(b"svGetSelectBit"), "unprovided routine exported");
     } else {
         assert_eq!(output.status.code(), Some(1), "{stderr}");
         assert!(

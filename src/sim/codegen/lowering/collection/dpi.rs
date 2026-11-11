@@ -5,9 +5,13 @@
 //! Every formal keeps its internal transport: scalars as before, packed
 //! values and sized unpacked aggregates as one packed payload. The generated
 //! thunk converts that payload to the canonical or C-compatible foreign
-//! layout recorded here. An open-array formal takes its unsized ranges from
+//! layout recorded here. An import's aggregate with real, shortreal, string
+//! or chandle leaves has no payload: its formal is the native value, real
+//! array or container that any subroutine formal of its type is, and the
+//! thunk converts that. An open-array formal takes its unsized ranges from
 //! the call's actual, so each distinct actual shape gets its own thunk whose
-//! formal is the actual's payload.
+//! formal is the actual's payload or, outside the payload and for a dynamic
+//! array or queue actual (SV 7.7), storage of the actual's own type.
 
 use super::*;
 use crate::core::db::DpiOpenType;
@@ -107,9 +111,11 @@ pub(super) fn dpi_open_template(open: &DpiOpenType) -> Result<IrDpiType, String>
 
 /// Whether a type fits the packed payload transport: every leaf has a packed
 /// width (no real, string or chandle inside an aggregate).
-fn payload_only(ty: &IrDpiType) -> bool {
+pub(super) fn payload_only(ty: &IrDpiType) -> bool {
     match ty {
-        IrDpiType::Array { element, .. } | IrDpiType::Open { element, .. } => payload_only(element),
+        IrDpiType::Array { element, .. }
+        | IrDpiType::Open { element, .. }
+        | IrDpiType::OpenDynamic { element, .. } => payload_only(element),
         IrDpiType::Struct(members) => members.iter().all(payload_only),
         IrDpiType::Real | IrDpiType::ShortReal | IrDpiType::Chandle | IrDpiType::String => false,
         _ => true,
@@ -149,9 +155,34 @@ impl Codegen<'_> {
                 IrDpiType::Array { .. } | IrDpiType::Struct(_) | IrDpiType::Open { .. }
             ) {
                 if !payload_only(&ty) {
-                    return Err(format!(
-                        "DPI-C {role} `{name}` formal {index} (`{formal_name}`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)"
-                    ));
+                    // An import marshals the value through the storage the
+                    // formal has as a subroutine formal; the export thunks
+                    // have no such path.
+                    let marshalled = role == "import"
+                        && (matches!(ty, IrDpiType::Open { .. })
+                            || ir.native_value.is_some()
+                            || ir.real_array.is_some()
+                            || ir.container.is_some());
+                    if !marshalled {
+                        // A structure with a member array at the column
+                        // threshold keeps its packed members in columns and
+                        // the others in a native value beside them; no thunk
+                        // joins the two.
+                        if role == "import"
+                            && (!self.record_formal_columns(*io).is_empty()
+                                || self.record_formal_native(*io).is_some())
+                        {
+                            return Err(format!(
+                                "DPI-C import `{name}` formal {index} (`{formal_name}`): an unpacked structure with real, shortreal, string or chandle members and a member array of {} or more packed cells is not supported (SIM-040)",
+                                crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS
+                            ));
+                        }
+                        return Err(format!(
+                            "DPI-C {role} `{name}` formal {index} (`{formal_name}`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)"
+                        ));
+                    }
+                    types.push(ty);
+                    continue;
                 }
                 // A column-layout record crosses as its whole payload, which
                 // the thunk builds from the columns.
@@ -221,20 +252,27 @@ impl Codegen<'_> {
         })
     }
 
-    /// Flatten the actual of an open-array formal into its unpacked
-    /// dimensions (slowest first) and element.
+    /// Flatten the actual of an open-array formal into its sized unpacked
+    /// dimensions (slowest first) and element. `dynamic` says that a
+    /// dynamic array or queue dimension precedes them: the actual's first.
     fn dpi_open_actual_shape(
         &self,
         formal: NodeId,
         actual: NodeId,
-    ) -> Result<(Vec<(i32, i32)>, TypeDescriptor), String> {
-        let descriptor = self.query_descriptor(actual).cloned().ok_or_else(|| {
-            format!(
-                "the actual of DPI-C open-array formal `{}` has no captured type",
-                self.node(formal).name
-            )
-        })?;
+    ) -> Result<DpiOpenActual, String> {
+        let name = &self.node(formal).name;
+        // A dynamic array bound to a formal with a sized dimension arrives
+        // under a conversion to the formal's type; its own type decides.
+        let descriptor = self
+            .query_descriptor(self.p30_unwrap_cast(actual))
+            .filter(|descriptor| matches!(descriptor.shape, TypeShape::Container { .. }))
+            .or_else(|| self.query_descriptor(actual))
+            .cloned()
+            .ok_or_else(|| {
+                format!("the actual of DPI-C open-array formal `{name}` has no captured type")
+            })?;
         let mut dims = Vec::new();
+        let mut dynamic = false;
         let mut current = descriptor;
         loop {
             match current.shape {
@@ -245,13 +283,37 @@ impl Codegen<'_> {
                     dims.extend(dimensions);
                     current = *element;
                 }
-                TypeShape::Container { .. } => {
+                TypeShape::Container {
+                    array: ArrayKind::Dynamic | ArrayKind::Queue { .. },
+                    element,
+                    ..
+                } if dims.is_empty() && !dynamic => {
+                    dynamic = true;
+                    current = *element;
+                }
+                // The elements of an open array have contiguous indices and
+                // one size per dimension (H.12.1): an associative array has
+                // neither, nor has a container below the first dimension.
+                TypeShape::Container {
+                    array: ArrayKind::Associative(_),
+                    ..
+                } => {
                     return Err(format!(
-                        "a dynamic array, queue or associative array actual of DPI-C open-array formal `{}` is not supported (SIM-040)",
-                        self.node(formal).name
+                        "an associative array actual of DPI-C open-array formal `{name}` is not supported: an open array has contiguous indices (SIM-040)"
                     ));
                 }
-                _ => return Ok((dims, current)),
+                TypeShape::Container { .. } => {
+                    return Err(format!(
+                        "a dynamic array or queue below the first dimension of the actual of DPI-C open-array formal `{name}` is not supported: every dimension of an open array has one size (SIM-040)"
+                    ));
+                }
+                _ => {
+                    return Ok(DpiOpenActual {
+                        dims,
+                        element: current,
+                        dynamic,
+                    })
+                }
             }
         }
     }
@@ -266,18 +328,66 @@ impl Codegen<'_> {
         template: &IrDpiType,
         actual: NodeId,
     ) -> Result<IrDpiType, String> {
+        self.dpi_open_specialize_unlocated(formal, template, actual)
+            .map_err(|error| self.dpi_actual_error(actual, error))
+    }
+
+    /// `error` about the actual of an open-array formal, located at the
+    /// actual.
+    fn dpi_actual_error(&self, actual: NodeId, error: String) -> String {
+        crate::sim::codegen::error::located(&self.source_location(actual), error)
+    }
+
+    fn dpi_open_specialize_unlocated(
+        &self,
+        formal: NodeId,
+        template: &IrDpiType,
+        actual: NodeId,
+    ) -> Result<IrDpiType, String> {
         let IrDpiType::Open { dims, element } = template else {
             return Ok(template.clone());
         };
         let name = &self.node(formal).name;
-        let (actual_dims, actual_element) = self.dpi_open_actual_shape(formal, actual)?;
-        if actual_dims.len() < dims.len() {
+        let DpiOpenActual {
+            dims: actual_dims,
+            element: actual_element,
+            dynamic,
+        } = self.dpi_open_actual_shape(formal, actual)?;
+        if actual_dims.len() + usize::from(dynamic) < dims.len() {
             return Err(format!(
                 "the actual of DPI-C open-array formal `{name}` has {} unpacked dimensions; the formal declares {}",
-                actual_dims.len(),
+                actual_dims.len() + usize::from(dynamic),
                 dims.len()
             ));
         }
+        if dynamic {
+            // The formal takes the container's size at the call; a sized
+            // first dimension would need a run-time size check instead.
+            if dims.first().is_none_or(Option::is_some) {
+                return Err(format!(
+                    "a dynamic array or queue actual of DPI-C open-array formal `{name}` needs an unsized first dimension of the formal (SIM-040)"
+                ));
+            }
+            // The elements are values of one packed or record type; llg has
+            // no element access for a dynamic array of unpacked arrays.
+            if !actual_dims.is_empty() {
+                return Err(format!(
+                    "a dynamic array or queue of unpacked arrays as the actual of DPI-C open-array formal `{name}` is not supported (SIM-040)"
+                ));
+            }
+            if matches!(
+                self.kind(formal),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Output,
+                    ..
+                }
+            ) {
+                return Err(format!(
+                    "a dynamic array or queue cannot be the actual of output open-array formal `{name}` (SV 7.7); declare the formal inout or pass a fixed-size array"
+                ));
+            }
+        }
+        let dims = &dims[usize::from(dynamic)..];
         let mut concrete = Vec::with_capacity(dims.len());
         for (declared, actual_dim) in dims.iter().zip(&actual_dims) {
             let range = match declared {
@@ -326,7 +436,11 @@ impl Codegen<'_> {
                         element: Box::new(dpi_type_of(&actual_element)?),
                     }
                 };
-                if actual_ty.payload_width() != declared.payload_width() {
+                // Elements outside the payload have no size to compare: they
+                // match when their foreign types do.
+                if actual_ty.payload_width() != declared.payload_width()
+                    || declared.payload_width().is_none() && actual_ty != *declared
+                {
                     return Err(format!(
                         "the actual of DPI-C open-array formal `{name}` has elements of a different size than the formal"
                     ));
@@ -334,9 +448,73 @@ impl Codegen<'_> {
                 declared.clone()
             }
         };
+        if dynamic {
+            return Ok(IrDpiType::OpenDynamic {
+                element: Box::new(element),
+            });
+        }
         Ok(IrDpiType::Open {
             dims: concrete,
             element: Box::new(element),
+        })
+    }
+
+    /// How the actual of an open-array formal specialized to `concrete`
+    /// reaches the thunk.
+    fn dpi_open_storage(
+        &self,
+        formal: NodeId,
+        concrete: &IrDpiType,
+        actual: NodeId,
+    ) -> Result<DpiOpenStorage, String> {
+        let name = &self.node(formal).name;
+        let dynamic = matches!(concrete, IrDpiType::OpenDynamic { .. });
+        if !dynamic && payload_only(concrete) {
+            return Ok(DpiOpenStorage::Payload);
+        }
+        let actual = self.p30_unwrap_cast(actual);
+        if let Some(container) = self.container_of(actual) {
+            let sequence = !matches!(
+                self.model.containers[container.ir].kind,
+                crate::sim::ir::IrContainerKind::Associative { .. }
+            );
+            if sequence {
+                return Ok(DpiOpenStorage::Container(container.ir));
+            }
+        }
+        if !dynamic {
+            if let Some(array) = self.array_of(actual).filter(|array| array.real) {
+                return Ok(DpiOpenStorage::RealArray(array.ir));
+            }
+        }
+        let error = if dynamic {
+            format!(
+                "the dynamic array or queue actual of DPI-C open-array formal `{name}` must be a whole variable (SIM-040)"
+            )
+        } else {
+            format!(
+                "the actual of DPI-C open-array formal `{name}` with real, shortreal, string or chandle elements must be a whole array variable (SIM-040)"
+            )
+        };
+        Err(self.dpi_actual_error(actual, error))
+    }
+
+    /// The argument of open-array formal `formal` when `actual` crosses in
+    /// storage of its own type; `None` when it crosses as a payload.
+    pub(in super::super) fn dpi_open_storage_argument(
+        &self,
+        formal: NodeId,
+        actual: NodeId,
+    ) -> Result<Option<IrCallArg>, String> {
+        let Some(open) = self.db.dpi_open_type(formal) else {
+            return Ok(None);
+        };
+        let template = dpi_open_template(open)?;
+        let concrete = self.dpi_open_specialize(formal, &template, actual)?;
+        Ok(match self.dpi_open_storage(formal, &concrete, actual)? {
+            DpiOpenStorage::Payload => None,
+            DpiOpenStorage::Container(container) => Some(IrCallArg::Container(container)),
+            DpiOpenStorage::RealArray(array) => Some(IrCallArg::RealArray(array)),
         })
     }
 
@@ -349,6 +527,9 @@ impl Codegen<'_> {
     ) -> Result<(u32, bool), String> {
         let template = dpi_open_template(open)?;
         let concrete = self.dpi_open_specialize(formal, &template, actual)?;
+        if self.dpi_open_storage(formal, &concrete, actual)? != DpiOpenStorage::Payload {
+            return Ok((0, false));
+        }
         let width = concrete
             .payload_width()
             .filter(|width| *width != 0 && *width <= u64::from(LLG_MAX_WIDTH))
@@ -386,22 +567,52 @@ impl Codegen<'_> {
             return Ok(template);
         };
         let mut types = dpi.formals.clone();
+        let mut storages = vec![DpiOpenStorage::Payload; types.len()];
+        // Storage of one type and shape serves every actual of it: the
+        // specialization is keyed by the foreign types and, outside the
+        // payload, by what the formal's storage holds.
+        let mut storage_key = String::new();
         for (index, (formal, _)) in formals.iter().enumerate() {
             if types[index].is_unsized() {
                 types[index] =
                     self.dpi_open_specialize(*formal, &types[index], bound[index].expr)?;
+                storages[index] =
+                    self.dpi_open_storage(*formal, &types[index], bound[index].expr)?;
+                match storages[index] {
+                    DpiOpenStorage::Payload => {}
+                    DpiOpenStorage::Container(container) => {
+                        let container = &self.model.containers[container];
+                        storage_key.push_str(&format!(
+                            ";{index}:{:?}:{:?}:{:?}",
+                            container.kind, container.element, container.initial_size
+                        ));
+                    }
+                    DpiOpenStorage::RealArray(_) => storage_key.push_str(&format!(";{index}:real")),
+                }
             }
         }
-        let key = (template, format!("{types:?}"));
+        let key = (template, format!("{types:?}{storage_key}"));
         if let Some(index) = self.dpi_specializations.get(&key) {
             return Ok(*index);
         }
         let mut function = self.model.funcs[template].clone();
         for (index, ir) in function.formals.iter_mut().enumerate().take(formals.len()) {
             if dpi.formals[index].is_unsized() {
-                ir.width = bound[index].width;
-                ir.two_state = bound[index].two_state;
                 ir.signed = false;
+                match storages[index] {
+                    DpiOpenStorage::Payload => {
+                        ir.width = bound[index].width;
+                        ir.two_state = bound[index].two_state;
+                    }
+                    DpiOpenStorage::Container(like) => {
+                        ir.width = 0;
+                        ir.container = Some(self.container_temporary_like(like));
+                    }
+                    DpiOpenStorage::RealArray(like) => {
+                        ir.width = 0;
+                        ir.real_array = Some(self.real_array_temporary_like(like));
+                    }
+                }
             }
         }
         function.inline_expanded = false;
@@ -422,6 +633,25 @@ impl Codegen<'_> {
         self.dpi_specializations.insert(key, index);
         Ok(index)
     }
+}
+
+/// The actual of an open-array formal: its sized unpacked dimensions
+/// (slowest first), the element below them and whether a dynamic array or
+/// queue dimension precedes them.
+struct DpiOpenActual {
+    dims: Vec<(i32, i32)>,
+    element: TypeDescriptor,
+    dynamic: bool,
+}
+
+/// What the formal of an open-array specialization is to the model: the
+/// actual's packed payload, or storage of the actual's type, named by the
+/// actual's container or real array.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DpiOpenStorage {
+    Payload,
+    Container(usize),
+    RealArray(usize),
 }
 
 /// Whether `name` is a C identifier (SV 35.4: a letter or underscore, then
@@ -468,8 +698,11 @@ impl Codegen<'_> {
             .get(&function)
             .cloned()
             .unwrap_or_else(|| self.source_path(&self.instance_path_of(inst)));
+        let scale = self.timescale_of_node(inst);
         let index = self.model.dpi_scopes.len();
-        self.model.dpi_scopes.push(IrDpiScope::new(name));
+        self.model
+            .dpi_scopes
+            .push(IrDpiScope::new(name, scale.unit_fs, scale.precision_fs));
         self.dpi_scope_ids.insert(inst, index);
         index
     }
@@ -613,9 +846,9 @@ fn dpi_two_state(ty: &IrDpiType) -> bool {
     match ty {
         IrDpiType::Bit | IrDpiType::Int { .. } => true,
         IrDpiType::Vector { logic, .. } | IrDpiType::OpenPacked { logic } => !logic,
-        IrDpiType::Array { element, .. } | IrDpiType::Open { element, .. } => {
-            dpi_two_state(element)
-        }
+        IrDpiType::Array { element, .. }
+        | IrDpiType::Open { element, .. }
+        | IrDpiType::OpenDynamic { element, .. } => dpi_two_state(element),
         IrDpiType::Struct(members) => members.iter().all(dpi_two_state),
         _ => false,
     }

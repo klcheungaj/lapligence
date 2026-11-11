@@ -111,6 +111,9 @@ const llg_cr_tunables_t* llg_cr_tunables(void) {
          * 4 Mi expanded nodes (on the order of 100 MiB of solver tables). */
         cr_tunables_value.array_elements = cr_env_u64("LLG_RAND_ARRAY_ELEMENTS", 1u << 20);
         cr_tunables_value.expand_nodes = cr_env_u64("LLG_RAND_EXPAND_NODES", 1u << 22);
+        /* A walk tests about 2^15 positions at most on average (sample.c);
+         * the bound only stops a walk that would not end. */
+        cr_tunables_value.cyclic_walk = cr_env_u64("LLG_RAND_CYCLIC_WALK", 1u << 26);
         cr_tunables_value.stats = cr_env_u64("LLG_RAND_STATS", 0u) != 0u;
         cr_tunables_value.overflow_memo = cr_env_u64("LLG_RAND_OVERFLOW_MEMO", 1u) != 0u;
         cr_tunables_value.search_cache = cr_env_u64("LLG_RAND_SEARCH_CACHE", 1u) != 0u;
@@ -179,6 +182,9 @@ struct llg_cr_session {
     uint8_t* var_active;
     uint8_t* var_input;
     uint8_t* var_fixed;
+    /* Per variable, in the size phase of an expansion only (else NULL): a
+     * live order places it before an array size (S30-D19). */
+    uint8_t* presize;
     uint32_t total_var_words;
     /* Blocks, leaves and calls. */
     uint8_t* block_enabled;

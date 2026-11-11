@@ -100,6 +100,23 @@ fn default_return(ty: &str) -> String {
     }
 }
 
+/// Power of ten, in seconds, of a time unit or precision of `fs`
+/// femtoseconds: the form the scope table and `vpiTimeUnit` use.
+fn time_exponent(fs: u64) -> Result<i32, String> {
+    let mut exponent = -15;
+    let mut rest = fs;
+    while rest >= 10 && rest.is_multiple_of(10) {
+        rest /= 10;
+        exponent += 1;
+    }
+    if rest != 1 || exponent > 2 {
+        return Err(format!(
+            "DPI-C scope time scale of {fs} fs is not a time unit"
+        ));
+    }
+    Ok(exponent)
+}
+
 /// Declarations that precede every subroutine body: thunk prototypes, the
 /// retained strings, each scope's export table, the scope table and the
 /// call-site table.
@@ -154,8 +171,10 @@ pub(super) fn render_dpi_declarations(model: &IrModel) -> Result<String, String>
                 format!("llg_dpi_exports_{index}, {}u", slots[index].len())
             };
             out.push_str(&format!(
-                "    {{ {}, {exports}, NULL }},\n",
-                c_string_literal(scope.name())
+                "    {{ {}, {exports}, {}, {}, NULL }},\n",
+                c_string_literal(scope.name()),
+                time_exponent(scope.unit_fs())?,
+                time_exponent(scope.precision_fs())?
             ));
         }
         out.push_str("};\n");

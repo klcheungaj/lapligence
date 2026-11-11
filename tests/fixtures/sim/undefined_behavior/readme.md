@@ -69,6 +69,27 @@ no include paths, defines, plusargs or simulator-specific HDL tasks.
 The two-state halves of `q02_types` and `q02_binary_types` are settled (IEEE
 1800-2009 21.4.2, L37366-37368) and also covered by `sim_027/q02_two_state`.
 
+## Allowed results
+
+The goldens are `llg`'s output, one member of the set the text allows; none
+claims to be the required result. The extension of each word is settled: a
+number is written "as in a ... source description" (21.4, L37273-37276), so a
+leftmost x or z pads with x or z and a known digit pads with zeros (5.7.1,
+`SystemVerilog-1800-2009.txt` L3921-3923). Two readings of 21.4.2
+L37368-37370 stay open: "out of range" as the base width (and 21.4.2, headed
+"Reading 2-state types" at L37364, may not reach a four-state enum at all) or
+as the member set.
+
+| Source | Settled by the text | Results the text allows | `llg` |
+| --- | --- | --- | --- |
+| `q02_types`, `q02_binary_types` | The `bit` words: extension, then X/Z read as 0 (21.4.2 L37366-37368) | For the enum words: each word stored as its extension; or an error at the first word that is no member (`z`, the second), which ends the load and leaves the later words at their initial X | Stores every word |
+| `q02_enum_tokens` | The extension of each token | Each word stored as its extension; or an error for every load, since no token is a member, each word keeping `ZERO` | Stores every word |
+| `q02_enum_numeric` | `1f` exceeds the width, is no member and is above the signed range, so every reading reports an error there and ends the load; the `x` and `1` words are never read | `f` is the bit pattern of `NEG` but the unsized number 15 is above the signed range: `NEG` stored and the error at `1f`; or the error at `f` with nothing stored | Stores `NEG`, then the error at `1f` |
+| `q02_malformed` | Only the legal file contents (21.4 L37268-37271; IEEE 1364-2001 17.2.8, `Verilog-1364-2001.txt` L19311-19316) | Any result for the token `2g` and what follows; the text gives no consequence | Error at `2g`; the load ends and keeps `11` (S27-D5) |
+
+Error and warning wording, and the exit status after a reported error, are
+`llg`'s own in every row.
+
 ## Exact `llg` invocations used for the goldens
 
 `sim_undefined_behavior` runs the following commands from this directory with

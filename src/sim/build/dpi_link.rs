@@ -24,13 +24,9 @@ use std::path::Path;
 const IMPORT_MARKER: &str = "/* llg DPI-C import: c_name=";
 
 /// `svdpi.h` routines outside the implemented open-array, canonical,
-/// version, scope, user-data, caller and disable set: the time services and
-/// the deprecated SV3.1a representation (H.13, which an implementation need
-/// not provide).
+/// version, scope, user-data, caller, disable and time set: the deprecated
+/// SV3.1a representation (H.13, which an implementation need not provide).
 pub(super) const UNPROVIDED_ROUTINES: &[&str] = &[
-    "svGetTime",
-    "svGetTimeUnit",
-    "svGetTimePrecision",
     "svSizeOfBitPackedArr",
     "svSizeOfLogicPackedArr",
     "svPutBitVec32",
@@ -580,7 +576,7 @@ mod tests {
     #[test]
     fn only_unprovided_routines_of_a_mach_o_library_are_named() {
         let library = mach_o(&[
-            ("_svGetTime", N_EXT, 0xfe, 0),
+            ("_svGetSelectBit", N_EXT, 0xfe, 0),
             ("_svGetArrayPtr", N_EXT, 0xfe, 0),
         ]);
         let directory = library_directory(line!(), &[("libneg.dylib", &library)]);
@@ -588,13 +584,13 @@ mod tests {
             &[directory.join("libneg.dylib")],
             &provided(&["svGetArrayPtr"]),
         )
-        .expect("svGetTime is unprovided");
-        assert_eq!(missing.routines, ["svGetTime"]);
+        .expect("svGetSelectBit is unprovided");
+        assert_eq!(missing.routines, ["svGetSelectBit"]);
         assert!(missing.imports.is_empty() && missing.unresolved.is_empty());
         assert!(
             missing
                 .output
-                .contains("libneg.dylib imports svGetTime for dyld"),
+                .contains("libneg.dylib imports svGetSelectBit for dyld"),
             "{}",
             missing.output
         );
@@ -662,7 +658,7 @@ mod tests {
             );
         }
         let elf = directory.join("libneg.so");
-        std::fs::write(&elf, b"\x7fELF svGetTime").unwrap();
+        std::fs::write(&elf, b"\x7fELF svGetSelectBit").unwrap();
         assert!(missing_mach_o_symbols(&[&elf], &model).is_none());
         // A relocatable object (`MH_OBJECT`) leaves every undefined symbol
         // at ordinal 0, libc's too; the model link checks them, so only an
@@ -670,13 +666,13 @@ mod tests {
         let mut object = mach_o(&[
             ("_printf", N_EXT, 0, 0),
             ("_err_kill", N_EXT, 0, 0),
-            ("_svGetTime", N_EXT, 0, 0),
+            ("_svGetSelectBit", N_EXT, 0, 0),
         ]);
         object[12..16].copy_from_slice(&MH_OBJECT.to_le_bytes());
         let object_path = directory.join("errors.o");
         std::fs::write(&object_path, &object).unwrap();
         let missing = missing_mach_o_symbols(&[&object_path], &model).unwrap();
-        assert_eq!(missing.routines, ["svGetTime"]);
+        assert_eq!(missing.routines, ["svGetSelectBit"]);
         assert!(missing.unresolved.is_empty(), "{missing:?}");
         std::fs::remove_dir_all(&directory).unwrap();
     }
@@ -706,10 +702,10 @@ mod tests {
             "/* llg DPI-C import: c_name=nowhere context=0 pure=0; x */\nextern int nowhere(void);\n",
         )
         .unwrap();
-        let transcript = "undefined reference to `nowhere'\nundefined reference to `svGetTime'\nundefined reference to `helper'";
+        let transcript = "undefined reference to `nowhere'\nundefined reference to `svGetSelectBit'\nundefined reference to `helper'";
         let missing = missing_dpi_symbols(&directory, transcript, false).unwrap();
         assert_eq!(missing.imports, vec!["nowhere".to_owned()]);
-        assert_eq!(missing.routines, vec!["svGetTime".to_owned()]);
+        assert_eq!(missing.routines, vec!["svGetSelectBit".to_owned()]);
         assert!(missing.unresolved.is_empty());
         assert!(
             missing_dpi_symbols(&directory, "undefined reference to `helper'", false).is_none()

@@ -1,0 +1,12 @@
+tb: tb time=0 type=55 high=0 low=1 real=1.234
+tb: tb unit=0 -9 precision=0 -12
+tb: <simulation> time=0 type=55 high=0 low=1234 real=1234.000
+tb: <simulation> unit=0 -12 precision=0 -12
+invalid scope: time=-1 type=55 high=1 low=2 real=-1.0
+invalid scope: unit=-1 77 precision=-1 77
+null result: time=-1 unit=-1 precision=-1
+child: tb.u time=0 type=55 high=0 low=3 real=2.750
+child: tb.u unit=0 -6 precision=0 -8
+child: <simulation> time=0 type=55 high=0 low=2750000 real=2750000.000
+child: <simulation> unit=0 -12 precision=0 -12
+done at 5001

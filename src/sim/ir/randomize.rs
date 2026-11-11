@@ -98,6 +98,10 @@ pub const RAND_ORDER_ARRAY: u32 = 0x8000_0000;
 /// args holding `{array, position}`.
 pub const RAND_ORDER_ELEM: u32 = 0x4000_0000;
 
+/// `LLG_CR_ORDER_SIZE`: the `after` side of an order naming the random size
+/// of an array (`solve x before a.size()`, S30-D19).
+pub const RAND_ORDER_SIZE: u32 = 0x2000_0000;
+
 /// `LLG_CR_RANGE_LOOP`: marks the array operand of a `Foreach`/`Reduce` as
 /// a declared range; the rest indexes args holding `{left, right}`.
 pub const RAND_RANGE_LOOP: u32 = 0x4000_0000;
@@ -226,6 +230,9 @@ pub enum IrRandArrayKind {
     /// Only the random size of a dynamic array or queue of handles: it has
     /// no elements of its own, the slot's links are the objects.
     Size = 3,
+    /// An associative array with an integral index type: its entries in
+    /// key order; `left` is the key width, `right` 1 for a signed key.
+    Assoc = 4,
 }
 
 /// A random (or state) unpacked array of packed elements of one unit
@@ -294,12 +301,18 @@ pub struct IrRandProblem {
 }
 
 /// Widest `randc` variable (`LLG_CR_CYCLIC_MAX_WIDTH`).
-pub const RAND_CYCLIC_MAX_WIDTH: u32 = 16;
+pub const RAND_CYCLIC_MAX_WIDTH: u32 = 32;
+
+/// Widest `randc` variable whose cycle state holds one bit per value
+/// (`LLG_CR_CYCLIC_BITMAP_WIDTH`).
+pub const RAND_CYCLIC_BITMAP_WIDTH: u32 = 16;
 
 /// Packed width of a `randc` variable's cycle state
 /// (`LLG_CR_CYCLIC_WORDS` 64-bit words).
 pub fn rand_cyclic_state_width(width: u32) -> u32 {
-    let words = if width >= 6 {
+    let words = if width > RAND_CYCLIC_BITMAP_WIDTH {
+        3
+    } else if width >= 6 {
         (1 << (width - 6)) + 1
     } else {
         2
@@ -312,6 +325,53 @@ fn words(width: u32) -> usize {
 }
 
 impl IrRandProblem {
+    /// The nodes `node` reads (operands, list items, call arguments, dist
+    /// items, references and loop bodies); absent operands are left out.
+    pub(in crate::sim) fn operands(&self, node: u32) -> Vec<u32> {
+        let Some(n) = self.nodes.get(node as usize) else {
+            return Vec::new();
+        };
+        let list = |first: u32, len: usize| {
+            self.args
+                .get(first as usize..first as usize + len)
+                .map(<[u32]>::to_vec)
+                .unwrap_or_default()
+        };
+        let mut operands = match n.op {
+            IrRandOp::Const | IrRandOp::Var | IrRandOp::State | IrRandOp::Iter | IrRandOp::Elem => {
+                Vec::new()
+            }
+            IrRandOp::Call | IrRandOp::TCall => self
+                .calls
+                .get(n.a as usize)
+                .map(|call| call.args.clone())
+                .unwrap_or_default(),
+            IrRandOp::Concat | IrRandOp::All => list(n.b, n.c as usize),
+            IrRandOp::Dist => {
+                let mut operands = Vec::new();
+                if let Some(dist) = self.dists.get(n.a as usize) {
+                    operands.push(dist.expr);
+                    operands.extend(dist.guard);
+                    for item in &dist.items {
+                        operands.extend([item.matches, item.lo, item.hi]);
+                        operands.extend(item.weight);
+                    }
+                }
+                operands
+            }
+            IrRandOp::Ref => vec![n.b, n.c],
+            IrRandOp::HVar | IrRandOp::IsNull => vec![n.a],
+            IrRandOp::AElem => vec![n.b, n.c],
+            IrRandOp::ASize => vec![n.c],
+            // {array, body, ref, loop[, operation]}
+            IrRandOp::Foreach | IrRandOp::Reduce => list(n.b, 3).split_off(1),
+            IrRandOp::DynSlice => vec![n.a, n.b],
+            op => [n.a, n.b, n.c][..op.fixed_operands()].to_vec(),
+        };
+        operands.retain(|operand| *operand != RAND_NONE);
+        operands
+    }
+
     /// Check the invariants the C solver also enforces, so a malformed
     /// problem fails at model construction rather than at run time.
     pub(in crate::sim) fn validate(&self, path: &str) -> Result<(), IrValidationError> {
@@ -456,18 +516,20 @@ impl IrRandProblem {
             }
         }
         for (index, order) in self.orders.iter().enumerate() {
-            let side_ok = |side: u32| {
+            let side_ok = |side: u32, after: bool| {
                 if side & RAND_ORDER_ARRAY != 0 {
                     ((side & !RAND_ORDER_ARRAY) as usize) < self.arrays.len()
                 } else if side & RAND_ORDER_ELEM != 0 {
                     ((side & !RAND_ORDER_ELEM) as usize) + 2 <= self.args.len()
+                } else if side & RAND_ORDER_SIZE != 0 {
+                    after && ((side & !RAND_ORDER_SIZE) as usize) < self.arrays.len()
                 } else {
                     side < vars
                 }
             };
             if order.block as usize >= self.blocks.len()
-                || !side_ok(order.before)
-                || !side_ok(order.after)
+                || !side_ok(order.before, false)
+                || !side_ok(order.after, true)
             {
                 return fail(format!("solve-before order {index} is out of range"));
             }
@@ -511,7 +573,14 @@ impl IrRandProblem {
                     && is_ref(node.c)
             }
             IrRandOp::ASize => is_array(node.a) && is_ref(node.c) && node.width == 32,
-            IrRandOp::Iter => node.width == 32 && node.signed,
+            // 32-bit signed, or the index type of an associative array.
+            IrRandOp::Iter => {
+                (node.width == 32 && node.signed)
+                    || self.arrays.iter().any(|array| {
+                        array.kind == IrRandArrayKind::Assoc
+                            && (array.left as u32, array.right != 0) == (node.width, node.signed)
+                    })
+            }
             IrRandOp::IsNull => is_ref(node.a) && node.width == 1,
             IrRandOp::TCall => self
                 .calls
@@ -642,6 +711,15 @@ pub enum IrRandStmt {
         index: IrExpr,
         value: IrExpr,
     },
+    /// The key of element `index` of an associative array, in the key's
+    /// type; elements are fed in key order.
+    SetKey {
+        problem: usize,
+        inst: IrExpr,
+        array: u32,
+        index: IrExpr,
+        value: IrExpr,
+    },
     /// Handle slot `slot` of instance `inst` names `child` at `index` (none
     /// for a scalar slot), an object of class unit `unit` (`random`: the
     /// handle is `rand` and enabled).
@@ -692,6 +770,7 @@ impl IrRandStmt {
             | Self::SetSlotSize { problem, .. }
             | Self::TrimSlot { problem, .. }
             | Self::SetElem { problem, .. }
+            | Self::SetKey { problem, .. }
             | Self::Link { problem, .. } => *problem,
         }
     }
@@ -715,7 +794,8 @@ impl IrRandStmt {
             | Self::SetArray { .. }
             | Self::SetSlotSize { .. }
             | Self::TrimSlot { .. }
-            | Self::SetElem { .. } => Vec::new(),
+            | Self::SetElem { .. }
+            | Self::SetKey { .. } => Vec::new(),
         }
     }
 
@@ -737,7 +817,8 @@ impl IrRandStmt {
             | Self::SetArray { .. }
             | Self::SetSlotSize { .. }
             | Self::TrimSlot { .. }
-            | Self::SetElem { .. } => Vec::new(),
+            | Self::SetElem { .. }
+            | Self::SetKey { .. } => Vec::new(),
         }
     }
 
@@ -767,6 +848,9 @@ impl IrRandStmt {
                 inst, size, active, ..
             } => vec![inst, size, active],
             Self::SetElem {
+                inst, index, value, ..
+            }
+            | Self::SetKey {
                 inst, index, value, ..
             } => vec![inst, index, value],
             Self::Link {
@@ -806,6 +890,9 @@ impl IrRandStmt {
                 inst, size, active, ..
             } => vec![inst, size, active],
             Self::SetElem {
+                inst, index, value, ..
+            }
+            | Self::SetKey {
                 inst, index, value, ..
             } => vec![inst, index, value],
             Self::Link {

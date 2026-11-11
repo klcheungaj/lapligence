@@ -82,6 +82,9 @@ pub(super) const PROVIDED_SVDPI_ROUTINES: &[&str] = &[
     "svGetPartselLogic",
     "svGetScope",
     "svGetScopeFromName",
+    "svGetTime",
+    "svGetTimePrecision",
+    "svGetTimeUnit",
     "svGetUserData",
     "svHigh",
     "svIncrement",
@@ -335,7 +338,8 @@ mod tests {
             assert!(lines[start + 1..].contains(&format!("    {name}").as_str()));
         }
         assert!(!names.contains(&"no"));
-        assert!(!names.contains(&"svGetTime"));
+        assert!(names.contains(&"svGetTime"));
+        assert!(!names.contains(&"svGetSelectBit"));
         assert!(lines[..start].iter().all(|line| line.starts_with(';')));
     }
 

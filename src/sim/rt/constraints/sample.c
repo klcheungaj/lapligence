@@ -280,11 +280,212 @@ static uint32_t cr_popcount64(uint64_t x) {
     return n;
 }
 
+/* ---- wide randc variables --------------------------------------------------
+ *
+ * A variable wider than LLG_CR_CYCLIC_BITMAP_WIDTH cannot keep a bit per
+ * value. It cycles "through all the values in a random permutation of [its]
+ * declared range" (18.4.2) literally: a keyed bijection of the w-bit range
+ * stands for the permutation, and the state is the next position in it, the
+ * key and the constraint signature. A call returns the value at the first
+ * position from the stored one on that has a legal completion; the positions
+ * it passes are spent, as values the constraints exclude are. Past the last
+ * position, or after a change of the constraints, a new key starts a new
+ * cycle. No history is kept, so a value cannot repeat inside a cycle even
+ * when earlier randc variables change which values are legal.
+ *
+ * The bijection is rounds of x ^= x >> k and multiplication by an odd number
+ * modulo 2^w, each invertible, so a value's position is computable too. */
+
+typedef struct {
+    uint32_t w;
+    uint32_t shift;
+    uint64_t mask;
+    uint64_t add;
+    uint64_t mul[3];
+    uint64_t inv[3];
+} cr_cycw_t;
+
+static int cr_cyc_wide(const llg_cr_session_t* s, uint32_t var) {
+    return s->p->vars[var].bit_width > LLG_CR_CYCLIC_BITMAP_WIDTH;
+}
+
+/* Inverse of odd `a` modulo 2^64 (Newton: each step doubles the low bits
+ * that are right, and a * a = 1 modulo 8). */
+static uint64_t cr_cycw_inverse_odd(uint64_t a) {
+    uint64_t inv = a;
+    for (int i = 0; i < 5; ++i) inv *= 2u - a * inv;
+    return inv;
+}
+
+static void cr_cycw_init(cr_cycw_t* c, uint32_t w, uint64_t key) {
+    c->w = w;
+    c->shift = w / 2u;
+    c->mask = (UINT64_C(1) << w) - 1u;
+    c->add = key;
+    c->mul[0] = (key >> 32) | 1u;
+    c->mul[1] = UINT64_C(0x9e3779b1);
+    c->mul[2] = (cr_mix(key) >> 32) | 1u;
+    for (int i = 0; i < 3; ++i) c->inv[i] = cr_cycw_inverse_odd(c->mul[i]);
+}
+
+/* The value at position `x` of the permutation. */
+static uint64_t cr_cycw_value(const cr_cycw_t* c, uint64_t x) {
+    x = (x + c->add) & c->mask;
+    for (int i = 0; i < 3; ++i) {
+        x ^= x >> c->shift;
+        x = (x * c->mul[i]) & c->mask;
+    }
+    return x ^ (x >> c->shift);
+}
+
+/* x from y = x ^ (x >> shift): each pass fixes `shift` more bits from the top. */
+static uint64_t cr_cycw_unshift(const cr_cycw_t* c, uint64_t y) {
+    uint64_t x = y;
+    for (uint32_t done = c->shift; done < c->w; done += c->shift) x = y ^ (x >> c->shift);
+    return x;
+}
+
+/* The position of value `y`. */
+static uint64_t cr_cycw_position(const cr_cycw_t* c, uint64_t y) {
+    y = cr_cycw_unshift(c, y);
+    for (int i = 2; i >= 0; --i) {
+        y = (y * c->inv[i]) & c->mask;
+        y = cr_cycw_unshift(c, y);
+    }
+    return (y - c->add) & c->mask;
+}
+
+enum { CR_CYCW_NEXT = 0, CR_CYCW_KEY = 1, CR_CYCW_SIGNATURE = 2 };
+
+static void cr_cycw_new_cycle(uint64_t* st, const llg_cr_rng_t* rng) {
+    uint64_t high = rng->next(rng->stream);
+    st[CR_CYCW_NEXT] = 0;
+    st[CR_CYCW_KEY] = (high << 32) | rng->next(rng->stream);
+}
+
+/* The state of `var` for a call under `signature`: a new cycle when the
+ * constraints changed (S30-D3). */
+static uint64_t* cr_cycw_begin(llg_cr_session_t* s, uint32_t var, uint64_t signature,
+                               const llg_cr_rng_t* rng) {
+    uint64_t* st = cr_cyc_state(s, var);
+    if (st[CR_CYCW_SIGNATURE] != signature) {
+        cr_cycw_new_cycle(st, rng);
+        st[CR_CYCW_SIGNATURE] = signature;
+    }
+    return st;
+}
+
+static uint64_t cr_cyc_free_signature(const llg_cr_session_t* s, uint32_t var) {
+    return cr_mix(cr_hash_text(s->p->vars[var].name) ^ UINT64_C(0x6672656576617200));
+}
+
+/* A wide cyclic variable without constraints: the next value of its
+ * permutation. */
+static void cr_cycw_free_draw(llg_cr_session_t* s, uint32_t var, const llg_cr_rng_t* rng) {
+    uint32_t w = s->p->vars[var].bit_width;
+    uint64_t* st = cr_cycw_begin(s, var, cr_cyc_free_signature(s, var), rng);
+    if (st[CR_CYCW_NEXT] >> w) cr_cycw_new_cycle(st, rng);
+    cr_cycw_t perm;
+    cr_cycw_init(&perm, w, st[CR_CYCW_KEY]);
+    s->sol[s->var_off[var]] = cr_cycw_value(&perm, st[CR_CYCW_NEXT]++);
+}
+
+/* Whether `value` of the cyclic variable drawn in the current layer has a
+ * path to true below `root` with the fixed bits. */
+static int cr_cycw_legal(const cr_wcount_t* c, uint32_t root, uint64_t value,
+                         const uint32_t* level_bit) {
+    const cr_exact_t* e = c->e;
+    uint32_t n = root;
+    while (n >= 2u) {
+        uint32_t level = e->level[n];
+        int bit = c->fixed[level];
+        if (bit < 0) {
+            if (!cr_level_counted(c, level)) cr_fatal("randc layer reads a later layer");
+            bit = (int)((value >> level_bit[level]) & 1u);
+        }
+        n = bit ? e->hi[n] : e->lo[n];
+    }
+    return n == 1u;
+}
+
+/* Legal values a draw may list to find the next one by position instead of
+ * testing positions one by one. Listing costs about one step per legal
+ * value and walking 2^w / count tests, so the two meet near the square
+ * root of the range; twice that keeps either side under about 2^17 steps
+ * for 32 bits. */
+static uint64_t cr_cycw_list_limit(uint32_t w) {
+    return UINT64_C(2) << ((w + 1u) / 2u);
+}
+
+/* Draw wide cyclic variable `var`, the only variable of the current layer
+ * (counts prepared), into *value. LLG_CR_UNSAT when no value is legal;
+ * LLG_CR_RESOURCE when the walk budget ran out. */
+static llg_cr_status_t cr_cycw_draw(cr_wcount_t* c, llg_cr_session_t* s, uint32_t root,
+                                    uint32_t var, uint64_t signature, const llg_cr_rng_t* rng,
+                                    uint64_t walk_budget, const uint32_t* level_bit,
+                                    uint64_t* value) {
+    const cr_exact_t* e = c->e;
+    uint32_t limbs = c->l->limbs;
+    uint32_t w = s->p->vars[var].bit_width;
+    /* Legal values with the earlier layers fixed. */
+    uint64_t* gap = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+    uint64_t* count = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+    cr_gap(c, gap, 0u, e->level[root]);
+    bn_mul(count, gap, c->cnt + (size_t)root * limbs, limbs);
+    uint32_t count_bits = bn_bits(count, limbs);
+    uint64_t legal = count_bits > 63u ? UINT64_MAX : count[0];
+    free(gap);
+    free(count);
+    if (!legal) return LLG_CR_UNSAT;
+    uint64_t* st = cr_cycw_begin(s, var, signature, rng);
+    cr_cycw_t perm;
+    cr_cycw_init(&perm, w, st[CR_CYCW_KEY]);
+    if (legal <= cr_cycw_list_limit(w)) {
+        cr_u64vec_t values = {0, 0, 0};
+        cr_enum_values(c, root, 0u, 0u, level_bit, &values);
+        if (!values.len) cr_fatal("randc layer lists no legal value");
+        for (int pass = 0; pass < 2; ++pass) {
+            uint64_t best = UINT64_MAX;
+            for (size_t i = 0; i < values.len; ++i) {
+                uint64_t at = cr_cycw_position(&perm, values.data[i]);
+                if (at >= st[CR_CYCW_NEXT] && at < best) best = at;
+            }
+            if (best != UINT64_MAX) {
+                st[CR_CYCW_NEXT] = best + 1u;
+                *value = cr_cycw_value(&perm, best);
+                break;
+            }
+            /* Nothing left in this cycle can satisfy the constraints: a new
+             * cycle starts (18.4.2). */
+            cr_cycw_new_cycle(st, rng);
+            cr_cycw_init(&perm, w, st[CR_CYCW_KEY]);
+        }
+        free(values.data);
+        return LLG_CR_OK;
+    }
+    for (uint64_t tested = 0; tested < walk_budget; ++tested) {
+        if (st[CR_CYCW_NEXT] >> w) {
+            cr_cycw_new_cycle(st, rng);
+            cr_cycw_init(&perm, w, st[CR_CYCW_KEY]);
+        }
+        uint64_t candidate = cr_cycw_value(&perm, st[CR_CYCW_NEXT]++);
+        if (cr_cycw_legal(c, root, candidate, level_bit)) {
+            *value = candidate;
+            return LLG_CR_OK;
+        }
+    }
+    return LLG_CR_RESOURCE;
+}
+
 /* A cyclic variable without constraints: uniform among its unused values. */
 static void cr_cyc_free_draw(llg_cr_session_t* s, uint32_t var, const llg_cr_rng_t* rng) {
+    if (cr_cyc_wide(s, var)) {
+        cr_cycw_free_draw(s, var, rng);
+        return;
+    }
     uint32_t w = s->p->vars[var].bit_width;
     uint32_t words = LLG_CR_CYCLIC_WORDS(w) - 1u;
-    cr_cyc_check(s, var, cr_mix(cr_hash_text(s->p->vars[var].name) ^ UINT64_C(0x6672656576617200)));
+    cr_cyc_check(s, var, cr_cyc_free_signature(s, var));
     uint64_t* st = cr_cyc_state(s, var);
     uint64_t unused = 0;
     for (uint32_t i = 0; i < words; ++i) unused += cr_popcount64(~st[i] & cr_cyc_word_mask(w, i));

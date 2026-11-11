@@ -25,6 +25,10 @@
  */
 
 #define CR_TPL_FLATS 16u
+/* A variable's `active` input: random, or random and already solved by the
+ * size phase (S30-D19: a variable solved before a size). */
+#define CR_VAR_RANDOM 1u
+#define CR_VAR_SOLVED 2u
 #define CR_X_NULL 0xFFFFFFFEu /* a ref that names no object */
 #define CR_X_DROP 0xFFFFFFFDu /* needs elements of an array of unknown size */
 /* leaf_idx of an object-less leaf that stands for an and/or/xor reduction of
@@ -45,6 +49,8 @@ typedef struct {
     size_t words_cap;
     uint8_t* input;
     size_t input_cap;
+    int64_t* keys;      /* associative arrays: the key of each element */
+    size_t keys_cap;
 } cr_iarr_t;
 
 typedef struct {
@@ -232,8 +238,9 @@ static int cr_tpl_loop_ok(const llg_cr_problem_t* p, uint32_t a) {
     return cr_tpl_array_ok(p, a);
 }
 
-static int cr_tpl_side_ok(const llg_cr_problem_t* p, uint32_t side) {
+static int cr_tpl_side_ok(const llg_cr_problem_t* p, uint32_t side, int after) {
     if (side & LLG_CR_ORDER_ARRAY) return (side & ~LLG_CR_ORDER_ARRAY) < p->array_count;
+    if (side & LLG_CR_ORDER_SIZE) return after && (side & ~LLG_CR_ORDER_SIZE) < p->array_count;
     if (side & LLG_CR_ORDER_ELEM) {
         uint32_t first = side & ~LLG_CR_ORDER_ELEM;
         return (size_t)first + 2u <= p->arg_count && p->args[first] < p->array_count;
@@ -257,9 +264,13 @@ static void cr_tpl_validate(const llg_cr_problem_t* p) {
         for (uint32_t i = 0; i < unit->slot_count; ++i)
             if (cr_unit_slots(p, u)[i] >= p->slot_count) cr_fatal("unit slot out of range");
     }
-    for (uint32_t a = 0; a < p->array_count; ++a)
-        if (p->arrays[a].elem_width == 0u || p->arrays[a].kind > LLG_CR_ARRAY_SIZE)
+    for (uint32_t a = 0; a < p->array_count; ++a) {
+        if (p->arrays[a].kind == LLG_CR_ARRAY_ASSOC &&
+            (p->arrays[a].left < 1 || p->arrays[a].left > 64))
+            cr_fatal("invalid associative array key");
+        if (p->arrays[a].elem_width == 0u || p->arrays[a].kind > LLG_CR_ARRAY_ASSOC)
             cr_fatal("invalid array");
+    }
     for (uint32_t n = 0; n < p->node_count; ++n) {
         const llg_cr_node_t* nd = &p->nodes[n];
         switch (nd->op) {
@@ -344,8 +355,8 @@ static void cr_tpl_validate(const llg_cr_problem_t* p) {
     for (uint32_t b = 0; b < p->block_count; ++b)
         if (p->blocks[b].root >= p->node_count) cr_fatal("block root out of range");
     for (uint32_t o = 0; o < p->order_count; ++o)
-        if (p->orders[o].block >= p->block_count || !cr_tpl_side_ok(p, p->orders[o].before) ||
-            !cr_tpl_side_ok(p, p->orders[o].after))
+        if (p->orders[o].block >= p->block_count || !cr_tpl_side_ok(p, p->orders[o].before, 0) ||
+            !cr_tpl_side_ok(p, p->orders[o].after, 1))
             cr_fatal("solve-before order out of range");
     for (uint32_t v = 0; v < p->var_count; ++v) {
         if (p->vars[v].bit_width == 0u) cr_fatal("zero-width variable");
@@ -463,13 +474,16 @@ static cr_tpl_t* cr_tpl_new(const llg_cr_problem_t* p) {
         }
         t->deps[n] = d;
     }
-    /* A handle element selects an object, so the state values its index
-     * reads shape the expansion: they are constants and part of its key. */
+    /* A handle element selects an object, and a key an entry of an
+     * associative array, so the state values such an index reads shape the
+     * expansion: they are constants and part of its key. */
     t->leaf_index = (uint8_t*)cr_alloc(p->leaf_count ? p->leaf_count : 1u, 1u);
     cr_u32vec_t cone = {0, 0, 0};
     for (uint32_t n = 0; n < p->node_count; ++n) {
         if (p->nodes[n].op == LLG_CR_REF && p->nodes[n].c != LLG_CR_NONE)
             cr_u32_push(&cone, p->nodes[n].c);
+        if (p->nodes[n].op == LLG_CR_AELEM && p->arrays[p->nodes[n].a].kind == LLG_CR_ARRAY_ASSOC)
+            cr_u32_push(&cone, p->nodes[n].b);
     }
     while (cone.len) {
         uint32_t n = cone.data[--cone.len];
@@ -496,6 +510,7 @@ static void cr_inst_release(cr_inst_t* in, const cr_tpl_t* t) {
         for (uint32_t i = 0; i < unit->array_count; ++i) {
             free(in->arrays[i].words);
             free(in->arrays[i].input);
+            free(in->arrays[i].keys);
         }
         for (uint32_t i = 0; i < unit->slot_count; ++i) free(in->slots[i].target);
     }
@@ -859,8 +874,23 @@ void llg_cr_set_array(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32
     arr->words = (uint64_t*)cr_grow(arr->words, &arr->words_cap, (size_t)size * ew + 1u,
                                     sizeof(uint64_t));
     arr->input = (uint8_t*)cr_grow(arr->input, &arr->input_cap, (size_t)size + 1u, 1u);
+    if (a->kind == LLG_CR_ARRAY_ASSOC)
+        arr->keys = (int64_t*)cr_grow(arr->keys, &arr->keys_cap, (size_t)size + 1u, sizeof(int64_t));
     arr->size = arr->chosen = size;
     arr->active = (uint8_t)(active != 0);
+}
+
+void llg_cr_set_key(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
+                    const uint64_t* words) {
+    cr_iarr_t* arr = cr_inst_array(s, inst, array);
+    const llg_cr_array_t* a = &s->tpl->p->arrays[array];
+    if (a->kind != LLG_CR_ARRAY_ASSOC) cr_fatal("not an associative array");
+    if (index >= arr->size) cr_fatal("array element out of range");
+    uint32_t w = (uint32_t)a->left;
+    uint64_t bits = w < 64u ? words[0] & ((UINT64_C(1) << w) - 1u) : words[0];
+    /* The key as its type reads it: sign-extended when the type is signed. */
+    if (a->right && w < 64u && ((bits >> (w - 1u)) & 1u)) bits |= ~((UINT64_C(1) << w) - 1u);
+    arr->keys[index] = (int64_t)bits;
 }
 
 void llg_cr_set_elem(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
@@ -895,8 +925,9 @@ static void cr_flat_free(cr_flat_t* f) {
 
 static int cr_random_size(const cr_tpl_t* t, const cr_inst_t* in, uint32_t pos) {
     uint32_t array = cr_unit_arrays(t->p, in->unit)[pos];
-    return in->random && in->arrays[pos].active &&
-           t->p->arrays[array].kind != LLG_CR_ARRAY_FIXED;
+    uint8_t kind = t->p->arrays[array].kind;
+    return in->random && in->arrays[pos].active && kind != LLG_CR_ARRAY_FIXED &&
+           kind != LLG_CR_ARRAY_ASSOC;
 }
 
 /* Structure of the expansion for `phase`: what makes two calls expand to
@@ -921,6 +952,14 @@ static void cr_tpl_key(const cr_tpl_t* t, int phase, cr_u32vec_t* key) {
                 cr_u32_push(key, cr_random_size(t, in, k) ? LLG_CR_NONE : arr->size);
             else
                 cr_u32_push(key, arr->chosen);
+            /* Keys are constants of the expansion: loop indices and the
+             * elements that selects name. */
+            if (t->p->arrays[cr_unit_arrays(t->p, in->unit)[k]].kind == LLG_CR_ARRAY_ASSOC) {
+                for (uint32_t e = 0; e < arr->size; ++e) {
+                    cr_u32_push(key, (uint32_t)(uint64_t)arr->keys[e]);
+                    cr_u32_push(key, (uint32_t)((uint64_t)arr->keys[e] >> 32));
+                }
+            }
         }
         if (!t->has_leaf_index) continue;
         for (uint32_t l = u->leaf_first; l < u->leaf_first + u->leaf_count; ++l) {
@@ -1441,6 +1480,19 @@ static uint32_t cr_fx_count(cr_ex_t* ex, uint32_t inst, uint32_t array, int* ran
     return ex->f->arr_size[k];
 }
 
+/* The keys of associative array `array` of object `inst`, by position;
+ * NULL for every other array. */
+static const int64_t* cr_fx_keys(const cr_ex_t* ex, uint32_t inst, uint32_t array) {
+    const cr_tpl_t* t = ex->t;
+    if ((array & (LLG_CR_SLOT_ARRAY | LLG_CR_RANGE_LOOP)) ||
+        ex->p->arrays[array].kind != LLG_CR_ARRAY_ASSOC)
+        return NULL;
+    inst = cr_fx_arr_inst(ex, inst, array);
+    uint32_t pos = t->arr_pos[(size_t)t->inst[inst].unit * t->ac + array];
+    if (pos == LLG_CR_NONE) cr_fatal("array of another unit");
+    return t->inst[inst].arrays[pos].keys;
+}
+
 static int64_t cr_fx_declared(const cr_ex_t* ex, uint32_t array, uint32_t pos) {
     uint8_t kind;
     int32_t left, right;
@@ -1548,8 +1600,9 @@ static uint32_t cr_ex_loop(cr_ex_t* ex, uint32_t n) {
     uint32_t saved_frame = ex->frame;
     uint32_t result = LLG_CR_NONE;
     ex->loop_on[loop] = 1;
+    const int64_t* keys = cr_fx_keys(ex, inst, array);
     for (uint32_t pos = 0; pos < count; ++pos) {
-        ex->loop_val[loop] = cr_fx_declared(ex, array, pos);
+        ex->loop_val[loop] = keys ? keys[pos] : cr_fx_declared(ex, array, pos);
         ex->frame = ++ex->frames;
         uint32_t r = cr_ex_expand(ex, body);
         if (r == CR_X_DROP || cr_ex_budget(ex)) {
@@ -1658,7 +1711,28 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
         if (ex->phase == CR_PH_SIZES && cr_random_size(t, &t->inst[inst], k - f->arr_base[inst]))
             return CR_X_DROP;
         uint32_t ix = cr_ex_res(ex, nd->b);
-        if (cr_fb_is_const(ex, ix)) {
+        if (p->arrays[nd->a].kind == LLG_CR_ARRAY_ASSOC) {
+            /* The select names a key, in the key's type: a constant, a loop
+             * index or state (lowering admits no other), so it is known
+             * here unless a state value it reads is an evaluation error,
+             * which the table node then carries. An entry the array does
+             * not hold is an index outside it (S30-D11): position `size`
+             * of the table. */
+            if (cr_fb_is_const(ex, ix)) {
+                const llg_cr_node_t* ni = &f->nodes[ix];
+                const int64_t* keys = t->inst[inst].arrays[k - f->arr_base[inst]].keys;
+                if (ni->bit_width > 64u) cr_fatal("associative array key wider than 64 bits");
+                uint64_t bits = f->consts.data[ni->a];
+                if (ni->sign_flag && ni->bit_width < 64u && ((bits >> (ni->bit_width - 1u)) & 1u))
+                    bits |= ~((UINT64_C(1) << ni->bit_width) - 1u);
+                uint32_t at = f->arr_size[k];
+                for (uint32_t e = 0; e < f->arr_size[k]; ++e)
+                    if (keys[e] == (int64_t)bits) at = e;
+                if (at < f->arr_size[k])
+                    return cr_fx_var_node(ex, cr_fx_elem(ex, inst, nd->a, k, at));
+                ix = cr_fb_small(ex, (int64_t)at, 32u, 1);
+            }
+        } else if (cr_fb_is_const(ex, ix)) {
             const llg_cr_node_t* ni = &f->nodes[ix];
             int64_t value;
             if (bv_index(f->consts.data + ni->a, ni->bit_width, ni->sign_flag, &value) &&
@@ -1689,7 +1763,7 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
     }
     case LLG_CR_ITER:
         if (nd->a >= t->loops || !ex->loop_on[nd->a]) cr_fatal("loop index outside its loop");
-        return cr_fb_small(ex, ex->loop_val[nd->a], 32u, 1);
+        return cr_fb_small(ex, ex->loop_val[nd->a], nd->bit_width, nd->sign_flag);
     case LLG_CR_FOREACH:
     case LLG_CR_REDUCE:
         return cr_ex_loop(ex, n);
@@ -1708,7 +1782,9 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
     }
     case LLG_CR_TCALL: {
         /* The thunk reads the root object: it cannot name another object
-         * of the same unit. */
+         * of the same unit. Generated code never registers one: every
+         * linked object, also one of the randomized class, takes its
+         * class's own unit, whose calls name it by instance. */
         if (t->inst[ex->inst].unit == 0u && ex->inst != 0u)
             cr_fatal("constraint function call of another object of the randomized class");
         const llg_cr_call_t* tc = &p->calls[nd->a];
@@ -1948,6 +2024,15 @@ static void cr_fx_order_side(const cr_flat_t* f, const cr_tpl_t* t, uint32_t i, 
                              cr_u32vec_t* out) {
     const llg_cr_problem_t* p = t->p;
     const cr_inst_t* in = &t->inst[i];
+    if (side & LLG_CR_ORDER_SIZE) {
+        /* The size variable exists in the size phase, when a constraint
+         * reads the random size; a known size orders nothing. */
+        uint32_t pos = t->arr_pos[(size_t)in->unit * t->ac + (side & ~LLG_CR_ORDER_SIZE)];
+        if (pos == LLG_CR_NONE) return;
+        uint32_t v = f->arr_svar[f->arr_base[i] + pos];
+        if (v != LLG_CR_NONE) cr_u32_push(out, v);
+        return;
+    }
     if (side & (LLG_CR_ORDER_ARRAY | LLG_CR_ORDER_ELEM)) {
         int whole = (side & LLG_CR_ORDER_ARRAY) != 0u;
         const uint32_t* x = whole ? NULL : p->args + (side & ~LLG_CR_ORDER_ELEM);
@@ -2181,7 +2266,8 @@ static void cr_flat_feed(cr_tpl_t* t, cr_flat_t* f) {
         uint32_t kind = f->var_kind.data[v], inst = f->var_inst.data[v];
         uint32_t idx = f->var_idx.data[v];
         if (kind == CR_FV_GLOBAL) {
-            llg_cr_set_var(fs, (uint32_t)v, t->g_cur + t->g_off[idx], t->g_active[idx], t->g_input[idx]);
+            llg_cr_set_var(fs, (uint32_t)v, t->g_cur + t->g_off[idx], t->g_active[idx] == CR_VAR_RANDOM,
+                           t->g_input[idx]);
             if (p->vars[idx].cyclic) llg_cr_set_cyclic(fs, (uint32_t)v, t->g_cyc + t->g_cyc_off[idx]);
             continue;
         }
@@ -2190,7 +2276,7 @@ static void cr_flat_feed(cr_tpl_t* t, cr_flat_t* f) {
             uint32_t pos = cr_inst_var(t, in, idx);
             uint32_t base = t->var_off_base[in->unit];
             llg_cr_set_var(fs, (uint32_t)v, in->var_cur + t->var_off[base + pos],
-                           in->random && in->var_active[pos], in->var_input[pos]);
+                           in->random && in->var_active[pos] == CR_VAR_RANDOM, in->var_input[pos]);
             if (p->vars[idx].cyclic)
                 llg_cr_set_cyclic(fs, (uint32_t)v, in->cyc + t->cyc_off[base + pos]);
             continue;
@@ -2349,6 +2435,26 @@ static llg_cr_status_t cr_tpl_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
                 uint32_t pos = t->arr_pos[(size_t)in->unit * t->ac + f->var_idx.data[v]];
                 in->arrays[pos].chosen = (uint32_t)llg_cr_value(f->session, (uint32_t)v)[0];
             }
+            /* A variable solved before a size keeps the value that size was
+             * drawn for: the second expansion reads it as state (S30-D19). */
+            const uint8_t* presize = f->session->presize;
+            for (size_t v = 0; presize && v < f->vars_len; ++v) {
+                uint32_t kind = f->var_kind.data[v], idx = f->var_idx.data[v];
+                if (!presize[v] || !f->session->var_active[v]) continue;
+                const uint64_t* value = llg_cr_value(f->session, (uint32_t)v);
+                uint32_t w = t->p->vars[idx].bit_width;
+                if (kind == CR_FV_GLOBAL) {
+                    cr_store_words(t->g_cur + t->g_off[idx], value, w);
+                    t->g_active[idx] = CR_VAR_SOLVED;
+                    t->g_input[idx] = LLG_CR_INPUT_KNOWN;
+                } else if (kind == CR_FV_UNIT) {
+                    cr_inst_t* in = &t->inst[f->var_inst.data[v]];
+                    uint32_t pos = cr_inst_var(t, in, idx);
+                    cr_store_words(in->var_cur + t->var_off[t->var_off_base[in->unit] + pos], value, w);
+                    in->var_active[pos] = CR_VAR_SOLVED;
+                    in->var_input[pos] = LLG_CR_INPUT_KNOWN;
+                }
+            }
             if (!cr_elements_ok(t)) {
                 report->budget = "LLG_RAND_ARRAY_ELEMENTS";
                 status = LLG_CR_RESOURCE;
@@ -2400,9 +2506,9 @@ const uint64_t* llg_cr_ivalue(const llg_cr_session_t* s, uint32_t inst, uint32_t
 int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var) {
     const cr_tpl_t* t = s->tpl;
     if (!t || var >= t->vc) cr_fatal("variable out of range");
-    if (inst == LLG_CR_NONE || t->global[var]) return t->g_active[var];
+    if (inst == LLG_CR_NONE || t->global[var]) return t->g_active[var] != 0u;
     const cr_inst_t* in = cr_inst_get(s, inst);
-    return in->random && in->var_active[cr_inst_var(t, in, var)];
+    return in->random && in->var_active[cr_inst_var(t, in, var)] != 0u;
 }
 
 int llg_cr_array_active(const llg_cr_session_t* s, uint32_t inst, uint32_t array) {

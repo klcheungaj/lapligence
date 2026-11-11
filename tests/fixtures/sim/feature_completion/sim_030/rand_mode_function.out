@@ -1,0 +1,11 @@
+all: modes 1 1 1 1 changed 1 1 1 1 active 5
+one element off: modes 1 0 1 1 changed 1 0 1 1 active 3
+object on: modes 1 1 1 1 changed 1 1 1 1 active 5
+object off, one element on: modes 0 0 1 0 changed 0 0 1 0 active 1
+new object in an off element: modes 0 1 1 1 changed 0 1 1 1 active 3
+handle of the object off: modes 1 1 1 1 changed 0 0 0 0 active 5
+handle: 0
+descending: 0 1 1
+below the range: 1
+above the range: 1
+condition: active

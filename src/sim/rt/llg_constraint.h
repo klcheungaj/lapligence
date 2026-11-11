@@ -95,8 +95,10 @@ enum {
     LLG_CR_ASIZE,       /* 32-bit signed size of array a (LLG_CR_SLOT_ARRAY
                            | slot: of a handle array) of the object ref c
                            names */
-    LLG_CR_ITER,        /* 32-bit signed index of loop a's current element
-                           (the declared index for fixed arrays) */
+    LLG_CR_ITER,        /* index of loop a's current element in the node's
+                           type, 32-bit signed but for the key type of an
+                           associative array (the declared index for fixed
+                           arrays, the key for associative ones) */
     LLG_CR_FOREACH,     /* args[b .. b+4) = {array, body, ref, loop}: the
                            conjunction of body over the elements (array as
                            for ASIZE) */
@@ -134,13 +136,19 @@ typedef struct {
     uint8_t cyclic;
 } llg_cr_var_t;
 
-/* Widest randc variable: its cycle state holds one bit per value. */
-#define LLG_CR_CYCLIC_MAX_WIDTH 16u
+/* Widest randc variable (18.4.2 permits a limit of 8 bits or more). */
+#define LLG_CR_CYCLIC_MAX_WIDTH 32u
+/* Widest randc variable whose cycle state holds one bit per value. A wider
+ * one walks a seeded permutation of its range and keeps only its place. */
+#define LLG_CR_CYCLIC_BITMAP_WIDTH 16u
 
-/* Words of a randc variable's cycle state: one "returned in this cycle" bit
- * per value, then a 64-bit signature of the constraints of the cycle. */
+/* Words of a randc variable's cycle state. Up to the bitmap width: one
+ * "returned in this cycle" bit per value, then a 64-bit signature of the
+ * constraints of the cycle. Wider: the next position in the permutation,
+ * the permutation's key, then the signature. */
 #define LLG_CR_CYCLIC_WORDS(width) \
-    ((width) >= 6u ? (1u << ((width) - 6u)) + 1u : 2u)
+    ((width) > LLG_CR_CYCLIC_BITMAP_WIDTH ? 3u \
+     : (width) >= 6u ? (1u << ((width) - 6u)) + 1u : 2u)
 
 /* One `dist` constraint (18.5.4). `expr` is the distributed expression,
  * `guard` the conjunction of the enclosing implication and if conditions
@@ -168,9 +176,13 @@ typedef struct {
 
 /* `solve before before after` from constraint block `block` (18.5.9).
  * In a problem with units a side is a variable, LLG_CR_ORDER_ARRAY | array
- * (every element) or LLG_CR_ORDER_ELEM | index of args {array, position}. */
+ * (every element), LLG_CR_ORDER_ELEM | index of args {array, position} or,
+ * as the `after` side only, LLG_CR_ORDER_SIZE | array (the random size of a
+ * dynamic array or queue: the variables before it are solved before the
+ * sizes and keep that value, S30-D19). */
 #define LLG_CR_ORDER_ARRAY 0x80000000u
 #define LLG_CR_ORDER_ELEM 0x40000000u
+#define LLG_CR_ORDER_SIZE 0x20000000u
 typedef struct {
     uint32_t block;
     uint32_t before;
@@ -192,7 +204,14 @@ typedef struct {
 /* Array kinds. A fixed array's position i has the declared index
  * left + i (left <= right) or left - i (left > right). */
 enum { LLG_CR_ARRAY_FIXED = 0, LLG_CR_ARRAY_DYNAMIC = 1, LLG_CR_ARRAY_QUEUE = 2,
-       LLG_CR_ARRAY_SIZE = 3 /* only the random size of a handle array */ };
+       LLG_CR_ARRAY_SIZE = 3 /* only the random size of a handle array */,
+       /* An associative array with an integral index type of at most 64
+        * bits: its entries, in key order, are the elements. Its size is
+        * never random, `left` is the key width and `right` is 1 for a
+        * signed key. Positions come from the keys (llg_cr_set_key): a loop
+        * index is the element's key, and an element select names a key,
+        * which must be known when the problem is expanded. */
+       LLG_CR_ARRAY_ASSOC = 4 };
 
 /* Bit marking a handle-array slot in LLG_CR_ASIZE / LLG_CR_FOREACH. */
 #define LLG_CR_SLOT_ARRAY 0x80000000u
@@ -452,6 +471,10 @@ void llg_cr_set_array(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32
                       int active);
 void llg_cr_set_elem(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
                      const uint64_t* words, int input_state);
+/* The key of element `index` of an associative array, in the key's width;
+ * elements are fed in ascending key order. */
+void llg_cr_set_key(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
+                    const uint64_t* words);
 const uint64_t* llg_cr_ivalue(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
 /* Whether variable `var` (array `array`) of `inst` took part as random. */
 int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
@@ -469,6 +492,8 @@ typedef struct {
     uint64_t conflicts;      /* LLG_RAND_CONFLICTS */
     uint64_t array_elements; /* LLG_RAND_ARRAY_ELEMENTS: elements per solve */
     uint64_t expand_nodes;   /* LLG_RAND_EXPAND_NODES: expanded nodes */
+    uint64_t cyclic_walk;    /* LLG_RAND_CYCLIC_WALK: permutation positions one
+                              * draw of a wide randc variable may test */
     int stats;               /* LLG_RAND_STATS */
     int overflow_memo;       /* LLG_RAND_OVERFLOW_MEMO: 0 rebuilds every
                               * overflowing exact model (never changes values) */

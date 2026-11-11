@@ -44,6 +44,121 @@ fn rand_mode_of_a_handle_variable_leaves_its_object() {
 }
 
 #[test]
+fn rand_mode_function_reads_the_handle_variable() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "rand_mode_function",
+        include_str!("../fixtures/sim/feature_completion/sim_030/rand_mode_function.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn rand_mode_function_needs_a_random_variable() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_mode_function_handle",
+        "too few arguments for 'rand_mode'",
+    );
+    names_source_position("neg_mode_function_handle");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_mode_function_not_rand",
+        "too few arguments for 'rand_mode'",
+    );
+    names_source_position("neg_mode_function_not_rand");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_element_mode_queue_function",
+        "`rand_mode` of an element of a dynamic array or queue of class handles is not supported",
+    );
+    names_source_position("neg_element_mode_queue_function");
+}
+
+/// S30-D20: the entries an associative array holds are its random
+/// elements; a loop index is a key and a select names one.
+#[test]
+fn associative_arrays_randomize_their_entries() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "rand_assoc",
+        include_str!("../fixtures/sim/feature_completion/sim_030/rand_assoc.out"),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "rt_assoc_missing_key",
+        &[],
+        &runtime_failure(
+            "ok=0 entries=1\nok=1 entries=2 aa[4]=9\n",
+            "ERROR: [SIM-010] randomize() at tb:12:10: select index out of range in a constraint",
+        ),
+    );
+}
+
+#[test]
+fn associative_array_forms_outside_the_entries_are_located_errors() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_size",
+        "the size of a random associative array is not supported in a constraint",
+    );
+    names_source_position("neg_assoc_size");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_string_key",
+        "array `sa` is not supported in constraints: an associative array needs an integral index type of at most 64 bits",
+    );
+    names_source_position("neg_assoc_string_key");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_random_key",
+        "an element of an associative array in a constraint needs a key the solution does not change",
+    );
+    names_source_position("neg_assoc_random_key");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_solve_element",
+        "a `solve...before` order naming one element of an associative array is not supported",
+    );
+    names_source_position("neg_assoc_solve_element");
+}
+
+/// Objects of the randomized class reached through handles, and the
+/// randomized object reached again, evaluate their own constraint functions.
+#[test]
+fn linked_objects_of_one_class_call_their_own_functions() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "linked_function_receivers",
+        include_str!("../fixtures/sim/feature_completion/sim_030/linked_function_receivers.out"),
+        &[],
+        &[],
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_call_receiver_element",
+        "a random array may be used in a constraint only through element selects",
+    );
+    names_source_position("neg_call_receiver_element");
+}
+
+/// S30-D19: a variable ordered before an array size is drawn before the
+/// sizes and keeps that value.
+#[test]
+fn solve_before_an_array_size_draws_the_variable_first() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "solve_before_size",
+        include_str!("../fixtures/sim/feature_completion/sim_030/solve_before_size.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn solve_before_orders_the_draws() {
     sim_cli::run_case_backend_parity(
         SUITE,
@@ -63,6 +178,42 @@ fn randc_cycles_per_object_and_restarts_on_constraint_changes() {
         &[],
         &[],
     );
+}
+
+/// S30-D18: 17 to 32 bits walk a permutation of the range. The whole 17-bit
+/// range and the 65536 legal values of the walked variable are each returned
+/// once per pass.
+#[test]
+fn wide_randc_never_repeats_inside_a_pass() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "randc_wide",
+        include_str!("../fixtures/sim/feature_completion/sim_030/randc_wide.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn wide_randc_walk_budget_is_a_resource_error() {
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "rt_randc_walk_budget",
+        &[],
+        &[("LLG_RAND_CYCLIC_WALK", "0")],
+        &runtime_failure(
+            "ok=0 legal=0\n",
+            "ERROR: [SIM-010] randomize() at tb:13:10: solver budget LLG_RAND_CYCLIC_WALK exhausted before a solution or proof of unsatisfiability was found (raise LLG_RAND_CYCLIC_WALK); randomize returns 0",
+        ),
+    );
+    sim_cli::run_case_checked_matrix(SUITE, "rt_randc_walk_budget", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(0), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "ok=1 legal=1\n",
+            "{label}"
+        );
+    });
 }
 
 #[test]
@@ -185,6 +336,12 @@ fn unsupported_array_and_object_forms_are_located_errors() {
     names_source_position("neg_element_mode_queue");
     sim_cli::reject_case(
         SUITE,
+        "neg_randc_array",
+        "`randc` array `a` is not supported",
+    );
+    names_source_position("neg_randc_array");
+    sim_cli::reject_case(
+        SUITE,
         "neg_handle_index",
         "a handle array element in a constraint needs a constant, state or loop index",
     );
@@ -197,10 +354,28 @@ fn unsupported_array_and_object_forms_are_located_errors() {
     names_source_position("neg_foreach_2d");
     sim_cli::reject_case(
         SUITE,
-        "neg_solve_size_after",
-        "a `solve...before` order that solves a variable before an array size is not supported",
+        "neg_solve_size_sum",
+        "a variable solved before an array size is constrained together with elements of an array whose size is random: the order is circular",
     );
-    names_source_position("neg_solve_size_after");
+    names_source_position("neg_solve_size_sum");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_solve_size_foreach",
+        "a variable solved before an array size is constrained together with elements of an array whose size is random: the order is circular",
+    );
+    names_source_position("neg_solve_size_foreach");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_solve_elements_before_size",
+        "a `solve...before` order that solves array elements before an array size is not supported",
+    );
+    names_source_position("neg_solve_elements_before_size");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_solve_size_other_object",
+        "a `solve...before` order that solves a variable before the array size of another object is not supported",
+    );
+    names_source_position("neg_solve_size_other_object");
 }
 
 /// A located rejection names the fixture's source position.
@@ -219,7 +394,7 @@ fn unsupported_and_later_edition_forms_are_located_errors() {
     sim_cli::reject_case(
         SUITE,
         "neg_randc_wide",
-        "`randc` property `r` of class `c_c` must be a packed integral value of at most 16 bits",
+        "`randc` property `r` of class `c_c` must be a packed integral value of at most 32 bits",
     );
     names_source_position("neg_randc_wide");
     sim_cli::reject_case(

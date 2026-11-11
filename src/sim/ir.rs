@@ -130,8 +130,8 @@ pub use randomize::{
     rand_cyclic_state_width, IrRandArray, IrRandArrayKind, IrRandBlock, IrRandCall, IrRandDist,
     IrRandDistItem, IrRandLeaf, IrRandNode, IrRandOp, IrRandOrder, IrRandProblem, IrRandQuery,
     IrRandSlot, IrRandStmt, IrRandUnit, IrRandVar, RAND_CYCLIC_MAX_WIDTH, RAND_NONE,
-    RAND_ORDER_ARRAY, RAND_ORDER_ELEM, RAND_RANGE_LOOP, RAND_SLOT_ARRAY, RAND_STEP_FAILED,
-    RAND_STEP_NEED_CALLS, RAND_STEP_OK,
+    RAND_ORDER_ARRAY, RAND_ORDER_ELEM, RAND_ORDER_SIZE, RAND_RANGE_LOOP, RAND_SLOT_ARRAY,
+    RAND_STEP_FAILED, RAND_STEP_NEED_CALLS, RAND_STEP_OK,
 };
 mod statements;
 pub use statements::{
@@ -763,15 +763,31 @@ pub struct IrModel {
 pub struct IrDpiScope {
     /// Fully qualified scope name, as `svGetNameFromScope` returns it.
     pub(in crate::sim) name: String,
+    /// Time unit of the scope in femtoseconds (`svGetTime`, `svGetTimeUnit`).
+    pub(in crate::sim) unit_fs: u64,
+    /// Time precision of the scope in femtoseconds (`svGetTimePrecision`).
+    pub(in crate::sim) precision_fs: u64,
 }
 
 impl IrDpiScope {
-    pub fn new(name: String) -> Self {
-        Self { name }
+    pub fn new(name: String, unit_fs: u64, precision_fs: u64) -> Self {
+        Self {
+            name,
+            unit_fs,
+            precision_fs,
+        }
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn unit_fs(&self) -> u64 {
+        self.unit_fs
+    }
+
+    pub fn precision_fs(&self) -> u64 {
+        self.precision_fs
     }
 }
 

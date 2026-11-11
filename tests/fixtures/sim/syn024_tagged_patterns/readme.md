@@ -16,5 +16,6 @@ wrong-tag member access diagnostics. `bad_tag_name.sv` and
 `bad_source_type.sv` are single-fault frontend controls. `edition_boundary.sv`
 checks rejection in IEEE 1364-2001, which has no tagged pattern syntax.
 
-Q03, a valid tagged NBA target retagged before publication, remains open in
-the SYN-021 storage contract; these predicate fixtures make no timing claim.
+Q03, a valid tagged NBA target retagged before publication, is resolved in
+[RTL-016](../feature_completion/rtl_016/readme.md); these predicate fixtures
+make no timing claim.

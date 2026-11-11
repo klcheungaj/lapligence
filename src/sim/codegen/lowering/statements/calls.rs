@@ -453,7 +453,21 @@ impl EmitCtx<'_, '_> {
         // declared formals of each direction (see `record_formal_columns`).
         let mut record_out_args = Vec::new();
         let mut record_in_args = Vec::new();
+        // Open-array formals bound below to storage of the actual's type.
+        let mut open_storage = vec![false; formals.len()];
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            // A DPI-C open-array formal whose actual crosses in storage of
+            // its own type (outside the payload, or a dynamic array or
+            // queue): the call's specialization has a formal of that type.
+            if let Some(argument) = self.cg.dpi_open_storage_argument(*io, bound[idx].expr)? {
+                open_storage[idx] = true;
+                if *is_out {
+                    out_args.push(argument);
+                } else {
+                    in_args.push((idx, argument));
+                }
+                continue;
+            }
             if self.cg.is_subroutine_container(*io) {
                 let argument = self.cg.container_call_argument(
                     &self.path,
@@ -912,7 +926,8 @@ impl EmitCtx<'_, '_> {
             out_args.push(IrCallArg::OutAddr(format!("&{tname}")));
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.cg.fixed_formal_array(*io).is_some()
+            if open_storage[idx]
+                || self.cg.fixed_formal_array(*io).is_some()
                 || self.cg.is_native_declaration(*io)
                 || self.cg.is_subroutine_container(*io)
                 || self.cg.real_formal_array(*io).is_some()

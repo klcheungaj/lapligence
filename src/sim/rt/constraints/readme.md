@@ -49,7 +49,14 @@ row-major array: selects compute the flat position (an index outside its own
 dimension makes it invalid), and `foreach` and reductions walk a dimension
 through a loop whose array operand is a declared range
 (`LLG_CR_RANGE_LOOP`). A random bounded queue carries its maximum element
-count in `right`, which bounds the domain of its size variable. Random
+count in `right`, which bounds the domain of its size variable. A random
+associative array (`LLG_CR_ARRAY_ASSOC`, S30-D20) is the entries it holds, in
+key order, with their keys (`llg_cr_set_key`): its size is never random, a
+loop index is the element's key in the index type (`ITER` has that type), and
+a select names a key, which lowering restricts to constants, loop indices
+and state, so the expansion resolves it to an element (the state values such
+a key reads, and the keys themselves, are constants of the expansion and part
+of its cache key); a key the array does not hold is an index outside it. Random
 arrays of enum or packed-structure elements add one block per array per unit
 (`<array>_legal`, enabled while the array is random) holding every element
 to its legal values; it does not name the size, so it leaves sizes alone.
@@ -85,6 +92,14 @@ direct element. With random dynamic arrays or queues, a first expansion
 solves the sizes before every other variable and drops the conjuncts that
 need elements of arrays of unknown size; the second fixes those sizes
 (S30-D5). A size no kept conjunct of an enabled block names keeps its value.
+An order whose later side is a size (`LLG_CR_ORDER_SIZE`, `solve x before
+a.size()`, S30-D19) reverses this for the variables before it: in the first
+expansion the solver marks every variable a live order places before a size
+(`cr_order_presize`), the sizes-first orders skip them, so their layers come
+before the sizes, and their values are kept: the second expansion reads them
+as state while the caller still commits them as random. Lowering rejects a
+conjunct that reads such a variable together with elements of an array of
+random size, which the first expansion would have dropped.
 Expanded problems and their sessions are cached by structure (sixteen per
 call site, least recently used replaced first), so repeated randomization of
 the same graph reuses the exact-engine caches. Random sizes give one graph
@@ -181,7 +196,8 @@ which keeps the recursive BDD operations shallow on coroutine-hosted stacks),
 `LLG_RAND_REJECT_TRIES` (4096), `LLG_RAND_CONFLICTS` (100000 conflicts per
 component search; 0 disables the search), `LLG_RAND_ARRAY_ELEMENTS` (2^20
 random array elements per solve), `LLG_RAND_EXPAND_NODES` (2^22 nodes per
-expansion), `LLG_RAND_OVERFLOW_MEMO` (1; 0 turns off the foreseen overflows
+expansion), `LLG_RAND_CYCLIC_WALK` (2^26 permutation positions per draw of a
+randc variable wider than 16 bits), `LLG_RAND_OVERFLOW_MEMO` (1; 0 turns off the foreseen overflows
 below), `LLG_RAND_SEARCH_CACHE` (1; 0 re-encodes every search; neither switch
 changes a drawn value) and `LLG_RAND_STATS=1` (one stderr line per solve:
 engines, components, BDD nodes, foreseen overflows, rejection tries,
@@ -254,9 +270,25 @@ plus a 64-bit signature of its component's conjuncts (operators, widths,
 variable and call names, and the values of the known operands they read:
 state variables, inline-constraint operands and constants; never the source
 positions in state leaf names, so the same constraint at another call site
-matches), `LLG_CR_CYCLIC_WORDS(width)` words, at most 16 bits wide. The caller passes
+matches), `LLG_CR_CYCLIC_WORDS(width)` words, for variables of at most 16 bits. The caller passes
 the object's state in before solving and stores `llg_cr_cyclic` back only
 after `LLG_CR_OK`, so a failed randomize leaves it unchanged. A different
 signature (constraint blocks enabled or disabled, other constraints, a state
 value read by the component that changed since the last call) starts a new
 cycle; so does a cycle with no unused feasible value left (S30-D3).
+
+A variable of 17 to 32 bits (S30-D18) cannot keep a bit per value. It walks
+a keyed bijection of its w-bit range (`cr_cycw_*` in `sample.c`: rounds of
+`x ^= x >> k` and multiplication by an odd number modulo 2^w, so a value's
+position is computable too) and its state is three words: the next
+position, the key and the signature. A call returns the value at the first
+position from the stored one on that is legal with the earlier layers
+fixed; passing the last position, or a changed signature, draws a new key
+from the random stream. When at most 2 * 2^(w/2) values are legal the draw
+lists them from the exact model and takes the smallest position
+(one step per legal value); otherwise it tests positions in order (about
+2^w / count tests, each one BDD path), so either way a call costs at most
+about 2^17 steps for 32 bits. `LLG_RAND_CYCLIC_WALK` (2^26) bounds the
+positions one draw may test; beyond it the call is `LLG_CR_RESOURCE`. A
+component with a wide randc variable that does not fit the exact engine is
+`LLG_CR_RESOURCE` like any other randc component (S30-D9).

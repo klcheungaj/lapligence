@@ -1,8 +1,10 @@
 # SIM-040: DPI-C packed, sized and open-array imports
 
 These fixtures cover imported DPI-C subroutines whose formals are packed
-vectors, sized unpacked arrays and structures, or open arrays, together with
-the `svdpi.h` routines that read and write them. Each positive `<name>.sv`
+vectors, sized unpacked arrays and structures (with packed, real, shortreal,
+string and chandle leaves), or open arrays with fixed-size and dynamic array
+actuals, together with the `svdpi.h` routines that read and write them and
+the time services. Each positive `<name>.sv`
 has a portable C11 companion `<name>.c`. The test
 [`sim_040.rs`](../../../../sim_feature_completion/sim_040.rs) builds the
 companion into a shared library and passes it with `--dpi-lib`. It runs on the
@@ -90,11 +92,52 @@ H.7.8 (L72330-72332):
 > guaranteed to be compatible with the C compiler's layout on the given
 > operating system.
 
-H.7.4 Table H.1 (L72189-72193):
+H.7.4 Table H.1 (L72189-72193, L72201-72207; the extraction prints the `*`
+of `void*` and `const char*` as `a`):
 
 > Table H.1—Mapping data types
 > SystemVerilog type C type
 > byte char
+> real double
+> shortreal float
+> chandle voida
+> string const chara
+
+H.8.10.1 (L72520-72522):
+
+> When strings are contained in aggregate arguments, those string members
+> shall also be represented by const char* variables. All the same
+> stipulations apply to string members of aggregate arguments as apply to
+> standalone string arguments.
+
+H.8.10 (L72486-72488):
+
+> If the pointer value is modified by the C application, SystemVerilog copies
+> the indicated string contents into its memory space and undertakes any
+> actions sensitive to this change.
+
+7.7 (L8577-8580):
+
+> The rules that govern dynamic array and queue formal arguments also govern
+> the behavior of unpacked dimensions of DPI open array formal arguments (see
+> 7.6). DPI open arrays can also have a solitary unsized, packed dimension
+> (see 34.5.6.1). A dynamic array or queue shall not be passed as an actual
+> argument if the DPI formal argument has unsized dimensions and an output
+> direction mode.
+
+20.7 (L34699, L34701-34702, L34704-34705):
+
+> For a queue or dynamic array dimension, $left shall return 0. [...] For a
+> queue or dynamic array dimension whose current size is zero, $right shall
+> return -1. [...] For a queue or dynamic array dimension, $increment shall
+> return -1.
+
+20.3.1 (L34168-34169) and 20.3.3 (L34207-34208), for the time services:
+
+> The $time system function returns an integer that is a 64-bit time, scaled
+> to the time unit of the module that invoked it. [...] The $realtime system
+> function returns a real number time that, like $time, is scaled to the time
+> unit of the module that invoked it.
 
 Plain `char` is unsigned on some ABIs (AArch64 Linux, PowerPC, RISC-V), so the
 companions read `byte` members through an explicit sign extension (`sv_byte`)
@@ -155,6 +198,21 @@ Where the text leaves a result open, llg's choice has a portable case in
 - S40-D6: an element access with a wrong number of indices is a fatal error;
   the import's C code is abandoned at the access, nothing is copied out and
   the run ends.
+- S40-D8: native leaves cross in the C layout; an output aggregate starts
+  with every byte zero and its string leaves at an empty string; changed
+  string pointers are all read before any leaf is replaced, so in llg a
+  pointer the C function received stays valid until it returns.
+- S40-D9: a dynamic array actual gives the formal its size at the call,
+  `[0:size-1]` with increment -1 (`[0:-1]` when empty); the formal is a copy
+  that an export resizing the actual does not change, and an inout is
+  assigned back with that size.
+- S40-D10: a dynamic array actual of an output open-array formal is a compile
+  error (7.7).
+- S40-D7: `svGetTime` fills `high`/`low` with the scope's `$time` and `real`
+  with its `$realtime` and leaves `type` alone; `svGetTimeUnit` and
+  `svGetTimePrecision` store powers of ten in seconds; a NULL scope is the
+  simulation time unit; an invalid scope or a NULL result pointer returns -1
+  and stores nothing.
 
 ## Fixtures and oracles
 
@@ -170,9 +228,28 @@ companion's arithmetic, then compared with llg.
 | `svdpi_access` | Every `svdpi.h` routine llg provides: `svDpiVersion`, bit and part selects, all array queries for dims 0..4 and invalid dims, `svGetArrayPtr`, `svSizeOfArray`, `svGetArrElemPtr{,1,2,3}`, `svGet/Put{Bit,Logic}ArrElem{,1,2,3}[VecVal]` with in-range and out-of-range indices (A03). | H.11, H.12; decisions S40-D3 and S40-D4. |
 | `svdpi_index_count` | Element pointer, get and put accesses with a wrong number of indices: the first reports one error and abandons the C function, so the later accesses and its last `printf` do not run, `after the call` never prints, the final procedure shows the arrays unchanged; exit status 1 (A03). | H.12.4 L73337-73340; decision S40-D6. |
 | `scopes_types` | One C function imported from two scopes, including an open-array import whose actual shape differs per scope; `pure` imports; enum, packed-struct and `integer` formals. | 35.5.4: one C function per C name. |
-| `neg_*` | Explicit errors: dynamic actuals of open formals, string or real elements in aggregates, aggregates over 1048575 payload bits, packed results, `ref`/`event`/class/unpacked-union formals, open arrays in exports, conflicting signatures, a missing import symbol (with `neg_missing_symbol.c`) and an unprovided routine `svGetTime` (with `neg_unprovided_routine.c`) (A03). | 35.5.5, 35.5.6, 35.5.6.1; llg limits in docs/known_issues.md. |
+| `time_services` | `svGetTime`, `svGetTimeUnit` and `svGetTimePrecision` from module scopes at 1 ns/1 ps, 1 us/10 ns and 100 ps/1 fs and a package at 10 ps/1 ps, from a noncontext import (no scope, and a scope found by name), with a NULL scope, an invalid scope and NULL result pointers; a time above 32 bits of simulation time units. | Decision S40-D7; 20.3.1 and 20.3.3 for the scaled values (1234000 fs is 1.234 ns, 123.4 units of 10 ps, 0.001234 us; 1234568 fs is 12.34568 units of 100 ps; 5 ms is 5000000000000 fs = 1164 * 2^32 + 658067456). |
+| `native_aggregates` | Structures with real, int, string, chandle, shortreal and byte members, nested structures with arrays (descending range, strings, a packed-only record, a 4-state member), sized arrays of strings (two dimensions, an array of an array type), reals (descending range, two dimensions), shortreals, chandles and records; input, output and inout; two outputs to one actual; an imported task; an array of structures with a string and a 20-cell member array, sized and open. | H.7.8 layout with Table H.1 types; H.7.3: C index 0 is the lowest SV index at every level (`pair [1:0]`, `o [3:2]`, `a [3:1]`); `tag = 4'b1x0z` is aval c, bval 5 (H.7.7); decisions S40-D1, S40-D2 and S40-D8. |
+| `native_open_arrays` | Open arrays of real (one and two open dimensions, a sized second dimension, a descending range), shortreal, string (output and two-dimensional inout), chandle and records with fixed-size actuals; `svGetArrayPtr`, `svSizeOfArray`, `svGetArrElemPtr1/2`; dimension 0 absent. | H.12.4 with the H.7.3 order (`down [4:2]`: raw element 0 is `down[2]`); S40-D3 for dimension 0 of a non-integral element; sums by hand. |
+| `dynamic_actuals` | Dynamic array actuals: `int` (three, one and no elements, a class property, a subroutine formal), a fixed actual of the same import, inout, a context import whose export resizes the actual, `logic [7:0]` with X/Z, an unsized packed dimension, real with shortreal factors, string, a packed-only record and a record with a string. | 20.7 for the ranges (`[0:2]`, `[0:0]`, `[0:-1]`; increment -1, 1 for the fixed `[4:2]`); 35.6.1 copy-in/copy-out: the export prints the actual unchanged and the resize is undone at the return; decision S40-D9. |
+| `native_context_task` | A context imported task waits in an exported task (ADV-018) holding a dynamic array, a record with a string, a string array and a real open array; the export changes the actuals meanwhile. | 35.6.1: the formals keep their call-time values across the wait and the inouts replace what the export wrote. |
+| `native_disabled` | A context imported task and function that an export disables after they wrote a record, a dynamic array, a string array and a real array. | 35.9 and decision S41-D5: nothing is copied back, so every actual prints its value from before the call. |
+| `neg_*` | Explicit errors: an aggregate over 1048575 payload bits, a structure with a string member and a member array of 20 cells (the column form), a dynamic array for an output open formal (7.7), a dynamic array of unpacked arrays, a dynamic array for a sized first dimension, a slice as the actual of an open array of reals, queue and associative actuals (frontend), packed results, `ref`/`event`/class/unpacked-union formals, open arrays in exports, conflicting signatures, a missing import symbol (with `neg_missing_symbol.c`) and an unprovided routine `svGetSelectBit` of the deprecated H.13 set (with `neg_unprovided_routine.c`) (A03). | 35.5.5, 35.5.6, 35.5.6.1, 7.7; llg limits in docs/known_issues.md. |
 
 ## Other implementations
+
+Some simulators lay out a structure member array with a descending range
+left bound first (`native_aggregates`: `c nest i pair=10.5 20.5`), and the
+whole of an open array likewise (`native_open_arrays`: `raw0=4` for `down`);
+llg follows H.7.3. Some show an output real array uninitialized and an output
+chandle array with the actual's handles; llg gives the type default
+(S40-D1). A string pointer of an input that the C function stores in an
+output leaf (`native_aggregates`: `io[1] = a[0]`) is copied by llg when the
+function returns, while the pointer still holds the input's characters; some
+simulators have reused that storage by then (H.8.10 lets the C function
+assume nothing about its lifetime). Some refuse a query of dimension 0 or of
+an empty dynamic array, a queue actual and an unsized packed dimension; some
+accept a dynamic array for an output open formal (S40-D10).
 
 In `roundtrip_xz` some simulators pass a whole `int` actual by reference, so
 `rt_result(r)` shows the actual (`c result o=5`) instead of the output's

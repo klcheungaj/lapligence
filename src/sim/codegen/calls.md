@@ -20,7 +20,11 @@ subprogram storage reject.
 String/chandle/native paths need typed owners/captures; chandles stay `void *`,
 never integers. Preserve explicit C names and pure/context qualifiers in canonical
 `svdpi.h` scalar thunks; reject missing/conflicting libraries/signatures before
-simulation and retain packed/open-array/ref guards. Exports (`IrFunc::dpi_export`)
+simulation and retain packed/open-array/ref guards. An open-array formal is
+specialized per call (`dpi_open_callee`): to the actual's payload, or, outside
+the payload and for a dynamic array, to storage of the actual's type
+(`dpi_open_storage_argument` passes the actual's container or real array).
+Exports (`IrFunc::dpi_export`)
 keep the import formal/result rules (exported tasks may consume time:
 ADV-018), reject reserved or colliding C identifiers and duplicate (scope, C identifier) pairs;
 `finish_dpi` sorts `IrModel::dpi_scopes` by name (the runtime binary-searches

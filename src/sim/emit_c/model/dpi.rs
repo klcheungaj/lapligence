@@ -8,9 +8,19 @@
 //! layout for open arrays (H.12). Foreign code therefore never addresses model
 //! storage (H.6.7). Results and outputs are staged after the call and then
 //! published in declaration order, each publication a cancellation boundary.
+//!
+//! An aggregate with real, shortreal, string or chandle leaves, and a dynamic
+//! array or queue actual of an open array, have no payload: the formal is a
+//! native value, a real cell array or a container that the caller made for
+//! the call ([`Transport`]), and the thunk converts it to the same C-layout
+//! buffer and back. The buffer of a dynamic array or queue is sized from the
+//! container at the call, and so is the open-array handle's first dimension.
 
 use super::*;
-use crate::sim::ir::{IrDpiImport, IrDpiType, IrFormal, IrFormalMode, IrModel};
+use crate::sim::ir::{
+    IrContainer, IrContainerElement, IrContainerKind, IrDpiImport, IrDpiType, IrFormal,
+    IrFormalMode, IrModel,
+};
 
 /// Canonical vectors up to this many bytes are staged in the thunk's C
 /// stack frame; wider ones in a scope-owned heap block, keeping a thunk's
@@ -151,8 +161,112 @@ pub(super) fn small_c_type(ty: &IrDpiType) -> Result<&'static str, String> {
 pub(super) fn is_aggregate(ty: &IrDpiType) -> bool {
     matches!(
         ty,
-        IrDpiType::Array { .. } | IrDpiType::Struct(_) | IrDpiType::Open { .. }
+        IrDpiType::Array { .. }
+            | IrDpiType::Struct(_)
+            | IrDpiType::Open { .. }
+            | IrDpiType::OpenDynamic { .. }
     )
+}
+
+/// What an aggregate formal is to the model, which decides how its thunk
+/// converts it.
+enum Transport<'a> {
+    /// One packed payload (`sv4_t`).
+    Payload,
+    /// A native value (`llg_value_t*`) of this type.
+    Native(&'a IrContainerElement),
+    /// The cells of a real fixed array (`double*`).
+    Reals,
+    /// A container of packed cells, each the payload of one element.
+    Cells(&'a IrContainer),
+    /// A container of values: a fixed array of strings, handles or records,
+    /// or a dynamic array or queue of an element type that is not packed.
+    Items(&'a IrContainer),
+}
+
+fn transport<'a>(model: &'a IrModel, formal: &IrFormal) -> Result<Transport<'a>, String> {
+    if let Some(value) = formal.native_value {
+        let value = model
+            .native_values
+            .get(value)
+            .ok_or("DPI-C native formal is out of range")?;
+        return model
+            .native_types
+            .get(value.ty)
+            .map(Transport::Native)
+            .ok_or_else(|| "DPI-C native formal type is out of range".to_owned());
+    }
+    if formal.real_array.is_some() {
+        return Ok(Transport::Reals);
+    }
+    if let Some(container) = formal.container {
+        let container = model
+            .containers
+            .get(container)
+            .ok_or("DPI-C container formal is out of range")?;
+        if matches!(container.kind, IrContainerKind::Associative { .. }) {
+            return Err("an associative array reached a DPI-C thunk".to_owned());
+        }
+        return Ok(if container.element.is_packed() {
+            Transport::Cells(container)
+        } else {
+            Transport::Items(container)
+        });
+    }
+    Ok(Transport::Payload)
+}
+
+/// C type of the runtime container a [`Transport::Cells`] or
+/// [`Transport::Items`] formal points at.
+fn container_c_type(container: &IrContainer) -> &'static str {
+    match (container.element.is_packed(), &container.kind) {
+        (true, IrContainerKind::Queue { .. }) => "llg_queue_t",
+        (true, _) => "llg_dyn_array_t",
+        (false, IrContainerKind::Queue { .. }) => "llg_queue_value_array_t",
+        (false, _) => "llg_dyn_value_array_t",
+    }
+}
+
+/// Sized unpacked dimensions (slowest first) and the type below them.
+type ArrayLevels<'a> = (Vec<(i32, i32)>, &'a IrDpiType);
+
+/// The sized unpacked dimensions at the top of `ty` and the type below them.
+fn array_levels(ty: &IrDpiType) -> Result<ArrayLevels<'_>, String> {
+    let mut dims = Vec::new();
+    let mut current = ty;
+    loop {
+        match current {
+            IrDpiType::Array {
+                dims: levels,
+                element,
+            } => {
+                dims.extend(levels.iter().copied());
+                current = element;
+            }
+            IrDpiType::Open {
+                dims: levels,
+                element,
+            } if dims.is_empty() => {
+                for level in levels {
+                    dims.push(level.ok_or("unspecialized DPI open array")?);
+                }
+                current = element;
+            }
+            _ => return Ok((dims, current)),
+        }
+    }
+}
+
+/// Unpacked dimensions directly below a container's own: those of its
+/// element type, which the container does not flatten.
+fn element_dimensions(element: &IrContainerElement) -> usize {
+    match element {
+        IrContainerElement::FixedArray {
+            dimensions,
+            element,
+        } => dimensions.len() + element_dimensions(element),
+        _ => 0,
+    }
 }
 
 /// Whether an output formal of type `ty` is a record or an array of records,
@@ -160,9 +274,9 @@ pub(super) fn is_aggregate(ty: &IrDpiType) -> bool {
 fn struct_output(ty: &IrDpiType) -> bool {
     match ty {
         IrDpiType::Struct(_) => true,
-        IrDpiType::Array { element, .. } | IrDpiType::Open { element, .. } => {
-            struct_output(element)
-        }
+        IrDpiType::Array { element, .. }
+        | IrDpiType::Open { element, .. }
+        | IrDpiType::OpenDynamic { element, .. } => struct_output(element),
         _ => false,
     }
 }
@@ -197,7 +311,9 @@ fn dpi_external_return_type(f: &IrFunc, dpi: &IrDpiImport) -> Result<&'static st
 pub(super) fn dpi_param_type(ty: &IrDpiType, form: &IrFormal) -> Result<String, String> {
     let address = form.is_address();
     Ok(match ty {
-        IrDpiType::Open { .. } => "const svOpenArrayHandle".to_owned(),
+        IrDpiType::Open { .. } | IrDpiType::OpenDynamic { .. } => {
+            "const svOpenArrayHandle".to_owned()
+        }
         IrDpiType::Vector { logic, .. } => format!(
             "{}{} *",
             if address { "" } else { "const " },
@@ -269,6 +385,14 @@ static void llg_dpi_sv4_from_logic_to(sv4_t* dst, svLogic value, int8_t is_signe
 static int64_t llg_dpi_byte_value(char value) {\n\
     return (int64_t)((unsigned char)value ^ 0x80u) - 0x80;\n\
 }\n\n"
+}
+
+/// The emitted layout of one aggregate formal: its C type and table, or,
+/// for a dynamic array or queue (`dynamic`), those of one element.
+struct Layout {
+    c_type: String,
+    table: String,
+    dynamic: bool,
 }
 
 /// Static layout tables of the aggregate formals of one thunk.
@@ -386,6 +510,193 @@ impl LayoutTables {
             other => Err(format!(
                 "DPI-C type {other:?} cannot be part of an unpacked aggregate argument"
             )),
+        }
+    }
+
+    /// Emit the C type and layout table of `ty` for a value stored as
+    /// `shape` outside the payload. A packed leaf, or an aggregate that the
+    /// value keeps as one packed leaf, gets its payload table.
+    fn emit_native(
+        &mut self,
+        ty: &IrDpiType,
+        shape: &IrContainerElement,
+    ) -> Result<(String, String), String> {
+        let leaf = |tables: &mut Self, c_type: &str, kind: &str| {
+            let (c, t) = tables.fresh();
+            tables.out.push_str(&format!("typedef {c_type} {c};\n"));
+            tables.table(&t, &format!(".kind = {kind}, .size = sizeof({c})"));
+            (c, t)
+        };
+        match (ty, shape) {
+            (_, IrContainerElement::Packed { .. }) => self.emit(ty),
+            (IrDpiType::Real, IrContainerElement::Real { .. }) => {
+                Ok(leaf(self, "double", "LLG_DPI_REAL"))
+            }
+            (IrDpiType::ShortReal, IrContainerElement::Real { .. }) => {
+                Ok(leaf(self, "float", "LLG_DPI_SHORTREAL"))
+            }
+            (IrDpiType::String, IrContainerElement::String) => {
+                Ok(leaf(self, "const char *", "LLG_DPI_STRING"))
+            }
+            (IrDpiType::Chandle, IrContainerElement::Chandle) => {
+                Ok(leaf(self, "void *", "LLG_DPI_CHANDLE"))
+            }
+            (
+                IrDpiType::Struct(members),
+                IrContainerElement::Aggregate {
+                    members: shapes, ..
+                },
+            ) if members.len() == shapes.len() => {
+                let emitted = members
+                    .iter()
+                    .zip(shapes)
+                    .map(|(member, shape)| self.emit_native(member, &shape.element))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let (c, t) = self.fresh();
+                let fields = emitted
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (member, _))| format!("{member} m{index};"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                self.out
+                    .push_str(&format!("typedef struct {{ {fields} }} {c};\n"));
+                let entries = emitted
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (_, table))| format!("{{ offsetof({c}, m{index}), &{table} }}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.out.push_str(&format!(
+                    "static const llg_dpi_member_t {t}_m[] = {{ {entries} }};\n"
+                ));
+                self.table(
+                    &t,
+                    &format!(
+                        ".kind = LLG_DPI_STRUCT, .size = sizeof({c}), .count = {}u, .members = {t}_m",
+                        members.len()
+                    ),
+                );
+                Ok((c, t))
+            }
+            (IrDpiType::Array { .. }, IrContainerElement::FixedArray { .. }) => {
+                let (dims, element) = array_levels(ty)?;
+                self.emit_native_levels(&dims, element, shape)
+            }
+            _ => Err(format!(
+                "DPI-C type {ty:?} does not match the storage of its formal"
+            )),
+        }
+    }
+
+    /// [`Self::emit_native`] for the array type of dimensions `dims` over
+    /// `element`: each fixed-array level of `shape` takes its dimensions.
+    fn emit_native_levels(
+        &mut self,
+        dims: &[(i32, i32)],
+        element: &IrDpiType,
+        shape: &IrContainerElement,
+    ) -> Result<(String, String), String> {
+        if dims.is_empty() {
+            return self.emit_native(element, shape);
+        }
+        match shape {
+            IrContainerElement::FixedArray {
+                dimensions,
+                element: below,
+            } if dimensions.len() <= dims.len()
+                && dimensions.iter().zip(dims).all(|(stored, declared)| {
+                    crate::sim::ir::dimension_size(stored.0, stored.1)
+                        == crate::sim::ir::dimension_size(declared.0, declared.1)
+                }) =>
+            {
+                let (level, rest) = dims.split_at(dimensions.len());
+                let inner = self.emit_native_levels(rest, element, below)?;
+                Ok(self.wrap_levels(level, inner))
+            }
+            IrContainerElement::Packed { .. } => self.emit(&IrDpiType::Array {
+                dims: dims.to_vec(),
+                element: Box::new(element.clone()),
+            }),
+            _ => Err(format!(
+                "DPI-C array of {element:?} does not match the storage of its formal"
+            )),
+        }
+    }
+
+    /// The `LLG_DPI_ARRAY` levels of the dimensions `dims` of one array
+    /// value around `inner`, slowest outermost; every level but the
+    /// outermost continues its flat item list.
+    fn wrap_levels(&mut self, dims: &[(i32, i32)], inner: (String, String)) -> (String, String) {
+        let (mut inner_c, mut inner_t) = inner;
+        for (position, (left, right)) in dims.iter().enumerate().rev() {
+            let count = crate::sim::ir::dimension_size(*left, *right);
+            let (c, t) = self.fresh();
+            self.out
+                .push_str(&format!("typedef {inner_c} {c}[{count}];\n"));
+            self.table(
+                &t,
+                &format!(
+                    ".kind = LLG_DPI_ARRAY, {}.size = sizeof({c}), .left = {left}, .right = {right}, .count = {count}u, .element = &{inner_t}",
+                    if position == 0 { "" } else { ".joined = 1u, " }
+                ),
+            );
+            inner_c = c;
+            inner_t = t;
+        }
+        (inner_c, inner_t)
+    }
+
+    /// The layout of aggregate formal `ty` reaching the thunk as
+    /// `transport`.
+    fn emit_formal(&mut self, ty: &IrDpiType, transport: &Transport<'_>) -> Result<Layout, String> {
+        let fixed = |(c_type, table)| Layout {
+            c_type,
+            table,
+            dynamic: false,
+        };
+        // The element of a dynamic array or queue: the first dimension is a
+        // table the thunk fills at each call.
+        if let IrDpiType::OpenDynamic { element } = ty {
+            let (c_type, table) = match transport {
+                Transport::Cells(_) => self.emit(element)?,
+                Transport::Items(container) => self.emit_native(element, &container.element)?,
+                _ => return Err("a DPI-C open array of a container has no container".to_owned()),
+            };
+            return Ok(Layout {
+                c_type,
+                table,
+                dynamic: true,
+            });
+        }
+        match transport {
+            Transport::Payload => self.emit(ty).map(fixed),
+            Transport::Native(shape) => {
+                let (dims, element) = array_levels(ty)?;
+                self.emit_native_levels(&dims, element, shape).map(fixed)
+            }
+            Transport::Reals => {
+                let (dims, element) = array_levels(ty)?;
+                let inner =
+                    self.emit_native(element, &IrContainerElement::Real { shortreal: false })?;
+                Ok(fixed(self.wrap_levels(&dims, inner)))
+            }
+            Transport::Items(container) => {
+                // The container lists the elements of its own dimensions
+                // flat; the dimensions of its element type stay below.
+                let (dims, element) = array_levels(ty)?;
+                let own = dims
+                    .len()
+                    .checked_sub(element_dimensions(&container.element))
+                    .filter(|own| *own > 0)
+                    .ok_or("DPI-C array formal has fewer dimensions than its storage")?;
+                let (level, rest) = dims.split_at(own);
+                let inner = self.emit_native_levels(rest, element, &container.element)?;
+                Ok(fixed(self.wrap_levels(level, inner)))
+            }
+            Transport::Cells(_) => {
+                Err("a sized DPI-C aggregate formal is a container of packed cells".to_owned())
+            }
         }
     }
 
@@ -603,10 +914,16 @@ fn render_thunk(
             .collect::<Vec<_>>()
     };
     let mut layouts = Vec::with_capacity(declared);
-    for index in 0..declared {
+    for (index, formal) in f.formals.iter().take(declared).enumerate() {
         let ty = formal_type(dpi, index)?;
         layouts.push(if is_aggregate(ty) {
-            Some(tables.emit(ty)?)
+            Some(
+                tables
+                    .emit_formal(ty, &transport(model, formal)?)
+                    .map_err(|error| {
+                        format!("DPI-C import `{}` formal {index}: {error}", dpi.c_name())
+                    })?,
+            )
         } else {
             None
         });
@@ -683,10 +1000,82 @@ fn render_thunk(
                 out.push_str(&format!("    {init};\n"));
                 arguments.push(format!("_dpi_v{index}"));
             }
-            _ if is_aggregate(ty) => {
-                let (c_type, table) = layouts[index]
+            _ if is_aggregate(ty) && !matches!(transport(model, formal)?, Transport::Payload) => {
+                let layout = layouts[index]
                     .as_ref()
                     .ok_or("DPI aggregate formal without a layout table")?;
+                let (c_type, table) = (&layout.c_type, &layout.table);
+                let stored = transport(model, formal)?;
+                // The container behind the formal, private to this call.
+                if let Transport::Cells(container) | Transport::Items(container) = &stored {
+                    let container_type = container_c_type(container);
+                    out.push_str(&format!(
+                        "    {}{container_type}* _dpi_q{index} = ({}{container_type}*){source};\n",
+                        if formal.is_address() { "" } else { "const " },
+                        if formal.is_address() { "" } else { "const " },
+                    ));
+                }
+                // The table and buffer size of the whole value: static, or
+                // built here from the container's size at this call.
+                let (whole, bytes) = if layout.dynamic {
+                    out.push_str(&format!(
+                        "    llg_dpi_type_t _dpi_t{index};\n    llg_dpi_dynamic_level(&_dpi_t{index}, &{table}, _dpi_q{index}->size);\n"
+                    ));
+                    (
+                        format!("&_dpi_t{index}"),
+                        format!("_dpi_t{index}.size ? _dpi_t{index}.size : 1u"),
+                    )
+                } else {
+                    (format!("&{table}"), format!("sizeof({c_type})"))
+                };
+                out.push_str(&format!(
+                    "    unsigned char* _dpi_b{index} = (unsigned char*)llg_value_scope_object(llg_value_scope_begin_object({bytes}, NULL));\n"
+                ));
+                if copy_in {
+                    out.push_str(&match &stored {
+                        Transport::Native(_) => format!(
+                            "    llg_dpi_value_to_c({whole}, {source}, _dpi_b{index});\n"
+                        ),
+                        Transport::Reals => format!(
+                            "    llg_dpi_reals_to_c({whole}, {source}, _dpi_b{index});\n"
+                        ),
+                        Transport::Cells(_) => format!(
+                            "    llg_dpi_cells_to_c({whole}, _dpi_q{index}->data, _dpi_q{index}->size, _dpi_b{index});\n"
+                        ),
+                        Transport::Items(_) => format!(
+                            "    llg_dpi_items_to_c({whole}, _dpi_q{index}->element, _dpi_q{index}->data, _dpi_q{index}->size, _dpi_b{index});\n"
+                        ),
+                        Transport::Payload => String::new(),
+                    });
+                } else {
+                    // Outputs start at the type default: every byte zero and
+                    // each string leaf an empty string (decision S40-D1).
+                    out.push_str(&format!(
+                        "    llg_dpi_init_native({whole}, _dpi_b{index});\n"
+                    ));
+                }
+                match ty {
+                    IrDpiType::Open { dims, .. } => {
+                        out.push_str(&format!(
+                            "    llg_dpi_open_t _dpi_h{index} = {{ {whole}, {}, _dpi_b{index} }};\n",
+                            dims.len()
+                        ));
+                        arguments.push(format!("&_dpi_h{index}"));
+                    }
+                    IrDpiType::OpenDynamic { .. } => {
+                        out.push_str(&format!(
+                            "    llg_dpi_open_t _dpi_h{index} = {{ {whole}, 1, _dpi_b{index} }};\n"
+                        ));
+                        arguments.push(format!("&_dpi_h{index}"));
+                    }
+                    _ => arguments.push(format!("_dpi_b{index}")),
+                }
+            }
+            _ if is_aggregate(ty) => {
+                let layout = layouts[index]
+                    .as_ref()
+                    .ok_or("DPI aggregate formal without a layout table")?;
+                let (c_type, table) = (&layout.c_type, &layout.table);
                 out.push_str(&format!(
                     "    unsigned char* _dpi_b{index} = (unsigned char*)llg_value_scope_object(llg_value_scope_begin_object(sizeof({c_type}), NULL));\n"
                 ));
@@ -740,7 +1129,7 @@ fn render_thunk(
         .map(|index| formal_type(dpi, index))
         .collect::<Result<Vec<_>, _>>()?
         .iter()
-        .any(|ty| matches!(ty, IrDpiType::Open { .. }));
+        .any(|ty| matches!(ty, IrDpiType::Open { .. } | IrDpiType::OpenDynamic { .. }));
     if guarded {
         let restore = if instrumented {
             "llg_dpi_import_abort(&_dpi_call);"
@@ -825,10 +1214,14 @@ fn render_thunk(
                 if *logic { "logic" } else { "bits" },
                 chunks(*width)
             )),
+            // A value outside the payload is read back from its C buffer
+            // when it is published.
+            _ if is_aggregate(ty) && !matches!(transport(model, formal)?, Transport::Payload) => {}
             _ if is_aggregate(ty) => {
-                let (_, table) = layouts[index]
+                let table = &layouts[index]
                     .as_ref()
-                    .ok_or("DPI aggregate formal without a layout table")?;
+                    .ok_or("DPI aggregate formal without a layout table")?
+                    .table;
                 let width = if dpi.record_columns(index).is_empty() {
                     u64::from(formal.width)
                 } else {
@@ -867,7 +1260,7 @@ fn render_thunk(
     }
     // A cancelled yielding context import does not copy anything out. Each
     // publication is another cancellation/reentrancy boundary.
-    for (index, _) in f
+    for (index, formal) in f
         .formals
         .iter()
         .take(declared)
@@ -879,7 +1272,34 @@ fn render_thunk(
         } else {
             "    if (llg_activation_cancelled()) goto _dpi_return;\n"
         });
+        let stored = transport(model, formal)?;
+        let whole = layouts[index].as_ref().map(|layout| {
+            if layout.dynamic {
+                format!("&_dpi_t{index}")
+            } else {
+                format!("&{}", layout.table)
+            }
+        });
         let statement = match formal_type(dpi, index)? {
+            // The formal is storage the caller made for this call, which
+            // copies it to the actual once the thunk has returned.
+            ty if is_aggregate(ty) && !matches!(stored, Transport::Payload) => {
+                let whole = whole.ok_or("DPI aggregate formal without a layout table")?;
+                match stored {
+                    Transport::Native(_) => {
+                        format!("llg_dpi_value_from_c({whole}, _dpi_b{index}, o{index});")
+                    }
+                    Transport::Reals => {
+                        format!("llg_dpi_reals_from_c({whole}, _dpi_b{index}, o{index});")
+                    }
+                    Transport::Cells(_) => format!(
+                        "llg_dpi_cells_from_c({whole}, _dpi_b{index}, _dpi_q{index}->data, _dpi_q{index}->size);"
+                    ),
+                    _ => format!(
+                        "llg_dpi_items_from_c({whole}, _dpi_b{index}, _dpi_q{index}->element, _dpi_q{index}->data, _dpi_q{index}->size);"
+                    ),
+                }
+            }
             IrDpiType::String => {
                 format!("llg_string_move_take(o{index}, _dpi_s{index});")
             }

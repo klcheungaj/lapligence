@@ -1,0 +1,11 @@
+ordered: bad=0 x0=1 size1=1 size4=1
+order disabled: bad=0 x0=1 size1=1
+inline order: bad=0 x0=1
+state array, state x: bad=0 x0=1 size3=1
+chain: bad=0 y3=1 x3=1
+length: bad=0 11111
+dist: bad=0 x3=1 size4=1
+static: bad=0 x0=1
+member object: bad=0 x0=1
+handles: bad=0 x0=1
+scope: bad=0 x0=1

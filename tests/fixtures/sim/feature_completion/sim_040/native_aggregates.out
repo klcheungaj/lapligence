@@ -1,0 +1,30 @@
+c leaf i r=1.5 i=-7 s=in h=11 f=2.25 b=9
+c leaf o r=0 i=0 s= h=-1 f=0 b=0
+c leaf io r=-3.25 i=42 s=io h=22 f=0.5 b=-3
+lo r=6.5 i=66 s=new0 h=33 f=1.75 b=-5
+lio r=-2.25 i=43 s=io h=44 f=1 b=7
+c nest i.one r=1.5 i=-7 s=in h=11 f=2.25 b=9
+c nest i pair=20.5 10.5 names=n0 n1 tag=c/5 plain=5 -6 7
+c nest io.one r=1.5 i=-7 s=nio h=11 f=2.25 b=9
+nio.one r=1.5 i=-7 s=new1 h=11 f=2.25 b=9
+nio pair=11 20.75 names=n1 new2 tag=01xz plain=-5 -7 8
+c strings a=s0 s1 o=[] []
+c strings io=a b c d
+c strings rows=r00 r01 r02 r10 r11 r12
+so[3]=new3 so[2]=new2 sio=a s0 d d
+c reals a=1.5 2.5 3.5 o=0 0 0 0 io=0.5 1.5
+ro=11.5 12.5 13.5 -1 fio=0.75 1.75
+c handles a=1 2 o=-1 -1 io=3 -1
+ho[1]=1 ho[0]=2 hio=-1 3
+c records a[1] r=-2.25 i=43 s=first h=44 f=1 b=7
+c records a[2] r=1.5 i=-7 s=in h=11 f=2.25 b=9
+c records o[0] r=0 i=0 s= h=-1 f=0 b=0
+lout[0] r=1.5 i=-7 s=in h=11 f=2.25 b=9
+lout[1] r=-2.25 i=43 s=new3 h=44 f=1 b=7
+order r=2 i=5 s=new1 h=-1 f=0 b=0
+n=4
+c task a=s0 s1 io.s=io
+task tout=100 200
+task lio r=-2.25 i=1000 s=s1 h=44 f=1 b=7
+c wide a=w0 1 19 w1 119 copy=w1 100 size=2
+wa=w0 0 500 w0 119

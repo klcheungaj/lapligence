@@ -1,0 +1,36 @@
+c tb 0: tb time=0 type=55 high=0 low=0 real=0.000000
+c tb 0: tb unit=0 -9 precision=0 -12
+c tb 0: <simulation> time=0 type=55 high=0 low=0 real=0.000000
+c tb 0: <simulation> unit=0 -15 precision=0 -15
+c tb 1.234: tb time=0 type=55 high=0 low=1 real=1.234000
+c tb 1.234: tb unit=0 -9 precision=0 -12
+c tb 1.234: <simulation> time=0 type=55 high=0 low=1234000 real=1234000.000000
+c tb 1.234: <simulation> unit=0 -15 precision=0 -15
+c pkg 123.4: ts_pkg time=0 type=55 high=0 low=123 real=123.400000
+c pkg 123.4: ts_pkg unit=0 -11 precision=0 -12
+c pkg 123.4: <simulation> time=0 type=55 high=0 low=1234000 real=1234000.000000
+c pkg 123.4: <simulation> unit=0 -15 precision=0 -15
+c plain: <simulation> time=0 type=55 high=0 low=1234000 real=1234000.000000
+c plain: <simulation> unit=0 -15 precision=0 -15
+c plain: tb.u_us time=0 type=55 high=0 low=0 real=0.001234
+c plain: tb.u_us unit=0 -6 precision=0 -8
+c invalid scope: time=-1 type=55 high=1 low=2 real=-1.0
+c invalid scope: unit=-1 77 precision=-1 77
+c null result: time=-1 unit=-1 precision=-1
+c fs: tb.u_fs time=0 type=55 high=0 low=12 real=12.345680
+c fs: tb.u_fs unit=0 -10 precision=0 -15
+c fs: <simulation> time=0 type=55 high=0 low=1234568 real=1234568.000000
+c fs: <simulation> unit=0 -15 precision=0 -15
+c us 0.4: tb.u_us time=0 type=55 high=0 low=0 real=0.400000
+c us 0.4: tb.u_us unit=0 -6 precision=0 -8
+c us 0.4: <simulation> time=0 type=55 high=0 low=400000000 real=400000000.000000
+c us 0.4: <simulation> unit=0 -15 precision=0 -15
+c us 2.75: tb.u_us time=0 type=55 high=0 low=3 real=2.750000
+c us 2.75: tb.u_us unit=0 -6 precision=0 -8
+c us 2.75: <simulation> time=0 type=55 high=0 low=2750000000 real=2750000000.000000
+c us 2.75: <simulation> unit=0 -15 precision=0 -15
+c tb 5000000: tb time=0 type=55 high=0 low=5000000 real=5000000.000000
+c tb 5000000: tb unit=0 -9 precision=0 -12
+c tb 5000000: <simulation> time=0 type=55 high=1164 low=658067456 real=5000000000000.000000
+c tb 5000000: <simulation> unit=0 -15 precision=0 -15
+time=5000000000000

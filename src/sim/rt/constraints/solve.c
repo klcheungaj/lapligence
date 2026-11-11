@@ -296,6 +296,7 @@ static void cr_session_free(llg_cr_session_t* s) {
     cr_cnf_cache_free(s);
     free(s->cyc_off);
     free(s->cyc);
+    free(s->presize);
     free(s->node_hash);
     free(s->node_off); free(s->val); free(s->status); free(s->ereason);
     free(s->eitem); free(s->stamp);
@@ -1534,7 +1535,9 @@ static llg_cr_status_t cr_pick_draw(cr_wcount_t* c, cr_solve_t* st, uint32_t roo
 }
 
 /* Draw one sample from a layered exact model (S30-D1 to S30-D3). Returns
- * LLG_CR_OK or LLG_CR_UNSAT (no value of a layer has a completion). */
+ * LLG_CR_OK, LLG_CR_UNSAT (no value of a layer has a completion) or
+ * LLG_CR_RESOURCE (a wide randc variable's walk budget, named in
+ * st->budget). */
 static llg_cr_status_t cr_layered_sample(cr_solve_t* st, const cr_exact_t* e,
                                          const cr_layout_t* lay, const uint32_t* level_var,
                                          const uint32_t* level_bit, uint64_t signature) {
@@ -1567,6 +1570,17 @@ static llg_cr_status_t cr_layered_sample(cr_solve_t* st, const cr_exact_t* e,
         } else if (var == LLG_CR_NONE) {
             cr_wcount_prepare(&c);
             if (!cr_wcount_draw(&c, root, st->rng, bits)) status = LLG_CR_UNSAT;
+        } else if (cr_cyc_wide(s, var)) {
+            cr_wcount_prepare(&c);
+            uint64_t value = 0;
+            status = cr_cycw_draw(&c, s, root, var,
+                                  cr_mix(signature ^ cr_hash_text(s->p->vars[var].name)), st->rng,
+                                  st->t->cyclic_walk, level_bit, &value);
+            if (status == LLG_CR_RESOURCE) st->budget = "LLG_RAND_CYCLIC_WALK";
+            if (status == LLG_CR_OK)
+                for (uint32_t l = 0; l < levels; ++l)
+                    if (lay->layer[l] == layer && fixed[l] < 0)
+                        bits[l] = (uint8_t)((value >> level_bit[l]) & 1u);
         } else {
             cr_wcount_prepare(&c);
             cr_cyc_check(s, var, cr_mix(signature ^ cr_hash_text(s->p->vars[var].name)));
@@ -2085,11 +2099,43 @@ static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
 static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach);
 
 /* Order an edge applies to: from an enabled block, between two distinct
- * active non-randc variables (18.5.9 L30061-30062 excludes randc). */
+ * active non-randc variables (18.5.9 L30061-30062 excludes randc). A
+ * sizes-first order does not apply to a variable solved before a size. */
 static int cr_order_live(const llg_cr_session_t* s, const llg_cr_order_t* o) {
     const llg_cr_problem_t* p = s->p;
+    if (s->presize && s->presize[o->after] && p->blocks[o->block].name == cr_sizes_block_name)
+        return 0;
     return s->block_enabled[o->block] && o->before != o->after && s->var_active[o->before] &&
            s->var_active[o->after] && !p->vars[o->before].cyclic && !p->vars[o->after].cyclic;
+}
+
+/* `solve x before a.size()` (S30-D19): in the size phase of an expansion
+ * every size is ordered before every other variable (S30-D5) by the orders
+ * of the sizes block, the problem's last. A live order of another block
+ * that places a variable before a size, directly or through other
+ * variables, wins: mark those variables so the sizes-first orders skip
+ * them. Their layers then come before the sizes they precede. */
+static void cr_order_presize(llg_cr_session_t* s) {
+    const llg_cr_problem_t* p = s->p;
+    if (s->presize) memset(s->presize, 0, p->var_count);
+    if (!p->block_count || p->blocks[p->block_count - 1u].name != cr_sizes_block_name) return;
+    uint32_t sizes = p->block_count - 1u;
+    if (!s->presize) s->presize = (uint8_t*)cr_alloc(p->var_count ? p->var_count : 1u, 1u);
+    uint8_t* size = (uint8_t*)cr_alloc(p->var_count ? p->var_count : 1u, 1u);
+    for (uint32_t o = 0; o < p->order_count; ++o)
+        if (p->orders[o].block == sizes) size[p->orders[o].before] = 1;
+    for (int changed = 1; changed;) {
+        changed = 0;
+        for (uint32_t o = 0; o < p->order_count; ++o) {
+            const llg_cr_order_t* ord = &p->orders[o];
+            if (ord->block == sizes || !cr_order_live(s, ord)) continue;
+            if (!size[ord->after] && !s->presize[ord->after]) continue;
+            if (size[ord->before] || s->presize[ord->before]) continue;
+            s->presize[ord->before] = 1;
+            changed = 1;
+        }
+    }
+    free(size);
 }
 
 /* Heights of the solve-before DAG: a variable's longest path to a sink.
@@ -2098,6 +2144,8 @@ static int cr_order_live(const llg_cr_session_t* s, const llg_cr_order_t* o) {
 static llg_cr_status_t cr_order_heights(cr_solve_t* st) {
     llg_cr_session_t* s = st->s;
     const llg_cr_problem_t* p = s->p;
+    if (!p->order_count) return LLG_CR_OK;
+    cr_order_presize(s);
     uint32_t live = 0;
     for (uint32_t o = 0; o < p->order_count; ++o) live += (uint32_t)cr_order_live(s, &p->orders[o]);
     if (!live) return LLG_CR_OK;

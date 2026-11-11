@@ -335,6 +335,16 @@ impl Codegen<'_> {
                 NodeKind::Expr(ExprKind::ScopeRef { target }) => Some(*target),
                 _ => None,
             };
+            if !constraint && rest.is_empty() {
+                if let Some(selection) = self
+                    .handle_property_selection(member)
+                    .filter(|selection| selection.element)
+                {
+                    return self
+                        .handle_element_mode(path, node, selection)
+                        .map(|value| Some(ModeCall::Value(value)));
+                }
+            }
             let bits = if constraint {
                 &self.constraint_mode_bits
             } else {
@@ -449,6 +459,25 @@ impl Codegen<'_> {
                         self.rand_mode_bits.get(&child).cloned()
                     };
                     if let Some(bit) = bit {
+                        if let Some((cells, width)) = self
+                            .rand_cell_modes
+                            .get(&child)
+                            .cloned()
+                            .filter(|_| !constraint)
+                        {
+                            // Every element takes the object's mode too.
+                            let lhs =
+                                self.hidden_state_target(&cells, width, Some(object.clone()))?;
+                            body.push(IrStmt::Assign {
+                                lhs,
+                                rhs: bin_packed(
+                                    IrBinOp::Sub,
+                                    packed_const(0, width, false),
+                                    IrExpr::resize_to(value.clone(), width, false),
+                                ),
+                                nba: false,
+                            });
+                        }
                         let lhs = self.mode_target(&bit, Some(object.clone()))?;
                         body.push(IrStmt::Assign {
                             lhs,
@@ -514,6 +543,12 @@ impl Codegen<'_> {
                             receiver: Some(receiver),
                             ..
                         } if name == "rand_mode" => self.handle_property_selection(*receiver),
+                        // The function form names the element as its
+                        // first argument.
+                        NodeKind::SysCall { name } if name == "rand_mode" => self
+                            .call_argument_nodes(node)
+                            .first()
+                            .and_then(|member| self.handle_property_selection(*member)),
                         _ => None,
                     })
                     .filter(|selection| selection.element)
@@ -532,6 +567,77 @@ impl Codegen<'_> {
             }
             _ => None,
         }
+    }
+
+    /// The object whose hidden state holds the mode of handle property
+    /// `decl`, named by `receiver` (the property or one element of it).
+    fn handle_mode_object(
+        &mut self,
+        path: &str,
+        receiver: NodeId,
+        decl: NodeId,
+        element: bool,
+    ) -> Result<IrChandleExpr, String> {
+        // A select keeps its declaration as the base; its path expression
+        // child names the object.
+        let named = element
+            .then(|| {
+                self.node(receiver).children.iter().copied().find(|child| {
+                    matches!(
+                        self.kind(*child),
+                        NodeKind::Expr(ExprKind::HierPath { .. } | ExprKind::MemberSelect { .. })
+                    )
+                })
+            })
+            .flatten()
+            .unwrap_or(receiver);
+        self.class_receiver_for(path, named, decl)
+    }
+
+    /// `a[i].rand_mode()` of one element of `rand` handle array `a`: the
+    /// mode of that element as an `int` (18.8). A selector that names no
+    /// element reads as active, the mode no call has changed.
+    fn handle_element_mode(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        selection: HandleSelection,
+    ) -> Result<IrExpr, String> {
+        let HandleSelection { receiver, decl, .. } = selection;
+        let Some(bit) = self.rand_mode_bits.get(&decl).cloned() else {
+            return Err(self.rand_error(
+                node,
+                path,
+                "the function form of `rand_mode` needs a random variable",
+            ));
+        };
+        let Some((cells, width)) = self.rand_cell_modes.get(&decl).cloned() else {
+            return Err(self.rand_error(
+                node,
+                path,
+                "`rand_mode` of an element of a dynamic array or queue of class handles is not supported",
+            ));
+        };
+        let object = match bit {
+            ModeBit::Signal(_) => None,
+            ModeBit::Field(..) => Some(self.handle_mode_object(path, receiver, decl, true)?),
+        };
+        let IrChandleExpr::ContainerGet { index, .. } = self.lower_chandle(path, receiver)? else {
+            return Err(self.rand_error(
+                node,
+                path,
+                "`rand_mode` of this element is not supported",
+            ));
+        };
+        // A position past the last element shifts every off bit out, and an
+        // X or Z selector converts to 0 (6.24): both read as active.
+        let off = bin_packed(
+            IrBinOp::Shr,
+            self.hidden_state_read(&cells, width, object)?,
+            IrExpr::resize_to(*index, 32, false),
+        );
+        let off = ir_to_storage(IrExpr::resize_to(off, 1, false), 1, false, true)?;
+        Ok(mode_value(off))
     }
 
     /// `rand_mode(s)` of a class handle property or of one element of a
@@ -555,24 +661,7 @@ impl Codegen<'_> {
         };
         let object = match bit {
             ModeBit::Signal(_) => None,
-            ModeBit::Field(..) => {
-                // A select keeps its declaration as the base; its path
-                // expression child names the object.
-                let named = element
-                    .then(|| {
-                        self.node(receiver).children.iter().copied().find(|child| {
-                            matches!(
-                                self.kind(*child),
-                                NodeKind::Expr(
-                                    ExprKind::HierPath { .. } | ExprKind::MemberSelect { .. }
-                                )
-                            )
-                        })
-                    })
-                    .flatten()
-                    .unwrap_or(receiver);
-                Some(self.class_receiver_for(path, named, decl)?)
-            }
+            ModeBit::Field(..) => Some(self.handle_mode_object(path, receiver, decl, element)?),
         };
         let off = self.mode_off_value(path, state)?;
         if !element {

@@ -62,19 +62,20 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 3. Modules/ports/elaboration | 4 | 5 | 0 | 0 | 0 | 0 | 9 |
 | 4. Scheduling/processes | 4 | 3 | 0 | 0 | 0 | 1 | 8 |
 | 5. Procedural statements | 5 | 7 | 0 | 1 | 0 | 0 | 13 |
-| 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 0 | 7 |
+| 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 1 | 8 |
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
 | 8. Continuous/structural | 5 | 11 | 0 | 1 | 0 | 1 | 18 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
 | 10. System tasks/functions | 13 | 8 | 1 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 2 | 0 | 0 | 9 |
 | 12. Verification/foreign interfaces | 1 | 18 | 0 | 1 | 0 | 0 | 20 |
-| **Total** | **50** | **88** | **2** | **9** | **0** | **2** | **151** |
+| **Total** | **50** | **88** | **2** | **9** | **0** | **3** | **152** |
 
-**140 rows have some source implementation; 88 of those remain partial and two
-are accepted.** The accepted rows (`always_ff` and writer rules; combined and
-negative timing checks) carry post-change HDL execution evidence from RTL-013
-and RTL-099, and from ADV-010; other rows have no
+**141 rows have some source implementation; 88 of those remain partial and
+three are accepted.** The accepted rows (`always_ff` and writer rules; combined
+and negative timing checks; event controls on string expressions) carry
+post-change HDL execution evidence from RTL-013 and RTL-099, from ADV-010 and
+from the SIM-014 `string_element_events` fixture; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
 
 These are **grouped capability rows**, not individual grammar productions or a
@@ -128,13 +129,23 @@ unsized-literal rules (SV §§21.4, 5.7.1), two-state words read X/Z as 0
 same-slot readers are tested against the allowed interleavings (V §§5.3–5.4;
 SV §§4.3–4.7) in the
 [sim_027 conformance fixtures](../tests/fixtures/sim/feature_completion/sim_027/readme.md).
-Enum words are not checked for membership (S27-D4, industry-standard
-behaviour); malformed-token recovery remains an llg choice (S27-D5). Q03
-member-NBA retagging is resolved from SV §§4.9.4, 10.4.2, 7.3.2 and 11.9: the
-member write is checked against the tag at commit (§2). Comparisons with
-other simulators are corroboration, not a normative resolution. Their
-[characterization fixtures](../tests/fixtures/sim/undefined_behavior/readme.md)
-are not independent conformance oracles.
+Two Q02 corners stay open and are classified by the results the text allows.
+SV §21.4.2 sits under "Reading 2-state types" and does not say whether "out of
+range" for an enum means the base width or the member set, so a fitting
+non-member word (also an X/Z word of a four-state enum) may be stored or end
+the load with an error; llg stores it (S27-D4, industry-standard behaviour).
+SV §21.4 and V §17.2.8 list the legal file contents but give no consequence
+for a malformed token; llg ends the load there (S27-D5, llg choice). The
+[Q02 characterization goldens](../tests/fixtures/sim/undefined_behavior/readme.md)
+record only what llg does today and list the allowed results per source; they
+are not conformance oracles. Q03 member-NBA retagging is resolved from SV
+§§4.9.4, 10.4.2, 7.3.2 and 11.9: a member write whose member is inactive at
+commit is a run-time error and stores nothing, and one whose member is active
+at commit publishes its issue-time value (§2). Reporting a member NBA issued
+under another tag at issue, and dropping it even when its member is active
+again at commit, is llg's reading, and continuing after either error is owner
+policy (§2). Comparisons with other simulators are corroboration, not a
+normative resolution.
 
 The six SYN-034 optional target uses remain outside this selected profile:
 elaboration-only static class methods/constant objects; operator overloading;
@@ -226,7 +237,7 @@ not convert is an error naming the override.
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
 | Process back-edges | Default 10,000,000 per process; `LLG_PROCESS_STEP_LIMIT` overrides the `LLG_NONCONVERGENCE_LIMIT` alias. An explicitly set region limit also supplies the process limit when neither process variable is set. Both require positive decimal `uint64` values. |
 | Concurrent-assertion sequence threads | Default 1,000,000 live pending sequence threads plus attempts across the model; `LLG_SEQUENCE_THREAD_LIMIT` accepts a positive decimal `uint64`. Exhaustion stops the run with an error naming the assertion and time; no attempt is dropped ([SIM-037](../tests/sim_feature_completion/sim_037.rs)). Sequence automata are limited to 1,048,576 states per assertion graph (repetition bodies unroll once per literal bound). |
-| Constraint solving per `randomize()` component | Exact BDD up to `LLG_RAND_BDD_BITS` (512) variable bits and `LLG_RAND_BDD_NODES` (1,048,576) nodes, `LLG_RAND_REJECT_TRIES` (4,096) rejection draws, then `LLG_RAND_CONFLICTS` (100,000) CDCL conflicts. Exhaustion is a run-time error naming the budget, distinct from infeasible constraints (S29-D5). |
+| Constraint solving per `randomize()` component | Exact BDD up to `LLG_RAND_BDD_BITS` (512) variable bits and `LLG_RAND_BDD_NODES` (1,048,576) nodes, `LLG_RAND_REJECT_TRIES` (4,096) rejection draws, then `LLG_RAND_CONFLICTS` (100,000) CDCL conflicts; a `randc` variable of 17 to 32 bits tests at most `LLG_RAND_CYCLIC_WALK` (67,108,864) positions of its permutation per call. Exhaustion is a run-time error naming the budget, distinct from infeasible constraints (S29-D5). |
 | Constraint expansion per `randomize()` call (arrays, objects) | `LLG_RAND_ARRAY_ELEMENTS` (1,048,576) elements of random arrays and `LLG_RAND_EXPAND_NODES` (4,194,304) expanded solver nodes. Exhaustion is a run-time error naming the budget; nothing is truncated. |
 | Driver, alias, process, final, event-waiter, procedural-driver and force registries | Size to the design or grow with checked allocation; the former 16-driver and 256-alias ceilings do not apply. |
 
@@ -463,11 +474,15 @@ Macros, includes and their edition-specific behavior are counted in §11.
   issue and perform the member assignment at commit; SV §11.9 requires that
   assignment to be consistent with the tag current then, and SV §7.3.2 never
   stores one member's value under another member's tag. A wrong tag at issue
-  reports at issue. A valid issue whose member is inactive at commit (another
-  member, void, a narrower member, another nested tag, an earlier-committed
-  whole-variable NBA or another process's retag) reports `nonblocking write to
-  tagged-union member M ... found an inactive tag at commit` and leaves the
-  retagged value unchanged (owner policy for the post-error state); a
+  reports at issue and queues nothing, also when the member is active again
+  at commit: §4.9.4 fixes the values that compute the target, not when its
+  tag is checked, so the text also allows that write to commit; reporting at
+  issue is llg's reading. A valid issue whose member is inactive at commit
+  (another member, void, a narrower member, another nested tag, an
+  earlier-committed whole-variable NBA or another process's retag) reports
+  `nonblocking write to tagged-union member M ... found an inactive tag at
+  commit` and leaves the retagged value unchanged (continuing after the error
+  is owner policy; §7.3.2 then allows only the retagged value); a
   same-member or away-and-back retag publishes the issue-time RHS.
   Interprocess races are tested as allowed result sets (SV §§4.6–4.7).
   Pattern matching is covered in §5.
@@ -2728,12 +2743,18 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   chandle and string signatures; packed vectors of any width as canonical
   `svBitVecVal`/`svLogicVecVal` chunks (integer, `time`, packed structures,
   unions and enums included); sized unpacked arrays and structures in the C
-  compiler's layout (H.7.8); and open arrays with any number of open unpacked
-  dimensions, a sized or unsized packed part and structure elements, passed
-  as `svOpenArrayHandle` with the actual's ranges (35.5.6.1, H.12). Every
+  compiler's layout (H.7.8), their `real`, `shortreal`, `string` and
+  `chandle` leaves included (Table H.1, H.8.10.1; S40-D8); and open arrays
+  with any number of open unpacked dimensions, a sized or unsized packed part
+  and structure, real, string or chandle elements, passed as
+  `svOpenArrayHandle` with the actual's ranges (35.5.6.1, H.12). A dynamic
+  array is the actual of an input or inout open array with the size it has
+  at the call (7.7, S40-D9). Every
   `svdpi.h` canonical-access, bit/part-select, array-query and open-array
   element routine of H.11-H.12 is provided, plus `svDpiVersion`
-  ("1800-2005"). An element access with the wrong number of indices ends the
+  ("1800-2005") and the time services `svGetTime`, `svGetTimeUnit` and
+  `svGetTimePrecision`, which answer for the time scale of the scope they
+  are given (S40-D7). An element access with the wrong number of indices ends the
   run and abandons the import's C code at the access (S40-D6). DPI-C libraries compile against the `svdpi.h` that llg
   writes beside the generated model (`--gen-only` shows it); it is the Annex I
   header with `<inttypes.h>` for the fixed-width types on every host (I.2).
@@ -2749,7 +2770,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   [lrm_decisions.md](lrm_decisions.md)). An imported task that
   returns nonzero without a disable is a fatal error (35.9, S40-D5). An import
   no `--dpi-lib` library defines, a library calling an `svdpi.h` routine llg
-  does not provide (`svGetTime*`; the SV3.1a H.13 forms) or a library calling
+  does not provide (the SV3.1a H.13 forms) or a library calling
   a symbol the design does not export fails the build with an error that
   names the symbol. Remaining limits:
   [known issue](known_issues.md#dpi-c-import-limits-sim-040). Exports and
@@ -3162,9 +3183,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   methods and tasks. SV 40 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and
   enum class properties (instance and static, inherited, with virtual
-  `randomize()`), random fixed arrays of any dimension count, dynamic arrays and
+  `randomize()`; `randc` up to 32 bits, S30-D18), random fixed arrays of any dimension count, dynamic arrays and
   bounded or unbounded queues of packed, enum or packed-structure elements
-  with `size()` constraints solved first, arrays of class handles, `rand`
+  with `size()` constraints solved first, associative arrays with an integral
+  index type (the entries they hold, S30-D20), arrays of class handles, `rand`
   object members randomized with their parent (global constraints, null
   guards, per-object `pre_randomize`/`post_randomize`), named, external,
   `pure` and static constraint blocks with derived-class overrides,
@@ -3184,8 +3206,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   [solver readme](../src/sim/rt/constraints/readme.md)). A failed call leaves
   every variable unchanged; infeasible constraints warn, evaluation errors and
   exhausted budgets are run-time errors (S29-D1 to S29-D10 and S30-D1 to
-  S30-D16 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays,
-  associative arrays and the other forms in
+  S30-D20 in [lrm_decisions](lrm_decisions.md)). Nested dynamic arrays
+  and the other forms in
   [known issues](known_issues.md#constrained-randomization-limits-sim-029-sim-030)
   are located errors; see
   [sim_029](../tests/fixtures/sim/feature_completion/sim_029/readme.md) and

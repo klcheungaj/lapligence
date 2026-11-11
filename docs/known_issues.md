@@ -2423,24 +2423,51 @@ assertion instance.
 ## DPI-C import limits (SIM-040)
 
 **Status:** open. SIM-040 marshals packed, sized unpacked and open-array
-formals of DPI-C imports; these forms remain outside it.
+formals of DPI-C imports, aggregates with `real`, `shortreal`, `string` and
+`chandle` leaves and dynamic array actuals of open arrays; these forms remain
+outside it.
 
 ### Symptom
 
-These legal imports reject with explicit diagnostics:
+These imports reject with explicit diagnostics:
 
-- an unpacked array or structure formal (sized or open) with `real`,
-  `shortreal`, `string` or `chandle` elements or members: "unpacked aggregates
-  with real, shortreal, string or chandle elements are not supported
-  (SIM-040)";
-- a dynamic array, queue or associative array actual of an open-array formal:
-  "a dynamic array, queue or associative array actual of DPI-C open-array
-  formal ... is not supported (SIM-040)";
-- an unpacked aggregate formal wider than 1048575 payload bits.
+- a queue actual of an open-array formal (legal by 7.6 and 7.7): the frontend
+  reports "value of type 'int$[$]' cannot be assigned to type 'int$[]'";
+- a dynamic array of unpacked arrays (`int rows [][3]`) as the actual of an
+  open-array formal: "a dynamic array or queue of unpacked arrays as the
+  actual of DPI-C open-array formal ... is not supported (SIM-040)";
+- a dynamic array actual of an open-array formal whose first dimension is
+  sized (`input bit [] a [3]`): "... needs an unsized first dimension of the
+  formal (SIM-040)";
+- an open-array actual with `real`, `shortreal`, `string` or `chandle`
+  elements that is not a whole array variable (a slice, a concatenation, a
+  function result): "... must be a whole array variable (SIM-040)";
+- an unpacked aggregate formal with packed leaves only that is wider than
+  1048575 payload bits;
+- a structure formal (not an array of structures) with `real`, `shortreal`,
+  `string` or `chandle` members that also holds a member array of 16 or more
+  packed cells, the size from which a structure is stored as columns
+  ([record columns](#unpacked-records-with-dense-member-arrays-emit-per-cell-code)): "an unpacked
+  structure with real, shortreal, string or chandle members and a member
+  array of 16 or more packed cells is not supported (SIM-040)";
+- an exported subroutine with an unpacked aggregate formal that has `real`,
+  `shortreal`, `string` or `chandle` leaves: "unpacked aggregates with real,
+  shortreal, string or chandle elements are not supported (SIM-040)".
 
-A library that calls `svGetTime`, `svGetTimeUnit`, `svGetTimePrecision` or a
-deprecated SV3.1a routine (H.13) fails the model link with an error naming
-the routine. A Mach-O library (macOS) is rejected with the same error before
+Two forms the text itself excludes are errors too: a dynamic array actual of
+an output open-array formal (7.7, decision S40-D10) and an associative array
+actual (the frontend rejects it; an open array has contiguous indices,
+H.12.1).
+
+The output and inout actuals of one call are copied back in declaration order
+within one kind of formal storage (packed values and strings; real arrays;
+containers; native records) and kind by kind in that order, as for any
+subroutine call, so an actual named twice through formals of different kinds
+(a structure and one of its `real` members) keeps the value of the kind
+copied later.
+
+A library that calls a deprecated SV3.1a routine (H.13) fails the model link
+with an error naming the routine. A Mach-O library (macOS) is rejected with the same error before
 the build, from its symbol table, because ld64 does not check a dylib's
 undefined symbols. On Windows a DPI DLL links against the model's import
 library (`llg --dpi-import-lib`), which lacks these routines, so the DLL's own
@@ -2449,21 +2476,28 @@ link fails and names the routine (see
 
 ### Cause
 
-The thunk moves each aggregate through the packed payload, which has no
-representation for owned strings, doubles or handles inside a record. Open
-formals are specialized per actual shape at compile time, so a runtime-sized
-actual has no fixed shape. Scope, user-data and disable services need the
-time services need a defined simulation-time view for foreign code.
+The vendored frontend matches an unsized formal dimension only with a
+fixed-size or dynamic array, so a queue never reaches lowering. llg has no
+element access for a dynamic array of unpacked arrays. A formal outside the
+packed payload is storage of the actual's own type that the caller copies as
+a whole, which takes a variable. The packed payload transport ends at the
+runtime's width limit. A column-layout structure passes its packed members as
+columns and the others in a native value beside them, and the thunk converts
+one storage form per formal. The export thunks convert only packed payloads. H.13
+lets an implementation leave the SV3.1a routines out.
 
 ### Intended direction
 
-Give aggregate leaves of native types their own C-layout slots in the layout
-tables; specialize open formals on container actuals by element type with a
-runtime-sized handle; provide the time services.
+Admit a queue for an unsized dimension in the frontend's open-array matching
+(a vendored-frontend patch); the lowering and thunk already treat a queue
+like a dynamic array. Build the copy of a non-variable actual at the call
+site. Convert a column-layout structure from its columns and its native value
+together. Give the export thunks the import's conversions for native leaves.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_040/neg_*.sv`.
+`tests/fixtures/sim/feature_completion/sim_040/neg_*.sv` and
+`tests/fixtures/sim/dpi/unsupported_native_member.sv` (export).
 
 ## DPI-C export limits (SIM-041)
 
@@ -2581,19 +2615,30 @@ these forms remain outside them.
 ### Symptom
 
 - Rejected with a located `randomization:` error: nested dynamic arrays and
-  queues, associative arrays, `randc` arrays and `randc` variables wider than
-  16 bits (18.4.2 lets an implementation limit them), a random untagged union
+  queues, associative arrays of class handles or with a string, class,
+  wildcard or wider than 64-bit index type, the size of a random associative
+  array, a random key and one element of an associative array as a
+  `solve...before` side (S30-D20), `randc` arrays and `randc` variables wider than
+  32 bits (18.4.2 lets an implementation limit them; S30-D18), a random untagged union
   with enum members, a `solve...before` that solves a variable before an
-  array size (S30-D5 solves sizes first) or names an element at a non-constant
-  index, and a row of a multidimensional array in `inside`. A whole array in
+  array size when a constraint ties that variable to elements of an array of
+  random size (`x == a.sum()`; S30-D19 fixes the variable before any element
+  exists, so the order would be circular), that solves array elements before
+  an array size or a variable before the array size of another object, or that
+  names an element at a non-constant index, and a row of a multidimensional array in `inside`. A whole array in
   a constraint is also rejected, as 18.3 requires (S30-D15).
 - `rand_mode` of one element of a dynamic array or queue of class handles
-  rejects: only fixed arrays keep a mode per element (S30-D16). The function
-  form on a handle variable (`c.a[1].rand_mode()`) stops in the frontend, which
-  reads it as the object task.
-- A constraint function reached for an object of the randomized class other
-  than the randomized object ends the run with a fatal error: its receiver is
-  fixed at the call. Objects of other classes evaluate their own functions.
+  rejects, as a task and as a function: only fixed arrays keep a mode per
+  element (S30-D16, S30-D17). The function form on a handle that is not a
+  random variable (`e.rand_mode()` of a module variable or of a property that
+  is not `rand`) stops in the frontend, which reads it as the object task.
+  `rand_mode` of one element of an array of packed values
+  (`c.v[1].rand_mode(0)`) rejects too.
+- A constraint function whose receiver is an element of a random handle
+  array (`foreach (q[i]) q[i].v >= q[i].f(x)`) rejects with a located error.
+  Every object a randomize call reaches evaluates its own functions, also
+  objects of the randomized class and the randomized object reached again
+  through a ring, and a scalar handle receiver (`next.f(x)`) works.
 - A `randomize()` call used as a value works in assignments, `if` conditions,
   `return`, declarations, system-task arguments, immediate assertions, loop
   headers and short-circuit or conditional operands of those. Elsewhere (a
@@ -2633,7 +2678,7 @@ lowering does not have.
 
 ### Intended direction
 
-Multidimensional arrays if a workload needs them; near-uniform sampling for the search fallback (hashing-based).
+Nested dynamic arrays and queues (each row an object of a row unit, row sizes in a further size phase), `randc` arrays (a cycle state per element) and element modes of dynamic arrays and queues if a workload needs them; near-uniform sampling for the search fallback (hashing-based).
 
 ### Reproduce
 

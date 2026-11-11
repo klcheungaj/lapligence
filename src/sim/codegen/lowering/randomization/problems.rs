@@ -204,6 +204,11 @@ impl ProblemBuilder {
         right: i32,
         index: u32,
     ) -> Result<u32, String> {
+        if kind == IrRandArrayKind::Assoc {
+            // The select names a key: the index cast to the index type
+            // (7.8.1), `left` bits wide and signed when `right` is set.
+            return Ok(self.convert(index, left as u32, right != 0));
+        }
         let (index, w, s) = self.ty(index);
         if kind != IrRandArrayKind::Fixed || (left <= right && left == 0) {
             return Ok(index);
@@ -345,6 +350,30 @@ impl ProblemBuilder {
             });
         }
         index
+    }
+
+    /// Whether `node` is known when a problem with units is expanded: it
+    /// reads only constants, loop indices and state.
+    pub(super) fn expansion_constant(&self, node: u32) -> bool {
+        let mut stack = vec![node];
+        while let Some(node) = stack.pop() {
+            match self.problem.nodes[node as usize].op {
+                IrRandOp::Var
+                | IrRandOp::Call
+                | IrRandOp::TCall
+                | IrRandOp::Dist
+                | IrRandOp::Elem
+                | IrRandOp::Ref
+                | IrRandOp::HVar
+                | IrRandOp::AElem
+                | IrRandOp::ASize
+                | IrRandOp::Foreach
+                | IrRandOp::Reduce
+                | IrRandOp::IsNull => return false,
+                _ => stack.extend(self.problem.operands(node)),
+            }
+        }
+        true
     }
 
     /// Mark variable `var` `randc` (18.4.2).

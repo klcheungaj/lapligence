@@ -380,7 +380,7 @@ fn generated_definition_file_lists_the_design_exports() {
     ] {
         assert_eq!(names.iter().filter(|n| **n == name).count(), 1, "{name}");
     }
-    for name in ["svGetTime", "tb_scopes", "plain_twice"] {
+    for name in ["svGetSelectBit", "tb_scopes", "plain_twice"] {
         assert!(!names.contains(&name), "{name} must not be exported");
     }
 }

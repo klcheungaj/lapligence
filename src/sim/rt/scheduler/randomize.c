@@ -116,6 +116,16 @@ void llg_cr_set_elem_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t array, uin
     sv4_destroy(&sized);
 }
 
+void llg_cr_set_key_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
+                        sv4_t value, uint32_t width) {
+    sv4_t sized = sv4_resize(value, width, 0);
+    uint64_t* words = randomize_scratch(width);
+    /* A stored key has no X or Z bit (7.8.1). */
+    (void)randomize_words(sized, words, width);
+    llg_cr_set_key(s, inst, array, index, words);
+    sv4_destroy(&sized);
+}
+
 sv4_t llg_cr_ivalue_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t var, uint32_t width,
                         int8_t is_signed) {
     return sv4_from_limbs(llg_cr_ivalue(s, inst, var), NULL, NULL, width, is_signed);

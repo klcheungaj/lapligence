@@ -31,7 +31,12 @@ enum {
     LLG_DPI_BITVEC = 4,   /* svBitVecVal chunks (H.7.7) */
     LLG_DPI_LOGICVEC = 5, /* svLogicVecVal chunks */
     LLG_DPI_ARRAY = 6,    /* one unpacked dimension, natural order (H.7.6) */
-    LLG_DPI_STRUCT = 7    /* unpacked structure, C compiler layout (H.7.8) */
+    LLG_DPI_STRUCT = 7,   /* unpacked structure, C compiler layout (H.7.8) */
+    /* Leaves without a packed payload (Table H.1), only inside aggregates. */
+    LLG_DPI_REAL = 8,      /* double */
+    LLG_DPI_SHORTREAL = 9, /* float */
+    LLG_DPI_STRING = 10,   /* const char* (H.8.10.1) */
+    LLG_DPI_CHANDLE = 11   /* void* */
 };
 
 typedef struct llg_dpi_member llg_dpi_member_t;
@@ -41,6 +46,14 @@ typedef struct llg_dpi_member llg_dpi_member_t;
  * of a matching generated C type so the C compiler's layout decides. */
 typedef struct llg_dpi_type {
     uint8_t kind;
+    /* LLG_DPI_ARRAY of a value that crosses outside the payload: a further
+     * dimension of the array type of the enclosing level, whose elements
+     * lie in the same flat item list. */
+    uint8_t joined;
+    /* LLG_DPI_ARRAY: the dimension of a dynamic array or queue actual,
+     * [0:count-1] and possibly empty (SV 20.7). Such a table is built by
+     * the thunk for one call. */
+    uint8_t dynamic;
     uint32_t width;
     size_t size;
     int32_t left, right;            /* LLG_DPI_ARRAY: declared range */
@@ -80,6 +93,33 @@ void llg_dpi_to_c(const llg_dpi_type_t* type, const sv4_t* payload, void* out);
 void llg_dpi_from_c(const llg_dpi_type_t* type, const void* in, sv4_t* payload);
 void llg_dpi_init_c(const llg_dpi_type_t* type, void* out);
 
+/* Aggregates with real, shortreal, string or chandle leaves have no payload:
+ * their formal is a native value, a real cell array or a container, private
+ * to the call, and these convert it to and from the C layout of `type`. A
+ * string leaf in C points at the value's own characters for the call; on the
+ * way back a pointer the foreign code changed is copied into the value
+ * (H.8.10). `llg_dpi_init_native` gives an output buffer all-zero bytes with
+ * every string leaf pointing at an empty string. */
+void llg_dpi_value_to_c(const llg_dpi_type_t* type, const llg_value_t* value, void* out);
+void llg_dpi_value_from_c(const llg_dpi_type_t* type, const void* in, llg_value_t* value);
+void llg_dpi_init_native(const llg_dpi_type_t* type, void* out);
+/* `cells` are the declaration-order cells of a real fixed array of all the
+ * dimensions of `type`. */
+void llg_dpi_reals_to_c(const llg_dpi_type_t* type, const double* cells, void* out);
+void llg_dpi_reals_from_c(const llg_dpi_type_t* type, const void* in, double* cells);
+/* `items` are the `count` elements of a container in storage order: values
+ * described by `element`, or packed cells that each hold the payload of one
+ * element of the first dimension of `type`. */
+void llg_dpi_items_to_c(const llg_dpi_type_t* type, const llg_value_desc_t* element,
+                        const llg_value_t* items, size_t count, void* out);
+void llg_dpi_items_from_c(const llg_dpi_type_t* type, const void* in,
+                          const llg_value_desc_t* element, llg_value_t* items, size_t count);
+void llg_dpi_cells_to_c(const llg_dpi_type_t* type, const sv4_t* cells, size_t count, void* out);
+void llg_dpi_cells_from_c(const llg_dpi_type_t* type, const void* in, sv4_t* cells, size_t count);
+/* Fill `level`, the first dimension of an open array over a dynamic array or
+ * queue that holds `count` elements of layout `element` at this call. */
+void llg_dpi_dynamic_level(llg_dpi_type_t* level, const llg_dpi_type_t* element, size_t count);
+
 /* ---- Context call chains (SV 35.5.3, Annex H.9) ----
  *
  * An svScope points at one llg_dpi_scope_t of the table the model passes to
@@ -106,6 +146,10 @@ typedef struct llg_dpi_scope {
     const char* name;                     /* fully qualified scope name */
     const llg_dpi_export_slot_t* exports; /* ascending `id` */
     uint32_t export_count;
+    /* Time unit and precision of the scope as powers of ten in seconds
+     * (2 to -15, like vpiTimeUnit), for the svdpi.h time services. */
+    int8_t time_unit;
+    int8_t time_precision;
     llg_dpi_user_t* user;                 /* svPutUserData entries */
 } llg_dpi_scope_t;
 

@@ -17,7 +17,9 @@ problem cannot express is a located error, never silently dropped.
 
 `rand_mode`/`constraint_mode` state is hidden one-bit two-state storage per
 random property and per root constraint block (overriding blocks share the
-root's bit; static members use a static signal), invisible to `%p`. The
+root's bit; static members use a static signal), invisible to `%p`. A fixed
+array of `rand` handles whose element a `rand_mode` call names also keeps
+one off bit per element (S30-D16, S30-D17). The
 dynamic class is resolved through `DynamicCast` cases, most derived first; the
 most-derived user `pre_randomize`/`post_randomize` (declared line != 0) runs
 before modes and state are read and after the commit. A value-form randomize
@@ -42,6 +44,14 @@ array read directly. The generated code walks the instances the runtime
 registers (`pre_randomize`, variables, blocks, leaves, arrays, links), then
 commits arrays and member objects and runs `post_randomize` in registration
 order (S30-D7). Problems without these forms keep the flat SIM-029 shape.
+A `rand` associative array with an integral index type is an array of kind
+`Assoc`: fed entry by entry in key order with its keys (`SetKey`), its loop
+indices typed as the key, its selects restricted to keys known at expansion
+(S30-D20).
+A `solve...before` whose later side is a random array size becomes an order
+side `RAND_ORDER_SIZE | array` (S30-D19); `check_presize_orders` rejects the
+variables it orders first when a conjunct reads them with elements of an array
+of random size.
 
 ## Functional coverage
 
