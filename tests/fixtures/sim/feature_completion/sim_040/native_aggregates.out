@@ -26,3 +26,5 @@ n=4
 c task a=s0 s1 io.s=io
 task tout=100 200
 task lio r=-2.25 i=1000 s=s1 h=44 f=1 b=7
+c wide a=w0 1 19 w1 119 copy=w1 100 size=2
+wa=w0 0 500 w0 119

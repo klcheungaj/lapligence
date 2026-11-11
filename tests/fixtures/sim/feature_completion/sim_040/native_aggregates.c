@@ -27,6 +27,11 @@ typedef struct {
     plain_t plain;
 } nest_t;
 
+typedef struct {
+    const char *s;
+    int big[20];
+} wide_t;
+
 static int ids[100];
 /* Storage the foreign side owns for strings it hands back (H.8.10). */
 static const char *const fresh[4] = {"new0", "new1", "new2", "new3"};
@@ -163,4 +168,13 @@ DPI_DLLESPEC int na_task(const char **a, double *o, leaf_t *io)
     io->i = 1000;
     io->s = a[1];
     return 0;
+}
+
+DPI_DLLESPEC void na_wide(wide_t *a, const svOpenArrayHandle copy)
+{
+    const wide_t *raw = (const wide_t *)svGetArrayPtr(copy);
+    printf("c wide a=%s %d %d %s %d copy=%s %d size=%d\n", text(a[0].s), a[0].big[1], a[0].big[19],
+           text(a[1].s), a[1].big[19], text(raw[1].s), raw[1].big[0], svSize(copy, 1));
+    a[0].big[19] = 500;
+    a[1].s = a[0].s;
 }

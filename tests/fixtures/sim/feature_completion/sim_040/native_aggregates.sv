@@ -14,6 +14,7 @@ module tb;
         plain_t plain;
     } nest_t;
     typedef string row_t [3];
+    typedef struct { string s; int big [20]; } wide_t;
 
     import "DPI-C" function chandle na_handle(input int id);
     import "DPI-C" function int na_id(input chandle h);
@@ -29,6 +30,7 @@ module tb;
     import "DPI-C" function void na_order(input int k, output leaf_t first, output int n,
         output leaf_t second);
     import "DPI-C" task na_task(input string a [2], output real o [2], inout leaf_t io);
+    import "DPI-C" function void na_wide(inout wide_t a [2], input wide_t copy []);
 
     leaf_t li, lo, lio;
     nest_t ni, nio;
@@ -45,6 +47,7 @@ module tb;
     leaf_t la [2:1];
     leaf_t lout [2];
     real tout [2];
+    wide_t wa [2];
     int n;
 
     function automatic void show(input string tag, input leaf_t v);
@@ -103,6 +106,17 @@ module tb;
         na_task(sa, tout, lio);
         $display("task tout=%g %g", tout[0], tout[1]);
         show("task lio", lio);
+
+        // An array of structures with a 20-cell member array: each element
+        // is one value of the array's storage, whatever its size.
+        wa[0].s = "w0"; wa[1].s = "w1";
+        for (int k = 0; k < 20; k++) begin
+            wa[0].big[k] = k;
+            wa[1].big[k] = 100 + k;
+        end
+        na_wide(wa, wa);
+        $display("wa=%s %0d %0d %s %0d", wa[0].s, wa[0].big[0], wa[0].big[19], wa[1].s,
+            wa[1].big[19]);
         $finish;
     end
 endmodule
