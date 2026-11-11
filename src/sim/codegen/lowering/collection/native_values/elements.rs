@@ -562,6 +562,9 @@ impl Codegen<'_> {
         let Some(selection) = self.record_element_of(lhs) else {
             return Ok(None);
         };
+        if let Some(statement) = self.lower_element_from_row(path, &selection, rhs)? {
+            return Ok(Some(statement));
+        }
         if let Some(statement) = self.element_items_assignment(path, &selection, rhs)? {
             return Ok(Some(statement));
         }
@@ -637,6 +640,237 @@ impl Codegen<'_> {
                 items,
             },
         ))))
+    }
+
+    /// The cell count and leaf of a fixed-array element of container
+    /// storage whose cells are integral or real; `None` for other elements.
+    fn fixed_element_row(&self, selection: &ElementSelection) -> Option<(u64, IrContainerElement)> {
+        let IrContainerElement::FixedArray {
+            dimensions,
+            element,
+        } = self.container_element_type(selection.container, selection.depth())?
+        else {
+            return None;
+        };
+        if !matches!(
+            *element,
+            IrContainerElement::Packed { .. } | IrContainerElement::Real { .. }
+        ) {
+            return None;
+        }
+        let total = dimensions
+            .iter()
+            .map(|(left, right)| i64::from(*left).abs_diff(i64::from(*right)) + 1)
+            .product();
+        Some((total, *element))
+    }
+
+    /// A whole unpacked-array element of string, handle or record cells
+    /// copied to or from an array variable (`sr = sd[k]`, `sd[k] = sr`):
+    /// the rows move only between arrays of integral or real cells.
+    pub(in crate::sim::codegen) fn reject_native_row_copy(
+        &self,
+        path: &str,
+        element: NodeId,
+    ) -> Result<(), String> {
+        let native = self.record_element_of(element).is_some_and(|selection| {
+            matches!(
+                self.container_element_type(selection.container, selection.depth()),
+                Some(IrContainerElement::FixedArray { .. })
+            ) && self.fixed_element_row(&selection).is_none()
+        });
+        if native {
+            return Err(crate::sim::codegen::error::located(
+                &self.source_location(element),
+                format!(
+                    "copying an unpacked-array element of strings, handles or records of a queue, dynamic or associative array to or from an array variable in `{path}` is not supported; copy it cell by cell"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The whole fixed-array variable `node` names, when its cells have the
+    /// shape of a row of `total` cells of `leaf` (SV 7.6 requires
+    /// equivalent element types and equal counts).
+    fn row_variable(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        total: u64,
+        leaf: &IrContainerElement,
+    ) -> Result<Option<usize>, String> {
+        let Ok(view) = self.fixed_memory_view(path, node) else {
+            return Ok(None);
+        };
+        let storage = &self.model.arrays[view.array];
+        if view.origin != 0
+            || !view.selectors.is_empty()
+            || view.sliced
+            || view.total != storage.total
+        {
+            return Err(crate::sim::codegen::error::located(
+                &self.source_location(node),
+                format!(
+                    "copying a row or slice of a fixed-size array to or from an unpacked-array element of a queue, dynamic or associative array in `{path}` is not supported; copy a whole array variable"
+                ),
+            ));
+        }
+        let matches = match leaf {
+            IrContainerElement::Packed { width, .. } => {
+                !storage.real && !storage.is_net() && storage.elem_width == *width
+            }
+            IrContainerElement::Real { .. } => storage.real,
+            _ => false,
+        };
+        if !matches || storage.total != total {
+            return Err(crate::sim::codegen::error::located(
+                &self.source_location(node),
+                format!("array and unpacked-array element in `{path}` have different shapes"),
+            ));
+        }
+        Ok(Some(view.array))
+    }
+
+    /// `row = da[k]`: every cell of an unpacked-array element of container
+    /// storage, copied into the whole fixed-array variable `lhs` in one
+    /// statement (SV 7.6). A missing element reads the Table 7-1 default.
+    pub(in crate::sim::codegen) fn lower_row_from_element(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        let source = self.p30_unwrap_cast(rhs);
+        let Some(selection) = self.record_element_of(source) else {
+            return Ok(None);
+        };
+        let Some((total, leaf)) = self.fixed_element_row(&selection) else {
+            return Ok(None);
+        };
+        let Some(array) = self.row_variable(path, lhs, total, &leaf)? else {
+            return Ok(None);
+        };
+        let root = self.element_row_root(path, &selection, false)?;
+        Ok(Some(if self.model.arrays[array].real {
+            IrStmt::Container(Box::new(IrContainerStmt::RealColumnAssign {
+                array,
+                source: None,
+                root: Some(root),
+                items: Vec::new(),
+                nba,
+            }))
+        } else {
+            IrStmt::FixedValueAssign {
+                dst: self.fixed_view_at(array, &[]),
+                src: Box::new(crate::sim::ir::IrFixedValue::ValueItems {
+                    root,
+                    items: Vec::new(),
+                    array,
+                }),
+                nba,
+            }
+        }))
+    }
+
+    /// `da[k] = row`: the whole fixed-array variable `rhs` stored into the
+    /// unpacked-array element `selection` selects, cell for cell in one
+    /// statement (SV 7.6).
+    fn lower_element_from_row(
+        &mut self,
+        path: &str,
+        selection: &ElementSelection,
+        rhs: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        if self.element_nba_target.is_some() {
+            return Ok(None);
+        }
+        let source = self.p30_unwrap_cast(rhs);
+        let Some((total, leaf)) = self.fixed_element_row(selection) else {
+            if matches!(
+                self.container_element_type(selection.container, selection.depth()),
+                Some(IrContainerElement::FixedArray { .. })
+            ) && self.container_of(source).is_some()
+            {
+                return Err(crate::sim::codegen::error::located(
+                    &self.source_location(source),
+                    format!(
+                        "copying an unpacked-array element of strings, handles or records of a queue, dynamic or associative array to or from an array variable in `{path}` is not supported; copy it cell by cell"
+                    ),
+                ));
+            }
+            return Ok(None);
+        };
+        let Some(array) = self.row_variable(path, source, total, &leaf)? else {
+            return Ok(None);
+        };
+        let root = self.element_row_root(path, selection, true)?;
+        Ok(Some(IrStmt::Container(Box::new(
+            IrContainerStmt::FixedToValueItem {
+                array,
+                root,
+                items: Vec::new(),
+            },
+        ))))
+    }
+
+    /// The whole fixed-array variable `source` into native value `value`
+    /// of an unpacked-array type with integral or real cells.
+    pub(in crate::sim::codegen) fn native_row_from_array(
+        &mut self,
+        path: &str,
+        value: usize,
+        source: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let ty = self.model.native_values[value].ty;
+        let IrContainerElement::FixedArray {
+            dimensions,
+            element,
+        } = self.model.native_types[ty].clone()
+        else {
+            return Ok(None);
+        };
+        if !matches!(
+            *element,
+            IrContainerElement::Packed { .. } | IrContainerElement::Real { .. }
+        ) {
+            return Ok(None);
+        }
+        let total = dimensions
+            .iter()
+            .map(|(left, right)| i64::from(*left).abs_diff(i64::from(*right)) + 1)
+            .product();
+        let Some(array) = self.row_variable(path, source, total, &element)? else {
+            return Ok(None);
+        };
+        Ok(Some(IrStmt::Container(Box::new(
+            IrContainerStmt::FixedToValueItem {
+                array,
+                root: IrValueItemRoot::Value(value),
+                items: Vec::new(),
+            },
+        ))))
+    }
+
+    /// The locator of a whole element as a transfer root; a `write` locator
+    /// creates a missing associative entry and publishes the store.
+    fn element_row_root(
+        &mut self,
+        path: &str,
+        selection: &ElementSelection,
+        write: bool,
+    ) -> Result<IrValueItemRoot, String> {
+        let IrValueSlot::Element { indices, key } = self.lower_element_slot(path, selection)?
+        else {
+            unreachable!("element selections lower to element slots");
+        };
+        Ok(IrValueItemRoot::Element(IrChandleExpr::ContainerElement {
+            container: selection.container,
+            indices,
+            key: key.map(Box::new),
+            write,
+        }))
     }
 
     /// `push_front`, `push_back` or `insert` of a record into a queue.

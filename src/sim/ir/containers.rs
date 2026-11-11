@@ -2088,10 +2088,10 @@ impl IrContainerStmt {
                 let storage = model.arrays.get(*array).ok_or_else(|| {
                     IrValidationError::new("container value", "array index is out of bounds")
                 })?;
-                if !storage.sparse() && !storage.real {
+                if storage.is_net() {
                     return Err(IrValidationError::new(
                         "container value",
-                        "native fixed-array store needs descriptor storage",
+                        "native fixed-array store needs variable storage",
                     ));
                 }
                 root.fixed_item(model, items, storage.total, string_return)

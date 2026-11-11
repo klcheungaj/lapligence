@@ -1302,6 +1302,12 @@ pub(super) fn render(
                 format!(
                     "    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) ({item})->value.items[_llg_n].value.real = *{source};\n"
                 )
+            } else if !frame.ctx.model.array(*array).sparse() {
+                // Dense cells hold the items' own type (SV 7.6 equivalence).
+                let source = frame.ctx.model.array(*array).cell_address("_llg_n");
+                format!(
+                    "    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) (void)llg_value_item_set_packed(&({item})->value.items[_llg_n], *{source});\n"
+                )
             } else {
                 let source = frame.fixed_array_address(*array)?;
                 format!("    llg_fixed_array_items_store({item}, {source});\n")

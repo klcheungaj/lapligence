@@ -2710,6 +2710,15 @@ impl Codegen<'_> {
         {
             return Ok(statement);
         }
+        // A whole unpacked-array value of integral or real cells from a
+        // fixed-array variable (`q.push_back(row)`).
+        if let (false, NativeEndpoint::Value { value, prefix }) = (nba, target) {
+            if prefix.is_empty() {
+                if let Some(statement) = self.native_row_from_array(path, *value, source)? {
+                    return Ok(statement);
+                }
+            }
+        }
         // A record member of a record call result (`f().r`) comes from the
         // temporary that holds the result.
         if let Some((call, members)) = self.native_call_member(source) {

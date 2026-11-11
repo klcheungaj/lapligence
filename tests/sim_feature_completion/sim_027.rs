@@ -719,3 +719,26 @@ fn record_member_cells_are_selected_at_run_time() {
         );
     }
 }
+
+/// FIN-001 C1 (c): whole unpacked-array elements to and from fixed-array
+/// variables and patterns.
+#[test]
+fn container_element_rows_copy_whole() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "container_element_rows",
+        include_str!("../fixtures/sim/feature_completion/sim_027/container_element_rows.out"),
+        &[],
+        &[],
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_container_native_row",
+        "neg_container_native_row.sv:9:26: [CODEGEN-001] copying an unpacked-array element of strings, handles or records of a queue, dynamic or associative array to or from an array variable in `tb` is not supported; copy it cell by cell",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_container_row_slice",
+        "neg_container_row_slice.sv:9:5: [CODEGEN-001] copying a row or slice of a fixed-size array to or from an unpacked-array element of a queue, dynamic or associative array in `tb` is not supported; copy a whole array variable",
+    );
+}

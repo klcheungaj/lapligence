@@ -1900,6 +1900,9 @@ impl<'a> Codegen<'a> {
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
         if op == Operation::Assignment {
+            if let Some(statement) = self.lower_row_from_element(path, lhs, rhs, !blocking)? {
+                return Ok(Some(statement));
+            }
             if let Ok(dst) = self.fixed_memory_view(path, lhs) {
                 if self.model.arrays[dst.array].sparse()
                     && self.descriptor_value_transport(path, &dst, rhs, blocking)?

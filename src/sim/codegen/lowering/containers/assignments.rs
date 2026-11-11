@@ -474,6 +474,9 @@ impl<'a> Codegen<'a> {
         if let Some(statement) = self.lower_container_concat_into(path, dst.ir, rhs)? {
             return Ok(statement);
         }
+        if self.container_of(rhs).is_none() {
+            self.reject_native_row_copy(path, rhs)?;
+        }
         let src = self.container_of(rhs).ok_or_else(|| {
             format!(
                 "resizable container assignment in `{path}` requires a compatible array (got {:?})",
