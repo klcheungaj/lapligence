@@ -390,11 +390,78 @@ fn open_arrays_take_native_elements() {
     );
 }
 
+/// A dynamic array actual gives the open array its size at the call; the
+/// formal is a copy, whatever an exported function does to the actual.
+#[test]
+fn open_arrays_take_dynamic_array_actuals() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "dynamic_actuals") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "dynamic_actuals",
+        include_str!("../fixtures/sim/feature_completion/sim_040/dynamic_actuals.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
+/// The copies outlive a wait of the foreign code in an exported task.
+#[test]
+fn a_waiting_context_task_keeps_its_native_copies() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "native_context_task") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "native_context_task",
+        include_str!("../fixtures/sim/feature_completion/sim_040/native_context_task.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
+/// A disabled import leaves every actual as it was (S41-D5).
+#[test]
+fn a_disabled_import_copies_no_native_formal_back() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "native_disabled") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "native_disabled",
+        include_str!("../fixtures/sim/feature_completion/sim_040/native_disabled.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
 #[test]
 fn unsupported_actuals_and_formal_types_are_explicit_errors() {
-    sim_cli::reject_case(SUITE, "neg_dynamic_actual", "a dynamic array, queue or associative array actual of DPI-C open-array formal `a` is not supported (SIM-040)");
     sim_cli::reject_case(SUITE, "neg_wide_aggregate", "DPI-C import `neg_big` formal 0 (`a`): an unpacked aggregate wider than 1048575 payload bits is not supported (SIM-040)");
+    sim_cli::reject_case(SUITE, "neg_dynamic_output", "a dynamic array or queue cannot be the actual of output open-array formal `a` (SV 7.7); declare the formal inout or pass a fixed-size array");
+    sim_cli::reject_case(SUITE, "neg_dynamic_rows", "a dynamic array or queue of unpacked arrays as the actual of DPI-C open-array formal `a` is not supported (SIM-040)");
+    sim_cli::reject_case(SUITE, "neg_dynamic_sized_first", "a dynamic array or queue actual of DPI-C open-array formal `a` needs an unsized first dimension of the formal (SIM-040)");
     sim_cli::reject_case(SUITE, "neg_native_open_slice", "the actual of DPI-C open-array formal `a` with real, shortreal, string or chandle elements must be a whole array variable (SIM-040)");
+}
+
+/// The frontend matches an unsized formal dimension only with a fixed-size
+/// or dynamic array.
+#[test]
+fn queue_and_associative_actuals_are_frontend_errors() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_queue_actual",
+        "value of type 'int$[$]' cannot be assigned to type 'int$[]'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_assoc_actual",
+        "value of type 'int$[int]' cannot be assigned to type 'int$[]'",
+    );
 }
 
 #[test]

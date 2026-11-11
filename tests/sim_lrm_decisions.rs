@@ -1300,6 +1300,27 @@ fn s40_d8_native_aggregate_leaves() {
 }
 
 #[test]
+fn s40_d9_dynamic_array_actual() {
+    run_dpi_decision(
+        "S40-D9_dynamic_array_actual",
+        include_str!("fixtures/sim/lrm_decisions/S40-D9_dynamic_array_actual.out"),
+    );
+}
+
+#[test]
+fn s40_d10_dynamic_output_illegal() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S40-D10_dynamic_output_illegal.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S40-D10_dynamic_output_illegal",
+        "a dynamic array or queue cannot be the actual of output open-array formal `a` (SV 7.7)",
+    );
+}
+
+#[test]
 fn s40_d7_time_services() {
     run_dpi_decision(
         "S40-D7_time_services",

@@ -203,7 +203,8 @@ call context and returns right after the foreign call when the process was
 killed; the waiting export's thunk fills the task's (possibly shared) frame
 type on the chain arena and the shim runs it with `LLG_CO_CALL_ARENA`.
 A DPI import formal outside the packed payload (an aggregate with real,
-shortreal, string or chandle leaves) is the native value, real cell array or container the caller made for the
+shortreal, string or chandle leaves; a dynamic array actual of an open array)
+is the native value, real cell array or container the caller made for the
 call (`model/dpi.rs` `Transport`); the thunk converts it to its C-layout
 buffer and, for an output or inout, back at its publication step, and the
 caller's ordinary copy-out writes the actual.

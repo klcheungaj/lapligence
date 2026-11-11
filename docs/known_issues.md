@@ -2410,16 +2410,22 @@ assertion instance.
 ## DPI-C import limits (SIM-040)
 
 **Status:** open. SIM-040 marshals packed, sized unpacked and open-array
-formals of DPI-C imports and aggregates with `real`, `shortreal`, `string`
-and `chandle` leaves; these forms remain outside it.
+formals of DPI-C imports, aggregates with `real`, `shortreal`, `string` and
+`chandle` leaves and dynamic array actuals of open arrays; these forms remain
+outside it.
 
 ### Symptom
 
 These imports reject with explicit diagnostics:
 
-- a dynamic array, queue or associative array actual of an open-array formal:
-  "a dynamic array, queue or associative array actual of DPI-C open-array
-  formal ... is not supported (SIM-040)";
+- a queue actual of an open-array formal (legal by 7.6 and 7.7): the frontend
+  reports "value of type 'int$[$]' cannot be assigned to type 'int$[]'";
+- a dynamic array of unpacked arrays (`int rows [][3]`) as the actual of an
+  open-array formal: "a dynamic array or queue of unpacked arrays as the
+  actual of DPI-C open-array formal ... is not supported (SIM-040)";
+- a dynamic array actual of an open-array formal whose first dimension is
+  sized (`input bit [] a [3]`): "... needs an unsized first dimension of the
+  formal (SIM-040)";
 - an open-array actual with `real`, `shortreal`, `string` or `chandle`
   elements that is not a whole array variable (a slice, a concatenation, a
   function result): "... must be a whole array variable (SIM-040)";
@@ -2428,6 +2434,11 @@ These imports reject with explicit diagnostics:
 - an exported subroutine with an unpacked aggregate formal that has `real`,
   `shortreal`, `string` or `chandle` leaves: "unpacked aggregates with real,
   shortreal, string or chandle elements are not supported (SIM-040)".
+
+Two forms the text itself excludes are errors too: a dynamic array actual of
+an output open-array formal (7.7, decision S40-D10) and an associative array
+actual (the frontend rejects it; an open array has contiguous indices,
+H.12.1).
 
 The output and inout actuals of one call are copied back in declaration order
 within one kind of formal storage (packed values and strings; real arrays;
@@ -2446,17 +2457,19 @@ link fails and names the routine (see
 
 ### Cause
 
-Open formals are specialized per actual shape at compile time, so a
-runtime-sized actual has no fixed shape. A formal outside the packed payload
-is storage of the actual's own type that the caller copies as a whole, which
-takes a variable. The packed payload transport ends at the runtime's width
-limit. The export thunks convert only packed payloads. H.13 lets an
-implementation leave the SV3.1a routines out.
+The vendored frontend matches an unsized formal dimension only with a
+fixed-size or dynamic array, so a queue never reaches lowering. llg has no
+element access for a dynamic array of unpacked arrays. A formal outside the
+packed payload is storage of the actual's own type that the caller copies as
+a whole, which takes a variable. The packed payload transport ends at the
+runtime's width limit. The export thunks convert only packed payloads. H.13
+lets an implementation leave the SV3.1a routines out.
 
 ### Intended direction
 
-Specialize open formals on container actuals by element type with a
-runtime-sized handle. Build the copy of a non-variable actual at the call
+Admit a queue for an unsized dimension in the frontend's open-array matching
+(a vendored-frontend patch); the lowering and thunk already treat a queue
+like a dynamic array. Build the copy of a non-variable actual at the call
 site. Give the export thunks the import's conversions for native leaves.
 
 ### Reproduce

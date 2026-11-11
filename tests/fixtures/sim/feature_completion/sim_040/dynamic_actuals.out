@@ -1,0 +1,45 @@
+c d dims=2 [0:2] low=0 high=2 inc=-1 size=3 bytes=12
+c d below=0 above=0 first=1
+sum d=6
+c empty dims=2 [0:-1] low=0 high=-1 inc=-1 size=0 bytes=0
+c empty below=0 above=0 first=-1
+sum empty=0
+c fixed dims=2 [4:2] low=2 high=4 inc=1 size=3 bytes=12
+c fixed below=0 above=0 first=20
+sum fixed=90
+c property dims=2 [0:0] low=0 high=0 inc=-1 size=1 bytes=4
+c property below=0 above=0 first=9
+sum property=9
+c formal dims=2 [0:2] low=0 high=2 inc=-1 size=3 bytes=12
+c formal below=0 above=0 first=1
+sum formal=6
+pure=12
+d='{101, 102, 103}
+empty size=0
+c resize before dims=2 [0:2] low=0 high=2 inc=-1 size=3 bytes=12
+export sees d='{101, 102, 103}
+c resize after dims=2 [0:2] low=0 high=2 inc=-1 size=3 bytes=12
+c resize first=555 fifth=0
+d='{555, 666, 103}
+c logic dims=2 [0:1] low=0 high=1 inc=-1 size=2 bytes=16
+c logic packed=[7:0]
+c logic[0]=1f/f
+c logic[1]=0/ff
+dl=5X 5X
+c dp dims=2 [0:1] low=0 high=1 inc=-1 size=2 bytes=8
+c dp packed=[11:0] abc 123
+c narrow dims=2 [0:1] low=0 high=1 inc=-1 size=2 bytes=8
+c narrow packed=[4:0] 1f 3
+c reals dims=1 [0:2] low=0 high=2 inc=-1 size=3 bytes=24
+c factors dims=1 [0:2] low=0 high=2 inc=-1 size=3 bytes=12
+dr=3 1.25 14
+c strings dims=1 [0:2] low=0 high=2 inc=-1 size=3 bytes=24
+c strings=a bb ccc
+dn=bb ccc a
+c packed recs dims=1 [0:1] low=0 high=1 inc=-1 size=2 bytes=24
+c packed rec[0]=5 c/5
+c packed rec[1]=6 3/0
+dpr=15 110z 16 110z
+c native recs dims=1 [0:1] low=0 high=1 inc=-1 size=2 bytes=32
+c native recs=1.5 n0 2.5 n1
+dnr=11.5 n0 12.5 N1

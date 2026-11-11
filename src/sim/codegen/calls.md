@@ -22,7 +22,7 @@ never integers. Preserve explicit C names and pure/context qualifiers in canonic
 `svdpi.h` scalar thunks; reject missing/conflicting libraries/signatures before
 simulation and retain packed/open-array/ref guards. An open-array formal is
 specialized per call (`dpi_open_callee`): to the actual's payload, or, outside
-the payload, to storage of the actual's type
+the payload and for a dynamic array, to storage of the actual's type
 (`dpi_open_storage_argument` passes the actual's container or real array).
 Exports (`IrFunc::dpi_export`)
 keep the import formal/result rules (exported tasks may consume time:

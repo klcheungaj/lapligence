@@ -10,8 +10,8 @@
 //! array or container that any subroutine formal of its type is, and the
 //! thunk converts that. An open-array formal takes its unsized ranges from
 //! the call's actual, so each distinct actual shape gets its own thunk whose
-//! formal is the actual's payload or, outside the payload, storage of the
-//! actual's own type.
+//! formal is the actual's payload or, outside the payload and for a dynamic
+//! array or queue actual (SV 7.7), storage of the actual's own type.
 
 use super::*;
 use crate::core::db::DpiOpenType;
@@ -239,20 +239,27 @@ impl Codegen<'_> {
         })
     }
 
-    /// Flatten the actual of an open-array formal into its unpacked
-    /// dimensions (slowest first) and element.
+    /// Flatten the actual of an open-array formal into its sized unpacked
+    /// dimensions (slowest first) and element. `dynamic` says that a
+    /// dynamic array or queue dimension precedes them: the actual's first.
     fn dpi_open_actual_shape(
         &self,
         formal: NodeId,
         actual: NodeId,
-    ) -> Result<(Vec<(i32, i32)>, TypeDescriptor), String> {
-        let descriptor = self.query_descriptor(actual).cloned().ok_or_else(|| {
-            format!(
-                "the actual of DPI-C open-array formal `{}` has no captured type",
-                self.node(formal).name
-            )
-        })?;
+    ) -> Result<DpiOpenActual, String> {
+        let name = &self.node(formal).name;
+        // A dynamic array bound to a formal with a sized dimension arrives
+        // under a conversion to the formal's type; its own type decides.
+        let descriptor = self
+            .query_descriptor(self.p30_unwrap_cast(actual))
+            .filter(|descriptor| matches!(descriptor.shape, TypeShape::Container { .. }))
+            .or_else(|| self.query_descriptor(actual))
+            .cloned()
+            .ok_or_else(|| {
+                format!("the actual of DPI-C open-array formal `{name}` has no captured type")
+            })?;
         let mut dims = Vec::new();
+        let mut dynamic = false;
         let mut current = descriptor;
         loop {
             match current.shape {
@@ -263,13 +270,37 @@ impl Codegen<'_> {
                     dims.extend(dimensions);
                     current = *element;
                 }
-                TypeShape::Container { .. } => {
+                TypeShape::Container {
+                    array: ArrayKind::Dynamic | ArrayKind::Queue { .. },
+                    element,
+                    ..
+                } if dims.is_empty() && !dynamic => {
+                    dynamic = true;
+                    current = *element;
+                }
+                // The elements of an open array have contiguous indices and
+                // one size per dimension (H.12.1): an associative array has
+                // neither, nor has a container below the first dimension.
+                TypeShape::Container {
+                    array: ArrayKind::Associative(_),
+                    ..
+                } => {
                     return Err(format!(
-                        "a dynamic array, queue or associative array actual of DPI-C open-array formal `{}` is not supported (SIM-040)",
-                        self.node(formal).name
+                        "an associative array actual of DPI-C open-array formal `{name}` is not supported: an open array has contiguous indices (SIM-040)"
                     ));
                 }
-                _ => return Ok((dims, current)),
+                TypeShape::Container { .. } => {
+                    return Err(format!(
+                        "a dynamic array or queue below the first dimension of the actual of DPI-C open-array formal `{name}` is not supported: every dimension of an open array has one size (SIM-040)"
+                    ));
+                }
+                _ => {
+                    return Ok(DpiOpenActual {
+                        dims,
+                        element: current,
+                        dynamic,
+                    })
+                }
             }
         }
     }
@@ -304,14 +335,46 @@ impl Codegen<'_> {
             return Ok(template.clone());
         };
         let name = &self.node(formal).name;
-        let (actual_dims, actual_element) = self.dpi_open_actual_shape(formal, actual)?;
-        if actual_dims.len() < dims.len() {
+        let DpiOpenActual {
+            dims: actual_dims,
+            element: actual_element,
+            dynamic,
+        } = self.dpi_open_actual_shape(formal, actual)?;
+        if actual_dims.len() + usize::from(dynamic) < dims.len() {
             return Err(format!(
                 "the actual of DPI-C open-array formal `{name}` has {} unpacked dimensions; the formal declares {}",
-                actual_dims.len(),
+                actual_dims.len() + usize::from(dynamic),
                 dims.len()
             ));
         }
+        if dynamic {
+            // The formal takes the container's size at the call; a sized
+            // first dimension would need a run-time size check instead.
+            if dims.first().is_none_or(Option::is_some) {
+                return Err(format!(
+                    "a dynamic array or queue actual of DPI-C open-array formal `{name}` needs an unsized first dimension of the formal (SIM-040)"
+                ));
+            }
+            // The elements are values of one packed or record type; llg has
+            // no element access for a dynamic array of unpacked arrays.
+            if !actual_dims.is_empty() {
+                return Err(format!(
+                    "a dynamic array or queue of unpacked arrays as the actual of DPI-C open-array formal `{name}` is not supported (SIM-040)"
+                ));
+            }
+            if matches!(
+                self.kind(formal),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Output,
+                    ..
+                }
+            ) {
+                return Err(format!(
+                    "a dynamic array or queue cannot be the actual of output open-array formal `{name}` (SV 7.7); declare the formal inout or pass a fixed-size array"
+                ));
+            }
+        }
+        let dims = &dims[usize::from(dynamic)..];
         let mut concrete = Vec::with_capacity(dims.len());
         for (declared, actual_dim) in dims.iter().zip(&actual_dims) {
             let range = match declared {
@@ -372,6 +435,11 @@ impl Codegen<'_> {
                 declared.clone()
             }
         };
+        if dynamic {
+            return Ok(IrDpiType::OpenDynamic {
+                element: Box::new(element),
+            });
+        }
         Ok(IrDpiType::Open {
             dims: concrete,
             element: Box::new(element),
@@ -387,7 +455,8 @@ impl Codegen<'_> {
         actual: NodeId,
     ) -> Result<DpiOpenStorage, String> {
         let name = &self.node(formal).name;
-        if payload_only(concrete) {
+        let dynamic = matches!(concrete, IrDpiType::OpenDynamic { .. });
+        if !dynamic && payload_only(concrete) {
             return Ok(DpiOpenStorage::Payload);
         }
         let actual = self.p30_unwrap_cast(actual);
@@ -400,15 +469,21 @@ impl Codegen<'_> {
                 return Ok(DpiOpenStorage::Container(container.ir));
             }
         }
-        if let Some(array) = self.array_of(actual).filter(|array| array.real) {
-            return Ok(DpiOpenStorage::RealArray(array.ir));
+        if !dynamic {
+            if let Some(array) = self.array_of(actual).filter(|array| array.real) {
+                return Ok(DpiOpenStorage::RealArray(array.ir));
+            }
         }
-        Err(self.dpi_actual_error(
-            actual,
+        let error = if dynamic {
+            format!(
+                "the dynamic array or queue actual of DPI-C open-array formal `{name}` must be a whole variable (SIM-040)"
+            )
+        } else {
             format!(
                 "the actual of DPI-C open-array formal `{name}` with real, shortreal, string or chandle elements must be a whole array variable (SIM-040)"
-            ),
-        ))
+            )
+        };
+        Err(self.dpi_actual_error(actual, error))
     }
 
     /// The argument of open-array formal `formal` when `actual` crosses in
@@ -545,6 +620,15 @@ impl Codegen<'_> {
         self.dpi_specializations.insert(key, index);
         Ok(index)
     }
+}
+
+/// The actual of an open-array formal: its sized unpacked dimensions
+/// (slowest first), the element below them and whether a dynamic array or
+/// queue dimension precedes them.
+struct DpiOpenActual {
+    dims: Vec<(i32, i32)>,
+    element: TypeDescriptor,
+    dynamic: bool,
 }
 
 /// What the formal of an open-array specialization is to the model: the

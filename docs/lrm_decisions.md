@@ -34,7 +34,7 @@ Each `<ID>_<name>.sv` file is:
 ### On another simulator
 
 1. Compile and run the `.sv` file alone, with `tb` as the top module.
-2. If there is a `.c` companion of the same name (B8, S40-D1 to S40-D8,
+2. If there is a `.c` companion of the same name (B8, S40-D1 to S40-D9,
    S41-D1 to S41-D8 and A18-D1 to A18-D3), build it as a shared DPI-C
    library (the S40, S41 and A18 cases include `svdpi.h`) and load it with the simulator's DPI library option.
    For S99-D6 the `.c` file is a VPI application (`vpi_user.h`,
@@ -47,7 +47,7 @@ Each `<ID>_<name>.sv` file is:
    notices and reports (the `$finish` message, assertion and constraint
    failure reports, the open-error notice of S47-D11) and compare the lines
    the design prints.
-4. **Negative cases have an empty `.out`.** For AA-D7, K1-D1, S14-D5, S22-D4 and S23-D2, the
+4. **Negative cases have an empty `.out`.** For AA-D7, K1-D1, S14-D5, S22-D4, S23-D2 and S40-D10, the
    expected result is a compile error, and no simulation should run.
 
 ### In llg
@@ -62,7 +62,7 @@ through the public `llg` command line:
 - requiring the exact `.out` stdout and identical stderr across backends.
 
 The A12 cases run with their SDF and configuration files written into the
-run directory. For B8, S40-D1 to S40-D8, S41-D1 to S41-D8 and A18-D1 to A18-D3, the test builds the `.c`
+run directory. For B8, S40-D1 to S40-D9, S41-D1 to S41-D8 and A18-D1 to A18-D3, the test builds the `.c`
 companion with the host C compiler and passes it with `--dpi-lib`; these cases
 run on Unix hosts only. S40-D5 must stop with exit status 1 after its first
 line, reporting "DPI-C import task `d5_task` returned nonzero, but nothing
@@ -75,7 +75,8 @@ their first line, reporting a "DPI-C protocol violation". AA-D7 must fail to
 compile with "`$past` of a real expression is illegal", S14-D5 with
 "nonblocking assignment to class property `x`", and S23-D2 with "is an
 unpacked structure or union, which is not a singular variable". S22-D4 must fail with "`push_back` modifies
-`limits`, which is declared const". K1-D1 must fail with "string, class
+`limits`, which is declared const". S40-D10 must fail with "a dynamic array
+or queue cannot be the actual of output open-array formal `a` (SV 7.7)". K1-D1 must fail with "string, class
 handle, event, unpacked or tagged union, queue, dynamic array and associative
 array clockvars are not supported".
 S30-D11 must end with exit status 1 after both lines, reporting "select
@@ -525,6 +526,8 @@ a switch. MOS, CMOS and resistive MOS switches stay unsupported by design.
 | S40-D6 | **A wrong element index count ends the run.** An svdpi.h element access with a number of indices other than the array's unpacked dimensions reports an error and ends the run: the import's C code is abandoned at the access (nothing after it runs and nothing is copied out), the statement after the call does not run, the final procedures run and the exit status is 1. C code of an outer import that called an export around the failing import still continues when the export returns. | H.12.4 L73337-73340 | `S40-D6_wrong_index_count_ends_run` (`.sv` and `.c`) | industry-standard behaviour (Annex H does not say what a wrong count does); split from S40-D4, which returned the default and continued; changed: the C code continued after the access until the import returned |
 | S40-D7 | **Time services.** `svGetTime` stores the current simulation time scaled to the time unit of the scope in both forms of `svTimeVal`: `high`/`low` hold the 64-bit integer `$time` returns in that scope and `real` the value `$realtime` returns; `type` is neither read nor written. `svGetTimeUnit` and `svGetTimePrecision` store the scope's time unit and precision as a power of ten in seconds (-9 for 1 ns), like `vpiTimeUnit`. A NULL scope stands for the simulation time unit, the smallest precision of the design, in all three. Each returns 0, or -1 without storing anything for a value that is no scope or a NULL result pointer. | `svdpi.h` declaration comments (Annex H has no text for the three routines); 20.3.1 L34168-34169; 20.3.3 L34207-34208; 38.6 L62049-62050; 37.10 detail 7 L57958-57959 | `S40-D7_time_services` (`.sv` and `.c`) | llg choice (the declarations do not say whether `type` selects a form, how a unit is encoded or what an error stores; a simulator whose `svdpi.h` predates the three routines cannot build the case) |
 | S40-D8 | **Native leaves of aggregates.** Real, shortreal, string and chandle leaves of unpacked structures and arrays cross in the C compiler's layout with the Table H.1 types, a string leaf as `const char*`, lowest index first. An output aggregate arrives with every byte zero and each string leaf pointing at an empty string. A string leaf given a new pointer is copied when the import returns; every such string is read before any leaf is replaced, and a leaf whose pointer is unchanged keeps its string. | H.7.8 L72330-72332; H.8.10.1 L72520-72522; H.8.10 L72486-72488; H.7.3 L72168-72169, L72181-72182 | `S40-D8_native_aggregate_leaves` (`.sv` and `.c`) | LRM text, industry-standard behaviour; the output start values and the order of the string copies are llg choices (35.5.1.2 leaves the first open; S40-D1). Some simulators lay out an array with a descending range that is a structure member, or the whole of an open array, left bound first; llg follows H.7.3 |
+| S40-D9 | **Dynamic array actuals of open arrays.** The formal of an input or inout open array is a copy with the size the dynamic array has at the call: range `[0:size-1]`, increment -1, and `[0:-1]` with size 0 and no element for an empty array. An exported function that resizes or writes the actual during the call sees the actual as it was at the call and changes neither the handle nor the formal; when the import returns an inout formal is assigned to the actual, which has its call-time size again. | 7.7 L8577-8578; 35.6.1.1 L56172-56174; 35.6.1 L56128-56129; 20.7 L34699, L34701-34702, L34704-34705 | `S40-D9_dynamic_array_actual` (`.sv` and `.c`) | LRM text, industry-standard behaviour (some simulators stop at a query of an empty array: the case's last three lines) |
+| S40-D10 | **A dynamic array actual of an output open-array formal is a compile error.** | 7.7 L8579-8580 | `S40-D10_dynamic_output_illegal` (negative; empty `.out`) | LRM text. Some simulators accept the call and give the formal the array's size at the call; llg follows 7.7, which says such an actual "shall not be passed" |
 | S41-D1 | **Context scope of a call chain.** A context import runs in the scope of its declaration; `svSetScope` selects another instance and returns the previous scope; after an export returns, the chain's scope is the one it had when the export was called. Scope names are full hierarchical names; a loop generate block reads `g[0]`. | 35.5.3 L55801-55807; H.9.2 L72598-72599; H.9.3 L72702; 27.4 L46316-46319 | `S41-D1_context_scope_chain` (`.sv` and `.c`) | LRM text. Some simulators run a context import called through an instance name (`u2.f()`) in the scope of its caller; llg follows 35.5.3, which gives the call chain "the instantiated scope of the import declaration" |
 | S41-D2 | **Export copy-back order.** When C calls an export, outputs and inouts are written to the C locations in declaration order after the body, so with one address for several formals the last wins; inouts are all copied in first. | 35.6.1 L56128-56131 | `S41-D2_export_copy_back` (`.sv` and `.c`) | llg choice (the text does not order copy-outs; as S40-D2) |
 | S41-D3 | **Noncontext imports have no scope, every import has a caller.** `svGetScope` returns NULL in a noncontext import, also when a context chain reaches it through an export. `svGetCallerInfo` returns 1 with the file and line of the call in every import, context or not. | 35.5.3 L55783-55785; H.9.3 L72673-72674, L72730-72736 | `S41-D3_noncontext_has_no_scope` (`.sv` and `.c`) | llg policy, industry-standard behaviour for the caller (undefined and implementation-specific in the text; llg formerly returned 0 in noncontext imports) |
