@@ -627,6 +627,23 @@ llg_value_t* llg_dyn_value_element(llg_dyn_value_array_t* array,
                                    const sv4_t* indices, size_t count);
 llg_value_t* llg_queue_value_element(llg_queue_value_array_t* queue,
                                      const sv4_t* indices, size_t count);
+/* A cell of an unpacked-array element (`da[k][j]`, `q[k][j]`) whose element
+ * the locator above did not find (decision S07-D19). A queue write at the
+ * queue's size appends an element holding its initial value and returns it
+ * (SV 7.10.1). Otherwise, under index checks, the run stops (the
+ * industry-standard behaviour); with the checks off the text applies
+ * (SV 7.4.6): NULL, after the queue's invalid-write warning for a queue
+ * write. */
+llg_value_t* llg_dyn_value_cell_miss(const llg_dyn_value_array_t* array,
+                                     sv4_t index, int write);
+llg_value_t* llg_queue_value_cell_miss(llg_queue_value_array_t* queue,
+                                       sv4_t index, int write);
+/* A whole unpacked-array element write (`q[k] = '{...}`) that
+ * `llg_queue_value_set_element` refused: the same rules as a cell write,
+ * except that a refused write at the queue's size (a full bounded queue)
+ * was already reported. */
+void llg_queue_value_store_miss(const llg_queue_value_array_t* queue,
+                                sv4_t index);
 llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
                                               const sv4_t* indices,
                                               size_t count, int create);

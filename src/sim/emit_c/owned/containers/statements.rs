@@ -1162,14 +1162,34 @@ pub(super) fn render(
                 }
                 (IrValueSlot::Element { indices, .. }, kind) => {
                     let list = super::indices(frame, owners, indices)?;
-                    let function = match kind {
-                        IrContainerKind::Dynamic => "llg_dyn_value_set_element",
-                        IrContainerKind::Queue { .. } => "llg_queue_value_set_element",
+                    // A whole unpacked-array element of a queue or dynamic
+                    // array has the index rules of its cells (S07-D19).
+                    let storage = &ctx.model.containers[*container];
+                    let row = matches!(storage.element, IrContainerElement::FixedArray { .. })
+                        && storage.initial_size.is_none()
+                        && indices.len() == 1;
+                    let (function, miss) = match kind {
+                        IrContainerKind::Dynamic => (
+                            "llg_dyn_value_set_element",
+                            row.then(|| {
+                                format!("(void)llg_dyn_value_cell_miss(&{target}, {list}[0], 1)")
+                            }),
+                        ),
+                        IrContainerKind::Queue { .. } => (
+                            "llg_queue_value_set_element",
+                            row.then(|| {
+                                format!("llg_queue_value_store_miss(&{target}, {list}[0])")
+                            }),
+                        ),
                         IrContainerKind::Associative { .. } => {
-                            "llg_assoc_value_set_element_integral"
+                            ("llg_assoc_value_set_element_integral", None)
                         }
                     };
-                    format!("{function}(&{target}, {list}, {}, {root})", indices.len())
+                    let call = format!("{function}(&{target}, {list}, {}, {root})", indices.len());
+                    if let Some(miss) = miss {
+                        return Ok(format!("    if (!{call}) {miss};\n"));
+                    }
+                    call
                 }
                 (IrValueSlot::PushFront, _) => {
                     format!("llg_queue_value_push_value(&{target}, 0, {root})")

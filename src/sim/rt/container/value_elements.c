@@ -18,6 +18,66 @@ llg_value_t* llg_queue_value_element(llg_queue_value_array_t* queue,
     return queue ? llg_queue_value_nested_at(queue, indices, count) : NULL;
 }
 
+/* An index of a queue or dynamic array of unpacked arrays that selects no
+ * element; `size` is the array's. Out of line: no other path calls it. */
+static LLG_OUTLYING void llg_value_cell_invalid(const char* operation,
+                                                const char* kind, sv4_t index,
+                                                size_t size, int queue_write) {
+    int64_t value = 0;
+    if (llg_index_stop_hook) {
+        char detail[160];
+        if (sv4_is_unknown(index))
+            snprintf(detail, sizeof(detail), "the index has X or Z bits");
+        else if (size == 0)
+            snprintf(detail, sizeof(detail), "the %s is empty", kind);
+        else if (sv4_to_index_i64(index, &value))
+            snprintf(detail, sizeof(detail),
+                     "index %lld is outside the valid range 0 to %llu",
+                     (long long)value, (unsigned long long)(size - 1));
+        else
+            snprintf(detail, sizeof(detail),
+                     "the index is outside the valid range 0 to %llu",
+                     (unsigned long long)(size - 1));
+        llg_index_stop_hook(operation, detail);
+        return;
+    }
+    if (queue_write) llg_container_warning("invalid queue write index");
+}
+
+LLG_OUTLYING llg_value_t* llg_dyn_value_cell_miss(
+    const llg_dyn_value_array_t* array, sv4_t index, int write) {
+    llg_value_cell_invalid(write ? "dynamic-array element write"
+                                 : "dynamic-array element read",
+                           "dynamic array", index, array ? array->size : 0, 0);
+    return NULL;
+}
+
+LLG_OUTLYING llg_value_t* llg_queue_value_cell_miss(
+    llg_queue_value_array_t* queue, sv4_t index, int write) {
+    int64_t value = 0;
+    if (write && queue && sv4_to_index_i64(index, &value) && value >= 0 &&
+        (uint64_t)value == (uint64_t)queue->size) {
+        llg_value_t initial = {0};
+        llg_native_value_init(&initial, queue->element);
+        int written = llg_queue_value_set_element(queue, &index, 1, &initial);
+        llg_native_value_destroy(&initial);
+        return written ? llg_queue_value_element(queue, &index, 1) : NULL;
+    }
+    llg_value_cell_invalid(write ? "queue element write" : "queue element read",
+                           "queue", index, queue ? queue->size : 0, write);
+    return NULL;
+}
+
+LLG_OUTLYING void llg_queue_value_store_miss(
+    const llg_queue_value_array_t* queue, sv4_t index) {
+    int64_t value = 0;
+    if (sv4_to_index_i64(index, &value) && value >= 0 &&
+        (uint64_t)value == (uint64_t)queue->size)
+        return;
+    llg_value_cell_invalid("queue element write", "queue", index, queue->size,
+                           1);
+}
+
 /* Insert a missing outer entry with its Table 6-7 initial value, as a write
  * through a missing key does (SV 7.8). Returns 0 for an invalid key. */
 static int llg_assoc_value_create_entry(llg_assoc_value_t* array,

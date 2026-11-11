@@ -5687,6 +5687,48 @@ fn s07_d15_index_checks_off() {
 }
 
 #[test]
+fn s07_d19_unpacked_element_cells_stop() {
+    // Each case stops at its first statement, so stdout stays empty.
+    let cases: [(&str, &str); 8] = [
+        ("1", "dynamic-array element read in process 'tb.initial': index 5 is outside the valid range 0 to 1"),
+        ("2", "dynamic-array element write in process 'tb.initial': index 5 is outside the valid range 0 to 1"),
+        ("3", "queue element read in process 'tb.initial': index 3 is outside the valid range 0 to 0"),
+        ("4", "queue element write in process 'tb.initial': index 3 is outside the valid range 0 to 0"),
+        ("5", "dynamic-array element read in process 'tb.initial': index 5 is outside the valid range 0 to 1"),
+        ("6", "dynamic-array element write in process 'tb.initial': index 5 is outside the valid range 0 to 1"),
+        ("7", "dynamic-array element write in process 'tb.initial': index 5 is outside the valid range 0 to 1"),
+        ("8", "dynamic-array element read in process 'tb.initial': the index has X or Z bits"),
+    ];
+    for (case, message) in cases {
+        let plusarg = format!("+case={case}");
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "S07-D19_unpacked_element_cells",
+            &[plusarg.as_str()],
+            "",
+            message,
+        );
+    }
+}
+
+#[test]
+fn s07_d19_unpacked_element_cells_off() {
+    sim_cli::run_case_with_args(
+        SUITE,
+        "S07-D19_unpacked_element_cells",
+        include_str!("fixtures/sim/lrm_decisions/S07-D19_unpacked_element_cells.out"),
+        concat!(
+            "WARNING: [SIM-012] invalid queue write index\n",
+            "WARNING: [SIM-012] associative-array read of a nonexistent entry returns the default\n",
+            "INFO: S07-D19_unpacked_element_cells.sv:50:5: [SIM-001] (tb @ 0 ps) $finish called\n",
+            "INFO: [SIM-000] 0 error(s), 2 warning(s), 1 info(s)\n",
+        ),
+        &[],
+        &["--no-index-checks"],
+    );
+}
+
+#[test]
 fn s07_d18_record_member_waits() {
     run_decision(
         "S07-D18_record_member_waits",

@@ -689,6 +689,20 @@ fn neg_verilog_2001_memory_file_limits() {
     );
 }
 
+/// FIN-001 C1 (a): a cell of an unpacked-array element of a dynamic array,
+/// queue or associative array is read and written in place (S07-D19 for the
+/// index rules).
+#[test]
+fn container_element_cells_are_read_and_written() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "container_element_cells",
+        include_str!("../fixtures/sim/feature_completion/sim_027/container_element_cells.out"),
+        &[],
+        &[],
+    );
+}
+
 /// FIN-001 C1 (a) below record members, in both record storage forms: the
 /// same file prints the same at 3 cells (one leaf each) and at 16 (a column).
 #[test]
