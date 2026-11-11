@@ -146,7 +146,13 @@ unknown: a known packed mismatch dominates, strings compare bytes, handles
 identities and reals numerically; `llg_{dyn,queue}[_value]_equal` compare
 whole containers element-wise. `llg_dyn_value_copy_range` and
 `llg_dyn_value_merge` serve fixed-array views (slices, ambiguous
-conditionals). A descriptor-array NBA (`llg_dyn_value_nba`, delayed by
+conditionals); `llg_dyn_copy_range` and `llg_dyn_set_range` copy and write
+rows of a multidimensional class property of packed cells. A cell of an
+unpacked-array element of a queue or dynamic array (`da[k][j]`) whose element
+does not exist goes to `llg_{dyn,queue}_value_cell_miss` (a whole-element
+write refused by the store to `llg_queue_value_store_miss`): a queue write at
+the queue's size appends, otherwise the index-check stop or, with the checks
+off, the text's result (S07-D19). A descriptor-array NBA (`llg_dyn_value_nba`, delayed by
 `llg_dyn_value_nba_after`, `is_values`) owns a deep copy of its payload from
 issue to commit or cancellation. A write to an item inside a native value
 (`llg_nba_locate_element`, `llg_nba_locate_value`, ended by

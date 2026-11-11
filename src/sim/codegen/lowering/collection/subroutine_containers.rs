@@ -238,6 +238,8 @@ impl Codegen<'_> {
         container.c_name = format!("S_llg_container_{ir}");
         container.activation = true;
         container.class_field = None;
+        // A temporary is its own storage, never a handle-qualified property.
+        container.receiver = None;
         // A fixed-array view keeps its declared size, so an output formal
         // or result starts with default elements; other temporaries start
         // empty.

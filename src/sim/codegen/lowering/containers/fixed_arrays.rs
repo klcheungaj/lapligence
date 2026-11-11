@@ -640,6 +640,144 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// A row or slice of a fixed view of packed cells (a multidimensional
+    /// class property): its container, first storage position and count.
+    fn packed_view_row(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<(usize, IrExpr, u64)>, String> {
+        if !self.is_fixed_view_slice(node) {
+            return Ok(None);
+        }
+        Ok(self
+            .fixed_view_slice(path, node)?
+            .filter(|(view, _, _)| self.model.containers[*view].element.is_packed()))
+    }
+
+    /// Storage positions of the `count` cells of a packed view row or slice
+    /// whose first position is `start`. A constant start folds; a run-time
+    /// one is captured once, and an invalid one (negative or X) moves every
+    /// cell to an invalid position, so each reads its default (SV 7.4.6).
+    fn packed_row_positions(
+        &self,
+        lhs: NodeId,
+        start: IrExpr,
+        count: u64,
+        captures: &mut Vec<IrStmt>,
+    ) -> Vec<IrExpr> {
+        let cells = 0..i128::from(count);
+        if let IrExprKind::Const(constant) = &start.kind {
+            let first = (constant.width <= 64
+                && constant.x.iter().chain(&constant.z).all(|word| *word == 0))
+            .then(|| constant.bits.first().copied().unwrap_or(0) as i64)
+            .filter(|first| *first >= 0);
+            return cells
+                .map(|cell| {
+                    pattern_key_expr(
+                        first.map_or(-1, |first| i128::from(first) + cell),
+                        64,
+                        true,
+                        false,
+                    )
+                })
+                .collect();
+        }
+        let width = start.width.max(64) + 1;
+        let start = IrExpr::convert_to(start, width, true);
+        let valid = IrExpr::new(
+            IrExprKind::Bin {
+                op: IrBinOp::Ge,
+                a: Box::new(start.clone()),
+                b: Box::new(pattern_key_expr(0, width, true, false)),
+            },
+            1,
+            false,
+            None,
+        );
+        let name = format!("_llg_row_{}", lhs.0);
+        captures.push(IrStmt::DeclLocal {
+            name: name.clone(),
+            width,
+            signed: true,
+            init: Some(Box::new(IrExpr::new(
+                IrExprKind::Mux {
+                    sel: Box::new(valid),
+                    a: Box::new(start),
+                    b: Box::new(pattern_key_expr(i128::from(i64::MIN), width, true, false)),
+                },
+                width,
+                true,
+                None,
+            ))),
+            two_state: false,
+        });
+        let row = IrExpr::new(IrExprKind::LocalRead(name), width, true, None);
+        cells
+            .map(|cell| {
+                if cell == 0 {
+                    return row.clone();
+                }
+                IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::Add,
+                        a: Box::new(row.clone()),
+                        b: Box::new(pattern_key_expr(cell, width, true, false)),
+                    },
+                    width,
+                    true,
+                    None,
+                )
+            })
+            .collect()
+    }
+
+    /// `o.g[i] = r`: a row or slice of a packed view (a multidimensional
+    /// class property of integral cells) written from a fixed-array value,
+    /// pattern or call. Every source cell is evaluated first, then one range
+    /// write stores them; an invalid row writes nothing (SV 7.4.6).
+    pub(super) fn lower_packed_row_write(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        view: usize,
+        start: IrExpr,
+        count: u64,
+    ) -> Result<IrStmt, String> {
+        let dimensions = match self
+            .query_descriptor(lhs)
+            .map(|descriptor| &descriptor.shape)
+        {
+            Some(TypeShape::FixedArray { dimensions, .. }) => dimensions.clone(),
+            _ => vec![(
+                0,
+                i32::try_from(count.saturating_sub(1)).unwrap_or(i32::MAX),
+            )],
+        };
+        let mut statements = Vec::new();
+        let values = self.p30_lower_source_values(
+            path,
+            lhs,
+            rhs,
+            &dimensions,
+            &mut statements,
+            &mut HashMap::new(),
+        )?;
+        if u64::try_from(values.len()).ok() != Some(count) {
+            return Err(format!(
+                "fixed unpacked-array assignment in `{path}` has {} source elements; destination requires {count}",
+                values.len()
+            ));
+        }
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::SetRange {
+            container: view,
+            start,
+            values,
+        })));
+        Ok(IrStmt::Block(statements))
+    }
+
     fn p30_container_source(&self, node: NodeId) -> Option<ContainerInfo> {
         if let Some(container) = self.container_of(node) {
             return Some(container);
@@ -2046,6 +2184,49 @@ impl<'a> Codegen<'a> {
                     )?));
                 }
             }
+        }
+        // A row of a multidimensional class property of integral cells
+        // (`r = o.g[i]`) reads cell for cell, as a whole property does
+        // (SIM-011).
+        if let Some((view, start, count)) = self.packed_view_row(path, rhs)? {
+            if usize::try_from(count).ok() != Some(target.coordinates.len()) {
+                return Err(format!(
+                    "fixed unpacked-array assignment in `{path}` has {count} source elements; destination requires {}",
+                    target.coordinates.len()
+                ));
+            }
+            let (width, signed) = {
+                let element = &self.model.containers[view].element;
+                (element.width(), element.signed())
+            };
+            let positions = self.packed_row_positions(lhs, start, count, &mut captures);
+            let two_state = self.model.arrays[target.array.ir].two_state;
+            for (coordinates, position) in target.coordinates.into_iter().zip(positions) {
+                let value = IrExpr::new(
+                    IrExprKind::Container(Box::new(IrContainerExpr::Get {
+                        container: view,
+                        index: Box::new(position),
+                    })),
+                    width,
+                    signed,
+                    None,
+                );
+                captures.push(IrStmt::Assign {
+                    lhs: IrLhs::ArrayElem {
+                        arr: self.reference_array(target.array.ir),
+                        indices: coordinates,
+                        elem_sel: IrElemSel::Whole,
+                    },
+                    rhs: ir_to_storage(
+                        value,
+                        target.array.elem_width,
+                        target.array.signed,
+                        two_state,
+                    )?,
+                    nba: !blocking,
+                });
+            }
+            return Ok(Some(IrStmt::Block(captures)));
         }
         if let Some(source) = self.p30_container_source(rhs) {
             return Ok(Some(self.lower_p30_container_to_fixed(

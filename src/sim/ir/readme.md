@@ -319,14 +319,18 @@ size and declared indices are normalized to storage positions at lowering
 order (`fixed_view_dims`): an element select of every dimension is one
 storage position (-1 when any index is outside its own dimension, X bits kept)
 and a row select is the contiguous run of cells below it, so rows reuse the
-slice forms. Whole-array `==`/`!=`/`===`/`!==` is
+slice forms. A row of a multidimensional class property of packed cells
+copies to and from other rows and resizable arrays by `CopyRange`, is written
+from a fixed-array value or pattern by `IrContainerStmt::SetRange` (values
+evaluated first, one range write) and is read into a fixed-array variable cell
+by cell. Whole-array `==`/`!=`/`===`/`!==` is
 `IrContainerExpr::Equal` (element-wise; sizes must match). Slice reads and
 writes are `IrContainerStmt::CopyRange`, ambiguous conditionals
 `IrContainerStmt::Merge` (elements merge leaf by leaf: equal leaves survive,
 others take their default), and NBAs `IrContainerStmt::Nonblocking`, which
 copies the source and evaluates its optional intra-assignment delay at issue
 and commits at NBA time of the current or delayed step. The legacy emitter
-rejects `CopyRange`, `Merge` and `Nonblocking`.
+rejects `CopyRange`, `SetRange`, `Merge` and `Nonblocking`.
 
 A tagged union with string, real, record or class-handle members in a
 module/static variable is per-leaf storage: a four-state `$tag` signal plus

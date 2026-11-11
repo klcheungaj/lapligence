@@ -858,6 +858,11 @@ void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
 void llg_dyn_destroy(llg_dyn_array_t* array);
 void llg_dyn_delete(llg_dyn_array_t* array);
 void llg_dyn_copy(llg_dyn_array_t* dst, const llg_dyn_array_t* src);
+/* `llg_dyn_value_copy_range` between packed dynamic arrays: a row or
+ * slice of a multidimensional class property of integral cells. */
+void llg_dyn_copy_range(llg_dyn_array_t* dst, sv4_t dst_start,
+                        const llg_dyn_array_t* src, sv4_t src_start,
+                        uint64_t count);
 /* Ambiguous-condition merges (SV 11.4.11) of packed dynamic arrays, queues
  * and associative arrays and of recursive queues and associative arrays,
  * with the leaf rule of `llg_dyn_value_merge`. Sequences merge position by
@@ -868,6 +873,13 @@ void llg_dyn_merge(llg_dyn_array_t* dst, const llg_dyn_array_t* a,
                    const llg_dyn_array_t* b);
 void llg_dyn_assign_values(llg_dyn_array_t* dst, const sv4_t* values,
                            size_t count);
+/* Write `count` borrowed values at consecutive storage positions from
+ * `start` (a row of a multidimensional class property written from a
+ * fixed-array value): an X/Z or negative start writes nothing, positions
+ * past the end are not written (SV 7.4.6); changed cells notify contents
+ * readers once. */
+void llg_dyn_set_range(llg_dyn_array_t* dst, sv4_t start, const sv4_t* values,
+                       size_t count);
 void llg_dyn_new(llg_dyn_array_t* dst, sv4_t size,
                  const llg_dyn_array_t* initializer);
 sv4_t llg_dyn_stream(const llg_dyn_array_t* array, uint32_t slice,

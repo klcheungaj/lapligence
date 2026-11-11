@@ -112,8 +112,14 @@ pub(super) fn render(
             src_start,
             count,
         } => {
+            // Rows of a multidimensional class property hold packed cells.
+            let function = if ctx.model.containers[*dst].element.is_packed() {
+                "llg_dyn_copy_range"
+            } else {
+                "llg_dyn_value_copy_range"
+            };
             format!(
-                "    llg_dyn_value_copy_range(&{}, {}, &{}, {}, {count}ULL);\n",
+                "    {function}(&{}, {}, &{}, {}, {count}ULL);\n",
                 name(frame, *dst)?,
                 operand(frame, owners, dst_start)?.code,
                 name(frame, *src)?,
@@ -404,6 +410,23 @@ pub(super) fn render(
                 name(frame, *container)?,
                 method_code(*method),
                 callback.as_deref().unwrap_or("NULL")
+            )
+        }
+        IrContainerStmt::SetRange {
+            container,
+            start,
+            values,
+        } => {
+            let start = operand(frame, owners, start)?.code;
+            let values = values
+                .iter()
+                .map(|value| Ok(operand(frame, owners, value)?.code))
+                .collect::<Result<Vec<_>, String>>()?;
+            format!(
+                "    llg_dyn_set_range(&{}, {start}, (const sv4_t[]){{ {} }}, {});\n",
+                name(frame, *container)?,
+                values.join(", "),
+                values.len()
             )
         }
         IrContainerStmt::AssignValues { container, values } => {

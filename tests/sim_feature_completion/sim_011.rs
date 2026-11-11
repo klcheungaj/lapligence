@@ -256,10 +256,37 @@ fn unsupported_property_layouts_reject_explicitly() {
         "neg_record_container_property",
         "class property `holder_c.m` of a record type with queue, dynamic or associative members is not supported (SIM-011)",
     );
+}
+
+/// FIN-001 C1 (d): a row of a multidimensional class property is an unpacked
+/// array operand, and a whole property takes an array variable.
+#[test]
+fn multidimensional_property_rows_are_array_operands() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "multidim_property_rows",
+        include_str!("../fixtures/sim/feature_completion/sim_011/multidim_property_rows.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn multidimensional_property_row_boundaries_reject() {
     sim_cli::reject_case(
         SUITE,
-        "neg_multidim_property",
-        "selecting a row or slice of a multidimensional class property in `tb` is not supported; it is accessed whole, by element or through memory file tasks (SIM-011)",
+        "neg_multidim_property_row_value",
+        "neg_multidim_property_row_value.sv:14:25: [CODEGEN-001] this use of a row of a multidimensional class property in `tb` is not supported; assign the row to or from an array variable, or print it (SIM-011)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_multidim_property_row_equality",
+        "neg_multidim_property_row_equality.sv:11:9: [CODEGEN-001] equality of a row or slice of a multidimensional class property in `tb` is not supported; compare elements or copy the row into an array variable first (SIM-011)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_multidim_property_cell_select",
+        "neg_multidim_property_cell_select.sv:10:9: [CODEGEN-001] this select of a multidimensional class property in `tb` is not supported; select it whole, one element or one row (SIM-011)",
     );
 }
 

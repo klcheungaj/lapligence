@@ -436,6 +436,18 @@ impl<'a> Codegen<'a> {
                         "multidimensional resizable container access in `{path}` is not supported"
                     ));
                 }
+                // A row of a multidimensional class property is an unpacked
+                // array, not a cell; its own operand forms read and write it.
+                if self.model.containers[container.ir].element.is_packed()
+                    && self.is_fixed_view_slice(node)
+                {
+                    return Err(crate::sim::codegen::error::located(
+                        &self.source_location(node),
+                        format!(
+                            "this use of a row of a multidimensional class property in `{path}` is not supported; assign the row to or from an array variable, or print it (SIM-011)"
+                        ),
+                    ));
+                }
                 let element = self.model.containers[container.ir].element.clone();
                 if element.is_string() || element.is_handle() {
                     return Ok(None);

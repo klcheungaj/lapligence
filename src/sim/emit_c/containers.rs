@@ -348,6 +348,7 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::BindElement { .. }
         | IrContainerStmt::TouchContents(_)
         | IrContainerStmt::CopyRange { .. }
+        | IrContainerStmt::SetRange { .. }
         | IrContainerStmt::Merge { .. }
         | IrContainerStmt::Nonblocking { .. }
         | IrContainerStmt::NbaLocate { .. }

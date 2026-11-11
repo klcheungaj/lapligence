@@ -762,7 +762,8 @@ pub enum IrContainerStmt {
         right: usize,
     },
     /// Copy `count` elements between fixed-array views of record, string or
-    /// handle elements: a slice read (`dst_start` zero) or a slice write.
+    /// handle elements, or of packed cells (rows of a multidimensional class
+    /// property): a slice read (`dst_start` zero) or a slice write.
     /// Starts are signed storage positions evaluated once; out-of-range
     /// source elements read their default and out-of-range destinations
     /// are not written (SV 7.4.6). Sources are snapshotted before writes.
@@ -817,6 +818,17 @@ pub enum IrContainerStmt {
     },
     AssignValues {
         container: usize,
+        values: Vec<IrExpr>,
+    },
+    /// Write `values` to the packed dynamic array `container` at the
+    /// consecutive storage positions from `start` (a row of a
+    /// multidimensional class property written from a fixed-array value).
+    /// `start` is evaluated once; an X/Z or negative start writes nothing,
+    /// as do positions past the end (SV 7.4.6). Every value is evaluated
+    /// before the first write.
+    SetRange {
+        container: usize,
+        start: IrExpr,
         values: Vec<IrExpr>,
     },
     QueueAssign {
@@ -2200,12 +2212,13 @@ impl IrContainerStmt {
                 let src = container_kind(model, *src, None)?;
                 if !matches!(dst.kind, IrContainerKind::Dynamic)
                     || !matches!(src.kind, IrContainerKind::Dynamic)
-                    || dst.element.is_packed()
                     || !dst.element.compatible_with(&src.element)
+                    || dst.element.is_packed() != src.element.is_packed()
+                    || dst.element.width() != src.element.width()
                 {
                     return Err(IrValidationError::new(
                         "container",
-                        "container range copy requires two descriptor-backed dynamic arrays of one element type",
+                        "container range copy requires two dynamic arrays of one element type",
                     ));
                 }
                 if *count == 0 || dst_start.is_real() || src_start.is_real() {
@@ -2428,6 +2441,25 @@ impl IrContainerStmt {
                             "array method callback name is empty",
                         ));
                     }
+                }
+                Ok(())
+            }
+            Self::SetRange {
+                container,
+                start,
+                values,
+            } => {
+                let container = container_kind(model, *container, None)?;
+                if !matches!(container.kind, IrContainerKind::Dynamic)
+                    || !container.element.is_packed()
+                    || start.is_real()
+                    || values.is_empty()
+                    || values.iter().any(IrExpr::is_real)
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "range write requires a packed dynamic array, an integral start and integral values",
+                    ));
                 }
                 Ok(())
             }
@@ -3113,6 +3145,10 @@ impl IrContainerStmt {
                     }
                 }
             }
+            Self::SetRange { start, values, .. } => {
+                visit(start);
+                values.iter().for_each(visit)
+            }
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter().for_each(visit)
             }
@@ -3274,6 +3310,10 @@ impl IrContainerStmt {
                         IrElementItemValue::Chandle(_) => {}
                     }
                 }
+            }
+            Self::SetRange { start, values, .. } => {
+                visit(start);
+                values.iter_mut().for_each(visit)
             }
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter_mut().for_each(visit)

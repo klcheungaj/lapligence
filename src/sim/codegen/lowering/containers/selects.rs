@@ -78,6 +78,15 @@ impl Codegen<'_> {
                         // A select flattened across the element boundary:
                         // `d[i][b]` arrives as one select with indices beyond
                         // the container depth.
+                        // Fewer indices than a multidimensional fixed view
+                        // has dimensions select a row (`fixed_view_slice`).
+                        if self
+                            .fixed_view_dims
+                            .get(&container.ir)
+                            .is_some_and(|dimensions| indices.len() < dimensions.len())
+                        {
+                            return None;
+                        }
                         let depth = self.container_index_depth(container.ir);
                         if indices.len() <= depth {
                             return None;
