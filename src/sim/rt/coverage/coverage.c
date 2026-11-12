@@ -201,6 +201,8 @@ static size_t llg_cov_n_model_types;
 // Set while the database rebuilds records of an earlier run: their
 // 19.5.6 warnings and bin-count errors were reported by that run.
 static uint8_t llg_cov_quiet;
+// The value llg_cov_hit_wide is counting, which messages print.
+static const sv4_t* llg_cov_wide_sample;
 static void llg_cov_db_release(void);
 
 // An illegal bin hit (19.5.5, 19.6.3) and a bins array size that is not
@@ -1731,6 +1733,11 @@ static int llg_cov_guard(const llg_cov_point_t* point, uint32_t decl, const uint
 // A key as the signed or unsigned value it stands for.
 static void llg_cov_format_key(const llg_cov_point_t* point, uint64_t key, char* text,
                                size_t size) {
+    // The key of a coverpoint wider than 64 bits does not spell its value.
+    if (llg_cov_wide_sample) {
+        sv4_to_dec_string(*llg_cov_wide_sample, text, size);
+        return;
+    }
     uint64_t raw = key;
     if (point->is_signed) raw ^= UINT64_C(1) << (point->width - 1u);
     if (point->is_signed && ((raw >> (point->width - 1u)) & 1u)) {
@@ -2332,6 +2339,94 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
         llg_cov_hit_default(inst, state, point, key, guards);
         return;
     }
+}
+
+// ── Coverpoints wider than 64 bits ────────────────────────────────────────
+
+// Two-word unsigned arithmetic, low word first, for the automatic bins of
+// a coverpoint of up to 128 bits.
+typedef struct {
+    uint64_t lo, hi;
+} llg_cov_u128_t;
+
+static int llg_cov_u128_less(llg_cov_u128_t a, llg_cov_u128_t b) {
+    return a.hi != b.hi ? a.hi < b.hi : a.lo < b.lo;
+}
+
+// `a` / `d` by shifts and subtractions; `*rem` gets the remainder.
+LLG_OUTLYING static llg_cov_u128_t llg_cov_u128_div(llg_cov_u128_t a, llg_cov_u128_t d,
+                                                   llg_cov_u128_t* rem) {
+    llg_cov_u128_t q = {0, 0}, r = {0, 0};
+    for (int bit = 127; bit >= 0; --bit) {
+        r.hi = (r.hi << 1) | (r.lo >> 63);
+        r.lo = (r.lo << 1) | ((bit >= 64 ? a.hi >> (bit - 64) : a.lo >> bit) & 1u);
+        if (!llg_cov_u128_less(r, d)) {
+            uint64_t borrow = r.lo < d.lo;
+            r.lo -= d.lo;
+            r.hi -= d.hi + borrow;
+            if (bit >= 64) q.hi |= UINT64_C(1) << (bit - 64);
+            else q.lo |= UINT64_C(1) << bit;
+        }
+    }
+    if (rem) *rem = r;
+    return q;
+}
+
+// The key of value key `v` of a coverpoint with automatic bins: the key
+// llg_cov_auto_bin maps, at 64 bits, to the bin 19.5.2 gives `v` among
+// `n_bins` bins of 2^width / n_bins values (the last one takes the rest).
+LLG_OUTLYING static uint64_t llg_cov_wide_auto_key(const llg_cov_wide_t* wide, llg_cov_u128_t v,
+                                                  uint64_t n_bins) {
+    llg_cov_u128_t n = {n_bins ? n_bins : 1u, 0}, rem;
+    // 2^width / n as (2^width - 1) / n, plus one when the remainder is n - 1.
+    llg_cov_u128_t top = {UINT64_MAX, wide->width >= 128u ? UINT64_MAX
+                                                          : (UINT64_C(1) << (wide->width - 64u)) - 1u};
+    llg_cov_u128_t span = llg_cov_u128_div(top, n, &rem);
+    if (rem.lo == n.lo - 1u && !rem.hi && ++span.lo == 0) span.hi++;
+    llg_cov_u128_t bin = llg_cov_u128_div(v, span, NULL);
+    uint64_t index = (bin.hi || bin.lo >= n.lo) ? n.lo - 1u : bin.lo;
+    uint64_t span64 = UINT64_MAX / n.lo;
+    if (UINT64_MAX % n.lo == n.lo - 1u) span64++;
+    return index * span64;
+}
+
+LLG_OUTLYING void llg_cov_hit_wide(void* record, uint32_t point_index, const sv4_t* value,
+                                   const uint8_t* guards) {
+    llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
+    if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
+    const llg_cov_wide_t* wide = inst->group->wide[point_index];
+    sv4_t key;
+    if (sv4_is_unknown(*value)) {
+        key = sv4_x(64u, 0);
+    } else {
+        llg_cov_u128_t v = {llg_sv4_word(*value, 0, LLG_SV4_BITS),
+                            llg_sv4_word(*value, 1, LLG_SV4_BITS)};
+        if (wide->width < 128u) v.hi &= (UINT64_C(1) << (wide->width - 64u)) - 1u;
+        if (wide->is_signed) v.hi ^= UINT64_C(1) << (wide->width - 65u);
+        uint64_t k;
+        if (wide->n_segments) {
+            uint32_t lo = 0, hi = wide->n_segments;
+            while (lo < hi) {
+                uint32_t mid = lo + (hi - lo) / 2u;
+                const llg_cov_wide_seg_t* seg = &wide->segments[mid];
+                llg_cov_u128_t bound = {seg->lo[0], seg->lo[1]};
+                if (!llg_cov_u128_less(v, bound)) lo = mid + 1u;
+                else hi = mid;
+            }
+            const llg_cov_wide_seg_t* seg = &wide->segments[lo - 1u];
+            // An exact segment holds fewer than 2^64 values: the low words'
+            // difference is the offset.
+            k = seg->base + (seg->exact ? v.lo - seg->lo[0] : 0u);
+        } else {
+            const llg_cov_layout_t* layout = inst->points[point_index].layout;
+            k = llg_cov_wide_auto_key(wide, v, layout ? layout->n_auto : 1u);
+        }
+        key = sv4_from_u64(k, 64u, 0);
+    }
+    llg_cov_wide_sample = value;
+    llg_cov_hit(record, point_index, &key, guards);
+    llg_cov_wide_sample = NULL;
+    sv4_destroy(&key);
 }
 
 void llg_cov_control(void* record, int32_t point, int start) {

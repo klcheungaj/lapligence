@@ -278,6 +278,37 @@ fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions
     format!("&{name}")
 }
 
+/// The class table of a coverpoint wider than 64 bits; returns its address.
+fn wide_table(out: &mut String, prefix: &str, table: &crate::sim::ir::IrCoverWide) -> String {
+    let segments = static_array(
+        out,
+        "llg_cov_wide_seg_t",
+        &format!("{prefix}_wseg"),
+        table
+            .bounds
+            .iter()
+            .zip(&table.bases)
+            .zip(&table.exact)
+            .map(|((bound, base), exact)| {
+                format!(
+                    "{{ {{ UINT64_C({}), UINT64_C({}) }}, UINT64_C({base}), {}u }}",
+                    *bound as u64,
+                    (*bound >> 64) as u64,
+                    u8::from(*exact)
+                )
+            })
+            .collect(),
+    );
+    let name = format!("{prefix}_wide");
+    out.push_str(&format!(
+        "static const llg_cov_wide_t {name} = {{ .width = {}u, .is_signed = {}u, .n_segments = {}u, .segments = {segments} }};\n",
+        table.width,
+        u8::from(table.signed),
+        table.bounds.len()
+    ));
+    format!("&{name}")
+}
+
 /// Static metadata of every covergroup; nothing for a model without one.
 pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     for (index, coverage_type) in model.coverage_types.iter().enumerate() {
@@ -314,8 +345,13 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     for (index, group) in model.covergroups.iter().enumerate() {
         let prefix = group_name(index);
         let mut points = Vec::with_capacity(group.points.len());
+        let mut wide = Vec::with_capacity(group.points.len());
         for (point_index, point) in group.points.iter().enumerate() {
             let point_prefix = format!("{prefix}_{point_index}");
+            wide.push(point.wide.as_ref().map_or_else(
+                || "NULL".to_owned(),
+                |table| wide_table(out, &point_prefix, table),
+            ));
             let (kind, keys) = match &point.automatic {
                 IrCoverAutomatic::Auto => ("LLG_COV_POINT_AUTO", None),
                 IrCoverAutomatic::Enum(keys) => ("LLG_COV_POINT_ENUM", Some(keys)),
@@ -423,8 +459,19 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 trampoline
             }
         };
+        // Only a group with a coverpoint wider than 64 bits names the
+        // field, so other groups keep their text.
+        let wide = if group.points.iter().any(|point| point.wide.is_some()) {
+            out.push_str(&format!(
+                "static const llg_cov_wide_t* const {prefix}_wide[] = {{ {} }};\n",
+                wide.join(", ")
+            ));
+            format!(", .wide = {prefix}_wide")
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .path = {}, .n_points = {}u, .points = {points_name}, .n_crosses = {}u, .crosses = {crosses_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe} }};\n",
+            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .path = {}, .n_points = {}u, .points = {points_name}, .n_crosses = {}u, .crosses = {crosses_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe}{wide} }};\n",
             c_string_literal(&group.name),
             c_string_literal(&group.path),
             group.points.len(),
@@ -932,8 +979,14 @@ impl Frame<'_, '_> {
                     // A plain read is passed by address without a copy;
                     // the borrow ends with the call.
                     let value = self.operand(&sample.value)?;
+                    // A coverpoint wider than 64 bits maps its value to a key.
+                    let hit = if sample.wide.is_some() {
+                        "llg_cov_hit_wide"
+                    } else {
+                        "llg_cov_hit"
+                    };
                     self.line(format!(
-                        "llg_cov_hit({record}, {}u, {}, {guard_array});",
+                        "{hit}({record}, {}u, {}, {guard_array});",
                         sample.point,
                         value.address()
                     ));

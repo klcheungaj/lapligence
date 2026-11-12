@@ -137,6 +137,24 @@ static void llg_cov_hash_trans(uint64_t* hash, const llg_cov_trans_t* trans) {
     llg_cov_fnv_u64(hash, (uint64_t)(int64_t)trans->default_bin);
 }
 
+// The value classes of coverpoints wider than 64 bits, whose keys alone do
+// not name their values.
+LLG_OUTLYING static void llg_cov_hash_wide(uint64_t* hash, const llg_cov_group_t* group) {
+    for (uint32_t p = 0; p < group->n_points; ++p) {
+        const llg_cov_wide_t* wide = group->wide[p];
+        llg_cov_fnv_u64(hash, wide != NULL);
+        if (!wide) continue;
+        llg_cov_fnv_u64(hash, wide->width);
+        llg_cov_fnv_u64(hash, wide->is_signed);
+        llg_cov_fnv_u64(hash, wide->n_segments);
+        for (uint32_t i = 0; i < wide->n_segments; ++i) {
+            llg_cov_fnv_words(hash, wide->segments[i].lo, 2u);
+            llg_cov_fnv_u64(hash, wide->segments[i].base);
+            llg_cov_fnv_u64(hash, wide->segments[i].exact);
+        }
+    }
+}
+
 // The schema identity of one declaration: everything that shapes its
 // counters, nothing that options or source positions change.
 static uint64_t llg_cov_group_hash(const llg_cov_group_t* group) {
@@ -173,6 +191,7 @@ static uint64_t llg_cov_group_hash(const llg_cov_group_t* group) {
         llg_cov_fnv_items(&hash, point->items, items);
         llg_cov_hash_trans(&hash, point->trans);
     }
+    if (group->wide) llg_cov_hash_wide(&hash, group);
     llg_cov_fnv_u64(&hash, group->n_crosses);
     for (uint32_t c = 0; c < group->n_crosses; ++c) {
         const llg_cov_cross_t* cross = &group->crosses[c];

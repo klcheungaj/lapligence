@@ -168,7 +168,7 @@ fn unsupported_coverage_forms_are_located_errors() {
     sim_cli::reject_case(
         SUITE,
         "neg_wide_point",
-        "neg_wide_point.sv:6:16: coverpoint `a` of covergroup `g` is 80 bits wide",
+        "neg_wide_point.sv:6:16: coverpoint `a` of covergroup `g` is 130 bits wide; llg supports coverpoints of at most 128 bits",
     );
     sim_cli::reject_case(
         SUITE,

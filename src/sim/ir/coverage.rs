@@ -75,6 +75,46 @@ pub struct IrCoverpoint {
     pub(in crate::sim) transitions: Option<IrCoverTransitions>,
     /// A cross reads the bins each sample counts.
     pub(in crate::sim) crossed: bool,
+    /// A coverpoint wider than 64 bits: `width` is then 64 and `signed`
+    /// false, and its keys are those of [`IrCoverWide`].
+    pub(in crate::sim) wide: Option<IrCoverWide>,
+}
+
+/// The runtime keys of a coverpoint of 65 to 128 bits. Its values fall
+/// into classes: class `i` holds the value keys (the value's bits, sign
+/// bit flipped when signed) from `bounds[i]` up to the next bound, and
+/// starts at runtime key `bases[i]`; an `exact` class has one runtime key
+/// per value, any other a single one. Keys keep the value order. Without
+/// classes the coverpoint has automatic bins, computed from the whole
+/// value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverWide {
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) bounds: Vec<u128>,
+    pub(in crate::sim) bases: Vec<u64>,
+    pub(in crate::sim) exact: Vec<bool>,
+}
+
+impl IrCoverWide {
+    fn valid(&self, automatic: bool) -> bool {
+        let max = u128::MAX >> (u128::BITS - self.width.clamp(1, 128));
+        (65..=128).contains(&self.width)
+            && self.bounds.len() == self.bases.len()
+            && self.bounds.len() == self.exact.len()
+            && (automatic == self.bounds.is_empty())
+            && (automatic || self.bounds.first() == Some(&0))
+            && self.bounds.windows(2).all(|pair| pair[0] < pair[1])
+            && self.bounds.iter().all(|bound| *bound <= max)
+            && self.bases.windows(2).enumerate().all(|(index, pair)| {
+                let size = if self.exact[index] {
+                    self.bounds[index + 1] - self.bounds[index]
+                } else {
+                    1
+                };
+                u128::from(pair[1]) == u128::from(pair[0]) + size
+            })
+    }
 }
 
 /// One cross (19.6). Its coordinates along each crossed coverpoint are that
@@ -418,6 +458,10 @@ pub struct IrCoverageSample {
     /// The coverpoint has transition bins: a false `iff` ends the
     /// sequences in progress (decision S45-D9).
     pub(in crate::sim) history: bool,
+    /// The covergroup (`IrModel::covergroups` index) of a coverpoint wider
+    /// than 64 bits, whose `value` has the declared width and is counted
+    /// through its [`IrCoverWide`] keys.
+    pub(in crate::sim) wide: Option<usize>,
 }
 
 /// One cross sample, after every coverpoint of the group: counts the
@@ -582,6 +626,14 @@ impl IrCovergroup {
             });
             if !items_valid || !bins_valid {
                 return Err(format!("coverpoint `{}` bins are invalid", point.name));
+            }
+            let wide_valid = point.wide.as_ref().is_none_or(|wide| {
+                point.width == 64
+                    && !point.signed
+                    && wide.valid(point.automatic == IrCoverAutomatic::Auto)
+            });
+            if !wide_valid {
+                return Err(format!("coverpoint `{}` wide keys are invalid", point.name));
             }
             if point.crossed && point.transitions.is_some() {
                 return Err(format!(

@@ -380,6 +380,42 @@ is hit and 0.00 otherwise, and `all` is the mean of the eight coverpoints.
 
 The run-time warnings come once per instance, in construction order.
 
+`wide_points.sv` (industry-standard behaviour, probed; 71-bit `x`, signed
+71-bit `s`, 128-bit `q`, signed 100-bit `t`). The ten samples of `x` are 0,
+2^70, 2^69, 2, 2^66, 2^71 - 1, 5, 2^68 + 6, 2^66, 0; `s` is -1, -2^70, then
+0; `n` 0 then 1; `q` 0, 2^128 - 1, 2^64, then 0x5555 · 2^112; `t` -2, 5,
+then -3. Every coverpoint and the cross have weight 1.
+
+- `p_val`: `zero`, `big`, `rng` hit, `miss` (7) never: 75.00. `p_arr`:
+  `arr[2]`, `arr[2^70]` and `top` hit, `arr[1]` not: 75.00. `p_ign`: `all`
+  ([0:15] without 5) by 0 and 2, `hi` by 2^66: 100.00.
+- `p_auto`: 64 automatic bins of 2^65 values (19.5.2): bins 0, 32, 16, 2,
+  63 and 8: 6/64 = 9.38. `p_sauto` (signed, numeric order): -2^70 in bin 0,
+  -1 in bin 31, 0 in bin 32: 3/64 = 4.69. `p_qauto` (`auto_bin_max` 3):
+  bins of floor(2^128 / 3) values; 0, 2^64 and 0x5555 · 2^112 fall in bin 0,
+  2^128 - 1 in bin 2: 2/3 = 66.67.
+- `p_cnt`: `c[4]` over 8 values, 2 each; 2^68 + 6 is in `c[3]`: 25.00.
+- `p_tr`: `u` (0 => 2^70) at samples 1-2 and `v[2=>2^66]` at 4-5; `t` and
+  `v[1=>2^66]` never: 2/4 = 50.00.
+- `p_x`: `hi` is the `big` and `rng` rows (8 products), the other 8 products
+  are automatic: 9 bins; (zero, 0), (big, 1) and (rng, 1) in `hi`, and
+  (zero, 1) at the last sample: 3/9 = 33.33.
+- `p_wild`: `w` is 2^71 - 16 .. 2^71 - 1, hit by 2^71 - 1; `o` never: 50.00.
+- `p_signed`: `neg` by -1, `mn` (the 71-bit -2^70) by -2^70, `z` by 0, `pos`
+  never: 75.00. `p_q`: all three hit: 100.00. `p_t`: `neg[-2]` and
+  `neg[-3]` of three: 66.67. `p_n`: 2 of 4 automatic bins: 50.00.
+- `all`: the mean of the 13 coverpoints and the cross: 780.73 / 14 = 55.77.
+
+`wide_illegal.sv` (industry-standard behaviour, probed): 3 hits `ok`
+(100.00); 2^70 + 1 is illegal, a run-time error that ends the run (S45-D3)
+and names the whole value; `after` never prints and the final procedure
+shows 100.00. Exit status 1.
+
+`wide_arguments.sv` is the plan's probe of a 71-bit coverpoint (`zero` and
+`big` both hit) beside a transition bin reading the argument `low` (2 => 3,
+hit at the last edge) and the value bin `[low:3]`: every value 100.00
+(industry-standard behaviour, probed).
+
 `cross_classes.sv` (llg limitation): each of `sa`..`sd` is 32 single-value
 selects of one crossed coverpoint, so every coverpoint splits into 33 value
 classes (its bins 0..31 one by one, and bins 32..63); 33^4 = 1185921
@@ -407,6 +443,10 @@ warning names the pair where it stopped. The run reports no overlap; samples
 | `neg_trans_length0` | `(3 [* 1:1])`, a transition of length 0: its repeat_range evaluates to 1 (S45-D11; `(3 [-> 1])` and the other forms of S45-D19 are legal) |
 | `neg_trans_array_goto` | `[]` transition bins with a goto repetition (19.5.1) |
 | `neg_trans_ignore_goto` | ignore_bins with a nonconsecutive repetition (19.5.4) |
+| `neg_wide_auto_ignore` | ignore_bins in a 71-bit coverpoint with automatic bins (llg limitation) |
+| `neg_wide_exact` | a `[4]` bins array over 2^32 + 1 values of a 71-bit coverpoint (llg limitation) |
+| `neg_wide_point_argument` | a bins value of a 71-bit coverpoint read from a covergroup argument (llg limitation) |
+| `neg_wide_intersect_auto` | `intersect` on a 71-bit coverpoint with automatic bins (llg limitation) |
 | `neg_trans_argument_array` | `[]` transition bins whose value reads a covergroup argument (llg limitation) |
 | `neg_trans_argument_removal` | a transition value read from a covergroup argument in a coverpoint with ignore_bins transitions (llg limitation) |
 | `neg_trans_argument_overlap` | a transition value read from a covergroup argument where option.detect_overlap may be set (llg limitation) |

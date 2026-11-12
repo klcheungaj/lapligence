@@ -43,7 +43,8 @@ read every terminal.
 
 `coverage.rs` holds functional coverage (SIM-044, SIM-045): `covergroups` and
 `coverage_types` are static coverpoint bin tables (validated for width, key
-order and segment shape), transition automata (`IrCoverTransitions`) and
+order and segment shape; `IrCoverWide` keys a coverpoint of 65 to 128
+bits), transition automata (`IrCoverTransitions`) and
 crosses (`IrCoverCross`, select expressions as boxes of bin ranks);
 `IrCoverageType::merge` selects merged type coverage; `IrStmt::Coverage` creates, configures, samples and
 controls one instance's runtime record, `SampleRegistered` calls a covergroup's

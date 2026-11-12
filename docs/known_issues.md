@@ -3074,8 +3074,13 @@ legal forms remain outside them.
 
 These covergroups reject with located diagnostics:
 
-- a coverpoint wider than 64 bits, or a bins value read from a covergroup
+- a coverpoint wider than 128 bits, or a bins value read from a covergroup
   argument wider than 64 bits;
+- in a coverpoint of 65 to 128 bits: a bins value read from a covergroup
+  argument, an item of more than 2^32 values in a `[]` or `[N]` bins array
+  (or a `[]` transition bin), `ignore_bins` or `illegal_bins` beside
+  automatic bins, `intersect` on it when it has automatic bins, and an enum
+  type;
 - a `wildcard` bins value whose don't-care bits expand to more than 4096
   ranges;
 - transition bins whose expansion exceeds a compile-time budget of one
@@ -3111,7 +3116,9 @@ coverage report.
 ### Cause
 
 `ref` arguments are bound statically per distinct actual tuple. Bins values
-are 64-bit runtime keys. Transition bins are compiled to fixed automata;
+are 64-bit runtime keys; a wider coverpoint maps its values to them through
+value classes built from its constant bins values, so per-value bins need a
+key per value and argument values cannot be placed. Transition bins are compiled to fixed automata;
 when a value reads a covergroup argument, each instance builds its own value
 classes when it is constructed, but the searches that count `[]` sequences,
 remove ignored and illegal sequences and find overlaps run only at compile

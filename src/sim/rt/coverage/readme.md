@@ -34,6 +34,13 @@ coverage is the union of instance bins by 19.11.3 name and a merged bin uses
 the largest `at_least` (S45-D18); merged crosses need equal layouts.
 Option values that 19.7 lets code write live in the mutable instance and
 type records, and queries read them at call time.
+A coverpoint of 65 to 128 bits has 64-bit unsigned keys: generated code
+calls `llg_cov_hit_wide` (out of line), which maps the value through the
+group's `llg_cov_wide_t` class table (one key per class, or per value in an
+exact class) or, for automatic bins, to a key of the bin 19.5.2 gives the
+whole value, then counts through `llg_cov_hit`; messages print the sampled
+value meanwhile (`llg_cov_wide_sample`). Other groups have no `wide` table
+and never reach this path.
 `llg_cov_hit`'s borrow contract is in `llg_rt.h`. Its rare paths (transitions, segment walks, the default bin, illegal-value
 reports, cross ranks, sparse inserts) stay `LLG_NOINLINE` so a plain
 coverpoint's sample keeps a small call frame; inlining them made a sample of

@@ -421,3 +421,62 @@ fn overlap_budget_is_a_located_warning() {
         );
     });
 }
+
+/// Coverpoints of 65 to 128 bits count every bins form at full width
+/// (industry-standard behaviour, probed).
+#[test]
+fn wide_coverpoints_compare_at_full_width() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/wide_points.out");
+    sim_cli::run_case_checked_matrix(SUITE, "wide_points", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(llg_messages(output), Vec::<String>::new(), "{label}");
+    });
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/wide_arguments.out");
+    sim_cli::run_case_checked_matrix(SUITE, "wide_arguments", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(llg_messages(output), Vec::<String>::new(), "{label}");
+    });
+}
+
+/// An illegal value of a wide coverpoint ends the run and is spelled in
+/// full (S45-D3).
+#[test]
+fn wide_illegal_values_end_the_run() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/wide_illegal.out");
+    sim_cli::run_case_checked_matrix(SUITE, "wide_illegal", &[], &|label, output| {
+        ends_run(
+            label,
+            output,
+            expected,
+            &[
+                "ERROR: [SIM-010] covergroup `cg` coverpoint `cp` sampled 1180591620717411303425, a value of illegal_bins `bad` at tb:8:56 (IEEE 1800-2009 19.5.5)",
+                "FATAL: [SIM-009] (tb:8:56 @ 0 ps) illegal_bins value sampled",
+            ],
+        );
+    });
+}
+
+/// The wide forms llg does not serve are located errors.
+#[test]
+fn wide_coverpoint_limits_are_located_errors() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_auto_ignore",
+        "neg_wide_auto_ignore.sv:7:36: ignore_bins and illegal_bins of coverpoint `cp` in covergroup `g`, which is 71 bits wide and has automatic bins: llg removes values from automatic bins only for coverpoints of at most 64 bits (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_exact",
+        "neg_wide_exact.sv:7:37: bins `b` of a coverpoint wider than 64 bits has an item of more than 2^32 values, each a bin or counted in a fixed number of bins; llg supports this only for coverpoints of at most 64 bits (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_point_argument",
+        "neg_wide_point_argument.sv:7:34: bins `b` of a coverpoint wider than 64 bits reads a covergroup argument; llg reads bins values from arguments only for coverpoints of at most 64 bits (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_intersect_auto",
+        "neg_wide_intersect_auto.sv:10:34: binsof in bins `lo` of cross `ab` in covergroup `g` intersects coverpoint `ca`, which is wider than 64 bits and has automatic bins (llg limitation)",
+    );
+}

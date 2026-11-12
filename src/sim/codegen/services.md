@@ -67,7 +67,11 @@ covergroup object and `coverage_ref_actuals` maps each `ref` formal to the
 variable bound by that variant; the owner is the method receiver, so owner
 properties lower as ordinary class fields. Bins are resolved here (19.5.6 on
 the operand of the frontend's conversion to the coverpoint type) into sorted
-disjoint key segments; signed keys flip the sign bit. Transition bins become
+disjoint key segments; signed keys flip the sign bit. A coverpoint of 65 to
+128 bits lowers on 64-bit keys (`coverage/wide.rs`): its items first record
+128-bit value ranges, whose classes (exact, one key per value, inside `[]`
+and `[N]` items) then give every item, transition range and `intersect`
+value its runtime key; `IrCoverWide` carries the classes to the runtime. Transition bins become
 compile-time automata in `coverage/transitions.rs`, whose `Tables::consume`
 mirrors the runtime `llg_cov_consume`; it also sizes `[]` arrays, counts
 coverable sequences and finds `detect_overlap` pairs within fixed budgets
