@@ -1180,9 +1180,10 @@ struct Capture {
   }
 
   // The typedef a declared type names (IEEE 1800-2009 37.23), as the
-  // semantic node of its declaration and the number of packed and fixed
-  // unpacked dimensions declared above it. Canonical type records drop
-  // typedef names, so typespec names come only from these references.
+  // semantic node of its declaration and the number of packed and unpacked
+  // (fixed-size, dynamic, queue or associative) dimensions declared above
+  // it. Canonical type records drop typedef names, so typespec names come
+  // only from these references.
   std::pair<uint64_t, uint64_t> declaredTypedef(const Type& declared) {
     const Type* current = &declared;
     for (uint64_t depth = 0; depth < kMaxTypedefDimensions; depth++) {
@@ -1192,6 +1193,12 @@ struct Capture {
         current = &current->as<PackedArrayType>().elementType;
       else if (current->kind == SymbolKind::FixedSizeUnpackedArrayType)
         current = &current->as<FixedSizeUnpackedArrayType>().elementType;
+      else if (current->kind == SymbolKind::DynamicArrayType)
+        current = &current->as<DynamicArrayType>().elementType;
+      else if (current->kind == SymbolKind::QueueType)
+        current = &current->as<QueueType>().elementType;
+      else if (current->kind == SymbolKind::AssociativeArrayType)
+        current = &current->as<AssociativeArrayType>().elementType;
       else
         break;
     }

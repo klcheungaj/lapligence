@@ -11,7 +11,8 @@ use crate::core::db::{MemberVisibility, RandQualifier};
 use crate::sim::ir::{
     IrClassFieldType, IrContainerElement, IrContainerKind, IrObjectType, IrVpiArrayType,
     IrVpiBuiltin, IrVpiClass, IrVpiClassItem, IrVpiClassItemKind, IrVpiDynamic, IrVpiField,
-    IrVpiKey, IrVpiRand, IrVpiShape, IrVpiStorage, IrVpiVisibility,
+    IrVpiKey, IrVpiRand, IrVpiShape, IrVpiStatic, IrVpiStaticStorage, IrVpiStorage,
+    IrVpiVisibility,
 };
 
 /// Nesting of container element types the capture follows; deeper element
@@ -39,12 +40,9 @@ impl Codegen<'_> {
                 .then_some(IrVpiStorage::Object(index))
             }
             NodeKind::Array { .. } => {
-                let meta = self.db.array_meta(id)?;
                 // A fixed-size array is a container only when its elements
-                // are strings, chandles or class handles; one dimension.
-                if matches!(meta.kind(), ArrayKind::Static) && meta.dimensions().len() != 1 {
-                    return None;
-                }
+                // are strings, handles or unpacked structures kept as
+                // values, of one or more dimensions.
                 let info = self.container_globals.get(&id)?;
                 Some(IrVpiStorage::Container(info.ir))
             }
@@ -81,9 +79,13 @@ impl Codegen<'_> {
                     return None;
                 }
                 if container.initial_size.is_some() {
-                    let (left, right) = self.db.array_meta(id)?.dimensions().first().copied()??;
-                    dims.push((i64::from(left), i64::from(right)));
-                    self.vpi_static_container_shape(dynamic, typespecs, descriptor, container)?
+                    for bounds in self.db.array_meta(id)?.dimensions() {
+                        let (left, right) = (*bounds)?;
+                        dims.push((i64::from(left), i64::from(right)));
+                    }
+                    self.vpi_static_container_shape(
+                        dynamic, typespecs, descriptor, container, false,
+                    )?
                 } else {
                     self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)?
                 }
@@ -123,14 +125,19 @@ impl Codegen<'_> {
         })
     }
 
-    /// The shape of a one-dimensional fixed-size array of strings, chandles
-    /// or class handles (37.17); other element types have no VPI form here.
+    /// The shape of a fixed-size array of strings, chandles, class handles
+    /// or unpacked structures kept as values (37.17), of any number of
+    /// dimensions (its cells are row-major). With `packed`, also of packed
+    /// or real cells: a static class property keeps those in a container,
+    /// while a module array of them is a signal served by the static
+    /// catalog. Other element types have no VPI form here.
     fn vpi_static_container_shape(
         &self,
         dynamic: &mut IrVpiDynamic,
         typespecs: &mut TypespecTable,
         descriptor: &TypeDescriptor,
         container: &crate::sim::ir::IrContainer,
+        packed: bool,
     ) -> Option<IrVpiShape> {
         let TypeShape::FixedArray {
             element: element_type,
@@ -139,17 +146,23 @@ impl Codegen<'_> {
         else {
             return None;
         };
-        if dimensions.len() != 1 {
+        if dimensions.is_empty() {
             return None;
         }
-        let element = self.vpi_element_shape(typespecs, element_type, &container.element, 0);
-        if !matches!(
-            element,
+        let element =
+            self.vpi_element_shape(dynamic, typespecs, element_type, &container.element, 0);
+        let served = match element {
             IrVpiShape::String
-                | IrVpiShape::Chandle
-                | IrVpiShape::Class { .. }
-                | IrVpiShape::Builtin { .. }
-        ) {
+            | IrVpiShape::Chandle
+            | IrVpiShape::Class { .. }
+            | IrVpiShape::Builtin { .. }
+            | IrVpiShape::Record { .. } => true,
+            IrVpiShape::Packed { .. } | IrVpiShape::Real { .. } => {
+                packed && !matches!(container.kind, IrContainerKind::Associative { .. })
+            }
+            _ => false,
+        };
+        if !served {
             return None;
         }
         Some(IrVpiShape::Container {
@@ -233,7 +246,8 @@ impl Codegen<'_> {
         {
             return None;
         }
-        let element = self.vpi_element_shape(typespecs, element_type, &container.element, depth);
+        let element =
+            self.vpi_element_shape(dynamic, typespecs, element_type, &container.element, depth);
         Some(IrVpiShape::Container {
             array_type,
             values: !container.element.is_packed(),
@@ -242,10 +256,105 @@ impl Codegen<'_> {
         })
     }
 
+    /// The shape of a queue, dynamic or associative array nested in a
+    /// container element (37.17 detail 4: a dimension of the outer array);
+    /// `None` for an index type whose elements are not reachable.
+    fn vpi_nested_container_shape(
+        &self,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        element: &IrContainerElement,
+        depth: u32,
+    ) -> Option<IrVpiShape> {
+        let IrContainerElement::Container {
+            kind,
+            key,
+            element: inner,
+            ..
+        } = element
+        else {
+            return None;
+        };
+        let TypeShape::Container {
+            element: inner_type,
+            ..
+        } = &descriptor.shape
+        else {
+            return None;
+        };
+        let (array_type, key) = match key {
+            Some(crate::sim::ir::IrAssocKey::Integral { .. }) => {
+                (IrVpiArrayType::Assoc, IrVpiKey::Integral)
+            }
+            Some(crate::sim::ir::IrAssocKey::String) => (IrVpiArrayType::Assoc, IrVpiKey::String),
+            Some(_) => return None,
+            None if &**kind == crate::sim::ir::NESTED_QUEUE_KIND => {
+                (IrVpiArrayType::Queue, IrVpiKey::None)
+            }
+            None => (IrVpiArrayType::Dynamic, IrVpiKey::None),
+        };
+        let element = self.vpi_element_shape(dynamic, typespecs, inner_type, inner, depth + 1);
+        Some(IrVpiShape::Container {
+            array_type,
+            values: !inner.is_packed(),
+            key,
+            element: dynamic.intern(element),
+        })
+    }
+
+    /// The shape of an unpacked structure kept as a value (37.24): its
+    /// members typed by the declaration, stored as the runtime element
+    /// says. `None` when the two disagree.
+    fn vpi_record_shape(
+        &self,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        element: &IrContainerElement,
+        depth: u32,
+    ) -> Option<IrVpiShape> {
+        let (
+            TypeShape::Aggregate(layout),
+            IrContainerElement::Aggregate {
+                members: stored, ..
+            },
+        ) = (&descriptor.shape, element)
+        else {
+            return None;
+        };
+        if layout.kind != AggregateKind::UnpackedStruct || layout.members.len() != stored.len() {
+            return None;
+        }
+        let mut members = Vec::with_capacity(stored.len());
+        for (declared, stored) in layout.members.iter().zip(stored) {
+            if declared.name != stored.name {
+                return None;
+            }
+            // An array member (fixed-size or a container) is listed
+            // without a value: members of structures are their own family.
+            let shape = match &*stored.element {
+                IrContainerElement::FixedArray { .. } | IrContainerElement::Container { .. } => {
+                    IrVpiShape::Other
+                }
+                element => self.vpi_element_shape(
+                    dynamic,
+                    typespecs,
+                    &declared.descriptor,
+                    element,
+                    depth + 1,
+                ),
+            };
+            members.push((declared.name.clone(), dynamic.intern(shape)));
+        }
+        Some(IrVpiShape::Record { members })
+    }
+
     /// The shape of a container element: the storage kind comes from the
     /// runtime element type, the VPI typing from the declared type.
     fn vpi_element_shape(
         &self,
+        dynamic: &mut IrVpiDynamic,
         typespecs: &mut TypespecTable,
         descriptor: &TypeDescriptor,
         element: &IrContainerElement,
@@ -255,6 +364,12 @@ impl Codegen<'_> {
             return IrVpiShape::Other;
         }
         match element {
+            IrContainerElement::Container { .. } => self
+                .vpi_nested_container_shape(dynamic, typespecs, descriptor, element, depth)
+                .unwrap_or(IrVpiShape::Other),
+            IrContainerElement::Aggregate { .. } => self
+                .vpi_record_shape(dynamic, typespecs, descriptor, element, depth)
+                .unwrap_or(IrVpiShape::Other),
             IrContainerElement::Packed {
                 width,
                 signed,
@@ -370,7 +485,9 @@ impl Codegen<'_> {
                 };
                 match container {
                     Some(container) => model.containers.get(container).and_then(|container| {
-                        self.vpi_static_container_shape(dynamic, typespecs, descriptor, container)
+                        self.vpi_static_container_shape(
+                            dynamic, typespecs, descriptor, container, false,
+                        )
                     }),
                     _ => None,
                 }
@@ -491,6 +608,7 @@ impl Codegen<'_> {
         }
         let mut names = vec![String::new(); model.classes.len()];
         let mut own: Vec<Vec<(usize, IrVpiField)>> = vec![Vec::new(); model.classes.len()];
+        let mut statics: Vec<Vec<IrVpiStatic>> = vec![Vec::new(); model.classes.len()];
         let mut nodes: Vec<(NodeId, usize)> = self
             .class_nodes
             .iter()
@@ -503,6 +621,10 @@ impl Codegen<'_> {
             };
             names[class_index] = self.node(class).name.clone();
             for child in &self.node(class).children {
+                if let Some(entry) = self.vpi_class_static(model, dynamic, typespecs, *child) {
+                    statics[class_index].push(entry);
+                    continue;
+                }
                 let Some((owner, field)) = self.vpi_class_field_index(model, *child) else {
                     continue;
                 };
@@ -590,6 +712,7 @@ impl Codegen<'_> {
             let Some(entry) = dynamic.classes.get_mut(*class_index) else {
                 continue;
             };
+            entry.statics = std::mem::take(&mut statics[*class_index]);
             entry.full_name = self.vpi_class_full_name(*class, 0);
             entry.scope = self.vpi_class_scope(*class);
             entry.is_virtual = self
@@ -605,6 +728,87 @@ impl Codegen<'_> {
             entry.file = node.file().map(str::to_owned);
         }
         constraints
+    }
+
+    /// A static property of a class (8.9) with its model storage and
+    /// value shape: a packed or real variable, a string or handle, or an
+    /// array of values. `None` for any other declaration (an instance
+    /// property, a static event).
+    fn vpi_class_static(
+        &self,
+        model: &IrModel,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+        child: NodeId,
+    ) -> Option<IrVpiStatic> {
+        let mut dims = Vec::new();
+        let (storage, shape) = if let Some(info) = self.class_static_signals.get(&child) {
+            let descriptor = self.db.type_descriptor(child)?;
+            let shape = if info.real {
+                IrVpiShape::Real {
+                    shortreal: info.shortreal,
+                }
+            } else {
+                self.vpi_packed_shape(
+                    typespecs,
+                    descriptor,
+                    info.width,
+                    info.signed,
+                    info.two_state,
+                )
+            };
+            (IrVpiStaticStorage::Signal(info.ir), shape)
+        } else if let Some(index) = self.class_static_objects.get(&child) {
+            let descriptor = self.db.type_descriptor(child)?;
+            let shape = match model.objects.get(*index)?.ty {
+                IrObjectType::String => IrVpiShape::String,
+                IrObjectType::Chandle | IrObjectType::Semaphore => {
+                    self.vpi_handle_shape(descriptor)?
+                }
+                _ => return None,
+            };
+            (IrVpiStaticStorage::Object(*index), shape)
+        } else if let Some(info) = self.event_globals.get(&child) {
+            (IrVpiStaticStorage::Event(info.ir), IrVpiShape::Event)
+        } else {
+            if self.db.variable_lifetime(child) != crate::core::db::VariableLifetime::Static {
+                return None;
+            }
+            let info = self.container_globals.get(&child)?;
+            let container = model.containers.get(info.ir)?;
+            if container.class_field.is_some() || !container.is_global_storage() {
+                return None;
+            }
+            let descriptor = self.db.type_descriptor(child)?;
+            let shape = if container.initial_size.is_some() {
+                for bounds in self.db.array_meta(child)?.dimensions() {
+                    let (left, right) = (*bounds)?;
+                    dims.push((i64::from(left), i64::from(right)));
+                }
+                self.vpi_static_container_shape(dynamic, typespecs, descriptor, container, true)?
+            } else {
+                self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)?
+            };
+            (IrVpiStaticStorage::Container(info.ir), shape)
+        };
+        Some(IrVpiStatic {
+            field: IrVpiField {
+                name: self.node(child).name.clone(),
+                shape: dynamic.intern(shape),
+                rand: match self.db.rand_qualifier(child) {
+                    RandQualifier::None => IrVpiRand::NotRand,
+                    RandQualifier::Rand => IrVpiRand::Rand,
+                    RandQualifier::RandC => IrVpiRand::RandC,
+                },
+                visibility: vpi_visibility(self.db.member_visibility(child)),
+                mode: None,
+                is_const: self.db.is_const_variable(child),
+                line: self.node(child).line,
+                file: self.node(child).file().map(str::to_owned),
+            },
+            storage,
+            dims,
+        })
     }
 
     /// The scope that declares `class` when it is a catalog scope (an

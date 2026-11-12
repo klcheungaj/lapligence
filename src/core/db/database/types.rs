@@ -133,8 +133,9 @@ pub struct TypeDescriptor {
 }
 
 /// The typedef a declared type names (IEEE 1800-2009 37.23): the typedef
-/// declaration node and the number of packed and fixed unpacked dimensions
-/// declared above it (0: the declared type is the typedef itself).
+/// declaration node and the number of packed and unpacked (fixed-size,
+/// dynamic, queue or associative) dimensions declared above it (0: the
+/// declared type is the typedef itself).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TypedefRef {
     pub typedef: NodeId,

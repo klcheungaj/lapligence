@@ -179,7 +179,8 @@ pub use vpi::{
 mod vpi_dynamic;
 pub use vpi_dynamic::{
     IrVpiArrayType, IrVpiBuiltin, IrVpiClass, IrVpiClassItem, IrVpiClassItemKind, IrVpiDynamic,
-    IrVpiField, IrVpiKey, IrVpiRand, IrVpiShape, IrVpiStorage, IrVpiVisibility,
+    IrVpiField, IrVpiKey, IrVpiRand, IrVpiShape, IrVpiStatic, IrVpiStaticStorage, IrVpiStorage,
+    IrVpiVisibility,
 };
 
 /// Upper bound on one generated `llg_net_t`'s driver count. The runtime stores

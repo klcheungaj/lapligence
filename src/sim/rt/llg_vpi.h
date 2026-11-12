@@ -377,6 +377,7 @@ enum {
     LLG_VPI_SHAPE_OTHER = 6,     /* listed without a value */
     LLG_VPI_SHAPE_EVENT = 7,     /* void*: an event property's synchronization object */
     LLG_VPI_SHAPE_VIF = 8,       /* void*: a virtual interface property's environment record */
+    LLG_VPI_SHAPE_RECORD = 9,    /* llg_value_t aggregate: an unpacked structure element */
 };
 /* The built-in class a class handle shape names (class_index 0): its
  * storage is the runtime's mailbox or semaphore, not a collected class
@@ -412,7 +413,18 @@ typedef struct {
      * vpiNamedEventArray, a fixed-size container of events); 0 otherwise. */
     int64_t left;
     int64_t right;
+    /* The member_count members of a record, from first_member in the
+     * member table; 0 otherwise. */
+    uint32_t first_member;
+    uint32_t member_count;
 } llg_vpi_shape_t;
+
+/* One member of a record shape (37.24), in declaration order: the shape of
+ * the value llg_value_t::value.items holds at its position. */
+typedef struct {
+    const char* name;
+    uint32_t shape;
+} llg_vpi_member_t;
 
 typedef struct {
     const char* name;         /* NULL: a hidden runtime field, not a property */
@@ -469,7 +481,20 @@ typedef struct {
     uint32_t item_count;
     uint32_t line;            /* vpiLineNo of the declaration, 0: none */
     const char* file;         /* vpiFile of the declaration, or NULL */
+    uint32_t first_static;    /* static_count static properties the class declares */
+    uint32_t static_count;
 } llg_vpi_class_t;
+
+/* A static property of a class (8.9): the one variable the class and all
+ * its objects share. `field` names and types it (its `mode` is 0). */
+typedef struct {
+    llg_vpi_class_field_t field;
+    void* storage;            /* the value storage of `field.shape` */
+    sv4_t* dependency;        /* a handle's change marker, or NULL */
+    const int64_t* dims;      /* a fixed-size array's (left, right) ranges, leftmost first */
+    uint32_t dim_count;
+    uint32_t class_index;     /* the declaring class layout */
+} llg_vpi_class_static_t;
 
 /* Field kinds the generated object accessor reports, matching the model's
  * class field slots: the shape of a property must agree before VPI reads it. */
@@ -508,6 +533,12 @@ typedef struct {
      * ascending by code row: the method the call names (37.38). */
     const uint32_t* method_calls;
     uint32_t method_call_count;
+    /* The members of the record shapes. */
+    const llg_vpi_member_t* members;
+    uint32_t member_count;
+    /* The static properties of the classes, each class's in one run. */
+    const llg_vpi_class_static_t* statics;
+    uint32_t static_count;
 } llg_vpi_dynamic_tables_t;
 
 /* The dynamic tables of the catalog, borrowed like the catalog and

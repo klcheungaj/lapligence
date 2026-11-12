@@ -675,7 +675,8 @@ pub struct TypeMember {
     pub initializer_constant_id: Option<u64>,
     /// The typedef the member's declared type names (IEEE 1800-2009 37.23):
     /// the semantic node of the typedef declaration and the number of packed
-    /// and fixed unpacked dimensions declared above it.
+    /// and unpacked (fixed-size, dynamic, queue or associative) dimensions
+    /// declared above it.
     pub typedef: Option<(u64, u32)>,
 }
 

@@ -1,0 +1,97 @@
+fixed arrays of more dimensions
+  [tb.s2] array s2 tb.s2 size=6 auto=0
+  ranges of s2: [0:1] [0:2]
+  element string s2[0][0] tb.s2[0][0] size=0 auto=0 ="" parent=s2
+  element string s2[0][1] tb.s2[0][1] size=3 auto=0 ="s01" parent=s2
+  element string s2[0][2] tb.s2[0][2] size=0 auto=0 ="" parent=s2
+  element string s2[1][0] tb.s2[1][0] size=0 auto=0 ="" parent=s2
+  element string s2[1][1] tb.s2[1][1] size=0 auto=0 ="" parent=s2
+  element string s2[1][2] tb.s2[1][2] size=3 auto=0 ="s12" parent=s2
+  s2 by indices 1 2: string s2[1][2] tb.s2[1][2] size=3 auto=0 ="s12" parent=s2
+  s2 by index 1: NULL!
+  [tb.s2[0][2]] string s2[0][2] tb.s2[0][2] size=0 auto=0 ="" parent=s2
+  index of s2[0][2]: 2 0; vpiIndex NULL!
+  put tb.s2[0][2]="w02"
+  [tb.s2[1]] NULL!
+  [tb.h2] array h2 tb.h2 size=4 auto=0
+  element class h2[0][0] tb.h2[0][0] auto=0 =null parent=h2
+  element class h2[0][1] tb.h2[0][1] auto=0 =null parent=h2
+  element class h2[1][0] tb.h2[1][0] auto=0 =object parent=h2
+  element class h2[1][1] tb.h2[1][1] auto=0 =null parent=h2
+nested containers
+  [tb.qq] array qq tb.qq size=3 auto=0
+  leaf int qq[0][0] tb.qq[0][0] size=32 auto=0 =1 parent=qq
+  leaf int qq[0][1] tb.qq[0][1] size=32 auto=0 =2 parent=qq
+  leaf int qq[1][0] tb.qq[1][0] size=32 auto=0 =3 parent=qq
+  [tb.qq[1][0]] int qq[1][0] tb.qq[1][0] size=32 auto=0 =3 parent=qq
+  index of qq[1][0]: 0 1; vpiIndex NULL!
+  put tb.qq[1][0]=30
+  [tb.qq[0]] NULL!
+  qq by index 0: NULL!
+  qq by indices 0 1: NULL!
+  [tb.aq] array aq tb.aq size=3 auto=0
+  leaf int aq[-1][0] tb.aq[-1][0] size=32 auto=0 =10 parent=aq
+  leaf int aq[5][0] tb.aq[5][0] size=32 auto=0 =50 parent=aq
+  leaf int aq[5][1] tb.aq[5][1] size=32 auto=0 =51 parent=aq
+  [tb.aq[5][1]] int aq[5][1] tb.aq[5][1] size=32 auto=0 =51 parent=aq
+  put tb.aq[5][1]=52
+arrays of records
+  [tb.rq] array rq tb.rq size=2 auto=0
+  element struct rq[0] tb.rq[0] size=3 auto=0 parent=rq
+    member int a tb.rq[0].a size=32 auto=0 =1 parent=rq[0]
+    member string s tb.rq[0].s size=3 auto=0 ="one" parent=rq[0]
+    member struct in tb.rq[0].in size=1 auto=0 parent=rq[0]
+      member byte b tb.rq[0].in.b size=8 auto=0 =2 parent=in
+  element struct rq[1] tb.rq[1] size=3 auto=0 parent=rq
+    member int a tb.rq[1].a size=32 auto=0 =3 parent=rq[1]
+    member string s tb.rq[1].s size=5 auto=0 ="three" parent=rq[1]
+    member struct in tb.rq[1].in size=1 auto=0 parent=rq[1]
+      member byte b tb.rq[1].in.b size=8 auto=0 =4 parent=in
+  put tb.rq[1].a=33
+  put tb.rq[1].in.b=44
+  put tb.rq[0].s="uno"
+  [tb.rf[1]] struct rf[1] tb.rf[1] size=3 auto=0 parent=rf
+    member int a tb.rf[1].a size=32 auto=0 =11 parent=rf[1]
+    member string s tb.rf[1].s size=0 auto=0 ="" parent=rf[1]
+    member struct in tb.rf[1].in size=1 auto=0 parent=rf[1]
+      member byte b tb.rf[1].in.b size=8 auto=0 =0 parent=in
+static class properties
+  variable int x NULL! size=32 auto=1 =0
+  variable int si tb.C::si size=32 auto=0 =4
+  variable string ss tb.C::ss size=2 auto=0 ="st"
+  variable array sa tb.C::sa size=2 auto=0
+  variable int ds tb.D::ds size=32 auto=0 =9
+  event event se tb.C::se auto=0
+  [tb.p.si] int si tb.C::si size=32 auto=0 =4
+  [tb.C::sa] array sa tb.C::sa size=2 auto=0
+  ranges of sa: [0:1]
+  [tb.C::sa[0]] int sa[0] tb.C::sa[0] size=32 auto=0 =0 parent=sa
+  put tb.C::sa[0]=20
+  [tb.C::si] int si tb.C::si size=32 auto=0 =4
+  put tb.C::si=40
+  [tb.p.ss] string ss tb.C::ss size=2 auto=0 ="st"
+  put tb.C::ss="ts"
+  [tb.D::ds] int ds tb.D::ds size=32 auto=0 =9
+  put tb.D::ds=90
+  [tb.C::se] event se tb.C::se auto=0
+  trigger tb.C::se
+s2[0][2]=w02 qq[1][0]=30 aq[5][1]=52 rq[1].a=33 rq[0].s=uno rq[1].in.b=44
+si=40 ss=ts sa[0]=20 ds=90 woke=1
+automatics of tb.t
+  element string sm[0][0] tb.t.sm[0][0] size=0 auto=1 ="" parent=sm
+  element string sm[0][1] tb.t.sm[0][1] size=0 auto=1 ="" parent=sm
+  element string sm[1][0] tb.t.sm[1][0] size=4 auto=1 ="sm10" parent=sm
+  element string sm[1][1] tb.t.sm[1][1] size=0 auto=1 ="" parent=sm
+  sm by indices 1 0: string sm[1][0] tb.t.sm[1][0] size=4 auto=1 ="sm10" parent=sm
+  put tb.t.sm[1][0]="w10"
+  leaf int nq[0][0] tb.t.nq[0][0] size=32 auto=1 =5 parent=nq
+  leaf int nq[0][1] tb.t.nq[0][1] size=32 auto=1 =6 parent=nq
+  index of nq[0][1]: 1 0; vpiIndex NULL!
+  put tb.t.nq[0][1]=60
+  element struct rr[0] tb.t.rr[0] size=3 auto=1 parent=rr
+    member int a tb.t.rr[0].a size=32 auto=1 =6 parent=rr[0]
+    member string s tb.t.rr[0].s size=1 auto=1 ="r" parent=rr[0]
+    member struct in tb.t.rr[0].in size=1 auto=1 parent=rr[0]
+      member byte b tb.t.rr[0].in.b size=8 auto=1 =7 parent=in
+  put tb.t.rr[0].in.b=70
+sm[1][0]=w10 nq[0][1]=60 rr[0].a=6 rr[0].s=r rr[0].in.b=70

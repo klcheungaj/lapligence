@@ -2752,6 +2752,15 @@ fn a19_d86_source_locations_and_range_identity() {
 }
 
 #[test]
+fn a19_d87_nested_records_and_static_properties() {
+    run_vpi_decision(
+        "A19-D87_nested_records_and_static_properties",
+        &["task $d87()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D87_nested_records_and_static_properties.out"),
+    );
+}
+
+#[test]
 fn a19_d75_frame_origins() {
     run_vpi_decision(
         "A19-D75_frame_origins",

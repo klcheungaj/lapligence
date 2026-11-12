@@ -1,0 +1,26 @@
+tb.qq size=3
+  qq[0][0]=1 parent=qq
+  qq[0][1]=2 parent=qq
+  qq[1][0]=3 parent=qq
+  by index 0: NULL error=1
+  by indices 1 0: NULL error=1
+tb.qq[1]: NULL error=1
+  tb.qq[1][0] indices: 0 1; vpiIndex NULL error=1
+  tb.s2[1][2] indices: 2 1; vpiIndex NULL error=1
+tb.rq[0] struct=1 size=2 automatic=0
+  member a tb.rq[0].a parent=rq[0]
+  member s tb.rq[0].s parent=rq[0]
+object of D
+  variables: da=NULL/1 si=tb.C::si/0 sa=tb.C::sa/0 ds=tb.D::ds/0
+  events: se=tb.C::se/0
+defn tb.C
+  variables: da=NULL/1 si=tb.C::si/0 sa=tb.C::sa/0
+  events: se=tb.C::se/0
+defn tb.D
+  variables: ds=tb.D::ds/0
+  events:
+tb.p.si: tb.C::si=4
+tb.C::sa[1]: tb.C::sa[1]=7 automatic=0
+tb.p.da[0] automatic=1
+put error=0
+qq[1][0]=30 rq[0].a=50 si=40 sa[1]=7 ds=dd woke=1

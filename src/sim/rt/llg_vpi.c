@@ -364,10 +364,12 @@ static int dyn_tables_valid(void);
 static size_t dyn_static_slot_count(void);
 static void dyn_static_slots(uint32_t base);
 static int dyn_row_valid(const llg_vpi_model_object_t* object);
+static void dyn_release_path(llg_vpi_slot_t* slot);
+static vpiHandle dyn_handle_by_multi_index(llg_vpi_slot_t* slot, const int64_t* indices,
+                                           uint32_t count);
 static int dyn_slot(const llg_vpi_slot_t* slot);
 static vpiHandle dyn_iterate_class_defns(uint32_t scope);
 static vpiHandle defn_handle(uint32_t class_index);
-static int dyn_event_array_property(const llg_vpi_slot_t* slot);
 static int dyn_is_class_scope(const llg_vpi_slot_t* slot);
 static int dyn_type(const llg_vpi_slot_t* slot);
 static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled);
@@ -381,6 +383,7 @@ static int dyn_compare(const llg_vpi_slot_t* a, uint32_t a_index, const llg_vpi_
                        uint32_t b_index);
 static vpiHandle dyn_handle_by_index(llg_vpi_slot_t* slot, PLI_INT32 index);
 static vpiHandle dyn_by_suffix(uint32_t row, const char* suffix);
+static vpiHandle dyn_static_by_name(const char* name);
 static int dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot);
 static int dyn_bind_object_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
 static void dyn_object_cb_added(void);
@@ -998,6 +1001,7 @@ static void release_slot(uint32_t index) {
     /* A call-owned slot released early leaves its call's list first, since
      * the free list reuses next_owned. */
     if (slot->owned) unlink_owned(index);
+    if (slot->kind == SLOT_DYNELEM) dyn_release_path(slot);
     free(slot->items);
     uint32_t generation = slot->generation;
     memset(slot, 0, sizeof(*slot));
@@ -3982,6 +3986,8 @@ static vpiHandle lookup_full_name(const char* name, int* selected) {
         prefix[cut] = name[cut];
     }
     free(prefix);
+    /* A static class property is no catalog row (37.17 detail 25). */
+    if (!found && strstr(name, "::")) found = dyn_static_by_name(name);
     return found;
 }
 
@@ -4417,14 +4423,11 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     }
     int64_t values[16];
     for (int i = 0; i < count; ++i) values[i] = indices[i];
+    /* Fixed-size arrays of strings, handles and structures, containers,
+     * and named event array properties (37.25: one dimension). */
+    if (dyn_slot(slot)) return dyn_handle_by_multi_index(slot, values, (uint32_t)count);
     if (slot->kind != SLOT_OBJECT) {
         if (slot->kind == SLOT_AUTO) return rts_auto_by_multi_index(slot, values, (uint32_t)count);
-        /* 37.25: a named event array property has one dimension. */
-        if (dyn_event_array_property(slot)) {
-            if (count == 1) return dyn_handle_by_index(slot, indices[0]);
-            vpi_error("LLG_VPI_INDEX", "a named event array property has one dimension");
-            return NULL;
-        }
         if (slot->kind == SLOT_ELEMENT && packed_array_typespec(slot->object, slot->element))
             return packed_select(slot->object, slot->element, values, (uint32_t)count, 0);
         if (slot->kind == SLOT_ELEMENT && count == 1)

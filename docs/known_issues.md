@@ -2774,28 +2774,29 @@ with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
   container); among frame automatics (decisions A19-D76, A19-D82 to
-  A19-D84), the elements and members of automatics llg keeps as
-  descriptor-backed values rather than one packed image or real cells
-  (fixed-size arrays wider than the packed transport or of more than one
-  dimension of strings or handles, structures holding a string, real,
-  handle or unpacked array member, arrays of such structures; listed under
-  `vpiAutomatics` with their size and no elements or members), the
+  A19-D84, A19-D87), the elements and members of automatics llg keeps as
+  descriptor-backed values rather than one packed image, real cells or a
+  container (fixed-size arrays wider than the packed transport, a
+  structure holding a string, real, handle or unpacked array member;
+  listed under `vpiAutomatics` with their size and no elements or
+  members), the
   elements of an unpacked array member of an automatic structure, and the
   automatic variables of blocks inside a task or function (llg models no
-  block frames, decisions A19-D44, A19-D76), named event array
-  properties of classes, tasks and functions of packages, the
+  block frames, decisions A19-D44, A19-D76), tasks and functions of
+  packages, the
   statements of class methods and class methods by name, programs, and checker objects (a checker instance is a module
   scope with its variables; VPI-C1);
-- dynamic objects (VPI-O4) other than static string, chandle and class
-  variables and dynamic, queue and associative arrays (of instances,
-  packages, `$unit`, named blocks and tasks and functions) and
-  one-dimensional fixed-size arrays of strings, chandles and class handles
-  (decision A19-D73): automatic ones, fixed-size arrays of more dimensions
-  or of other element types not stored as packed values, static class
-  properties (static event properties included), events other than
-  instance event properties of class objects (decision A19-D45), and
-  virtual interface variables (virtual interface properties of classes are
-  served, decision A19-D72);
+- dynamic objects (VPI-O4) other than string, chandle and class variables,
+  dynamic, queue and associative arrays (nested ones flattened to their
+  innermost elements), fixed-size arrays of strings, chandles, class
+  handles and unpacked structures of any number of dimensions, the elements
+  of arrays of structures with their members, frame automatics of those
+  kinds and static class properties (decisions A19-D73, A19-D76, A19-D82,
+  A19-D87): fixed-size class instance properties, fixed-size arrays of
+  other element types not stored as packed values, events other than event
+  properties of classes (decisions A19-D45, A19-D87), and virtual interface
+  variables (virtual interface properties of classes are served, decision
+  A19-D72);
   mailbox and semaphore objects (`vpiClassType` and `vpiMessages`; their
   typespecs are NULL; `vpiWaitingProcesses` is served, decision A19-D71);
   `foreach` constraints (no 2009 object, decision A19-D37); `vpiTypedef`
@@ -2803,10 +2804,14 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `vpiArgument` of `vpiExtends` and `vpiParamAssign` of class typespecs; a
   parameterized class lists one class defn per specialization, each under
   the class's own name (decision A19-D36);
-  elements of nested containers and of arrays of records or fixed arrays
+  array and container members of an element of an array of structures
   (listed as `vpiUndefined` objects without a value), associative arrays
-  with a wildcard index or keys of more than 64 bits; `vpiFullName` of a dynamic array element
-  inside a class object; `cbValueChange` on chandle variables, class
+  with a wildcard index or keys of more than 64 bits; `vpiFullName` of an
+  element of a container property of a class object (37.17 detail 25
+  gives a non-static class member no full name; industry-standard
+  behaviour names it by the path that reached it, `tb.p.da[1]`, and
+  answers NULL when the object was reached by iteration; pending a
+  decision); `cbValueChange` on chandle variables, class
   properties, strings and arrays (the last three excluded by 38.36.1) and
   `cbSizeChange`; `vpi_put_value` with a
   delay, force or release on a string, property or element (decisions

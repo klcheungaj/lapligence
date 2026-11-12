@@ -58,6 +58,8 @@ pub(super) fn render_vpi_dynamic(
         return;
     }
     out.push_str("/* dynamic objects of the VPI catalog (37.17, 37.29) */\n");
+    // The members of every record shape, one run per shape.
+    let mut members = Vec::new();
     let shapes = dynamic
         .shapes
         .iter()
@@ -107,13 +109,22 @@ pub(super) fn render_vpi_dynamic(
                 | IrVpiShape::Chandle
                 | IrVpiShape::Event
                 | IrVpiShape::VirtualInterface
+                | IrVpiShape::Record { .. }
                 | IrVpiShape::Other => {}
             }
-            // Only an event array names a declared range; the other shapes
-            // leave it zero, so their rows keep their text.
+            // Only an event array names a declared range and only a record
+            // its members; the other shapes leave both zero, so their rows
+            // keep their text.
             let range = match shape {
                 IrVpiShape::EventArray { left, right, .. } => {
                     format!(", INT64_C({left}), INT64_C({right})")
+                }
+                IrVpiShape::Record { members: list } => {
+                    let first = members.len();
+                    members.extend(list.iter().map(|(name, shape)| {
+                        format!("    {{ {}, {shape}u }}", c_string_literal(name))
+                    }));
+                    format!(", 0, 0, {first}u, {}u", list.len())
                 }
                 _ => String::new(),
             };
@@ -136,6 +147,15 @@ pub(super) fn render_vpi_dynamic(
         ));
         "llg_vpi_shapes"
     };
+    let member_table = if members.is_empty() {
+        None
+    } else {
+        out.push_str(&format!(
+            "static const llg_vpi_member_t llg_vpi_members[] = {{\n{}\n}};\n",
+            members.join(",\n")
+        ));
+        Some(members.len())
+    };
     let rows: std::collections::HashMap<&str, usize> = model
         .vpi_objects
         .iter()
@@ -145,14 +165,30 @@ pub(super) fn render_vpi_dynamic(
     let mut fields = Vec::new();
     let mut classes = Vec::new();
     let mut items = Vec::new();
-    for class in &dynamic.classes {
+    let mut statics = Vec::new();
+    let mut static_dims = Vec::new();
+    for (class_index, class) in dynamic.classes.iter().enumerate() {
+        // Static properties whose storage the model keeps; the first and
+        // count trail the class row only when it has some, so other rows
+        // keep their text.
+        let first_static = statics.len();
+        for entry in &class.statics {
+            if let Some(row) = render_static(model, entry, class_index, &mut static_dims) {
+                statics.push(row);
+            }
+        }
+        let static_range = if statics.len() > first_static {
+            format!(", {first_static}u, {}u", statics.len() - first_static)
+        } else {
+            String::new()
+        };
         let scope = class
             .scope
             .as_deref()
             .and_then(|key| rows.get(key))
             .map_or(0, |row| row + 1);
         classes.push(format!(
-            "    {{ {}, {}u, {}u, {}u, {}, {scope}u, {}, {}u, {}u, {}u, {} }}",
+            "    {{ {}, {}u, {}u, {}u, {}, {scope}u, {}, {}u, {}u, {}u, {}{static_range} }}",
             c_string_literal(&class.name),
             class.base.map_or(0, |base| base + 1),
             fields.len(),
@@ -195,6 +231,25 @@ pub(super) fn render_vpi_dynamic(
             items.push(render_class_item(model, item));
         }
     }
+    if !static_dims.is_empty() {
+        out.push_str(&format!(
+            "static const int64_t llg_vpi_static_dims[] = {{ {} }};\n",
+            static_dims
+                .iter()
+                .map(|bound: &i64| format!("INT64_C({bound})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let static_table = if statics.is_empty() {
+        None
+    } else {
+        out.push_str(&format!(
+            "static const llg_vpi_class_static_t llg_vpi_class_statics[] = {{\n{}\n}};\n",
+            statics.join(",\n")
+        ));
+        Some(statics.len())
+    };
     let item_table = if items.is_empty() {
         "NULL".to_owned()
     } else {
@@ -294,15 +349,88 @@ static void* llg_class_vpi_field(void* handle, uint32_t index, unsigned* kind) {
         "llg_vpi_method_calls".to_owned()
     };
     out.push_str(&format!(
-        "static const llg_vpi_dynamic_tables_t llg_vpi_dynamic_tables_value = {{ {shape_table}, {}u, {class_table}, {}u, {field_table}, {}u, {item_table}, {}u, {accessors}, {vif_table}, {}u, {method_table}, {}u }};\n\
+        "static const llg_vpi_dynamic_tables_t llg_vpi_dynamic_tables_value = {{ {shape_table}, {}u, {class_table}, {}u, {field_table}, {}u, {item_table}, {}u, {accessors}, {vif_table}, {}u, {method_table}, {}u{} }};\n\
          static const llg_vpi_dynamic_tables_t* const llg_vpi_dynamic_tables = &llg_vpi_dynamic_tables_value;\n",
         shapes.len(),
         classes.len(),
         fields.len(),
         items.len(),
         vifs.len(),
-        dynamic.method_calls.len()
+        dynamic.method_calls.len(),
+        match (member_table, static_table) {
+            (None, None) => String::new(),
+            (Some(members), None) => format!(", llg_vpi_members, {members}u"),
+            (members, Some(count)) => format!(
+                ", {}, {}u, llg_vpi_class_statics, {count}u",
+                members.map_or("NULL", |_| "llg_vpi_members"),
+                members.unwrap_or(0)
+            ),
+        },
     ));
+}
+
+/// One `llg_vpi_class_static_t` initializer of a static property of class
+/// layout `class_index`, appending a fixed-size array's ranges to `dims`;
+/// `None` when the model keeps no storage for it.
+fn render_static(
+    model: &IrModel,
+    entry: &crate::sim::ir::IrVpiStatic,
+    class_index: usize,
+    dims: &mut Vec<i64>,
+) -> Option<String> {
+    use crate::sim::ir::IrVpiStaticStorage;
+    let (storage, dependency) = match entry.storage {
+        IrVpiStaticStorage::Signal(index) => {
+            let (packed, real, _) = super::signal_storage(model, index)?;
+            (
+                if packed == "NULL" { real } else { packed },
+                "NULL".to_owned(),
+            )
+        }
+        IrVpiStaticStorage::Object(index) => {
+            let object = model.objects.get(index)?;
+            // A handle store publishes the variable's marker; a string
+            // publishes its own.
+            let dependency = if object.ty == crate::sim::ir::IrObjectType::String {
+                "NULL".to_owned()
+            } else {
+                format!("&{}_llg_dep", object.c_name)
+            };
+            (format!("&{}", object.c_name), dependency)
+        }
+        IrVpiStaticStorage::Container(index) => (
+            format!("&{}", model.containers.get(index)?.c_name),
+            "NULL".to_owned(),
+        ),
+        // The handle slot inside the llg_event_t, the same storage an
+        // object's event field has.
+        IrVpiStaticStorage::Event(index) => {
+            let event = model.events.get(index).filter(|event| !event.is_array())?;
+            (format!("&{}.object", event.c_name), "NULL".to_owned())
+        }
+    };
+    let ranges = if entry.dims.is_empty() {
+        "NULL".to_owned()
+    } else {
+        let first = dims.len();
+        dims.extend(entry.dims.iter().flat_map(|(left, right)| [*left, *right]));
+        format!("&llg_vpi_static_dims[{first}]")
+    };
+    let field = &entry.field;
+    Some(format!(
+        "    {{ {{ {}, {}u, {}, {}, 0u, {}u, {}u, {} }}, (void*){storage}, {dependency}, {ranges}, {}u, {class_index}u }}",
+        c_string_literal(&field.name),
+        field.shape,
+        field.rand.c_code(),
+        field.visibility.c_code(),
+        u8::from(field.is_const),
+        field.line,
+        field
+            .file
+            .as_deref()
+            .map_or_else(|| "NULL".to_owned(), c_string_literal),
+        entry.dims.len()
+    ))
 }
 
 /// One `llg_vpi_class_item_t` initializer.

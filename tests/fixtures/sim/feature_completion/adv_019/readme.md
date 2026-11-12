@@ -884,12 +884,72 @@ not have a value property"). Its members are not served: llg keeps the
 record without member cells the frame names (a known gap). `g=18` is
 `(5 + 1) + 4'hc`.
 
+## deep (37.17, 37.24, 37.25, 37.27, 37.29, decision A19-D87)
+
+`deep.sv` declares a fixed-size array of strings `s2[2][3]` and of class
+handles `h2[2][2]`, a nested queue `qq[$][$]`, an associative array of
+queues `aq[int][$]`, a queue `rq` and a fixed-size array `rf` of an unpacked
+structure `rec_t` (an `int`, a `string` and a nested structure), a class `C`
+with static properties `si`, `ss`, `sa[2]` and the static event `se`, a
+derived class `D` with the static `ds`, and the automatic task `t` with
+locals `sm[2][2]` (strings), `nq[$][$]` and `rr[$]` (records). `deep.c`
+prints, for each object it reaches, the type, `vpiName`, `vpiFullName`,
+`vpiSize` (not for class handles and events: 37.17 detail 9 leaves it
+undefined), `vpiAutomatic`, the value and `vpiParent`; `!` marks an answer
+that raised an error. `adv_019::deeper_dynamic_objects_give_elements_members_and_static_properties`
+runs it in both optimizer modes with both value backends.
+
+- Fixed arrays of more dimensions: `vpiSize` is the 6 elements (detail 9,
+  L58760: "the number of variables in the array"), `vpiRange` one range per
+  dimension leftmost first (detail 4, L58744-58745), the elements listed in
+  row-major order and named by all their indices. `vpi_handle_by_multi_index`
+  selects `s2[1][2]`; `vpi_handle_by_index` and the name `tb.s2[1]` with
+  fewer indices give NULL and an error (no subarray object, A20-D23).
+  `vpiIndex` iterates `2 0`, the element's own index first and then outward
+  (detail 5, L58751-58753, A19-D28), and `vpi_handle(vpiIndex)` is NULL with
+  an error (detail 5 defines it for one dimension only).
+- Nested containers are flattened (A19-D87): `qq` has 3 innermost elements,
+  named `qq[0][0]` to `qq[1][0]`, each with `qq` as its parent; `aq` lists
+  its keys in order (`aq[-1][0]`, `aq[5][0]`, `aq[5][1]`). A leaf is found
+  and written by its full name; `tb.qq[0]`, an index and a multi-index on
+  the array give NULL and an error.
+- Arrays of records: an element is a `vpiStructVar` with `vpiSize` 3, its
+  number of fields (detail 9, L58763), listing its members (37.24 detail 1)
+  with full names `tb.rq[0].a` and the element as parent; a nested
+  structure recurses. Puts to `rq[1].a`, `rq[1].in.b` and `rq[0].s` reach
+  the design (`rq[1].a=33 rq[0].s=uno rq[1].in.b=44`).
+- Elements of module arrays report `vpiAutomatic` 0, those of the task's
+  locals 1 (37.3.7).
+- Static class properties: the object of `D` lists its instance property
+  `x` (no full name, detail 25, L58825) and then `si`, `ss`, `sa` of `C`
+  and `ds` of `D`, with `vpiAutomatic` 0, and `se` under `vpiNamedEvent`
+  (37.29). Their full names are `tb.C::si` and `tb.D::ds` (detail 25,
+  L58837: "The vpiFullName for p.Id is "top.Packet::Id""), also when
+  reached through `tb.p.si`; the names `tb.C::sa`, `tb.C::sa[0]`, `tb.C::si`,
+  `tb.D::ds` and `tb.C::se` find them. The puts give `si=40 ss=ts sa[0]=20
+  ds=90`, and the put to `se` triggers it: the process waiting on `C::se`
+  sets `woke=1`.
+- `$deep(2)` walks the task's automatics: `sm` lists its four elements in
+  row-major order and takes a multi-index and a put (`sm[1][0]=w10`), `nq`
+  lists its leaves (`vpiIndex` of `nq[0][1]` is `1 0`) and takes a put
+  (`nq[0][1]=60`), and the element of `rr` gives its members; the put to
+  `rr[0].in.b` gives `70`.
+
+Strings report their length as `vpiSize` (`s01` is 3); industry-standard
+behaviour answers 1, gives a structure element `vpiSize` 1, lists indices
+outermost first, names static properties by the path that reached them and
+finds none under `C::`, and spells integral keys with a leading zero
+(decision A19-D87 records these differences).
+
 ## catalog (A01, A03; 37.3, 38.3, 38.6, 38.18, 38.23, 38.40, 40.5.3)
 
 `catalog.sv` holds an object of most kinds the VPI catalog
 (`src/sim/rt/vpi_catalog.txt`) lists: instances and instance arrays,
 interfaces with a modport, ports, nets and net arrays, every variable kind,
-class, string and container variables, parameters, gates, a UDP and a
+class, string and container variables (a two-dimensional string array, a
+nested queue and a queue of structures included, with the same kinds as
+automatics of the walking task), static class properties (a variable and an
+event, decision A19-D87), parameters, gates, a UDP and a
 switch, a module path, a timing check and a specparam, continuous assignments, a generate
 loop with its genvar (decision A19-D42), sequences, properties and concurrent assertions, tasks and functions
 with most statement and expression kinds (a `wait_order` statement that

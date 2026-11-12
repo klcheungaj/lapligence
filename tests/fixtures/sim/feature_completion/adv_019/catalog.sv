@@ -90,6 +90,10 @@ module tb;
     event steps [0:1];
     // A virtual interface property (37.27 detail 7, 37.29 detail 7).
     virtual bus_if vif;
+    // Static properties: one variable and one event of the class (37.17
+    // detail 25, 37.27 detail 4).
+    static int count = 3;
+    static event ping;
     function new(int i);
       id = i;
     endfunction
@@ -154,6 +158,11 @@ module tb;
   int q[$];
   int qs;
   int aa[int];
+  // A fixed-size array of strings of two dimensions, a nested queue and a
+  // queue of records (37.17): their elements are dynamic objects.
+  string s2 [0:1][0:1];
+  int nq[$][$];
+  rec_t rq[$];
   event ev;
   event ev2;
   // A named event array (37.25).
@@ -313,6 +322,12 @@ module tb;
 
   // The walk runs inside a task so that it reaches a frame (37.39).
   task automatic catalog_walk;
+    string sm [0:1][0:1];
+    int nl[$][$];
+    rec_t rl[$];
+    sm[0][1] = "m";
+    nl.push_back('{3});
+    rl.push_back(rec);
     $catalog;
   endtask
 
@@ -333,6 +348,9 @@ module tb;
     qs = q.sum() with (item * 2) + p.get() + sq.area(0);
     aa[3] = 4;
     rec.a = 1;
+    s2[1][0] = "x";
+    nq.push_back('{1, 2});
+    rq.push_back(rec);
     mem[1] = 4'h2;
     assert (iv == 1);
     begin

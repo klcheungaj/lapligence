@@ -21,9 +21,10 @@ pub enum IrVpiArrayType {
     Dynamic,
     Queue,
     Assoc,
-    /// A one-dimensional fixed-size array whose elements are strings,
-    /// chandles or class handles (37.17): its row's `dims` give the
-    /// declared range the element indices follow.
+    /// A fixed-size array whose elements are strings, chandles, class
+    /// handles or unpacked structures kept as values (37.17): its row's
+    /// `dims` give the declared ranges, leftmost first, that the element
+    /// indices follow; elements are stored in row-major order.
     Static,
 }
 
@@ -103,7 +104,13 @@ pub enum IrVpiShape {
     /// 7): a reference object whose storage is the handle naming the
     /// interface instance's environment record.
     VirtualInterface,
-    /// Events, records, nested fixed arrays: listed, without a value.
+    /// An unpacked structure kept as a value (37.17, 37.24): a container
+    /// element, a struct var whose members are `(name, shape index)` in
+    /// declaration order.
+    Record {
+        members: Vec<(String, usize)>,
+    },
+    /// Events, unions, fixed arrays inside values: listed, without a value.
     Other,
 }
 
@@ -121,6 +128,7 @@ impl IrVpiShape {
             Self::Event => "vpiNamedEvent",
             Self::EventArray { .. } => "vpiNamedEventArray",
             Self::VirtualInterface => "vpiRefObj",
+            Self::Record { .. } => "vpiStructVar",
             Self::Other => "vpiUndefined",
         }
     }
@@ -138,6 +146,7 @@ impl IrVpiShape {
             // Elements are reached as those of any fixed-size container.
             Self::EventArray { .. } => "LLG_VPI_SHAPE_CONTAINER",
             Self::VirtualInterface => "LLG_VPI_SHAPE_VIF",
+            Self::Record { .. } => "LLG_VPI_SHAPE_RECORD",
             Self::Other => "LLG_VPI_SHAPE_OTHER",
         }
     }
@@ -285,6 +294,34 @@ pub struct IrVpiClassItem {
     pub(in crate::sim) mode_signal: Option<usize>,
 }
 
+/// The model storage of a static class property (8.9): one variable the
+/// class and all its objects share.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrVpiStaticStorage {
+    /// A packed or real property (index into [`IrModel::signals`]).
+    Signal(usize),
+    /// A string or handle property (index into [`IrModel::objects`]).
+    Object(usize),
+    /// A dynamic, queue, associative or fixed-size array of values (index
+    /// into [`IrModel::containers`]).
+    Container(usize),
+    /// An `event` property (index into [`IrModel::events`], never an
+    /// array): the storage is the event's handle slot, as for an object's
+    /// event field.
+    Event(usize),
+}
+
+/// A static property of a class (37.17 detail 25, 37.27 detail 4): listed
+/// with the properties of the class definition and of its objects.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrVpiStatic {
+    /// Name, shape and qualifiers; `mode` is always `None`.
+    pub(in crate::sim) field: IrVpiField,
+    pub(in crate::sim) storage: IrVpiStaticStorage,
+    /// Declared ranges of a fixed-size array, leftmost first.
+    pub(in crate::sim) dims: Vec<(i64, i64)>,
+}
+
 /// One class layout (index-aligned with [`IrModel::classes`]): every object
 /// field, base class fields first; `None` marks a hidden runtime field
 /// (randomization mode bits) that is not a property.
@@ -309,6 +346,8 @@ pub struct IrVpiClass {
     /// 0 when unknown.
     pub(in crate::sim) line: u32,
     pub(in crate::sim) file: Option<String>,
+    /// The static properties the class declares, in declaration order.
+    pub(in crate::sim) statics: Vec<IrVpiStatic>,
 }
 
 /// Shapes and class layouts of the dynamic catalog objects.
@@ -345,6 +384,9 @@ impl IrVpiDynamic {
                     *element < index && self.shapes[*element] == IrVpiShape::Event
                 }
                 IrVpiShape::Class { class } => class.is_none_or(|class| class < self.classes.len()),
+                IrVpiShape::Record { members } => members
+                    .iter()
+                    .all(|(name, shape)| *shape < index && !name.contains('\0')),
                 IrVpiShape::Packed {
                     width, typespec, ..
                 } => {
@@ -374,6 +416,19 @@ impl IrVpiDynamic {
                     field.shape >= self.shapes.len()
                         || field.name.contains('\0')
                         || field.mode.is_some_and(|mode| mode >= layout.fields.len())
+                })
+                || class.statics.iter().any(|entry| {
+                    entry.field.shape >= self.shapes.len()
+                        || entry.field.name.contains('\0')
+                        || entry.field.mode.is_some()
+                        || match entry.storage {
+                            IrVpiStaticStorage::Signal(index) => index >= model.signals.len(),
+                            IrVpiStaticStorage::Object(index) => index >= model.objects.len(),
+                            IrVpiStaticStorage::Container(index) => index >= model.containers.len(),
+                            IrVpiStaticStorage::Event(index) => {
+                                model.events.get(index).is_none_or(|event| event.is_array())
+                            }
+                        }
                 })
                 || class.items.iter().any(|item| {
                     item.name.contains('\0')
@@ -443,6 +498,25 @@ mod tests {
         };
         assert!(dynamic.validate(&model).is_ok());
         dynamic.shapes.push(IrVpiShape::Class { class: Some(0) });
+        assert!(dynamic.validate(&model).is_err());
+    }
+
+    #[test]
+    fn a_record_member_must_precede_the_record_and_its_name_hold_no_nul() {
+        let model = IrModel::new("tb".to_owned(), 1).expect("model");
+        let mut dynamic = IrVpiDynamic::default();
+        let string = dynamic.intern(IrVpiShape::String);
+        dynamic.intern(IrVpiShape::Record {
+            members: vec![("s".to_owned(), string)],
+        });
+        assert!(dynamic.validate(&model).is_ok());
+        dynamic.shapes.push(IrVpiShape::Record {
+            members: vec![("self".to_owned(), 2)],
+        });
+        assert!(dynamic.validate(&model).is_err());
+        dynamic.shapes[2] = IrVpiShape::Record {
+            members: vec![("a\0b".to_owned(), string)],
+        };
         assert!(dynamic.validate(&model).is_err());
     }
 }
