@@ -122,6 +122,35 @@ impl Codegen<'_> {
             .collect()
     }
 
+    /// The declarations a randomize receiver names (`req`, `env.req`,
+    /// `this.req` without its `this`), when it is a plain variable path; a
+    /// constraint naming the same path names the randomized object, which
+    /// the receiver held when the call evaluated it (18.7). Empty for any
+    /// other receiver.
+    fn receiver_path(&self, receiver: NodeId) -> Vec<NodeId> {
+        let mut refs = match self.kind(receiver) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => vec![*target],
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .iter()
+                .copied()
+                .collect::<Option<Vec<_>>>()
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        if refs.len() > 1 && self.node(refs[0]).name == "this" {
+            refs.remove(0);
+        }
+        if refs
+            .iter()
+            .any(|reference| self.node(*reference).name == "this")
+        {
+            return Vec::new();
+        }
+        refs
+    }
+
     fn lower_class_randomize(
         &mut self,
         path: &str,
@@ -222,6 +251,9 @@ impl Codegen<'_> {
         // Container properties a constraint reads as state are those of the
         // randomized object; only `this` is the enclosing method's receiver.
         let explicit_object = receiver.is_some_and(|receiver| self.node(receiver).name != "this");
+        let receiver_path = receiver
+            .map(|receiver| self.receiver_path(receiver))
+            .unwrap_or_default();
         for class in &cases {
             bodies.push(self.class_randomize_case(
                 path,
@@ -233,6 +265,7 @@ impl Codegen<'_> {
                 result,
                 &site,
                 explicit_object,
+                &receiver_path,
             )?);
         }
         statements.extend(self.class_case_chain(&local, &object, &cases, bodies));
@@ -303,6 +336,7 @@ impl Codegen<'_> {
         result: &str,
         site: &str,
         explicit_object: bool,
+        receiver_path: &[NodeId],
     ) -> Result<Vec<IrStmt>, String> {
         let chain = self.class_chain(class);
         let class_name = self.node(class).name.clone();
@@ -408,6 +442,7 @@ impl Codegen<'_> {
             });
         let mut scoped = RandLowering::new(classes, Some(object.clone()), placeholders);
         scoped.inline_local = caller_overlap;
+        scoped.receiver_path = receiver_path.to_vec();
         let saved = self.rand_lowering.replace(scoped);
         let bound = if explicit_object {
             self.bind_constraint_containers(&chain, &effective, inline, object)

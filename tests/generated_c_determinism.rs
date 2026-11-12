@@ -9,7 +9,11 @@ use crate::sim_harness;
 /// Fixtures and how many times each is generated. Generic class
 /// specializations come from a frontend hash map whose order changes between
 /// processes, so those fixtures run more often to catch an order leak.
-const FIXTURES: [(&str, usize); 5] = [
+/// The frontend also creates a specialization from whichever reference
+/// reaches it first, keeping that spelling of its type parameter, so a type
+/// reached through two spellings (`specialization_spellings`) catches an
+/// order key that reads the spelling.
+const FIXTURES: [(&str, usize); 6] = [
     (
         "data_types_next/static_function_executable_assignments.sv",
         3,
@@ -18,6 +22,10 @@ const FIXTURES: [(&str, usize); 5] = [
     ("compact_names/names.sv", 3),
     ("feature_completion/sim_006/generic_specializations.sv", 6),
     ("feature_completion/sim_006/class_container_forms.sv", 6),
+    (
+        "feature_completion/ki_uvm_run/specialization_spellings.sv",
+        6,
+    ),
 ];
 
 fn snapshot_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {

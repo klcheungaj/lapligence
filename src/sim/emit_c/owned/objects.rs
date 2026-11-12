@@ -725,9 +725,8 @@ impl Frame<'_, '_> {
     pub(super) fn class_handle_property(&self, name: &str) -> Option<IrNativeAccess> {
         self.ctx
             .model
-            .native_accesses
-            .iter()
-            .find(|access| access.name == name)
+            .native_access(name)
+            .map(|(_, access)| access)
             .filter(|access| match access.kind {
                 IrNativeAccessKind::ClassField { class, field } => {
                     let layout = &self.ctx.model.classes[class].fields[field];

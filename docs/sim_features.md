@@ -358,8 +358,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   §7). Refs to real queue, dynamic and associative elements remain rejected
   ([known issue](known_issues.md#real-references-and-real-array-expressions-outside-stable-storage));
   NBAs to automatic reals are illegal. V §3.9 **[1995]**.
-- 🟦 **Typedefs and enums** — Simple/packed aliases resolve through the frontend.
-  Enums retain nominal identity, base width and sparse signed declaration-order
+- 🟦 **Typedefs and enums** — Simple/packed aliases resolve through the frontend;
+  a forward `typedef class` in a module or package only names a later class.
+  `$typename` of a type parameter spells the parameter where the frontend
+  first met the type, not the resolved type (known issue). Enums retain nominal identity, base width and sparse signed declaration-order
   values. `first/last/next/prev/num/name` support wrapping counts, owned names and
   two-/four-state invalid-value defaults. SV §§6.18–6.19 **[SV-2005]**.
 - 🟨 **Structures and untagged unions** — Packed members preserve state/sign and
@@ -534,7 +536,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   them in and out and pattern actuals build at the call. Unpacked array
   concatenations (§10.10) assign element values to queues and dynamic
   arrays, and queues also combine queues and queue slices
-  (`q = {q[1:$], x}`); array items assigned to a dynamic array reject.
+  (`q = {q[1:$], x}`); array items assigned to a dynamic array reject. A
+  whole fixed array of strings, handles or records assigned to a dynamic
+  array copies element by element (SV §7.6, [ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
   Declaration initializers accept any whole-container source (`new[n]`,
   `new[n](src)`, copies, concatenations); static ones run in the declaration
   initialization schedule after what they read.
@@ -673,7 +677,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (static and automatic, timed tasks with `ref` formals, class methods and
   static class members of package classes, forks in package tasks) execute
   from every importer (FIN-001 probes). Instance-hierarchical names are not constant-expression operands;
-  lexical package references remain distinct. SV §26 **[SV-2005]**.
+  lexical package references remain distinct. Among initializers that read
+  nothing from one another, class static properties run first, then package
+  and `$unit` variables, then the design hierarchy (decision S22-D8). A
+  package defined twice (a guarded header compiled on its own and included
+  again in another compilation unit; the frontend warns) is simulated once, as
+  every reference binds the first definition
+  ([ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
+  SV §26 **[SV-2005]**.
 - 🟦 **Interfaces and modports** — Concrete storage, instance-local processes,
   parameterized interfaces, member references and modport views are represented.
   `.name` and `.*` connection shorthands retain their resolved links. Modport
@@ -1838,7 +1849,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Fixed arrays of native records, of any dimension, cross input, output and
   `ref` formals and fixed arrays of strings copy in and out of calls
   (SIM-007); a row of a multidimensional one is an input, output or inout
-  actual.
+  actual. A string-returning function called in an expression copies out its
+  packed output and inout formals as other expression calls do
+  ([ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and
@@ -2027,6 +2040,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   and depth-64 markers), and `null`/`chandle`/`event`/`interface`/`process`
   for other handles; output is capped at 1 MiB with a warning
   ([sim_024](../tests/fixtures/sim/feature_completion/sim_024/readme.md)).
+  A class pattern leaves embedded covergroup instances out ([ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
   Tagged unions and semaphore/mailbox handles reject under `%p`; non-`%p`
   conversions of unpacked values or handles reject. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
 - 🟨 **Postponed output** — Strobes print once at the end of their slot, after
@@ -2513,7 +2527,9 @@ These are bounded implementations, not full verification-infrastructure support.
   SV ch.8 **[SV-2005]**.
 - 🟨 **Virtual interfaces** — Typed instance/modport identity survives rebinding,
   class/formal storage, record members, fixed arrays (any range) and dynamic,
-  queue and associative storage. Packed member access (also through class
+  queue and associative storage, function results and class type parameters
+  (a configuration database's `T read()` and `inout T` copy-out;
+  [ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)). Packed member access (also through class
   properties and record members), methods, null/type checks and clocking-input
   samples are present. Timed tasks dispatch through any receiver storage and
   stay on the instance named at the call while the variable is rebound; event
@@ -2702,7 +2718,7 @@ These are bounded implementations, not full verification-infrastructure support.
 
 | Area | Implemented forms |
 | --- | --- |
-| Attempts and actions | Preponed packed sampling, Observed resolution, overlapping attempts, vacuity accounting and Reactive actions. `cover sequence` runs its pass statement for every nonempty match of an attempt (SV §16.15.3). An implication attempt `R \|-> P` reports one result (SV §16.13.6): a failure as soon as one consequent started by a match of `R` fails, otherwise a success once `R` can match no more and every such consequent has succeeded; an antecedent that can always match again (`b[->1:$]`) leaves the attempt pending. A procedural `expect` starts exactly one attempt (SV §16.18) and runs its action block in the calling process after it resumes, so the block can assign the caller's automatic variables. Action blocks may contain timing controls; each execution is its own process, so overlapping actions suspend independently while new attempts continue. Each assertion of an `initial` procedure made only of concurrent assertions (labeled or not, in any nesting of `begin`-`end` blocks) starts one attempt (SV §16.15.6, [AH-D1](lrm_decisions.md#assertion-procedure-shapes-follow-up-to-sim-038-and-sim-039)). At the end of simulation a pending attempt that waits on an `s_eventually` obligation fails and every other pending attempt, with weak or other strong obligations, ends without a result ([SIM-038](../tests/fixtures/sim/feature_completion/sim_038/readme.md), [decisions S38-D1-D10](lrm_decisions.md#ordinary-properties-actions-and-expect-sim-038), A13-D7). A `cover property` counts every success except the vacuous success of an implication or else-less `if` (S38-D10). `restrict property` is accepted everywhere a concurrent assertion may appear and, as SV §16.15.4 requires, is not verified in simulation; `llg` reports each such statement once as an `ELAB-005` INFO. |
+| Attempts and actions | Preponed packed sampling (`$countones`, `$onehot`, `$onehot0` and `$isunknown` of sampled values included, [ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)), Observed resolution, overlapping attempts, vacuity accounting and Reactive actions. `cover sequence` runs its pass statement for every nonempty match of an attempt (SV §16.15.3). An implication attempt `R \|-> P` reports one result (SV §16.13.6): a failure as soon as one consequent started by a match of `R` fails, otherwise a success once `R` can match no more and every such consequent has succeeded; an antecedent that can always match again (`b[->1:$]`) leaves the attempt pending. A procedural `expect` starts exactly one attempt (SV §16.18) and runs its action block in the calling process after it resumes, so the block can assign the caller's automatic variables. Action blocks may contain timing controls; each execution is its own process, so overlapping actions suspend independently while new attempts continue. Each assertion of an `initial` procedure made only of concurrent assertions (labeled or not, in any nesting of `begin`-`end` blocks) starts one attempt (SV §16.15.6, [AH-D1](lrm_decisions.md#assertion-procedure-shapes-follow-up-to-sim-038-and-sim-039)). At the end of simulation a pending attempt that waits on an `s_eventually` obligation fails and every other pending attempt, with weak or other strong obligations, ends without a result ([SIM-038](../tests/fixtures/sim/feature_completion/sim_038/readme.md), [decisions S38-D1-D10](lrm_decisions.md#ordinary-properties-actions-and-expect-sim-038), A13-D7). A `cover property` counts every success except the vacuous success of an implication or else-less `if` (S38-D10). `restrict property` is accepted everywhere a concurrent assertion may appear and, as SV §16.15.4 requires, is not verified in simulation; `llg` reports each such statement once as an `ELAB-005` INFO. |
 | Clock/disable flow | Every clocking event form as an assertion clock (SV §§14.13-14.14, 16.5, 16.14): edges, `edge`, value changes, event lists, bit selects, clocking-block events, `iff` gates (leading or not) and `$global_clock`, each ticking at most once per time step ([A13-D5](lrm_decisions.md#multiclock-and-recursive-assertions-adv-013)); an edge whose `iff` condition is false at the edge is no clock tick. Clock flow of SV §16.14.3 and Annex F.5.1 across operators, parentheses, juxtaposed clocks and instances, with semantic leading clocks (SV §16.17.1), nearest default-clock inheritance and procedure clocks (an inferred `edge` clock included, SV §16.15.6); `$inferred_clock`/`$inferred_disable` formal defaults resolve at the instance (SV §16.15.7, A13-D6). `disable iff` takes any side-effect-free Boolean expression of current values (a non-signal condition becomes a hidden continuously driven net) and acts asynchronously; `default disable iff` applies to the concurrent assertions of its module and generate blocks without their own `disable iff` (not to child instances or `expect`, SV §16.16). `accept_on/reject_on` (nestable anywhere in a property) act in the time step their condition holds, read with its current value after that step's clock ticks, and with its sampled value at a tick where an evaluation starts or ends ([S38-D13](lrm_decisions.md#ordinary-properties-actions-and-expect-sim-038)); `sync_accept_on/sync_reject_on` at clock ticks (SV §16.13.14). |
 | Sequences | Multiclocked concatenation with `##1`/`##0` between clocks (SV §16.14.1), with the 16.14.1 restrictions diagnosed; per clock, composition under Annex F: nested `##` concatenation with fixed, ranged and unbounded delays; consecutive repetition of Booleans and of whole sequences (`[*m:n]`, `[*]`, `[+]`, empty-admitting bodies) and nonconsecutive/goto repetition; empty matches; `or`; multi-cycle `and`, `intersect`, `throughout` and `within` (runtime joins that pair operand endpoints and drop threads that can no longer pair); `first_match`. Matches are counted with multiplicity (SV §§16.9.5, 16.9.7, 16.9.8): each `or` operand, each pair of `and`/`intersect` operand matches and each delay or repetition choice is a distinct match, observable through `cover sequence` and once-per-match match items; ways of matching the empty word count once. Live sequence threads are bounded by `LLG_SEQUENCE_THREAD_LIMIT` (default 1,000,000); exhaustion is a reported execution error. |
 | Properties and instances | Every property operator of SV §16.13, singly or multiply clocked (SV §16.14.2, coincident and separate ticks of irregular clocks, [ADV-013](../tests/fixtures/sim/feature_completion/adv_013/readme.md), [decisions A13-D1-D8](lrm_decisions.md#multiclock-and-recursive-assertions-adv-013)): sequence properties with `strong`/`weak` and the assertion-kind default, `not`, `and`, `or`, `implies`, `iff`, `\|->`/`\|=>` with property consequents, `#-#`/`#=#`, `if`/`if-else`, `case`, `nexttime`/`s_nexttime [n]`, `always`/`always [m:n]`/`always [m:$]`, `s_always [m:n]`, `eventually [m:n]`, `s_eventually`/`s_eventually [m:n]`/`[m:$]`, `until`/`s_until`/`until_with`/`s_until_with` and nested aborts, evaluated per attempt by the runtime property engine with 16.15.8 vacuity. Recursive properties (SV §16.13.17), including mutual recursion, recursion across clocks and under aborts, run as calls of an earlier expansion with the same actuals (Annex F.7); local variable formals and declared locals with declaration assignments are passed by value, one copy per recursion level and per semantic leading clock (SV §§16.8.2, 16.10, 16.14.7, [A13-D8](lrm_decisions.md#multiclock-and-recursive-assertions-adv-013); remaining shapes in the [known issue](known_issues.md#multiclock-and-recursive-assertion-limits-after-adv-013)); locals flow through nested implications, and `if`/`case` conditions may read them; the four 16.13.17 restrictions are diagnosed. Single-clock results are checked against an Annex F interpreter on every two-signal trace of length 5, and multiclocked and recursive ones against an Annex F interpreter on randomized traces of two irregular clocks. Named sequence/property instances take positional/named/default arguments. |
@@ -3238,7 +3254,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   functions with their 18.5.11 ordering (one call per occurrence, with loop
   indices, array elements and other objects' variables as arguments, and in
   objects reached through `rand` handles), 18.5.12 guards, `randomize() with`
-  (also `with (identifier_list)`), variable lists and `randomize(null)`,
+  (also `with (identifier_list)`; a path in it that repeats the receiver's,
+  as in `req.randomize() with { req.size == 1; }`, names the randomized
+  object, [ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)), variable lists and `randomize(null)`,
   `std::randomize()` of variables and of fixed, dynamic and queue arrays of any scope with and without
   `with`, `rand_mode`/`constraint_mode` in every form, and `pre_randomize`/
   `post_randomize`. Values come from an in-house C11 solver: exact BDD

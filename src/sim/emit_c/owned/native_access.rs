@@ -108,10 +108,8 @@ impl Frame<'_, '_> {
         let Some(access) = self
             .ctx
             .model
-            .native_accesses
-            .iter()
-            .find(|a| a.name == name)
-            .cloned()
+            .native_access(name)
+            .map(|(_, access)| access.clone())
         else {
             return Ok(None);
         };
@@ -431,10 +429,8 @@ impl Frame<'_, '_> {
         let Some(access) = self
             .ctx
             .model
-            .native_accesses
-            .iter()
-            .find(|access| access.name == name)
-            .cloned()
+            .native_access(name)
+            .map(|(_, access)| access.clone())
         else {
             return Ok(());
         };
@@ -460,10 +456,8 @@ impl Frame<'_, '_> {
         let Some(access) = self
             .ctx
             .model
-            .native_accesses
-            .iter()
-            .find(|access| access.name == name)
-            .cloned()
+            .native_access(name)
+            .map(|(_, access)| access.clone())
         else {
             return Ok(None);
         };

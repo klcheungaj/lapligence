@@ -3294,6 +3294,172 @@ FSM sections of another model), `option_kinds.sv` (`--code-coverage`);
 `tests/fixtures/sim/feature_completion/adv_017/neg_fsm_width.sv` (a 65-bit
 state vector), `relations.sv` (declarations without bodies).
 
+## UVM example differences (U2)
+
+**Status:** open. The UVM 1.1d and 1.2 `simple` and `integrated` examples were
+run against the industry-standard simulator; the differences fixed then are in
+the [ki_uvm_run readme](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md).
+These remain.
+
+### `process::self()` in a static initializer
+
+**Symptom.** `process::self()` called while a static declaration initializer
+runs returns null, so a following `get_randstate()` stops the run as a null
+process access. UVM 1.1d's `uvm_config_db::set` calls it unguarded, and the
+1.1d `module` and `pkg` examples construct components in module-scope
+initializers, so both end with a fatal error at time 0. The industry-standard
+simulator returns a running process there whose random state can be read and
+restored. UVM 1.2 checks the handle for null and is not affected.
+
+**Cause.** Static initialization runs before any process exists (SV 6.8), and
+the runtime has no process object for it; 9.7 defines `self()` only as the
+process making the call.
+
+**Intended direction.** Give static initialization one runtime process handle:
+running while the initializers execute and finished afterwards, its random
+state the initialization stream the initializers already draw from (T1-D3),
+with `kill`, `suspend` and `resume` of it a run-time error. This changes
+shared runtime paths and needs a decision row.
+
+**Reproduce.** [`process_self_static_initializer.sv`](../tests/fixtures/sim/feature_completion/ki_uvm_run/process_self_static_initializer.sv)
+pins the current output; its readme row gives the simulator's.
+
+### Override visibility the frontend rejects
+
+**Symptom.** Examples whose classes override a virtual method with another
+visibility stop in the frontend, which reports the override as an error. The
+UVM 1.2 and 1.1d `registers/models/coverage` example overrides the protected
+`sample` method of `uvm_reg` as a public method; the UVM 1.1d APB agent
+(`integrated/apb`) overrides the public `run_phase` of `uvm_component` as a
+protected task, which stops the nine 1.1d examples built on that agent
+(`integrated/codec` and the `registers` examples `integration/10direct`,
+`integration/20layered`, `models/broadcast`, `models/fifo_reg`, `primer`,
+`sequence_api` and both `vertical_reuse` runs). The industry-standard
+simulator accepts these examples.
+
+**Cause.** SV 2009 8.19 lists the encapsulation criteria among the
+information a virtual method's prototype provides and requires overrides to
+"follow the prototype exactly", naming return and argument types; the
+frontend reads that as requiring the same visibility (decision S08-D1, open).
+
+**Intended direction.** Decide whether to accept a visibility change in an
+override as a warning; the wrapper can set the diagnostic's severity without
+a frontend patch.
+
+### Mixed blocking and nonblocking assignments stop the run
+
+**Symptom.** The `ubus`, `integrated/codec` and `registers/models/broadcast`
+examples mix blocking and nonblocking assignments in one process. Lint rule
+`mixed-assignments` (LINT-016) is an error by default, so `llg` stops before
+generating the model; the industry-standard simulator runs them. With the
+rule set to a warning (`[lint.rules.mixed-assignments] severity = "warning"`
+in a `--config` file) generation continues.
+
+**Cause.** Always-on lint with blocking errors is a product decision
+(2026-10-06).
+
+### `$typename` of a type parameter
+
+**Symptom.** `$typename(T)` inside a class specialization returns the spelling
+of the parameter where the frontend first met the type (`lib::registry::T`),
+where the industry-standard simulator returns the resolved type
+(`class tb.mine`).
+
+**Cause.** The owned type table keeps one spelling per canonical type, the
+first reference's; `$typename` reads it.
+
+**Intended direction.** Capture the frontend's folded `$typename` text per
+call, or a canonical spelling for every type kind as virtual interface types
+now have.
+
+### Prefix increment of a member of a container element's object
+
+**Symptom.** `v = ++t["a"].count["x"];`, where `t` is an associative array
+of class handles and `count` an associative array property, stops generation
+with "cannot resolve array base of select `count`". The statement forms
+`t["a"].count["x"]++;` and plain reads and writes work.
+
+**Intended direction.** Lower the prefix-increment expression through the
+same element reference as the statement form.
+
+### Interface instance inside an interface, through a virtual interface
+
+**Symptom.** `vif = agent.vif.tx;`, where `agent.vif` is a virtual interface
+whose interface instantiates interface `tx`, stops generation with "chandle
+values can only be copied from chandle or null". The UVM 1.2
+`integrated/codec` example's driver selects its transmit interface this way;
+the industry-standard simulator runs it.
+
+**Cause.** A virtual interface value designates one interface instance;
+codegen has no mapping from an instance to the interface instances declared
+inside it (25.9 allows a virtual interface to be assigned "An interface
+instance of the same type", which includes a nested one).
+
+**Intended direction.** Give each interface type with nested interface
+instances a per-instance table of its children, and lower a member select of
+a virtual interface that names one to a lookup in it.
+
+**Reproduce.** A driver class holding `virtual top_if top` assigns
+`vif = top.tx` and drives `vif.Tx` on a clock edge; the industry-standard
+simulator prints `15 Tx=1`.
+
+### Sequence declared in a clocking block
+
+**Symptom.** `if (!sigs.mck.at_posedge.triggered) @(sigs.mck);`, where
+`at_posedge` is a sequence declared inside clocking block `mck`, stops
+generation with "concurrent assertions require one explicit signal clock".
+The UVM APB agent (`integrated/apb/apb_master.sv`) uses it only inside a
+branch selected by a tool's predefined macro; without that macro the agent
+waits for an extra clock edge before each transfer, so the register examples
+built on it (`integration/10direct`, `integration/20layered`) reach their
+final checks later than with the industry-standard simulator, which takes its
+own branch. Their verdicts and counts match.
+
+**Cause.** Sequence and property declarations within a clocking block take
+the block's clocking event (16.17); codegen requires an explicit signal clock
+on the sequence itself.
+
+**Intended direction.** Infer a sequence's clock from its enclosing clocking
+block.
+
+### Run-time crash in the deferred change check (register broadcast)
+
+**Symptom.** The UVM 1.2 `registers/models/broadcast` example (run with the
+`mixed-assignments` rule as a warning) generates and builds, then stops with a
+segmentation fault at time 0 while the register model is configured. The
+industry-standard simulator runs it to the expected `UVM_HDL_READ` fatal error
+at 830 ns.
+
+**Cause.** Under investigation. A debugger shows the deferred change check
+that runs before a `$display` (T1-D11 coalescing) settling a record whose
+storage key no longer holds a value (a 32-bit signed variable's record now
+points into reused string memory), on the clocking-edge history path.
+
+**Intended direction.** Find which write leaves a pending change record for
+storage that is freed before the check (an automatic variable or a container
+element is the likely owner) and drop or settle the record when the storage
+goes away.
+
+
+### The bus example's run diverges after its first transfer
+
+**Symptom.** The UVM 1.2 and 1.1d `integrated/ubus` example (two masters,
+four slaves; run with the `mixed-assignments` rule as a warning) generates,
+builds and starts, then its interface assertions report the read, write,
+size, wait and error lines unknown at 75 ns and 85 ns, and the run makes no
+progress afterwards (stopped after about 400 s of CPU time). The
+industry-standard simulator completes it with no error.
+
+**Cause.** Under investigation. Each master's driver writes the shared bus
+variables (`sig_read`, `sig_write`, `sig_size`) with nonblocking assignments,
+`'bz` when it is idle, so the value the assertions sample depends on the
+order of those writes within a time step.
+
+**Intended direction.** Reduce the first transfer to a probe and compare the
+write order and the values sampled at 75 ns with the industry-standard
+simulator.
+
+
 ## Semantic tokens around text macros (llg_ls)
 
 **Status:** partially fixed by LS-MAC. Use sites, written arguments, open

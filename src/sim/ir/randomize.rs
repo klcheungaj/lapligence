@@ -298,6 +298,11 @@ pub struct IrRandProblem {
     pub units: Vec<IrRandUnit>,
     pub arrays: Vec<IrRandArray>,
     pub slots: Vec<IrRandSlot>,
+    /// The unit of an object of each class (by class index), for the links
+    /// that take the unit from the child's class ([`IrRandStmt::Link`]
+    /// without a unit); [`RAND_NONE`] for a class no handle slot holds.
+    /// Empty when every link names its unit.
+    pub class_units: Vec<u32>,
 }
 
 /// Widest `randc` variable (`LLG_CR_CYCLIC_MAX_WIDTH`).
@@ -490,6 +495,9 @@ impl IrRandProblem {
             }
         }
         let vars = self.vars.len() as u32;
+        if self.units.is_empty() && !self.class_units.is_empty() {
+            return fail("class units need a problem with units".to_owned());
+        }
         if !self.units.is_empty() {
             let mut block_end = 0;
             let mut leaf_end = 0;
@@ -507,6 +515,13 @@ impl IrRandProblem {
             }
             if block_end as usize != self.blocks.len() || leaf_end as usize != self.leaves.len() {
                 return fail("units do not cover the blocks and leaves".to_owned());
+            }
+            if self
+                .class_units
+                .iter()
+                .any(|unit| *unit != RAND_NONE && *unit as usize >= self.units.len())
+            {
+                return fail("a class unit is out of range".to_owned());
             }
             for (index, array) in self.arrays.iter().enumerate() {
                 if array.elem_width == 0 || array.elem_width >= crate::sim::emit_c::LLG_WIDTH_LIMIT
@@ -721,15 +736,16 @@ pub enum IrRandStmt {
         value: IrExpr,
     },
     /// Handle slot `slot` of instance `inst` names `child` at `index` (none
-    /// for a scalar slot), an object of class unit `unit` (`random`: the
-    /// handle is `rand` and enabled).
+    /// for a scalar slot), an object of class unit `unit`, or with no unit
+    /// the one the problem's `class_units` gives the child's class
+    /// (`random`: the handle is `rand` and enabled).
     Link {
         problem: usize,
         inst: IrExpr,
         slot: u32,
         index: Option<IrExpr>,
         child: IrChandleExpr,
-        unit: u32,
+        unit: Option<u32>,
         random: IrExpr,
     },
     /// Handle array slot `slot` of instance `inst` has `size` elements, all

@@ -8,6 +8,12 @@ fn problem_name(problem: usize) -> String {
     format!("llg_rand_problem_{problem}")
 }
 
+/// The class-to-unit table of a problem whose links take the unit from the
+/// child's class.
+fn class_units_name(problem: usize) -> String {
+    format!("{}_class_units", problem_name(problem))
+}
+
 /// The site's persistent session (created on first use).
 fn session(problem: usize) -> String {
     format!("llg_rand_session_{problem}()")
@@ -237,6 +243,19 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 })
                 .collect(),
         );
+        if !problem.class_units.is_empty() {
+            // Read by the links only; unreferenced when no link is reachable.
+            out.push_str(&format!(
+                "static LLG_MAYBE_UNUSED const uint32_t {}[] = {{\n    {}\n}};\n",
+                class_units_name(index),
+                problem
+                    .class_units
+                    .iter()
+                    .map(|unit| format!("{unit}u"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
         out.push_str(&format!(
             "static const llg_cr_problem_t {name} = {{\n    {}, {nodes}, {}u, {arg_table}, {}u, {consts}, {}u,\n    {vars}, {}u, {blocks}, {}u, {leaves}, {}u, {calls}, {}u,\n    {dists}, {}u, {dist_items}, {item_count}u, {orders}, {}u,\n    NULL, 0u, NULL, 0u, {units}, {}u, {unit_item_table}, {unit_item_count}u,\n    {rand_arrays}, {}u, {slots}, {}u\n}};\n",
             c_string_literal(&problem.name),
@@ -461,8 +480,21 @@ impl Frame<'_, '_> {
                 };
                 let random = self.condition(random)?;
                 let child = self.chandle(child)?;
+                let (child, unit) = match unit {
+                    Some(unit) => (child, format!("{unit}u")),
+                    None => {
+                        // A null child takes no unit (`llg_cr_link`).
+                        let child = self.scalar("void*", child);
+                        let units = class_units_name(problem);
+                        let count = self.ctx.model.rand_problems[problem].class_units.len();
+                        let unit = format!(
+                            "{child} ? llg_cr_class_unit({units}, {count}u, llg_class_id({child})) : 0u"
+                        );
+                        (child, unit)
+                    }
+                };
                 self.line(format!(
-                    "(void)llg_cr_link({s}, {inst}, {slot}u, {index}, {child}, {unit}u, {random});"
+                    "(void)llg_cr_link({s}, {inst}, {slot}u, {index}, {child}, {unit}, {random});"
                 ));
             }
             IrRandStmt::SetSlotSize {

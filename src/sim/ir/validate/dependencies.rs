@@ -136,44 +136,43 @@ impl Validator<'_> {
                 !local.is_empty()
             }
             IrDependency::RefFormal { .. } | IrDependency::NativeRefFormal { .. } => true,
-            IrDependency::NativeAccess(name) => self
-                .model
-                .native_accesses
-                .iter()
-                .find(|access| access.name == *name)
-                .is_some_and(|access| match access.kind {
-                    crate::sim::ir::IrNativeAccessKind::ClassField { class, field } => self
-                        .model
-                        .classes
-                        .get(class)
-                        .and_then(|class| class.fields.get(field))
-                        .is_some_and(|field| {
-                            field.container.is_none()
-                                && field.native_value.is_none()
-                                && matches!(
-                                    field.ty,
-                                    IrClassFieldType::Packed { .. }
-                                        | IrClassFieldType::Real { .. }
-                                        | IrClassFieldType::String
-                                        | IrClassFieldType::Chandle
-                                )
-                        }),
-                    crate::sim::ir::IrNativeAccessKind::ClassContainer { class, field } => self
-                        .model
-                        .classes
-                        .get(class)
-                        .and_then(|class| class.fields.get(field))
-                        .is_some_and(|field| field.container.is_some()),
-                    crate::sim::ir::IrNativeAccessKind::ClassRecord { class, field } => self
-                        .model
-                        .classes
-                        .get(class)
-                        .and_then(|class| class.fields.get(field))
-                        .is_some_and(|field| field.native_value.is_some()),
-                    crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
-                    | crate::sim::ir::IrNativeAccessKind::MailboxCount => true,
-                    _ => false,
-                }),
+            IrDependency::NativeAccess(name) => {
+                self.model
+                    .native_access(name)
+                    .is_some_and(|(_, access)| match access.kind {
+                        crate::sim::ir::IrNativeAccessKind::ClassField { class, field } => self
+                            .model
+                            .classes
+                            .get(class)
+                            .and_then(|class| class.fields.get(field))
+                            .is_some_and(|field| {
+                                field.container.is_none()
+                                    && field.native_value.is_none()
+                                    && matches!(
+                                        field.ty,
+                                        IrClassFieldType::Packed { .. }
+                                            | IrClassFieldType::Real { .. }
+                                            | IrClassFieldType::String
+                                            | IrClassFieldType::Chandle
+                                    )
+                            }),
+                        crate::sim::ir::IrNativeAccessKind::ClassContainer { class, field } => self
+                            .model
+                            .classes
+                            .get(class)
+                            .and_then(|class| class.fields.get(field))
+                            .is_some_and(|field| field.container.is_some()),
+                        crate::sim::ir::IrNativeAccessKind::ClassRecord { class, field } => self
+                            .model
+                            .classes
+                            .get(class)
+                            .and_then(|class| class.fields.get(field))
+                            .is_some_and(|field| field.native_value.is_some()),
+                        crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
+                        | crate::sim::ir::IrNativeAccessKind::MailboxCount => true,
+                        _ => false,
+                    })
+            }
             IrDependency::Object(object) => self
                 .model
                 .objects

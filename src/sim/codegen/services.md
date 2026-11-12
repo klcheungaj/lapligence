@@ -38,7 +38,13 @@ or `std::randomize` scope, each other unit a class an object reached through a
 `rand` handle can have, or a handle array (a slot with `llg_cr_link` per
 element; non-random properties read through its elements are inactive
 variables); variables, arrays and handle slots are problem-wide,
-one per property declaration. `template_forms` runs before a constraint
+one per property declaration. A slot whose class has derived classes links
+its child with the unit the problem's `class_units` table gives the child's
+dynamic class (`llg_cr_class_unit`), one link per slot in each unit instead
+of a class test per derived class: with a recursive `rand` handle every unit
+holds the slot, and the tests made the C cubic in the class count. A call
+still builds one problem per class the object can have, each with one unit
+per class the handles reach, so a recursive handle stays quadratic. `template_forms` runs before a constraint
 expression is lowered and registers array selects, `size()`, reductions
 (`item`, `item.index`), `inside` an array, members and null tests through
 `rand` handles as `_llg_randvar_t<n>` placeholders that `random_placeholder`

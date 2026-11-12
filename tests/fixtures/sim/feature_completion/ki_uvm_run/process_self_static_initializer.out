@@ -1,0 +1,5 @@
+static: null=1
+static2: null=1
+initial: null=0
+initial: status=RUNNING
+initial: replay=1

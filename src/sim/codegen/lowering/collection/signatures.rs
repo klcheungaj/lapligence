@@ -784,7 +784,7 @@ impl<'a> Codegen<'a> {
         let Some(ty) = ret else {
             return Ok(None);
         };
-        if matches!(ty.kind.as_str(), "void" | "chandle" | "class" | "string") {
+        if ty.kind == "void" || ty.kind == "string" || is_handle_kind(&ty.kind) {
             return Ok(None);
         }
         if is_real_kind(&ty.kind) {
@@ -840,7 +840,7 @@ impl<'a> Codegen<'a> {
             {
                 None
             }
-            Some(ty) if matches!(ty.kind.as_str(), "chandle" | "class" | "string") => None,
+            Some(ty) if ty.kind == "string" || is_handle_kind(&ty.kind) => None,
             Some(ty) => {
                 if is_real_kind(&ty.kind) {
                     Some((0, false, false, ty.kind == "shortreal"))

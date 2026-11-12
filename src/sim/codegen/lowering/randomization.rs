@@ -64,6 +64,11 @@ pub(super) struct RandLowering {
     /// name resolves to the same declaration as an unqualified one, so its
     /// source spelling tells them apart.
     inline_local: bool,
+    /// Declarations the randomize call's receiver names (`req` in
+    /// `req.randomize() with { req.addr == a; }`); a path starting with
+    /// them names the randomized object. Empty when the receiver is no
+    /// plain variable path.
+    receiver_path: Vec<NodeId>,
 }
 
 impl RandLowering {
@@ -80,6 +85,7 @@ impl RandLowering {
             bindings: HashMap::new(),
             element_refs: HashMap::new(),
             inline_local: false,
+            receiver_path: Vec::new(),
         }
     }
 }
@@ -346,19 +352,31 @@ impl Codegen<'_> {
                 let end = refs
                     .iter()
                     .rposition(|reference| *reference == Some(field))?;
-                refs[..end]
-                    .iter()
-                    .all(|reference| {
-                        reference.is_some_and(|this| {
-                            self.node(this).name == "this"
-                                && lowering.receiver.is_some()
-                                && self.rand_this(this)
-                        })
+                (refs[..end].iter().all(|reference| {
+                    reference.is_some_and(|this| {
+                        self.node(this).name == "this"
+                            && lowering.receiver.is_some()
+                            && self.rand_this(this)
                     })
-                    .then(|| placeholder.clone())
+                }) || self.names_receiver(&refs[..end]))
+                .then(|| placeholder.clone())
             }
             _ => None,
         }
+    }
+
+    /// Whether `prefix` is the path of the randomize call's receiver, so
+    /// that it names the randomized object.
+    pub(super) fn names_receiver(&self, prefix: &[Option<NodeId>]) -> bool {
+        self.rand_lowering.as_ref().is_some_and(|lowering| {
+            lowering.receiver.is_some()
+                && !lowering.receiver_path.is_empty()
+                && prefix.len() == lowering.receiver_path.len()
+                && prefix
+                    .iter()
+                    .zip(&lowering.receiver_path)
+                    .all(|(reference, declaration)| *reference == Some(*declaration))
+        })
     }
 
     /// Whether `this` names the randomized object: the implicit `this` of a

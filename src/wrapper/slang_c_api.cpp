@@ -1048,8 +1048,15 @@ struct Capture {
       virtualInterfaceTypes[&vif.iface.getDefinition()].push_back(&vif);
     }
     chargeRecord(output, sizeof(LlgSlangType));
+    // A virtual interface type is named by its interface, parameters and
+    // modport, which consumers parse as its identity: the spelling of the
+    // first reference may be an alias (a class type parameter prints as
+    // `cls::T`), and which reference comes first depends on traversal order.
+    const std::string spelling = canonical.kind == SymbolKind::VirtualInterfaceType
+                                     ? canonical.toString()
+                                     : input.toString();
     output.types.push_back({id, kind, flags, canonical.getBitWidth(),
-                            storeString(output, input.toString()),
+                            storeString(output, spelling),
                             LLG_SLANG_INVALID_ID, LLG_SLANG_INVALID_ID,
                             0, 0, 0, 0});
 
@@ -2546,7 +2553,11 @@ bool isSyntheticLValue(const Expression& expression) {
 // A key that orders the specializations of one generic class by their
 // parameter values: printed values and types, plus the declaring path and
 // source position of each type, which tell apart same-named types of
-// different scopes.
+// different scopes. A type parameter contributes its canonical type only:
+// Slang keys a specialization by matching types, and the spelling it keeps
+// (`CB` of an enclosing specialization or the class name itself) is
+// whichever reference created the specialization first, an order that
+// follows Slang's hash maps and so changes between runs.
 std::string specializationOrderKey(const Type& specialization) {
   std::string key;
   if (specialization.kind != SymbolKind::ClassType)
@@ -2558,17 +2569,16 @@ std::string specializationOrderKey(const Type& specialization) {
       key += '\x1f';
     }
     else if (member.kind == SymbolKind::TypeParameter) {
-      const Type& type = member.as<TypeParameterSymbol>().targetType.getType();
-      for (const Type* named : {&type, &type.getCanonicalType()}) {
-        key += named->toString();
-        key += '\x1e';
-        key += named->getHierarchicalPath();
-        key += '\x1e';
-        key += std::to_string(named->location.buffer().getId());
-        key += ':';
-        key += std::to_string(named->location.offset());
-        key += '\x1f';
-      }
+      const Type& type =
+          member.as<TypeParameterSymbol>().targetType.getType().getCanonicalType();
+      key += type.toString();
+      key += '\x1e';
+      key += type.getHierarchicalPath();
+      key += '\x1e';
+      key += std::to_string(type.location.buffer().getId());
+      key += ':';
+      key += std::to_string(type.location.offset());
+      key += '\x1f';
     }
   }
   return key;
@@ -2800,6 +2810,15 @@ public:
 
   template<std::derived_from<Symbol> T>
   void handle(const T& symbol) {
+    if constexpr (std::same_as<T, PackageSymbol>) {
+      // A second definition of a package name (the frontend warns) is never
+      // bound by a lookup: every reference resolves to the first. Simulation
+      // captures only that one, so the design holds one package per name; the
+      // language server keeps both definitions.
+      if (!capture.declarationOnly && !symbol.name.empty() &&
+          symbol.getCompilation().getPackage(symbol.name) != &symbol)
+        return;
+    }
     if constexpr (std::same_as<T, InstanceBodySymbol>) {
       // Every mode records the reached definition bodies so shadowed
       // duplicates are found (captureShadowedDefinitions); library-unit

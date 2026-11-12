@@ -418,6 +418,35 @@ impl<'a> Codegen<'a> {
                 return self.lower_slice_into(path, dst.ir, src, start, count);
             }
         }
+        // A whole fixed array of strings, handles or records converted
+        // implicitly to a dynamic array (`d = t`, SV 7.6) is an element copy
+        // too; a bit-stream cast needs packed elements.
+        if matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Cast { .. }))
+            && self.db.is_implicit_conversion(rhs)
+            && !self.model.containers[dst.ir].element.is_packed()
+        {
+            let whole = self
+                .container_of(self.p30_unwrap_cast(rhs))
+                .map(|source| source.ir)
+                .filter(|source| *source != dst.ir && self.is_fixed_view(*source))
+                .and_then(|source| {
+                    let origin = &self.model.containers[source];
+                    let target = &self.model.containers[dst.ir];
+                    (target.element.compatible_with(&origin.element))
+                        .then_some(origin.initial_size)
+                        .flatten()
+                        .map(|count| (source, count))
+                });
+            if let Some((source, count)) = whole {
+                return self.lower_slice_into(
+                    path,
+                    dst.ir,
+                    source,
+                    pattern_key_expr(0, 64, true, false),
+                    count,
+                );
+            }
+        }
         if let Some(statement) =
             self.lower_bitstream_cast_container_assignment(path, type_node, rhs, &dst)?
         {

@@ -273,10 +273,8 @@ impl Frame<'_, '_> {
         let access = self
             .ctx
             .model
-            .native_accesses
-            .iter()
-            .find(|access| access.name == name)
-            .cloned()
+            .native_access(name)
+            .map(|(_, access)| access.clone())
             .ok_or_else(|| pending(&format!("unresolved native access dependency {name}")))?;
         let previous = std::mem::replace(&mut self.quiet_receivers, true);
         let receiver = self.chandle(&access.receiver);

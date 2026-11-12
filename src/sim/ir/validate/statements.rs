@@ -2064,7 +2064,11 @@ impl Validator<'_> {
                 .get(*array as usize)
                 .is_some_and(|array| array.kind == crate::sim::ir::IrRandArrayKind::Assoc),
             IrRandStmt::Link { slot, unit, .. } => {
-                (*slot as usize) < problem.slots.len() && (*unit as usize) < problem.units.len()
+                (*slot as usize) < problem.slots.len()
+                    && match unit {
+                        Some(unit) => (*unit as usize) < problem.units.len(),
+                        None => !problem.class_units.is_empty(),
+                    }
             }
             IrRandStmt::SetSlotSize { slot, .. } | IrRandStmt::TrimSlot { slot, .. } => problem
                 .slots

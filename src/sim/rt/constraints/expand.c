@@ -747,6 +747,11 @@ uint32_t llg_cr_link(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t
     return id;
 }
 
+uint32_t llg_cr_class_unit(const uint32_t* units, uint32_t count, uint32_t class_id) {
+    if (class_id >= count || units[class_id] == LLG_CR_NONE) cr_fatal("object class has no unit");
+    return units[class_id];
+}
+
 /* Instances a walk over the kept links reaches stay in the post_randomize
  * order; `visited` marks the order on the way in, so it is reused here. */
 void llg_cr_trim_slot(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t count) {

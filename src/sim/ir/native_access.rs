@@ -75,3 +75,18 @@ pub struct IrClassAllocation {
     pub(in crate::sim) body: Vec<IrStmt>,
     pub(in crate::sim) function: Option<usize>,
 }
+
+impl IrModel {
+    /// The native access named `name` and its table index. Access symbols are numbered by their
+    /// table position (`_llg_access_<n>`, enforced by the validator), so the
+    /// lookup reads the index instead of scanning the table: effect
+    /// collection and emission look an access up at every statement that
+    /// names it, and a scan made that quadratic in the model size.
+    pub(in crate::sim) fn native_access(&self, name: &str) -> Option<(usize, &IrNativeAccess)> {
+        let index = name.strip_prefix("_llg_access_")?.parse::<usize>().ok()?;
+        self.native_accesses
+            .get(index)
+            .filter(|access| access.name == name)
+            .map(|access| (index, access))
+    }
+}

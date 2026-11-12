@@ -538,13 +538,14 @@ impl<'a> TriggerStorage<'a> {
                 .is_some_and(|value| value.marker),
             // A virtual-interface member is resolved through its handle each
             // time a sensitivity loop arms (SV 9.2.2.2.1, 25.9).
-            IrDependency::NativeAccess(name) => ir.native_accesses.iter().any(|access| {
-                access.name == *name
-                    && matches!(
+            IrDependency::NativeAccess(name) => {
+                ir.native_access(name).is_some_and(|(_, access)| {
+                    matches!(
                         access.kind,
                         crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
                     )
-            }),
+                })
+            }
             IrDependency::InterfaceInstance { .. } => valid_interface_instance(ir, dependency),
             // A process-local cell is no static trigger storage.
             IrDependency::SharedCell { .. }
@@ -1652,12 +1653,7 @@ fn collect_native_access_effects(
     visited_calls: &mut CallVisits,
 ) {
     let name = name.strip_prefix('&').unwrap_or(name);
-    let Some((index, access)) = ir
-        .native_accesses
-        .iter()
-        .enumerate()
-        .find(|(_, access)| access.name == name)
-    else {
+    let Some((index, access)) = ir.native_access(name) else {
         return;
     };
     // Storage recipes occupy a disjoint recursion namespace after procedures

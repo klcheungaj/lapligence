@@ -27,6 +27,27 @@ enum ProcessWriteMode {
     Ownership,
 }
 
+/// The subroutines a process-write walk is inside and the ones it has
+/// finished. A walk inlines each callee's body at its call; a subroutine
+/// whose walk met no `ref` binding adds the same writes wherever it is
+/// called, so a second call adds nothing to the set and is not walked again
+/// (a library's call graph has exponentially many paths).
+#[derive(Default)]
+struct CallWalk {
+    /// Subroutines on the current call path (a call back into one is cut).
+    active: HashSet<NodeId>,
+    /// Active subroutines entered with `ref` bindings.
+    bound: HashSet<NodeId>,
+    /// Subroutines walked to the end without a taint: their writes are all
+    /// in the set already.
+    walked: HashSet<NodeId>,
+    /// Calls so far whose writes depend on the call path: a call that binds
+    /// a `ref` formal to a packed storage prefix (cut, it writes the whole
+    /// actual instead), or a cut into a frame entered with bindings. A walk
+    /// that met one is not recorded as complete.
+    taints: usize,
+}
+
 impl<'a> Codegen<'a> {
     /// The descriptor dependency of `ref` formal `target` in a typed body,
     /// where no specialization bound its actual (see `CallShape`).
@@ -795,11 +816,10 @@ impl<'a> Codegen<'a> {
         root: NodeId,
     ) -> Result<HashSet<IrDependency>, String> {
         let mut writes = HashSet::new();
-        let mut visited = HashSet::new();
         self.walk_process_writes_bound(
             root,
             &mut writes,
-            &mut visited,
+            &mut CallWalk::default(),
             &HashMap::new(),
             ProcessWriteMode::Sensitivity,
         )?;
@@ -910,7 +930,7 @@ impl<'a> Codegen<'a> {
         self.walk_process_writes_bound(
             root,
             &mut writes,
-            &mut HashSet::new(),
+            &mut CallWalk::default(),
             &HashMap::new(),
             ProcessWriteMode::Ownership,
         )?;
@@ -927,7 +947,7 @@ impl<'a> Codegen<'a> {
         self.walk_process_writes_bound(
             root,
             &mut writes,
-            &mut HashSet::new(),
+            &mut CallWalk::default(),
             &HashMap::new(),
             ProcessWriteMode::ContinuousConflict,
         )?;
@@ -938,7 +958,7 @@ impl<'a> Codegen<'a> {
         &self,
         node: NodeId,
         writes: &mut HashSet<IrDependency>,
-        visited_functions: &mut HashSet<NodeId>,
+        calls: &mut CallWalk,
         bindings: &HashMap<NodeId, IrDependency>,
         mode: ProcessWriteMode,
     ) -> Result<(), String> {
@@ -947,13 +967,13 @@ impl<'a> Codegen<'a> {
         }
         if self.is_semaphore_constructor_call(node) {
             for child in &self.node(node).children {
-                self.walk_process_writes_bound(*child, writes, visited_functions, bindings, mode)?;
+                self.walk_process_writes_bound(*child, writes, calls, bindings, mode)?;
             }
             return Ok(());
         }
         if self.is_mailbox_constructor_call(node) {
             for child in &self.node(node).children {
-                self.walk_process_writes_bound(*child, writes, visited_functions, bindings, mode)?;
+                self.walk_process_writes_bound(*child, writes, calls, bindings, mode)?;
             }
             return Ok(());
         }
@@ -964,14 +984,14 @@ impl<'a> Codegen<'a> {
                 // The generic children can also contain Slang's assignment
                 // wrapper. Visit only the typed operands so that wrapper does
                 // not reclassify the override as an ordinary variable write.
-                self.walk_process_writes_bound(*lhs, writes, visited_functions, bindings, mode)?;
-                self.walk_process_writes_bound(*rhs, writes, visited_functions, bindings, mode)?;
+                self.walk_process_writes_bound(*lhs, writes, calls, bindings, mode)?;
+                self.walk_process_writes_bound(*rhs, writes, calls, bindings, mode)?;
                 return Ok(());
             }
             NodeKind::Stmt(StmtKind::Release { lhs } | StmtKind::Deassign { lhs })
                 if mode != ProcessWriteMode::Sensitivity =>
             {
-                self.walk_process_writes_bound(*lhs, writes, visited_functions, bindings, mode)?;
+                self.walk_process_writes_bound(*lhs, writes, calls, bindings, mode)?;
                 return Ok(());
             }
             NodeKind::Stmt(StmtKind::Assign { .. })
@@ -1003,13 +1023,7 @@ impl<'a> Codegen<'a> {
                     if mode == ProcessWriteMode::ContinuousConflict {
                         self.add_process_lhs_write_bound(*declaration, writes, bindings);
                     }
-                    self.walk_process_writes_bound(
-                        initializer,
-                        writes,
-                        visited_functions,
-                        bindings,
-                        mode,
-                    )?;
+                    self.walk_process_writes_bound(initializer, writes, calls, bindings, mode)?;
                 }
                 return Ok(());
             }
@@ -1046,7 +1060,10 @@ impl<'a> Codegen<'a> {
                     self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
                 let (_, _, formals) = self.func_info(ft, callee_inst)?;
                 let mut callee_bindings = HashMap::new();
-                let recursive = visited_functions.contains(&ft);
+                let recursive = calls.active.contains(&ft);
+                if recursive && calls.bound.contains(&ft) {
+                    calls.taints += 1;
+                }
                 for ((formal, is_out), actual) in formals.iter().zip(&self.node(node).children) {
                     let is_ref = matches!(
                         self.kind(*formal),
@@ -1056,6 +1073,12 @@ impl<'a> Codegen<'a> {
                         }
                     );
                     let actual = self.unwrap_output_actual(*actual);
+                    if is_ref
+                        && recursive
+                        && self.packed_storage_prefix_bound(actual, bindings).is_some()
+                    {
+                        calls.taints += 1;
+                    }
                     if is_ref && !recursive {
                         if let Some(prefix) = self.packed_storage_prefix_bound(actual, bindings) {
                             callee_bindings.insert(*formal, prefix);
@@ -1081,23 +1104,36 @@ impl<'a> Codegen<'a> {
                         self.add_process_lhs_write_bound(actual, writes, bindings);
                     }
                 }
-                if visited_functions.insert(ft) {
+                let bound = !callee_bindings.is_empty();
+                if bound {
+                    calls.taints += 1;
+                }
+                if (bound || !calls.walked.contains(&ft)) && calls.active.insert(ft) {
+                    if bound {
+                        calls.bound.insert(ft);
+                    }
+                    let taints = calls.taints;
                     if let Some(body) = self.func_body(ft) {
                         self.walk_process_writes_bound(
                             body,
                             writes,
-                            visited_functions,
+                            calls,
                             &callee_bindings,
                             mode,
                         )?;
                     }
-                    visited_functions.remove(&ft);
+                    calls.active.remove(&ft);
+                    if bound {
+                        calls.bound.remove(&ft);
+                    } else if calls.taints == taints {
+                        calls.walked.insert(ft);
+                    }
                 }
             }
             _ => {}
         }
         for child in &self.node(node).children {
-            self.walk_process_writes_bound(*child, writes, visited_functions, bindings, mode)?;
+            self.walk_process_writes_bound(*child, writes, calls, bindings, mode)?;
         }
         Ok(())
     }
