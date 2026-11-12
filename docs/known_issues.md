@@ -3294,6 +3294,85 @@ FSM sections of another model), `option_kinds.sv` (`--code-coverage`);
 `tests/fixtures/sim/feature_completion/adv_017/neg_fsm_width.sv` (a 65-bit
 state vector), `relations.sv` (declarations without bodies).
 
+## UVM example differences (U2)
+
+**Status:** open. The UVM 1.1d and 1.2 `simple` and `integrated` examples were
+run against the industry-standard simulator; the differences fixed then are in
+the [ki_uvm_run readme](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md).
+These remain.
+
+### `process::self()` in a static initializer
+
+**Symptom.** `process::self()` called while a static declaration initializer
+runs returns null, so a following `get_randstate()` stops the run as a null
+process access. UVM 1.1d's `uvm_config_db::set` calls it unguarded, and the
+1.1d `module` and `pkg` examples construct components in module-scope
+initializers, so both end with a fatal error at time 0. The industry-standard
+simulator returns a running process there whose random state can be read and
+restored. UVM 1.2 checks the handle for null and is not affected.
+
+**Cause.** Static initialization runs before any process exists (SV 6.8), and
+the runtime has no process object for it; 9.7 defines `self()` only as the
+process making the call.
+
+**Intended direction.** Give static initialization one runtime process handle:
+running while the initializers execute and finished afterwards, its random
+state the initialization stream the initializers already draw from (T1-D3),
+with `kill`, `suspend` and `resume` of it a run-time error. This changes
+shared runtime paths and needs a decision row.
+
+**Reproduce.** [`process_self_static_initializer.sv`](../tests/fixtures/sim/feature_completion/ki_uvm_run/process_self_static_initializer.sv)
+pins the current output; its readme row gives the simulator's.
+
+### Override visibility the frontend rejects
+
+**Symptom.** The UVM 1.2 and 1.1d `registers/models/coverage` example stops
+in the frontend: its register classes override the protected `sample` method
+of `uvm_reg` as a public virtual method, which the frontend reports as an
+error. The industry-standard simulator accepts the example.
+
+**Cause.** The frontend applies the later standards' rule that an override
+keeps the overridden method's visibility; SV 2009 (8.19) does not state it.
+
+**Intended direction.** Decide whether to downgrade this frontend error for
+the 2009 edition, which needs a patch to the vendored frontend.
+
+### Mixed blocking and nonblocking assignments stop the run
+
+**Symptom.** The `ubus` and `registers/models/broadcast` examples mix blocking
+and nonblocking assignments in one process. Lint rule `mixed-assignments`
+(LINT-016) is an error by default, so `llg` stops before generating the model;
+the industry-standard simulator runs them. With the rule set to a warning
+(`[lint.rules.mixed-assignments] severity = "warning"` in a `--config` file)
+both examples run.
+
+**Cause.** Always-on lint with blocking errors is a product decision
+(2026-10-06).
+
+### `$typename` of a type parameter
+
+**Symptom.** `$typename(T)` inside a class specialization returns the spelling
+of the parameter where the frontend first met the type (`lib::registry::T`),
+where the industry-standard simulator returns the resolved type
+(`class tb.mine`).
+
+**Cause.** The owned type table keeps one spelling per canonical type, the
+first reference's; `$typename` reads it.
+
+**Intended direction.** Capture the frontend's folded `$typename` text per
+call, or a canonical spelling for every type kind as virtual interface types
+now have.
+
+### Prefix increment of a member of a container element's object
+
+**Symptom.** `v = ++t["a"].count["x"];`, where `t` is an associative array
+of class handles and `count` an associative array property, stops generation
+with "cannot resolve array base of select `count`". The statement forms
+`t["a"].count["x"]++;` and plain reads and writes work.
+
+**Intended direction.** Lower the prefix-increment expression through the
+same element reference as the statement form.
+
 ## Semantic tokens around text macros (llg_ls)
 
 **Status:** partially fixed by LS-MAC. Use sites, written arguments, open

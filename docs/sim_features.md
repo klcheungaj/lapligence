@@ -358,8 +358,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   §7). Refs to real queue, dynamic and associative elements remain rejected
   ([known issue](known_issues.md#real-references-and-real-array-expressions-outside-stable-storage));
   NBAs to automatic reals are illegal. V §3.9 **[1995]**.
-- 🟦 **Typedefs and enums** — Simple/packed aliases resolve through the frontend.
-  Enums retain nominal identity, base width and sparse signed declaration-order
+- 🟦 **Typedefs and enums** — Simple/packed aliases resolve through the frontend;
+  a forward `typedef class` in a module or package only names a later class.
+  `$typename` of a type parameter spells the parameter where the frontend
+  first met the type, not the resolved type (known issue). Enums retain nominal identity, base width and sparse signed declaration-order
   values. `first/last/next/prev/num/name` support wrapping counts, owned names and
   two-/four-state invalid-value defaults. SV §§6.18–6.19 **[SV-2005]**.
 - 🟨 **Structures and untagged unions** — Packed members preserve state/sign and
@@ -673,7 +675,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (static and automatic, timed tasks with `ref` formals, class methods and
   static class members of package classes, forks in package tasks) execute
   from every importer (FIN-001 probes). Instance-hierarchical names are not constant-expression operands;
-  lexical package references remain distinct. SV §26 **[SV-2005]**.
+  lexical package references remain distinct. Among initializers that read
+  nothing from one another, class static properties run first, then package
+  and `$unit` variables, then the design hierarchy (decision S22-D8). A
+  package defined twice (a guarded header compiled on its own and included
+  again in another compilation unit; the frontend warns) is simulated once, as
+  every reference binds the first definition
+  ([ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
+  SV §26 **[SV-2005]**.
 - 🟦 **Interfaces and modports** — Concrete storage, instance-local processes,
   parameterized interfaces, member references and modport views are represented.
   `.name` and `.*` connection shorthands retain their resolved links. Modport
@@ -1838,7 +1847,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Fixed arrays of native records, of any dimension, cross input, output and
   `ref` formals and fixed arrays of strings copy in and out of calls
   (SIM-007); a row of a multidimensional one is an input, output or inout
-  actual.
+  actual. A string-returning function called in an expression copies out its
+  packed output and inout formals as other expression calls do
+  ([ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and
@@ -2513,7 +2524,9 @@ These are bounded implementations, not full verification-infrastructure support.
   SV ch.8 **[SV-2005]**.
 - 🟨 **Virtual interfaces** — Typed instance/modport identity survives rebinding,
   class/formal storage, record members, fixed arrays (any range) and dynamic,
-  queue and associative storage. Packed member access (also through class
+  queue and associative storage, function results and class type parameters
+  (a configuration database's `T read()` and `inout T` copy-out;
+  [ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)). Packed member access (also through class
   properties and record members), methods, null/type checks and clocking-input
   samples are present. Timed tasks dispatch through any receiver storage and
   stay on the instance named at the call while the variable is rebound; event

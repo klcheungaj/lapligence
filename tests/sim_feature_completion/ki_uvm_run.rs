@@ -151,6 +151,24 @@ fn duplicate_package_definition() {
     );
 }
 
+/// `process::self()` in static declaration initializers returns null, a
+/// known issue (see `docs/known_issues.md`, "UVM example differences"): the
+/// industry-standard simulator returns a running process there, which a
+/// library's configuration database calls `get_randstate` on. The case pins
+/// the current output so a change is deliberate.
+#[test]
+fn process_self_static_initializer() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "process_self_static_initializer",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/process_self_static_initializer.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// Randomize through base-class handles over 40 derived classes. The model
 /// is about 2 MB of C; the dispatch shape, not C optimization, is under test,
 /// so the model builds at `-O0`.
