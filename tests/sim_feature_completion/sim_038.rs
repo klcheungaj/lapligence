@@ -1056,6 +1056,18 @@ fn initial_procedure_assertion_starts_one_attempt() {
     });
 }
 
+/// IEEE 1800-2009 16.18: an `expect` whose attempt its `disable iff`
+/// disables neither succeeds nor fails, so its caller stays blocked (no
+/// action and no `after expect` line); another process ends the run.
+#[test]
+fn expect_disabled_attempt_keeps_its_caller_blocked() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_038/expect_disable_blocks.out");
+    sim_cli::run_case_checked_matrix(SUITE, "expect_disable_blocks", &[], &|label, output| {
+        assert_sorted_stdout(label, output, expected)
+    });
+}
+
 // Illegal property grammar stays a frontend error; legal forms outside the
 // SIM-038 subset keep specific located diagnostics.
 

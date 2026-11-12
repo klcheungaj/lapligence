@@ -2274,8 +2274,10 @@ entry.
 ### Reproduce
 
 `neg_procedural_automatic_past.sv` and `neg_procedural_edge.sv` in
-[sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md); the
-other items need small hand-written cases.
+[sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md);
+`expect_disable_blocks.sv` in
+[sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md) for the
+blocked `expect` caller; the abort timing needs a small hand-written case.
 
 ## Multiclock and recursive assertion limits after ADV-013
 

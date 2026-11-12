@@ -171,6 +171,20 @@ pulse disables it: `rst_n` low during [22, 23), `kill_m` high during [27, 28),
 - The `expect (s ##1 !t ##1 !t ##1 !t)` started at 2 does not inherit the
   default (S38-D5) and passes at 35 despite the `kill_m` pulse.
 
+## `expect_disable_blocks`
+
+16.18 L27950-27951: "An expect statement causes the executing process to
+block until the given property succeeds or fails." L27953: "When the property
+succeeds or fails, the process unblocks". The second process waits for the
+edge at 5 and prints `[5] expect start`; the expect's attempt begins at the
+edge at 15 (`a` is 1 from 3, so `##[1:3] b` is pending). `rst` is 1 during
+[23, 33): the `disable iff` condition disables the attempt at 23, which then
+neither succeeds nor fails, so no action runs and the process never prints
+`after expect`. The first process prints `[83] end` and calls `$finish`.
+Industry-standard behaviour gives no reference here: it rejects `disable iff`
+in an `expect` at compile time. llg keeps the caller blocked (known issue
+"Concurrent property limits after SIM-038").
+
 ## `initial_assert`
 
 `a` is 1 on ticks 1-3, `b` on tick 2. `i1` (`a ##1 b`) and `i2` (`a |=> b`)
