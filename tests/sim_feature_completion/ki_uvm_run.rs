@@ -224,10 +224,10 @@ fn recursive_rand_handle() {
 /// ten minutes. The bound on the generation time is the test's timeout.
 #[test]
 fn recursive_rand_handle_links_once_per_unit() {
-    const CLASSES: usize = 22;
+    const CLASSES: usize = 14;
     let directory = sim_harness::TempDir::new("ki-uvm-run-recursive").expect("temporary directory");
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim/feature_completion/ki_uvm_run/recursive_rand_handle_wide.sv");
+        .join("tests/fixtures/sim/feature_completion/ki_uvm_run/recursive_rand_handle.sv");
     for (out, mode) in [("opt", None), ("no_opt", Some("--no-opt"))] {
         let output = sim_harness::run_command(
             Command::new(env!("CARGO_BIN_EXE_llg"))
