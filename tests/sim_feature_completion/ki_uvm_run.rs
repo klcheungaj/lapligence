@@ -117,6 +117,22 @@ fn forward_class_typedef_in_module() {
     );
 }
 
+/// Class handles whose classes declare embedded covergroups print in an
+/// assignment pattern without the covergroup instances: a library's pool of
+/// monitors prints its entries this way.
+#[test]
+fn class_pattern_covergroup_member() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_pattern_covergroup_member",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/class_pattern_covergroup_member.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// Interface nets driven by a clocking block and read in the select of a
 /// nonblocking assignment's target: a register file indexed by a bus
 /// address writes the register file, not the address net.

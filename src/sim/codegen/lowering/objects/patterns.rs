@@ -551,6 +551,15 @@ impl Codegen<'_> {
             .map(|(node, index)| (*node, *index))
             .collect();
         nodes.sort_by_key(|(_, index)| *index);
+        // A covergroup's instance layout holds its coverage record and
+        // arguments; no pattern reaches it (covergroup properties are hidden
+        // below), so its display layout is all hidden.
+        let mut covergroups = vec![false; classes.len()];
+        nodes.retain(|(node, index)| {
+            let covergroup = self.db.covergroup(*node).is_some();
+            covergroups[*index] |= covergroup;
+            !covergroup
+        });
         let mut own: Vec<Vec<(usize, IrPatternField)>> = vec![Vec::new(); classes.len()];
         for (class, class_index) in nodes {
             for child in self.node(class).children.clone() {
@@ -567,6 +576,12 @@ impl Codegen<'_> {
                     ));
                 };
                 let storage = self.class_field_storage(class_index, field.1, &descriptor);
+                // An embedded covergroup's instance variable (19.4) has no
+                // value form; it stays in the layout as a hidden (unnamed)
+                // member, so the pattern leaves it out, as is
+                // industry-standard behaviour.
+                let hidden =
+                    matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Covergroup");
                 let ty = match &descriptor.shape {
                     // A semaphore or mailbox property prints as a handle.
                     TypeShape::Opaque { kind }
@@ -576,12 +591,17 @@ impl Codegen<'_> {
                     {
                         self.intern_pattern_type(IrPatternType::Chandle)
                     }
+                    _ if hidden => self.intern_pattern_type(IrPatternType::Chandle),
                     _ => self.pattern_type(&descriptor)?,
                 };
                 own[class_index].push((
                     field.1,
                     IrPatternField {
-                        name: self.node(child).name.clone(),
+                        name: if hidden {
+                            String::new()
+                        } else {
+                            self.node(child).name.clone()
+                        },
                         ty,
                         storage,
                     },
@@ -599,7 +619,20 @@ impl Codegen<'_> {
             }
         }
         for index in 0..classes.len() {
-            self.pattern_class_layout(index, &mut own, &mut classes)?;
+            if covergroups[index] {
+                // Every member is hidden; the walker never reads them.
+                let ty = self.intern_pattern_type(IrPatternType::Chandle);
+                let hidden = IrPatternField {
+                    name: String::new(),
+                    ty,
+                    storage: IrPatternStorage::Handle,
+                };
+                classes[index] = Some(IrPatternClass {
+                    fields: vec![hidden; self.model.classes[index].fields.len()],
+                });
+            } else {
+                self.pattern_class_layout(index, &mut own, &mut classes)?;
+            }
         }
         self.model.pattern_classes = classes
             .into_iter()
