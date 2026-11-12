@@ -380,28 +380,6 @@ pub(in crate::sim::codegen) fn c_format_literal(format: &[u8]) -> String {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn c_format_literal_escapes_every_non_printing_byte() {
-        assert_eq!(
-            c_format_literal(b"a\"?\\\n\t\r\x01\xff7"),
-            "\"a\\\"\\?\\\\\\n\\t\\r\\001\\3777\""
-        );
-        assert_eq!(c_format_literal(b""), "\"\"");
-    }
-
-    #[test]
-    fn only_a_bare_zero_flag_abbreviates_patterns() {
-        assert!(spec_is_abbreviated(b"%0p"));
-        assert!(!spec_is_abbreviated(b"%p"));
-        assert!(!spec_is_abbreviated(b"%05p"));
-        assert!(!spec_is_abbreviated(b"%-0p"));
-    }
-}
-
 impl<'a> Codegen<'a> {
     /// The time unit a literal normalized format hands the formatter: `unit` when
     /// a `%t` conversion reads it, else 0 (the design precision), which leaves the
@@ -424,5 +402,37 @@ impl<'a> Codegen<'a> {
             }
         }
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn c_format_literal_escapes_every_non_printing_byte() {
+        assert_eq!(
+            c_format_literal(b"a\"?\\\n\t\r\x01\xff7"),
+            "\"a\\\"\\?\\\\\\n\\t\\r\\001\\3777\""
+        );
+        assert_eq!(c_format_literal(b""), "\"\"");
+    }
+
+    #[test]
+    fn only_a_bare_zero_flag_abbreviates_patterns() {
+        assert!(spec_is_abbreviated(b"%0p"));
+        assert!(!spec_is_abbreviated(b"%p"));
+        assert!(!spec_is_abbreviated(b"%05p"));
+        assert!(!spec_is_abbreviated(b"%-0p"));
+    }
+
+    #[test]
+    fn only_a_time_conversion_takes_the_scope_unit() {
+        let unit = 1_000_000;
+        assert_eq!(Codegen::literal_time_unit(b"at %0t: %d", unit), unit);
+        assert_eq!(Codegen::literal_time_unit(b"%-10.3T", unit), unit);
+        assert_eq!(Codegen::literal_time_unit(b"%d %s %h", unit), 0);
+        assert_eq!(Codegen::literal_time_unit(b"100%%t done", unit), 0);
+        assert_eq!(Codegen::literal_time_unit(b"", unit), 0);
     }
 }
