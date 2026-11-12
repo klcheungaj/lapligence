@@ -2557,9 +2557,11 @@ outside them.
   consume time runs its C code on a foreign call context (an OS thread with
   its own stack, [design](../src/sim/rt/foreign_contexts/readme.md)), whether
   or not that call reaches such a task: each call costs two thread
-  hand-offs, and each call of a waiting exported task two more (about a
-  microsecond each while the other thread is still polling, tens of
-  microseconds once it sleeps). The C code must not rely on running on
+  hand-offs, and each call of a waiting exported task two more. Measured on
+  the x86-64 development host: 0.13 to 0.25 us per hand-off while the other
+  thread still polls on a core of its own, about 18 us once it sleeps (the
+  other side ran longer than the poll bound), and about 19 us when both
+  threads share one CPU, where the poll only delays the other thread. The C code must not rely on running on
   the main thread (thread-local storage, thread affinity of other
   libraries). Its stack is `LLG_DPI_CONTEXT_STACK_BYTES` (8 MiB by default;
   set it with `LLG_CFLAGS=-DLLG_DPI_CONTEXT_STACK_BYTES=<bytes>`).
@@ -2579,8 +2581,10 @@ outside them.
   alone implies the static CRT (`/MT`), whose own `stdout` buffer keeps the
   DLL's `printf` output until the DLL unloads, after every line the model
   printed. llg cannot flush another C runtime's buffers.
-  The route is unit-tested on Linux (generated `sim.def`, CMake text) and
-  written for MSVC; its Windows run is pending CI.
+  The generated `sim.def` and CMake text are unit-tested on every host; the
+  CI `Windows x86_64` `test` job builds every DPI-C and VPI companion of the
+  suite as a DLL against the import library (`sim_040`, `sim_041`, `adv_018`,
+  `sim_042`, `adv_020`, the S40/S41/A18 decision cases).
 - On macOS ld64 does not check the undefined symbols of a dylib built with
   `-undefined dynamic_lookup`, so llg reads each Mach-O `--dpi-lib` symbol
   table before the build and names an import that neither the model (the
@@ -2616,7 +2620,21 @@ cost matters; a `dlltool` import library if MinGW DLLs are needed.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/adv_018/crossing.sv`;
-`tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv`.
+`tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv`. Each
+point above has a test:
+
+- Foreign call contexts only where needed:
+  `adv_018::only_designs_with_waiting_exports_get_context_shims`; their
+  stack size and its flag: `adv_018::context_stacks_have_the_configured_size`.
+- A chain suspended at the end: `sim_lrm_decisions::a18_d2_finish_leaves_chain_suspended`.
+- The Windows DLL route: the DLL lanes above on the CI `Windows x86_64`
+  `test` job, and `sim_040::model_import_library_is_explicit_about_the_toolchain`
+  (an import library under MSVC, the explicit error elsewhere).
+- macOS: `sim_040::unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build`
+  and `sim_041::undeclared_exports_imported_by_a_mach_o_library_are_named_before_the_build`.
+- An export outside a call chain: `sim_041::export_called_outside_a_call_chain_is_fatal`.
+- Recursion through C: `sim_041::recursion_through_c_stops_at_the_recursion_limit`.
+- S41-D5: `sim_lrm_decisions::s41_d5_disabled_outputs`.
 
 ## Strings declared in a branch of a function
 
