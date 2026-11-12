@@ -1467,6 +1467,18 @@ impl Codegen<'_> {
                 .is_some_and(|lowering| lowering.receiver.is_some())
         {
             refs.remove(0);
+        } else {
+            let prefix = self
+                .rand_lowering
+                .as_ref()
+                .map_or(0, |lowering| lowering.receiver_path.len());
+            if prefix > 0
+                && refs.len() > prefix
+                && self
+                    .names_receiver(&refs[..prefix].iter().copied().map(Some).collect::<Vec<_>>())
+            {
+                refs.drain(..prefix);
+            }
         }
         Some(refs)
     }

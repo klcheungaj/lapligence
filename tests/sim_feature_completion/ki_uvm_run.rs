@@ -166,6 +166,23 @@ fn assertion_bit_vector_functions() {
     );
 }
 
+/// Inline constraints naming the randomized object through the receiver's
+/// own path (`req.randomize() with { req.size == 4; }`, as a sequence's
+/// `uvm_do_with` writes them) constrain its random variables; a path to
+/// another object reads that object's values.
+#[test]
+fn inline_constraint_receiver_path() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "inline_constraint_receiver_path",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/inline_constraint_receiver_path.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// Interface nets driven by a clocking block and read in the select of a
 /// nonblocking assignment's target: a register file indexed by a bus
 /// address writes the register file, not the address net.
