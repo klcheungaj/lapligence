@@ -3191,8 +3191,10 @@ S46-D14 and A19-D46.
   different model is rejected as a whole; records are not matched by name
   across designs.
 - Type options (`type_option.weight`, `goal`, `comment`,
-  `merge_instances`) are not saved; a loaded run uses the current model's
-  type options.
+  `merge_instances`) are saved (format version 2), but a load applies none
+  of them: a loaded run uses the current model's type options, as
+  industry-standard behaviour does (S46-D15). No llg tool reads the saved
+  values yet; a database of format version 1 still loads.
 - VPI assertion API (ADV-017): assertion handles answer the static 39.3.2
   properties, `vpiFile`/`vpiLineNo`/`vpiColumn` and the 40.5.3 counters,
   and run the 39.4 callbacks and 39.5 controls, with these limits:
@@ -3264,9 +3266,9 @@ state numbering shared by all assertion engines.
 
 `tests/fixtures/sim/lrm_decisions/S46-D5_unavailable_kinds.sv`,
 `S46-D6_string_scope_is_definition.sv`,
-`S46-D14_toggle_coverage.sv`;
+`S46-D14_toggle_coverage.sv`, `S46-D15_loaded_type_options.sv`;
 `tests/fixtures/sim/feature_completion/sim_046/db_errors.sv` (`-G W=3`
-reads a database of the W = 4 model).
+reads a database of the W = 4 model), `option_kinds.sv` (`--code-coverage`).
 
 ## Semantic tokens around text macros (llg_ls)
 

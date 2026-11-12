@@ -63,7 +63,11 @@ and `coverage.c`; the sample method then only reads design state.
 `coverage/database.c` owns the llg coverage database; its format, atomic load
 and save are in the module comment. The checksum covers every preceding byte;
 loads read at most `LLG_COV_DB_MAX_BYTES`. Keep the field order when adding fields: a format change bumps
-`LLG_COV_DB_VERSION`.
+`LLG_COV_DB_VERSION`, and a load keeps reading every version from
+`LLG_COV_DB_VERSION_MIN` on (version 2 added the type options at the end
+of the functional section; a load checks them and applies none, S46-D15).
+The schema hashes use their own revision (`LLG_COV_DB_SCHEMA`), so a
+format bump alone does not make older files foreign.
 
 `coverage/assertions.c` holds the assertion coverage items (40.2.2, 40.5.3):
 a generated table of `llg_acov_item_t` sorted by statement identity and the

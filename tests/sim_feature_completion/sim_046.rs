@@ -164,6 +164,12 @@ fn database_with_payload(template: &[u8], payload: &[u8]) -> Vec<u8> {
     bytes
 }
 
+/// The type options of the `db_errors` model: type `g`, one coverpoint,
+/// all declared defaults.
+fn db_errors_type_options() -> Vec<u8> {
+    type_options_block(&[("g", 1, 100, 0, "", &[(1, 100, "")])])
+}
+
 /// The single record of the `db_errors` database `good` (one type `g`, one
 /// record of one automatic coverpoint without transitions): its bytes and
 /// the offset of its first counter entry's bin index within them.
@@ -176,7 +182,9 @@ fn single_record(good: &[u8]) -> (Vec<u8>, usize) {
     assert_eq!(u32_at(payload, 0), 1, "one type");
     let name = u32_at(payload, 4);
     assert_eq!(u32_at(payload, 8 + name), 1, "one record");
-    let record = payload[12 + name..].to_vec();
+    let options = db_errors_type_options();
+    assert!(payload.ends_with(&options), "type options last");
+    let record = payload[12 + name..payload.len() - options.len()].to_vec();
     // hash, name, comment, five options, two flags, slots, items
     let mut at = 8;
     at += 4 + u32_at(&record, at);
@@ -193,7 +201,8 @@ fn single_record(good: &[u8]) -> (Vec<u8>, usize) {
     (record, at + 8)
 }
 
-/// A framed functional section of type `g` holding `records`.
+/// A framed functional section of type `g` holding `records`, then the
+/// model's type options.
 fn functional_payload(records: &[&[u8]]) -> Vec<u8> {
     let mut body = 1u32.to_le_bytes().to_vec();
     body.extend_from_slice(&1u32.to_le_bytes());
@@ -202,9 +211,157 @@ fn functional_payload(records: &[&[u8]]) -> Vec<u8> {
     for record in records {
         body.extend_from_slice(record);
     }
+    body.extend_from_slice(&db_errors_type_options());
     let mut payload = (body.len() as u64).to_le_bytes().to_vec();
     payload.extend_from_slice(&body);
     payload
+}
+
+/// The type options block that ends a version 2 functional section: per
+/// type its name, weight, goal, merge_instances and comment, then per item
+/// weight, goal and comment (`src/sim/rt/coverage/database.c`).
+type TypeOptions<'a> = (&'a str, i64, i64, u8, &'a str, &'a [(i64, i64, &'a str)]);
+
+fn type_options_block(types: &[TypeOptions]) -> Vec<u8> {
+    let text = |bytes: &mut Vec<u8>, value: &str| {
+        bytes.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(value.as_bytes());
+    };
+    let mut bytes = (types.len() as u32).to_le_bytes().to_vec();
+    for (name, weight, goal, merge, comment, items) in types {
+        text(&mut bytes, name);
+        bytes.extend_from_slice(&weight.to_le_bytes());
+        bytes.extend_from_slice(&goal.to_le_bytes());
+        bytes.push(*merge);
+        text(&mut bytes, comment);
+        bytes.extend_from_slice(&(items.len() as u32).to_le_bytes());
+        for (weight, goal, comment) in *items {
+            bytes.extend_from_slice(&weight.to_le_bytes());
+            bytes.extend_from_slice(&goal.to_le_bytes());
+            text(&mut bytes, comment);
+        }
+    }
+    bytes
+}
+
+/// S46-D15: a database saves the type options in effect at the save, and a
+/// load adds the saved counts but applies none of them; a database in the
+/// format version 1 (no type options) loads the same way (readme.md).
+#[test]
+fn saved_type_options_round_trip_and_version_one_databases_still_load() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/db_type_options.out");
+    // The runs that load: everything after the first run's four lines.
+    let old_expected = expected.split_inclusive('\n').skip(4).collect::<String>();
+    let block = type_options_block(&[
+        (
+            "g",
+            3,
+            90,
+            1,
+            "g saved",
+            &[(4, 80, "p saved"), (1, 100, "")],
+        ),
+        ("h", 2, 100, 0, "", &[(1, 100, "")]),
+    ]);
+    for optimized in [false, true] {
+        let label = format!("{SUITE}/db_type_options, optimized={optimized}");
+        let (directory, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "db_type_options",
+            optimized,
+            &[],
+            &[],
+            &[(&[], &[]), (&[], &["+load=t.db"])],
+        );
+        let stdout: String = outputs
+            .iter()
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+            .collect();
+        assert_eq!(stdout, expected, "{label}");
+        for output in &outputs {
+            assert!(output.status.success(), "{label}");
+            assert!(llg_messages(output).is_empty(), "{label}");
+        }
+        // The saved file: version 2, the functional section only, ending
+        // with the type options in effect at the save.
+        let saved = std::fs::read(directory.path().join("t.db")).expect("saved database");
+        assert_eq!(&saved[..8], b"LLGCOVDB");
+        assert_eq!(u32_at(&saved, 8), 2, "{label}: format version");
+        assert_eq!(
+            u32_at(&saved, 12),
+            1,
+            "{label}: only the functional section"
+        );
+        let section = &saved[48..saved.len() - 8];
+        assert_eq!(u64_at(&saved, 40) as usize, section.len(), "{label}");
+        assert!(section.ends_with(&block), "{label}: type options block");
+        // The same run in version 1: no type options block.
+        let records = &section[..section.len() - block.len()];
+        let mut payload = (records.len() as u64).to_le_bytes().to_vec();
+        payload.extend_from_slice(records);
+        let mut old = database_with_payload(&saved, &payload);
+        old[8..12].copy_from_slice(&1u32.to_le_bytes());
+        let checksum = fnv1a(&old[..old.len() - 8]);
+        let at = old.len() - 8;
+        old[at..].copy_from_slice(&checksum.to_le_bytes());
+        let (_rerun, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "db_type_options",
+            optimized,
+            &[],
+            &[("old.db", &old)],
+            &[(&[], &["+load=old.db"])],
+        );
+        assert!(outputs[0].status.success(), "{label}: version 1");
+        assert!(llg_messages(&outputs[0]).is_empty(), "{label}: version 1");
+        assert_eq!(
+            String::from_utf8_lossy(&outputs[0].stdout),
+            old_expected,
+            "{label}: version 1"
+        );
+        // Type options that do not fit the model, or a negative weight,
+        // reject the whole file: no record and no option changes.
+        let block_at = 48 + records.len();
+        let mut renamed = saved.clone();
+        assert_eq!(renamed[block_at + 8], b'g');
+        renamed[block_at + 8] = b'x';
+        let mut negative = saved.clone();
+        negative[block_at + 9..block_at + 17].copy_from_slice(&(-1i64).to_le_bytes());
+        for (case, mut bytes, reason) in [
+            (
+                "renamed type",
+                renamed,
+                "the type options do not match the model's covergroup types",
+            ),
+            ("negative weight", negative, "a type has invalid options"),
+        ] {
+            let at = bytes.len() - 8;
+            let checksum = fnv1a(&bytes[..at]);
+            bytes[at..].copy_from_slice(&checksum.to_le_bytes());
+            let (_rerun, outputs) = sim_cli::run_case_sequence(
+                SUITE,
+                "db_type_options",
+                optimized,
+                &[],
+                &[("bad.db", &bytes)],
+                &[(&[], &["+load=bad.db"])],
+            );
+            let label = format!("{label}, {case}");
+            assert_eq!(outputs[0].status.code(), Some(1), "{label}");
+            assert_eq!(
+                String::from_utf8_lossy(&outputs[0].stdout),
+                include_str!("../fixtures/sim/feature_completion/sim_046/db_type_options_bad.out"),
+                "{label}"
+            );
+            assert_eq!(
+                llg_messages(&outputs[0]),
+                [format!(
+                    "ERROR: [SIM-010] $load_coverage_db at tb:38:7: coverage database `bad.db` was not loaded: {reason}; no coverage changed"
+                )],
+                "{label}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -240,7 +397,7 @@ fn corrupt_and_foreign_databases_change_nothing() {
         let mut flipped = good.clone();
         flipped[58] ^= 1;
         let mut future = good.clone();
-        future[8..12].copy_from_slice(&2u32.to_le_bytes());
+        future[8..12].copy_from_slice(&3u32.to_le_bytes());
         let mut unknown_section = good.clone();
         // Bits 1, 2, 4, 8 and 16 are the functional, assertion, FSM,
         // statement and toggle sections.

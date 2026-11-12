@@ -180,7 +180,8 @@ instances `one`, `two` (and `three` in the second run) named by
 
 `g` has one automatic coverpoint over `bit [W-1:0] v`, W = 4: 16 bins; one
 sample of 3: 1/16 = 6.25. The test saves good.db, then builds damaged copies
-in Rust from the documented format (`src/sim/rt/coverage/database.c`) and
+in Rust from the documented format (`src/sim/rt/coverage/database.c`; the
+functional section ends with the type options of `g`, all defaults) and
 loads each with `+load=bad.db`:
 
 | Case | Message | Output |
@@ -189,7 +190,7 @@ loads each with `+load=bad.db`:
 | first 30 bytes | the file is not an llg coverage database | unchanged 1/16 |
 | one bit flipped | the checksum does not match | unchanged |
 | foreign magic | the file is not an llg coverage database | unchanged |
-| version 2 | the database version is not supported | unchanged |
+| version 3 | the database version is not supported | unchanged |
 | section bit 2 set | the database has unknown sections | unchanged |
 | last checksum byte missing | the file length does not match its header | unchanged |
 | functional frame one byte longer than the payload | the database sections are malformed | unchanged |
@@ -519,6 +520,42 @@ seen at 0 and 1 (3 bits).
   (0 covered, count 0, 5 coverable); bits as above.
 - `option_kinds_statement.out` (`code_coverage = ["statement"]` in the
   `llg.toml` named by `--config`): statements as above; bits stopped (0).
+
+## db_type_options.sv
+
+The coverage database saves the type options in effect at the save, and a
+load applies none of them (decision S46-D15, industry-standard behaviour;
+the text is silent). Clauses: 19.9 L33683-33686, quoted under
+`database.sv`; 19.7.1 L33491-33492: "The strobe type option can only be set
+in the covergroup definition. Other type options can be assigned
+procedurally at any time during simulation."
+
+`g` has coverpoints `p` (`lo` = 0, `hi` = 1) and `q` (`two`, `three`) and
+declares `type_option.weight = 2` and a comment; `h` has one bin over
+every value. Defaults (Table 19-3): weight 1, goal 100, merge_instances 0,
+comment "".
+
+- First run: `gi` samples 0 (`p.lo`), `hi` samples 3. The writes make `g`
+  weight 3, goal 90, merge_instances 1, comment "g saved", `g::p` weight 4,
+  goal 80, comment "p saved", `h` weight 2. With merge_instances 1, `g`'s
+  type coverage uses the type weights of its items (19.7.1 example):
+  (50 x 4 + 0 x 1) / 5 = 40.00; `h` 100.00; `$get_coverage` (19.11)
+  (40 x 3 + 100 x 2) / 5 = 64.00. The test checks that `t.db` (format
+  version 2, the functional section only) ends with exactly these options:
+  per type its name, weight, goal, merge_instances and comment, then per
+  item its weight, goal and comment.
+- `+load=t.db`: before the load the declared options and no samples (0.00).
+  After it the options are still the declared ones; the saved counts join
+  `gi` (S46-D2), so with merge_instances 0 `g` is `gi`'s instance coverage
+  with option weights 1: (50 + 0) / 2 = 25.00; `h` 100.00; total
+  (25 x 2 + 100 x 1) / 3 = 50.00. After `g::type_option.weight = 5`:
+  (25 x 5 + 100) / 6 = 37.50.
+- `+load=old.db`: the test rewrites `t.db` as format version 1 (no type
+  options block, version 1, new checksum); it loads with the same output
+  as `+load=t.db`.
+- `db_type_options_bad.out`: `t.db` with the first type renamed (`x`) or
+  with a negative type weight is not loaded (the whole file is refused,
+  S46-D3), so the run reports the declared options and 0.00.
 
 ## Negative cases
 

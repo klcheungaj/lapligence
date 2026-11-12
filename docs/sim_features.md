@@ -3168,8 +3168,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `option.name` defaults to a unique `<scope>.<group>#<k>` (S46-D1).
   `$set_coverage_db_name` saves every covergroup's coverage at the end of the
   run, after `final` procedures, to a versioned, checksummed, host-independent
-  llg database; `$load_coverage_db` adds a saved run to type coverage, joining
-  the live instance of the same name (S46-D2). A missing, corrupt or foreign
+  llg database, with the type options in effect; `$load_coverage_db` adds a
+  saved run to type coverage, joining the live instance of the same name
+  (S46-D2), and keeps the run's own type options (S46-D15); databases of the
+  previous format version still load. A missing, corrupt or foreign
   database (other covergroups, bins or options layout) is a located run-time
   error that changes nothing (S46-D3). Instances outlive their last handle
   (S44-D3). Value counters are dense up to 4096 bins and sparse beyond, and
