@@ -282,6 +282,17 @@ fn resolve_simulator(raw: &RawSimulator) -> Result<SimulatorConfig, ConfigError>
                 .map_err(|error| ConfigError::new(format!("simulator.pulse_style: {error}")))
         })
         .transpose()?;
+    let code_coverage = raw
+        .code_coverage
+        .as_ref()
+        .map(|names| {
+            if names.is_empty() {
+                return Ok(crate::sim::codegen::CodeCoverageKinds::default());
+            }
+            crate::sim::codegen::CodeCoverageKinds::parse(names.iter().map(String::as_str))
+                .map_err(|error| ConfigError::new(format!("simulator.code_coverage: {error}")))
+        })
+        .transpose()?;
     Ok(SimulatorConfig {
         stop_policy,
         optimize: raw.optimize,
@@ -294,6 +305,7 @@ fn resolve_simulator(raw: &RawSimulator) -> Result<SimulatorConfig, ConfigError>
         timing_check_messages: raw.timing_check_messages,
         neg_timing_checks: raw.neg_timing_checks,
         index_checks: raw.index_checks,
+        code_coverage,
         plusargs: raw.plusargs.clone(),
     })
 }

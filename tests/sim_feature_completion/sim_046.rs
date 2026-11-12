@@ -733,6 +733,96 @@ fn vpi_started_statement_coverage_counts_per_shared_instance() {
     );
 }
 
+/// The generated C of `option_kinds.sv` (no `$coverage_*` call) without
+/// the VPI catalog, with the code coverage kinds `kinds` requested.
+fn option_kinds_model(kinds: llg::sim::codegen::CodeCoverageKinds) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/feature_completion/sim_046/option_kinds.sv");
+    let compiled = llg::core::compile::compile_checked(&llg::core::compile::CompileOpts {
+        files: vec![path.to_string_lossy().into_owned()],
+        top: Some("tb".to_owned()),
+        system_subroutines: vec!["task $cov_report()".to_owned()],
+        ..Default::default()
+    })
+    .expect("option_kinds compiles");
+    let db = llg::core::db::Db::from_slang(&compiled.snapshot).expect("owned database");
+    llg::sim::codegen::generate_from_db_with_codegen_options(
+        &db,
+        &llg::sim::codegen::CodegenOptions {
+            code_coverage: kinds,
+            ..Default::default()
+        },
+    )
+    .expect("option_kinds emits")
+    .model_c
+}
+
+/// S46-D13, `--code-coverage`: without a `$coverage_*` call or the VPI
+/// catalog a model carries no code coverage; the option compiles in the
+/// kinds it names, started at time 0 (the last argument of the startup
+/// call), and no other kind.
+#[test]
+fn code_coverage_option_compiles_in_and_starts_the_named_kinds() {
+    use llg::sim::codegen::CodeCoverageKinds;
+    let plain = option_kinds_model(CodeCoverageKinds::default());
+    assert!(!plain.contains("llg_scov_model(") && !plain.contains("llg_tcov_model("));
+    let both = option_kinds_model(CodeCoverageKinds::ALL);
+    assert!(both.contains("llg_scov_model(llg_scov, 15u, &llg_scov_pack, 1);"));
+    assert!(both.contains("llg_tcov_model(llg_model_tcov_signals, 3u, 1);"));
+    let toggle = option_kinds_model(CodeCoverageKinds {
+        statement: false,
+        toggle: true,
+    });
+    assert!(!toggle.contains("llg_scov_model("));
+    assert!(toggle.contains("llg_tcov_model(llg_model_tcov_signals, 3u, 1);"));
+}
+
+/// `--code-coverage` in a model built for VPI: the named kinds collect from
+/// time 0 without a `$coverage_*` call and the others stay stopped
+/// (A19-D46); `simulator.code_coverage` in the `--config` file does the
+/// same (readme.md).
+#[test]
+fn code_coverage_option_collects_from_time_zero() {
+    let directory =
+        super::sim_harness::TempDir::new("sim046-option-kinds").expect("temporary directory");
+    let Some(library) = super::sim_040::plugin_library(SUITE, &directory, "option_kinds", &[])
+    else {
+        return;
+    };
+    let vpi = ["--vpi", "--define-system-task", "task $cov_report()"];
+    for (option, expected) in [
+        (
+            "--code-coverage",
+            include_str!("../fixtures/sim/feature_completion/sim_046/option_kinds.out"),
+        ),
+        (
+            "--code-coverage=toggle",
+            include_str!("../fixtures/sim/feature_completion/sim_046/option_kinds_toggle.out"),
+        ),
+    ] {
+        let args = [&vpi[..], &[option]].concat();
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "option_kinds",
+            expected,
+            &args,
+            &[("LLG_VPI_PLUGIN", &library)],
+        );
+    }
+    let args = [&vpi[..], &["--config", "llg.toml"]].concat();
+    sim_cli::run_case_backend_parity_with_files(
+        SUITE,
+        "option_kinds",
+        include_str!("../fixtures/sim/feature_completion/sim_046/option_kinds_statement.out"),
+        &args,
+        &[("LLG_VPI_PLUGIN", &library)],
+        &[(
+            "llg.toml",
+            "schema_version = 1\n[simulator]\ncode_coverage = [\"statement\"]\n",
+        )],
+    );
+}
+
 /// S46-D13: the statement counters leave the code they count unchanged: a
 /// unique-if ladder reports both true conditions, a disabled named block
 /// forming a whole fork branch ends it KILLED, the helper that a continuous

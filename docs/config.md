@@ -105,6 +105,8 @@ option or key, so no precedence applies to it.
   `--lint-only`/`--no-lint-only`, `-Werror`/`-Wno-error`. `--no-lint-only` also
   cancels `lint.json`. `--lint-json [<path>]` chooses its own destination
   (stdout without a path) instead of the file's `lint.json_file`.
+- `--code-coverage[=<kinds>]` replaces `simulator.code_coverage` and
+  `--no-code-coverage` cancels it.
 - `--wave <file>` replaces `waveform.file` and `--no-wave` cancels it;
   `--wave-depth` replaces `waveform.depth` and needs a file from either layer.
 - Every `llg` run lints. The `[lint]` rule settings (`enabled`, `rules.<id>`)
@@ -170,6 +172,7 @@ server, accepted and ignored by `llg`.
 | `simulator.timing_checks`, `simulator.notifiers`, `simulator.timing_check_messages` | bools | llg | `--[no-]timing-checks`, `--[no-]notifiers`, `--[no-]timing-check-messages` |
 | `simulator.neg_timing_checks` | bool | llg | `--[no-]neg-timing-checks` |
 | `simulator.index_checks` | bool | llg | `--[no-]index-checks` |
+| `simulator.code_coverage` | strings `"statement"`, `"toggle"` | llg | `--code-coverage[=statement,toggle]`, `--no-code-coverage` |
 | `simulator.plusargs` | strings | llg | arguments after `--` (they replace; `--append-plusarg` adds) |
 | `waveform.file` | `.vcd`/`.fst` path | llg | `--wave` |
 | `waveform.depth` | integer 0 to 4294967295 | llg | `--wave-depth`; requires `file` |
@@ -184,7 +187,8 @@ server, accepted and ignored by `llg`.
 
 Command-line-only: `--config`, `--help`, `--version`, `--vpi`,
 `--vpi-port-delays`, `--dpi-import-lib`, and the negations
-`--no-gen-only`, `--opt`, `--no-lint-only`, `-Wno-error`, `--no-wave`.
+`--no-gen-only`, `--opt`, `--no-lint-only`, `-Wno-error`, `--no-wave`,
+`--no-code-coverage`.
 
 ```toml
 schema_version = 1
@@ -426,6 +430,17 @@ severity = "error"
   text's result: no write, a warning, `$cast` returning 0, a read giving the
   default; an invalid `new[]` size empties the array with a warning. The model reads it from `LLG_INDEX_CHECKS` (`on` or `off`) at
   run time, so changing it needs no regeneration.
+- `code_coverage` (array of `"statement"` and `"toggle"`, default `[]`) —
+  collect statement and toggle coverage (IEEE 1800-2009 40.2.2) of the kinds
+  listed from time 0 without any `$coverage_*` call in the design, as a
+  `$coverage_control` START of each kind at time 0 would. The kinds are
+  compiled into the model, so changing them needs a regeneration; results
+  are read by the `$coverage_*` functions, the coverage database and VPI
+  applications (`--vpi`). `--code-coverage` without a list gives both kinds,
+  `--code-coverage=toggle` (a comma-separated list) the kinds named, and
+  `--no-code-coverage` cancels the configured kinds. Without the option a
+  kind is collected only when a `$coverage_*` call names it (from time 0) or,
+  stopped until a START, in a model built for VPI.
 - `plusargs` (array of strings) — arguments passed to the generated simulator
   (the arguments after `--`).
 

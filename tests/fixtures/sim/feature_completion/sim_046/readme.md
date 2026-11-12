@@ -484,6 +484,42 @@ The event control's vpiCoveredCount sums all five.
 - Phase 3 (after edge 6, which runs `n = 0`): `u3` counts edge 6 only: 5,
   5 covered; `u4` 8 + 5 = 13, 5 covered; `u0`, `u2` never started: 0.
 
+## option_kinds.sv and option_kinds.c
+
+`llg --code-coverage[=statement,toggle]` and `simulator.code_coverage`
+(decision S46-D13): the design calls no `$coverage_*` function, and the
+model, built with `--vpi` for the run-time VPI application `$cov_report`,
+has both kinds available. The option starts the kinds it names at time 0,
+as a design whose calls name them would; the others stay stopped (A19-D46).
+Clause: 40.3.2.1 L66123-66125: "`SV_COV_START, if possible, starts
+collecting coverage information in the specified hierarchy. There is no
+effect if coverage is already being collected. Coverage is automatically
+started at the beginning of simulation for all portions of the hierarchy
+enabled for coverage."; 40.5.3 L66585-66586 (instance counts) and
+L66723-66725 (sums), quoted under `vpi_shared_start.sv`.
+
+Statements (S46-D13; each timing control and the statement it controls are
+two items):
+- `tb` has 10: the `initial` block, `repeat`, its block, `#1 go = 1` (2),
+  `#1 go = 0` (2), `#1 $cov_report` (2) and `$finish`. When `$cov_report`
+  runs, every one has started except `$finish`: 9.
+- `u` has 5 (the event control, the block, `n++`, the `if`, `n = 0`), all
+  run by the third `go` edge. The event control runs at time 0 and after
+  each of the 3 edges (4); the block, `n++` and the `if` on each edge (3
+  each); `n = 0` on edge 2, where `n` reaches 2: count 4 + 3 + 3 + 3 + 1 =
+  14.
+
+Toggle bits (S46-D14): `tb.go` goes 0, 1 (1 bit); in `u`, `go` follows it
+and `n` goes 00, 01, 10 then 00 within edge 2's time step, 01: both bits
+seen at 0 and 1 (3 bits).
+
+- `option_kinds.out` (`--code-coverage`): tb 9 statements, 1 bit; u 5
+  statements, 3 bits; the `always` 5 of 5, count 14.
+- `option_kinds_toggle.out` (`--code-coverage=toggle`): statements stopped
+  (0 covered, count 0, 5 coverable); bits as above.
+- `option_kinds_statement.out` (`code_coverage = ["statement"]` in the
+  `llg.toml` named by `--config`): statements as above; bits stopped (0).
+
 ## Negative cases
 
 | Fixture | Rejected construct | Owner |

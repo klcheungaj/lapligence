@@ -3214,9 +3214,11 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_get(vpiStatementCoverage | vpiToggleCoverage, instance)` and
   `vpiCovered`/`vpiCoverMax`/`vpiCoveredCount` on statements, nets,
   variables and bits. A design whose `$coverage_*` calls name a kind
-  collects it from time 0; a model built with `--vpi` or `--dpi-lib` has
-  both available and stopped until START; any other model is generated
-  unchanged. Covergroups are not
+  collects it from time 0, and so does a model built with
+  `--code-coverage[=statement,toggle]` (`simulator.code_coverage`) for the
+  kinds it names, without any `$coverage_*` call; a model built with
+  `--vpi` or `--dpi-lib` has both available and stopped until START; any
+  other model is generated unchanged. Covergroups are not
   a 40.3.1 coverage type and are reached only through the 19.8 and 19.9
   methods and tasks. SV 40 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and

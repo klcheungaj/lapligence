@@ -645,6 +645,7 @@ notifiers = true
 timing_check_messages = false
 neg_timing_checks = true
 index_checks = false
+code_coverage = ["toggle"]
 plusargs = ["+seed=1"]
 [waveform]
 file = "waves/run.FST"
@@ -723,6 +724,13 @@ runtime_cache = "../cache"
     assert_eq!(config.simulator.timing_check_messages, Some(false));
     assert_eq!(config.simulator.neg_timing_checks, Some(true));
     assert_eq!(config.simulator.index_checks, Some(false));
+    assert_eq!(
+        config.simulator.code_coverage,
+        Some(crate::sim::codegen::CodeCoverageKinds {
+            statement: false,
+            toggle: true
+        })
+    );
     assert_eq!(config.build.gen_only, Some(true));
     assert_eq!(config.build.cc.as_deref(), Some("gcc"));
     assert_eq!(
@@ -817,6 +825,14 @@ fn invalid_driver_values_name_their_key() {
         (
             "[simulator]\nneg_timing_checks = \"yes\"\n",
             "simulator.neg_timing_checks",
+        ),
+        (
+            "[simulator]\ncode_coverage = [\"branch\"]\n",
+            "simulator.code_coverage",
+        ),
+        (
+            "[simulator]\ncode_coverage = true\n",
+            "simulator.code_coverage",
         ),
         ("[lint]\nrun = true\n", "lint.run"),
         ("[waveform]\nfile = \"dump.txt\"\n", "waveform.file"),

@@ -428,6 +428,52 @@ pub struct CodegenOptions {
     /// A21-D2, A21-D4, A21-D5), and a port whose two sides are one
     /// simulated net takes no delays.
     pub vpi_port_delays: bool,
+    /// Code coverage kinds collected from time 0 without a `$coverage_*`
+    /// call (`--code-coverage`, `simulator.code_coverage`): each requested
+    /// kind is compiled in and started as a `$coverage_control` START at
+    /// time 0 would start it (IEEE 1800-2009 40.3.2.1).
+    pub code_coverage: CodeCoverageKinds,
+}
+
+/// The statement and toggle coverage kinds an invocation requests
+/// (`--code-coverage[=statement,toggle]`, `simulator.code_coverage`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CodeCoverageKinds {
+    pub statement: bool,
+    pub toggle: bool,
+}
+
+impl CodeCoverageKinds {
+    /// Both kinds: `--code-coverage` without a list.
+    pub const ALL: Self = Self {
+        statement: true,
+        toggle: true,
+    };
+
+    /// Parse the kind names of `--code-coverage=<list>` or the entries of
+    /// `simulator.code_coverage`: `statement` and `toggle`, each at most
+    /// once in effect; no name, an empty name or another name is an error.
+    pub fn parse<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Self, String> {
+        let mut kinds = Self::default();
+        let mut any = false;
+        for name in names {
+            match name {
+                "statement" => kinds.statement = true,
+                "toggle" => kinds.toggle = true,
+                other => {
+                    return Err(format!(
+                        "unknown code coverage kind `{other}` (expected statement or toggle)"
+                    ))
+                }
+            }
+            any = true;
+        }
+        if any {
+            Ok(kinds)
+        } else {
+            Err("expected statement, toggle or both".to_owned())
+        }
+    }
 }
 
 /// The name of the system function a `--define-system-task` prototype
@@ -768,7 +814,7 @@ fn lower_model_with(
     cg.record_column_types = record_columns.clone();
     cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
-    cg.plan_code_coverage(options.vpi);
+    cg.plan_code_coverage(options.vpi, options.code_coverage);
     if !cg.checker_free.is_empty() {
         cg.plan_free_variables()?;
     }

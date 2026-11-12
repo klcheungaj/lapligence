@@ -83,6 +83,9 @@ pub(crate) struct DriverOptions {
     pub stop_policy: StopPolicy,
     /// `simulator.index_checks`, passed to the model as `LLG_INDEX_CHECKS`.
     pub index_checks: bool,
+    /// `simulator.code_coverage`: the code coverage kinds the model collects
+    /// from time 0 without a `$coverage_*` call (a generation option).
+    pub code_coverage: sim::codegen::CodeCoverageKinds,
     /// Module path pulse limits, style and showcancelled setting.
     pub path_pulse: sim::ir::IrPathPulseOptions,
     /// System timing check, notifier and violation report switches.
@@ -512,6 +515,10 @@ pub(crate) fn resolve(
             .index_checks
             .or(config.simulator.index_checks)
             .unwrap_or(true),
+        code_coverage: cli
+            .code_coverage
+            .or(config.simulator.code_coverage)
+            .unwrap_or_default(),
         path_pulse,
         timing_checks: sim::ir::IrTimingCheckOptions {
             checks: cli
@@ -1403,6 +1410,56 @@ files = ["a.sv"]
         assert!(options.index_checks);
         let options = resolve_no_env(cli(&["--no-index-checks", "x.sv"]), None).unwrap();
         assert!(!options.index_checks);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn code_coverage_follows_the_precedence_rules() {
+        use sim::codegen::CodeCoverageKinds;
+        let dir = temp("code-coverage");
+        let defaults = resolve_no_env(cli(&["x.sv"]), None).unwrap();
+        assert_eq!(defaults.code_coverage, CodeCoverageKinds::default());
+        let both = resolve_no_env(cli(&["--code-coverage", "x.sv"]), None).unwrap();
+        assert_eq!(both.code_coverage, CodeCoverageKinds::ALL);
+        let toggle = resolve_no_env(cli(&["--code-coverage=toggle", "x.sv"]), None).unwrap();
+        assert_eq!(
+            toggle.code_coverage,
+            CodeCoverageKinds {
+                statement: false,
+                toggle: true
+            }
+        );
+        let listed =
+            resolve_no_env(cli(&["--code-coverage=toggle,statement", "x.sv"]), None).unwrap();
+        assert_eq!(listed.code_coverage, CodeCoverageKinds::ALL);
+        let cfg = config(
+            &dir,
+            "schema_version = 1\n[simulator]\ncode_coverage = [\"statement\"]\n",
+        );
+        let options = resolve_no_env(cli(&["x.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(
+            options.code_coverage,
+            CodeCoverageKinds {
+                statement: true,
+                toggle: false
+            }
+        );
+        // The command line replaces the configured kinds, or cancels them.
+        let options = resolve_no_env(cli(&["--code-coverage", "x.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(options.code_coverage, CodeCoverageKinds::ALL);
+        let options = resolve_no_env(cli(&["--no-code-coverage", "x.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(options.code_coverage, CodeCoverageKinds::default());
+        for rejected in [
+            &["--code-coverage=", "x.sv"][..],
+            &["--code-coverage=branch", "x.sv"][..],
+            &["--code-coverage=statement,", "x.sv"][..],
+        ] {
+            assert_eq!(
+                parse_args(rejected.iter().map(|arg| (*arg).to_owned()).collect()).err(),
+                Some(2),
+                "{rejected:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -3170,11 +3170,13 @@ S46-D14 and A19-D46.
 ### Symptom
 
 - Statement and toggle coverage are collected only in a model whose
-  `$coverage_*` calls name them (from time 0) or that is built with
-  `--vpi` or `--dpi-lib` (stopped until a START); llg has no command-line
-  coverage switch. A model that loads a VPI application at run time
-  (`LLG_VPI_PLUGIN`) without either has neither kind: queries return 0 and
-  CHECK reports `SV_COV_NOCOV`.
+  `$coverage_*` calls name them or that is built with `--code-coverage`
+  (`simulator.code_coverage`) for them (both from time 0), or that is built
+  with `--vpi` or `--dpi-lib` (stopped until a START). A model that loads a
+  VPI application at run time (`LLG_VPI_PLUGIN`) without any of these has
+  neither kind: queries return 0 and CHECK reports `SV_COV_NOCOV`. The
+  option is a generation option: a built model cannot change its kinds at
+  run time.
 - Toggle coverage counts packed integral nets and variables of instances,
   their generate scopes and ports; unpacked arrays, reals, strings,
   events, handles, class properties, and block, subroutine and package
@@ -3253,8 +3255,10 @@ atomic.
 
 ### Intended direction
 
-No owner. A command-line switch to collect code coverage without a
-`$coverage_*` call would be an `llg` option feeding the same gating.
+No owner. The command-line switch exists (`--code-coverage`); the
+other limits stay as documented unless a user needs them: UCIS or another
+interchange format is out of scope, and assertion stepping (A17-D2) needs a
+state numbering shared by all assertion engines.
 
 ### Reproduce
 
