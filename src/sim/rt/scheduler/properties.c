@@ -934,8 +934,9 @@ static void property_assertions_async_pass(void) {
  * (decision of the abort timing; 16.12 reads sampled values). They are
  * checked in the first pass of each time step, where an evaluation whose
  * abort starts strictly after its launch step becomes due, and in every
- * pass after a signal write. */
-static void property_assertions_async(void) {
+ * pass after a signal write. Out of line, so the Observed pass of designs
+ * without asynchronous aborts keeps its size and placement. */
+static LLG_OUTLYING void property_assertions_async(void) {
     if (!g.property_async_pending && g.property_async_step == g.now + 1) return;
     g.property_async_pending = 0;
     g.property_async_step = g.now + 1;

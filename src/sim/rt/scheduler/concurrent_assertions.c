@@ -4,7 +4,7 @@ static void run_property_assertion(llg_concurrent_assertion_t* assertion,
 static void property_attempt_begin(llg_concurrent_assertion_t* assertion,
                                    const llg_assertion_clock_event_t* event,
                                    llg_frame_t* values);
-static void property_assertions_async(void);
+static LLG_OUTLYING void property_assertions_async(void);
 static void future_assertion_observed(llg_concurrent_assertion_t* assertion);
 static int future_assertion_defer_end(llg_concurrent_assertion_t* assertion, int killed);
 static void future_assertion_add_start(llg_concurrent_assertion_t* assertion);
