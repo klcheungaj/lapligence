@@ -27,6 +27,8 @@
 use super::*;
 use crate::sim::ir::IrNativeAccessKind;
 
+mod report_plan;
+
 /// Longest handle-property chain (`a.b.c.d.v`) whose links a wait follows;
 /// deeper links reject at the emitter's own access-depth guard first.
 const MAX_HANDLE_PROPERTY_DEPTH: usize = 256;
@@ -52,11 +54,13 @@ struct CalleeReceivers {
 pub(in super::super) enum ReportReadPlan {
     /// Named storage only: the ordinary read walk finds every trigger.
     Fixed,
-    /// Property paths: the handles and properties they pass through are
-    /// exact dependencies, resolved again after each evaluation.
+    /// Property paths, and calls whose callee reads bind through the call's
+    /// handles: the handles and properties they pass through are exact
+    /// dependencies, resolved again after each evaluation.
     Exact,
-    /// Calls, virtual-interface members or synchronization objects: storage
-    /// no dependency names, so the monitor evaluates at every settled slot.
+    /// Virtual methods, calls with a read no handle binds, virtual-interface
+    /// members or synchronization objects: storage no dependency names, so
+    /// the monitor evaluates at every settled slot.
     EverySlot,
 }
 
@@ -182,23 +186,31 @@ impl Codegen<'_> {
         false
     }
 
-    /// How a `$monitor` watches report argument `root`.
+    /// How a `$monitor` watches report argument `root`. A call of a
+    /// function or nonvirtual method is exact when every class storage its
+    /// body reads binds through the call's receiver, handle formals, handle
+    /// properties, static handles or handle locals that hold one handle
+    /// (`report_plan`); otherwise, and for a virtual method, a
+    /// virtual-interface member or a synchronization object, the monitor
+    /// evaluates at every settled slot.
     pub(in super::super) fn report_read_plan(&self, root: NodeId) -> ReportReadPlan {
         if !self.reads_dynamic_storage(root) {
             return ReportReadPlan::Fixed;
         }
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {
-            let dynamic_call = self.called_subroutine(node).is_some_and(|callee| {
-                self.func_body(callee)
-                    .is_some_and(|body| self.reads_dynamic_storage_in(body, &mut HashSet::new()))
-            });
-            if dynamic_call
-                || self.dynamic_interface_member(node)
-                || self.class_method_call(node).is_some()
-                || self.synchronization_method_call(node)
-            {
+            if self.dynamic_interface_member(node) || self.synchronization_method_call(node) {
                 return ReportReadPlan::EverySlot;
+            }
+            if let Some(callee) = self.called_subroutine(node) {
+                let watched = self.calls_virtual_method(node)
+                    || self.class_method_call(node).is_some()
+                    || self.func_body(callee).is_some_and(|body| {
+                        self.reads_dynamic_storage_in(body, &mut HashSet::new())
+                    });
+                if watched && !self.report_call_binds(node, callee) {
+                    return ReportReadPlan::EverySlot;
+                }
             }
             pending.extend(self.node(node).children.iter().copied());
         }
