@@ -149,6 +149,23 @@ fn fixed_array_to_dynamic_handles() {
     );
 }
 
+/// `$countones`, `$onehot`, `$onehot0` and `$isunknown` in concurrent
+/// assertions, from a procedure of an interface and at module level, read
+/// their arguments' sampled values: a bus interface checks its grant and
+/// address lines this way.
+#[test]
+fn assertion_bit_vector_functions() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "assertion_bit_vector_functions",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/assertion_bit_vector_functions.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// Interface nets driven by a clocking block and read in the select of a
 /// nonblocking assignment's target: a register file indexed by a bus
 /// address writes the register file, not the address net.

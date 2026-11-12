@@ -2708,6 +2708,10 @@ impl Codegen<'_> {
                 crate::sim::ir::IrSysFunc::Sampled(call) => {
                     call.domain.is_some() || self.sampled_compatible(&call.argument)
                 }
+                // `$countones`, `$onehot`, `$onehot0` and `$isunknown` are
+                // functions of their argument's value alone, so they read the
+                // sampled argument (16.5, 16.12).
+                crate::sim::ir::IrSysFunc::BitQuery { arg, .. } => self.sampled_compatible(arg),
                 _ => false,
             },
             _ => false,
