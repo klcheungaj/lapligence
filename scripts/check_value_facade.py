@@ -8,9 +8,10 @@ MEMBER = re.compile(r'(?P<receiver>(?:[a-zA-Z_]\w*|\{[^{}]*\})(?:(?:\.|->)[a-zA-
 METADATA = {
     'rt/container/dynamic_arrays.c': ('changes',),
     'rt/container/queues.c': ('changes',),
-    # Coverpoint tables: `width` and `is_signed` describe the bin key.
-    'rt/coverage/coverage.c': ('point',),
-    'rt/coverage/database.c': ('point',),
+    # Coverpoint tables: `width` and `is_signed` describe the bin key, and
+    # for a coverpoint wider than 64 bits (`wide`) its declared value.
+    'rt/coverage/coverage.c': ('point', 'wide'),
+    'rt/coverage/database.c': ('point', 'wide'),
     # Toggle coverage signal rows: `width` is the watched storage's bit count.
     'rt/coverage/code.c': ('llg_tcov_signals[i]', 'llg_tcov_signals[signal]', 'row', 'signal',
                            'signals[i]'),
