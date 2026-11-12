@@ -16,6 +16,19 @@ fn assert_stdout(label: &str, output: &Output, expected: &str) {
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
 }
 
+/// The listed warnings of a run's stderr, from the line on.
+fn lowering_warnings(output: &Output) -> Vec<String> {
+    super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
+        .iter()
+        .map(|warning| {
+            warning
+                .split_once(".sv:")
+                .map_or(warning.as_str(), |(_, rest)| rest)
+                .to_owned()
+        })
+        .collect()
+}
+
 /// The run-time messages of a run's stderr ([`super::sim_harness::runtime_messages`]).
 fn llg_messages(output: &Output) -> Vec<String> {
     super::sim_harness::runtime_messages(&String::from_utf8_lossy(&output.stderr))
@@ -180,10 +193,51 @@ fn invalid_transition_forms_are_located_errors() {
         "neg_trans_ignore_goto",
         "neg_trans_ignore_goto.sv:6:55: ignore_bins and illegal_bins `skip` of coverpoint `cp` in covergroup `g` cannot use goto or nonconsecutive repetition",
     );
+}
+
+/// Transition values read from covergroup arguments resolve per instance
+/// when it is constructed (19.5, 19.5.6), as value bins do.
+#[test]
+fn transition_values_read_covergroup_arguments() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_045/transition_arguments.out");
+    let ignored = "value is outside the coverpoint type and is ignored (IEEE 1800-2009 19.5.6)";
+    let limited = "range is limited to the values of the coverpoint type (IEEE 1800-2009 19.5.6)";
+    sim_cli::run_case_checked_matrix(SUITE, "transition_arguments", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(
+            llg_messages(output),
+            [
+                format!("WARNING: [SIM-011] tb:13:39: bins `out` {ignored}"),
+                format!("WARNING: [SIM-011] tb:14:41: bins `part` {limited}"),
+                format!("WARNING: [SIM-011] tb:13:39: bins `out` {ignored}"),
+                format!("WARNING: [SIM-011] tb:14:41: bins `part` {limited}"),
+                format!("WARNING: [SIM-011] tb:21:53: bins `o` {ignored}"),
+            ],
+            "{label}"
+        );
+    });
+}
+
+/// The transition forms whose counts need compile-time searches keep
+/// constant values (llg limitations).
+#[test]
+fn transition_argument_limits_are_located_errors() {
+    let describe = "transition bins `t` of coverpoint `cp` in covergroup `g`";
     sim_cli::reject_case(
         SUITE,
-        "neg_trans_argument",
-        "neg_trans_argument.sv:6:39: transition bins `t` of coverpoint `cp` in covergroup `g` read a covergroup argument; llg supports only constant transition values (llg limitation)",
+        "neg_trans_argument_array",
+        &format!("neg_trans_argument_array.sv:7:29: {describe} with `[]` read a covergroup argument; llg creates one bin per sequence only for constant transition values (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_argument_removal",
+        &format!("neg_trans_argument_removal.sv:7:29: {describe} read a covergroup argument in a coverpoint with ignore_bins or illegal_bins transitions; llg supports this only for constant transition values (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_argument_overlap",
+        &format!("neg_trans_argument_overlap.sv:8:29: {describe} read a covergroup argument in a coverpoint whose option.detect_overlap may be set; llg supports this only for constant transition values (llg limitation)"),
     );
 }
 
@@ -273,5 +327,161 @@ fn invalid_options_are_located_errors() {
         SUITE,
         "neg_merge_argument",
         "neg_merge_argument.sv:6:35 cannot refer to automatic variable 'm' from static initializer",
+    );
+}
+
+/// The compile-time budgets of transition bins (llg limitations): automaton
+/// states, `[* m:n]` expansion of `[]` bins and of removal bins, start
+/// entries and the value class sequences that count `[]` bins.
+#[test]
+fn transition_budgets_are_located_errors() {
+    let describe = "transition bins `t` of coverpoint `cp`";
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_states",
+        &format!("neg_trans_states.sv:7:29: {describe} needs more than 65536 transition states in its coverpoint (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_sequences",
+        &format!("neg_trans_sequences.sv:7:29: {describe} expands to more than 4096 transition sequences (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_ignore_sequences",
+        "neg_trans_ignore_sequences.sv:7:56: transition bins `skip` of coverpoint `cp` expands to more than 4096 transition sequences (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_starts",
+        &format!("neg_trans_starts.sv:83:12: {describe} needs more than 1048576 transition start entries in its coverpoint (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_class_sequences",
+        &format!("neg_trans_class_sequences.sv:83:12: {describe} needs more than 1048576 value class sequences to count its sequences (llg limitation)"),
+    );
+}
+
+/// A cross may name only bins of the coverpoints it crosses, so a `binsof`
+/// of a transition bin meets the rejection of the cross first.
+#[test]
+fn binsof_a_transition_bin_is_a_located_error() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_binsof_transition",
+        "neg_binsof_transition.sv:10:5: cross `ab` in covergroup `g` crosses coverpoint `ca`, which has transition bins; llg crosses only value bins (llg limitation)",
+    );
+}
+
+/// Select expressions expand to at most 1024 terms, through `&&` and `||`.
+#[test]
+fn select_term_budget_is_a_located_error() {
+    let message = "the select expression of bins `big` of cross `ab` in covergroup `g` expands to more than 1024 terms (llg limitation)";
+    sim_cli::reject_case(
+        SUITE,
+        "neg_cross_select_product",
+        &format!("neg_cross_select_product.sv:10:18: {message}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_cross_select_union",
+        &format!("neg_cross_select_union.sv:10:18: {message}"),
+    );
+}
+
+/// Selects that split the crossed coverpoints into more than 2^20 value
+/// class combinations: a located run-time error at construction; the run
+/// goes on and the cross counts nothing.
+#[test]
+fn cross_value_class_budget_is_a_run_time_error() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/cross_classes.out");
+    sim_cli::run_case_checked_matrix(SUITE, "cross_classes", &[], &|label, output| {
+        ends_run(
+            label,
+            output,
+            expected,
+            &["ERROR: [SIM-010] tb:16:12: covergroup `g` cross `abcd` has select expressions that split its coverpoints into more than 2^20 value class combinations; its bins are not counted (llg limitation)"],
+        );
+    });
+}
+
+/// The detect_overlap search of transition bins has a budget; reaching it
+/// is a located compile-time warning.
+#[test]
+fn overlap_budget_is_a_located_warning() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/overlap_budget.out");
+    sim_cli::run_case_checked_matrix(SUITE, "overlap_budget", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(llg_messages(output), Vec::<String>::new(), "{label}");
+        assert_eq!(
+            lowering_warnings(output),
+            ["11:5: option.detect_overlap stops checking the transition bins of coverpoint `cp` in covergroup `g` at bins `a` and `b`, after 1048576 explored sequence steps; overlaps of these and later bins are not reported (llg limitation)"],
+            "{label}"
+        );
+    });
+}
+
+/// Coverpoints of 65 to 128 bits count every bins form at full width
+/// (industry-standard behaviour, probed).
+#[test]
+fn wide_coverpoints_compare_at_full_width() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/wide_points.out");
+    sim_cli::run_case_checked_matrix(SUITE, "wide_points", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(llg_messages(output), Vec::<String>::new(), "{label}");
+    });
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/wide_arguments.out");
+    sim_cli::run_case_checked_matrix(SUITE, "wide_arguments", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(llg_messages(output), Vec::<String>::new(), "{label}");
+    });
+}
+
+/// An illegal value of a wide coverpoint ends the run and is spelled in
+/// full (S45-D3).
+#[test]
+fn wide_illegal_values_end_the_run() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/wide_illegal.out");
+    sim_cli::run_case_checked_matrix(SUITE, "wide_illegal", &[], &|label, output| {
+        ends_run(
+            label,
+            output,
+            expected,
+            &[
+                "ERROR: [SIM-010] covergroup `cg` coverpoint `cp` sampled -170141183460469231731687303715884105728, a value of illegal_bins `bad` at tb:8:56 (IEEE 1800-2009 19.5.5)",
+                "FATAL: [SIM-009] (tb:8:56 @ 0 ps) illegal_bins value sampled",
+            ],
+        );
+    });
+}
+
+/// The wide forms llg does not serve are located errors.
+#[test]
+fn wide_coverpoint_limits_are_located_errors() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_auto_ignore",
+        "neg_wide_auto_ignore.sv:7:36: ignore_bins and illegal_bins of coverpoint `cp` in covergroup `g`, which is 71 bits wide and has automatic bins: llg removes values from automatic bins only for coverpoints of at most 64 bits (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_exact",
+        "neg_wide_exact.sv:7:37: bins `b` of a coverpoint wider than 64 bits has an item of more than 2^32 values, each a bin or counted in a fixed number of bins; llg supports this only for coverpoints of at most 64 bits (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_point_argument",
+        "neg_wide_point_argument.sv:7:34: bins `b` of a coverpoint wider than 64 bits reads a covergroup argument; llg reads bins values from arguments only for coverpoints of at most 64 bits (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_intersect_auto",
+        "neg_wide_intersect_auto.sv:10:34: binsof in bins `lo` of cross `ab` in covergroup `g` intersects coverpoint `ca`, which is wider than 64 bits and has automatic bins (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_enum",
+        "neg_wide_enum.sv:8:5: enum coverpoint `cp` of covergroup `g` is 70 bits wide; llg supports enum coverpoints of at most 64 bits (llg limitation)",
     );
 }

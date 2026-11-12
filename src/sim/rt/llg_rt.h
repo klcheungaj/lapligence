@@ -3986,6 +3986,15 @@ typedef struct {
      * option.detect_overlap. */
     uint32_t n_overlaps;
     const uint32_t* overlaps;
+    /* Transition values read from slots (a covergroup argument, 19.5):
+     * step s holds items[step_items[s]] up to items[step_items[s + 1]].
+     * Each instance then resolves them by 19.5.6 when it is ready and builds
+     * its own classes, accept sets, start lists and scalar `bins` coverable
+     * counts; `bounds` and `accept` above hold the constant values only.
+     * Such tables have no ignore or illegal bins and no overlaps. NULL for
+     * constant tables. */
+    const llg_cov_item_t* items;
+    const uint32_t* step_items;
 } llg_cov_trans_t;
 typedef struct {
     const char* name;
@@ -4039,6 +4048,24 @@ typedef struct {
     uint8_t dynamic; /* an intersect value reads a slot */
     int64_t type_weight;
 } llg_cov_cross_t;
+/* A coverpoint of 65 to 128 bits, whose llg_cov_point_t has 64-bit
+ * unsigned keys. Its values fall into classes: segment i holds the value
+ * keys (the value's bits, sign bit flipped when signed; two words, low
+ * first) from segments[i].lo up to the next segment and starts at key
+ * `base`; an exact segment has one key per value, any other one key. With
+ * no segments the coverpoint has automatic bins, counted from the whole
+ * value (19.5.2). */
+typedef struct {
+    uint64_t lo[2];
+    uint64_t base;
+    uint8_t exact;
+} llg_cov_wide_seg_t;
+typedef struct {
+    uint32_t width;
+    uint8_t is_signed;
+    uint32_t n_segments;
+    const llg_cov_wide_seg_t* segments;
+} llg_cov_wide_t;
 typedef struct llg_cov_inst llg_cov_inst_t;
 typedef struct llg_cov_layout llg_cov_layout_t;
 /* The declared type options of one coverpoint or cross (Table 19-3, 19-4). */
@@ -4113,6 +4140,9 @@ typedef struct llg_cov_group {
      * llg_cov_ready. */
     llg_cov_layout_t** layouts;
     struct llg_cov_xlayout** xlayouts;
+    /* Per coverpoint: its llg_cov_wide_t when wider than 64 bits, else
+     * NULL; NULL when no coverpoint is. */
+    const llg_cov_wide_t* const* wide;
 } llg_cov_group_t;
 /* Create the runtime record of one instance with Table 19-1 defaults; apply
  * llg_cov_option and llg_cov_slot, then llg_cov_ready before the first
@@ -4123,11 +4153,18 @@ void llg_cov_option(void* inst, int32_t point, uint32_t option, sv4_t value, con
 /* The value of argument slot `slot` that bins of this instance read. */
 void llg_cov_slot(void* inst, uint32_t slot, sv4_t value);
 void llg_cov_ready(void* inst);
+/* After llg_cov_ready, for a group whose transition values read slots
+ * (llg_cov_trans_t.step_items): build each such coverpoint's tables for
+ * this instance. Other records are unchanged. */
+void llg_cov_resolve_transitions(void* inst);
 /* Count one sampled value; X/Z values and stopped scopes count nothing.
  * `value` is only read during the call, so generated code passes the address
  * of the sampled variable itself when the coverpoint is a plain read.
  * `guards` holds the group's bin `iff` results, or is NULL without any. */
 void llg_cov_hit(void* inst, uint32_t point, const sv4_t* value, const uint8_t* guards);
+/* llg_cov_hit for a coverpoint wider than 64 bits (the group's `wide`):
+ * `value` has the declared width and is only read during the call. */
+void llg_cov_hit_wide(void* inst, uint32_t point, const sv4_t* value, const uint8_t* guards);
 /* The coverpoint's `iff` was false at a sample: the transition sequences in
  * progress end (decision S45-D9). */
 void llg_cov_skip(void* inst, uint32_t point);

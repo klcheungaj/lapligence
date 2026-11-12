@@ -75,6 +75,24 @@ pub(super) struct CoverageBuild {
     slots: Vec<NodeId>,
     /// The group sets option.detect_overlap to a value that may be true.
     detect_overlap: bool,
+    /// While the items of a coverpoint wider than 64 bits lower: its type
+    /// and value ranges, or its classes once they are known.
+    wide: Option<WideItems>,
+}
+
+/// The bins items of one coverpoint wider than 64 bits ([`wide`]). While
+/// its own bins lower, an item becomes a placeholder key naming its entry
+/// of `ranges`; once `map` is known (cross `intersect` values), an item
+/// becomes its runtime keys.
+#[derive(Clone, Debug, Default)]
+struct WideItems {
+    width: u32,
+    signed: bool,
+    /// The items being lowered need one runtime key per value (`[]` and
+    /// `[N]` bins, `[]` transition bins).
+    exact: bool,
+    ranges: Vec<(u128, u128, bool)>,
+    map: Option<wide::WideMap>,
 }
 
 impl CoverageBuild {
@@ -133,6 +151,7 @@ mod code;
 mod control;
 mod fsm;
 mod transitions;
+mod wide;
 pub(super) use code::CodeCoveragePlan;
 pub(super) use control::{CoverageInstances, ImmediateAssertionItem};
 const COVERAGE_OWNER_FIELD: &str = "llg_cov_owner";
@@ -1227,13 +1246,16 @@ impl<'a> Codegen<'a> {
                 info.ty.kind.as_str(),
                 "string" | "class" | "chandle" | "event"
             );
-        let width = match info.ty.width {
-            Some(width) if integral && (1..=64).contains(&width) => width,
-            Some(width) if integral && width > 64 => {
+        // A wider coverpoint runs on 64-bit unsigned runtime keys (`wide`).
+        let (width, wide_width) = match info.ty.width {
+            Some(width) if integral && (1..=64).contains(&width) => (width, None),
+            Some(width) if integral && width <= wide::MAX_WIDE_POINT_BITS => (64, Some(width)),
+            Some(width) if integral => {
                 return Err(self.coverage_error(
                     point,
                     format!(
-                        "coverpoint `{point_name}` of covergroup `{group_name}` is {width} bits wide; llg supports coverpoints of at most 64 bits"
+                        "coverpoint `{point_name}` of covergroup `{group_name}` is {width} bits wide; llg supports coverpoints of at most {} bits",
+                        wide::MAX_WIDE_POINT_BITS
                     ),
                 ))
             }
@@ -1246,7 +1268,7 @@ impl<'a> Codegen<'a> {
                 ))
             }
         };
-        let signed = info.ty.signed;
+        let signed = info.ty.signed && wide_width.is_none();
         for setter in &info.options {
             let (scope, member, value) = self.coverage_option_parts(*setter).ok_or_else(|| {
                 self.coverage_error(*setter, "coverage option setter has no option member")
@@ -1262,6 +1284,8 @@ impl<'a> Codegen<'a> {
         });
         let automatic = if declares_bins {
             IrCoverAutomatic::None
+        } else if let Some(wide_width) = wide_width {
+            self.coverage_wide_automatic(group_name, point, info, wide_width, info.ty.signed)?
         } else {
             match self.enum_coverpoint_keys(point, info, width, signed)? {
                 Some(keys) => IrCoverAutomatic::Enum(keys),
@@ -1277,7 +1301,13 @@ impl<'a> Codegen<'a> {
             items: Vec::new(),
             transitions: None,
             crossed: false,
+            wide: None,
         };
+        build.wide = wide_width.map(|width| WideItems {
+            width,
+            signed: info.ty.signed,
+            ..WideItems::default()
+        });
         let mut transition_bins = Vec::new();
         let mut transition_nodes = Vec::new();
         for bin in info.bins.iter().copied() {
@@ -1306,12 +1336,46 @@ impl<'a> Codegen<'a> {
             }
             self.coverage_value_bin(group_name, point, bin, &mut coverpoint, build)?;
         }
+        if let Some(items) = build.wide.take() {
+            self.coverage_wide_keys(
+                group_name,
+                point,
+                items,
+                &mut coverpoint,
+                &mut transition_bins,
+            )?;
+        }
         if !transition_bins.is_empty() {
             let detect_overlap = build.detect_overlap
                 || info
                     .options
                     .iter()
                     .any(|setter| self.coverage_option_may_be_set(*setter, "detect_overlap"));
+            // Values read from covergroup arguments give each instance its
+            // own classes; the compile-time searches over classes (removal
+            // and overlap) are not repeated per instance.
+            if let Some(index) = transition_bins.iter().position(|bin| bin.dynamic) {
+                let reason = if transition_bins
+                    .iter()
+                    .any(|bin| matches!(bin.kind, IrCoverBinKind::Ignore | IrCoverBinKind::Illegal))
+                {
+                    Some("in a coverpoint with ignore_bins or illegal_bins transitions")
+                } else if detect_overlap {
+                    Some("in a coverpoint whose option.detect_overlap may be set")
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    let bin = transition_nodes[index];
+                    return Err(self.coverage_error(
+                        bin,
+                        format!(
+                            "transition bins `{}` of coverpoint `{point_name}` in covergroup `{group_name}` read a covergroup argument {reason}; llg supports this only for constant transition values (llg limitation)",
+                            self.node(bin).name
+                        ),
+                    ));
+                }
+            }
             let tables = transitions::build(width, transition_bins, detect_overlap).map_err(|(index, message)| {
                 let bin = transition_nodes[index];
                 self.coverage_error(
@@ -1322,6 +1386,16 @@ impl<'a> Codegen<'a> {
                     ),
                 )
             })?;
+            if let Some((a, b)) = tables.overlap_stop {
+                let (a, b) = (&tables.bins[a as usize].name, &tables.bins[b as usize].name);
+                self.coverage_warning(
+                    point,
+                    format!(
+                        "option.detect_overlap stops checking the transition bins of coverpoint `{point_name}` in covergroup `{group_name}` at bins `{a}` and `{b}`, after {} explored sequence steps; overlaps of these and later bins are not reported (llg limitation)",
+                        transitions::MAX_CLASS_SEQUENCES
+                    ),
+                );
+            }
             coverpoint.transitions = Some(tables);
         }
         Ok(coverpoint)
@@ -1520,10 +1594,36 @@ impl<'a> Codegen<'a> {
                     items: Vec::new(),
                     transitions: None,
                     crossed: false,
+                    wide: None,
                 };
-                for item in intersect.iter().copied() {
-                    self.coverage_value_item(bin_name, item, false, &mut scratch, build)?;
-                }
+                // Values of a wider coverpoint take its runtime keys.
+                build.wide = match &point.wide {
+                    None => None,
+                    Some(wide) if wide.bounds.is_empty() && !intersect.is_empty() => {
+                        return Err(self.coverage_error(
+                            select.node,
+                            format!(
+                                "binsof in bins `{bin_name}` of {describe} intersects coverpoint `{}`, which is wider than 64 bits and has automatic bins (llg limitation)",
+                                point.name
+                            ),
+                        ))
+                    }
+                    Some(wide) => Some(WideItems {
+                        width: wide.width,
+                        signed: wide.signed,
+                        map: Some(wide::WideMap {
+                            bounds: wide.bounds.clone(),
+                            bases: wide.bases.clone(),
+                            exact: wide.exact.clone(),
+                        }),
+                        ..WideItems::default()
+                    }),
+                };
+                let lowered = intersect.iter().copied().try_for_each(|item| {
+                    self.coverage_value_item(bin_name, item, false, &mut scratch, build)
+                });
+                build.wide = None;
+                lowered?;
                 let first_item = table.items.len() as u32;
                 let n_items = scratch.items.len() as u32;
                 table.items.extend(scratch.items);
@@ -1660,6 +1760,11 @@ impl<'a> Codegen<'a> {
             (build.guards.len() - 1) as u32
         });
         let mut sets = Vec::with_capacity(metadata.transitions.len());
+        let mut dynamic = false;
+        // `[]` transition bins count sequences of values.
+        if let Some(wide) = build.wide.as_mut() {
+            wide.exact = array;
+        }
         for set in &metadata.transitions {
             let mut steps = Vec::with_capacity(set.len());
             for range in set {
@@ -1716,6 +1821,7 @@ impl<'a> Codegen<'a> {
                     items: Vec::new(),
                     transitions: None,
                     crossed: false,
+                    wide: None,
                 };
                 let max_key = if width == 64 {
                     u64::MAX
@@ -1723,6 +1829,7 @@ impl<'a> Codegen<'a> {
                     (1u64 << width) - 1
                 };
                 let mut ranges = Vec::new();
+                let mut items = Vec::new();
                 for item in range.items.iter().copied() {
                     scratch.items.clear();
                     self.coverage_value_item(
@@ -1739,21 +1846,19 @@ impl<'a> Codegen<'a> {
                             IrCoverBound::Max => Some(max_key),
                             IrCoverBound::Slot(_) => None,
                         };
-                        match (key(value.lo), key(value.hi)) {
-                            (Some(lo), Some(hi)) => ranges.push((lo, hi)),
-                            _ => {
-                                return Err(self.coverage_error(
-                                    item,
-                                    format!(
-                                        "transition bins {describe} read a covergroup argument; llg supports only constant transition values (llg limitation)"
-                                    ),
-                                ))
-                            }
+                        // A value read from a covergroup argument is
+                        // resolved when the instance is constructed.
+                        if let (Some(lo), Some(hi)) = (key(value.lo), key(value.hi)) {
+                            ranges.push((lo, hi));
+                        } else {
+                            dynamic = true;
                         }
                     }
+                    items.append(&mut scratch.items);
                 }
                 steps.push(transitions::StepSpec {
                     ranges,
+                    items,
                     repeat,
                     lo,
                     hi,
@@ -1777,12 +1882,21 @@ impl<'a> Codegen<'a> {
             }
             sets.push(steps);
         }
+        if dynamic && array {
+            return Err(self.coverage_error(
+                bin,
+                format!(
+                    "transition bins {describe} with `[]` read a covergroup argument; llg creates one bin per sequence only for constant transition values (llg limitation)"
+                ),
+            ));
+        }
         Ok(transitions::BinSpec {
             name: bin_name,
             site: Self::coverage_site(&build.path, self.node(bin)),
             kind,
             array,
             guard,
+            dynamic,
             sets,
         })
     }
@@ -1870,6 +1984,9 @@ impl<'a> Codegen<'a> {
             (build.guards.len() - 1) as u32
         });
         let first_item = coverpoint.items.len() as u32;
+        if let Some(wide) = build.wide.as_mut() {
+            wide.exact = !matches!(shape, IrCoverBinShape::Scalar);
+        }
         for item in metadata.values.iter().copied() {
             self.coverage_value_item(&bin_name, item, metadata.wildcard, coverpoint, build)?;
         }
@@ -1933,6 +2050,9 @@ impl<'a> Codegen<'a> {
         coverpoint: &mut IrCoverpoint,
         build: &mut CoverageBuild,
     ) -> Result<(), String> {
+        if build.wide.is_some() {
+            return self.coverage_wide_item(bin_name, item, wildcard, coverpoint, build);
+        }
         let (width, signed) = (coverpoint.width, coverpoint.signed);
         let (low_node, high_node) = match self.kind(item) {
             NodeKind::Expr(ExprKind::Operation {
@@ -2201,16 +2321,15 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn enum_coverpoint_keys(
+    /// The enum type of a coverpoint of declared `width` and `signed`ness,
+    /// whose automatic bins are one per named value (19.5.2).
+    pub(super) fn coverpoint_enum(
         &self,
-        point: NodeId,
         info: &CoverpointInfo,
         width: u32,
         signed: bool,
-    ) -> Result<Option<Vec<u64>>, String> {
-        // An enum coverpoint has one bin per named value (19.5.2).
-        let Some(metadata) = info
-            .type_id
+    ) -> Option<&crate::core::db::EnumTypeMetadata> {
+        info.type_id
             .and_then(|type_id| self.db.enum_type_metadata(type_id))
             .or_else(|| self.enum_metadata_for_expr(info.expr))
             .or_else(|| match self.kind(info.expr) {
@@ -2223,7 +2342,16 @@ impl<'a> Codegen<'a> {
                 }
                 _ => None,
             })
-        else {
+    }
+
+    fn enum_coverpoint_keys(
+        &self,
+        point: NodeId,
+        info: &CoverpointInfo,
+        width: u32,
+        signed: bool,
+    ) -> Result<Option<Vec<u64>>, String> {
+        let Some(metadata) = self.coverpoint_enum(info, width, signed) else {
             return Ok(None);
         };
         let mut keys = Vec::with_capacity(metadata.members.len());
@@ -2353,8 +2481,15 @@ impl<'a> Codegen<'a> {
                         .coverpoint(point)
                         .cloned()
                         .ok_or("coverpoint vanished")?;
-                    let width = ctx.cg.model.covergroups[lowering.ir].points[index].width;
-                    let signed = ctx.cg.model.covergroups[lowering.ir].points[index].signed;
+                    // A wider coverpoint samples its declared value.
+                    let ir_point = &ctx.cg.model.covergroups[lowering.ir].points[index];
+                    let (width, signed) = ir_point
+                        .wide
+                        .as_ref()
+                        .map_or((ir_point.width, ir_point.signed), |wide| {
+                            (wide.width, wide.signed)
+                        });
+                    let wide = ir_point.wide.is_some().then_some(lowering.ir);
                     let located = |cg: &Codegen<'_>, node: NodeId, error: String| {
                         cg.coverage_error(
                             node,
@@ -2382,6 +2517,7 @@ impl<'a> Codegen<'a> {
                         iff,
                         value,
                         history,
+                        wide,
                     });
                 }
                 let mut crosses = Vec::with_capacity(info.crosses.len());
@@ -3414,7 +3550,19 @@ impl<'a> Codegen<'a> {
         self.coverage_scope = saved_scope;
         self.coverage_ref_actuals = saved_actuals;
         body.extend(options?);
-        body.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Ready { record })));
+        let resolve = self.model.covergroups[lowering.ir]
+            .points
+            .iter()
+            .any(|point| {
+                point
+                    .transitions
+                    .as_ref()
+                    .is_some_and(|trans| !trans.step_items.is_empty())
+            });
+        body.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Ready {
+            record,
+            resolve,
+        })));
         if lowering.registered {
             body.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Register {
                 group: lowering.ir,

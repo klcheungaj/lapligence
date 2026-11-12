@@ -17,7 +17,14 @@ Value bins of one group share a layout (key segments, removed values, the
 values each `bins` declaration keeps) unless they depend on covergroup
 arguments or `auto_bin_max` differs; `llg_cov_ready` builds it and reports
 `detect_overlap` pairs once per layout. Transition bins run compile-time
-automata (`llg_cov_trans_t`): one attempt per state with the latest start,
+automata (`llg_cov_trans_t`); when their values read slots, generated code
+calls `llg_cov_resolve_transitions` after `llg_cov_ready` (and the database
+does for the records it rebuilds), which resolves the step items and builds
+the instance's own classes, accept sets, start lists and scalar coverable
+counts; its history then runs them. That code and the wide-coverpoint code
+below are outlying and cold (`llg_compiler.h`): it stays out of `.text`
+and out of the unit's inlining budget. A history runs
+one attempt per state with the latest start,
 removal by the latest ignore/illegal start, `[]` arrays counted per distinct
 sequence in a hash table, and `llg_cov_skip` ending sequences on a disabled
 sample. A sample starts with `llg_cov_sample_begin`; `llg_cov_hit` records the
@@ -31,6 +38,13 @@ coverage is the union of instance bins by 19.11.3 name and a merged bin uses
 the largest `at_least` (S45-D18); merged crosses need equal layouts.
 Option values that 19.7 lets code write live in the mutable instance and
 type records, and queries read them at call time.
+A coverpoint of 65 to 128 bits has 64-bit unsigned keys: generated code
+calls `llg_cov_hit_wide` (out of line), which maps the value through the
+group's `llg_cov_wide_t` class table (one key per class, or per value in an
+exact class) or, for automatic bins, to a key of the bin 19.5.2 gives the
+whole value, then counts through `llg_cov_hit`; messages print the sampled
+value meanwhile (`llg_cov_wide_sample`). Other groups have no `wide` table
+and never reach this path.
 `llg_cov_hit`'s borrow contract is in `llg_rt.h`. Its rare paths (transitions, segment walks, the default bin, illegal-value
 reports, cross ranks, sparse inserts) stay `LLG_NOINLINE` so a plain
 coverpoint's sample keeps a small call frame; inlining them made a sample of

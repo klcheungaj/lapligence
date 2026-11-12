@@ -243,9 +243,28 @@ fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions
             .flat_map(|(a, b)| [format!("{a}u"), format!("{b}u")])
             .collect(),
     );
+    // Values read from slots: the step items each instance resolves. Only
+    // such tables name the fields, so constant tables keep their text.
+    let dynamic = if tables.step_items.is_empty() {
+        String::new()
+    } else {
+        let items = static_array(
+            out,
+            "llg_cov_item_t",
+            &format!("{prefix}_titems"),
+            item_rows(&tables.items),
+        );
+        let step_items = static_array(
+            out,
+            "uint32_t",
+            &format!("{prefix}_tstep_items"),
+            u32_rows(&tables.step_items),
+        );
+        format!(", .items = {items}, .step_items = {step_items}")
+    };
     let name = format!("{prefix}_trans");
     out.push_str(&format!(
-        "static const llg_cov_trans_t {name} = {{ .n_classes = {}u, .bounds = {bounds}, .words = {}u, .accept = {accept}, .n_steps = {}u, .steps = {steps}, .n_sets = {}u, .sets = {sets}, .start_index = {start_index}, .start_sets = {start_sets}, .n_states = {}u, .window = {}u, .n_bins = {}u, .bins = {bins}, .default_bin = {}, .n_overlaps = {}u, .overlaps = {overlaps} }};\n",
+        "static const llg_cov_trans_t {name} = {{ .n_classes = {}u, .bounds = {bounds}, .words = {}u, .accept = {accept}, .n_steps = {}u, .steps = {steps}, .n_sets = {}u, .sets = {sets}, .start_index = {start_index}, .start_sets = {start_sets}, .n_states = {}u, .window = {}u, .n_bins = {}u, .bins = {bins}, .default_bin = {}, .n_overlaps = {}u, .overlaps = {overlaps}{dynamic} }};\n",
         tables.bounds.len(),
         tables.words,
         tables.steps.len(),
@@ -255,6 +274,37 @@ fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions
         tables.bins.len(),
         tables.default_bin.map_or(-1, i64::from),
         tables.overlaps.len()
+    ));
+    format!("&{name}")
+}
+
+/// The class table of a coverpoint wider than 64 bits; returns its address.
+fn wide_table(out: &mut String, prefix: &str, table: &crate::sim::ir::IrCoverWide) -> String {
+    let segments = static_array(
+        out,
+        "llg_cov_wide_seg_t",
+        &format!("{prefix}_wseg"),
+        table
+            .bounds
+            .iter()
+            .zip(&table.bases)
+            .zip(&table.exact)
+            .map(|((bound, base), exact)| {
+                format!(
+                    "{{ {{ UINT64_C({}), UINT64_C({}) }}, UINT64_C({base}), {}u }}",
+                    *bound as u64,
+                    (*bound >> 64) as u64,
+                    u8::from(*exact)
+                )
+            })
+            .collect(),
+    );
+    let name = format!("{prefix}_wide");
+    out.push_str(&format!(
+        "static const llg_cov_wide_t {name} = {{ .width = {}u, .is_signed = {}u, .n_segments = {}u, .segments = {segments} }};\n",
+        table.width,
+        u8::from(table.signed),
+        table.bounds.len()
     ));
     format!("&{name}")
 }
@@ -295,8 +345,13 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     for (index, group) in model.covergroups.iter().enumerate() {
         let prefix = group_name(index);
         let mut points = Vec::with_capacity(group.points.len());
+        let mut wide = Vec::with_capacity(group.points.len());
         for (point_index, point) in group.points.iter().enumerate() {
             let point_prefix = format!("{prefix}_{point_index}");
+            wide.push(point.wide.as_ref().map_or_else(
+                || "NULL".to_owned(),
+                |table| wide_table(out, &point_prefix, table),
+            ));
             let (kind, keys) = match &point.automatic {
                 IrCoverAutomatic::Auto => ("LLG_COV_POINT_AUTO", None),
                 IrCoverAutomatic::Enum(keys) => ("LLG_COV_POINT_ENUM", Some(keys)),
@@ -404,8 +459,19 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 trampoline
             }
         };
+        // Only a group with a coverpoint wider than 64 bits names the
+        // field, so other groups keep their text.
+        let wide = if group.points.iter().any(|point| point.wide.is_some()) {
+            out.push_str(&format!(
+                "static const llg_cov_wide_t* const {prefix}_wide[] = {{ {} }};\n",
+                wide.join(", ")
+            ));
+            format!(", .wide = {prefix}_wide")
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .path = {}, .n_points = {}u, .points = {points_name}, .n_crosses = {}u, .crosses = {crosses_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe} }};\n",
+            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .path = {}, .n_points = {}u, .points = {points_name}, .n_crosses = {}u, .crosses = {crosses_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe}{wide} }};\n",
             c_string_literal(&group.name),
             c_string_literal(&group.path),
             group.points.len(),
@@ -865,9 +931,13 @@ impl Frame<'_, '_> {
                 self.line(format!("llg_cov_slot({record}, {slot}u, {});", value.code));
                 self.discard(value);
             }
-            IrCoverageStmt::Ready { record } => {
+            IrCoverageStmt::Ready { record, resolve } => {
                 let record = self.chandle(record)?;
                 self.line(format!("llg_cov_ready({record});"));
+                // Only such groups name it, so other models keep their text.
+                if *resolve {
+                    self.line(format!("llg_cov_resolve_transitions({record});"));
+                }
             }
             IrCoverageStmt::Register { group, object } => {
                 let object = self.chandle(object)?;
@@ -913,8 +983,14 @@ impl Frame<'_, '_> {
                     // A plain read is passed by address without a copy;
                     // the borrow ends with the call.
                     let value = self.operand(&sample.value)?;
+                    // A coverpoint wider than 64 bits maps its value to a key.
+                    let hit = if sample.wide.is_some() {
+                        "llg_cov_hit_wide"
+                    } else {
+                        "llg_cov_hit"
+                    };
                     self.line(format!(
-                        "llg_cov_hit({record}, {}u, {}, {guard_array});",
+                        "{hit}({record}, {}u, {}, {guard_array});",
                         sample.point,
                         value.address()
                     ));

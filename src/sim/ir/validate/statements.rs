@@ -1963,9 +1963,20 @@ impl Validator<'_> {
             // A slot value keeps its own signedness for 19.5.6 and has at
             // most 64 bits.
             IrCoverageStmt::Slot { value, .. } => !value.is_real() && value.width <= 64,
-            IrCoverageStmt::Sample { points, .. } => points
-                .iter()
-                .all(|sample| !sample.value.is_real() && sample.value.width <= 64),
+            // A coverpoint wider than 64 bits samples its declared width.
+            IrCoverageStmt::Sample { points, .. } => points.iter().all(|sample| {
+                let width = match sample.wide {
+                    None => Some(64),
+                    Some(group) => self
+                        .model
+                        .covergroups
+                        .get(group)
+                        .and_then(|group| group.points.get(sample.point as usize))
+                        .and_then(|point| point.wide.as_ref())
+                        .map(|wide| wide.width),
+                };
+                !sample.value.is_real() && width.is_some_and(|width| sample.value.width <= width)
+            }),
             IrCoverageStmt::TypeOption {
                 coverage_type,
                 value,

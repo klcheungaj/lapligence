@@ -3142,20 +3142,24 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   (not for block events, S44-D9). An `end` block event also samples after
   `return` (S44-D7), not after a disable or a jump (`break`, `continue`,
   `return`) out of a named block, nested named blocks included (S44-D8,
-  S44-D10). Coverpoints of at most 64 bits with automatic bins (enum
+  S44-D10). Coverpoints of at most 128 bits (values compared at full width)
+  with automatic bins (enum
   cardinality, `auto_bin_max`, numeric order for signed values, S44-D2) and
   the 1800-2009 bins forms (19.5): single, `[]` and `[N]` value bins,
   `default`, `wildcard`, `ignore_bins` and `illegal_bins` (a run-time error
   that ends the run, final procedures included, S45-D3), `iff`-guarded bins and bins values from
   covergroup arguments; transition bins (19.5.1) with `[*]`, `[->]` and `[=]`
-  repetition, `[]` transition arrays and `default sequence`; crosses (19.6)
+  repetition, `[]` transition arrays, `default sequence` and scalar
+  transition values from covergroup arguments, resolved per instance; crosses (19.6)
   of coverpoints and variables with `binsof`/`intersect` select expressions
   and cross `ignore_bins`/`illegal_bins`, counted with the 19.11.2
   denominators (S45-D1 to S45-D16). Options at their 19.7 levels: `weight`,
   `goal`, `at_least` and `auto_bin_max` (group values are item defaults),
   `detect_overlap` warnings (S45-D17), `type_option.weight`, and
   `type_option.merge_instances` with `option.get_inst_coverage` (19.11.3,
-  S45-D18). `get_coverage()` (type, per elaborated declaration, S44-D1),
+  S45-D18); `goal`, `comment`, `cross_num_print_missing` and
+  `per_instance` are stored and readable but only shape a coverage report,
+  which llg does not write ([known issues](known_issues.md#functional-coverage-limits-sim-044-sim-045)). `get_coverage()` (type, per elaborated declaration, S44-D1),
   `get_inst_coverage()`, `start()`, `stop()`, `set_inst_name()` (no report)
   and `$get_coverage()` follow 19.11; the two-argument forms of 19.8 assign
   the covered and total bins (S46-D7). Options are read through an
@@ -3170,7 +3174,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   error that changes nothing (S46-D3). Instances outlive their last handle
   (S44-D3). Value counters are dense up to 4096 bins and sparse beyond, and
   crosses keep only the products hit, so a sample costs the bins it hits, not
-  the bins defined. Rejected with located diagnostics: coverpoints over 64
+  the bins defined. Rejected with located diagnostics: coverpoints over 128
   bits; block events on subroutines without a body; 1800-2012 forms (`with`
   filters, set expressions); and the limits in
   [known issues](known_issues.md#functional-coverage-limits-sim-044-sim-045).

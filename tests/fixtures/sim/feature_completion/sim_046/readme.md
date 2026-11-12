@@ -229,6 +229,21 @@ in every run (S46-D1), so loaded records join them (S46-D2).
   `get_inst_coverage` equals `get_coverage` (19.7 Table 19-1 L33291-33295),
   so one, one.x and two also report the merged numbers (one.x: 3 of 3).
 
+## db_trans_args.sv
+
+Two runs in one directory. `cm(lo, hi)` has one coverpoint with three
+scalar transition bins: `t = (lo => 3)`, `o = (hi => 1)` and the constant
+`c = (7 => 8)`. The values of `t` and `o` read the arguments, so each
+instance resolves them when it is constructed (19.5).
+
+- `+first`: `m1 = new(2, 9)` samples 2, 3, 7, 8: `t` (2 => 3) and `c`
+  (7 => 8) complete, `o` (9 => 1) does not: 2 of 3, 66.666667. Saved to
+  t.db.
+- `+second` loads t.db and constructs nothing: the type's only member is
+  the loaded record, which resolves `t` and `o` from its saved arguments as
+  the first run did: 2 of 3, 66.666667. Without that resolution only the
+  constant bin `c` would be defined (1 of 1).
+
 ## assertions.sv
 
 Assertion coverage counters, scopes and control in two runs (the second

@@ -3078,12 +3078,21 @@ legal forms remain outside them.
 
 These covergroups reject with located diagnostics:
 
-- a coverpoint wider than 64 bits, or a bins value read from a covergroup
+- a coverpoint wider than 128 bits, or a bins value read from a covergroup
   argument wider than 64 bits;
+- in a coverpoint of 65 to 128 bits: a bins value read from a covergroup
+  argument, an item of more than 2^32 values in a `[]` or `[N]` bins array
+  (or a `[]` transition bin), `ignore_bins` or `illegal_bins` beside
+  automatic bins, `intersect` on it when it has automatic bins, and an enum
+  type;
 - a `wildcard` bins value whose don't-care bits expand to more than 4096
   ranges;
-- transition bins whose values read a covergroup argument, or whose
-  expansion exceeds the compile-time state or sequence budget;
+- transition bins whose expansion exceeds a compile-time budget of one
+  coverpoint: 65536 automaton states, 4096 sequences of one `[]` or removal
+  bin, 2^20 start entries, or 2^20 value class sequences to count its bins;
+- transition values read from a covergroup argument in a `[]` transition
+  bin, in a coverpoint with `ignore_bins` or `illegal_bins` transitions, or
+  in a coverpoint whose `option.detect_overlap` may be set;
 - a cross of a coverpoint that has transition bins, and a `binsof` that names
   a transition bin;
 - a cross select expression that expands to more than 1024 terms;
@@ -3093,24 +3102,44 @@ These covergroups reject with located diagnostics:
 At run time:
 
 - a cross whose select expressions split its coverpoints into more than
-  2^20 value-class combinations reports an error and counts no bins;
+  2^20 value-class combinations reports a located error when the instance is
+  constructed and counts no bins;
 - with `type_option.merge_instances`, a cross whose instances have different
   cross bins (bins depending on covergroup arguments) reports an error, and
   its merged coverage is 0;
 - `option.detect_overlap` stops checking transition bins after a fixed
-  budget of explored sequence pairs, so a very large transition coverpoint
-  may miss a warning.
+  budget of explored sequence steps; compilation then warns, located at the
+  coverpoint, which pair of bins it stopped at, and overlaps from that pair
+  on are not reported.
 
-`option.per_instance`, `option.cross_num_print_missing`, `option.goal`,
-`type_option.goal` and the `comment` options are stored (names and comments
-also in the coverage database) but change nothing else: llg writes no
-coverage report.
+These options are stored, can be read back and written where 19.7 allows,
+but change no number, because their only effect in Table 19-1 and Table
+19-3 is on the coverage report, which llg does not write (a report through
+`$get_coverage` text or a report file is out of scope until a user asks for
+one):
+
+- `option.goal` and `type_option.goal`: the target a report compares
+  coverage with;
+- `option.comment` and `type_option.comment`: saved in the coverage
+  database (with `option.name`), shown in no report;
+- `option.cross_num_print_missing`: the missing cross products a report
+  lists; the database keeps none;
+- `option.per_instance`: llg always keeps instance coverage, which Table
+  19-1 allows when the option is 0 ("implementations are not required to
+  save instance-specific information"), so `get_inst_coverage()` reports it
+  either way. Some simulators return 0 from `get_inst_coverage()` when the
+  option is 0; portable fixtures set it.
 
 ### Cause
 
 `ref` arguments are bound statically per distinct actual tuple. Bins values
-are 64-bit runtime keys. Transition bins are compiled to fixed automata, so
-their values must be constants. Crosses address coverpoint bins by value
+are 64-bit runtime keys; a wider coverpoint maps its values to them through
+value classes built from its constant bins values, so per-value bins need a
+key per value and argument values cannot be placed. Transition bins are compiled to fixed automata;
+when a value reads a covergroup argument, each instance builds its own value
+classes when it is constructed, but the searches that count `[]` sequences,
+remove ignored and illegal sequences and find overlaps run only at compile
+time, on constant values. Crosses address coverpoint bins by value
 rank, so transition bins have no coordinate. Merged cross bins are matched
 by layout (coverpoint-bin coordinates and select signatures), not by the
 19.11.3 `<binname1,...,binnameN>` names; a name-keyed cross merge would need
@@ -3127,8 +3156,8 @@ services of SIM-046 have their own limits below.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_044/neg_*.sv`,
-`tests/fixtures/sim/feature_completion/sim_045/neg_*.sv` and
-`merge_cross.sv`.
+`tests/fixtures/sim/feature_completion/sim_045/neg_*.sv`,
+`merge_cross.sv`, `cross_classes.sv` and `overlap_budget.sv`.
 
 ## Coverage API and database limits (SIM-046)
 

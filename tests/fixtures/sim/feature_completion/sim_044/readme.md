@@ -228,7 +228,8 @@ here before SIM-046, are covered positively by `sim_046/options.sv`.
 | Fixture | Rejected construct | Owner |
 | --- | --- | --- |
 | `neg_strobe` | `type_option.strobe` in a coverpoint (Table 19-4) | frontend |
-| `neg_wide_point` | an 80-bit coverpoint | llg limit (64 bits) |
+| `neg_wide_point` | a 130-bit coverpoint | llg limit (128 bits) |
+| `neg_ref_actual` | a `ref` argument whose actual is an unpacked array element, not a whole static variable or net | llg limit |
 | `neg_import_event` | a block event on an imported function, which has no body | llg limit |
 | `neg_embedded_outside_new` | embedded `new` outside the class `new` (19.4) | frontend |
 | `neg_sample_arguments` | `sample()` without its declared argument (19.8.1) | frontend |

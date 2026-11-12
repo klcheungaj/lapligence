@@ -117,6 +117,10 @@ typedef struct {
     size_t sequence_capacity, n_sequences;
     uint64_t* pool;
     size_t pool_used, pool_capacity;
+    // The tables the history runs: the coverpoint's, or `own`, built for
+    // this instance when transition values read slots.
+    const llg_cov_trans_t* trans;
+    llg_cov_trans_t* own;
 } llg_cov_history_t;
 
 typedef struct {
@@ -176,6 +180,7 @@ struct llg_cov_inst {
 };
 
 static llg_cov_history_t* llg_cov_history_new(const llg_cov_trans_t* trans);
+static void llg_cov_trans_free(llg_cov_trans_t* trans);
 
 // Types that own at least one instance, for $get_coverage and cleanup.
 static llg_cov_type_t* llg_cov_types_used;
@@ -195,6 +200,8 @@ static size_t llg_cov_n_model_types;
 // Set while the database rebuilds records of an earlier run: their
 // 19.5.6 warnings and bin-count errors were reported by that run.
 static uint8_t llg_cov_quiet;
+// The value llg_cov_hit_wide is counting, which messages print.
+static const sv4_t* llg_cov_wide_sample;
 static void llg_cov_db_release(void);
 
 // An illegal bin hit (19.5.5, 19.6.3) and a bins array size that is not
@@ -920,10 +927,12 @@ static int llg_cov_spans_hold(const llg_cov_span_t* spans, size_t n, uint64_t va
     return lo < n && spans[lo].lo <= value;
 }
 
+// Located at the cross's first bins declaration, when it has one.
 static void llg_cov_xlayout_error(const llg_cov_inst_t* inst, const llg_cov_cross_t* cross,
                                   const char* what) {
     if (llg_cov_quiet) return;
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` cross `%s` %s; its bins are not counted (llg limitation)", inst->group->name, cross->name, what);
+    const char* site = cross->n_bins ? cross->bins[0].site : NULL;
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s%scovergroup `%s` cross `%s` %s; its bins are not counted (llg limitation)", site ? site : "", site ? ": " : "", inst->group->name, cross->name, what);
     llg_rt_mark_failed();
     llg_rt_note_error(0, "cross bins are not counted", NULL);
 }
@@ -972,7 +981,7 @@ static void llg_cov_xlayout_count(const llg_cov_inst_t* inst, const llg_cov_cros
         else tuples *= unique ? unique : 1u;
     }
     if (too_many) {
-        llg_cov_xlayout_error(inst, cross, "has select expressions with too many value classes");
+        llg_cov_xlayout_error(inst, cross, "has select expressions that split its coverpoints into more than 2^20 value class combinations");
         xl->n_auto = 0;
     } else if (xl->product) {
         uint64_t* acc = (uint64_t*)llg_checked_calloc(words, sizeof(uint64_t), "coverage cross");
@@ -1718,9 +1727,21 @@ static int llg_cov_guard(const llg_cov_point_t* point, uint32_t decl, const uint
     return guard < 0 || !guards || guards[guard];
 }
 
+// The value llg_cov_hit_wide is counting. Only coverpoints wider than 64
+// bits reach it, so it is outlying and cold (llg_compiler.h).
+LLG_COLD LLG_OUTLYING static void llg_cov_format_wide(char* text, size_t size) {
+    sv4_to_dec_string(*llg_cov_wide_sample, text, size);
+}
+
 // A key as the signed or unsigned value it stands for.
+
 static void llg_cov_format_key(const llg_cov_point_t* point, uint64_t key, char* text,
                                size_t size) {
+    // The key of a coverpoint wider than 64 bits does not spell its value.
+    if (llg_cov_wide_sample) {
+        llg_cov_format_wide(text, size);
+        return;
+    }
     uint64_t raw = key;
     if (point->is_signed) raw ^= UINT64_C(1) << (point->width - 1u);
     if (point->is_signed && ((raw >> (point->width - 1u)) & 1u)) {
@@ -1737,7 +1758,7 @@ LLG_NOINLINE static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_c
                             uint32_t decl, uint64_t key) {
     if (llg_rt_exiting()) return;
     const llg_cov_bin_t* bin = &point->bins[decl];
-    char value[32];
+    char value[48];  // a value of up to 128 bits in decimal
     llg_cov_format_key(point, key, value, sizeof value);
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` coverpoint `%s` sampled %s, a value of illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)", inst->group->name, point->name, value, bin->name, bin->site);
     llg_cov_fatal("illegal_bins value sampled", bin->site);
@@ -1883,6 +1904,7 @@ static llg_cov_history_t* llg_cov_history_new(const llg_cov_trans_t* trans) {
             (uint64_t*)llg_checked_calloc(trans->window, sizeof(uint64_t), "coverage transitions");
     }
     history->fresh = 1;
+    history->trans = trans;
     return history;
 }
 
@@ -1901,7 +1923,129 @@ static void llg_cov_history_free(llg_cov_history_t* history) {
     free(history->sequence);
     free(history->sequences);
     free(history->pool);
+    if (history->own) llg_cov_trans_free(history->own);
     free(history);
+}
+
+// Tables built by llg_cov_history_resolve (outlying and cold like it).
+LLG_COLD LLG_OUTLYING static void llg_cov_trans_free(llg_cov_trans_t* trans) {
+    free((void*)trans->bounds);
+    free((void*)trans->accept);
+    free((void*)trans->start_index);
+    free((void*)trans->start_sets);
+    free((void*)trans->bins);
+    free(trans);
+}
+
+// Transition values that read slots (19.5) resolve by 19.5.6 once the
+// instance is ready, as value bins do; the classes, accept sets and start
+// lists then follow as `transitions::build` derives them at compile time,
+// and a scalar `bins` declaration is coverable when one of its sets has a
+// value at every step (codegen rejects removal bins and `[]` bins reading
+// a slot in such coverpoints, whose counts need its searches). The
+// history llg_cov_ready made for the coverpoint's tables then runs these:
+// they differ only in classes, accept sets, start lists and counts.
+LLG_COLD LLG_OUTLYING static void llg_cov_history_resolve(const llg_cov_inst_t* inst,
+                                                         uint32_t index,
+                                                         llg_cov_history_t* history) {
+    const llg_cov_point_t* point = &inst->group->points[index];
+    const llg_cov_trans_t* tpl = point->trans;
+    uint32_t n_items = tpl->step_items[tpl->n_steps];
+    size_t slots = n_items ? n_items : 1u;
+    llg_cov_span_t* spans =
+        (llg_cov_span_t*)llg_checked_calloc(slots, sizeof(*spans), "coverage transitions");
+    uint8_t* held = (uint8_t*)llg_checked_calloc(slots, 1u, "coverage transitions");
+    uint64_t* bounds =
+        (uint64_t*)llg_checked_calloc(2u * slots + 1u, sizeof(uint64_t), "coverage transitions");
+    size_t n_bounds = 0;
+    bounds[n_bounds++] = 0;
+    uint64_t max_key = llg_cov_mask(point);
+    for (uint32_t s = 0; s < tpl->n_steps; ++s) {
+        const llg_cov_tbin_t* tbin = &tpl->bins[tpl->sets[tpl->steps[s].set].bin];
+        // The 19.5.6 warnings name the transition bin.
+        llg_cov_bin_t named = {0};
+        named.name = tbin->name;
+        named.site = tbin->site;
+        for (uint32_t i = tpl->step_items[s]; i < tpl->step_items[s + 1u]; ++i) {
+            held[i] = (uint8_t)llg_cov_item_keys(inst, point, &named, &tpl->items[i], &spans[i]);
+            if (!held[i]) continue;
+            bounds[n_bounds++] = spans[i].lo;
+            if (spans[i].hi < max_key) bounds[n_bounds++] = spans[i].hi + 1u;
+        }
+    }
+    qsort(bounds, n_bounds, sizeof(uint64_t), llg_cov_u64_order);
+    size_t classes = 0;
+    for (size_t b = 0; b < n_bounds; ++b)
+        if (!classes || bounds[b] != bounds[classes - 1u]) bounds[classes++] = bounds[b];
+    llg_cov_trans_t* own = (llg_cov_trans_t*)llg_checked_calloc(1, sizeof(*own), "coverage transitions");
+    *own = *tpl;
+    own->n_classes = (uint32_t)classes;
+    own->bounds = bounds;
+    own->words = (uint32_t)((classes + 63u) / 64u);
+    uint64_t* accept = (uint64_t*)llg_checked_calloc(
+        (size_t)tpl->n_steps * own->words + 1u, sizeof(uint64_t), "coverage transitions");
+    for (uint32_t s = 0; s < tpl->n_steps; ++s)
+        for (uint32_t i = tpl->step_items[s]; i < tpl->step_items[s + 1u]; ++i) {
+            if (!held[i]) continue;
+            uint32_t last = llg_cov_class(own, spans[i].hi);
+            for (uint32_t c = llg_cov_class(own, spans[i].lo); c <= last; ++c)
+                accept[(size_t)s * own->words + c / 64u] |= UINT64_C(1) << (c % 64u);
+        }
+    own->accept = accept;
+    // Per class: the sets whose first step accepts it, in set order.
+    uint32_t* start_index =
+        (uint32_t*)llg_checked_calloc(classes + 1u, sizeof(uint32_t), "coverage transitions");
+    size_t entries = 0;
+    for (uint32_t c = 0; c < classes; ++c)
+        for (uint32_t t = 0; t < tpl->n_sets; ++t)
+            entries += (size_t)llg_cov_accepts(own, tpl->sets[t].first_step, c);
+    uint32_t* start_sets = (uint32_t*)llg_checked_calloc(entries ? entries : 1u, sizeof(uint32_t),
+                                                         "coverage transitions");
+    entries = 0;
+    for (uint32_t c = 0; c < classes; ++c) {
+        start_index[c] = (uint32_t)entries;
+        for (uint32_t t = 0; t < tpl->n_sets; ++t)
+            if (llg_cov_accepts(own, tpl->sets[t].first_step, c)) start_sets[entries++] = t;
+    }
+    start_index[classes] = (uint32_t)entries;
+    own->start_index = start_index;
+    own->start_sets = start_sets;
+    llg_cov_tbin_t* bins = (llg_cov_tbin_t*)llg_checked_calloc(
+        tpl->n_bins ? tpl->n_bins : 1u, sizeof(*bins), "coverage transitions");
+    for (uint32_t b = 0; b < tpl->n_bins; ++b) {
+        bins[b] = tpl->bins[b];
+        if (bins[b].kind == LLG_COV_BIN_BINS && !bins[b].array) bins[b].coverable = 0;
+    }
+    for (uint32_t t = 0; t < tpl->n_sets; ++t) {
+        const llg_cov_tset_t* set = &tpl->sets[t];
+        if (bins[set->bin].kind != LLG_COV_BIN_BINS || bins[set->bin].array) continue;
+        int every = 1;
+        for (uint32_t s = set->first_step; every && s < set->first_step + set->n_steps; ++s) {
+            int any = 0;
+            for (uint32_t i = tpl->step_items[s]; i < tpl->step_items[s + 1u]; ++i) any |= held[i];
+            every = any;
+        }
+        if (every) bins[set->bin].coverable = 1;
+    }
+    own->bins = bins;
+    free(spans);
+    free(held);
+    history->trans = own;
+    history->own = own;
+}
+
+// Only models whose transition values read slots call it, and the database
+// for their records, so it is outlying and cold like the code above; it is
+// a separate entry so that llg_cov_ready, which every model runs, keeps
+// its code.
+LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_cov_resolve_transitions(void* record) {
+    llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
+    if (!inst || !inst->ready) return;
+    for (uint32_t i = 0; i < inst->group->n_points; ++i) {
+        llg_cov_history_t* history = inst->points[i].history;
+        if (history && history->trans->step_items && !history->own)
+            llg_cov_history_resolve(inst, i, history);
+    }
 }
 
 static uint64_t llg_cov_sequence_hash(uint32_t bin, const uint64_t* keys, uint32_t length) {
@@ -1977,7 +2121,7 @@ static void llg_cov_sequence_count(llg_cov_history_t* history, uint32_t bin,
 static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                                        const llg_cov_tbin_t* bin, int known, uint64_t key) {
     if (bin->kind != LLG_COV_BIN_ILLEGAL_DEFAULT && llg_rt_exiting()) return;
-    char value[32];
+    char value[48];  // a value of up to 128 bits in decimal
     if (known) llg_cov_format_key(point, key, value, sizeof value);
     else snprintf(value, sizeof value, "a value with X or Z bits");
     const char* what = bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT
@@ -2001,7 +2145,7 @@ static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov
 LLG_NOINLINE static void llg_cov_transitions(const llg_cov_inst_t* inst, llg_cov_history_t* history,
                                 const llg_cov_point_t* point, int known, uint64_t key,
                                 const uint8_t* guards) {
-    const llg_cov_trans_t* trans = point->trans;
+    const llg_cov_trans_t* trans = history->trans;
     history->serial++;
     uint64_t serial = history->serial;
     uint32_t cls = known ? llg_cov_class(trans, key) : UINT32_MAX;
@@ -2218,6 +2362,97 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
     }
 }
 
+// ── Coverpoints wider than 64 bits ────────────────────────────────────────
+// Only coverpoints wider than 64 bits reach this code, so it is outlying
+// and cold (llg_compiler.h): it stays out of `.text`, between the
+// functions other models run, and out of the unit's inlining budget.
+
+// Two-word unsigned arithmetic, low word first, for the automatic bins of
+// a coverpoint of up to 128 bits.
+typedef struct {
+    uint64_t lo, hi;
+} llg_cov_u128_t;
+
+static int llg_cov_u128_less(llg_cov_u128_t a, llg_cov_u128_t b) {
+    return a.hi != b.hi ? a.hi < b.hi : a.lo < b.lo;
+}
+
+// `a` / `d` by shifts and subtractions; `*rem` gets the remainder.
+LLG_COLD LLG_OUTLYING static llg_cov_u128_t llg_cov_u128_div(llg_cov_u128_t a, llg_cov_u128_t d,
+                                                   llg_cov_u128_t* rem) {
+    llg_cov_u128_t q = {0, 0}, r = {0, 0};
+    for (int bit = 127; bit >= 0; --bit) {
+        r.hi = (r.hi << 1) | (r.lo >> 63);
+        r.lo = (r.lo << 1) | ((bit >= 64 ? a.hi >> (bit - 64) : a.lo >> bit) & 1u);
+        if (!llg_cov_u128_less(r, d)) {
+            uint64_t borrow = r.lo < d.lo;
+            r.lo -= d.lo;
+            r.hi -= d.hi + borrow;
+            if (bit >= 64) q.hi |= UINT64_C(1) << (bit - 64);
+            else q.lo |= UINT64_C(1) << bit;
+        }
+    }
+    if (rem) *rem = r;
+    return q;
+}
+
+// The key of value key `v` of a coverpoint with automatic bins: the key
+// llg_cov_auto_bin maps, at 64 bits, to the bin 19.5.2 gives `v` among
+// `n_bins` bins of 2^width / n_bins values (the last one takes the rest).
+LLG_COLD LLG_OUTLYING static uint64_t llg_cov_wide_auto_key(const llg_cov_wide_t* wide, llg_cov_u128_t v,
+                                                  uint64_t n_bins) {
+    llg_cov_u128_t n = {n_bins ? n_bins : 1u, 0}, rem;
+    // 2^width / n as (2^width - 1) / n, plus one when the remainder is n - 1.
+    llg_cov_u128_t top = {UINT64_MAX, wide->width >= 128u ? UINT64_MAX
+                                                          : (UINT64_C(1) << (wide->width - 64u)) - 1u};
+    llg_cov_u128_t span = llg_cov_u128_div(top, n, &rem);
+    if (rem.lo == n.lo - 1u && !rem.hi && ++span.lo == 0) span.hi++;
+    llg_cov_u128_t bin = llg_cov_u128_div(v, span, NULL);
+    uint64_t index = (bin.hi || bin.lo >= n.lo) ? n.lo - 1u : bin.lo;
+    uint64_t span64 = UINT64_MAX / n.lo;
+    if (UINT64_MAX % n.lo == n.lo - 1u) span64++;
+    return index * span64;
+}
+
+LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_cov_hit_wide(void* record, uint32_t point_index, const sv4_t* value,
+                                   const uint8_t* guards) {
+    llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
+    if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
+    const llg_cov_wide_t* wide = inst->group->wide[point_index];
+    sv4_t key;
+    if (sv4_is_unknown(*value)) {
+        key = sv4_x(64u, 0);
+    } else {
+        llg_cov_u128_t v = {llg_sv4_word(*value, 0, LLG_SV4_BITS),
+                            llg_sv4_word(*value, 1, LLG_SV4_BITS)};
+        if (wide->width < 128u) v.hi &= (UINT64_C(1) << (wide->width - 64u)) - 1u;
+        if (wide->is_signed) v.hi ^= UINT64_C(1) << (wide->width - 65u);
+        uint64_t k;
+        if (wide->n_segments) {
+            uint32_t lo = 0, hi = wide->n_segments;
+            while (lo < hi) {
+                uint32_t mid = lo + (hi - lo) / 2u;
+                const llg_cov_wide_seg_t* seg = &wide->segments[mid];
+                llg_cov_u128_t bound = {seg->lo[0], seg->lo[1]};
+                if (!llg_cov_u128_less(v, bound)) lo = mid + 1u;
+                else hi = mid;
+            }
+            const llg_cov_wide_seg_t* seg = &wide->segments[lo - 1u];
+            // An exact segment holds fewer than 2^64 values: the low words'
+            // difference is the offset.
+            k = seg->base + (seg->exact ? v.lo - seg->lo[0] : 0u);
+        } else {
+            const llg_cov_layout_t* layout = inst->points[point_index].layout;
+            k = llg_cov_wide_auto_key(wide, v, layout ? layout->n_auto : 1u);
+        }
+        key = sv4_from_u64(k, 64u, 0);
+    }
+    llg_cov_wide_sample = value;
+    llg_cov_hit(record, point_index, &key, guards);
+    llg_cov_wide_sample = NULL;
+    sv4_destroy(&key);
+}
+
 void llg_cov_control(void* record, int32_t point, int start) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst) return;
@@ -2359,11 +2594,11 @@ static void llg_cov_value_bins(const llg_cov_inst_t* inst, uint32_t index, uint6
 static void llg_cov_transition_bins(const llg_cov_inst_t* inst, uint32_t index,
                                     uint64_t* covered, uint64_t* defined) {
     const llg_cov_point_state_t* state = &inst->points[index];
-    const llg_cov_trans_t* trans = inst->group->points[index].trans;
     const llg_cov_history_t* history = state->history;
     *covered = 0;
     *defined = 0;
-    if (!trans || !history) return;
+    if (!history) return;
+    const llg_cov_trans_t* trans = history->trans;
     uint64_t at_least = state->at_least < 0 ? 0u : (uint64_t)state->at_least;
     for (uint32_t b = 0; b < trans->n_bins; ++b) {
         const llg_cov_tbin_t* bin = &trans->bins[b];
@@ -2573,8 +2808,23 @@ static void llg_cov_merged_values(const llg_cov_inst_t* const* recs, size_t n, u
     free(merged.slots);
 }
 
+// A merged transition bin of tables resolved per instance (19.11.3: bins
+// equal by name) exists when some instance's values give it a sequence.
+// Outlying and cold: only such tables reach it.
+LLG_COLD LLG_OUTLYING static uint64_t llg_cov_merged_coverable(const llg_cov_inst_t* const* recs, size_t n,
+                                                     uint32_t index, uint32_t bin) {
+    uint64_t coverable = 0;
+    for (size_t r = 0; r < n; ++r) {
+        const llg_cov_history_t* history = recs[r]->points[index].history;
+        if (history && history->trans->bins[bin].coverable > coverable)
+            coverable = history->trans->bins[bin].coverable;
+    }
+    return coverable;
+}
+
 // Merged transition bins of coverpoint `index`: the tables are the same in
-// every instance of the declaration.
+// every instance of the declaration, except the classes and scalar
+// coverable counts of tables resolved per instance.
 static void llg_cov_merged_transitions(const llg_cov_inst_t* const* recs, size_t n,
                                        uint32_t index, uint64_t* covered, uint64_t* defined) {
     const llg_cov_trans_t* trans = recs[0]->group->points[index].trans;
@@ -2587,12 +2837,14 @@ static void llg_cov_merged_transitions(const llg_cov_inst_t* const* recs, size_t
     for (uint32_t b = 0; b < trans->n_bins; ++b) {
         const llg_cov_tbin_t* bin = &trans->bins[b];
         if (bin->kind != LLG_COV_BIN_BINS) continue;
-        *defined = llg_cov_saturating_add(*defined, bin->coverable);
+        uint64_t coverable =
+            trans->step_items ? llg_cov_merged_coverable(recs, n, index, b) : bin->coverable;
+        *defined = llg_cov_saturating_add(*defined, coverable);
         if (!at_least) {
-            *covered = llg_cov_saturating_add(*covered, bin->coverable);
+            *covered = llg_cov_saturating_add(*covered, coverable);
             continue;
         }
-        if (bin->array || !bin->coverable) continue;
+        if (bin->array || !coverable) continue;
         uint64_t sum = 0;
         for (size_t r = 0; r < n; ++r)
             if (recs[r]->points[index].history)

@@ -75,6 +75,46 @@ pub struct IrCoverpoint {
     pub(in crate::sim) transitions: Option<IrCoverTransitions>,
     /// A cross reads the bins each sample counts.
     pub(in crate::sim) crossed: bool,
+    /// A coverpoint wider than 64 bits: `width` is then 64 and `signed`
+    /// false, and its keys are those of [`IrCoverWide`].
+    pub(in crate::sim) wide: Option<IrCoverWide>,
+}
+
+/// The runtime keys of a coverpoint of 65 to 128 bits. Its values fall
+/// into classes: class `i` holds the value keys (the value's bits, sign
+/// bit flipped when signed) from `bounds[i]` up to the next bound, and
+/// starts at runtime key `bases[i]`; an `exact` class has one runtime key
+/// per value, any other a single one. Keys keep the value order. Without
+/// classes the coverpoint has automatic bins, computed from the whole
+/// value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverWide {
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) bounds: Vec<u128>,
+    pub(in crate::sim) bases: Vec<u64>,
+    pub(in crate::sim) exact: Vec<bool>,
+}
+
+impl IrCoverWide {
+    fn valid(&self, automatic: bool) -> bool {
+        let max = u128::MAX >> (u128::BITS - self.width.clamp(1, 128));
+        (65..=128).contains(&self.width)
+            && self.bounds.len() == self.bases.len()
+            && self.bounds.len() == self.exact.len()
+            && (automatic == self.bounds.is_empty())
+            && (automatic || self.bounds.first() == Some(&0))
+            && self.bounds.windows(2).all(|pair| pair[0] < pair[1])
+            && self.bounds.iter().all(|bound| *bound <= max)
+            && self.bases.windows(2).enumerate().all(|(index, pair)| {
+                let size = if self.exact[index] {
+                    self.bounds[index + 1] - self.bounds[index]
+                } else {
+                    1
+                };
+                u128::from(pair[1]) == u128::from(pair[0]) + size
+            })
+    }
 }
 
 /// One cross (19.6). Its coordinates along each crossed coverpoint are that
@@ -156,6 +196,16 @@ pub struct IrCoverTransitions {
     /// Pairs of `bins` declarations that share a sequence, reported when
     /// option.detect_overlap is set (19.7).
     pub(in crate::sim) overlaps: Vec<(u32, u32)>,
+    /// The pair of `bins` declarations at which the detect_overlap search
+    /// ran out of its budget; it and later pairs are not checked.
+    pub(in crate::sim) overlap_stop: Option<(u32, u32)>,
+    /// Empty unless a transition value reads a slot (19.5): the items of
+    /// every step (`step_items[s]..step_items[s + 1]`), from which each
+    /// instance builds its own classes, accept sets, start lists and scalar
+    /// `bins` coverable counts. `bounds` and `accept` then cover the
+    /// constant values only.
+    pub(in crate::sim) items: Vec<IrCoverItem>,
+    pub(in crate::sim) step_items: Vec<u32>,
 }
 
 /// The repetition of a step; a step without repetition is `[* 1]`.
@@ -408,6 +458,10 @@ pub struct IrCoverageSample {
     /// The coverpoint has transition bins: a false `iff` ends the
     /// sequences in progress (decision S45-D9).
     pub(in crate::sim) history: bool,
+    /// The covergroup (`IrModel::covergroups` index) of a coverpoint wider
+    /// than 64 bits, whose `value` has the declared width and is counted
+    /// through its [`IrCoverWide`] keys.
+    pub(in crate::sim) wide: Option<usize>,
 }
 
 /// One cross sample, after every coverpoint of the group: counts the
@@ -465,8 +519,13 @@ pub enum IrCoverageStmt {
         value: IrExpr,
     },
     /// Options and slots are final: resolve defaults, build the bin layouts
-    /// and size the counters.
-    Ready { record: IrChandleExpr },
+    /// and size the counters. `resolve`: some transition values read slots
+    /// ([`IrCoverTransitions::step_items`]), and the instance builds its own
+    /// transition tables from them.
+    Ready {
+        record: IrChandleExpr,
+        resolve: bool,
+    },
     /// Add `object` to the objects the group's coverage event samples.
     Register { group: usize, object: IrChandleExpr },
     /// Count the coverpoint values of one sample of the record. `guards`
@@ -573,6 +632,14 @@ impl IrCovergroup {
             if !items_valid || !bins_valid {
                 return Err(format!("coverpoint `{}` bins are invalid", point.name));
             }
+            let wide_valid = point.wide.as_ref().is_none_or(|wide| {
+                point.width == 64
+                    && !point.signed
+                    && wide.valid(point.automatic == IrCoverAutomatic::Auto)
+            });
+            if !wide_valid {
+                return Err(format!("coverpoint `{}` wide keys are invalid", point.name));
+            }
             if point.crossed && point.transitions.is_some() {
                 return Err(format!(
                     "coverpoint `{}` is crossed and has transition bins",
@@ -580,7 +647,7 @@ impl IrCovergroup {
                 ));
             }
             if let Some(transitions) = &point.transitions {
-                if !transitions.valid(max, self.guards) {
+                if !transitions.valid(max, self.guards, self.slots) {
                     return Err(format!(
                         "coverpoint `{}` transition bins are invalid",
                         point.name
@@ -629,7 +696,7 @@ impl IrCovergroup {
 
 impl IrCoverTransitions {
     /// The table invariants the runtime indexes by.
-    fn valid(&self, max_key: u64, guards: u32) -> bool {
+    fn valid(&self, max_key: u64, guards: u32, slots: u32) -> bool {
         let classes = self.bounds.len();
         let words = self.words as usize;
         let states = self.states as u64;
@@ -680,6 +747,37 @@ impl IrCoverTransitions {
                 .overlaps
                 .iter()
                 .all(|(a, b)| a < b && (*b as usize) < self.bins.len())
+            && self.dynamic_valid(max_key, slots)
+    }
+
+    /// Per-instance tables: one item range per step, items resolvable, and
+    /// none of the forms whose counts need compile-time searches.
+    fn dynamic_valid(&self, max_key: u64, slots: u32) -> bool {
+        if self.items.is_empty() && self.step_items.is_empty() {
+            return true;
+        }
+        let bound_valid = |bound: IrCoverBound| match bound {
+            IrCoverBound::Key(key) => key <= max_key,
+            IrCoverBound::Slot(slot) => slot < slots,
+            IrCoverBound::Min | IrCoverBound::Max => true,
+        };
+        self.step_items.len() == self.steps.len() + 1
+            && self.step_items.first() == Some(&0)
+            && self.step_items.windows(2).all(|pair| pair[0] <= pair[1])
+            && self.step_items.last().copied() == Some(self.items.len() as u32)
+            && self.items.iter().all(|item| {
+                bound_valid(item.lo)
+                    && bound_valid(item.hi)
+                    && match (item.lo, item.hi) {
+                        (IrCoverBound::Key(lo), IrCoverBound::Key(hi)) => lo <= hi,
+                        _ => item.site.is_some(),
+                    }
+            })
+            && self.overlaps.is_empty()
+            && self
+                .bins
+                .iter()
+                .all(|bin| !matches!(bin.kind, IrCoverBinKind::Ignore | IrCoverBinKind::Illegal))
     }
 }
 
@@ -776,7 +874,7 @@ impl IrCoverageStmt {
             Self::Option { record, .. }
             | Self::Text { record, .. }
             | Self::Slot { record, .. }
-            | Self::Ready { record }
+            | Self::Ready { record, .. }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],
             Self::Register { object, .. } | Self::Watch { object, .. } => vec![object],
@@ -796,7 +894,7 @@ impl IrCoverageStmt {
             Self::Option { record, .. }
             | Self::Text { record, .. }
             | Self::Slot { record, .. }
-            | Self::Ready { record }
+            | Self::Ready { record, .. }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],
             Self::Register { object, .. } | Self::Watch { object, .. } => vec![object],
