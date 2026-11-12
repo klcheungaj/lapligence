@@ -940,9 +940,16 @@ static vpiHandle rts_fixed_element(const llg_vpi_slot_t* slot, const int64_t* in
     return rts_part_make(slot, (uint32_t)(offset + 1u), 0u);
 }
 
-/* vpi_handle_by_multi_index of an automatic. */
+/* vpi_handle_by_multi_index of an automatic: an element of a fixed-size
+ * array kept as an image or as a container. */
 static vpiHandle rts_auto_by_multi_index(const llg_vpi_slot_t* slot, const int64_t* indices,
                                          uint32_t count) {
+    dyn_place_t place;
+    if (!rts_is_part(slot) && slot->right >= 0 &&
+        rts_auto_container(slot->element, (uint32_t)slot->right, &place)) {
+        if (!rts_alive(slot)) return NULL;
+        return dyn_element_by_indices(&place, (uint32_t)slot->right, indices, count, 0);
+    }
     return rts_fixed_element(slot, indices, count);
 }
 
@@ -1162,12 +1169,12 @@ static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* plac
     place->name = entry->name;
     place->serial = (int64_t)serial;
     if (shape->array_type == vpiStaticArray) {
-        /* A fixed-size array of strings or handles: its declared range. */
+        /* A fixed-size array of strings, handles or structures kept as
+         * values: its declared ranges. */
         const llg_vpi_typespec_t* typespec = typespec_ref(entry->typespec);
-        if (!typespec || typespec->range_count != 1u) return 0;
-        place->ranged = 1;
-        place->left = g_vpi.types->ranges[2u * typespec->first_range];
-        place->right = g_vpi.types->ranges[2u * typespec->first_range + 1u];
+        if (!typespec || !typespec->range_count || typespec->range_count > DYN_MAX_DIMS) return 0;
+        place->dims = &g_vpi.types->ranges[2u * typespec->first_range];
+        place->dim_count = typespec->range_count;
     }
     return 1;
 }
@@ -1248,7 +1255,7 @@ static vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* slot) {
     }
     dyn_place_t place;
     if (!rts_auto_elements(slot, &place)) return NULL;
-    const llg_vpi_shape_t* element = dyn_shape(place.shape->element);
+    const llg_vpi_shape_t* element = dyn_leaf_shape(place.shape);
     if (!element || !dyn_element_type_matches(element, type)) {
         vpi_error("LLG_VPI_RELATION", "this object has no such iteration");
         return NULL;
@@ -1257,6 +1264,9 @@ static vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_UNSUPPORTED", "llg does not iterate associative arrays with a wildcard index");
         return NULL;
     }
+    /* 37.17 detail 4: the innermost elements of nested containers. */
+    if (dyn_shape(place.shape->element)->shape == LLG_VPI_SHAPE_CONTAINER)
+        return dyn_iterate_leaves(&place, (uint32_t)slot->right, type);
     size_t size = dyn_container_size(&place);
     if (size > UINT32_MAX) size = UINT32_MAX;
     vpiHandle iterator = dyn_iterator(DYN_ITER_ELEMENTS, (uint32_t)size);
@@ -1549,8 +1559,13 @@ static vpiHandle rts_auto_by_name(const char* name) {
            (strlen(table[index].name) != length || strncmp(table[index].name, rest, length) != 0))
         ++index;
     if (!table[index].name) return NULL;
-    vpiHandle handle = rts_auto_handle_by_serial(frame->serial, index);
     const char* p = rest + length;
+    dyn_place_t place;
+    if (*p == '[' && rts_auto_container(frame->serial, index, &place))
+        /* A container automatic: its elements, nested elements and
+         * structure members are dynamic elements. */
+        return dyn_auto_suffix(&place, index, p);
+    vpiHandle handle = rts_auto_handle_by_serial(frame->serial, index);
     if (*p == '[') {
         int64_t indices[16];
         uint32_t count = 0;

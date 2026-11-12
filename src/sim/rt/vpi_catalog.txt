@@ -878,6 +878,7 @@ node array_var 37.17 type=vpiRegArray
   iterate vpiIndex implemented a19d28
   str vpiDecompile implemented walk
   iterate vpiIntVar extension walk a variable array iterates its elements by their own type
+  iterate vpiStructVar extension walk a variable array iterates its elements by their own type
 
 node packed_array_var 37.17 type=vpiPackedArrayVar
   get vpiPacked implemented walk

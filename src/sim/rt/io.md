@@ -300,7 +300,17 @@ global and whose `shape` indexes `llg_vpi_dynamic_tables`. Class objects,
 properties and elements are dynamic slots (`SLOT_CLASSOBJ`, `SLOT_PROPERTY`,
 `SLOT_DYNELEM`) that keep the object's address, never a reference the
 collector sees; an element keeps (row or property, index or key) and
-re-resolves at each access. Class definitions, typespecs and extends
+re-resolves at each access. An element below the first level (a leaf of a
+nested container, a cell of a multidimensional fixed array, a member of a
+structure element, shape `LLG_VPI_SHAPE_RECORD` with its
+`llg_vpi_member_t` rows) keeps its further steps in a path the slot owns
+(`use`, `span`), resolved level by level from the top container; a write
+publishes through the top container (decision A19-D87). A static class
+property is a `SLOT_PROPERTY` slot of the pseudo row `DYN_STATIC_ROW`
+whose field index carries `DYN_STATIC_FIELD`: its `llg_vpi_class_static_t`
+row names the class's storage (signal, string or handle object, container
+or event handle slot), is listed after the instance fields of objects and
+definitions and is named `scope.Class::name`. Class definitions, typespecs and extends
 objects are static slots after the catalog rows, followed by one
 `SLOT_CLASSITEM` slot per `llg_vpi_class_item_t` (methods, their io
 declarations, parameters); a class's items are contiguous, a method's io

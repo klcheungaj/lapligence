@@ -2974,8 +2974,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   force and release, each with `vpiLineNo` and `vpiFile`. Built from
   compact static tables only for VPI models; decisions A19-D11..D13.
   Dynamic objects (VPI-O4; 37.17, 37.27-37.29, 38.36.1): static string,
-  chandle and class variables, one-dimensional fixed-size arrays of them
-  (decision A19-D73), mailbox and semaphore `vpiWaitingProcesses`
+  chandle and class variables, fixed-size arrays of them and of unpacked
+  structures of any number of dimensions (decisions A19-D73, A19-D87),
+  mailbox and semaphore `vpiWaitingProcesses`
   (decision A19-D71), virtual interface properties of classes
   (`vpiInterfaceDecl`, decision A19-D72) and dynamic, queue and associative arrays of
   instances, packages, named blocks and tasks are catalog objects (`vpiStringVar`, `vpiChandleVar`,
@@ -2993,7 +2994,11 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   constraints with their qualifiers, `constraint_mode` state and items
   (distributions, orderings, implications, constraint `if`s; A19-D37); array elements iterate with names, values,
   writes and `vpiIndex` (a string key: a `vpiStringConst` constant),
-  selected by index or key at each access; string variables take
+  selected by index or key at each access; nested containers list their
+  innermost elements (`tb.qq[1][0]`), an element of an array of structures
+  gives its members, and static class properties (variables and events)
+  are listed by objects and definitions under `tb.C::si` full names
+  (decision A19-D87); string variables take
   `vpiStringVal` and `vpiIntVal` writes (A19-D25) and chandle variables read
   and write their 64-bit pointer image.
   `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject` follow construction,
