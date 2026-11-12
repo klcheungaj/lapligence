@@ -527,24 +527,34 @@ static void llg_cov_put_record(llg_cov_buf_t* buf, const llg_cov_inst_t* const* 
     }
 }
 
+// A text field written from out-of-line code: the same bytes as
+// llg_cov_put_text, which stays inlined into its callers.
+LLG_OUTLYING static void llg_cov_put_text_outlying(llg_cov_buf_t* buf, const char* text) {
+    size_t len = text ? strlen(text) : 0u;
+    if (len > LLG_COV_DB_MAX_TEXT) len = LLG_COV_DB_MAX_TEXT;
+    llg_cov_put_u32(buf, (uint32_t)len);
+    llg_cov_put(buf, text ? text : "", len);
+}
+
 // The type options of every covergroup type of the model, in model order:
-// the values in effect, procedural writes included (19.7.1).
-LLG_COLD LLG_OUTLYING static void llg_cov_put_type_options(llg_cov_buf_t* buf) {
+// the values in effect, procedural writes included (19.7.1). Not `cold`:
+// a call to a cold function would split the saving code around it.
+LLG_OUTLYING static void llg_cov_put_type_options(llg_cov_buf_t* buf) {
     llg_cov_put_u32(buf, (uint32_t)llg_cov_n_model_types);
     for (size_t t = 0; t < llg_cov_n_model_types; ++t) {
         const llg_cov_type_t* type = llg_cov_model_types[t];
-        llg_cov_put_text(buf, type->name);
+        llg_cov_put_text_outlying(buf, type->name);
         llg_cov_put_u64(buf, (uint64_t)type->weight);
         llg_cov_put_u64(buf, (uint64_t)type->goal);
         llg_cov_put_u8(buf, type->merge);
-        llg_cov_put_text(buf, type->comment_set ? type->comment : type->declared_comment);
+        llg_cov_put_text_outlying(buf, type->comment_set ? type->comment : type->declared_comment);
         llg_cov_put_u32(buf, type->n_items);
         for (uint32_t i = 0; i < type->n_items; ++i) {
             const llg_cov_type_decl_t* decl = &type->declared_items[i];
             const llg_cov_type_item_t* item = type->items ? &type->items[i] : NULL;
             llg_cov_put_u64(buf, (uint64_t)(item ? item->weight : decl->weight));
             llg_cov_put_u64(buf, (uint64_t)(item ? item->goal : decl->goal));
-            llg_cov_put_text(buf, item ? item->comment : decl->comment);
+            llg_cov_put_text_outlying(buf, item ? item->comment : decl->comment);
         }
     }
 }
@@ -983,7 +993,7 @@ static int llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
 // entry per covergroup type of the model, in model order. A load applies
 // none of them: the run keeps its own type options, declared or written
 // (19.9 is silent; industry-standard behaviour, decision S46-D15).
-LLG_COLD LLG_OUTLYING static int llg_cov_db_type_options(llg_cov_reader_t* reader) {
+LLG_OUTLYING static int llg_cov_db_type_options(llg_cov_reader_t* reader) {
     uint32_t types;
     if (!llg_cov_get_u32(reader, &types)) return 0;
     if (types != llg_cov_n_model_types)
@@ -1014,13 +1024,11 @@ LLG_COLD LLG_OUTLYING static int llg_cov_db_type_options(llg_cov_reader_t* reade
     return 1;
 }
 
-// Parse the functional section of a database of `version` in one of two
-// passes: validation stages a record per database record into `staged` and
-// checks the type options; publication adds the counters of record r to
-// `targets[r]`.
-static int llg_cov_db_functional(llg_cov_reader_t* reader, uint32_t version,
-                                 llg_cov_inst_t*** staged, size_t* n_staged, size_t* staged_cap,
-                                 llg_cov_inst_t** targets) {
+// Parse the records of the functional section in one of two passes:
+// validation stages a record per database record into `staged`;
+// publication adds the counters of record r to `targets[r]`.
+static int llg_cov_db_functional(llg_cov_reader_t* reader, llg_cov_inst_t*** staged,
+                                 size_t* n_staged, size_t* staged_cap, llg_cov_inst_t** targets) {
     uint32_t types = 0;
     if (!llg_cov_get_u32(reader, &types)) return 0;
     size_t record = 0;
@@ -1046,7 +1054,7 @@ static int llg_cov_db_functional(llg_cov_reader_t* reader, uint32_t version,
         }
         free(type_name);
     }
-    return version < 2u || targets || llg_cov_db_type_options(reader);
+    return 1;
 }
 
 // The loaded record a staged record's counters go to: an earlier loaded
@@ -1075,7 +1083,8 @@ void llg_cov_load_db(llg_string_t name, const char* site) {
     size_t n_staged = 0, staged_cap = 0;
     if (!error) {
         llg_cov_reader_t reader = {db.data, db.functional_end, db.functional_at, NULL};
-        if (!llg_cov_db_functional(&reader, db.version, &staged, &n_staged, &staged_cap, NULL))
+        if (!llg_cov_db_functional(&reader, &staged, &n_staged, &staged_cap, NULL) ||
+            (db.version >= 2u && !llg_cov_db_type_options(&reader)))
             error = reader.error;
         else if (reader.pos != reader.len)
             error = "the functional section has trailing data";
@@ -1094,7 +1103,7 @@ void llg_cov_load_db(llg_string_t name, const char* site) {
             if (targets[i] != staged[i]) staged[i]->loaded = 2;  // merged away below
         }
         llg_cov_reader_t reader = {db.data, db.functional_end, db.functional_at, NULL};
-        (void)llg_cov_db_functional(&reader, db.version, NULL, NULL, NULL, targets);
+        (void)llg_cov_db_functional(&reader, NULL, NULL, NULL, targets);
         for (size_t i = 0; i < n_staged; ++i)
             if (staged[i]->loaded == 2) llg_cov_free_record(staged[i]);
         free(targets);
