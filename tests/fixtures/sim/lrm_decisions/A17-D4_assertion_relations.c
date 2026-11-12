@@ -24,14 +24,14 @@ static PLI_INT32 failed(PLI_INT32 reason, p_vpi_time time, vpiHandle assertion,
 
 static PLI_INT32 d4(PLI_BYTE8* data) {
     (void)data;
-    static const char* names[] = {"tb.q1", "tb.q2", "tb.q3", "tb.q4", "tb.q5"};
-    for (int i = 0; i < 5; ++i) {
+    static const char* names[] = {"tb.q1", "tb.q2", "tb.q3", "tb.q4", "tb.q6", "tb.q5"};
+    for (int i = 0; i < 6; ++i) {
         vpiHandle a = vpi_handle_by_name((PLI_BYTE8*)names[i], NULL);
         vpi_printf("%s end=%d:%d", names[i], (int)vpi_get(vpiEndLine, a),
                    (int)vpi_get(vpiEndColumn, a));
-        if (i < 4) vpi_printf(" inferred=%d", (int)vpi_get(vpiIsClockInferred, a));
+        if (i < 5) vpi_printf(" inferred=%d", (int)vpi_get(vpiIsClockInferred, a));
         vpi_printf("\n");
-        if (i < 4) {
+        if (i < 5) {
             show("vpiClockingEvent", vpi_handle(vpiClockingEvent, a));
             show("vpiDisableCondition", vpi_handle(vpiDisableCondition, a));
             vpiHandle p = vpi_handle(vpiProperty, a);

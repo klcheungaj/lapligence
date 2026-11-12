@@ -190,6 +190,12 @@ impl Codegen<'_> {
         if async_abort {
             return Err(deferral_limit("`accept_on`/`reject_on`"));
         }
+        // Saved values belong to one attempt; the deferred queue keeps none.
+        if !self.queued_values.is_empty() {
+            return Err(deferral_limit(
+                "a procedural assertion reading an automatic variable or a const cast",
+            ));
+        }
         let clock = match self.assertion_future_clock.take() {
             Some(clock) => clock,
             None => {

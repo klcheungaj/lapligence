@@ -2,6 +2,30 @@
 use super::*;
 
 impl Frame<'_, '_> {
+    /// Open a block holding a new frame with the values a procedural
+    /// assertion instance or an `expect` saves (16.15.6.1), one slot each in
+    /// order, and return the frame's name. The caller hands the frame to the
+    /// runtime, which owns it from then on, and closes the block.
+    pub(super) fn queued_values(&mut self, captures: &[IrExpr]) -> Result<String, String> {
+        let frame = "_llg_queued";
+        self.line(format!(
+            "{{ llg_frame_t* {frame} = llg_frame_new({}ULL);",
+            captures.len()
+        ));
+        for (slot, capture) in captures.iter().enumerate() {
+            let value = self.expression(capture)?;
+            if value.width == 0 {
+                return Err("a queued assertion value must be packed".to_owned());
+            }
+            self.line(format!(
+                "llg_frame_capture_value({frame}, {slot}u, {});",
+                value.code
+            ));
+            self.discard(value);
+        }
+        Ok(frame.to_owned())
+    }
+
     pub(super) fn assertion_control(
         &mut self,
         kind: IrAssertionControlKind,

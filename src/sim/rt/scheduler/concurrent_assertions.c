@@ -2,8 +2,9 @@ struct llg_property_inst;
 static void run_property_assertion(llg_concurrent_assertion_t* assertion,
                                    const llg_assertion_clock_event_t* event, int root_event);
 static void property_attempt_begin(llg_concurrent_assertion_t* assertion,
-                                   const llg_assertion_clock_event_t* event);
-static void property_assertions_async(void);
+                                   const llg_assertion_clock_event_t* event,
+                                   llg_frame_t* values);
+static LLG_OUTLYING void property_assertions_async(void);
 static void future_assertion_observed(llg_concurrent_assertion_t* assertion);
 static int future_assertion_defer_end(llg_concurrent_assertion_t* assertion, int killed);
 static void future_assertion_add_start(llg_concurrent_assertion_t* assertion);
@@ -20,7 +21,78 @@ static void assertion_action(llg_concurrent_assertion_t* assertion,
     if (proc) {
         proc->is_assertion_action = 1;
         proc->action_assertion = assertion->identity;
+        // The action reads the values its instance saved (16.15.6.1).
+        if (LLG_CO_UNLIKELY(g.assertion_values != NULL)) {
+            llg_frame_retain(g.assertion_values);
+            proc->frame = g.assertion_values;
+        }
     }
+}
+
+/* Saved values of procedural assertion instances (IEEE 1800-2009
+ * 16.15.6.1). A queued instance carries a frame with them; when it matures
+ * the frame waits on the assertion's queue until the instance begins its
+ * attempt, which then owns it, and evaluators and the action process read
+ * it through llg_assertion_instance_value. */
+static LLG_OUTLYING void queued_values_push(llg_concurrent_assertion_t* assertion,
+                                           llg_frame_t* frame) {
+    if (assertion->queued_count == assertion->queued_capacity) {
+        size_t capacity = assertion->queued_capacity ? assertion->queued_capacity * 2u : 4u;
+        llg_frame_t** items =
+            (llg_frame_t**)llg_checked_malloc(capacity, sizeof(*items), "queued assertion values");
+        for (size_t index = 0; index < assertion->queued_count; index++)
+            items[index] = assertion->queued_values[(assertion->queued_head + index) %
+                                                    assertion->queued_capacity];
+        free(assertion->queued_values);
+        assertion->queued_values = items;
+        assertion->queued_capacity = capacity;
+        assertion->queued_head = 0;
+    }
+    assertion->queued_values[(assertion->queued_head + assertion->queued_count) %
+                             assertion->queued_capacity] = frame;
+    assertion->queued_count++;
+}
+
+/* The frame of the oldest matured instance, now owned by the caller, or
+ * NULL for an assertion whose instances save nothing. */
+static llg_frame_t* queued_values_take(llg_concurrent_assertion_t* assertion) {
+    if (LLG_CO_LIKELY(!assertion->queued_count)) return NULL;
+    llg_frame_t* frame = assertion->queued_values[assertion->queued_head];
+    assertion->queued_head = (assertion->queued_head + 1u) % assertion->queued_capacity;
+    assertion->queued_count--;
+    return frame;
+}
+
+/* Matured instances that will not begin release their saved values. */
+static LLG_OUTLYING void queued_values_clear(llg_concurrent_assertion_t* assertion) {
+    while (assertion->queued_count) llg_frame_release(queued_values_take(assertion));
+}
+
+static LLG_OUTLYING const llg_frame_t* instance_values(uint32_t slot) {
+    const llg_frame_t* frame = g.assertion_values;
+    if (!frame) {
+        llg_proc_t* current = llg_current();
+        frame = current ? current->frame : NULL;
+    }
+    if (!frame || slot >= frame->nslots) {
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL,
+                "saved value %u of a procedural concurrent assertion read outside its "
+                "attempt and action", (unsigned)slot);
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    return frame;
+}
+
+LLG_INTERNAL LLG_OUTLYING sv4_t llg_assertion_instance_value(uint32_t slot) {
+    const llg_frame_t* frame = instance_values(slot);
+    return frame ? llg_frame_read_value(frame, slot) : sv4_x(1, 0);
+}
+
+LLG_INTERNAL LLG_OUTLYING void llg_assertion_instance_value_to(sv4_t* dst, uint32_t slot) {
+    const llg_frame_t* frame = instance_values(slot);
+    sv4_replace(dst, frame ? llg_frame_read_value(frame, slot) : sv4_x(1, 0));
 }
 
 static void assertion_vacuous(void) {
@@ -254,6 +326,7 @@ static void procedural_disabled_starts(llg_concurrent_assertion_t* assertion) {
     for (uint64_t index = 0; index < assertion->procedural_matured; index++)
         assertion_disabled_start(assertion);
     assertion->procedural_matured = 0;
+    if (LLG_CO_UNLIKELY(assertion->queued_count)) queued_values_clear(assertion);
     assertion->procedural_disabled_tick = g.now + 1;
 }
 
@@ -336,8 +409,9 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
 }
 
 static void assertion_abort_condition_changed(void) {
-    property_assertions_async();
-    if (g.finish) return;
+    // Asynchronous aborts of property programs read current values in the
+    // next Observed pass (property_assertions_async).
+    if (g.property_async_count) g.property_async_pending = 1;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
         if ((assertion->enabled || assertion_has_attempts(assertion)) &&
@@ -808,7 +882,8 @@ static int assertion_root_event_pending(const llg_concurrent_assertion_t* assert
  * time step of its leading clocking event begins in this Observed region).
  * Older attempts were advanced by that event already, so only the new
  * attempt takes it. */
-static void procedural_begin_at_tick(llg_concurrent_assertion_t* assertion) {
+static void procedural_begin_at_tick(llg_concurrent_assertion_t* assertion,
+                                     llg_frame_t* values) {
     if (assertion->abort_condition && assertion->abort_condition(assertion->data)) {
         assertion->procedural_matured = 1;
         abort_new_attempts(assertion, 0);
@@ -816,7 +891,7 @@ static void procedural_begin_at_tick(llg_concurrent_assertion_t* assertion) {
     }
     if (assertion->property) {
         llg_acov_attempt(assertion->acov, assertion_event_time());
-        property_attempt_begin(assertion, &assertion->procedural_event);
+        property_attempt_begin(assertion, &assertion->procedural_event, values);
         return;
     }
     if (assertion->consequent_sequence) {
@@ -860,18 +935,23 @@ static void procedural_begin_at_tick(llg_concurrent_assertion_t* assertion) {
  * Observed region (16.15.6). In a time step of its leading clocking event
  * it begins an attempt now; otherwise it waits on the matured queue for the
  * next leading clocking event. */
-static void procedural_instance_mature(llg_concurrent_assertion_t* assertion) {
+static void procedural_instance_mature(llg_concurrent_assertion_t* assertion,
+                                       llg_frame_t* values) {
     if (assertion_root_event_pending(assertion)) {
         assertion->procedural_matured++;
     } else if (assertion->procedural_disabled_tick == g.now + 1) {
         assertion_disabled_start(assertion);
+        llg_frame_release(values);
+        return;
     } else if (assertion->procedural_tick == g.now + 1) {
         // A deferred assertion has not evaluated that event yet.
         if (assertion->future_clock) future_assertion_add_start(assertion);
-        else procedural_begin_at_tick(assertion);
+        else procedural_begin_at_tick(assertion, values);
+        return;
     } else {
         assertion->procedural_matured++;
     }
+    if (LLG_CO_UNLIKELY(values != NULL)) queued_values_push(assertion, values);
 }
 
 /* Observed region: every pending procedural instance that no flush point
@@ -883,8 +963,11 @@ static void procedural_assertions_mature(void) {
         llg_deferred_assertion_report_t* report = &g.deferred_pending.items[i];
         if (!report->live || report->kind != LLG_DEFERRED_PROCEDURAL) continue;
         llg_concurrent_assertion_t* assertion = report->procedural;
+        // The saved values pass from the pending instance to the matured one.
+        llg_frame_t* values = report->frame;
+        report->frame = NULL;
         deferred_report_drop(report);
-        procedural_instance_mature(assertion);
+        procedural_instance_mature(assertion, values);
     }
 }
 
@@ -904,6 +987,8 @@ static int run_concurrent_assertions(void) {
     assertion_events_enter();
     int ok = run_concurrent_assertions_pass();
     assertion_events_leave_tick();
+    if (LLG_CO_UNLIKELY(g.property_async_count) && ok && !g.finish)
+        property_assertions_async();
     return ok && !g.finish;
 }
 

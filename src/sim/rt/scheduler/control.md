@@ -96,6 +96,19 @@ S99-D4). Each root clock event takes all matured instances as attempts;
 matured instances begin even while the assertion is off; KILL drops pending
 and matured instances (S99-D3). Procedural assertions are never
 single-attempt, end points or `expect`.
+An instance that reads automatic variables or `const'` casts (16.15.6.1) is
+queued by `llg_assertion_queue_values` with an `llg_frame_t` of those values,
+held in the record's `frame`. Lowering puts such assertions on the property
+engine. When it matures the frame moves to the assertion's `queued_values`
+ring (one per counted matured instance) or straight to the attempt that
+begins; the root `llg_property_inst_t` owns it (`values`, kept across
+`property_collapse`) and releases it with the attempt. While a root is
+evaluated or reported `g.assertion_values` names it, so generated evaluators
+read it through `llg_assertion_instance_value`, and `assertion_action` gives
+the action process a reference as its `frame`, which the same function reads
+there. Flushes, disabled starts, KILL and teardown release the frames. An
+`expect` hands its frame over with `llg_assertion_expect_values` before
+`llg_assertion_expect_start`, which moves it to the ring for its one attempt.
 `llg_sequence_match_call` appends a sequence match-item call (SV 16.11) with
 its owned argument frame directly to the matured array (kind
 `LLG_DEFERRED_MATCH_CALL`): it runs in the Reactive region in queue order with
@@ -155,9 +168,14 @@ on the assertion's clock. Sequence operands reuse the sequence engine on their c
 with their own zero-delay ranks. `LLG_PROPERTY_CALL` (a recursive property
 instance, 16.13.17) starts a fresh instance of its target node.
 `llg_assertion_clock_pulse` writes a planned clock's hidden signal 1 then 0 at
-most once per time step. Asynchronous `accept_on`/`reject_on` are checked once per
-time step from the write hook with sampled values; synchronous ones and every
-abort are checked first on each tick. At the end of simulation
+most once per time step. Every abort is checked first on each tick with the
+sampled value of its condition (the only check of `sync_accept_on`/`sync_reject_on`).
+Asynchronous `accept_on`/`reject_on` are also checked with current values
+(the ABORT node's `third` atom) by `property_assertions_async` at the end of
+`run_concurrent_assertions`, after the ticks: in the first Observed pass of
+each time step and in every pass after a signal write, which the write hook
+records in `property_async_pending` while such an assertion is registered
+(S38-D13). At the end of simulation
 (`run_end_of_simulation_assertions`, after deferred reports) a pending attempt
 fails (fail action in an isolated Reactive pass) only if it waits on an
 `s_eventually` obligation, begun or due to begin through a started operator

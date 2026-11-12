@@ -224,7 +224,10 @@ static int run_design_set(void) {
 static int observed_pending(void) {
     // A pending procedural concurrent assertion instance matures only in
     // Observed (SV 16.15.6), also when a reactive process queued it.
-    if (g.assertion_edges_pending || g.procedural_pending_live) return 1;
+    // A write after the last Observed pass can raise an asynchronous abort
+    // condition, which is checked there.
+    if (g.assertion_edges_pending || g.procedural_pending_live || g.property_async_pending)
+        return 1;
     for (llg_region_t region = LLG_REGION_PRE_OBSERVED_PLI;
          region <= LLG_REGION_POST_OBSERVED_PLI; region++) {
         if (region_pending(region)) return 1;

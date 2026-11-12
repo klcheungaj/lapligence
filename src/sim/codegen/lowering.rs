@@ -2273,6 +2273,10 @@ struct Codegen<'a> {
     /// Procedural concurrent assertions registered so far, which is the
     /// index of the next one ([`IrAssertion::procedural`]).
     procedural_assertions: u32,
+    /// Nodes of the procedural assertion being lowered that read a value its
+    /// instance saved when queued (IEEE 1800-2009 16.15.6.1); empty
+    /// otherwise.
+    queued_values: HashMap<NodeId, assertions::QueuedValue>,
     /// Interned sampled-value clocks and histories (`IrModel::sampled_clocks`
     /// and `sampled_domains`), keyed by their lowered identity so every call
     /// that reads one expression on one clock and gate shares one history.
@@ -2665,6 +2669,7 @@ impl<'a> Codegen<'a> {
             assertion_clock_changes: HashSet::new(),
             procedure_body: None,
             procedural_assertions: 0,
+            queued_values: HashMap::new(),
             sampled_clock_keys: HashMap::new(),
             sampled_domain_keys: HashMap::new(),
             assertion_future_clock: None,

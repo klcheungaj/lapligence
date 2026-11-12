@@ -9,6 +9,7 @@
 //! assertion statement to that queue operation.
 
 use super::*;
+use crate::sim::ir::{IrSampledCall, IrSampledFunc};
 
 /// The clock a procedure infers for its procedural concurrent assertions
 /// (16.15.6 a)-c)): the unique `edge_identifier expression1 [iff
@@ -17,8 +18,10 @@ use super::*;
 pub(in crate::sim::codegen) enum ProcedureClock {
     /// A `posedge` or `negedge` expression, with its `iff` qualifier.
     Edge(EventSpec),
-    /// `edge expression1`, which an assertion clock cannot use in llg.
-    BothEdges(NodeId),
+    /// `edge expression1`, captured as its posedge and its negedge event
+    /// expressions (each with the `iff` qualifier), the clocking event of
+    /// both edges.
+    BothEdges(Vec<EventSpec>),
 }
 
 impl Codegen<'_> {
@@ -108,7 +111,15 @@ impl Codegen<'_> {
                 continue;
             }
             candidates.push(if paired {
-                ProcedureClock::BothEdges(signal)
+                ProcedureClock::BothEdges(
+                    specs
+                        .iter()
+                        .filter(|spec| {
+                            flatten_clock_spec(spec).is_some_and(|(sig, _, _)| sig == signal)
+                        })
+                        .cloned()
+                        .collect(),
+                )
             } else {
                 ProcedureClock::Edge(spec.clone())
             });
@@ -192,14 +203,11 @@ impl Codegen<'_> {
         };
         match self.infer_procedure_clock(body) {
             None => Ok(None),
-            Some(ProcedureClock::BothEdges(signal)) => Err(format!(
-                "{}: the clock inferred from the procedure (`edge` of the expression at line \
-                 {}, column {}) cannot clock a concurrent assertion in llg; give the assertion \
-                 a posedge or negedge clock (IEEE 1800-2009 16.15.6)",
-                self.source_location(origin),
-                self.node(signal).line,
-                self.node(signal).col
-            )),
+            // `edge expression1` is the clocking event of both edges, ticking
+            // once per time step like any other event clock.
+            Some(ProcedureClock::BothEdges(specs)) => {
+                self.assertion_clock_from_specs(path, &specs, 0).map(Some)
+            }
             Some(ProcedureClock::Edge(spec)) => self
                 .lower_sampled_clock_spec(path, std::slice::from_ref(&spec))?
                 .map(Some)
@@ -215,37 +223,36 @@ impl Codegen<'_> {
 
     /// The clocking event that procedure body `body` infers for a checker
     /// instantiated in it, which its `$inferred_clock` formal defaults
-    /// stand for (17.4), or `None` when the procedure infers none.
+    /// stand for (17.4), as its event expressions, or `None` when the
+    /// procedure infers none.
     pub(in crate::sim::codegen) fn procedure_inferred_event(
         &self,
         body: NodeId,
-        origin: NodeId,
-    ) -> Result<Option<EventSpec>, String> {
-        match self.infer_procedure_clock(body) {
-            None => Ok(None),
-            Some(ProcedureClock::Edge(spec)) => Ok(Some(spec)),
-            Some(ProcedureClock::BothEdges(signal)) => Err(format!(
-                "{}: the clock inferred from the procedure (`edge` of the expression at line \
-                 {}, column {}) cannot clock a checker in llg; pass the checker a posedge or \
-                 negedge clock (IEEE 1800-2009 16.15.6, 17.4)",
-                self.source_location(origin),
-                self.node(signal).line,
-                self.node(signal).col
-            )),
+    ) -> Option<Vec<EventSpec>> {
+        match self.infer_procedure_clock(body)? {
+            ProcedureClock::Edge(spec) => Some(vec![spec]),
+            ProcedureClock::BothEdges(specs) => Some(specs),
         }
     }
 
     /// Lower a concurrent assertion reached in procedural code: register it
     /// as procedural assertion `index` and return the statement that queues
-    /// one of its instances.
+    /// one of its instances. `captures` are the values each instance saves,
+    /// lowered in the procedure, for the sites [`Self::queued_value_sites`]
+    /// found (slot order); the assertion reads them through
+    /// [`crate::sim::ir::IrSampledFunc::Queued`].
     pub(in crate::sim::codegen) fn emit_procedural_concurrent_assertion(
         &mut self,
         inst: NodeId,
         path: &str,
         assertion: NodeId,
+        sites: &[QueuedValueSite],
+        captures: Vec<IrExpr>,
     ) -> Result<IrStmt, String> {
-        self.reject_procedural_captures(assertion)?;
-        self.emit_concurrent_assertion(inst, path, assertion)?;
+        let previous = self.enter_queued_values(sites, &captures);
+        let result = self.emit_concurrent_assertion(inst, path, assertion);
+        self.queued_values = previous;
+        result?;
         let index = self.procedural_assertions;
         let registered = self
             .model
@@ -257,60 +264,239 @@ impl Codegen<'_> {
         self.procedural_assertions = index
             .checked_add(1)
             .ok_or_else(|| "too many procedural concurrent assertions".to_owned())?;
-        Ok(IrStmt::QueueProceduralAssertion { index })
+        Ok(IrStmt::QueueProceduralAssertion { index, captures })
     }
 
-    /// Reject the procedural assertion forms whose instances carry values
-    /// captured when they are queued (16.15.6.1): automatic variables of the
-    /// procedure and `const'` casts, in the assertion or its action blocks.
-    /// The runtime queue keeps no per-instance values, so evaluating these
-    /// forms from sampled values would silently change their meaning.
-    fn reject_procedural_captures(&self, assertion: NodeId) -> Result<(), String> {
-        // Report the first offending reference in source order.
-        let mut first: Option<(NodeId, Option<NodeId>)> = None;
+    /// Make the nodes of `sites` read their saved values while one
+    /// assertion is lowered; returns the map to restore afterwards.
+    pub(in crate::sim::codegen) fn enter_queued_values(
+        &mut self,
+        sites: &[QueuedValueSite],
+        captures: &[IrExpr],
+    ) -> HashMap<NodeId, QueuedValue> {
+        let mut values = HashMap::new();
+        for site in sites {
+            let capture = &captures[site.slot as usize];
+            values.insert(
+                site.node,
+                QueuedValue {
+                    slot: site.slot,
+                    width: capture.width,
+                    signed: capture.signed,
+                },
+            );
+        }
+        std::mem::replace(&mut self.queued_values, values)
+    }
+
+    /// The read of a value the instance being lowered saved when it was
+    /// queued, for a node [`Self::queued_value_sites`] found.
+    pub(in crate::sim::codegen) fn queued_value_read(&self, node: NodeId) -> Option<IrExpr> {
+        let value = self.queued_values.get(&node)?;
+        // The argument records the shape only; the runtime reads the slot.
+        let shape = IrConst::packed(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            value.width,
+            value.signed,
+            None,
+        )
+        .ok()?;
+        Some(IrExpr::new(
+            IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
+                IrSampledFunc::Queued,
+                IrExpr::new(IrExprKind::Const(shape), value.width, value.signed, None),
+                None,
+                u64::from(value.slot),
+            )))),
+            value.width,
+            value.signed,
+            None,
+        ))
+    }
+
+    /// The values a procedural concurrent assertion instance saves when it
+    /// is queued (16.15.6.1): every automatic variable of the procedure and
+    /// every outermost `const'` cast in the assertion or its action blocks.
+    /// References to one automatic variable share a slot; slots follow
+    /// source order. Property and sequence local variables belong to the
+    /// attempt, not to the procedure, and are not saved.
+    pub(in crate::sim::codegen) fn queued_value_sites(
+        &self,
+        assertion: NodeId,
+    ) -> QueuedValueSites {
+        let mut found: Vec<(NodeId, Option<NodeId>)> = Vec::new();
         let mut stack = vec![assertion];
         while let Some(node) = stack.pop() {
+            if self.db.is_const_cast(node) {
+                found.push((node, None));
+                continue;
+            }
             stack.extend(self.node(node).children.iter().copied());
-            let offending = if self.db.is_const_cast(node) {
-                Some(None)
-            } else if let NodeKind::Expr(ExprKind::Ref {
+            if let NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) = self.kind(node)
             {
-                // Property and sequence local variables belong to the
-                // attempt, not to the procedure.
-                (matches!(self.kind(*target), NodeKind::Var { .. })
-                    && self.db.variable_lifetime(*target) == VariableLifetime::Automatic
-                    && !self.db.is_assertion_local_var(*target))
-                .then_some(Some(*target))
-            } else {
-                None
-            };
-            let Some(variable) = offending else {
-                continue;
-            };
-            let position = |id: NodeId| (self.node(id).line, self.node(id).col);
-            if first.is_none_or(|(known, _)| position(node) < position(known)) {
-                first = Some((node, variable));
+                if self.automatic_procedure_value(*target) {
+                    found.push((node, Some(*target)));
+                }
             }
         }
-        match first {
-            None => Ok(()),
-            Some((node, None)) => Err(format!(
-                "{}: a const cast in a procedural concurrent assertion takes its value when \
-                 the assertion is queued (IEEE 1800-2009 16.15.6.1); llg does not capture \
-                 queued values",
-                self.source_location(node)
-            )),
-            Some((node, Some(variable))) => Err(format!(
-                "{}: automatic variable `{}` in a procedural concurrent assertion takes its \
-                 value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg does not \
-                 capture queued values",
-                self.source_location(node),
-                self.node(variable).name
-            )),
+        let position = |id: NodeId| (self.node(id).line, self.node(id).col, id.index());
+        found.sort_by_key(|(node, _)| position(*node));
+        let mut sites = QueuedValueSites::default();
+        let mut slots: HashMap<NodeId, u32> = HashMap::new();
+        for (node, variable) in found {
+            let slot = match variable.and_then(|variable| slots.get(&variable)) {
+                Some(slot) => *slot,
+                None => {
+                    let slot = sites.sources.len() as u32;
+                    sites.sources.push(node);
+                    if let Some(variable) = variable {
+                        slots.insert(variable, slot);
+                    }
+                    slot
+                }
+            };
+            sites.sites.push(QueuedValueSite { node, slot });
+        }
+        sites
+    }
+
+    /// Whether `declaration` is an automatic variable of the procedure or of
+    /// an automatic subroutine it runs, including a formal other than `ref`.
+    /// Property and sequence local variables belong to the attempt.
+    fn automatic_procedure_value(&self, declaration: NodeId) -> bool {
+        match self.kind(declaration) {
+            NodeKind::Var { .. } => {
+                self.db.variable_lifetime(declaration) == VariableLifetime::Automatic
+                    && !self.db.is_assertion_local_var(declaration)
+            }
+            NodeKind::FuncArg { direction, .. } => {
+                *direction != DbDirection::Ref
+                    && self.node(declaration).parent.is_some_and(|subroutine| {
+                        matches!(
+                            self.kind(subroutine),
+                            NodeKind::FuncTask {
+                                automatic: true,
+                                ..
+                            }
+                        )
+                    })
+            }
+            _ => false,
         }
     }
+
+    /// A located error for a saved value llg cannot keep: `capture` is the
+    /// value as lowered in the procedure.
+    pub(in crate::sim::codegen) fn check_queued_value(
+        &self,
+        node: NodeId,
+        capture: &IrExpr,
+    ) -> Result<(), String> {
+        if capture.width != 0 && !capture.is_real() {
+            return Ok(());
+        }
+        let what = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => format!("automatic variable `{}`", self.node(*target).name),
+            _ => "const cast".to_owned(),
+        };
+        Err(format!(
+            "{}: {what} in a procedural concurrent assertion takes its value when the \
+             assertion is queued (IEEE 1800-2009 16.15.6.1); llg saves packed integral values \
+             only",
+            self.source_location(node)
+        ))
+    }
+
+    /// Reject a saved value in `expression`, which is evaluated outside the
+    /// attempts of the assertion being lowered (`what`: a `disable iff`
+    /// condition, a clock's `iff` or a sampled value function's history).
+    pub(in crate::sim::codegen) fn reject_queued_read(
+        &self,
+        expression: &IrExpr,
+        what: &str,
+    ) -> Result<(), String> {
+        if self.queued_values.is_empty() {
+            return Ok(());
+        }
+        let mut reads = false;
+        crate::sim::opt::walk_expr_mut(&mut expression.clone(), &mut |node| {
+            if let IrExprKind::SysFunc(function) = &node.kind {
+                if let IrSysFunc::Sampled(call) = &**function {
+                    reads |= call.kind == IrSampledFunc::Queued;
+                }
+            }
+        });
+        if !reads {
+            return Ok(());
+        }
+        let location = self
+            .assertion_inferred_origin
+            .map(|origin| self.source_location(origin))
+            .unwrap_or_default();
+        Err(format!(
+            "{location}: {what} of this procedural concurrent assertion reads an automatic \
+             variable or a const cast, whose value the instance saves when it is queued (IEEE \
+             1800-2009 16.15.6.1); llg evaluates it outside the instance's attempts and does \
+             not support this"
+        ))
+    }
+
+    /// Reject queued values in an assertion lowered outside the procedure
+    /// that queues it: a procedural checker's static assertion, whose
+    /// automatic or `const'` actuals 17.3 substitutes when it is queued.
+    pub(in crate::sim::codegen) fn reject_queued_values(
+        &self,
+        assertion: NodeId,
+    ) -> Result<(), String> {
+        let sites = self.queued_value_sites(assertion);
+        let Some(site) = sites.sites.first() else {
+            return Ok(());
+        };
+        let what = match self.kind(site.node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => format!("automatic variable `{}`", self.node(*target).name),
+            _ => "a const cast".to_owned(),
+        };
+        Err(format!(
+            "{}: {what} in a procedural concurrent assertion takes its value when the \
+             assertion is queued (IEEE 1800-2009 16.15.6.1); llg saves queued values for \
+             assertions written in the procedure, not for the assertions of a procedural \
+             checker (17.3)",
+            self.source_location(site.node)
+        ))
+    }
+}
+
+/// One node of a procedural concurrent assertion that reads a value saved
+/// when the instance was queued, and its slot in the instance's frame.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::sim::codegen) struct QueuedValueSite {
+    pub(in crate::sim::codegen) node: NodeId,
+    pub(in crate::sim::codegen) slot: u32,
+}
+
+/// The saved values of one procedural concurrent assertion: `sources` are
+/// the nodes evaluated in the procedure, one per slot; `sites` every node
+/// reading a slot.
+#[derive(Default)]
+pub(in crate::sim::codegen) struct QueuedValueSites {
+    pub(in crate::sim::codegen) sources: Vec<NodeId>,
+    pub(in crate::sim::codegen) sites: Vec<QueuedValueSite>,
+}
+
+/// Slot and shape of one saved value while its assertion is lowered.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::sim::codegen) struct QueuedValue {
+    slot: u32,
+    width: u32,
+    signed: bool,
 }
 
 /// Every expression node an event spec names.

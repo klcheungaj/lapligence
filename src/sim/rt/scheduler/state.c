@@ -356,8 +356,6 @@ typedef struct llg_property_inst {
     /* Own-clock ticks evaluated so far (the next is relative tick `ticks`);
      * for nodes without a clock of their own, 1 once started. */
     uint64_t ticks;
-    /* Simulation time + 1 of the last asynchronous abort check. */
-    uint64_t abort_checked;
     uint8_t status;     /* 0 pending, 1 true, 2 false */
     uint8_t nonvacuous; /* valid once resolved (16.15.8) */
     uint8_t strict;     /* starts strictly after `launch` */
@@ -379,6 +377,9 @@ typedef struct llg_property_inst {
     uint8_t consumed_hit;
     /* Collapsed past an operator whose result is never cover-vacuous. */
     uint8_t carry_hit;
+    /* The values a procedural assertion instance saved when it was queued
+     * (16.15.6.1), owned by the attempt's root node; NULL elsewhere. */
+    llg_frame_t* values;
 } llg_property_inst_t;
 
 /* A sequence can advance on a clock other than its leading assertion clock.
@@ -571,10 +572,8 @@ typedef struct llg_concurrent_assertion {
     uint32_t** property_ranks;
     llg_property_inst_t* property_attempts;
     llg_property_inst_t* property_attempts_tail;
-    /* The program has an asynchronous accept_on/reject_on, and the time + 1
-     * of the step whose sampled abort conditions were last checked. */
+    /* The program has an asynchronous accept_on/reject_on. */
     int property_async;
-    uint64_t property_async_checked;
     /* Global clocking future sampled value functions (16.9.4): the global
      * clock, the capture callback and slot count, the deferred evaluation
      * queue with its recycled entries, and the replay state (the entry's
@@ -588,12 +587,25 @@ typedef struct llg_concurrent_assertion {
     llg_assertion_lag_t* lag_head;
     llg_assertion_lag_t* lag_tail;
     llg_assertion_lag_t* lag_free;
+    /* Frames of the values that matured procedural instances saved when
+     * they were queued (16.15.6.1), oldest first, one per instance counted
+     * in `procedural_matured`; an armed `expect` keeps its one frame here.
+     * `expect_values` holds the frame of an `expect` until it is armed. A
+     * property-engine assertion only; empty for assertions saving nothing. */
+    llg_frame_t** queued_values;
+    size_t queued_head;
+    size_t queued_count;
+    size_t queued_capacity;
+    llg_frame_t* expect_values;
 } llg_concurrent_assertion_t;
 
 /* Discard the running attempts of an assertion whose disable iff holds or
  * that a control task kills, counting them for assertion coverage
  * (concurrent_assertions.c). */
 static void end_assertion_attempts(llg_concurrent_assertion_t* assertion, int killed);
+/* Saved values of matured procedural instances (concurrent_assertions.c). */
+static void queued_values_push(llg_concurrent_assertion_t* assertion, llg_frame_t* frame);
+static void queued_values_clear(llg_concurrent_assertion_t* assertion);
 
 typedef struct {
     uint64_t unit_fs;
@@ -817,8 +829,12 @@ typedef struct {
     llg_acov_event_queue_t assertion_events;
     // vpiAssertionSysEnd ran: no control enables an assertion again.
     int assertions_ended;
-    // Registered property assertions with an asynchronous abort condition.
-    uint64_t property_async_count;
+    // Registered property assertions with an asynchronous abort condition,
+    // and with any, a signal written since their last check (S38-D13: they
+    // are checked in Observed, after the clock ticks, with current values).
+    // The pair fills the 8 bytes the count alone used to.
+    uint32_t property_async_count;
+    uint32_t property_async_pending;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
     // Pending deferred assertion reports of the current pass and the
@@ -900,6 +916,11 @@ typedef struct {
     int argc;
     char** argv;
     llg_q_queue_t* q_queues;
+    // The saved values (16.15.6.1) of the procedural assertion attempt being
+    // evaluated or reported, or NULL.
+    llg_frame_t* assertion_values;
+    // The time + 1 of the step whose asynchronous aborts were last checked.
+    uint64_t property_async_step;
 } llg_rt_ctx_t;
 
 static llg_rt_ctx_t g;

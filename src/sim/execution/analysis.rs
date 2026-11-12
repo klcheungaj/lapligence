@@ -1455,6 +1455,7 @@ mod tests {
             IrStmt::Expect {
                 identity: 1,
                 fail_action: false,
+                captures: Vec::new(),
             },
             IrStmt::StopControl {
                 verbosity: 0,

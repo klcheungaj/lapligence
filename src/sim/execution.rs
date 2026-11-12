@@ -1259,6 +1259,11 @@ fn collect_statement_expression_effects(
         IrStmt::RandomSeed { seed } => {
             collect_expression_effects(ir, seed, effects, visited_calls);
         }
+        IrStmt::QueueProceduralAssertion { captures, .. } | IrStmt::Expect { captures, .. } => {
+            for capture in captures {
+                collect_expression_effects(ir, capture, effects, visited_calls);
+            }
+        }
         IrStmt::Randomize(operation) => {
             for expression in operation.expressions() {
                 collect_expression_effects(ir, expression, effects, visited_calls);

@@ -386,32 +386,83 @@ fn procedural_concurrent_assertions_queue_flush_and_mature() {
     });
 }
 
-/// G5 / IEEE 1800-2009 16.15.6.1: llg keeps no values with a queued
-/// instance, so const casts and automatic variables in a procedural
-/// concurrent assertion stop compilation at their position, and so does an
-/// inferred `edge` clock.
+/// A1 / IEEE 1800-2009 16.15.6.1, 16.18: a procedural concurrent assertion
+/// instance saves the values of the automatic variables and `const'` casts
+/// it reads when it is queued, and its attempt and action blocks read them;
+/// an `expect` saves those of its property when it starts. Lines of one time
+/// step compare as a set.
+#[test]
+fn procedural_assertions_save_automatic_and_const_values() {
+    let check = |expected: &str| {
+        let expected = time_step_sets(expected);
+        move |label: &str, output: &Output| {
+            assert!(output.status.success(), "{label}: {output:?}");
+            assert_eq!(
+                time_step_sets(&String::from_utf8_lossy(&output.stdout)),
+                expected,
+                "{label}"
+            );
+        }
+    };
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "procedural_automatic",
+        &[],
+        &check(include_str!(
+            "../fixtures/sim/feature_completion/sim_099/procedural_automatic.out"
+        )),
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "procedural_const",
+        &[],
+        &check(include_str!(
+            "../fixtures/sim/feature_completion/sim_099/procedural_const.out"
+        )),
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "expect_automatic",
+        &[],
+        &check(include_str!(
+            "../fixtures/sim/feature_completion/sim_099/expect_automatic.out"
+        )),
+    );
+}
+
+/// G5 / IEEE 1800-2009 16.15.6.1: a saved value read where the assertion is
+/// evaluated outside its instances' attempts (a sampled value function's
+/// history) stops compilation at the assertion.
 #[test]
 fn procedural_assertion_forms_without_exact_semantics_are_rejected() {
     sim_cli::reject_case(
         SUITE,
-        "neg_procedural_automatic",
-        "neg_procedural_automatic.sv:9:47: automatic variable `i` in a procedural concurrent \
-         assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg \
-         does not capture queued values",
+        "neg_procedural_automatic_past",
+        "neg_procedural_automatic_past.sv:10:7: the argument of $past of this procedural \
+         concurrent assertion reads an automatic variable or a const cast, whose value the \
+         instance saves when it is queued (IEEE 1800-2009 16.15.6.1)",
     );
-    sim_cli::reject_case(
+}
+
+/// G5 / IEEE 1800-2009 16.15.6 c): `edge clk` inferred from the procedure
+/// clocks its assertions at both edges of clk, once per time step.
+#[test]
+fn procedural_assertions_infer_an_edge_clock() {
+    let expected = time_step_sets(include_str!(
+        "../fixtures/sim/feature_completion/sim_099/procedural_edge.out"
+    ));
+    sim_cli::run_case_checked_matrix(
         SUITE,
-        "neg_procedural_const",
-        "neg_procedural_const.sv:9:45: a const cast in a procedural concurrent assertion takes \
-         its value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg does not capture \
-         queued values",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_procedural_edge",
-        "neg_procedural_edge.sv:8:5: the clock inferred from the procedure (`edge` of the \
-         expression at line 6, column 17) cannot clock a concurrent assertion in llg; give the \
-         assertion a posedge or negedge clock (IEEE 1800-2009 16.15.6)",
+        "procedural_edge",
+        &[],
+        &move |label: &str, output: &Output| {
+            assert!(output.status.success(), "{label}: {output:?}");
+            assert_eq!(
+                time_step_sets(&String::from_utf8_lossy(&output.stdout)),
+                expected,
+                "{label}"
+            );
+        },
     );
 }
 

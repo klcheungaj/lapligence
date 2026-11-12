@@ -68,6 +68,13 @@ impl Frame<'_, '_> {
                     expr.width,
                     expr.signed,
                 ),
+                // A value the procedural assertion instance (or `expect`)
+                // saved when it was queued (SV 16.15.6.1).
+                IrSampledFunc::Queued => self.value(
+                    format!("llg_assertion_instance_value({}u)", call.ticks),
+                    expr.width,
+                    expr.signed,
+                ),
                 IrSampledFunc::Future => {
                     let previous = self.sampled_reads;
                     self.sampled_reads = true;

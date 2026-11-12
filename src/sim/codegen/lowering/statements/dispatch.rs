@@ -341,11 +341,12 @@ impl EmitCtx<'_, '_> {
             }
             NodeKind::Stmt(StmtKind::ConcurrentAssertion {
                 kind,
+                property,
                 if_true,
                 if_false,
                 ..
             }) => {
-                let (if_true, if_false) = (*if_true, *if_false);
+                let (property, if_true, if_false) = (*property, *if_true, *if_false);
                 if matches!(kind, ConcurrentAssertionKind::Expect) {
                     if self.in_final {
                         return Err(format!(
@@ -361,15 +362,35 @@ impl EmitCtx<'_, '_> {
                     }
                 }
                 let path = self.path.clone();
-                if !matches!(kind, ConcurrentAssertionKind::Expect) {
+                let expect = matches!(kind, ConcurrentAssertionKind::Expect);
+                // 16.15.6.1: automatic variables and const casts take their
+                // values when the instance is queued (an `expect`, when it
+                // starts its one attempt; its action blocks run here).
+                let sites = self
+                    .cg
+                    .queued_value_sites(if expect { property } else { h });
+                let mut captures = Vec::with_capacity(sites.sources.len());
+                for source in &sites.sources {
+                    let capture = self.cg.lower_expr(&path, *source)?;
+                    self.cg.check_queued_value(*source, &capture)?;
+                    captures.push(capture);
+                }
+                if !expect {
                     // 16.15.6: reaching the statement queues an instance.
-                    let queue = self
-                        .cg
-                        .emit_procedural_concurrent_assertion(self.inst, &path, h)?;
+                    let queue = self.cg.emit_procedural_concurrent_assertion(
+                        self.inst,
+                        &path,
+                        h,
+                        &sites.sites,
+                        captures,
+                    )?;
                     return Ok(vec![queue]);
                 }
-                self.cg.emit_concurrent_assertion(self.inst, &path, h)?;
-                self.lower_expect_actions(h.index() as u64, if_true, if_false)
+                let previous = self.cg.enter_queued_values(&sites.sites, &captures);
+                let result = self.cg.emit_concurrent_assertion(self.inst, &path, h);
+                self.cg.queued_values = previous;
+                result?;
+                self.lower_expect_actions(h.index() as u64, if_true, if_false, captures)
             }
             NodeKind::Stmt(StmtKind::IfElse {
                 predicate,
@@ -871,6 +892,7 @@ impl EmitCtx<'_, '_> {
         identity: u64,
         if_true: Option<NodeId>,
         if_false: Option<NodeId>,
+        captures: Vec<IrExpr>,
     ) -> Result<Vec<IrStmt>, String> {
         let clock = self.cg.take_expect_action_clock();
         let previous_clock = std::mem::replace(&mut self.cg.sampled_clock, clock);
@@ -884,6 +906,7 @@ impl EmitCtx<'_, '_> {
         let mut statements = vec![IrStmt::Expect {
             identity,
             fail_action: fail.is_some(),
+            captures,
         }];
         let outcome_is = |value: u64| -> Result<IrExpr, String> {
             let constant = IrConst::packed(vec![value], vec![], vec![], 2, false, None)

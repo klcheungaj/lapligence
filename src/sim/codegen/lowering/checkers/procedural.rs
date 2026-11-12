@@ -104,7 +104,10 @@ impl Codegen<'_> {
             queue.extend(
                 indices
                     .into_iter()
-                    .map(|index| IrStmt::QueueProceduralAssertion { index }),
+                    .map(|index| IrStmt::QueueProceduralAssertion {
+                        index,
+                        captures: Vec::new(),
+                    }),
             );
         }
         Ok(queue)
@@ -119,8 +122,9 @@ impl Codegen<'_> {
         assertion: NodeId,
         indices: &mut Vec<u32>,
     ) -> Result<(), String> {
-        match self.emit_procedural_concurrent_assertion(inst, path, assertion)? {
-            IrStmt::QueueProceduralAssertion { index } => {
+        self.reject_queued_values(assertion)?;
+        match self.emit_procedural_concurrent_assertion(inst, path, assertion, &[], Vec::new())? {
+            IrStmt::QueueProceduralAssertion { index, .. } => {
                 indices.push(index);
                 Ok(())
             }

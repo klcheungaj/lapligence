@@ -207,7 +207,9 @@ property that the predicate/sequence forms cannot represent
 (`assertions/property.rs`): every node and sequence carries its own clock from
 the program's clock list (leading clock first), single-tick operands are
 sampled atoms on their clock, and the `strong`/`weak` default comes from the
-assertion kind. A recursive re-entry (16.13.17), which Slang leaves
+assertion kind. The emitter also renders the condition of each asynchronous
+`accept_on`/`reject_on` as a current-value atom after the sampled ones (its
+ABORT node's `third`), which the runtime checks between ticks (S38-D13). A recursive re-entry (16.13.17), which Slang leaves
 unexpanded, becomes `IrPropertyNode::Call` of the nearest enclosing expansion
 of the same property whose actuals have equal structural keys and whose
 flowing clock is the same (Annex F.7); the call site's actuals are read from
@@ -223,9 +225,16 @@ code (`assertions/procedural.rs`, SV 16.15.6) registers as an ordinary
 assertion with a dense `IrAssertion::procedural` index and lowers to
 `IrStmt::QueueProceduralAssertion`; without a clock of its own it takes
 `infer_procedure_clock` of `Codegen::procedure_body` before default clocking.
-`const'` casts, procedure automatics and an inferred `edge` clock are located
-rejections (no queued values are kept), and its operands are not implicit
-sensitivities (S99-D2). Assertion-only `initial` and timing-free `always`
+Its `const'` casts and automatic variables (formals of automatic subroutines
+included) are saved per instance (SV 16.15.6.1): the statement lowers each
+source once in the procedure into `QueueProceduralAssertion::captures`, and
+`Codegen::queued_values` turns every read of them while the assertion and its
+action blocks lower into `IrSampledFunc::Queued` slot reads; such an assertion
+always takes the property engine. An `expect` saves those of its property in
+`IrStmt::Expect::captures`. Reads evaluated outside an attempt (sampled value
+histories, `disable iff`, clock gates, global clocking futures, procedural
+checker assertions) are located rejections; an inferred `edge e` clock is the
+event clock of both edges of `e`. Its operands are not implicit sensitivities (S99-D2). Assertion-only `initial` and timing-free `always`
 procedures keep the static path. Deferred
 assertions retain issue-time values (packed, real, string, chandle/class handle
 captures; a method receiver naming static storage is read at maturity with an

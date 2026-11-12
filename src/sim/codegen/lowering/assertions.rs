@@ -20,7 +20,7 @@ mod locals;
 mod match_calls;
 pub(super) use locals::local_assignment;
 mod procedural;
-pub(in crate::sim::codegen) use procedural::ProcedureClock;
+pub(in crate::sim::codegen) use procedural::{ProcedureClock, QueuedValue};
 mod property;
 use crate::core::db::{
     AssertionBinaryOp, AssertionExprKind, AssertionRange, AssertionRepetition,
@@ -583,7 +583,9 @@ impl Codegen<'_> {
                 ))
             }
         };
-        if self.property_requires_engine(property) {
+        // An instance that saved values when it was queued (16.15.6.1) keeps
+        // them with its attempt, which only the property engine carries.
+        if self.property_requires_engine(property) || !self.queued_values.is_empty() {
             let strong_default = matches!(
                 kind,
                 ConcurrentAssertionKind::Cover
@@ -1204,6 +1206,7 @@ impl Codegen<'_> {
                             "sampled clock `iff` condition must be a static packed expression in `{path}`"
                         ));
                     }
+                    self.reject_queued_read(&iff, "the clock's `iff` condition")?;
                     gate = Some(match gate {
                         Some(gate) => IrExpr::new(
                             IrExprKind::Bin {
@@ -1403,6 +1406,7 @@ impl Codegen<'_> {
                 "disable iff condition must be a side-effect-free packed expression at {path}"
             ));
         }
+        self.reject_queued_read(&condition, "the `disable iff` condition")?;
         let value = property_truth(condition);
         let signal = self.model.signals.len();
         self.model.signals.push(IrSignal {

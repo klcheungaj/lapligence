@@ -1,7 +1,8 @@
 // Decision A17-D4: assertion relations. vpiClockingEvent of a concurrent
 // assertion is the clock that evaluates it: the one written at the top of
 // its property (also inside the named property it instantiates), else the
-// edge of the enclosing always procedure, else the default clocking;
+// edge of the enclosing always procedure (for `edge clk`, the or of its
+// posedge and negedge), else the default clocking;
 // vpiIsClockInferred is 1 for the last two. vpiDisableCondition is the
 // disable iff written in the statement only: one inside a named property
 // and the default disable iff are not reported. vpiProperty is a property
@@ -41,6 +42,7 @@ module tb;
     q3: assert property (a ##1 b);
     always @(posedge clk) q4: assert property (b);
     always @(posedge clk) q5: assert (b);
+    always @(edge clk) q6: assert property (b);
     initial begin
         $d4;
         #12 b = 1'b0;

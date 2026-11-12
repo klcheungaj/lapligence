@@ -858,8 +858,13 @@ impl Frame<'_, '_> {
                     ));
                 }
             }
-            IrStmt::QueueProceduralAssertion { index } => {
-                self.line(format!("llg_assertion_queue({index}u);"));
+            IrStmt::QueueProceduralAssertion { index, captures } => {
+                if captures.is_empty() {
+                    self.line(format!("llg_assertion_queue({index}u);"));
+                } else {
+                    let frame = self.queued_values(captures)?;
+                    self.line(format!("llg_assertion_queue_values({index}u, {frame}); }}"));
+                }
             }
             IrStmt::WaitFork => {
                 self.await_arm(SuspensionOperation::WaitFork, "llg_arm_wait_fork(self)")?
@@ -902,7 +907,14 @@ impl Frame<'_, '_> {
             IrStmt::Expect {
                 identity,
                 fail_action,
+                captures,
             } => {
+                if !captures.is_empty() {
+                    let frame = self.queued_values(captures)?;
+                    self.line(format!(
+                        "llg_assertion_expect_values({identity}ULL, {frame}); }}"
+                    ));
+                }
                 self.line(format!(
                     "if (!llg_assertion_expect_start({identity}ULL, {})) {{",
                     u8::from(*fail_action)

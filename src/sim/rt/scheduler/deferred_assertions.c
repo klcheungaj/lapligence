@@ -208,6 +208,22 @@ void llg_assertion_queue(uint32_t index) {
     g.procedural_pending_live++;
 }
 
+// llg_assertion_queue for an instance that saves values (SV 16.15.6.1): the
+// pending instance owns `frame` until it matures or is flushed.
+LLG_INTERNAL LLG_OUTLYING void llg_assertion_queue_values(uint32_t index, llg_frame_t* frame) {
+    if (index >= g.procedural_assertion_count) {
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid procedural assertion %u", (unsigned)index);
+        abort();
+    }
+    llg_concurrent_assertion_t* assertion = g.procedural_assertions[index];
+    if (!assertion->enabled) {
+        llg_frame_release(frame);
+        return;
+    }
+    llg_assertion_queue(index);
+    g.deferred_pending.items[g.deferred_pending.count - 1u].frame = frame;
+}
+
 // Compatibility entrypoint for embedding callers without hierarchy metadata.
 void llg_deferred_assertion(int kind, int passed, uint64_t identity,
                             const char* label, const char* location,

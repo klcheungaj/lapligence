@@ -2261,45 +2261,38 @@ Reproduce with
 
 ### Symptom
 
-- A procedural concurrent assertion (16.15.6) whose assertion or action
-  blocks read an automatic variable or a `const'` cast stops compilation at
-  that reference: llg queues instances without the values 16.15.6.1 saves at
-  queue time. A procedure whose inferred clock is `edge expr` is rejected the
-  same way.
-- An `expect` property that reads an automatic variable (16.18 allows it, as
-  in the LRM's `wait_for` example) is rejected ("unsupported sampled ...
-  expression"); static variables work and the action block may assign
-  automatic variables.
-- `accept_on`/`reject_on` are checked at the first signal update of each time
-  step (with that step's sampled values) and at every clock tick. A time step
-  in which no signal changes does not check them, so an abort whose condition
-  rose in an earlier step is reported at the next step with an update instead
-  of the first step in which its sampled value is 1. Only the action time can
-  differ; the verdict cannot.
+- A procedural concurrent assertion (16.15.6) whose automatic variable or
+  `const'` cast is read where the assertion is evaluated outside its
+  instances' attempts stops compilation at the assertion: the argument or
+  gate of a sampled value function (`$past`, `$rose`, ...), a `disable iff`
+  condition, a clock's `iff`, an assertion with global clocking future
+  functions, or a static assertion of a procedural checker (17.3). Every
+  other read takes the value saved when the instance was queued
+  (16.15.6.1).
 - An `expect` whose evaluation is disabled by its `disable iff` ends without
   a result and leaves its caller blocked, as 16.18 literally says ("block
   until the given property succeeds or fails").
 
 ### Cause
 
-The per-process procedural assertion queue
-(`llg_assertion_queue`, kept with the deferred report queue) holds only the
-assertion of each pending instance, not values; the expect property is
-lowered once per assertion instance, where automatic storage has no static
-location; asynchronous aborts are driven from the signal-write hook.
+A saved value lives in the frame of one instance's attempt; sampled value
+histories, `disable iff` conditions and clock gates are evaluated per
+assertion, and a procedural checker's assertions are registered once for all
+the procedures that queue them. A disabled `expect` follows the 16.18 text
+literally.
 
 ### Intended direction
 
-Give each pending procedural instance (and `expect`) a frame of captured
-automatic and constant arguments read by its attempt, and drive the
-asynchronous abort check from the scheduler's time-step entry.
+Evaluate the per-assertion forms per attempt where a saved value reaches
+them.
 
 ### Reproduce
 
-`neg_procedural_automatic.sv`, `neg_procedural_const.sv` and
-`neg_procedural_edge.sv` in
-[sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md); the
-other items need small hand-written cases.
+`neg_procedural_automatic_past.sv` in
+[sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md);
+`expect_disable_blocks.sv` in
+[sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md) for the
+blocked `expect` caller.
 
 ## Multiclock and recursive assertion limits after ADV-013
 
@@ -2398,12 +2391,12 @@ the VPI callbacks of 39.4.2.1 are delivered), not at the event itself.
 These assertions evaluate each clock event at the next global clock tick
 from operands captured at the event. An `expect` would block its caller and
 an end point would publish its matches one global clock tick late; an
-asynchronous abort reads sampled values between assertion clock ticks, which
-the captured operands do not keep. A captured operand is a packed value.
+asynchronous abort reads current values between assertion clock ticks
+(S38-D13), which the captured operands do not keep. A captured operand is a packed value.
 
 ### Intended direction
 
-Capture the abort condition once per time step while evaluations are pending,
+Capture the abort condition at each of its checks while evaluations are pending,
 keep real operands as their 64-bit images, and resume an `expect` caller at
 the global clock tick.
 
@@ -2442,15 +2435,15 @@ whose current-step obligation it can express on the constraint solver.
 Sampled histories of variables that are read with current values have no
 defined meaning in llg's sampling model. The current value of an automatic
 or `const'` actual is substituted whenever a static assertion of the
-checker is queued (17.3), and llg's procedural assertion queue keeps no
-values with a queued instance (the same limit as for procedural concurrent
-assertions, SIM-099).
+checker is queued (17.3); llg registers a procedural checker's assertions
+once for every procedure that queues them, and saves queued values only for
+the procedural concurrent assertions written in a procedure (SIM-099).
 
 ### Intended direction
 
 Derive the current-step obligations of sequence and property assumptions
-from their pending attempts; capture queued values with each procedural
-assertion instance.
+from their pending attempts; lower a procedural checker's actuals in the
+procedure that queues its assertions, so they can be saved per instance.
 
 ### Reproduce
 

@@ -836,6 +836,11 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         }
         // `unlocated_mut` above already stripped the wrapper.
         IrStmt::Located { statement, .. } => walk_stmt_mut(statement, f),
+        IrStmt::QueueProceduralAssertion { captures, .. } | IrStmt::Expect { captures, .. } => {
+            for capture in captures {
+                walk_expr_mut(capture, f);
+            }
+        }
         // Statements with no expression slot: storage, scope and process
         // control by index or name, constant payloads and markers.
         IrStmt::FixedArrayCopy { .. }
@@ -852,10 +857,8 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         | IrStmt::Fork { .. }
         | IrStmt::DisableTarget { .. }
         | IrStmt::DeferredAssertionDisable { .. }
-        | IrStmt::QueueProceduralAssertion { .. }
         | IrStmt::WaitFork
         | IrStmt::DisableFork
-        | IrStmt::Expect { .. }
         | IrStmt::MonitorEnable(_)
         | IrStmt::WaveFile(_)
         | IrStmt::WaveDumpVars(_)
