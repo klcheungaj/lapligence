@@ -48,6 +48,15 @@ Language rules, rejected in both optimizer modes:
 
 - `neg_class_property_nba`: `h.x <= @e 5`. SV 6.21 forbids nonblocking
   writes to class properties; llg reports the property and the source location.
+- `neg_class_record_property_nba_whole`, `_member` and `_string`: `c.r <= v`,
+  `c.r.a <= #1 6` and `c.r.s <= @e "z"` on a record property with a string
+  member, run with `-D N=3` and `-D N=16` (both record storage forms). The same
+  SV 6.21 rule (`SystemVerilog-1800-2009.txt` L7007-7008: "members or elements of
+  dynamic variables—class properties and dynamically sized variables—shall not
+  be written with nonblocking, continuous, or procedural continuous
+  assignments"), decision S14-D5; llg reports the property and the location.
+  Industry-standard behaviour accepts the whole-record write (the 1800-2012
+  rule) and rejects the member writes because the record holds a string.
 - `neg_automatic_event_nba` and the FND-002 `neg_automatic_nba_witness`: an
   automatic task variable as an NBA target, with a repeated event control or a
   real value (SV 6.21, 13.3.2), reported by the frontend.

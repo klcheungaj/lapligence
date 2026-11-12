@@ -318,6 +318,14 @@ impl Codegen<'_> {
                  members of dynamic objects cannot be nonblocking targets (SV 6.21)"
             ));
         }
+        if let Some(field) = self.class_native_field_target(lhs) {
+            return Err(format!(
+                "nonblocking assignment to class property `{}` at {} in `{path}` is illegal \
+                 (IEEE 1800-2009 6.21: class properties shall not be written with nonblocking assignments)",
+                self.node(field).name,
+                self.source_location(lhs)
+            ));
+        }
         if self.is_mailbox_expr(path, lhs)
             || self.is_process_value(path, lhs)
             || self.is_semaphore_expr(path, lhs)

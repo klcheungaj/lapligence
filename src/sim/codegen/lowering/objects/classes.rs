@@ -40,6 +40,27 @@ impl Codegen<'_> {
         }
     }
 
+    /// The instance record property with string, real or handle members
+    /// that a member path writes when it is the last property on the path
+    /// (`c.r`, `c.r.s`, `c.r.arr[1]`); [`Self::class_field_target`] leaves it
+    /// out because it is neither packed nor object storage.
+    pub(in super::super) fn class_native_field_target(&self, node: NodeId) -> Option<NodeId> {
+        let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(node) else {
+            return None;
+        };
+        refs.iter()
+            .rev()
+            .flatten()
+            .copied()
+            .find(|target| {
+                self.class_fields.contains_key(target)
+                    || self.class_static_signals.contains_key(target)
+                    || self.class_static_objects.contains_key(target)
+                    || self.class_native_fields.contains_key(target)
+            })
+            .filter(|target| self.class_native_fields.contains_key(target))
+    }
+
     /// The computed handle base of a property target (`get().v`,
     /// `get().a[i]`) whose evaluation has effects, if any.
     pub(in super::super) fn effectful_computed_receiver(&self, target: NodeId) -> Option<NodeId> {

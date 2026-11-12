@@ -779,6 +779,7 @@ impl EmitCtx<'_, '_> {
             .cg
             .class_field_target(node)
             .filter(|field| self.cg.class_fields.contains_key(field))
+            .or_else(|| self.cg.class_native_field_target(node))
         else {
             return Ok(());
         };

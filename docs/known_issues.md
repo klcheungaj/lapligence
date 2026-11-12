@@ -1913,7 +1913,7 @@ limits apply to the form named:
   (`q[0].a[k] = '{1, 2}`); assign through a record variable first. A whole member
   array of an element written through an event control (`m.e[1].a <= @(e) v`).
 - both forms: a virtual-interface method that waits on a record `ref` formal bound
-  to an element. A whole record property of a class written with `<=` (`c.r <= v`).
+  to an element.
 - per-cell form, below 16 cells: a whole record assigned to or read from an
   element of a member array at a run-time index (`r.rows[i] = x`), and two
   continuous assignments to separate bits of one member of an element of an
