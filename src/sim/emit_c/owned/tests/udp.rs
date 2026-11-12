@@ -52,7 +52,7 @@ fn udp_gate_body_is_constant_size_with_many_rows() {
         assert_eq!(body.matches("sv4_fill_to(").count(), 1);
         assert!(!body.contains("sv4_udp_eval"));
         assert!(!body.contains("sv4_mux_to("));
-        bodies.push(body.to_owned());
+        bodies.push(body.into_owned());
     }
     // The dense index makes the evaluation independent of the row count.
     assert_eq!(bodies[0], bodies[1]);

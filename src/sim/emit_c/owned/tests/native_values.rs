@@ -295,3 +295,37 @@ fn generic_queue_queries_use_the_generic_runtime_layout() {
     assert!(frame.body().contains("llg_queue_value_size(&G_values)"));
     assert!(!frame.body().contains("llg_queue_size(&G_values)"));
 }
+
+#[test]
+fn unnamed_native_locals_get_one_use_and_named_ones_none() {
+    let model = IrModel::new("native_locals".to_owned(), 1).unwrap();
+    let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    let unused = frame.native_local("unused", NativeKind::String).address;
+    let named = frame.native_local("named", NativeKind::Chandle).address;
+    let read_later = frame
+        .native_local("read_later", NativeKind::Chandle)
+        .address;
+    frame.line(format!("*({named}) = NULL;"));
+    frame.line(format!(
+        "llg_display(\"{unused} {read_later}\"); (void)*({read_later});"
+    ));
+    let source = frame.body();
+    assert!(!source.contains("__llg_native_use"));
+    // A name inside a C string literal is not a use.
+    assert_eq!(
+        source.matches(&format!("(void)sizeof({unused});")).count(),
+        1
+    );
+    assert!(!source.contains(&format!("(void)sizeof({named});")));
+    assert!(!source.contains(&format!("(void)sizeof({read_later});")));
+    let declaration = source.find(&format!("* {unused} = ")).unwrap();
+    assert!(declaration < source.find(&format!("(void)sizeof({unused});")).unwrap());
+}

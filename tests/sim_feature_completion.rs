@@ -189,6 +189,8 @@ mod ki_select_bugs;
 mod ki_lrm_audit_b;
 #[path = "sim_feature_completion/ki_uvm_cast.rs"]
 mod ki_uvm_cast;
+#[path = "sim_feature_completion/ki_uvm_run.rs"]
+mod ki_uvm_run;
 
 #[path = "sim_feature_completion/rtl_001.rs"]
 mod rtl_001;

@@ -222,7 +222,7 @@ fn fixed_array_reduction_map_can_read_an_enclosing_formal() {
         .body()
         .lines()
         .any(|line| line.contains("_to(") && line.contains(&format!(" {address}"))));
-    assert!(find_copy(frame.body(), &address).is_none());
+    assert!(find_copy(&frame.body(), &address).is_none());
     frame.discard(value);
     assert!(frame.slots.iter().all(|live| !live));
     assert_eq!(frame.body().matches("for (uint64_t").count(), 1);

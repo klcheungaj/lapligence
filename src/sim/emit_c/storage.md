@@ -10,6 +10,9 @@ resume-free inner blocks), or in the outer C scope of a frame-less function. Req
 remain live through common-return unwinding; sibling overlays may reuse them
 only after all registrations in the preceding scope have ended. Initialization
 and registration still occur at the original declaration, preserving LIFO cleanup.
+A heap-backed native local of a C-stack body that no later line names gets a
+`(void)sizeof` use after its declaration (`Frame::body`), as coroutine
+declarations do in `resolve_local_uses`, so `-Wall` model builds stay quiet.
 
 NBA destinations, all address/ref/output call actuals and local wait dependencies
 keep heap cells. Typed binding names identify cells; never infer eligibility from

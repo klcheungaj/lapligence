@@ -10,6 +10,7 @@ use super::context::RCtx;
 use super::frame_layout::{declaration, FrameLayout, FrameStorage};
 use crate::sim::execution::{CallMechanism, CoroutineId, ExecutionAnalysis, SuspensionOperation};
 use crate::sim::ir::*;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 mod activations;
@@ -228,6 +229,9 @@ pub(super) struct Frame<'a, 'm> {
     construction_stack: Vec<usize>,
     layout: FrameLayout,
     declarations: Vec<DeferredDeclaration>,
+    /// Native locals of a C-stack body whose use is decided in `body`
+    /// (see `check_native_use`).
+    native_use_checks: usize,
     declaration_error: Option<String>,
     brace_kinds: Vec<bool>,
     in_block_comment: bool,
@@ -508,6 +512,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             construction_stack: Vec::new(),
             layout: FrameLayout::with_backend(storage, ctx.value_backend),
             declarations: Vec::new(),
+            native_use_checks: 0,
             declaration_error: None,
             brace_kinds: Vec::new(),
             in_block_comment: false,
@@ -1363,8 +1368,26 @@ impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn macro_epilogue(&self) -> &'static str {
         ""
     }
-    pub(super) fn body(&self) -> &str {
-        &self.code
+    /// The rendered C-stack body. A native local that nothing names after
+    /// its declaration gets a `(void)sizeof` use there (compilers diagnose an
+    /// unused variable); a body without such locals is the buffer itself.
+    pub(super) fn body(&self) -> Cow<'_, str> {
+        if self.native_use_checks == 0 {
+            Cow::Borrowed(&self.code)
+        } else {
+            Cow::Owned(resolve_native_uses(&self.code))
+        }
+    }
+    /// Mark the C-stack native local `name`, declared on the line just
+    /// emitted, for the use check in `body`. A coroutine frame checks every
+    /// declaration through `resolve_local_uses` instead.
+    fn check_native_use(&mut self, name: &str) {
+        if self.layout.storage() == FrameStorage::CStack {
+            self.code.push_str(NATIVE_USE_MARKER);
+            self.code.push_str(name);
+            self.code.push_str(NATIVE_USE_MARKER_END);
+            self.native_use_checks += 1;
+        }
     }
     pub(super) fn into_coframe(mut self) -> Result<CoroutineBody, String> {
         // Emission can fold an expression which still has a conservative call
@@ -1514,6 +1537,71 @@ impl<'a, 'm> Frame<'a, 'm> {
         output.push_str(rest);
         Ok(output)
     }
+}
+
+const NATIVE_USE_MARKER: &str = "/*__llg_native_use ";
+const NATIVE_USE_MARKER_END: &str = " */\n";
+
+/// Replace each `check_native_use` marker line: dropped when the code after it
+/// names the local, a `(void)sizeof` use when nothing does. Names are unique
+/// within a frame, so any later occurrence is this local.
+fn resolve_native_uses(code: &str) -> String {
+    let mut output = String::with_capacity(code.len());
+    let mut rest = code;
+    while let Some(start) = rest.find(NATIVE_USE_MARKER) {
+        output.push_str(&rest[..start]);
+        let marker = &rest[start + NATIVE_USE_MARKER.len()..];
+        let Some((name, after)) = marker.split_once(NATIVE_USE_MARKER_END) else {
+            output.push_str(&rest[start..]);
+            return output;
+        };
+        if !names_identifier(after, name) {
+            output.push_str("    (void)sizeof(");
+            output.push_str(name);
+            output.push_str(");\n");
+        }
+        rest = after;
+    }
+    output.push_str(rest);
+    output
+}
+
+/// Whether `text` holds `name` as a whole identifier outside C literals.
+fn names_identifier(text: &str, name: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    let mut quoted = None;
+    let mut escaped = false;
+    while index < bytes.len() {
+        if let Some(quote) = quoted {
+            let byte = bytes[index];
+            index += 1;
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                quoted = None;
+            }
+        } else if matches!(bytes[index], b'\'' | b'"') {
+            quoted = Some(bytes[index]);
+            index += 1;
+        } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
+            {
+                index += 1;
+            }
+            if &text[start..index] == name {
+                return true;
+            }
+        } else {
+            index += 1;
+        }
+    }
+    false
 }
 
 fn identifier_counts(text: &str) -> HashMap<&str, usize> {

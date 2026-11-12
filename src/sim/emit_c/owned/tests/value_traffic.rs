@@ -110,7 +110,7 @@ fn calls_snapshot_earlier_operands_including_output_calls() {
     let value = frame.expression(&add(read(), call, 65)).unwrap();
     frame.discard(value);
     assert!(
-        find_copy(frame.body(), "&G_value").unwrap() < frame.body().find("f_increment(").unwrap()
+        find_copy(&frame.body(), "&G_value").unwrap() < frame.body().find("f_increment(").unwrap()
     );
 }
 
@@ -145,7 +145,7 @@ fn selected_assignment_snapshots_rhs_before_calling_selector() {
         })
         .unwrap();
     assert!(
-        find_copy(frame.body(), "&G_value").unwrap() < frame.body().find("f_increment(").unwrap()
+        find_copy(&frame.body(), "&G_value").unwrap() < frame.body().find("f_increment(").unwrap()
     );
 }
 
@@ -243,7 +243,7 @@ fn mutating_later_operand_snapshots_the_earlier_read() {
     let value = frame.expression(&add(read(), mutation, 65)).unwrap();
     frame.discard(value);
     assert!(
-        find_copy(frame.body(), "&G_value").unwrap()
+        find_copy(&frame.body(), "&G_value").unwrap()
             < frame.body().find("llg_ba_from(&G_value").unwrap()
     );
 }
@@ -365,7 +365,7 @@ fn borrowed_local_materializes_using_its_registered_address() {
     let value = frame.operand(&read).unwrap();
     assert!(value.slot.is_none());
     let value = frame.own(value);
-    assert!(find_copy(frame.body(), &address).is_some());
+    assert!(find_copy(&frame.body(), &address).is_some());
     assert!(!frame.body().contains("&(*"));
     frame.discard(value);
 }
@@ -408,7 +408,7 @@ fn pure_short_circuit_and_mux_selectors_borrow_without_changing_branches() {
     );
     let value = frame.expression(&mux).unwrap();
     frame.discard(value);
-    assert!(find_copy(frame.body(), "&G_value").is_none());
+    assert!(find_copy(&frame.body(), "&G_value").is_none());
     assert!(frame.body().contains("sv4_mux_to(&_llg_t[0], &G_value,"));
     assert!(!frame.body().contains("sv4_resize_to("));
 }

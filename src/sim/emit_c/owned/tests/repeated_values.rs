@@ -29,7 +29,7 @@ fn render_model(model: &IrModel, parts: Vec<IrExpr>) -> (String, usize) {
     assert_eq!(value.width, expr.width);
     frame.discard(value);
     assert!(frame.slots.iter().all(|live| !live));
-    (frame.body().to_owned(), frame.slots.len())
+    (frame.body().into_owned(), frame.slots.len())
 }
 
 #[test]
