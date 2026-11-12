@@ -931,9 +931,13 @@ impl Frame<'_, '_> {
                 self.line(format!("llg_cov_slot({record}, {slot}u, {});", value.code));
                 self.discard(value);
             }
-            IrCoverageStmt::Ready { record } => {
+            IrCoverageStmt::Ready { record, resolve } => {
                 let record = self.chandle(record)?;
                 self.line(format!("llg_cov_ready({record});"));
+                // Only such groups name it, so other models keep their text.
+                if *resolve {
+                    self.line(format!("llg_cov_resolve_transitions({record});"));
+                }
             }
             IrCoverageStmt::Register { group, object } => {
                 let object = self.chandle(object)?;

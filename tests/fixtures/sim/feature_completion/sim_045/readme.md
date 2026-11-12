@@ -406,10 +406,12 @@ then -3. Every coverpoint and the cross have weight 1.
   `neg[-3]` of three: 66.67. `p_n`: 2 of 4 automatic bins: 50.00.
 - `all`: the mean of the 13 coverpoints and the cross: 780.73 / 14 = 55.77.
 
-`wide_illegal.sv` (industry-standard behaviour, probed): 3 hits `ok`
-(100.00); 2^70 + 1 is illegal, a run-time error that ends the run (S45-D3)
-and names the whole value; `after` never prints and the final procedure
-shows 100.00. Exit status 1.
+`wide_illegal.sv` (industry-standard behaviour for a 71-bit coverpoint,
+probed; the fixture uses the longest value a coverpoint llg serves can
+spell): 3 hits `ok` (100.00); -2^127, the most negative 128-bit value, is
+illegal, a run-time error that ends the run (S45-D3) and names the whole
+value (40 characters); `after` never prints and the final procedure shows
+100.00. Exit status 1.
 
 `wide_arguments.sv` is the plan's probe of a 71-bit coverpoint (`zero` and
 `big` both hit) beside a transition bin reading the argument `low` (2 => 3,

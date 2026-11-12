@@ -4147,6 +4147,10 @@ void llg_cov_option(void* inst, int32_t point, uint32_t option, sv4_t value, con
 /* The value of argument slot `slot` that bins of this instance read. */
 void llg_cov_slot(void* inst, uint32_t slot, sv4_t value);
 void llg_cov_ready(void* inst);
+/* After llg_cov_ready, for a group whose transition values read slots
+ * (llg_cov_trans_t.step_items): build each such coverpoint's tables for
+ * this instance. Other records are unchanged. */
+void llg_cov_resolve_transitions(void* inst);
 /* Count one sampled value; X/Z values and stopped scopes count nothing.
  * `value` is only read during the call, so generated code passes the address
  * of the sampled variable itself when the coverpoint is a plain read.

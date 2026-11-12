@@ -180,7 +180,6 @@ struct llg_cov_inst {
 };
 
 static llg_cov_history_t* llg_cov_history_new(const llg_cov_trans_t* trans);
-static llg_cov_history_t* llg_cov_history_resolved(const llg_cov_inst_t* inst, uint32_t index);
 static void llg_cov_trans_free(llg_cov_trans_t* trans);
 
 // Types that own at least one instance, for $get_coverage and cleanup.
@@ -1716,9 +1715,7 @@ void llg_cov_ready(void* record) {
             state->dense = (uint64_t*)llg_checked_calloc((size_t)state->layout->n_bins,
                                                          sizeof(uint64_t), "coverage bins");
         const llg_cov_trans_t* trans = inst->group->points[i].trans;
-        if (trans)
-            state->history = trans->step_items ? llg_cov_history_resolved(inst, i)
-                                               : llg_cov_history_new(trans);
+        if (trans) state->history = llg_cov_history_new(trans);
         if (!state->has_detect_overlap) state->detect_overlap = inst->detect_overlap;
         if (state->detect_overlap) llg_cov_report_overlaps(inst, i);
     }
@@ -1730,12 +1727,19 @@ static int llg_cov_guard(const llg_cov_point_t* point, uint32_t decl, const uint
     return guard < 0 || !guards || guards[guard];
 }
 
+// The value llg_cov_hit_wide is counting. Only coverpoints wider than 64
+// bits reach it, so it is outlying and cold (llg_compiler.h).
+LLG_COLD LLG_OUTLYING static void llg_cov_format_wide(char* text, size_t size) {
+    sv4_to_dec_string(*llg_cov_wide_sample, text, size);
+}
+
 // A key as the signed or unsigned value it stands for.
+
 static void llg_cov_format_key(const llg_cov_point_t* point, uint64_t key, char* text,
                                size_t size) {
     // The key of a coverpoint wider than 64 bits does not spell its value.
     if (llg_cov_wide_sample) {
-        sv4_to_dec_string(*llg_cov_wide_sample, text, size);
+        llg_cov_format_wide(text, size);
         return;
     }
     uint64_t raw = key;
@@ -1754,7 +1758,7 @@ LLG_NOINLINE static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_c
                             uint32_t decl, uint64_t key) {
     if (llg_rt_exiting()) return;
     const llg_cov_bin_t* bin = &point->bins[decl];
-    char value[32];
+    char value[48];  // a value of up to 128 bits in decimal
     llg_cov_format_key(point, key, value, sizeof value);
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` coverpoint `%s` sampled %s, a value of illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)", inst->group->name, point->name, value, bin->name, bin->site);
     llg_cov_fatal("illegal_bins value sampled", bin->site);
@@ -1923,7 +1927,8 @@ static void llg_cov_history_free(llg_cov_history_t* history) {
     free(history);
 }
 
-LLG_OUTLYING static void llg_cov_trans_free(llg_cov_trans_t* trans) {
+// Tables built by llg_cov_history_resolve (outlying and cold like it).
+LLG_COLD LLG_OUTLYING static void llg_cov_trans_free(llg_cov_trans_t* trans) {
     free((void*)trans->bounds);
     free((void*)trans->accept);
     free((void*)trans->start_index);
@@ -1932,14 +1937,17 @@ LLG_OUTLYING static void llg_cov_trans_free(llg_cov_trans_t* trans) {
     free(trans);
 }
 
-// Transition values that read slots (19.5) resolve by 19.5.6 when the
+// Transition values that read slots (19.5) resolve by 19.5.6 once the
 // instance is ready, as value bins do; the classes, accept sets and start
 // lists then follow as `transitions::build` derives them at compile time,
 // and a scalar `bins` declaration is coverable when one of its sets has a
 // value at every step (codegen rejects removal bins and `[]` bins reading
-// a slot in such coverpoints, whose counts need its searches).
-LLG_OUTLYING static llg_cov_history_t* llg_cov_history_resolved(const llg_cov_inst_t* inst,
-                                                               uint32_t index) {
+// a slot in such coverpoints, whose counts need its searches). The
+// history llg_cov_ready made for the coverpoint's tables then runs these:
+// they differ only in classes, accept sets, start lists and counts.
+LLG_COLD LLG_OUTLYING static void llg_cov_history_resolve(const llg_cov_inst_t* inst,
+                                                         uint32_t index,
+                                                         llg_cov_history_t* history) {
     const llg_cov_point_t* point = &inst->group->points[index];
     const llg_cov_trans_t* tpl = point->trans;
     uint32_t n_items = tpl->step_items[tpl->n_steps];
@@ -2022,9 +2030,22 @@ LLG_OUTLYING static llg_cov_history_t* llg_cov_history_resolved(const llg_cov_in
     own->bins = bins;
     free(spans);
     free(held);
-    llg_cov_history_t* history = llg_cov_history_new(own);
+    history->trans = own;
     history->own = own;
-    return history;
+}
+
+// Only models whose transition values read slots call it, and the database
+// for their records, so it is outlying and cold like the code above; it is
+// a separate entry so that llg_cov_ready, which every model runs, keeps
+// its code.
+LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_cov_resolve_transitions(void* record) {
+    llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
+    if (!inst || !inst->ready) return;
+    for (uint32_t i = 0; i < inst->group->n_points; ++i) {
+        llg_cov_history_t* history = inst->points[i].history;
+        if (history && history->trans->step_items && !history->own)
+            llg_cov_history_resolve(inst, i, history);
+    }
 }
 
 static uint64_t llg_cov_sequence_hash(uint32_t bin, const uint64_t* keys, uint32_t length) {
@@ -2100,7 +2121,7 @@ static void llg_cov_sequence_count(llg_cov_history_t* history, uint32_t bin,
 static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                                        const llg_cov_tbin_t* bin, int known, uint64_t key) {
     if (bin->kind != LLG_COV_BIN_ILLEGAL_DEFAULT && llg_rt_exiting()) return;
-    char value[32];
+    char value[48];  // a value of up to 128 bits in decimal
     if (known) llg_cov_format_key(point, key, value, sizeof value);
     else snprintf(value, sizeof value, "a value with X or Z bits");
     const char* what = bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT
@@ -2342,6 +2363,9 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
 }
 
 // ── Coverpoints wider than 64 bits ────────────────────────────────────────
+// Only coverpoints wider than 64 bits reach this code, so it is outlying
+// and cold (llg_compiler.h): it stays out of `.text`, between the
+// functions other models run, and out of the unit's inlining budget.
 
 // Two-word unsigned arithmetic, low word first, for the automatic bins of
 // a coverpoint of up to 128 bits.
@@ -2354,7 +2378,7 @@ static int llg_cov_u128_less(llg_cov_u128_t a, llg_cov_u128_t b) {
 }
 
 // `a` / `d` by shifts and subtractions; `*rem` gets the remainder.
-LLG_OUTLYING static llg_cov_u128_t llg_cov_u128_div(llg_cov_u128_t a, llg_cov_u128_t d,
+LLG_COLD LLG_OUTLYING static llg_cov_u128_t llg_cov_u128_div(llg_cov_u128_t a, llg_cov_u128_t d,
                                                    llg_cov_u128_t* rem) {
     llg_cov_u128_t q = {0, 0}, r = {0, 0};
     for (int bit = 127; bit >= 0; --bit) {
@@ -2375,7 +2399,7 @@ LLG_OUTLYING static llg_cov_u128_t llg_cov_u128_div(llg_cov_u128_t a, llg_cov_u1
 // The key of value key `v` of a coverpoint with automatic bins: the key
 // llg_cov_auto_bin maps, at 64 bits, to the bin 19.5.2 gives `v` among
 // `n_bins` bins of 2^width / n_bins values (the last one takes the rest).
-LLG_OUTLYING static uint64_t llg_cov_wide_auto_key(const llg_cov_wide_t* wide, llg_cov_u128_t v,
+LLG_COLD LLG_OUTLYING static uint64_t llg_cov_wide_auto_key(const llg_cov_wide_t* wide, llg_cov_u128_t v,
                                                   uint64_t n_bins) {
     llg_cov_u128_t n = {n_bins ? n_bins : 1u, 0}, rem;
     // 2^width / n as (2^width - 1) / n, plus one when the remainder is n - 1.
@@ -2390,7 +2414,7 @@ LLG_OUTLYING static uint64_t llg_cov_wide_auto_key(const llg_cov_wide_t* wide, l
     return index * span64;
 }
 
-LLG_OUTLYING void llg_cov_hit_wide(void* record, uint32_t point_index, const sv4_t* value,
+LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_cov_hit_wide(void* record, uint32_t point_index, const sv4_t* value,
                                    const uint8_t* guards) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
@@ -2786,7 +2810,8 @@ static void llg_cov_merged_values(const llg_cov_inst_t* const* recs, size_t n, u
 
 // A merged transition bin of tables resolved per instance (19.11.3: bins
 // equal by name) exists when some instance's values give it a sequence.
-LLG_OUTLYING static uint64_t llg_cov_merged_coverable(const llg_cov_inst_t* const* recs, size_t n,
+// Outlying and cold: only such tables reach it.
+LLG_COLD LLG_OUTLYING static uint64_t llg_cov_merged_coverable(const llg_cov_inst_t* const* recs, size_t n,
                                                      uint32_t index, uint32_t bin) {
     uint64_t coverable = 0;
     for (size_t r = 0; r < n; ++r) {

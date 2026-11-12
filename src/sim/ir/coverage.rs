@@ -519,8 +519,13 @@ pub enum IrCoverageStmt {
         value: IrExpr,
     },
     /// Options and slots are final: resolve defaults, build the bin layouts
-    /// and size the counters.
-    Ready { record: IrChandleExpr },
+    /// and size the counters. `resolve`: some transition values read slots
+    /// ([`IrCoverTransitions::step_items`]), and the instance builds its own
+    /// transition tables from them.
+    Ready {
+        record: IrChandleExpr,
+        resolve: bool,
+    },
     /// Add `object` to the objects the group's coverage event samples.
     Register { group: usize, object: IrChandleExpr },
     /// Count the coverpoint values of one sample of the record. `guards`
@@ -869,7 +874,7 @@ impl IrCoverageStmt {
             Self::Option { record, .. }
             | Self::Text { record, .. }
             | Self::Slot { record, .. }
-            | Self::Ready { record }
+            | Self::Ready { record, .. }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],
             Self::Register { object, .. } | Self::Watch { object, .. } => vec![object],
@@ -889,7 +894,7 @@ impl IrCoverageStmt {
             Self::Option { record, .. }
             | Self::Text { record, .. }
             | Self::Slot { record, .. }
-            | Self::Ready { record }
+            | Self::Ready { record, .. }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],
             Self::Register { object, .. } | Self::Watch { object, .. } => vec![object],

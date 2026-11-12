@@ -17,10 +17,14 @@ Value bins of one group share a layout (key segments, removed values, the
 values each `bins` declaration keeps) unless they depend on covergroup
 arguments or `auto_bin_max` differs; `llg_cov_ready` builds it and reports
 `detect_overlap` pairs once per layout. Transition bins run compile-time
-automata (`llg_cov_trans_t`); when their values read slots, the instance
-resolves the step items when it is ready and builds its own classes, accept
-sets, start lists and scalar coverable counts (`llg_cov_history_resolved`,
-out of line), which its history then runs: one attempt per state with the latest start,
+automata (`llg_cov_trans_t`); when their values read slots, generated code
+calls `llg_cov_resolve_transitions` after `llg_cov_ready` (and the database
+does for the records it rebuilds), which resolves the step items and builds
+the instance's own classes, accept sets, start lists and scalar coverable
+counts; its history then runs them. That code and the wide-coverpoint code
+below are outlying and cold (`llg_compiler.h`): it stays out of `.text`
+and out of the unit's inlining budget. A history runs
+one attempt per state with the latest start,
 removal by the latest ignore/illegal start, `[]` arrays counted per distinct
 sequence in a hash table, and `llg_cov_skip` ending sequences on a disabled
 sample. A sample starts with `llg_cov_sample_begin`; `llg_cov_hit` records the

@@ -449,7 +449,7 @@ fn wide_illegal_values_end_the_run() {
             output,
             expected,
             &[
-                "ERROR: [SIM-010] covergroup `cg` coverpoint `cp` sampled 1180591620717411303425, a value of illegal_bins `bad` at tb:8:56 (IEEE 1800-2009 19.5.5)",
+                "ERROR: [SIM-010] covergroup `cg` coverpoint `cp` sampled -170141183460469231731687303715884105728, a value of illegal_bins `bad` at tb:8:56 (IEEE 1800-2009 19.5.5)",
                 "FATAL: [SIM-009] (tb:8:56 @ 0 ps) illegal_bins value sampled",
             ],
         );

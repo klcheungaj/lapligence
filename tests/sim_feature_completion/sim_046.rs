@@ -98,6 +98,26 @@ fn saved_runs_load_and_merge_into_type_coverage() {
 }
 
 #[test]
+fn saved_transition_bins_read_their_arguments_when_loaded() {
+    check_saved_runs(
+        "db_trans_args",
+        include_str!("../fixtures/sim/feature_completion/sim_046/db_trans_args.out"),
+        &["t.db"],
+        &|optimized, envs| {
+            let (directory, outputs) = sim_cli::run_case_sequence(
+                SUITE,
+                "db_trans_args",
+                optimized,
+                envs,
+                &[],
+                &[(&[], &["+first"]), (&[], &["+second"])],
+            );
+            (database_files(directory.path()), outputs)
+        },
+    );
+}
+
+#[test]
 fn saved_crosses_and_instances_merge_across_runs() {
     check_saved_runs(
         "db_cross",

@@ -1854,7 +1854,7 @@ impl<'a> Codegen<'a> {
                             dynamic = true;
                         }
                     }
-                    items.extend(scratch.items.drain(..));
+                    items.append(&mut scratch.items);
                 }
                 steps.push(transitions::StepSpec {
                     ranges,
@@ -3542,7 +3542,19 @@ impl<'a> Codegen<'a> {
         self.coverage_scope = saved_scope;
         self.coverage_ref_actuals = saved_actuals;
         body.extend(options?);
-        body.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Ready { record })));
+        let resolve = self.model.covergroups[lowering.ir]
+            .points
+            .iter()
+            .any(|point| {
+                point
+                    .transitions
+                    .as_ref()
+                    .is_some_and(|trans| !trans.step_items.is_empty())
+            });
+        body.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Ready {
+            record,
+            resolve,
+        })));
         if lowering.registered {
             body.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Register {
                 group: lowering.ir,
