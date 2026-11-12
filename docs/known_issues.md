@@ -2782,8 +2782,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
   members), the
   elements of an unpacked array member of an automatic structure, and the
   automatic variables of blocks inside a task or function (llg models no
-  block frames, decisions A19-D44, A19-D76), named event array
-  properties of classes, tasks and functions of packages, the
+  block frames, decisions A19-D44, A19-D76), tasks and functions of
+  packages, the
   statements of class methods and class methods by name, programs, and checker objects (a checker instance is a module
   scope with its variables; VPI-C1);
 - dynamic objects (VPI-O4) other than string, chandle and class variables,
