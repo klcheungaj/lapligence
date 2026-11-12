@@ -14,8 +14,8 @@
 use super::*;
 use crate::core::db::{AggregateMember, ConstraintKind, RandQualifier, RandomizeForm};
 use crate::sim::ir::{
-    IrClassField, IrClassFieldType, IrDynamicCast, IrObjectQuery, IrObjectStmt, IrRandOp,
-    IrRandStmt,
+    IrCaseItem, IrCaseKind, IrClassField, IrClassFieldType, IrDynamicCast, IrObjectQuery,
+    IrObjectStmt, IrRandOp, IrRandStmt,
 };
 
 mod free_variables;
@@ -26,6 +26,14 @@ mod templates;
 
 pub(super) use free_variables::FreeSolveVar;
 use modes::ModeCall;
+
+/// The most cases a randomize dispatch tests as an `if`/`else if` chain,
+/// which nests one C block per case. A dispatch with more cases is one flat
+/// `case`, testing the same conditions in the same order: chains nest inside
+/// each other (a unit dispatch holds the class chains of its handles) and C
+/// compilers cap nesting (clang 256 brackets, MSVC 128 blocks), which a class
+/// with hundreds of derived classes exceeds.
+const RAND_DISPATCH_CHAIN_MAX: usize = 32;
 
 /// One hidden off bit of a random variable or constraint block.
 #[derive(Clone)]
@@ -433,9 +441,9 @@ impl Codegen<'_> {
             return vec![IrStmt::Block(statements)];
         }
         let target = format!("{local}_c");
-        for (index, body) in bodies.into_iter().enumerate().rev() {
+        let test = |index: usize| {
             let class_index = self.class_nodes[&cases[index]];
-            let test = IrExpr::new(
+            IrExpr::new(
                 IrExprKind::DynamicCast(Box::new(IrDynamicCast {
                     lhs: IrLhs::WholeRef {
                         addr: format!("&{target}"),
@@ -458,13 +466,31 @@ impl Codegen<'_> {
                 1,
                 false,
                 None,
-            );
-            statements = vec![IrStmt::If {
-                cond: test,
-                then_: body,
-                els: Some(statements),
+            )
+        };
+        if cases.len() > RAND_DISPATCH_CHAIN_MAX {
+            // `case (1'b1)`: the first class test that holds picks its body.
+            let mut items = bodies
+                .into_iter()
+                .enumerate()
+                .map(|(index, body)| IrCaseItem::new(vec![test(index)], body))
+                .collect::<Vec<_>>();
+            items.push(IrCaseItem::new(Vec::new(), statements));
+            statements = vec![IrStmt::Case {
+                sel: packed_const(1, 1, false),
+                kind: IrCaseKind::Exact,
+                items,
                 check: IrUniquePriorityCheck::None,
             }];
+        } else {
+            for (index, body) in bodies.into_iter().enumerate().rev() {
+                statements = vec![IrStmt::If {
+                    cond: test(index),
+                    then_: body,
+                    els: Some(statements),
+                    check: IrUniquePriorityCheck::None,
+                }];
+            }
         }
         let mut chain = vec![IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
             target, None,

@@ -1881,6 +1881,14 @@ fn sequence_statement(statement: &IrStmt) -> bool {
             init, incr, body, ..
         } => init.iter().chain(incr).chain(body).all(sequence_statement),
         IrStmt::While { body, .. } => body.iter().all(sequence_statement),
+        // A flat dispatch (a randomize walk's long class or unit chain); a
+        // `unique` or `priority` check could report, so it stays out.
+        IrStmt::Case { items, check, .. } => {
+            check.is_none()
+                && items
+                    .iter()
+                    .all(|item| item.body.iter().all(sequence_statement))
+        }
         _ => false,
     }
 }

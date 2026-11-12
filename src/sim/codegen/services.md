@@ -20,7 +20,10 @@ random property and per root constraint block (overriding blocks share the
 root's bit; static members use a static signal), invisible to `%p`. A fixed
 array of `rand` handles whose element a `rand_mode` call names also keeps
 one off bit per element (S30-D16, S30-D17). The
-dynamic class is resolved through `DynamicCast` cases, most derived first; the
+dynamic class is resolved through `DynamicCast` cases, most derived first (a
+dispatch over more than `RAND_DISPATCH_CHAIN_MAX` cases, class or unit, is one
+flat `case` instead of an `if`/`else if` chain, so C nesting stays within
+compiler limits for classes with hundreds of derived classes); the
 most-derived user `pre_randomize`/`post_randomize` (declared line != 0) runs
 before modes and state are read and after the commit. A value-form randomize
 is hoisted into `rand_prelude` where it runs exactly once per statement

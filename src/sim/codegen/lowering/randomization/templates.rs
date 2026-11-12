@@ -448,8 +448,21 @@ fn when(cond: IrExpr, then_: Vec<IrStmt>) -> IrStmt {
     }
 }
 
-/// `if (value == 0) bodies[0] else if (value == 1) ...` over `(value, body)`.
+/// `if (value == 0) bodies[0] else if (value == 1) ...` over `(value, body)`;
+/// a flat `case (value)` beyond `RAND_DISPATCH_CHAIN_MAX` cases.
 fn dispatch(selector: &str, cases: Vec<(u32, Vec<IrStmt>)>) -> Option<IrStmt> {
+    if cases.len() > RAND_DISPATCH_CHAIN_MAX {
+        let items = cases
+            .into_iter()
+            .map(|(value, body)| IrCaseItem::new(vec![int_const(i64::from(value))], body))
+            .collect();
+        return Some(IrStmt::Case {
+            sel: local_read(selector, 32, true),
+            kind: IrCaseKind::Exact,
+            items,
+            check: IrUniquePriorityCheck::None,
+        });
+    }
     let mut chain: Option<IrStmt> = None;
     for (value, body) in cases.into_iter().rev() {
         chain = Some(IrStmt::If {
