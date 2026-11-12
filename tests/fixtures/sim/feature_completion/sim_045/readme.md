@@ -347,6 +347,21 @@ merged cross has no common layout: a run-time error at the type query (llg
 limitation), which reports 0.00; the instance values (get_inst_coverage 1)
 are 1/4 = 25.00 and 1/6 = 16.67.
 
+`cross_classes.sv` (llg limitation): each of `sa`..`sd` is 32 single-value
+selects of one crossed coverpoint, so every coverpoint splits into 33 value
+classes (its bins 0..31 one by one, and bins 32..63); 33^4 = 1185921
+combinations exceed the 2^20 llg counts. Constructing the instance in the
+`initial` procedure reports a run-time error located at `sa`, the first
+bins of the cross; the run goes on, `ca` counts 1 of its 64 bins: 1.56, and
+the cross counts nothing: 0.00. Exit status 1.
+
+`overlap_budget.sv` (llg limitation): `a` and `b` share no complete
+sequence (the final 2 must follow both the last 1 and the last 3), but the
+lockstep search of option.detect_overlap explores every pair of goto counts,
+about 10^6 pairs, past its budget of 2^20 steps: a located compile-time
+warning names the pair where it stopped. The run reports no overlap; samples
+0 and 2 complete neither bin: 0.00.
+
 ## Negative cases
 
 | Fixture | Error |
@@ -362,6 +377,14 @@ are 1/4 = 25.00 and 1/6 = 16.67.
 | `neg_trans_argument` | a transition value read from a covergroup argument (llg limitation) |
 | `neg_cross_of_cross` | a cross of a cross (not 1800-2009 syntax) |
 | `neg_cross_transition` | a cross of a coverpoint with transition bins (llg limitation) |
+| `neg_trans_states` | `2 [* 70000]` needs more than 65536 automaton states in one coverpoint (llg limitation) |
+| `neg_trans_sequences` | `[]` transition bins whose `[* 1:65]` ranges expand to 4225 sequences, more than 4096 (llg limitation) |
+| `neg_trans_ignore_sequences` | ignore_bins whose `[* 1:65]` ranges expand to 4225 sequences, more than 4096 (llg limitation) |
+| `neg_trans_starts` | 1024 sequence shapes of `t[]` starting at more than 2200 value classes: more than 2^20 start entries (llg limitation) |
+| `neg_trans_class_sequences` | counting the sequences of `t[]` over more than 2200 value classes needs more than 2^20 class sequences (llg limitation) |
+| `neg_binsof_transition` | `binsof` of a transition bin; the cross of its coverpoint is rejected first (llg limitation) |
+| `neg_cross_select_product` | a select `&&` that expands to 33 × 32 = 1056 terms, more than 1024 (llg limitation) |
+| `neg_cross_select_union` | a select `\|\|` that expands to 1024 + 1 terms, more than 1024 (llg limitation) |
 | `neg_cross_set` | a cross bin `with` filter, 1800-2012 syntax |
 | `neg_type_weight` | `type_option.weight = -2` (Table 19-3) |
 | `neg_merge_argument` | type_option.merge_instances from an argument (Slang: not a constant, 19.7.1) |

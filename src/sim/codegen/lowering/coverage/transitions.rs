@@ -398,7 +398,10 @@ pub(super) fn build(
     }
     // option.detect_overlap (19.7): pairs of `bins` declarations that
     // share a sequence, checked only when the option may be set.
+    // The search stops at the pair that exhausts its budget; the caller
+    // reports where.
     let mut overlaps = Vec::new();
+    let mut overlap_stop = None;
     if detect_overlap {
         let mut budget = MAX_CLASS_SEQUENCES;
         'pairs: for a in 0..ir_bins.len() {
@@ -408,16 +411,26 @@ pub(super) fn build(
                 {
                     continue;
                 }
+                let mut exhausted = false;
                 let found = sets.iter().filter(|set| set.bin as usize == a).any(|left| {
                     sets.iter()
                         .filter(|set| set.bin as usize == b)
-                        .any(|right| sets_overlap(&tables, left, right, &mut budget) == Some(true))
+                        .any(
+                            |right| match sets_overlap(&tables, left, right, &mut budget) {
+                                Some(found) => found,
+                                None => {
+                                    exhausted = true;
+                                    true
+                                }
+                            },
+                        )
                 });
+                if exhausted {
+                    overlap_stop = Some((a as u32, b as u32));
+                    break 'pairs;
+                }
                 if found {
                     overlaps.push((a as u32, b as u32));
-                }
-                if budget == 0 {
-                    break 'pairs;
                 }
             }
         }
@@ -435,6 +448,7 @@ pub(super) fn build(
         bins: ir_bins,
         default_bin,
         overlaps,
+        overlap_stop,
     })
 }
 

@@ -3079,7 +3079,9 @@ These covergroups reject with located diagnostics:
 - a `wildcard` bins value whose don't-care bits expand to more than 4096
   ranges;
 - transition bins whose values read a covergroup argument, or whose
-  expansion exceeds the compile-time state or sequence budget;
+  expansion exceeds a compile-time budget of one coverpoint: 65536 automaton
+  states, 4096 sequences of one `[]` or removal bin, 2^20 start entries, or
+  2^20 value class sequences to count its bins;
 - a cross of a coverpoint that has transition bins, and a `binsof` that names
   a transition bin;
 - a cross select expression that expands to more than 1024 terms;
@@ -3089,13 +3091,15 @@ These covergroups reject with located diagnostics:
 At run time:
 
 - a cross whose select expressions split its coverpoints into more than
-  2^20 value-class combinations reports an error and counts no bins;
+  2^20 value-class combinations reports a located error when the instance is
+  constructed and counts no bins;
 - with `type_option.merge_instances`, a cross whose instances have different
   cross bins (bins depending on covergroup arguments) reports an error, and
   its merged coverage is 0;
 - `option.detect_overlap` stops checking transition bins after a fixed
-  budget of explored sequence pairs, so a very large transition coverpoint
-  may miss a warning.
+  budget of explored sequence steps; compilation then warns, located at the
+  coverpoint, which pair of bins it stopped at, and overlaps from that pair
+  on are not reported.
 
 `option.per_instance`, `option.cross_num_print_missing`, `option.goal`,
 `type_option.goal` and the `comment` options are stored (names and comments
@@ -3123,8 +3127,8 @@ services of SIM-046 have their own limits below.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_044/neg_*.sv`,
-`tests/fixtures/sim/feature_completion/sim_045/neg_*.sv` and
-`merge_cross.sv`.
+`tests/fixtures/sim/feature_completion/sim_045/neg_*.sv`,
+`merge_cross.sv`, `cross_classes.sv` and `overlap_budget.sv`.
 
 ## Coverage API and database limits (SIM-046)
 

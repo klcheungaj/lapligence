@@ -1322,6 +1322,16 @@ impl<'a> Codegen<'a> {
                     ),
                 )
             })?;
+            if let Some((a, b)) = tables.overlap_stop {
+                let (a, b) = (&tables.bins[a as usize].name, &tables.bins[b as usize].name);
+                self.coverage_warning(
+                    point,
+                    format!(
+                        "option.detect_overlap stops checking the transition bins of coverpoint `{point_name}` in covergroup `{group_name}` at bins `{a}` and `{b}`, after {} explored sequence steps; overlaps of these and later bins are not reported (llg limitation)",
+                        transitions::MAX_CLASS_SEQUENCES
+                    ),
+                );
+            }
             coverpoint.transitions = Some(tables);
         }
         Ok(coverpoint)

@@ -172,6 +172,11 @@ fn unsupported_coverage_forms_are_located_errors() {
     );
     sim_cli::reject_case(
         SUITE,
+        "neg_ref_actual",
+        "neg_ref_actual.sv:10:13: ref argument `r` of covergroup `g` must name a whole static variable or net (llg limitation, see docs/sim_features.md)",
+    );
+    sim_cli::reject_case(
+        SUITE,
         "neg_import_event",
         "neg_import_event.sv:5:31: the covergroup block event on `c_value` is not supported for this subroutine",
     );

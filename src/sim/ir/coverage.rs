@@ -156,6 +156,9 @@ pub struct IrCoverTransitions {
     /// Pairs of `bins` declarations that share a sequence, reported when
     /// option.detect_overlap is set (19.7).
     pub(in crate::sim) overlaps: Vec<(u32, u32)>,
+    /// The pair of `bins` declarations at which the detect_overlap search
+    /// ran out of its budget; it and later pairs are not checked.
+    pub(in crate::sim) overlap_stop: Option<(u32, u32)>,
 }
 
 /// The repetition of a step; a step without repetition is `[* 1]`.

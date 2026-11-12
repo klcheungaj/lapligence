@@ -920,10 +920,12 @@ static int llg_cov_spans_hold(const llg_cov_span_t* spans, size_t n, uint64_t va
     return lo < n && spans[lo].lo <= value;
 }
 
+// Located at the cross's first bins declaration, when it has one.
 static void llg_cov_xlayout_error(const llg_cov_inst_t* inst, const llg_cov_cross_t* cross,
                                   const char* what) {
     if (llg_cov_quiet) return;
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` cross `%s` %s; its bins are not counted (llg limitation)", inst->group->name, cross->name, what);
+    const char* site = cross->n_bins ? cross->bins[0].site : NULL;
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s%scovergroup `%s` cross `%s` %s; its bins are not counted (llg limitation)", site ? site : "", site ? ": " : "", inst->group->name, cross->name, what);
     llg_rt_mark_failed();
     llg_rt_note_error(0, "cross bins are not counted", NULL);
 }
@@ -972,7 +974,7 @@ static void llg_cov_xlayout_count(const llg_cov_inst_t* inst, const llg_cov_cros
         else tuples *= unique ? unique : 1u;
     }
     if (too_many) {
-        llg_cov_xlayout_error(inst, cross, "has select expressions with too many value classes");
+        llg_cov_xlayout_error(inst, cross, "has select expressions that split its coverpoints into more than 2^20 value class combinations");
         xl->n_auto = 0;
     } else if (xl->product) {
         uint64_t* acc = (uint64_t*)llg_checked_calloc(words, sizeof(uint64_t), "coverage cross");

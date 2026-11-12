@@ -16,6 +16,19 @@ fn assert_stdout(label: &str, output: &Output, expected: &str) {
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
 }
 
+/// The listed warnings of a run's stderr, from the line on.
+fn lowering_warnings(output: &Output) -> Vec<String> {
+    super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
+        .iter()
+        .map(|warning| {
+            warning
+                .split_once(".sv:")
+                .map_or(warning.as_str(), |(_, rest)| rest)
+                .to_owned()
+        })
+        .collect()
+}
+
 /// The run-time messages of a run's stderr ([`super::sim_harness::runtime_messages`]).
 fn llg_messages(output: &Output) -> Vec<String> {
     super::sim_harness::runtime_messages(&String::from_utf8_lossy(&output.stderr))
@@ -274,4 +287,96 @@ fn invalid_options_are_located_errors() {
         "neg_merge_argument",
         "neg_merge_argument.sv:6:35 cannot refer to automatic variable 'm' from static initializer",
     );
+}
+
+/// The compile-time budgets of transition bins (llg limitations): automaton
+/// states, `[* m:n]` expansion of `[]` bins and of removal bins, start
+/// entries and the value class sequences that count `[]` bins.
+#[test]
+fn transition_budgets_are_located_errors() {
+    let describe = "transition bins `t` of coverpoint `cp`";
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_states",
+        &format!("neg_trans_states.sv:7:29: {describe} needs more than 65536 transition states in its coverpoint (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_sequences",
+        &format!("neg_trans_sequences.sv:7:29: {describe} expands to more than 4096 transition sequences (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_ignore_sequences",
+        "neg_trans_ignore_sequences.sv:7:56: transition bins `skip` of coverpoint `cp` expands to more than 4096 transition sequences (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_starts",
+        &format!("neg_trans_starts.sv:83:12: {describe} needs more than 1048576 transition start entries in its coverpoint (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_class_sequences",
+        &format!("neg_trans_class_sequences.sv:83:12: {describe} needs more than 1048576 value class sequences to count its sequences (llg limitation)"),
+    );
+}
+
+/// A cross may name only bins of the coverpoints it crosses, so a `binsof`
+/// of a transition bin meets the rejection of the cross first.
+#[test]
+fn binsof_a_transition_bin_is_a_located_error() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_binsof_transition",
+        "neg_binsof_transition.sv:10:5: cross `ab` in covergroup `g` crosses coverpoint `ca`, which has transition bins; llg crosses only value bins (llg limitation)",
+    );
+}
+
+/// Select expressions expand to at most 1024 terms, through `&&` and `||`.
+#[test]
+fn select_term_budget_is_a_located_error() {
+    let message = "the select expression of bins `big` of cross `ab` in covergroup `g` expands to more than 1024 terms (llg limitation)";
+    sim_cli::reject_case(
+        SUITE,
+        "neg_cross_select_product",
+        &format!("neg_cross_select_product.sv:10:18: {message}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_cross_select_union",
+        &format!("neg_cross_select_union.sv:10:18: {message}"),
+    );
+}
+
+/// Selects that split the crossed coverpoints into more than 2^20 value
+/// class combinations: a located run-time error at construction; the run
+/// goes on and the cross counts nothing.
+#[test]
+fn cross_value_class_budget_is_a_run_time_error() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/cross_classes.out");
+    sim_cli::run_case_checked_matrix(SUITE, "cross_classes", &[], &|label, output| {
+        ends_run(
+            label,
+            output,
+            expected,
+            &["ERROR: [SIM-010] tb:16:12: covergroup `g` cross `abcd` has select expressions that split its coverpoints into more than 2^20 value class combinations; its bins are not counted (llg limitation)"],
+        );
+    });
+}
+
+/// The detect_overlap search of transition bins has a budget; reaching it
+/// is a located compile-time warning.
+#[test]
+fn overlap_budget_is_a_located_warning() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/overlap_budget.out");
+    sim_cli::run_case_checked_matrix(SUITE, "overlap_budget", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(llg_messages(output), Vec::<String>::new(), "{label}");
+        assert_eq!(
+            lowering_warnings(output),
+            ["11:5: option.detect_overlap stops checking the transition bins of coverpoint `cp` in covergroup `g` at bins `a` and `b`, after 1048576 explored sequence steps; overlaps of these and later bins are not reported (llg limitation)"],
+            "{label}"
+        );
+    });
 }
