@@ -627,6 +627,23 @@ llg_value_t* llg_dyn_value_element(llg_dyn_value_array_t* array,
                                    const sv4_t* indices, size_t count);
 llg_value_t* llg_queue_value_element(llg_queue_value_array_t* queue,
                                      const sv4_t* indices, size_t count);
+/* A cell of an unpacked-array element (`da[k][j]`, `q[k][j]`) whose element
+ * the locator above did not find (decision S07-D19). A queue write at the
+ * queue's size appends an element holding its initial value and returns it
+ * (SV 7.10.1). Otherwise, under index checks, the run stops (the
+ * industry-standard behaviour); with the checks off the text applies
+ * (SV 7.4.6): NULL, after the queue's invalid-write warning for a queue
+ * write. */
+llg_value_t* llg_dyn_value_cell_miss(const llg_dyn_value_array_t* array,
+                                     sv4_t index, int write);
+llg_value_t* llg_queue_value_cell_miss(llg_queue_value_array_t* queue,
+                                       sv4_t index, int write);
+/* A whole unpacked-array element write (`q[k] = '{...}`) that
+ * `llg_queue_value_set_element` refused: the same rules as a cell write,
+ * except that a refused write at the queue's size (a full bounded queue)
+ * was already reported. */
+void llg_queue_value_store_miss(const llg_queue_value_array_t* queue,
+                                sv4_t index);
 llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
                                               const sv4_t* indices,
                                               size_t count, int create);
@@ -841,6 +858,11 @@ void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
 void llg_dyn_destroy(llg_dyn_array_t* array);
 void llg_dyn_delete(llg_dyn_array_t* array);
 void llg_dyn_copy(llg_dyn_array_t* dst, const llg_dyn_array_t* src);
+/* `llg_dyn_value_copy_range` between packed dynamic arrays: a row or
+ * slice of a multidimensional class property of integral cells. */
+void llg_dyn_copy_range(llg_dyn_array_t* dst, sv4_t dst_start,
+                        const llg_dyn_array_t* src, sv4_t src_start,
+                        uint64_t count);
 /* Ambiguous-condition merges (SV 11.4.11) of packed dynamic arrays, queues
  * and associative arrays and of recursive queues and associative arrays,
  * with the leaf rule of `llg_dyn_value_merge`. Sequences merge position by
@@ -851,6 +873,13 @@ void llg_dyn_merge(llg_dyn_array_t* dst, const llg_dyn_array_t* a,
                    const llg_dyn_array_t* b);
 void llg_dyn_assign_values(llg_dyn_array_t* dst, const sv4_t* values,
                            size_t count);
+/* Write `count` borrowed values at consecutive storage positions from
+ * `start` (a row of a multidimensional class property written from a
+ * fixed-array value): an X/Z or negative start writes nothing, positions
+ * past the end are not written (SV 7.4.6); changed cells notify contents
+ * readers once. */
+void llg_dyn_set_range(llg_dyn_array_t* dst, sv4_t start, const sv4_t* values,
+                       size_t count);
 void llg_dyn_new(llg_dyn_array_t* dst, sv4_t size,
                  const llg_dyn_array_t* initializer);
 sv4_t llg_dyn_stream(const llg_dyn_array_t* array, uint32_t slice,

@@ -658,11 +658,6 @@ fn neg_memory_names_that_are_not_variable_memories() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_container_element_select",
-        "multidimensional resizable container access in `tb` is not supported",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_wide_variable_slice",
         "$readmemh indexed memory slice is wider than its dimension in `tb`",
     );
@@ -691,5 +686,59 @@ fn neg_verilog_2001_memory_file_limits() {
         "neg_multidim_v2001.v",
         "$readmemh multidimensional memory views require SystemVerilog-2009 in `tb`",
         &["--edition", "v2001"],
+    );
+}
+
+/// FIN-001 C1 (a): a cell of an unpacked-array element of a dynamic array,
+/// queue or associative array is read and written in place (S07-D19 for the
+/// index rules).
+#[test]
+fn container_element_cells_are_read_and_written() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "container_element_cells",
+        include_str!("../fixtures/sim/feature_completion/sim_027/container_element_cells.out"),
+        &[],
+        &[],
+    );
+}
+
+/// FIN-001 C1 (a) below record members, in both record storage forms: the
+/// same file prints the same at 3 cells (one leaf each) and at 16 (a column).
+#[test]
+fn record_member_cells_are_selected_at_run_time() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_027/record_member_cells.out");
+    for cells in ["N=3", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_member_cells",
+            expected,
+            &["-D", cells],
+            &[],
+        );
+    }
+}
+
+/// FIN-001 C1 (c): whole unpacked-array elements to and from fixed-array
+/// variables and patterns.
+#[test]
+fn container_element_rows_copy_whole() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "container_element_rows",
+        include_str!("../fixtures/sim/feature_completion/sim_027/container_element_rows.out"),
+        &[],
+        &[],
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_container_native_row",
+        "neg_container_native_row.sv:9:26: [CODEGEN-001] copying an unpacked-array element of strings, handles or records of a queue, dynamic or associative array to or from an array variable in `tb` is not supported; copy it cell by cell",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_container_row_slice",
+        "neg_container_row_slice.sv:9:5: [CODEGEN-001] copying a row or slice of a fixed-size array to or from an unpacked-array element of a queue, dynamic or associative array in `tb` is not supported; copy a whole array variable",
     );
 }

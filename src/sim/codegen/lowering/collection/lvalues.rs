@@ -426,7 +426,7 @@ impl<'a> Codegen<'a> {
         if let Some(select) = self.packed_element_member_select(lhs) {
             if self.class_packed_select(select) {
                 return Err(format!(
-                    "{}: writing a member of an element of a class array property is not supported in `{path}`; assign the whole element",
+                    "{}: writing a member of an element of a class array property other than by an assignment statement (as an output or inout actual, for example) is not supported in `{path}`; assign it with `=` or assign the whole element",
                     self.source_location(lhs)
                 ));
             }

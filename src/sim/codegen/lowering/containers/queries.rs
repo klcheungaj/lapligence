@@ -428,8 +428,24 @@ impl<'a> Codegen<'a> {
                     return Ok(None);
                 };
                 if indices.len() != 1 {
+                    // A cell of a fixed-array element (`da[k][j]`).
+                    if self.element_cell_select(node).is_some() {
+                        return self.element_leaf_read(path, node);
+                    }
                     return Err(format!(
                         "multidimensional resizable container access in `{path}` is not supported"
+                    ));
+                }
+                // A row of a multidimensional class property is an unpacked
+                // array, not a cell; its own operand forms read and write it.
+                if self.model.containers[container.ir].element.is_packed()
+                    && self.is_fixed_view_slice(node)
+                {
+                    return Err(crate::sim::codegen::error::located(
+                        &self.source_location(node),
+                        format!(
+                            "this use of a row of a multidimensional class property in `{path}` is not supported; assign the row to or from an array variable, or print it (SIM-011)"
+                        ),
                     ));
                 }
                 let element = self.model.containers[container.ir].element.clone();

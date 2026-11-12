@@ -23,6 +23,27 @@ impl Codegen<'_> {
             return Ok(None);
         };
         if self.is_fixed_view_slice(*left) || self.is_fixed_view_slice(*right) {
+            let packed = [*left, *right].into_iter().any(|operand| {
+                let operand = self.p30_unwrap_cast(operand);
+                let base = match self.kind(operand) {
+                    NodeKind::Expr(
+                        ExprKind::ArraySelect { base, .. }
+                        | ExprKind::PartSelect { base, .. }
+                        | ExprKind::IndexedPartSelect { base, .. },
+                    ) => *base,
+                    _ => return false,
+                };
+                self.container_of_select(operand, base)
+                    .is_some_and(|view| self.model.containers[view.ir].element.is_packed())
+            });
+            if packed {
+                return Err(crate::sim::codegen::error::located(
+                    &self.source_location(*left),
+                    format!(
+                        "equality of a row or slice of a multidimensional class property in `{path}` is not supported; compare elements or copy the row into an array variable first (SIM-011)"
+                    ),
+                ));
+            }
             return Err(format!(
                 "equality of a row or slice of a fixed array of strings, handles or native records in `{path}` is not supported; compare whole arrays or elements"
             ));

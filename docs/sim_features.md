@@ -539,7 +539,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `new[n](src)`, copies, concatenations); static ones run in the declaration
   initialization schedule after what they read.
   Elements may be
-  records (whole and member access, push/insert/pop), nested containers
+  fixed unpacked arrays (a cell read and written in place at constant or
+  run-time indices, also below record members; whole elements to and from
+  fixed-array variables of integral or real cells and patterns; index rules
+  in S07-D19), records (whole and member access, push/insert/pop), nested containers
   (written from dynamic arrays, patterns or concatenations; nested `size()`)
   and identity handles. Associative reads through an X/Z key or of a missing
   entry warn and return the default unless an explicit default is set;
@@ -2484,10 +2487,14 @@ These are bounded implementations, not full verification-infrastructure support.
   [collector limits](known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection).
   Static record properties of any record type are one shared record, stored
   like a package record ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
-  Instance record properties with container members,
-  element, row and slice selects of multidimensional fixed-array properties
-  (which are used whole: copies, equality, `%p`, nested positional patterns,
-  memory files) and multidimensional properties of non-packed elements,
+  Rows of multidimensional class properties of packed cells read into and
+  write from array variables, rows, patterns and resizable arrays and print
+  with `%p`; a whole one takes an array variable; a member of a packed element
+  of a class array property is written by an assignment statement.
+  Instance record properties with container members, a row of a
+  multidimensional property as a fixed-array formal's actual or in an
+  equality, bit selects of its elements, and multidimensional properties of
+  non-packed elements,
   container
   properties selected through other handle expressions or outside procedural
   statements remain restricted; constrained randomization has its own row.

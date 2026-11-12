@@ -151,6 +151,27 @@ impl Frame<'_, '_> {
                 self.line(format!("llg_native_value_copy({target}, {source});"));
                 self.copy_native_companions(*dst, *src)?;
             }
+            IrStmt::FixedValueAssign { dst, src, nba }
+                if !self.ctx.model.array(dst.array).sparse() =>
+            {
+                // Dense storage takes the cells of a native item one by one,
+                // in the left-to-right order both share (SV 7.6).
+                let IrFixedValue::ValueItems { root, items, .. } = src.as_ref() else {
+                    return Err("dense fixed-array assignment needs a native item source".into());
+                };
+                let item = self.value_item_root(root, items)?;
+                let item = self.scalar("llg_value_t*", item);
+                let info = self.ctx.model.array(dst.array);
+                let (total, cell) = (info.total, info.cell_address("_llg_n"));
+                let store = if *nba {
+                    format!("llg_nba_after({cell}, {item}->value.items[_llg_n].value.packed, 0)")
+                } else {
+                    format!("llg_ba_from({cell}, &{item}->value.items[_llg_n].value.packed)")
+                };
+                self.line(format!(
+                    "for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) {store};"
+                ));
+            }
             IrStmt::FixedValueAssign { dst, src, nba } => {
                 // Between two whole arrays nothing runs after the source is
                 // read, and the copy keeps its own image where it needs one.

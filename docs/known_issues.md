@@ -679,46 +679,48 @@ the pin held by the formal (SIM-008); fork capture pins (SIM-010).
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
-## Cell selects inside unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
+## Remaining forms of unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
 
-**Status:** open; SIM-027 reads and writes these storages as whole elements
-through memory file tasks, and SIM-011 stores multidimensional class
-properties of packed words.
+**Status:** open; FIN-001 C1 serves cells of unpacked-array elements of
+queues, dynamic and associative arrays (`da[k][j]`, `aa[k][j] = v`, also below
+record members at run-time indices), whole elements of integral or real cells
+to and from array variables and patterns (`row = da[k]`, `da[k] = row`,
+`aa[k] = '{...}`), rows of multidimensional class properties of packed cells
+(`o.g[i]`), and writes to a member of a packed element of a class array
+property (`o.a[i].m = v`).
 
 ### Symptom
 
-These legal forms reject with a located diagnostic: selecting one cell, or a
-part of it, of an element that is a fixed unpacked array of a dynamic array,
-queue or associative array (`da[k][j]`, `aa[k][j] = v`, `x = q[k][j]`), and a
-row or slice select of a multidimensional class property in an
-expression (`o.g[i]`). A whole element cannot be read into or
-assigned from an unpacked-array variable or pattern either (`row = da[k]`,
-`da[k] = row`, `aa[k] = '{...}`). The containers work as a whole (copies,
-`%p`, memory file tasks), and so do whole multidimensional class properties
-and their single elements (`o.g[i][j]`). A member of a packed element of a
-class array property reads (`o.a[i].m`) but rejects as a write target; assign
-the whole element.
+These legal forms reject with a located diagnostic: a whole element of string,
+handle or record cells copied to or from an array variable (`sr = sd[k]`); a
+row or slice of a larger array copied to or from a whole element
+(`m2[1] = da[k]`); a row of a multidimensional class property passed to a
+fixed-array formal or compared with `==`, and a bit select of one of its
+elements (`o.g[i][j][3]`); and a member of a packed element of a class array
+property as an output or inout actual. A fully constant path through a record
+nested in a record element (`oq[0].e[1].arr[2]`) fails with "cannot resolve
+array base of select"; a run-time index anywhere on that path works.
 
 ### Cause
 
-Native arrays are stored as container elements (`llg_value_t` rows) or one flat
-packed container, and the expression and lvalue lowering resolve a select's
-base to a model array, a record column or a one-level container. A second
-select level, or a row of a flat property, has no element-address operand;
-the memory file tasks address the rows in place through their own runtime
-entry points instead.
+Rows of string, handle or record cells live in a fixed view of the container
+runtime (a descriptor array), and the element's value holds its cells as items
+of one native value; no transfer between the two exists. Rows of a larger
+model array have no whole-array view. A class property row has no flattened
+value for a formal, and the packed-element member write is a statement form.
 
 ### Intended direction
 
-An addressed element operand (container plus key or index, then the fixed
-dimensions) shared by reads, writes and the memory tasks, so a select over a
-container of unpacked arrays and a row of a multidimensional property lower to
-the same cell address (about 42 call sites of the container element path).
+A transfer between a descriptor-array range and a fixed-array item of a
+native value, and the row operand for fixed-array formals and equality.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_027/neg_container_element_select.sv`
-and `tests/fixtures/sim/feature_completion/sim_011/neg_multidim_property.sv`.
+`neg_container_native_row.sv` and `neg_container_row_slice.sv` in
+`tests/fixtures/sim/feature_completion/sim_027/`; `neg_multidim_property_row_value.sv`,
+`neg_multidim_property_row_equality.sv`, `neg_multidim_property_cell_select.sv`
+and `neg_class_packed_member_actual.sv` in
+`tests/fixtures/sim/feature_completion/sim_011/`.
 
 ## Bit-stream limits (SIM-020)
 
@@ -1202,8 +1204,9 @@ rejections by design.
 These mailbox forms stop compilation with a located SIM-017 diagnostic:
 
 - a message whose type is, or has a member that is, an associative array;
-- a whole unpacked fixed-array variable as a `put` source or a `get`
-  destination (assignment patterns and record members of array type work);
+- a whole unpacked fixed-array variable (or a row or slice of one) as a `put`
+  source, or a whole one as a `get` destination (assignment patterns and
+  record members of array type work);
 - `try_put`/`try_get`/`try_peek` with a record, array or selected operand in
   an expression that is not a statement, an assignment, a system-task
   argument, an `if` condition or a loop condition or step (for example a
@@ -1216,8 +1219,9 @@ associative or unpacked array is not singular (6.4); industry-standard
 behaviour rejects both as messages. llg's aggregate messages (records,
 queues, dynamic arrays and pattern-built unpacked arrays) are an extension,
 and these two types stay outside it: the runtime message value has no nested
-associative form, and a whole fixed-array variable has no leaf transfer to or
-from a lexical native value. The aggregate copy-in and copy-out of the
+associative form, a whole fixed-array source is rejected by a guard although
+the native transfer could copy it, and a whole fixed-array destination has no
+transfer out of a message value. The aggregate copy-in and copy-out of the
 expression forms run before a statement that evaluates the call once, or in
 place at each evaluation of a loop condition or step and of an operand that
 may be skipped; other expression contexts have neither placement.
@@ -1780,9 +1784,8 @@ changes, and, for a class property, when a handle or container property of the
 same object changes (they share the object's marker). A change undone before
 the writer suspends wakes nobody, a string member's included
 ([T1-D11](lrm_decisions.md)). A run-time index into a member array of a record
-property (`h.r.arr[k]`) still rejects with its location ("runtime index into a
-native record array member"), and so does one in a `wait` condition on a static
-subroutine record below 16 cells; an event control on the latter works.
+property (`h.r.arr[k]`) or of a static subroutine record is served, also in a
+`wait` condition.
 
 ## Native stack frames grow with a statement's format-argument count
 

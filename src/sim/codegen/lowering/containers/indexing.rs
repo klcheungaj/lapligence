@@ -287,16 +287,21 @@ impl<'a> Codegen<'a> {
         &self,
         path: &str,
         container: usize,
+        node: NodeId,
     ) -> Result<(), String> {
-        match self.fixed_view_dims.get(&container) {
-            Some(_) if self.model.containers[container].class_field.is_some() => Err(format!(
-                "selecting a row or slice of a multidimensional class property in `{path}` is not supported; it is accessed whole, by element or through memory file tasks (SIM-011)"
-            )),
-            Some(_) => Err(format!(
+        let message = match self.fixed_view_dims.get(&container) {
+            Some(_) if self.model.containers[container].class_field.is_some() => format!(
+                "this select of a multidimensional class property in `{path}` is not supported; select it whole, one element or one row (SIM-011)"
+            ),
+            Some(_) => format!(
                 "this select of a multidimensional fixed array of native elements in `{path}` is not supported; select one element or one row"
-            )),
-            None => Ok(()),
-        }
+            ),
+            None => return Ok(()),
+        };
+        Err(crate::sim::codegen::error::located(
+            &self.source_location(node),
+            message,
+        ))
     }
 
     /// The container and logical index of a select of one element: a
@@ -1141,7 +1146,7 @@ impl<'a> Codegen<'a> {
                 return self.lower_view_position(path, &dimensions, &indices);
             }
         }
-        self.reject_multidimensional_view(path, container)?;
+        self.reject_multidimensional_view(path, container, node)?;
         if matches!(
             self.model.containers[container].kind,
             IrContainerKind::Queue { .. }
@@ -1203,7 +1208,6 @@ impl Codegen<'_> {
         if indices.len() >= dimensions.len() {
             return Ok(None);
         }
-        self.reject_class_view_select(path, container)?;
         let count = dimensions[indices.len()..]
             .iter()
             .map(|(left, right)| (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
@@ -1236,15 +1240,6 @@ impl Codegen<'_> {
         }
     }
 
-    /// Rows of multidimensional class properties stay rejected (SIM-011):
-    /// whole accesses, single elements and memory file tasks reach them.
-    fn reject_class_view_select(&self, path: &str, container: usize) -> Result<(), String> {
-        if self.model.containers[container].class_field.is_some() {
-            return self.reject_multidimensional_view(path, container);
-        }
-        Ok(())
-    }
-
     /// A slice of a fixed-array view (`a[l:r]`, `a[b+:w]`, `a[b-:w]`): its
     /// container, first storage position (signed, possibly out of range)
     /// and element count. Constant bounds are folded; an indexed base is
@@ -1269,7 +1264,7 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        self.reject_multidimensional_view(path, container)?;
+        self.reject_multidimensional_view(path, container, node)?;
         let Some((left, right)) = self.fixed_view_ranges.get(&container).copied() else {
             return Ok(None);
         };

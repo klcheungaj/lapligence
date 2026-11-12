@@ -821,8 +821,14 @@ impl Frame<'_, '_> {
         }
         let storage = self.ctx.model.containers[container].clone();
         let name = self.container_name(container)?;
+        // An element that is an unpacked array of a queue or dynamic array:
+        // the locator selects one of its cells, which has index rules of
+        // its own (decision S07-D19). A fixed view's elements always exist.
+        let cell = matches!(storage.element, IrContainerElement::FixedArray { .. })
+            && storage.initial_size.is_none()
+            && indices.len() == 1;
         let position = match indices {
-            [index] => dyn_position(index),
+            [index] if !cell => dyn_position(index),
             _ => None,
         };
         let (call, depth, touch) = match (storage.kind, position) {
@@ -868,6 +874,17 @@ impl Frame<'_, '_> {
                     ),
                 };
                 let element = self.scalar("llg_value_t*", call);
+                let miss = match kind {
+                    IrContainerKind::Dynamic if cell => Some("llg_dyn_value_cell_miss"),
+                    IrContainerKind::Queue { .. } if cell => Some("llg_queue_value_cell_miss"),
+                    _ => None,
+                };
+                if let Some(miss) = miss {
+                    self.line(format!(
+                        "if (!{element}) {element} = {miss}(&{name}, {list}[0], {});",
+                        i32::from(write)
+                    ));
+                }
                 for value in values {
                     self.discard(value);
                 }

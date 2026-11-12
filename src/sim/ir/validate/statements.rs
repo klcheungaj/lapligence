@@ -345,7 +345,16 @@ impl Validator<'_> {
                     .total
                     .checked_mul(u64::from(array.elem_width))
                     .ok_or_else(|| IrValidationError::new(path, "fixed target width overflow"))?;
-                if !array.sparse()
+                // Dense storage takes the cells of a native item directly.
+                let dense_items = !array.sparse()
+                    && !array.real
+                    && !array.is_net()
+                    && matches!(src.as_ref(), IrFixedValue::ValueItems { .. })
+                    && dst.origin == 0
+                    && dst.selectors.is_empty()
+                    && !dst.sliced
+                    && dst.total == array.total;
+                if (!array.sparse() && !dense_items)
                     || (*nba && array.activation)
                     || source_bits > target_bits
                     || (!matches!(src.as_ref(), IrFixedValue::Stream { .. })

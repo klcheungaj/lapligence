@@ -63,6 +63,16 @@
 #define LLG_COLD
 #endif
 
+// A runtime function only the generated model calls (never a VPI or DPI
+// library): on ELF targets hidden from the dynamic symbol table that models
+// export for those libraries, so adding one does not grow that table and move
+// the model's data. The runtime is always linked statically into the model.
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__ELF__)
+#define LLG_INTERNAL __attribute__((visibility("hidden")))
+#else
+#define LLG_INTERNAL
+#endif
+
 // A model definition that may be unreferenced, such as the descriptor of a
 // process that only hosts runtime-called callbacks.
 #if defined(__GNUC__) || defined(__clang__)

@@ -112,8 +112,14 @@ pub(super) fn render(
             src_start,
             count,
         } => {
+            // Rows of a multidimensional class property hold packed cells.
+            let function = if ctx.model.containers[*dst].element.is_packed() {
+                "llg_dyn_copy_range"
+            } else {
+                "llg_dyn_value_copy_range"
+            };
             format!(
-                "    llg_dyn_value_copy_range(&{}, {}, &{}, {}, {count}ULL);\n",
+                "    {function}(&{}, {}, &{}, {}, {count}ULL);\n",
                 name(frame, *dst)?,
                 operand(frame, owners, dst_start)?.code,
                 name(frame, *src)?,
@@ -404,6 +410,23 @@ pub(super) fn render(
                 name(frame, *container)?,
                 method_code(*method),
                 callback.as_deref().unwrap_or("NULL")
+            )
+        }
+        IrContainerStmt::SetRange {
+            container,
+            start,
+            values,
+        } => {
+            let start = operand(frame, owners, start)?.code;
+            let values = values
+                .iter()
+                .map(|value| Ok(operand(frame, owners, value)?.code))
+                .collect::<Result<Vec<_>, String>>()?;
+            format!(
+                "    llg_dyn_set_range(&{}, {start}, (const sv4_t[]){{ {} }}, {});\n",
+                name(frame, *container)?,
+                values.join(", "),
+                values.len()
             )
         }
         IrContainerStmt::AssignValues { container, values } => {
@@ -1162,14 +1185,34 @@ pub(super) fn render(
                 }
                 (IrValueSlot::Element { indices, .. }, kind) => {
                     let list = super::indices(frame, owners, indices)?;
-                    let function = match kind {
-                        IrContainerKind::Dynamic => "llg_dyn_value_set_element",
-                        IrContainerKind::Queue { .. } => "llg_queue_value_set_element",
+                    // A whole unpacked-array element of a queue or dynamic
+                    // array has the index rules of its cells (S07-D19).
+                    let storage = &ctx.model.containers[*container];
+                    let row = matches!(storage.element, IrContainerElement::FixedArray { .. })
+                        && storage.initial_size.is_none()
+                        && indices.len() == 1;
+                    let (function, miss) = match kind {
+                        IrContainerKind::Dynamic => (
+                            "llg_dyn_value_set_element",
+                            row.then(|| {
+                                format!("(void)llg_dyn_value_cell_miss(&{target}, {list}[0], 1)")
+                            }),
+                        ),
+                        IrContainerKind::Queue { .. } => (
+                            "llg_queue_value_set_element",
+                            row.then(|| {
+                                format!("llg_queue_value_store_miss(&{target}, {list}[0])")
+                            }),
+                        ),
                         IrContainerKind::Associative { .. } => {
-                            "llg_assoc_value_set_element_integral"
+                            ("llg_assoc_value_set_element_integral", None)
                         }
                     };
-                    format!("{function}(&{target}, {list}, {}, {root})", indices.len())
+                    let call = format!("{function}(&{target}, {list}, {}, {root})", indices.len());
+                    if let Some(miss) = miss {
+                        return Ok(format!("    if (!{call}) {miss};\n"));
+                    }
+                    call
                 }
                 (IrValueSlot::PushFront, _) => {
                     format!("llg_queue_value_push_value(&{target}, 0, {root})")
@@ -1281,6 +1324,12 @@ pub(super) fn render(
                 let source = frame.real_column_cell(*array, "_llg_n")?;
                 format!(
                     "    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) ({item})->value.items[_llg_n].value.real = *{source};\n"
+                )
+            } else if !frame.ctx.model.array(*array).sparse() {
+                // Dense cells hold the items' own type (SV 7.6 equivalence).
+                let source = frame.ctx.model.array(*array).cell_address("_llg_n");
+                format!(
+                    "    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) (void)llg_value_item_set_packed(&({item})->value.items[_llg_n], *{source});\n"
                 )
             } else {
                 let source = frame.fixed_array_address(*array)?;

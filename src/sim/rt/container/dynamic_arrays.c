@@ -288,6 +288,75 @@ sv4_t llg_dyn_get(const llg_dyn_array_t* array, sv4_t index) {
     return sv4_clone(&array->data[native]);
 }
 
+/* Out of line (LLG_OUTLYING) so the container functions other models run
+ * keep their placement, and cold (LLG_COLD) so the unit's inliner budget, and
+ * with it what is inlined into those functions, stays as it was. Only models
+ * call it, so it stays out of their dynamic symbol table (LLG_INTERNAL). */
+LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_dyn_copy_range(
+    llg_dyn_array_t* dst, sv4_t dst_start, const llg_dyn_array_t* src,
+    sv4_t src_start, uint64_t count) {
+    int64_t to = 0;
+    if (!sv4_to_index_i64(dst_start, &to)) return;
+    int64_t from = 0;
+    int from_known = sv4_to_index_i64(src_start, &from);
+    size_t n = llg_checked_count(count, sizeof(sv4_t));
+    /* Every selected source cell (the default outside the source) is taken
+     * before the first write, so overlapping ranges of one array read their
+     * old cells (SV 7.6). */
+    sv4_t* cells = llg_alloc_items(n, sizeof(*cells));
+    for (size_t i = 0; i < n; ++i) {
+        if (from_known && from >= 0 && (uint64_t)from <= SIZE_MAX - i &&
+            (size_t)from + i < src->size)
+            cells[i] = llg_element_assign(src->data[(size_t)from + i],
+                                          dst->element_width,
+                                          dst->element_signed,
+                                          dst->element_two_state);
+        else
+            cells[i] = llg_element_default(dst->element_width,
+                                           dst->element_signed,
+                                           dst->element_two_state);
+    }
+    int changed = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (to < 0 || (uint64_t)to > SIZE_MAX - i || (size_t)to + i >= dst->size)
+            continue;
+        sv4_t* target = &dst->data[(size_t)to + i];
+        if (sv4_same(*target, cells[i])) continue;
+        sv4_move(target, &cells[i]);
+        changed = 1;
+    }
+    for (size_t i = 0; i < n; ++i) sv4_destroy(&cells[i]);
+    free(cells);
+    llg_notify(dst->notify, dst->contents_dependency, dst->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
+}
+
+/* Out of line and cold like `llg_dyn_copy_range`. The values are
+ * borrowed and already evaluated, so writing them in order is the snapshot
+ * semantics of one assignment. */
+LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_dyn_set_range(
+    llg_dyn_array_t* dst, sv4_t start, const sv4_t* values, size_t count) {
+    int64_t to = 0;
+    if (!sv4_to_index_i64(start, &to) || to < 0) return;
+    int changed = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if ((uint64_t)to > SIZE_MAX - i || (size_t)to + i >= dst->size) break;
+        sv4_t cell = llg_element_assign(values[i], dst->element_width,
+                                        dst->element_signed,
+                                        dst->element_two_state);
+        sv4_t* target = &dst->data[(size_t)to + i];
+        if (sv4_same(*target, cell)) {
+            sv4_destroy(&cell);
+            continue;
+        }
+        sv4_move(target, &cell);
+        changed = 1;
+    }
+    if (changed)
+        llg_notify(dst->notify, dst->contents_dependency,
+                   dst->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+}
+
 int llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value) {
     size_t native;
     if (!llg_index(index, array->size, 0, &native)) return 0;

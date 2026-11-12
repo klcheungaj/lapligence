@@ -301,6 +301,13 @@ impl<'a> Codegen<'a> {
                 Some((src, start, _)) => (src, start),
                 None => match self.container_of(self.p30_unwrap_cast(rhs)) {
                     Some(src) => (src.ir, pattern_key_expr(0, 64, true, false)),
+                    // Packed cells (a multidimensional class property) take
+                    // the source's values directly.
+                    None if self.model.containers[dst].element.is_packed() => {
+                        return self
+                            .lower_packed_row_write(path, lhs, rhs, dst, dst_start, count)
+                            .map(Some);
+                    }
                     None => {
                         let temporary = self.selection_temporary(dst, lhs, count);
                         statements.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
@@ -401,6 +408,16 @@ impl<'a> Codegen<'a> {
                 })));
             }
         }
+        // A row or slice converted implicitly (`d = o.g[i]`) is an element
+        // copy, not a bit-stream cast.
+        if matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Cast { .. }))
+            && self.db.is_implicit_conversion(rhs)
+            && self.is_fixed_view_slice(rhs)
+        {
+            if let Some((src, start, count)) = self.fixed_view_slice(path, rhs)? {
+                return self.lower_slice_into(path, dst.ir, src, start, count);
+            }
+        }
         if let Some(statement) =
             self.lower_bitstream_cast_container_assignment(path, type_node, rhs, &dst)?
         {
@@ -474,12 +491,27 @@ impl<'a> Codegen<'a> {
         if let Some(statement) = self.lower_container_concat_into(path, dst.ir, rhs)? {
             return Ok(statement);
         }
-        let src = self.container_of(rhs).ok_or_else(|| {
-            format!(
+        let Some(src) = self.container_of(rhs) else {
+            // A whole class property of integral cells (`h.g = r2`) takes
+            // a fixed-array value cell for cell, as one of its rows does.
+            if self.is_fixed_view(dst.ir) && self.model.containers[dst.ir].element.is_packed() {
+                if let Some(count) = self.model.containers[dst.ir].initial_size {
+                    return self.lower_packed_row_write(
+                        path,
+                        type_node,
+                        rhs,
+                        dst.ir,
+                        pattern_key_expr(0, 64, true, false),
+                        count,
+                    );
+                }
+            }
+            self.reject_native_row_copy(path, rhs)?;
+            return Err(format!(
                 "resizable container assignment in `{path}` requires a compatible array (got {:?})",
                 self.kind(rhs)
-            )
-        })?;
+            ));
+        };
         Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {
             dst: dst.ir,
             src: src.ir,
@@ -746,8 +778,11 @@ impl<'a> Codegen<'a> {
         start: IrExpr,
         count: u64,
     ) -> Result<IrStmt, String> {
+        // Packed cells copy only between packed arrays (a row of a
+        // multidimensional class property, SIM-011).
         if !matches!(self.model.containers[dst].kind, IrContainerKind::Dynamic)
             || self.model.containers[dst].element.is_packed()
+                != self.model.containers[src].element.is_packed()
         {
             return Err(format!(
                 "fixed-array slice in `{path}` can only be assigned to a fixed or dynamic array"

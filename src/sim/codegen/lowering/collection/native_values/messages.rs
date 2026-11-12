@@ -119,6 +119,21 @@ impl Codegen<'_> {
             let companion = self.model.native_values[value].companions[0];
             before.push(self.lower_container_into(path, source, companion, source)?);
         } else {
+            // A whole fixed-array variable (or a row or slice of one) stays
+            // rejected as a message source, although the native transfer
+            // now copies one into an unpacked-array value: a message is
+            // singular (SV 15.4.3), and industry-standard behaviour rejects
+            // an unpacked-array message.
+            if matches!(descriptor.shape, TypeShape::FixedArray { .. })
+                && self.fixed_memory_view(path, source).is_ok()
+            {
+                return Err(self.fixed_array_message_error(
+                    path,
+                    descriptor,
+                    source,
+                    String::new(),
+                ));
+            }
             let endpoint = NativeEndpoint::Value {
                 value,
                 prefix: Vec::new(),
