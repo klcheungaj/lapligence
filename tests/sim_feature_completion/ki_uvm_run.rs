@@ -133,6 +133,22 @@ fn class_pattern_covergroup_member() {
     );
 }
 
+/// Fixed arrays of class handles and strings assigned to dynamic arrays
+/// copy element by element: a register model hands a broadcast callback a
+/// fixed array of its target fields.
+#[test]
+fn fixed_array_to_dynamic_handles() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "fixed_array_to_dynamic_handles",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/fixed_array_to_dynamic_handles.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// Interface nets driven by a clocking block and read in the select of a
 /// nonblocking assignment's target: a register file indexed by a bus
 /// address writes the register file, not the address net.
