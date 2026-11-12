@@ -4,7 +4,7 @@
 
 
 
-static void force_dependency_changed(sv4_t* sig, double* real, int is_real);
+static LLG_OUTLYING void force_dependency_changed(sv4_t* sig, double* real, int is_real);
 static void sig_write(sv4_t* target, sv4_t value);
 static void sig_write_now(sv4_t* target, sv4_t value);
 static int marker_flip(sv4_t* marker, int rowless);
@@ -829,6 +829,19 @@ static int wait_source_armed(const llg_wait_source_t* source) {
     return 0;
 }
 
+// The consumers of a check that its row counts in `checks`, after the
+// waiters: force expressions that read the storage. `target` is packed
+// storage, else `real` is real storage.
+static LLG_OUTLYING void check_consumers_changed(llg_wait_source_t* source, sv4_t* target,
+                                                 double* real) {
+    if (source->force_reads) force_dependency_changed(target, real, real != NULL);
+}
+
+// Whether a waiter or a consumer that runs at the check observes the row.
+static int wait_source_observed(const llg_wait_source_t* source) {
+    return wait_source_armed(source) || (source && source->checks);
+}
+
 static int change_marker_is_reference(const sv4_t* marker) {
     return llg_sv4_width(*marker) == LLG_NATIVE_REF_MARKER_WIDTH;
 }
@@ -842,7 +855,7 @@ static int dependency_bindings_waited(const void* target, uint8_t kind) {
         if (binding->key != target || binding->kind != kind ||
             change_marker_is_reference(binding->dependency))
             continue;
-        if (wait_source_armed(wait_source_find(binding->dependency))) return 1;
+        if (wait_source_observed(wait_source_find(binding->dependency))) return 1;
     }
     return 0;
 }
@@ -996,7 +1009,7 @@ static llg_wait_source_t* change_open_packed(llg_wait_source_t* source,
 static llg_wait_source_t* change_begin(sv4_t* target, const sv4_t* before, int eager) {
     llg_wait_source_t* source = wait_source_find(target);
     if (source && source->change) return source;
-    if (wait_source_armed(source) || g.deferred_triggers ||
+    if (wait_source_observed(source) || g.deferred_triggers ||
         (eager && (dependency_bindings_waited(target, LLG_DEPENDENCY_BINDING_PACKED) ||
                    fixed_array_contents_waited(target))))
         return change_open_packed(source, target, before);
@@ -1028,7 +1041,7 @@ static llg_change_t* change_marker_defer(sv4_t* marker, int* rowless, int* opene
     if (opened) *opened = 0;
     if (source && source->change)
         return source->change->kind == LLG_CHANGE_MARKER ? source->change : NULL;
-    if (!(g.deferred_triggers || wait_source_armed(source)) ||
+    if (!(g.deferred_triggers || wait_source_observed(source)) ||
         change_marker_is_reference(marker))
         return NULL;
     if (!source) source = wait_source_get(marker);
@@ -1114,7 +1127,7 @@ static void fire_bound_markers(const void* target, uint8_t kind, int toggle_rest
 static llg_wait_source_t* change_begin_real(double* target, double before) {
     llg_wait_source_t* source = wait_source_find(target);
     if (source && source->change) return source;
-    if (wait_source_armed(source) || g.deferred_triggers ||
+    if (wait_source_observed(source) || g.deferred_triggers ||
         dependency_bindings_waited(target, LLG_DEPENDENCY_BINDING_REAL)) {
         if (!source) source = wait_source_get(target);
         change_open(source, LLG_CHANGE_REAL)->before_real = before;
@@ -1321,6 +1334,7 @@ LLG_CO_INLINE void sig_settle(sv4_t* target, llg_wait_source_t* source,
                                bound == LLG_BOUND_SETTLE);
         if (contents) fire_marker(contents);
     }
+    if (LLG_CO_UNLIKELY(source && source->checks)) check_consumers_changed(source, target, NULL);
 }
 
 // The check of a history record: nothing waited on the storage or its bound
@@ -1480,7 +1494,6 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
         }
     }
     fixed_block_sampled_changed(block, target, old);
-    force_dependency_changed(target, NULL, 0);
     // Timing check terminals only mark their sets; the checks run later in
     // the time step (llg_timing_checks_run).
     if (LLG_CO_UNLIKELY(timing != NULL)) timing_terminals_changed(timing);
@@ -1680,6 +1693,7 @@ static void real_settle(double* target, llg_wait_source_t* source,
     deferred_trigger_source_change(NULL, target);
     if (cursor) fire_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL, 0);
     else publish_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
+    if (LLG_CO_UNLIKELY(source && source->checks)) check_consumers_changed(source, NULL, target);
 }
 
 // Real equality is bitwise: repeated NaNs with the same payload are
@@ -1712,7 +1726,6 @@ static void real_write(double* target, double value) {
         else publish_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
     }
     if (LLG_CO_UNLIKELY(llg_native_real_refs_live)) llg_native_ref_real_stored(target);
-    force_dependency_changed(NULL, target, 1);
     if (LLG_CO_UNLIKELY(watched)) value_watch_notify(target);
     if (target_pin) llg_value_scope_end(target_pin);
 }

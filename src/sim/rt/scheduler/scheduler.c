@@ -66,10 +66,12 @@ static int run_region_queue(llg_region_t region) {
             change_defer_active = 1;
             llg_co_status_t status = llg_co_run(&process->chain);
             change_defer_active = 0;
-            net_defer_active = 0;
             g.process_turn_active = 0;
             g.current = NULL;
+            // The check ends the turn: net updates its consumers make (force
+            // targets, switch controls) are deferred like those of the turn.
             change_check();
+            net_defer_active = 0;
             if (status == LLG_CO_DONE ||
                 (status == LLG_CO_EXIT &&
                  process->chain.exiting == LLG_EXIT_COMPLETE)) {

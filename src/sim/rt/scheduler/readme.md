@@ -158,13 +158,19 @@ writes from a process sensitive to what the condition reads, so it is
 evaluated after the check that woke it, with the values current then, and
 publishes once per run of that process; its row carries a value watch, and
 `value_watch_notify` hands the publication to
-`assertion_disable_signal_changed`. Per-write consumers stay in
-`sig_publish`: VPI value change, waveforms, monitors, abort conditions,
-force expressions, switches and timing checks, and the AA-D6 gate, which a gate-at-write wait
+`assertion_disable_signal_changed`. A live force expression counts itself
+on the rows of what it reads (`force_reads`, and `checks`, which counts
+every consumer that runs at the check), so `change_begin` opens a record
+for them and `sig_settle`/`real_settle` call `check_consumers_changed` at
+the check, after the waiters, which evaluates it again
+(`force_dependency_changed`). One waiter-less
+subscription (`keep`) keeps a row alive for timing check terminals, switch
+controls and force reads. Per-write consumers stay in `sig_publish`: VPI
+value change, waveforms, monitors, abort conditions, switches and timing
+checks, and the AA-D6 gate, which a gate-at-write wait
 latches at each write (`llg_wait_gate_at_write`, `payload.expression.gate_open`,
 walked through `write_walkers`); moving one to the check means calling it
-from `sig_settle` and `history_settle` and counting what it observes in
-`change_begin`. Ordered change logs (`llg_wait_changes`) also log per write.
+from `sig_settle` and counting what it observes in `wait_source_observed`. Ordered change logs (`llg_wait_changes`) also log per write.
 Strings, container cells and reference markers publish per write, and so do
 markers bound to an unwaited marker. The contents marker of a native record
 (`llg_record_changed`, called after each statement that stores into a record a

@@ -107,6 +107,29 @@ static void wait_subscription_insert(llg_wait_subscription_t* node,
     *slot = node;
 }
 
+static void wait_subscription_unlink(llg_wait_subscription_t* node);
+
+// Gives the row its keep-alive subscription (`keep`) unless it has one.
+static LLG_OUTLYING void wait_source_keep(llg_wait_source_t* source) {
+    if (source->keep) return;
+    llg_wait_subscription_t* node = (llg_wait_subscription_t*)llg_checked_calloc(
+        1, sizeof(*node), "wait source keep");
+    node->source = source;
+    wait_subscription_insert(node, &source->head);
+    source->keep = node;
+}
+
+// Drops the keep-alive subscription once nothing it stands for is left.
+// Unlinking the last subscriber frees the row itself, so the caller must not
+// use `source` afterwards.
+static LLG_OUTLYING void wait_source_unkeep(llg_wait_source_t* source) {
+    llg_wait_subscription_t* node = source->keep;
+    if (!node || source->timing || source->switches || source->checks) return;
+    source->keep = NULL;
+    wait_subscription_unlink(node);
+    free(node);
+}
+
 static void wait_subscription_unlink(llg_wait_subscription_t* node) {
     *node->prev_link = node->next;
     if (node->next) node->next->prev_link = node->prev_link;

@@ -402,14 +402,21 @@ struct llg_wait_source {
     // memberships of ordered dependency waits, which log each write (S3-D5),
     // and expression waits whose qualifiers are read at the write (AA-D6).
     uint32_t write_walkers;
-    // Timing check terminals on this address and the waiter-less
-    // subscription that keeps the row alive while they exist.
+    // Timing check terminals on this address.
     llg_timing_watch_t* timing;
-    llg_wait_subscription_t* timing_keep;
-    // Direct switch controls on this address and the waiter-less
-    // subscription that keeps the row alive while they exist.
+    // Direct switch controls on this address.
     llg_switch_watch_t* switches;
-    llg_wait_subscription_t* switches_keep;
+    // The waiter-less subscription that keeps the row alive while timing
+    // check terminals, switch controls or check consumers observe it
+    // (wait_source_keep, wait_source_unkeep).
+    llg_wait_subscription_t* keep;
+    // Live force expressions that read the storage.
+    uint32_t force_reads;
+    // How many consumers that see one change per check instead of each write
+    // (T1-D11) observe the storage: its force reads. A deferred write of the
+    // storage opens a record (change_begin), and its check runs them
+    // (check_consumers_changed).
+    uint32_t checks;
 };
 
 // One limb covers scalar clocks and packed values through 64 bits. Larger

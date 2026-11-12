@@ -128,12 +128,8 @@ static void switch_controls_release(void) {
         // A watch from an earlier runtime lifetime is already gone.
         llg_wait_source_t* source = wait_source_find(watch->signal);
         if (!source || source->switches != watch) continue;
-        llg_wait_subscription_t* node = source->switches_keep;
         source->switches = NULL;
-        source->switches_keep = NULL;
-        // Unlinking the last subscriber frees the row itself.
-        wait_subscription_unlink(node);
-        free(node);
+        wait_source_unkeep(source);
     }
     free(g_sw.watches);
     free(g_sw.controls);
@@ -679,11 +675,7 @@ void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t co
         watch->shadow = (uint64_t*)llg_checked_calloc(
             (size_t)watch->words * 3u + 1u, sizeof(uint64_t), "switch control watch");
         llg_wait_source_t* source = wait_source_get(watch->signal);
-        llg_wait_subscription_t* node = (llg_wait_subscription_t*)llg_checked_calloc(
-            1, sizeof(*node), "switch control watch");
-        node->source = source;
-        wait_subscription_insert(node, &source->head);
-        source->switches_keep = node;
+        wait_source_keep(source);
         source->switches = watch;
         switch_watch_snapshot(watch);
         switch_watch_apply(watch, UINT32_MAX);

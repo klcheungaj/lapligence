@@ -1,0 +1,8 @@
+1 waiter y=0
+2 c=0 y=0
+3 u stale
+4 u=8
+5 ry stale
+6 ry=3.0
+7 waiter y=1
+7 c=1

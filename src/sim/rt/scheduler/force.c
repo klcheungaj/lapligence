@@ -47,7 +47,34 @@ static int llg_is_real_forced(double* target) {
     return 0;
 }
 
+// Counts (`add`) or uncounts the entry's reads on their rows, so that a check
+// of what it reads evaluates it again (force_dependency_changed).
+static LLG_OUTLYING void force_reads_watch(const llg_force_entry_t* entry, int add) {
+    for (int i = 0; i < entry->n_reads; i++) {
+        const llg_force_read_t* read = &entry->reads[i];
+        const void* key = read->is_real ? (const void*)read->real : (const void*)read->sig;
+        if (!key) continue;
+        if (add) {
+            llg_wait_source_t* source = wait_source_get(key);
+            if (source->checks == UINT32_MAX) {
+                llg_msg(LLG_MSG_INTERNAL, NULL, "force dependency count overflow");
+                abort();
+            }
+            wait_source_keep(source);
+            source->force_reads++;
+            source->checks++;
+        } else {
+            llg_wait_source_t* source = wait_source_find(key);
+            if (!source || !source->force_reads) continue;
+            source->force_reads--;
+            source->checks--;
+            wait_source_unkeep(source);
+        }
+    }
+}
+
 static void force_free_entry(llg_force_entry_t* entry) {
+    if (entry->reads) force_reads_watch(entry, 0);
     sv4_destroy(&entry->value);
     sv4_destroy_array(entry->masks, entry->masks ? (size_t)entry->n_parts : 0);
     free(entry->parts);
@@ -136,6 +163,7 @@ static llg_force_entry_t* force_prepare_packed(
     entry->eval = eval;
     entry->real_eval = NULL;
     entry->n_reads = n_reads;
+    force_reads_watch(entry, 1);
     return entry;
 }
 
@@ -287,7 +315,10 @@ int llg_force_source_active(const sv4_t* sig, const double* real) {
     return 0;
 }
 
-static void force_dependency_changed(sv4_t* sig, double* real, int is_real) {
+// The check of storage that live force expressions read (`force_reads` on
+// its row): each such expression is evaluated again once per check that sees
+// a change, and its targets are updated at once (T1-D11).
+static LLG_OUTLYING void force_dependency_changed(sv4_t* sig, double* real, int is_real) {
     for (int i = 0; i < g.force_count; i++) {
         llg_force_entry_t* entry = &g.force_table[i];
         if (entry->active && force_read_matches(entry, sig, real, is_real))
@@ -319,6 +350,7 @@ void llg_force_real(double* target, llg_force_real_eval_fn eval,
         if (g.force_table[i].active && g.force_table[i].is_real &&
             g.force_table[i].real_target == target) {
             entry = &g.force_table[i];
+            force_reads_watch(entry, 0);
             free(entry->reads);
             entry->reads = NULL;
             break;
@@ -340,6 +372,7 @@ void llg_force_real(double* target, llg_force_real_eval_fn eval,
     entry->real_eval = eval;
     entry->eval = NULL;
     entry->n_reads = n_reads;
+    force_reads_watch(entry, 1);
     force_evaluate_entry(entry);
     change_check();
     if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(0, NULL, 0, target);
@@ -418,6 +451,7 @@ void llg_force_real_value(double* target, double value) {
         if (g.force_table[i].active && g.force_table[i].is_real &&
             g.force_table[i].real_target == target) {
             entry = &g.force_table[i];
+            force_reads_watch(entry, 0);
             free(entry->reads);
             entry->reads = NULL;
             break;

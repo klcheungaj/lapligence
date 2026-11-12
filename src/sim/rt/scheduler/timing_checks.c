@@ -128,13 +128,7 @@ static void timing_heap_schedule(timing_heap_t* heap, llg_region_t region,
 
 static void timing_watch_add(llg_timing_check_set_t* set, uint32_t terminal) {
     llg_wait_source_t* source = wait_source_get(set->terminals[terminal].value);
-    if (!source->timing_keep) {
-        llg_wait_subscription_t* node = (llg_wait_subscription_t*)llg_checked_calloc(
-            1, sizeof(*node), "timing check watch");
-        node->source = source;
-        wait_subscription_insert(node, &source->head);
-        source->timing_keep = node;
-    }
+    wait_source_keep(source);
     llg_timing_watch_t* watch = (llg_timing_watch_t*)llg_checked_calloc(
         1, sizeof(*watch), "timing check watch");
     watch->set = set;
@@ -145,17 +139,13 @@ static void timing_watch_add(llg_timing_check_set_t* set, uint32_t terminal) {
 
 static void timing_watch_release(const void* key) {
     llg_wait_source_t* source = wait_source_find(key);
-    if (!source || !source->timing_keep) return;
+    if (!source || !source->timing) return;
     while (source->timing) {
         llg_timing_watch_t* next = source->timing->next;
         free(source->timing);
         source->timing = next;
     }
-    llg_wait_subscription_t* node = source->timing_keep;
-    source->timing_keep = NULL;
-    // Unlinking the last subscriber frees the row itself.
-    wait_subscription_unlink(node);
-    free(node);
+    wait_source_unkeep(source);
 }
 
 static void timing_ring(void) {
