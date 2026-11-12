@@ -37,6 +37,13 @@ fn real_array_methods_compare_numbers() {
 }
 
 #[test]
+fn real_array_case_equality_compares_element_bit_patterns() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_005/real_array_case_equality.out");
+    sim_cli::run_case_backend_parity(SUITE, "real_array_case_equality", expected, &[], &[]);
+}
+
+#[test]
 fn real_sampled_values_stay_numeric() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_005/real_sampled.out");
     sim_cli::run_case_backend_parity(SUITE, "real_sampled", expected, &[], &[]);
@@ -125,11 +132,6 @@ fn illegal_real_forms_stay_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_real_case_equality",
-        "case equality on a real operand in `tb` is illegal",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_real_array_case_equality",
         "case equality on a real operand in `tb` is illegal",
     );
     sim_cli::reject_case(

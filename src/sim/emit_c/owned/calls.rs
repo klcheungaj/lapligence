@@ -1121,6 +1121,15 @@ impl Frame<'_, '_> {
         if !reference.steps.is_empty() {
             acquire = self.scalar("void*", format!("llg_native_ref_bind({acquire})"));
         }
+        if reference.observed {
+            let IrElementRoot::Value(value) = &reference.root else {
+                return Err("an observed element reference must bind a native value".to_owned());
+            };
+            let marker = self
+                .record_marker(*value, true)?
+                .ok_or("an observed element reference names a record without a marker")?;
+            self.line(format!("llg_native_ref_observe({acquire}, {marker});"));
+        }
         let scope = self.scalar(
             "llg_value_scope_t*",
             "llg_value_scope_begin_object(sizeof(void*), llg_native_ref_scope_release)".to_owned(),

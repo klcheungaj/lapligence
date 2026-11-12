@@ -38,20 +38,9 @@ impl<'a> Codegen<'a> {
     /// bound to `records`, creating it on first use. The clone keeps the
     /// template's signature: callers still pass the reference descriptors,
     /// which the body ignores for the bound formals, and null parameters for
-    /// the bound records ([`IrCallArg::NativeRefBound`]).
-    pub(in super::super) fn task_specialization(
-        &mut self,
-        task: NodeId,
-        inst: NodeId,
-        statics: Vec<StaticRef>,
-        records: Vec<RecordRefBinding>,
-    ) -> Result<usize, String> {
-        self.task_specialization_watching(task, inst, statics, records, Vec::new())
-    }
-
-    /// [`Self::task_specialization`] whose formals at `watched` stay native
-    /// record `ref` formals and take the change marker of their element
-    /// (`IrFormal::record_marker`).
+    /// the bound records ([`IrCallArg::NativeRefBound`]). Formals at
+    /// `watched` stay native record `ref` formals and take the change marker
+    /// of their element (`IrFormal::record_marker`).
     pub(in super::super) fn task_specialization_watching(
         &mut self,
         task: NodeId,

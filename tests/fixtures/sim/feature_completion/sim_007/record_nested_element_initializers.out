@@ -1,0 +1,7 @@
+direct 11 'eleven' 13
+static before time 0 0 '' 0 0
+automatic 11 'eleven' 12 13
+static from initialized 2 'two' 3 22 4
+loop 1 'one'
+loop 2 'two'
+function 5

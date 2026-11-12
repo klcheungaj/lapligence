@@ -186,23 +186,32 @@ impl Codegen<'_> {
             // Subroutine native locals are bound only while their body
             // lowers; bind this declaration to its persistent value again.
             let previous = self.native_roots.insert(declaration, value);
-            let statement = self.lower_native_value_assignment(
-                &path,
-                declaration,
-                initializer,
-                false,
-                Operation::Assignment,
-            );
+            let statements = self.lower_staged_record_initializer(&path, initializer, |cg| {
+                let statement = cg
+                    .lower_native_value_assignment(
+                        &path,
+                        declaration,
+                        initializer,
+                        false,
+                        Operation::Assignment,
+                    )?
+                    .ok_or_else(|| {
+                        format!(
+                            "initializer of static record `{}` in `{path}` has no record assignment",
+                            cg.node(declaration).name
+                        )
+                    })?;
+                Ok(vec![statement])
+            });
             match previous {
                 Some(previous) => self.native_roots.insert(declaration, previous),
                 None => self.native_roots.remove(&declaration),
             };
-            let statement = statement?.ok_or_else(|| {
-                format!(
-                    "initializer of static record `{}` in `{path}` has no record assignment",
-                    self.node(declaration).name
-                )
-            })?;
+            let mut statements = statements?;
+            let statement = match statements.len() {
+                1 => statements.remove(0),
+                _ => IrStmt::Block(statements),
+            };
             self.record_initializer_source(declaration, initializer);
             let identity = self.declaration_identity(declaration)?;
             self.declaration_statements.push((identity, statement));

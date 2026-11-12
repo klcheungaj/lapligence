@@ -169,7 +169,7 @@ not a leaf-wise pattern is one record assignment in the static schedule.
 String object values (`IrObject::initial`) join that schedule at their
 declaration's slot. Native record `ref` formals:
 `native_values/record_refs.rs` module docs; specializations are keyed with
-`task_specialization` and install an `unpacked_aggregates` alias while the body
+`task_specialization_watching` and install an `unpacked_aggregates` alias while the body
 lowers. Element, run-time-indexed
 and subroutine-member actuals and method formals reject. Reject
 run-time native indices, NBAs to native roots (their

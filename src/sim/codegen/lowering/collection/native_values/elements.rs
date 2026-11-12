@@ -1112,10 +1112,9 @@ impl Codegen<'_> {
                         .is_some_and(|first| self.record_element_of(first).is_some())
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
-                self.db
-                    .array_select_path(node)
-                    .is_some_and(|(owner, _)| self.record_element_of(owner).is_some())
-                    || self.element_cell_select(node).is_some()
+                self.db.array_select_path(node).is_some_and(|(owner, _)| {
+                    self.record_element_of(owner).is_some() || self.names_element_member(owner)
+                }) || self.element_cell_select(node).is_some()
                     || self.names_element_member(*base)
             }
             NodeKind::Expr(
@@ -1177,17 +1176,17 @@ impl Codegen<'_> {
                     return Some((element, selection, path));
                 }
                 // A member array is named by a detached array node; the
-                // captured select path gives its element owner.
+                // captured select path gives its owner: the record element,
+                // or an element of a member array of it (`q[0].e[1].a[2]`).
                 let (element, selection, mut path) = match self.db.array_select_path(node) {
-                    Some((owner, members)) => (
-                        owner,
-                        self.record_element_of(owner)?,
-                        members
-                            .iter()
-                            .cloned()
-                            .map(AggregatePathPart::Member)
-                            .collect(),
-                    ),
+                    Some((owner, members)) => {
+                        let (element, selection, mut path) = match self.record_element_of(owner) {
+                            Some(selection) => (owner, selection, Vec::new()),
+                            None => self.element_member_parts(owner)?,
+                        };
+                        path.extend(members.iter().cloned().map(AggregatePathPart::Member));
+                        (element, selection, path)
+                    }
                     None => self.element_member_parts(*base)?,
                 };
                 for index in indices {
@@ -1466,14 +1465,16 @@ impl Codegen<'_> {
         let Some((owner, members)) = self.db.array_select_path(node) else {
             return Ok(None);
         };
-        let Some(selection) = self.record_element_of(owner) else {
-            return Ok(None);
+        // The owner is the record element or an element of a member array
+        // of it (`q[0].e[1].a[2][0]`).
+        let (selection, mut path) = match self.record_element_of(owner) {
+            Some(selection) => (selection, Vec::new()),
+            None => match self.element_member_parts(owner) {
+                Some((_, selection, path)) => (selection, path),
+                None => return Ok(None),
+            },
         };
-        let mut path: Vec<_> = members
-            .iter()
-            .cloned()
-            .map(AggregatePathPart::Member)
-            .collect();
+        path.extend(members.iter().cloned().map(AggregatePathPart::Member));
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
         for position in 0..=indices.len() {
             if let Some(leaf) = leaves.scalars.iter().find(|leaf| leaf.path == path) {
@@ -2043,6 +2044,64 @@ impl Codegen<'_> {
         self.stage_below_aliases(path, &mut before, &mut after, StageRoot::Initializer(node))?;
         debug_assert!(after.is_empty(), "an initializer writes back nothing");
         Ok(before)
+    }
+
+    /// Whether the declaration initializer `initializer` reads an element of
+    /// a nested container (`nas["x"][1]`) or a container member of an element,
+    /// which must be staged around it (see [`Self::stage_initializer`]),
+    /// outside any other staging.
+    pub(in crate::sim::codegen) fn initializer_stages(&self, initializer: NodeId) -> bool {
+        if !self.element_staging_possible
+            || !self.staged_element_members.is_empty()
+            || !self.staged_nested_elements.is_empty()
+        {
+            return false;
+        }
+        let (mut members, mut nested) = (Vec::new(), Vec::new());
+        if !self.stage_whole_read(initializer, &mut members, &mut nested) {
+            self.collect_staged_members(initializer, false, &mut members, &mut nested);
+        }
+        !members.is_empty() || !nested.is_empty()
+    }
+
+    /// Whether `declaration` is an unpacked record or union whose initializer
+    /// is a whole nested container element ([`Self::initializer_stages`]).
+    pub(in crate::sim::codegen) fn record_initializer_stages(
+        &self,
+        declaration: NodeId,
+        initializer: NodeId,
+    ) -> bool {
+        matches!(
+            self.query_descriptor(declaration).map(|descriptor| &descriptor.shape),
+            Some(TypeShape::Aggregate(layout))
+                if matches!(layout.kind, AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion)
+        ) && self.initializer_stages(initializer)
+    }
+
+    /// The statements `lower` gives for a record declaration initializer
+    /// `initializer`, with the nested container elements and element members
+    /// it reads staged around them as an assignment statement stages its
+    /// source (`rec_t z = nas["x"][1];`). Without anything to stage, or inside
+    /// another staging, the statements are `lower`'s alone.
+    pub(in crate::sim::codegen) fn lower_staged_record_initializer(
+        &mut self,
+        path: &str,
+        initializer: NodeId,
+        lower: impl FnOnce(&mut Self) -> Result<Vec<IrStmt>, String>,
+    ) -> Result<Vec<IrStmt>, String> {
+        if !self.initializer_stages(initializer) {
+            return lower(self);
+        }
+        let lowered = self
+            .stage_initializer(path, initializer)
+            .and_then(|before| Ok((before, lower(self)?)));
+        self.end_element_member_staging();
+        let (mut before, body) = lowered?;
+        if before.is_empty() {
+            return Ok(body);
+        }
+        before.extend(body);
+        Ok(vec![IrStmt::Block(before)])
     }
 
     /// Stage the queue and dynamic-array members of container record

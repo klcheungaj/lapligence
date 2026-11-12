@@ -341,6 +341,7 @@ impl Codegen<'_> {
             const_ref,
             companions: Vec::new(),
             stop_unselected,
+            observed: false,
         }))))
     }
 
@@ -584,16 +585,19 @@ impl Codegen<'_> {
     /// are each instance's specialization, so the ordinary dispatchers serve
     /// the call and code grows with distinct actuals. Returns the method and
     /// its representative function. Instances name their own formals, so a
-    /// binding carries over by formal position.
+    /// binding carries over by formal position. The formals at `watched` stay
+    /// native record `ref` formals and take their element's change marker
+    /// (see `task_specialization_watching`).
     pub(in crate::sim::codegen::lowering) fn record_ref_interface_method(
         &mut self,
         interface: usize,
         method: usize,
         function: NodeId,
         records: &[RecordRefBinding],
+        watched: Vec<usize>,
     ) -> Result<(usize, usize), String> {
         let positions = self.record_ref_positions(function, records)?;
-        let key = (interface, method, positions.clone());
+        let key = (interface, method, positions.clone(), watched.clone());
         if let Some(entry) = self.record_ref_interface_methods.get(&key) {
             return Ok(*entry);
         }
@@ -622,7 +626,13 @@ impl Codegen<'_> {
                 )
             })?;
             let bindings = self.record_ref_rebind(concrete, &positions)?;
-            let index = self.task_specialization(concrete, inst, Vec::new(), bindings)?;
+            let index = self.task_specialization_watching(
+                concrete,
+                inst,
+                Vec::new(),
+                bindings,
+                watched.clone(),
+            )?;
             if implementation == entry.function {
                 representative = Some(index);
             }

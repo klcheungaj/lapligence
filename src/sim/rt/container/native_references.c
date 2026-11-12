@@ -67,6 +67,8 @@ struct llg_native_ref {
     uint64_t watch_pass;
     /* The record a borrowed root stands for. */
     llg_value_t* origin;
+    /* The marker a root's waiters follow (llg_native_ref_observe). */
+    sv4_t* observed;
 };
 
 enum {
@@ -816,12 +818,13 @@ int llg_native_ref_packed_write(void* reference, sv4_t value) {
     return 1;
 }
 
-/* A container's readers follow its contents marker; other roots have only
- * the stores through this reference. */
+/* A container's readers follow its contents marker, and an observed class
+ * record property's its object's marker; other roots have only the stores
+ * through this reference. */
 sv4_t* llg_native_ref_dependency(const void* reference) {
     const llg_native_ref_t* ref = reference;
     const llg_native_ref_t* root = ref->parent;
-    sv4_t* contents = NULL;
+    sv4_t* contents = root ? root->observed : NULL;
     if (root && root->owner) {
         switch (root->kind) {
         case LLG_NATIVE_REF_DYNAMIC:
@@ -838,7 +841,19 @@ sv4_t* llg_native_ref_dependency(const void* reference) {
     return contents ? contents : (sv4_t*)&ref->marker;
 }
 
-sv4_t* llg_native_ref_marker(void* reference) {
+/* Only waits on record properties reach it (LLG_COLD, LLG_OUTLYING): the
+ * functions the other models run keep their code and addresses. Only models
+ * call it, so it stays out of their dynamic symbol table (LLG_INTERNAL). */
+LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_native_ref_observe(void* reference,
+                                                              sv4_t* marker) {
+    llg_native_ref_t* ref = reference;
+    (ref->parent ? ref->parent : ref)->observed = marker;
+}
+
+/* Out of line (LLG_OUTLYING): its slot behind llg_native_ref_dependency
+ * absorbs that function's observed-root branch, so the functions behind keep
+ * their addresses. */
+LLG_OUTLYING sv4_t* llg_native_ref_marker(void* reference) {
     return &((llg_native_ref_t*)reference)->marker;
 }
 

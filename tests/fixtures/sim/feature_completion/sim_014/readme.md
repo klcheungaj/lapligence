@@ -48,6 +48,21 @@ Language rules, rejected in both optimizer modes:
 
 - `neg_class_property_nba`: `h.x <= @e 5`. SV 6.21 forbids nonblocking
   writes to class properties; llg reports the property and the source location.
+- `neg_class_record_property_nba_whole`, `_member` and `_string`: `c.r <= v`,
+  `c.r.a <= #1 6` and `c.r.s <= @e "z"` on a record property with a string
+  member, run with `-D N=3` and `-D N=16` (both record storage forms). The same
+  SV 6.21 rule (`SystemVerilog-1800-2009.txt` L7007-7008: "members or elements of
+  dynamic variables—class properties and dynamically sized variables—shall not
+  be written with nonblocking, continuous, or procedural continuous
+  assignments"), decision S14-D5; llg reports the property and the location.
+  Industry-standard behaviour accepts the whole-record write (the 1800-2012
+  rule) and rejects the member writes because the record holds a string.
+- `neg_ref_wait_record_property_whole` and `_real` (FIN-001 R2): a task
+  waiting on a record `ref` formal bound to the whole record property `h.r`,
+  and one waiting on a `ref real` formal bound to `h.r.rv`, of a record with a
+  string member, run with `-D N=3` and `-D N=16`. Legal (§13.5.2), rejected
+  at the call: no store into the property reaches the formal's marker, and the
+  wait could never resume (SIM-009).
 - `neg_automatic_event_nba` and the FND-002 `neg_automatic_nba_witness`: an
   automatic task variable as an NBA target, with a repeated event control or a
   real value (SV 6.21, 13.3.2), reported by the frontend.
@@ -250,6 +265,8 @@ expression again and resumes when the value changed. The clauses, all in
 | `event_record_property` | Through the chain `d.c.r`: `posedge` at 1 (0 to 1, L11807 least significant bit); the store into `s` at 2 and into another object's record at 3 resume nothing; `negedge` at 4; `x` changes at 6; `a or s` at 7 (the store into `s`); `posedge` at 8 (2 to 3); `d.c = other` at 9 rebinds the handle, and `other.r.a` is 1 where the old object's was 3, so `@(d.c.r.a)` resumes with 1. Identical to industry-standard behaviour. |
 | `method_wait_record_property` | A method waits on its own record by bare name (1) and through `this` (2, after `set(4)` stores from another method); a derived class's method waits on the inherited record and the store goes through a base-class handle (3). Identical to industry-standard behaviour. |
 | `callee_wait_record_property` | L11837-11838 above (decision B2): `ready()` reads `r.s` through its receiver, `has(c, v)` reads `c.r.a` through a handle formal and `both` calls both. `h.r.a = 7` at 1 makes `has(h, 7)` true and changes it (`has=1 event=1`); `h.r.s = "go"` at 2 makes `ready()` and `both(h)` true (`ready=2 both=2`). Each waiter records its own time, so same-step order does not show. Some simulators follow only a call's arguments and never resume these waits. |
+| `ref_wait_record_property_member` (FIN-001 R2) | §13.5.2, §9.4.2: a task's `@(x)` on a `ref int` formal bound to `h.r.a` resumes at 2 when `h.r.a = 7`; the stores into `h.r.b`, `h.other`, `h.r.arr[1]` and `h.r.s` at 1 change other storage and resume nothing. A store through another formal bound to the same member (3), a `wait (x == 9)` that the first store (`8`) does not complete (5), a method waiting on its own `r.a` (6), an alias handle (7) and a virtual-interface method (8) resume too. Run with `-D N=3` and `-D N=16`. Agrees with industry-standard behaviour. |
+| `ref_wait_container_property_element` (FIN-001 R2) | The same for `ref int` formals bound to `c.fa[i]`, `c.q[i]`, `c.d[i]`, `c.pa[i].a`, `c.sa[k].arr[N-1]` and `c.sq[k].a`, and through a virtual-interface method: each resumes only at the second store, into its own element; the first store into another element or member (and a `push_back`) resumes nothing. Run with `-D N=3` and `-D N=16`. Agrees with industry-standard behaviour for the array, queue and dynamic-array forms; it does not support the record-array member forms. |
 | `record_property_stores` | One line per store: member and whole-record assignment (1, 2), an output record and an output member (3, 4: 13.5 L18754 "output // copy value out at end"), `++` and `+=` (5, 6), a string concatenation (7), `$sscanf` and `$sformat` targets (8, 9), a method of the object (10), the real member (11), stores through `ref` formals inside time-consuming tasks, seen when they are made (13, 14 the record; 16 an `int` member; 18 the string member: 13.5.2 L19140-19141 "changes are seen outside the subroutine immediately (before the subroutine returns)"), an assignment pattern (19) and the same pattern again (20: no value changes, no line). Identical to industry-standard behaviour. |
 | `static_record_waits` | A static task's record, named from the module by its hierarchical name: the task's own stores (1, 2), member stores (3, 4), `ref` actuals (6, 8) and a pattern (9); the `wait`s complete at 3 and 8. Identical to industry-standard behaviour. |
 | `static_record_nba_waits` | 4.9.4 L3536-3539 (a nonblocking assignment "always computes the updated value and schedules the update as an NBA update event"): each nonblocking store resumes the waiter in its own step (1, 2, 3). At 4 two nonblocking stores leave `a` at 7, which it already was: no line (decision T1-D11). At 5 only `x` changes. `a <= #2 9` issued at 6 commits at 8, after the line at 7 still shows 7. `always @*` (9.4.2.2 L11892-11894: "adding all nets and variables that are read by the statement") keeps `y` at `a + 1`: 8, then 10. Some simulators reject nonblocking stores into such a record, so this output follows the text. |

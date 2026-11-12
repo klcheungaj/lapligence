@@ -529,6 +529,17 @@ impl Validator<'_> {
                                     == (width, signed, two_state)
                         }
                     };
+                    if reference.observed
+                        && !matches!(
+                            (&reference.root, &reference.kind),
+                            (IrElementRoot::Value(_), IrElementRefKind::Packed { .. })
+                        )
+                    {
+                        return self.fail(
+                            arg_path,
+                            "only a packed member of a record value is an observed reference",
+                        );
+                    }
                     if !matches_formal
                         || !formal.is_ref()
                         || (reference.const_ref && !formal.const_ref)
@@ -560,9 +571,17 @@ impl Validator<'_> {
                             }
                         }
                         IrElementRoot::Value(value) => {
-                            if *value >= self.model.native_values.len() {
+                            let Some(storage) = self.model.native_values.get(*value) else {
                                 return self
                                     .fail(arg_path, "element reference value is out of bounds");
+                            };
+                            if reference.observed
+                                && !(storage.marker && storage.class_field.is_some())
+                            {
+                                return self.fail(
+                                    arg_path,
+                                    "observed element reference names no observed record property",
+                                );
                             }
                         }
                         IrElementRoot::Leaves { leaves, .. } => {

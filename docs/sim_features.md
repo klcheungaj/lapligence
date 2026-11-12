@@ -568,7 +568,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   [sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)).
   Other expressions (an `if` condition, a loop bound, a `return`, an
   initializer) bind nested elements and record-element members at each
-  evaluation.
+  evaluation; a record declaration initialized from a record element of a
+  nested container (`rec_t z = nas["x"][1]`, static or automatic, either
+  record storage form) binds it the same way.
   An associative array nested in an element (`int aa[string][int]`,
   `int qa[$][int]`) is bound the same way, so element access costs one lookup
   per level; it takes every method, whole reads and writes, patterns, `foreach`,
@@ -1259,8 +1261,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   numeric casts and ordinary `case` comparisons have paths. Real-to-integral
   conversion rounds half away from zero and keeps the low target bits;
   nonfinite reals convert to 0. Bitwise, reduction, shifts, concatenation,
-  case equality (also over real arrays), real selects, real edge descriptors
-  and `$rose/$fell` of reals reject as illegal. V §4.1.1 **[1995]**.
+  case equality of a real operand, real selects, real edge descriptors and
+  `$rose/$fell` of reals reject as illegal. Case equality of real fixed arrays
+  compares element bit patterns (decision R05-D4). V §4.1.1 **[1995]**.
 - 🟨 **Static and dynamic casts** — Typed, size and sign casts preserve width,
   state and conversion boundaries in admitted scalar/vector and fixed contexts.
   `$cast` supports packed/real values, enum membership against the complete
@@ -1871,7 +1874,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   integers, reals or strings (`ref_wait_unselected_*`, decision S13-D6); a
   callee that does not wait keeps the default of the element type.
   Virtual-interface methods take these actuals through a bound dispatch entry
-  ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)),
+  and a method waiting on an element-bound formal through one watching entry
+  per interface instance (`record_ref_interface_element_waits`).
   Record elements with queue or dynamic-array members bind through companion
   containers the runtime mirrors, at the member's size per change
   ([record_ref_container_member](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
@@ -1938,9 +1943,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   module, package, static, process or fork-shared variable, class property or
   array element the actual names, and a handle store through a `ref` formal
   wakes waiters at the store (decisions S09-D1..D7); branches waiting on a
-  parent's automatic string or handle wake on its writes. Native record `ref`
-  formals waited on with class-property or task-automatic records reject
-  explicitly
+  parent's automatic string or handle wake on its writes. A packed `ref`
+  formal a task waits on, bound to an element of a container class property
+  or a member of a record class property, wakes on direct stores: the
+  property publishes on its object's marker, which the reference follows
+  (`ref_wait_*` in sim_014). Native record `ref` formals waited on with
+  whole class-property or task-automatic records, and column-form ones with
+  element actuals holding native members, reject explicitly
   ([known issue](known_issues.md#waited-ref-formals-with-unobservable-actuals)).
   Event expressions over by-value formals copy them when the control arms;
   event formals of class methods, virtual ones included, take the typed path

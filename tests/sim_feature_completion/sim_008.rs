@@ -318,6 +318,53 @@ fn module_records_bind_ref_formals_of_virtual_interface_methods() {
     sim_cli::run_case_backend_parity(SUITE, "record_ref_interface_method", expected, &[], &[]);
 }
 
+/// FIN-001 R2: tasks waiting on a record `ref` formal bound to an element
+/// holding a string resume in the per-cell form; the column form (16 cells)
+/// has no change to follow and rejects at the call instead of waiting
+/// forever.
+#[test]
+fn waited_record_refs_bound_to_native_elements() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_wait_native_elements.out"
+    );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "record_ref_wait_native_elements",
+        expected,
+        &["-D", "N=3"],
+        &[],
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "record_ref_wait_native_elements",
+        "record_ref_wait_native_elements.sv:27:9 in `tb`",
+        &["-D", "N=16"],
+    );
+}
+
+/// FIN-001 R2: virtual-interface methods waiting on a record `ref` formal
+/// bound to an element. The column form (16 cells) has no change to follow
+/// for an element holding a string and rejects at the call.
+#[test]
+fn virtual_interface_methods_wait_on_element_bound_record_refs() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_interface_element_waits.out"
+    );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "record_ref_interface_element_waits",
+        expected,
+        &["-D", "N=3"],
+        &[],
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "record_ref_interface_element_waits",
+        "record_ref_interface_element_waits.sv:43:11 in `tb`",
+        &["-D", "N=16"],
+    );
+}
+
 #[test]
 fn unbindable_record_ref_actuals_are_rejected_explicitly() {
     sim_cli::reject_case(

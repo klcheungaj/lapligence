@@ -290,6 +290,81 @@ fn neg_class_property_nba() {
 }
 
 #[test]
+fn neg_class_record_property_nba() {
+    // Language rule (SV 6.21) for a record property with a string member,
+    // whole or one member, in both record storage forms (FIN-001 R2).
+    for cells in ["N=3", "N=16"] {
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "neg_class_record_property_nba_whole",
+            "neg_class_record_property_nba_whole.sv:16:8 in `tb` is illegal (IEEE 1800-2009 6.21",
+            &["-D", cells],
+        );
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "neg_class_record_property_nba_member",
+            "neg_class_record_property_nba_member.sv:16:8 in `tb` is illegal (IEEE 1800-2009 6.21",
+            &["-D", cells],
+        );
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "neg_class_record_property_nba_string",
+            "neg_class_record_property_nba_string.sv:16:8 in `tb` is illegal (IEEE 1800-2009 6.21",
+            &["-D", cells],
+        );
+    }
+}
+
+/// FIN-001 R2: a `ref int` formal a task waits on, bound to a member of a
+/// record property or to an element of a container property, resumes on a
+/// direct store, in both record storage forms.
+#[test]
+fn waited_ref_formals_bound_into_class_properties_resume() {
+    let members = include_str!(
+        "../fixtures/sim/feature_completion/sim_014/ref_wait_record_property_member.out"
+    );
+    let elements = include_str!(
+        "../fixtures/sim/feature_completion/sim_014/ref_wait_container_property_element.out"
+    );
+    for cells in ["N=3", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "ref_wait_record_property_member",
+            members,
+            &["-D", cells],
+            &[],
+        );
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "ref_wait_container_property_element",
+            elements,
+            &["-D", cells],
+            &[],
+        );
+    }
+}
+
+/// FIN-001 R2: waited `ref` formals bound into a record property that no
+/// store would resume reject at the call instead of waiting forever.
+#[test]
+fn neg_ref_wait_record_property() {
+    for cells in ["N=3", "N=16"] {
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "neg_ref_wait_record_property_whole",
+            "neg_ref_wait_record_property_whole.sv:20:",
+            &["-D", cells],
+        );
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "neg_ref_wait_record_property_real",
+            "neg_ref_wait_record_property_real.sv:21:9 cannot be observed by a wait or event expression",
+            &["-D", cells],
+        );
+    }
+}
+
+#[test]
 fn neg_automatic_event_nba() {
     // Language rule (SV 6.21, 10.4.2), reported by the frontend.
     sim_cli::reject_case(

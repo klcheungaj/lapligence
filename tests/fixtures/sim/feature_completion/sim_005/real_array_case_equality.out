@@ -1,0 +1,7 @@
+ra===rb 1 ra===rc 0 ra!==rc 1 ra!==rb 0 ra==rb 1 ra!=rc 1
+slice 0 1
+rows 1 0 1
+shortreal 1 0
+signed zero == 1 === 0
+nan == 0 === 1 !== 0
+condition

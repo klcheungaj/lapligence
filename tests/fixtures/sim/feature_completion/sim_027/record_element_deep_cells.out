@@ -1,0 +1,18 @@
+oq[0].e[1].arr[2] 42
+after write 43
+run-time 44 44
+outer run-time 45 45
+increment 46
+bits 94 1 5
+other cells 0 0 0
+dynamic 42 46
+associative 47 42
+oa[1][a].e[1].t[2] 7
+after write 8
+run-time 9 9
+nested cells 10 0 1
+string record 5 6 six
+string record writes 11 12 13 six
+whole record 3 three 4
+its members 3 three 4
+member writes 9 x

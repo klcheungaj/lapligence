@@ -31,7 +31,7 @@ including inherited lifetimes and loop/block scopes.
 Subroutine calls always use the typed `IrFunc`, timed or disabling included;
 there is no call-site expansion (removed by SIM-009-A03). A `ref` formal read by
 an event control binds a whole-signal actual statically: each distinct actual
-signal gets one cloned task (`task_specialization`, lowered after all call
+signal gets one cloned task (`task_specialization_watching`, lowered after all call
 sites); otherwise the typed body follows whatever its descriptor names
 (`IrDependency::RefFormal`): a variable, fixed-array element, class property,
 container element (its container's contents marker), member view or unpacked

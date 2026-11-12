@@ -690,6 +690,7 @@ impl Codegen<'_> {
             const_ref,
             companions: Vec::new(),
             stop_unselected: None,
+            observed: false,
         }))))
     }
 

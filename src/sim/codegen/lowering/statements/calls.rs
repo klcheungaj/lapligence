@@ -116,6 +116,37 @@ impl EmitCtx<'_, '_> {
         // formals select a specialization (`record_refs`).
         let records = self.cg.record_ref_bindings(&formals, &bound);
         let dispatch = self.cg.record_ref_dispatch(h, virtual_call_info.is_some());
+        // A column formal bound to a record that holds native members (an
+        // element, or a record property) reads it through its address, which
+        // publishes no change: a waiter on the formal could never resume.
+        let unwatched_cell = records.iter().find(|record| {
+            record.cell
+                && self.cg.fixed_value_width(record.formal).is_none()
+                && formals
+                    .iter()
+                    .position(|(formal, _)| *formal == record.formal)
+                    .is_some_and(|index| match dispatch {
+                        RecordRefDispatch::Virtual => {
+                            self.cg.any_override_waits_on_record_ref(ft, callee_inst)
+                        }
+                        _ => self.cg.waits_on_ref_formal(ft, callee_inst, index),
+                    })
+        });
+        if let Some(record) = unwatched_cell {
+            let actual = formals
+                .iter()
+                .position(|(formal, _)| *formal == record.formal)
+                .map_or(h, |index| bound[index].expr);
+            let node = self.cg.node(actual);
+            return Err(format!(
+                "task `{name}` waits on record `ref` formal `{}` of the column form (16 or more cells), whose actual holds string, real, handle or container members and publishes no change that form follows: the wait could never resume (SIM-009) at {}:{}:{} in `{}`",
+                self.cg.node(record.formal).name,
+                node.file.as_deref().unwrap_or("<unknown>"),
+                node.line,
+                node.col,
+                self.cg.source_path(&self.path)
+            ));
+        }
         if let Some(select) = self.cg.record_ref_select(&self.path, &formals, &bound)? {
             let waits = match dispatch {
                 RecordRefDispatch::Virtual => {
@@ -149,9 +180,13 @@ impl EmitCtx<'_, '_> {
             .as_mut()
             .filter(|_| !records.is_empty())
         {
-            let (method, function) =
-                self.cg
-                    .record_ref_interface_method(call.interface, call.method, ft, &records)?;
+            let (method, function) = self.cg.record_ref_interface_method(
+                call.interface,
+                call.method,
+                ft,
+                &records,
+                Vec::new(),
+            )?;
             call.method = method;
             specialized = Some(function);
         }
@@ -178,15 +213,33 @@ impl EmitCtx<'_, '_> {
         // A waited record no specialization binds is followed through its
         // reference's marker: an element, or a formal that has one.
         if specialized.is_none() && waits {
+            // Every instance of an interface runs the same method body.
             let waited = match dispatch {
-                RecordRefDispatch::Direct => shape.static_refs.clone(),
+                RecordRefDispatch::Direct | RecordRefDispatch::Interface => {
+                    shape.static_refs.clone()
+                }
                 _ => self.cg.native_record_formals(&formals),
             };
             let watched = self.cg.watched_record_formals(&formals, &waited);
-            if dispatch == RecordRefDispatch::Interface || watched.is_empty() {
+            if watched.is_empty() {
                 return Err(self.record_wait_error(h, name));
             }
-            specialized = Some(if dispatch == RecordRefDispatch::Virtual {
+            // A virtual-interface method dispatches to one watching
+            // specialization per interface instance.
+            if let Some(call) = call_receiver.virtual_interface.as_mut() {
+                let (method, function) = self.cg.record_ref_interface_method(
+                    call.interface,
+                    call.method,
+                    ft,
+                    &[],
+                    watched.clone(),
+                )?;
+                call.method = method;
+                specialized = Some(function);
+            }
+            specialized = Some(if let Some(function) = specialized {
+                function
+            } else if dispatch == RecordRefDispatch::Virtual {
                 self.cg.record_ref_family(ft, Vec::new(), watched)?
             } else {
                 self.cg.task_specialization_watching(
@@ -766,6 +819,17 @@ impl EmitCtx<'_, '_> {
                         ref_static,
                     )?);
                     self.stop_if_unselected(&mut out_args, *io, callee_inst, idx, h);
+                    if self
+                        .cg
+                        .enclosing_func_task(*io)
+                        .is_some_and(|task| self.cg.waits_on_ref_formal(task, callee_inst, idx))
+                    {
+                        self.cg.observe_waited_ref_actual(
+                            &self.path,
+                            bound[idx].expr,
+                            out_args.last_mut(),
+                        )?;
+                    }
                 }
                 if !bound[idx].string && !matches!(out_args.last(), Some(IrCallArg::ElementRef(_)))
                 {

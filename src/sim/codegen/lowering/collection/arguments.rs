@@ -561,7 +561,29 @@ impl<'a> Codegen<'a> {
         }))
     }
 
+    /// The descriptor argument of a `ref` formal. A failure names the
+    /// actual's source location unless it already names one.
     pub(in super::super) fn lower_ref_arg(
+        &mut self,
+        scope_path: &str,
+        bound: &BoundArg,
+        const_ref: bool,
+        ref_static: bool,
+    ) -> Result<IrCallArg, String> {
+        self.lower_ref_descriptor(scope_path, bound, const_ref, ref_static)
+            .map_err(|error| {
+                let file = self.node(bound.expr).file.as_deref();
+                if crate::sim::codegen::error::is_located(&error)
+                    || file.is_none_or(|file| error.contains(file))
+                {
+                    error
+                } else {
+                    crate::sim::codegen::error::located(&self.source_location(bound.expr), error)
+                }
+            })
+    }
+
+    fn lower_ref_descriptor(
         &mut self,
         scope_path: &str,
         bound: &BoundArg,
