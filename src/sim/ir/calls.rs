@@ -234,6 +234,11 @@ pub struct IrElementRef {
     /// Where the run stops, with index checks on, when the index selects no
     /// element.
     pub(in crate::sim) stop_unselected: Option<IrRefStop>,
+    /// The callee waits on the formal and the root is a class record
+    /// property some wait observes ([`IrElementRoot::Value`] with
+    /// `IrNativeValue::marker`): direct stores into the property toggle only
+    /// its object's marker, so the reference follows that marker.
+    pub(in crate::sim) observed: bool,
 }
 
 /// Message of the run-time error for a waited `ref` formal whose actual

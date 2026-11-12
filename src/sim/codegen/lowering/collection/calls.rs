@@ -156,7 +156,14 @@ impl<'a> Codegen<'a> {
         let function = match virtual_call_info.as_mut().filter(|_| !records.is_empty()) {
             Some((interface, method, ..)) => {
                 let (bound_method, function) =
-                    self.record_ref_interface_method(*interface, *method, ft, &records)?;
+                    // A function cannot wait, so no formal is watched.
+                    self.record_ref_interface_method(
+                        *interface,
+                        *method,
+                        ft,
+                        &records,
+                        Vec::new(),
+                    )?;
                 *method = bound_method;
                 function
             }

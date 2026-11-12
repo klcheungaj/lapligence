@@ -315,15 +315,25 @@ fn neg_class_record_property_nba() {
     }
 }
 
-/// FIN-001 R2: a `ref int` formal a task waits on, bound to an element of a
-/// container property, resumes on a direct store, in both record storage
-/// forms.
+/// FIN-001 R2: a `ref int` formal a task waits on, bound to a member of a
+/// record property or to an element of a container property, resumes on a
+/// direct store, in both record storage forms.
 #[test]
 fn waited_ref_formals_bound_into_class_properties_resume() {
+    let members = include_str!(
+        "../fixtures/sim/feature_completion/sim_014/ref_wait_record_property_member.out"
+    );
     let elements = include_str!(
         "../fixtures/sim/feature_completion/sim_014/ref_wait_container_property_element.out"
     );
     for cells in ["N=3", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "ref_wait_record_property_member",
+            members,
+            &["-D", cells],
+            &[],
+        );
         sim_cli::run_case_backend_parity(
             SUITE,
             "ref_wait_container_property_element",

@@ -180,9 +180,13 @@ impl EmitCtx<'_, '_> {
             .as_mut()
             .filter(|_| !records.is_empty())
         {
-            let (method, function) =
-                self.cg
-                    .record_ref_interface_method(call.interface, call.method, ft, &records)?;
+            let (method, function) = self.cg.record_ref_interface_method(
+                call.interface,
+                call.method,
+                ft,
+                &records,
+                Vec::new(),
+            )?;
             call.method = method;
             specialized = Some(function);
         }
@@ -209,15 +213,33 @@ impl EmitCtx<'_, '_> {
         // A waited record no specialization binds is followed through its
         // reference's marker: an element, or a formal that has one.
         if specialized.is_none() && waits {
+            // Every instance of an interface runs the same method body.
             let waited = match dispatch {
-                RecordRefDispatch::Direct => shape.static_refs.clone(),
+                RecordRefDispatch::Direct | RecordRefDispatch::Interface => {
+                    shape.static_refs.clone()
+                }
                 _ => self.cg.native_record_formals(&formals),
             };
             let watched = self.cg.watched_record_formals(&formals, &waited);
-            if dispatch == RecordRefDispatch::Interface || watched.is_empty() {
+            if watched.is_empty() {
                 return Err(self.record_wait_error(h, name));
             }
-            specialized = Some(if dispatch == RecordRefDispatch::Virtual {
+            // A virtual-interface method dispatches to one watching
+            // specialization per interface instance.
+            if let Some(call) = call_receiver.virtual_interface.as_mut() {
+                let (method, function) = self.cg.record_ref_interface_method(
+                    call.interface,
+                    call.method,
+                    ft,
+                    &[],
+                    watched.clone(),
+                )?;
+                call.method = method;
+                specialized = Some(function);
+            }
+            specialized = Some(if let Some(function) = specialized {
+                function
+            } else if dispatch == RecordRefDispatch::Virtual {
                 self.cg.record_ref_family(ft, Vec::new(), watched)?
             } else {
                 self.cg.task_specialization_watching(
@@ -802,8 +824,11 @@ impl EmitCtx<'_, '_> {
                         .enclosing_func_task(*io)
                         .is_some_and(|task| self.cg.waits_on_ref_formal(task, callee_inst, idx))
                     {
-                        self.cg
-                            .observe_waited_ref_actual(&self.path, bound[idx].expr)?;
+                        self.cg.observe_waited_ref_actual(
+                            &self.path,
+                            bound[idx].expr,
+                            out_args.last_mut(),
+                        )?;
                     }
                 }
                 if !bound[idx].string && !matches!(out_args.last(), Some(IrCallArg::ElementRef(_)))

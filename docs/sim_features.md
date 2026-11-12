@@ -1874,7 +1874,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   integers, reals or strings (`ref_wait_unselected_*`, decision S13-D6); a
   callee that does not wait keeps the default of the element type.
   Virtual-interface methods take these actuals through a bound dispatch entry
-  ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  ([record_ref_interface_method](../tests/fixtures/sim/feature_completion/sim_008/readme.md)),
+  and a method waiting on an element-bound formal through one watching entry
+  per interface instance (`record_ref_interface_element_waits`).
   Record elements with queue or dynamic-array members bind through companion
   containers the runtime mirrors, at the member's size per change
   ([record_ref_container_member](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
@@ -1941,9 +1943,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   module, package, static, process or fork-shared variable, class property or
   array element the actual names, and a handle store through a `ref` formal
   wakes waiters at the store (decisions S09-D1..D7); branches waiting on a
-  parent's automatic string or handle wake on its writes. Native record `ref`
-  formals waited on with class-property or task-automatic records reject
-  explicitly
+  parent's automatic string or handle wake on its writes. A packed `ref`
+  formal a task waits on, bound to an element of a container class property
+  or a member of a record class property, wakes on direct stores: the
+  property publishes on its object's marker, which the reference follows
+  (`ref_wait_*` in sim_014). Native record `ref` formals waited on with
+  whole class-property or task-automatic records, and column-form ones with
+  element actuals holding native members, reject explicitly
   ([known issue](known_issues.md#waited-ref-formals-with-unobservable-actuals)).
   Event expressions over by-value formals copy them when the control arms;
   event formals of class methods, virtual ones included, take the typed path

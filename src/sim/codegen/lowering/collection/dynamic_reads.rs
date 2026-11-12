@@ -25,7 +25,7 @@
 //! located error.
 
 use super::*;
-use crate::sim::ir::IrNativeAccessKind;
+use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrNativeAccessKind};
 
 mod report_plan;
 
@@ -470,13 +470,17 @@ impl Codegen<'_> {
     /// names storage inside a class object. The waiter follows the
     /// reference's own marker: an element of a container property
     /// (`c.q[i]`, `c.a[i].m`) takes the container's marker, which the
-    /// property then publishes on its object. A binding into a record
-    /// property (`c.r.a`) has no marker a direct store reaches, so the call
-    /// rejects rather than waiting forever.
+    /// property then publishes on its object. A packed member of a record
+    /// property (`c.r.a`) binds a reference to the property's value, which
+    /// then follows its object's marker ([`IrElementRef::observed`]). Any
+    /// other binding into a record property has no marker a direct store
+    /// reaches, so the call rejects rather than waiting forever. `argument`
+    /// is the lowered actual.
     pub(in crate::sim::codegen) fn observe_waited_ref_actual(
         &mut self,
         path: &str,
         actual: NodeId,
+        argument: Option<&mut IrCallArg>,
     ) -> Result<(), String> {
         let mut node = actual;
         loop {
@@ -507,6 +511,18 @@ impl Codegen<'_> {
                 return Ok(());
             }
             if let Some(field) = self.class_record_property(node) {
+                let receiver = self.class_receiver_for(path, node, field).ok();
+                if let (Some(receiver), Some(IrCallArg::ElementRef(reference))) =
+                    (receiver, argument)
+                {
+                    if matches!(reference.root, IrElementRoot::Value(_))
+                        && matches!(reference.kind, IrElementRefKind::Packed { .. })
+                    {
+                        self.class_record_dependencies(receiver, field);
+                        reference.observed = true;
+                        return Ok(());
+                    }
+                }
                 return Err(self.unobservable_read(
                     path,
                     actual,

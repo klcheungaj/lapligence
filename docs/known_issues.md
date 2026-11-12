@@ -1571,25 +1571,34 @@ not wake.
 
 ## Waited `ref` formals with unobservable actuals
 
-**Status:** narrowed by SIM-013 and SIM-009-A03 (the call-site expansion is
-gone; every remaining form rejects at the call with its location).
+**Status:** narrowed by SIM-013, SIM-009-A03 (the call-site expansion is
+gone; every remaining form rejects at the call with its location) and FIN-001
+R2.
 
 ### Symptom
 
-Two legal forms reject explicitly instead of running:
+These legal forms reject explicitly instead of running:
 
 - A task waiting on a member of a native record `ref` formal (an unpacked
-  structure with a string, container or class member) called with a record
-  that is a class property, a task-automatic variable or an array element
+  structure with a string, container or class member) called with a whole
+  record that is a class property or a task-automatic variable
   ("waits on a native
   record `ref` formal, so each of its record actuals must be a module, static
-  or procedural-block record").
+  or procedural-block record"). In the column form (16 or more cells), also
+  one called with an element of a fixed array, queue, dynamic array or class
+  property, directly or through a virtual interface ("of the column form ...
+  publishes no change that form follows"); the per-cell form serves elements.
+- A task waiting on a `ref real` formal bound to a real member of such a
+  record property (`h.r.rv`; "storage of record class property ... cannot be
+  observed").
 - `@(s)` on a subroutine string or handle that is neither a `ref` formal nor
   shared with a fork branch (only the waiting process could change it).
 
 Everything else takes the typed call path: packed and real `ref` formals
 bound to variables, fixed-array, queue, dynamic and associative array
-elements, unpacked-structure members and class properties, unpacked
+elements, unpacked-structure members and class properties (also elements of
+container class properties, and members of record properties whose object
+marker a packed `ref` formal then follows), unpacked
 aggregate and virtual-interface `ref` formals, and string and handle `ref`
 formals bound to module, static, process or fork-shared variables, class
 properties and array elements. Handle stores through a `ref` formal publish at
@@ -1599,7 +1608,8 @@ the store.
 
 A native record `ref` formal's body reads leaves that only a record
 specialization binds; class-property and automatic records have no static
-leaves.
+leaves. A column-form formal takes an element holding native members by
+address, with no marker beside it.
 
 ### Intended direction
 
@@ -1608,7 +1618,10 @@ Pass a native record's leaf markers with the record value.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_009/neg_record_ref_wait_actual.sv`,
-`neg_string_event_control.sv`.
+`neg_string_event_control.sv`;
+`sim_014/neg_ref_wait_record_property_whole.sv` and
+`neg_ref_wait_record_property_real.sv`;
+`sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
 
 ## Rebinding a class event property through an output formal publishes at the return
 
@@ -1912,8 +1925,9 @@ limits apply to the form named:
   row of a multidimensional member array of a queue element at a run-time index
   (`q[0].a[k] = '{1, 2}`); assign through a record variable first. A whole member
   array of an element written through an event control (`m.e[1].a <= @(e) v`).
-- both forms: a virtual-interface method that waits on a record `ref` formal bound
-  to an element.
+- column form: a task or virtual-interface method that waits on a record `ref`
+  formal bound to an element holding native members rejects
+  ([waited `ref` formals](#waited-ref-formals-with-unobservable-actuals)).
 - per-cell form, below 16 cells: a whole record assigned to or read from an
   element of a member array at a run-time index (`r.rows[i] = x`), and two
   continuous assignments to separate bits of one member of an element of an

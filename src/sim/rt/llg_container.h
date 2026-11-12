@@ -772,6 +772,12 @@ sv4_t* llg_native_ref_dependency(const void* reference);
 /* The change marker of one reference: it toggles when this element changes,
  * through the reference or the container, and never for other elements. */
 sv4_t* llg_native_ref_marker(void* reference);
+/* A waited reference into a class record property, bound right after
+ * llg_native_ref_bind: direct stores into the property toggle only `marker`,
+ * its object's marker, so waiters on the reference follow `marker` instead
+ * of the reference's own. Stores through the reference reach `marker` through
+ * the call's llg_record_watch_t. `marker` must outlive the reference. */
+void llg_native_ref_observe(void* reference, sv4_t* marker);
 /* The marker of a record reference a wait follows. It toggles after any change
  * of a container (see llg_native_refs_publish_watched) and the wait re-reads
  * the record. */
