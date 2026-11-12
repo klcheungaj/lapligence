@@ -134,8 +134,9 @@ fn locals_disables_actions_and_end_across_domains() {
     );
 }
 
-/// A02 negatives: the four 16.13.17 restrictions, and the located limit for
-/// recursion through local variable formals.
+/// A02 negatives: the four 16.13.17 restrictions, and the located limits
+/// for recursion through local variable formals, for a re-entry that repeats
+/// no enclosing expansion and for a re-entry with live property locals.
 #[test]
 fn illegal_recursive_properties_are_rejected() {
     sim_cli::reject_case(
@@ -166,6 +167,18 @@ fn illegal_recursive_properties_are_rejected() {
         SUITE,
         "neg_rec_local_formal",
         "recursive property `count` with local variable formal arguments at",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_rec_reentry_args",
+        "neg_rec_reentry_args.sv:10:3 does not repeat an enclosing expansion with the same \
+         actual arguments, which llg does not support (SV 16.13.17)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_rec_reentry_locals",
+        "neg_rec_reentry_locals.sv:12:3 is evaluated with property local variables, which llg \
+         does not support (SV 16.13.17)",
     );
 }
 
