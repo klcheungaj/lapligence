@@ -610,12 +610,18 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn is_foreach_iterator(&self, node: NodeId) -> bool {
-        self.db.node_ids().any(|id| match self.kind(id) {
-            NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => {
-                vars.iter().flatten().any(|variable| *variable == node)
-            }
-            _ => false,
-        })
+        self.foreach_iterators
+            .get_or_init(|| {
+                self.db
+                    .node_ids()
+                    .filter_map(|id| match self.kind(id) {
+                        NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => Some(vars),
+                        _ => None,
+                    })
+                    .flat_map(|vars| vars.iter().flatten().copied())
+                    .collect()
+            })
+            .contains(&node)
     }
 
     /// Resolve a string loop iterator through its lexical statement scopes.

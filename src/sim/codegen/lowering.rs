@@ -2315,6 +2315,9 @@ struct Codegen<'a> {
     /// member path, each member behind the hierarchy separator.
     wave_block_records: Vec<(NodeId, usize, String)>,
     wave_unnamed_blocks: std::cell::OnceCell<HashMap<NodeId, u32>>,
+    /// The iterator variables of every `foreach`, built on first use: local
+    /// collection asks for each node of every subroutine body.
+    foreach_iterators: std::cell::OnceCell<HashSet<NodeId>>,
     /// Assertion action helpers are registered by the runtime and must not
     /// also be spawned as ordinary design processes at time zero.
     assertion_action_procs: HashSet<String>,
@@ -2746,6 +2749,7 @@ impl<'a> Codegen<'a> {
             wave_subroutine_statics: Vec::new(),
             wave_block_records: Vec::new(),
             wave_unnamed_blocks: std::cell::OnceCell::new(),
+            foreach_iterators: std::cell::OnceCell::new(),
             assertion_action_procs: HashSet::new(),
             checker_free: Vec::new(),
             free_set_plans: Vec::new(),
