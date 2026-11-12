@@ -234,6 +234,58 @@ fn protocol_violations_are_fatal_errors() {
     );
 }
 
+/// SV -> C -> SV recursion takes a native stack frame per level; the
+/// simulator's limit of 256 subroutine activations bounds it with a run-time
+/// error, and the run goes on.
+#[test]
+fn recursion_through_c_stops_at_the_recursion_limit() {
+    let directory = sim_harness::TempDir::new("sim041-recursion").expect("temporary directory");
+    let Some(library) = companion(&directory, "recursion") else {
+        return;
+    };
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "recursion",
+        &["--dpi-lib", &library],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(0), "{label}: {stderr}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "depth 40: 40\ndepth 1000 returned\n",
+                "{label}: {stderr}"
+            );
+            assert!(
+                stderr.contains("recursion limit exceeded"),
+                "{label}: {stderr}"
+            );
+        },
+    );
+}
+
+/// An export called by foreign code outside any import call chain (here a
+/// VPI system task linked from a static archive, on every host) is a fatal
+/// error (35.5.3).
+#[test]
+fn export_called_outside_a_call_chain_is_fatal() {
+    let directory = sim_harness::TempDir::new("sim041-outside").expect("temporary directory");
+    let archive = static_companion(&directory, "outside");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "neg_export_outside_chain",
+        &[
+            "--define-system-task",
+            "task $outside()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &fatal_after(
+            "start\n",
+            "ERROR: [SIM-017] DPI-C export `err_inc` was called outside a DPI-C import call; only a context import call chain may call exported subroutines (SV 35.5.3)",
+        ),
+    );
+}
+
 /// A library that calls exports the design does not declare is named at a
 /// link: the model's on Unix hosts, the DLL's own on Windows (the design's
 /// import library lacks them).

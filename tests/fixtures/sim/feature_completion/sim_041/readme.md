@@ -247,6 +247,20 @@ mandates no check, and the call cannot be checked when the model is compiled,
 so the task runs and returns 0 (35.9 a), decision S41-D8): `start`, then
 `after r=0 ticks=1`.
 
+`neg_export_outside_chain` (companion `outside.c`, a VPI application linked
+as a static archive): the calltf of `$outside` calls the export `err_inc`
+while no import call is active. 35.5.3 (L55774-55780) describes export calls
+only inside an import call chain ("This nested invocation of inter-language
+and intra-language calls is considered a part of a single import call
+chain"); with no chain there is no context scope, and llg reports a fatal
+error after `start` (an llg choice; the text is silent).
+
+`recursion` (companion `recursion.c`): `rc_down` (C) and `rc_up` (SV) call
+each other, each adding 1 until `n` is 0, so `rc_down(40)` is 40. Every
+level is a native stack frame; at 1000 levels llg's limit of 256 subroutine
+activations (an implementation limit; the text sets none) reports
+"recursion limit exceeded" and the run continues: `depth 1000 returned`.
+
 `neg_missing_export`: `errors.c` calls `err_tick` and `err_kill`, which the
 design does not export; the model link names both.
 

@@ -81,6 +81,43 @@ fn suspended_chains_follow_the_disable_protocol() {
     );
 }
 
+/// The foreign code of a suspendable import runs on a stack of
+/// `LLG_DPI_CONTEXT_STACK_BYTES` (8 MiB by default), not on the platform's
+/// default thread stack (musl 128 KiB, macOS 512 KiB, Windows 1 MiB): a
+/// 6 MiB frame fits. The model flag sets the size: with 16 MiB a 12 MiB
+/// frame fits, which the 8 MiB default would not hold.
+#[test]
+fn context_stacks_have_the_configured_size() {
+    let directory = sim_harness::TempDir::new("adv018-stack").expect("temporary directory");
+    let Some(library) = companion(&directory, "context_stack") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "context_stack",
+        include_str!("../fixtures/sim/feature_completion/adv_018/context_stack.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+    let size = "-DLLG_DPI_CONTEXT_STACK_BYTES=16777216";
+    let cflags = std::env::var("LLG_CFLAGS")
+        .map_or_else(|_| size.to_owned(), |flags| format!("{flags} {size}"));
+    let output = sim_cli::invoke_with_env(
+        SUITE,
+        "context_stack",
+        true,
+        &["--dpi-lib", &library, "--define", "BIG"],
+        &[("LLG_CFLAGS", &cflags)],
+        &[],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "5 pages=3072\n");
+}
+
 /// A fatal error after the output that precedes it.
 fn fatal_after(
     stdout: &'static str,
