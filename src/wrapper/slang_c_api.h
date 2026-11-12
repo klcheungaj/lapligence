@@ -325,8 +325,9 @@ typedef struct {
   uint64_t initializer_constant_id;
   /* The typedef the member's declared type names (IEEE 1800-2009 37.23):
      the semantic node of its typedef declaration, or INVALID_ID, and the
-     number of packed and fixed unpacked dimensions declared above it (0:
-     the member's type is the typedef itself). */
+     number of packed and unpacked (fixed-size, dynamic, queue or
+     associative) dimensions declared above it (0: the member's type is the
+     typedef itself). */
   uint64_t typedef_id;
   uint64_t typedef_depth;
 } LlgSlangTypeMember;
@@ -1300,7 +1301,8 @@ enum {
   LLG_SLANG_EDGE_RAND_JOIN = 41,
   /* The typedef declaration the declared type of a variable, net,
    * parameter or typedef names (IEEE 1800-2009 37.23). The index counts the
-   * packed and fixed unpacked dimensions declared above it: 0 when the
+   * packed and unpacked (fixed-size, dynamic, queue or associative)
+   * dimensions declared above it: 0 when the
    * declared type is the typedef itself (for a typedef, the typedef it
    * aliases). At most one edge per declaration. */
   LLG_SLANG_EDGE_TYPEDEF = 42,

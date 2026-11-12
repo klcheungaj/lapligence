@@ -2295,7 +2295,9 @@ mod tests {
             typedef parrtype2 unparrtype [6:4]; \
             typedef struct { p::nib_t n; p::nib_t pair [2]; int plain; } rec_t; \
             colors c; my_time t; unparrtype arr [3:0]; rec_t r; logic [7:0] v; \
-            initial $display(\"%0d %0d %0d %0d\", c, t, arr[0][4], r.plain, v); endmodule";
+            rec_t rq [$][2]; colors ca [string][]; \
+            initial $display(\"%0d %0d %0d %0d %0d %0d\", c, t, arr[0][4], r.plain, v, \
+            rq.size(), ca.num()); endmodule";
         let output = crate::core::compile::compile_sources_checked(
             &[crate::core::compile::OwnedSource::compilation_unit(
                 "typedefs.sv",
@@ -2327,6 +2329,9 @@ mod tests {
         assert_eq!(typedef_of("arr"), Some(("unparrtype".to_owned(), 1)));
         assert_eq!(typedef_of("r"), Some(("rec_t".to_owned(), 0)));
         assert_eq!(typedef_of("v"), None);
+        // Queue, dynamic and associative dimensions count like fixed ones.
+        assert_eq!(typedef_of("rq"), Some(("rec_t".to_owned(), 2)));
+        assert_eq!(typedef_of("ca"), Some(("colors".to_owned(), 2)));
         // Each typedef names the typedef it aliases, at its own depth.
         let chain = |reference: TypedefRef| db.declared_typedef(reference.typedef);
         let colors = db.declared_typedef(declaration("c")).unwrap();
