@@ -179,12 +179,14 @@ impl EmitCtx<'_, '_> {
         let (format, values) =
             self.cg
                 .lower_format_segments(&self.path, Some(&library), name, args, default_radix)?;
+        let time_unit_fs =
+            Codegen::literal_time_unit(&format, self.cg.timescale_of_node(site).unit_fs);
         Ok(IrStringExpr::Format {
             format: Box::new(IrStringExpr::Literal(format)),
             args: values,
             scope: self.format_scope(site),
             binding: None,
-            time_unit_fs: self.cg.timescale_of_node(site).unit_fs,
+            time_unit_fs,
         })
     }
 

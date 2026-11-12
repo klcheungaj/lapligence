@@ -82,12 +82,14 @@ impl Codegen<'_> {
                 push_default_conversion(&mut format, &value, IrDisplayRadix::Decimal);
                 values.push(value);
             }
+            let time_unit_fs =
+                Self::literal_time_unit(&format, self.timescale_of_node(format_node).unit_fs);
             return Ok(IrStringExpr::Format {
                 format: Box::new(IrStringExpr::Literal(format)),
                 args: values,
                 scope,
                 binding: None,
-                time_unit_fs: self.timescale_of_node(format_node).unit_fs,
+                time_unit_fs,
             });
         }
         let format = self.lower_string(path, format_node)?;
@@ -397,5 +399,30 @@ mod tests {
         assert!(!spec_is_abbreviated(b"%p"));
         assert!(!spec_is_abbreviated(b"%05p"));
         assert!(!spec_is_abbreviated(b"%-0p"));
+    }
+}
+
+impl<'a> Codegen<'a> {
+    /// The time unit a literal normalized format hands the formatter: `unit` when
+    /// a `%t` conversion reads it, else 0 (the design precision), which leaves the
+    /// value of every other conversion unchanged.
+    pub(in super::super) fn literal_time_unit(format: &[u8], unit: u64) -> u64 {
+        let mut bytes = format.iter().copied();
+        while let Some(byte) = bytes.next() {
+            if byte != b'%' {
+                continue;
+            }
+            // Skip flags, width and precision to the conversion character.
+            for conversion in bytes.by_ref() {
+                if conversion.is_ascii_digit() || matches!(conversion, b'-' | b'+' | b'.' | b' ') {
+                    continue;
+                }
+                if matches!(conversion, b't' | b'T') {
+                    return unit;
+                }
+                break;
+            }
+        }
+        0
     }
 }
