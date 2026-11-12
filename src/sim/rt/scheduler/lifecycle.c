@@ -298,6 +298,8 @@ static void free_assertions(void) {
         g.assertions = next;
     }
     g.assertion_tail = NULL;
+    // The condition watches end with the other watches (free_value_watches).
+    value_watch_disable = 0;
     free(g.sequence_endpoints);
     g.sequence_endpoints = NULL;
     g.sequence_endpoint_count = 0;

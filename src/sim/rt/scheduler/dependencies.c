@@ -1438,10 +1438,6 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
                         const sv4_t* before, llg_wait_subscription_t* cursor) {
     sampled_record_write(target);
     if (deferred && g.sampled_edge_clocks) sampled_clock_gates_latch(target, old, value);
-    // `disable iff` is an asynchronous, unsampled control. Abort pending
-    // attempts at the write boundary, before any waiter or later region can
-    // observe the changed value.
-    assertion_disable_signal_changed(target);
     // Ordinary accept_on/reject_on controls are also asynchronous. Their
     // predicate is evaluated only after the write is visible, while the
     // synchronous variants are checked at the sampled assertion edge below.

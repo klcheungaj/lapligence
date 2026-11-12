@@ -1374,31 +1374,30 @@ impl Codegen<'_> {
     }
 
     /// The signal whose truth disables a concurrent assertion. `disable iff`
-    /// reads current, not sampled, values and acts asynchronously (16.12):
-    /// a direct packed signal is watched at its own writes, and any other
-    /// condition becomes a hidden one-bit net continuously driven by the
-    /// expression, shared by every assertion of the instance that names the
-    /// same condition node (a `default disable iff` names one node for all).
+    /// reads current, not sampled, values and acts asynchronously (16.13).
+    /// Every condition, a single signal included, becomes a hidden one-bit
+    /// net driven by a process sensitive to what the condition reads: like
+    /// any such process it wakes at the check that sees a change (T1-D11) and
+    /// reads the values current when it runs, so a change undone before that
+    /// is no change. The net is shared by every assertion of the instance
+    /// that names the same condition node (a `default disable iff` names one
+    /// node for all), or the same single signal.
     pub(super) fn lower_disable_condition(
         &mut self,
         path: &str,
         node: NodeId,
     ) -> Result<usize, String> {
-        if let IrExprKind::SigRead(signal) = self.lower_expr(path, node)?.kind() {
-            if matches!(
-                self.model.signals.get(*signal),
-                Some(IrSignal {
-                    fixed_default: None,
-                    ty: IrType::Packed { .. },
-                    omit: false,
-                    ..
-                })
-            ) {
-                return Ok(*signal);
-            }
-        }
         if let Some(signal) = self.disable_conditions.get(&(self.inst, node)) {
             return Ok(*signal);
+        }
+        let single = match self.lower_expr(path, node)?.kind() {
+            IrExprKind::SigRead(signal) => Some(*signal),
+            _ => None,
+        };
+        if let Some(signal) = single.and_then(|read| self.disable_signal_conditions.get(&read)) {
+            let signal = *signal;
+            self.disable_conditions.insert((self.inst, node), signal);
+            return Ok(signal);
         }
         let condition = self.lower_boolean_expr(path, node)?;
         if condition.is_real() || !self.sampled_compatible(&condition) {
@@ -1424,6 +1423,9 @@ impl Codegen<'_> {
             omit: false,
         });
         self.disable_conditions.insert((self.inst, node), signal);
+        if let Some(read) = single {
+            self.disable_signal_conditions.insert(read, signal);
+        }
         let reads = self.collect_read_signals(path, node)?;
         let shape = if reads.is_empty() {
             IrShape::RunOnce

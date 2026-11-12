@@ -1146,6 +1146,7 @@ int llg_assertion_register_property(
     assertion->clock = clock;
     assertion->edge = edge;
     assertion->disable = disable;
+    assertion_disable_watch(disable);
     assertion->pass_desc = pass_desc;
     assertion->fail_desc = fail_desc;
     assertion->data = data;

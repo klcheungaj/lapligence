@@ -352,8 +352,12 @@ static void end_assertion_attempts(llg_concurrent_assertion_t* assertion, int ki
     free_assertion_attempts(assertion);
 }
 
-static void assertion_disable_signal_changed(sv4_t* signal) {
-    if (!signal) return;
+/* A watched publication of a model with `disable iff` conditions. Each
+ * condition is a hidden signal written only by its own process, which runs
+ * after the check that saw a change of what the condition reads (codegen):
+ * so its publication is one change per check, and a condition that holds
+ * discards the attempts of the assertions it disables. */
+static LLG_OUTLYING void assertion_disable_signal_changed(sv4_t* signal) {
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
         if (assertion->disable == signal && sv4_to_bool(*signal)) {
@@ -362,6 +366,14 @@ static void assertion_disable_signal_changed(sv4_t* signal) {
             assertion_events_leave();
         }
     }
+}
+
+/* The condition's row carries a value watch, so its publications reach
+ * assertion_disable_signal_changed through value_watch_notify. */
+static LLG_OUTLYING void assertion_disable_watch(sv4_t* disable) {
+    if (!disable) return;
+    value_watch_disable = 1;
+    (void)llg_value_watch_add(disable);
 }
 
 static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
@@ -1030,6 +1042,7 @@ int llg_assertion_register_control(
     assertion->clock = clock;
     assertion->edge = edge;
     assertion->disable = disable;
+    assertion_disable_watch(disable);
     assertion->antecedent = antecedent;
     assertion->consequent = consequent;
     // The entry marks the clock for changes in a turn (dependencies.c).
@@ -1167,6 +1180,7 @@ int llg_assertion_register_sequence_control(
     assertion->clock = clock;
     assertion->edge = edge;
     assertion->disable = disable;
+    assertion_disable_watch(disable);
     assertion->pass_desc = pass_desc;
     assertion->fail_desc = fail_desc;
     assertion->abort_condition = abort_condition;

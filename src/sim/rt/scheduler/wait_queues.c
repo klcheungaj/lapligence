@@ -149,10 +149,14 @@ static void llg_fcov_changed(const void* key);
 // So does toggle coverage (coverage/code.c) with its started signals.
 static int value_watch_toggle;
 static void llg_tcov_changed(const void* key);
+// And concurrent assertions with the hidden signals that hold their
+// `disable iff` conditions (concurrent_assertions.c).
+static int value_watch_disable;
 
 // A watched publication: the coverage monitors first, so a VPI value-change
 // callback already reads the coverage of the new value.
 static void value_watch_notify(const void* key) {
+    if (value_watch_disable) assertion_disable_signal_changed((sv4_t*)key);
     if (value_watch_fsm) llg_fcov_changed(key);
     if (value_watch_toggle) llg_tcov_changed(key);
     if (value_watch_hook) value_watch_hook(key);

@@ -2214,9 +2214,12 @@ struct Codegen<'a> {
     /// Released variable signal -> hidden marker toggled by its `release`
     /// statements, so its continuous drivers re-evaluate (SV 10.6.2).
     release_markers: HashMap<usize, usize>,
-    /// Hidden nets that carry a non-signal `disable iff` condition, keyed by
-    /// instance and condition node.
+    /// Hidden nets that carry a `disable iff` condition, keyed by instance
+    /// and condition node.
     disable_conditions: HashMap<(NodeId, NodeId), usize>,
+    /// The same for conditions that name one packed signal, keyed by that
+    /// signal: every assertion disabled by it shares one net.
+    disable_signal_conditions: HashMap<usize, usize>,
     /// Structural source owner, source node and resolved-group index ->
     /// synthetic signal carrying that source's independent contribution slot.
     /// A source can feed more than one canonical group (for example a
@@ -2685,6 +2688,7 @@ impl<'a> Codegen<'a> {
             feedback_storage: None,
             release_markers: HashMap::new(),
             disable_conditions: HashMap::new(),
+            disable_signal_conditions: HashMap::new(),
             structural_driver_sites: HashMap::new(),
             structural_driver_sources: HashSet::new(),
             structural_drivers: Vec::new(),

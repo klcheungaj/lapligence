@@ -153,9 +153,14 @@ equals its before value is dropped; otherwise clocking history, sampled
 clocks, assertion clocks, waiters and bound markers run as one publication
 (`sig_settle`). A marker's check runs the marker's whole publication
 (`sig_publish` with the record's cursor). Storage nothing observes opens no
-record. Per-write consumers stay in `sig_publish`: VPI value change,
-waveforms, monitors, `disable iff` and abort conditions, force expressions,
-switches and timing checks, and the AA-D6 gate, which a gate-at-write wait
+record. A `disable iff` condition is a hidden one-bit signal that codegen
+writes from a process sensitive to what the condition reads, so it is
+evaluated after the check that woke it, with the values current then, and
+publishes once per run of that process; its row carries a value watch, and
+`value_watch_notify` hands the publication to
+`assertion_disable_signal_changed`. Per-write consumers stay in
+`sig_publish`: VPI value change, waveforms, monitors, abort conditions,
+force expressions, switches and timing checks, and the AA-D6 gate, which a gate-at-write wait
 latches at each write (`llg_wait_gate_at_write`, `payload.expression.gate_open`,
 walked through `write_walkers`); moving one to the check means calling it
 from `sig_settle` and `history_settle` and counting what it observes in
