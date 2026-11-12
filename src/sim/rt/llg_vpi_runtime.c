@@ -1236,7 +1236,7 @@ static int rts_auto_elements(const llg_vpi_slot_t* slot, dyn_place_t* place) {
 
 /* vpi_iterate(vpiReg / vpiVarSelect ...) of a dynamic array, queue or
  * associative array automatic: its elements (37.17 detail 4). */
-static vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* slot) {
+static LLG_OUTLYING vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* slot) {
     rts_part_t part;
     if (type == vpiMember || rts_is_part(slot)) {
         if (!rts_part(slot, &part)) return NULL;

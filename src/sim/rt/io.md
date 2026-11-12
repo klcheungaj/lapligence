@@ -305,7 +305,11 @@ nested container, a cell of a multidimensional fixed array, a member of a
 structure element, shape `LLG_VPI_SHAPE_RECORD` with its
 `llg_vpi_member_t` rows) keeps its further steps in a path the slot owns
 (`use`, `span`), resolved level by level from the top container; a write
-publishes through the top container (decision A19-D87). A static class
+publishes through the top container (decision A19-D87). The path, name
+and static-property helpers are `LLG_OUTLYING` (with `dyn_element_by_index`
+and `rts_auto_iterate`), so their code sits behind `.text` and adds no
+`.cold` part in front of it: the model and the scheduler keep their
+addresses in `--vpi` models. A static class
 property is a `SLOT_PROPERTY` slot of the pseudo row `DYN_STATIC_ROW`
 whose field index carries `DYN_STATIC_FIELD`: its `llg_vpi_class_static_t`
 row names the class's storage (signal, string or handle object, container
