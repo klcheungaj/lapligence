@@ -2210,7 +2210,9 @@ int llg_assertion_register_sequence_control(
  *   AND/OR/IMPLIES/IFF  first, second = operands
  *   IMPLICATION / FOLLOWED_BY  first = antecedent graph, second = consequent;
  *                 OVERLAPPED for |-> and #-#
- *   IF            first = condition atom, second = then, third = else or NONE
+ *   IF            first = condition atom, second = then, third = else or NONE;
+ *                 with LOCALS, first = a sequence graph whose first transition's
+ *                 atom is the condition, read with the node's local variables
  *   NEXTTIME      first = operand, min = tick count; STRONG flag
  *   ALWAYS / EVENTUALLY  first = operand, [min, max] ticks; STRONG flag
  *   UNTIL         first = left, second = right; STRONG, OVERLAPPED (until_with)
@@ -2244,6 +2246,7 @@ int llg_assertion_register_sequence_control(
 #define LLG_PROPERTY_OVERLAPPED 2u
 #define LLG_PROPERTY_ACCEPT 4u
 #define LLG_PROPERTY_SYNC 8u
+#define LLG_PROPERTY_LOCALS 16u
 #define LLG_PROPERTY_NONE UINT32_MAX
 typedef int (*llg_property_atom_fn)(uint32_t atom, void* data);
 typedef struct {

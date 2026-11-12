@@ -15,10 +15,13 @@ use crate::sim::ir::IrMutationExpr;
 
 /// One local variable formal of an instance and the actual bound to it.
 #[derive(Clone, Copy)]
-struct LocalFormal {
-    formal: NodeId,
-    direction: DbDirection,
-    actual: NodeId,
+pub(super) struct LocalFormal {
+    /// The local variable the instance's body reads and writes.
+    pub(super) formal: NodeId,
+    /// The declaration's port, shared by every instance of the declaration.
+    pub(super) port: NodeId,
+    pub(super) direction: DbDirection,
+    pub(super) actual: NodeId,
 }
 
 impl Codegen<'_> {
@@ -29,7 +32,7 @@ impl Codegen<'_> {
     /// Slang and need nothing. A local the body never names needs no slot: an
     /// input is unread, an inout copies back the value it was given, and Slang
     /// rejects an output that a match leaves unassigned.
-    fn instance_locals(&self, expression: NodeId) -> (Vec<LocalFormal>, Vec<NodeId>) {
+    pub(super) fn instance_locals(&self, expression: NodeId) -> (Vec<LocalFormal>, Vec<NodeId>) {
         let NodeKind::Expr(ExprKind::AssertionInstance { body, bindings, .. }) =
             self.kind(expression)
         else {
@@ -53,6 +56,7 @@ impl Codegen<'_> {
                 })?;
                 Some(LocalFormal {
                     formal,
+                    port: binding.formal,
                     direction,
                     actual: binding.actual,
                 })

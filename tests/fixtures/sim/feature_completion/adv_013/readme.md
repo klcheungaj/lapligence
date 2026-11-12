@@ -374,6 +374,94 @@ same verdict; an attempt still undecided at `$finish` reports nothing, since
 llg reports only a pending `s_eventually` obligation at the end (S38-D1,
 A13-D7) and the tested properties contain none.
 
+## Local variables in recursive and multiclocked properties (A2)
+
+`rec_local_formal.sv`, `rec_reentry_locals.sv`, `rec_fibonacci.sv`,
+`rec_check_write.sv`, `rec_local_forms.sv`, `local_two_clocks.sv`,
+`local_flow.sv`, `local_if.sv` and `rec_budget.sv`. Each recursion level and
+each attempt has its own locals; a local's initialization is a one-tick
+match item at the semantic leading clock of the property it starts (F.4.2
+`push`, decision A13-D8). Clocks rise at 5, 15, 25, ... (period 10) unless
+said otherwise; a value set between ticks is the sampled value at the next
+tick. Every attempt whose antecedent does not match prints a vacuous `P`
+at its own tick (S38-D11), which the lists below leave out; the nonvacuous
+lines were also confirmed against the industry-standard behaviour, except
+the `case` property `p2` of `local_if.sv`, which that implementation does not
+accept.
+
+Clauses:
+
+- 16.10 L23800-23802: "At the beginning of each evaluation attempt of an
+  instance of a named sequence or property, a new copy of each of its local
+  variables shall be created and, if present, the corresponding
+  initialization assignment shall be performed."
+- 16.8.2 L22290-22293: "A local variable formal argument with direction
+  input or inout shall be treated like a local variable declared in an
+  assertion_variable_declaration with a declaration assignment. The initial
+  value for the local variable formal argument is provided by the associated
+  actual argument for the instance."
+- 16.13.17 L25526-25530 (restriction 4): "each actual argument expression e
+  of the instance satisfies at least one of the following conditions: ...
+  e is bound to a local variable formal argument of q."
+- 16.14.7 L26329-26335: "If there are two or more distinct semantic leading
+  clocks for an instance of a named property, then a separate copy of the
+  local variable shall be created for each semantic leading clock. For each
+  copy of the local variable, the initialization assignment shall be
+  performed at the earliest tick of the corresponding semantic leading clock
+  that is at or after the beginning of the evaluation attempt".
+
+Expected lines:
+
+- `rec_local_formal.sv`, `a |-> count(2)` with `count(n) = if (n > 0) (d
+  and (1'b1 |=> count(n - 1)))`: d must hold for n ticks. Attempt 15 (a, d):
+  d15, d25, then `count(0)` at 35 holds vacuously: P35. Attempt 45: d45, d55
+  = 0: F55.
+- `rec_reentry_locals.sv`, `s |-> track(1)` where every level samples `v =
+  cnt` and checks `cnt == v + 1` one tick later; `cnt` counts at the falling
+  edges from 20 except 50: attempt 15 holds at 25, 35 and 45 and fails at 55
+  (cnt sampled 3 at both 45 and 55): F55.
+- `rec_fibonacci.sv`, the 16.13.17 `fibonacci1` (L25533-25541). f1 `start
+  |-> fibonacci1(a0, b0, n0, fib)`: attempt 15 (0, 1, 6) checks fib = 0, 1,
+  1, 2, 3, 5 at 15..65 and ends with n = 0 at 75: P75; attempt 35 (1, 2, 3)
+  checks 1, 2, 3 at 35..55: P65. f2 reads `bad`, which is 4 instead of 3 at
+  55: both attempts F55. f3 `start |=> fibonacci1(a0, b0, 2, fib)` samples
+  the actuals where the instance starts, one tick after the attempt:
+  attempt 15 takes (1, 1) at 25 and checks fib = 1, 1 at 25 and 35: P45;
+  attempt 35 takes (2, 3) at 45 and checks 2, 3: P65.
+- `rec_check_write.sv`, the 16.13.17 `check_write` /
+  `check_write_data_beat` (L25637-25686), `expected_data[i*8+:8]` being byte
+  i from the most significant end. Request tag 3 at 15 (A1, A2): beat A1 at
+  35, last beat A2 at 55, no retry at 65: P65. Request tag 5 at 75: beat B1
+  at 95, a wrong second beat at 105: F105. Request tag 7 at 125: beat C1 at
+  145, retry at 155 restarts at beat 0, beats C1 at 175 and C2 (last) at 185,
+  no retry at 195: P195.
+- `rec_local_forms.sv` (`c2` rises at 17, 37, 57, ...; `s` at 15 and 55).
+  m1, mutual recursion `up(k)`/`down(k)` with `k + 1` per tick, d then e:
+  attempt 15 from 2 holds to 55 and fails at 65 (e = 8, not 7); attempt 55
+  from 6 fails at 65 too: F65 F65. m2, `sw(p, q)` swaps its locals by value:
+  attempt 15 (2, 9) needs d = 9 at 25: F25; attempt 55 (6, 7) needs d = 7 at
+  65: F65. m3, `s |=> cs(d)` with `logic [3:0] m = k + 1`: at 25 k = 3 and
+  d + 1 == m: P25; at 65 k = 9 and e (8) is not m (10): F65. m4, `(s, v = e)
+  |=> keep(3, v)` reads the antecedent's v at every level: attempt 15 (v = 9)
+  P55, attempt 55 (v = 7) P95. m5, `s |=> tc(x)` with one copy of v per
+  clock: attempt 15 takes x = 3 at c2 17 and x = 4 at 25: P25; attempt 55
+  takes x = 2 at c2 57: F57. m6, `not ((@clk v == 1) or (@c2 v == 2))`:
+  P25, and F57 (x = 2 at 57). m7, recursion under `nexttime` never fails:
+  no nonvacuous line.
+- `local_two_clocks.sv` (`c1` rises at 10, 30, ...; `c2` at 16, 36, ...),
+  the former `neg_local_two_clocks.sv`: attempt 10 gives the c2 copy x = 3
+  at 16 and the c1 copy x = 4 at 30: P30; attempt 50 gives the c2 copy x = 4
+  at 56: F56.
+- `local_flow.sv`, `(a, x = d) |=> ((b, y = e) |=> (x == y + 1))`: x flows
+  through the inner antecedent, which assigns only y: attempt 15 (x = 5,
+  y = 4 at 25): P35; attempt 45 (x = 7, y = 2): F65.
+- `local_if.sv`, conditions on the antecedent's x: attempt 15 (x = 5) needs
+  !b at 35 (b = 1): p1 F35, p2 F35; attempt 45 (x = 6) needs b at 65 in p1
+  (b = 0): F65, and !b in p2: P65.
+- `rec_budget.sv`: `grow(n)` starts two recursive instances per tick from
+  15; with `LLG_SEQUENCE_THREAD_LIMIT=200` the live instances pass the budget
+  at 75 and the run stops with the budget report, before `done`.
+
 ## Rejections
 
 | Fixture | Diagnostic | Why |
@@ -389,10 +477,10 @@ A13-D7) and the tested properties contain none.
 | `neg_rec_disable.sv` | `recursive properties cannot have disable iff conditions` (frontend) | 16.13.17 L25499-25500 (restriction 2): "The operator disable iff cannot be used in the declaration of a recursive property." |
 | `neg_rec_no_advance.sv` | `recursive property instance must occur after a positive advance in time` (frontend) | 16.13.17 L25515-25516 (restriction 3): "every instance of p must occur after a positive advance in time." |
 | `neg_rec_args.sv` | `cannot refer to argument 'x' in an argument to a recursive property ...` (frontend) | 16.13.17 L25526-25530 (restriction 4). |
-| `neg_rec_local_formal.sv` | `recursive property `count` with local variable formal arguments at ... is not supported (SV 16.13.17)` (llg limit) | Legal by L25530 ("e is bound to a local variable formal argument of q"); llg calls an earlier expansion for a recursive re-entry, which needs the same actual values, and a local formal changes its value per call. Rejected with a location instead of approximated. |
 | `neg_rec_reentry_args.sv` | `recursive property instance at ... does not repeat an enclosing expansion with the same actual arguments, which llg does not support (SV 16.13.17)` (llg limit) | Legal by L25526-25528 (restriction 4: "e is itself a formal argument of p"); the actuals rotate three formals, so the frontend's two expansions are not repeated by the re-entry, which llg would have to call. |
-| `neg_rec_reentry_locals.sv` | `recursive property instance at ... is evaluated with property local variables, which llg does not support (SV 16.13.17)` (llg limit) | Legal; 16.10 L23800-23802: "At the beginning of each evaluation attempt of an instance of a named sequence or property, a new copy of each of its local variables shall be created and, if present, the corresponding initialization assignment shall be performed." |
-| `neg_local_two_clocks.sv` | `local variable `v` of the property declared at ... is initialized at the property attempt's start, which this property form does not support` (llg limit) | Legal by 16.10 L26329-26337 (one copy per semantic leading clock, initialized at that clock's first tick); llg supports the explicit equivalent form of L26363-26369 (`l3`) and rejects the declaration-assignment form with a location. |
+| `neg_rec_locals_args.sv` | `recursive property instance at ... re-enters a property with local variables after its other actual arguments changed; this is not supported (SV 16.13.17)` (llg limit) | Legal by L25526-25530; the non-local actual changes from `e` to `d` after the first level, and the frontend leaves the third level unexpanded, so llg has no actuals to bind the local formal from. |
+| `neg_rec_locals_clocks.sv` | `recursive property instance at ... re-enters a property whose local variables are initialized at more than one semantic leading clock; this is not supported (SV 16.13.17, 16.14.7)` (llg limit) | Legal; 16.14.7 L26331-26335 gives each semantic leading clock its own copy, and a recursion level would need one per copy. |
+| `neg_local_clocks_implies.sv` | `the local variables of the property instance at ... would be initialized at more than one semantic leading clock below an operator other than `and`, `or` or `not`; this is not supported (SV 16.14.7)` (llg limit) | Legal by 16.14.7 L26331-26335; F.4.2 (L70953, L70964-70965) defines the split only for `and`, `or` and `not`, which llg implements. |
 
 ## Other implementations
 

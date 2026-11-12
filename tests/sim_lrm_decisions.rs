@@ -5144,6 +5144,14 @@ fn a13_d7_unbegun_strong_at_end() {
 }
 
 #[test]
+fn a13_d8_local_init_per_leading_clock() {
+    run_decision(
+        "A13-D8_local_init_per_leading_clock",
+        include_str!("fixtures/sim/lrm_decisions/A13-D8_local_init_per_leading_clock.out"),
+    );
+}
+
+#[test]
 fn a14_d1_future_report_time() {
     run_decision(
         "A14-D1_future_report_time",

@@ -2346,6 +2346,10 @@ struct Codegen<'a> {
     /// Property-level locals the antecedent graph being lowered initializes
     /// whether or not it reads them, so its consequent inherits them.
     assertion_forced_locals: Vec<NodeId>,
+    /// Locals of the enclosing property evaluation that the next sequence
+    /// graph carries when it has locals of its own, so the evaluation its
+    /// match starts still reads them (16.10 local variable flow).
+    assertion_carried_locals: Vec<NodeId>,
     /// Canonical virtual-interface type identity → execution descriptor.
     virtual_interface_types: HashMap<String, usize>,
     /// Concrete interface instance → `(descriptor, instance)` binding.
@@ -2693,6 +2697,7 @@ impl<'a> Codegen<'a> {
             assertion_property_locals: Vec::new(),
             assertion_property_local_init: assertion_context::PropertyLocalInit::Unsupported,
             assertion_forced_locals: Vec::new(),
+            assertion_carried_locals: Vec::new(),
             virtual_interface_types: HashMap::new(),
             virtual_interface_instances: HashMap::new(),
             virtual_interface_members: HashMap::new(),

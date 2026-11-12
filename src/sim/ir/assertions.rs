@@ -509,6 +509,14 @@ pub enum IrPropertyNode {
         then: u32,
         otherwise: Option<u32>,
     },
+    /// `if (b) p [else q]` whose condition reads local variables (16.10):
+    /// `condition` is a sequence whose single transition's atom is `b`,
+    /// evaluated against the locals the node inherits.
+    LocalIf {
+        condition: u32,
+        then: u32,
+        otherwise: Option<u32>,
+    },
     /// `nexttime[n] p` / `s_nexttime[n] p` (16.13.10).
     Nexttime {
         count: u32,
@@ -565,6 +573,9 @@ impl IrPropertyNode {
             }
             Self::Implication { consequent, .. } => [Some(consequent), None],
             Self::If {
+                then, otherwise, ..
+            }
+            | Self::LocalIf {
                 then, otherwise, ..
             } => [Some(then), otherwise],
         }
@@ -713,6 +724,7 @@ impl IrProperty {
             let sequence = match *node {
                 IrPropertyNode::Sequence { sequence, .. } => Some(sequence),
                 IrPropertyNode::Implication { antecedent, .. } => Some(antecedent),
+                IrPropertyNode::LocalIf { condition, .. } => Some(condition),
                 _ => None,
             };
             if sequence.is_some_and(|sequence| sequence as usize >= self.sequences.len()) {
@@ -722,6 +734,20 @@ impl IrProperty {
                 ));
             }
             match *node {
+                IrPropertyNode::LocalIf { condition, .. } => {
+                    let condition = &self.sequences[condition as usize];
+                    if condition
+                        .transitions
+                        .first()
+                        .and_then(|transition| transition.atom)
+                        .is_none()
+                    {
+                        return Err(IrValidationError::new(
+                            path,
+                            "a local if condition is the atom of its sequence's first transition",
+                        ));
+                    }
+                }
                 IrPropertyNode::Sequence { sequence, .. } => {
                     if self.sequences[sequence as usize].admits_empty {
                         return Err(IrValidationError::new(

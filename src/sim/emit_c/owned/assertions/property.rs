@@ -170,6 +170,21 @@ fn node_row(node: &IrPropertyNode, clock: Option<u32>, current: Option<u32>) -> 
             0,
             "0ULL".to_owned(),
         ),
+        IrPropertyNode::LocalIf {
+            condition,
+            then,
+            otherwise,
+        } => (
+            "LLG_PROPERTY_IF",
+            "LLG_PROPERTY_LOCALS".to_owned(),
+            format!("{condition}u"),
+            format!("{then}u"),
+            otherwise
+                .map(|node| format!("{node}u"))
+                .unwrap_or_else(|| NONE.to_owned()),
+            0,
+            "0ULL".to_owned(),
+        ),
         IrPropertyNode::Nexttime {
             count,
             strong,

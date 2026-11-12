@@ -2084,27 +2084,23 @@ Subroutine calls attached to a sequence match (SV 16.11, SIM-039) use the
 same captured frame and share these limits, reported as "sequence match-item
 call" diagnostics; a match-item task with a timing control is also rejected.
 
-## Assertion locals in property operands and join operands
+## Assertion locals in join operands and end points
 
 **Status:** open (SIM-039 deferral).
 
-A property local variable (a local input formal or a declared local with a
-declaration assignment) is initialized when the property attempt begins
-(SV 16.10). llg does this for a property whose body is a sequence or an
-implication: the antecedent attempt initializes the locals and the
-consequent inherits them. A property operand of the property engine
-(`always`, `until`, `s_eventually`, `and`/`or` of properties, ...) starts its
-own sequence attempts later, so reading such a local there is rejected with
-"local variable `v` of the property declared at ... is initialized at the
-property attempt's start, which this property form does not support".
-Local-variable assignments inside `and`/`intersect`/`throughout`/`within`
-operands and local variables passed to sequence end points
-(`s(v).triggered`, `@(s(v))`) are also still rejected; the runtime keeps one
-local array per thread and a join keeps the locals of the operand that
-matched last.
+Property locals (local input formals and declared locals with a declaration
+assignment) are initialized in every property form since FIN-001 A2: the
+property engine places the initialization at the semantic leading clock of
+the property they start (F.4.2, decision A13-D8), so later property operands
+(`always`, `until`, `and`/`or` of properties, ...) read them. Local-variable
+assignments inside `and`/`intersect`/`throughout`/`within` operands and
+local variables passed to sequence end points (`s(v).triggered`, `@(s(v))`)
+are still rejected; the runtime keeps one local array per thread and a join
+keeps the locals of the operand that matched last. A local read by an
+`accept_on`/`reject_on` condition is rejected as well.
 
-Reproduce with `property p; logic [7:0] v = d; always (a |-> d == v);
-endproperty`.
+Reproduce with `(a, v = d) and (b, v = e)` in a sequence, or `s(v).triggered`
+for a local `v`.
 
 ## Implicit sensitivity through handles a process cannot evaluate
 
@@ -2296,45 +2292,53 @@ blocked `expect` caller.
 
 ## Multiclock and recursive assertion limits after ADV-013
 
-**Status:** open (ADV-013 boundary).
+**Status:** open (ADV-013 and FIN-001 A2 boundary). Recursive properties
+with local variable formals or declared locals (such as the LRM's
+`fibonacci1` and `check_write_data_beat`) and locals with two semantic
+leading clocks are supported since A2 (decision A13-D8); the shapes below
+stay located rejections.
 
 ### Symptom
 
-- A recursive property (16.13.17) with a local variable formal argument,
-  such as the LRM's `fibonacci1` and `check_write_data_beat`, is rejected
-  with "recursive property `name` with local variable formal arguments ...
-  is not supported (SV 16.13.17)". A recursive re-entry that does not repeat
-  an enclosing expansion with the same actual values and flowing clock, or
-  that is evaluated with property local variables, is rejected with a
-  located diagnostic as well; no shape of this kind is known among legal
-  programs without local formals.
-- A property local with a declaration assignment in a property with two
-  semantic leading clocks (16.10 L26329-26337: one copy per leading clock) is
-  rejected ("is initialized at the property attempt's start, which this
-  property form does not support"); the equivalent explicit form with a local
-  assignment in each operand works.
+- A recursive re-entry whose non-local actuals repeat no enclosing
+  expansion (for example three formals rotated) is rejected with "does not
+  repeat an enclosing expansion with the same actual arguments".
+- A recursive property with local variables whose non-local actuals change
+  after the first level (`td(x, local input int k)` called as `td(e, 0)`
+  and recursing as `td(d, k + 1)`) is rejected with "re-enters a property
+  with local variables after its other actual arguments changed".
+- A recursive property whose locals have two semantic leading clocks is
+  rejected ("re-enters a property whose local variables are initialized at
+  more than one semantic leading clock"), and so is a property whose two
+  leading clocks meet under an operator other than `and`, `or` or `not`
+  ("would be initialized at more than one semantic leading clock below an
+  operator other than ...").
 
 ### Cause
 
 A recursive re-entry is a call (`IrPropertyNode::Call`) of an earlier
-expansion of the same property, which needs the same actual values; a local
-formal changes its value per call and would need its own local-variable
-frame per call. Property locals are initialized only at the attempt's start
-(the SIM-039 boundary), not at each leading clock's first tick. `restrict` has no
-lowering at all. The empty-match check is Slang's, which examines the whole
-operand rather than the maximal singly clocked subsequence.
+expansion of the same property. Local variables are passed by value through
+a one-tick binding in front of the call, but the non-local actuals are
+substituted into the expansion, so they must repeat. The frontend expands a
+recursive property at most twice and leaves the next instance without
+actuals, so a local formal whose level changes the non-local actuals has no
+actual to bind from. A split initialization (16.14.7) has one binding per
+leading-clock operand, which a single call cannot repeat; F.4.2 defines the
+split for `and`, `or` and `not` only. The empty-match check of a
+multiclocked operand is Slang's, which examines the whole operand rather
+than the maximal singly clocked subsequence.
 
 ### Intended direction
 
-Give a recursive call a frame of local variables passed by value, and lower
-`restrict property` to nothing with a note. The frontend check needs a Slang
-patch.
+Map the actuals of the unexpanded instance from the expanded copy of the
+same call site, and give a split initialization one call per copy. The
+frontend check needs a Slang patch.
 
 ### Reproduce
 
-`neg_rec_local_formal.sv` and `neg_local_two_clocks.sv` in
-[adv_013](../tests/fixtures/sim/feature_completion/adv_013/readme.md); the
-other items need small hand-written cases.
+`neg_rec_reentry_args.sv`, `neg_rec_locals_args.sv`,
+`neg_rec_locals_clocks.sv` and `neg_local_clocks_implies.sv` in
+[adv_013](../tests/fixtures/sim/feature_completion/adv_013/readme.md).
 
 ## Port connections kept as continuous assignments
 

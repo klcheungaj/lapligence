@@ -28,6 +28,31 @@ enum SiteActual {
     Value(String),
 }
 
+/// One local variable initialization of a property instance (16.8.2,
+/// 16.10): a local input formal from its actual, or a declared local from
+/// its declaration assignment.
+#[derive(Clone, Copy)]
+struct LocalInit {
+    /// The local variable of the instance's body.
+    local: NodeId,
+    /// The actual or the declaration assignment.
+    source: NodeId,
+    /// The declaration's port of a formal; `None` for a declared local.
+    port: Option<NodeId>,
+}
+
+/// The initializations of an instance's locals, waiting to be placed at the
+/// semantic leading clock of the property they start (F.4.2 `push`).
+#[derive(Clone)]
+struct PendingInit {
+    /// The instance's frame.
+    frame: usize,
+    inits: Vec<LocalInit>,
+    /// Whether they were split over the operands of `and`/`or`/`not`, one
+    /// copy per semantic leading clock (16.14.7).
+    split: bool,
+}
+
 /// One property instance being lowered (IEEE 1800-2009 16.13.17).
 struct InstanceFrame {
     /// The instance expression.
@@ -37,10 +62,33 @@ struct InstanceFrame {
     /// Structural keys of the actuals: equal keys denote the same
     /// expression of the same declarations.
     values: Vec<String>,
+    /// The positions of `values` bound to local variable formals, which a
+    /// recursive instance passes by value instead of repeating.
+    local_formals: Vec<bool>,
     /// The clock flowing into the instance.
     clock: Option<SampledClock>,
-    /// CALL nodes of recursive re-entries, patched to the instance's root.
+    /// The instance's local variable initializations.
+    inits: Vec<LocalInit>,
+    /// The clock of the initializations when they precede the whole body,
+    /// and the body node they precede, which a recursive instance calls
+    /// after initializing its own values.
+    init_clock: Option<SampledClock>,
+    init_body: Option<u32>,
+    /// CALL nodes of recursive re-entries, patched to the instance's root
+    /// (or `init_body`).
     calls: Vec<u32>,
+}
+
+/// Whether two instances of one property pass the same actuals, apart from
+/// those bound to local variable formals.
+fn same_actuals(frame: &InstanceFrame, values: &[String]) -> bool {
+    frame.values.len() == values.len()
+        && frame
+            .values
+            .iter()
+            .zip(values)
+            .zip(&frame.local_formals)
+            .all(|((a, b), local)| *local || a == b)
 }
 
 /// The frame a recursive re-entry repeats exactly, if any. The re-entry
@@ -63,7 +111,15 @@ fn recursion_target(
         .collect::<Option<Vec<_>>>()?;
     frames
         .iter()
-        .rposition(|frame| frame.target == target && frame.values == values)
+        .rposition(|frame| frame.target == target && same_actuals(frame, &values))
+}
+
+/// A lowered `if`/`case` condition.
+enum PropertyCondition {
+    /// A sampled atom of the program.
+    Sampled(IrExpr),
+    /// A one-tick sequence that reads local variables.
+    Local(IrSequence),
 }
 
 pub(super) struct PropertyProgram {
@@ -86,6 +142,13 @@ struct PropertyBuilder {
     strong_default: bool,
     instances: Vec<InstanceFrame>,
     origin: NodeId,
+    /// Local variable initializations to place in front of the next
+    /// property node lowered.
+    pending: Option<PendingInit>,
+    /// The locals an evaluation at the node being lowered has: those its
+    /// antecedents assigned and its instances initialized (16.10 local
+    /// variable flow).
+    scope: Vec<NodeId>,
 }
 
 impl PropertyBuilder {
@@ -191,6 +254,27 @@ fn single_tick_atom(sequence: &IrSequence) -> Option<(IrExpr, Option<(usize, boo
                     .map(|signal| (signal, transition.clock_posedge)),
             )
         })
+}
+
+/// The one-tick sequence on `clock` whose atom is `condition`, read with
+/// the local slots `locals` (an `if` condition that names locals).
+fn local_condition(
+    condition: IrExpr,
+    locals: Vec<IrSequenceLocal>,
+    clock: SampledClock,
+) -> Result<IrSequence, String> {
+    let mut sequence = SequenceBuilder::new();
+    let start = sequence.state()?;
+    let accept = sequence.state()?;
+    sequence.edge_with_clock(start, accept, zero_range(), Some(condition), Some(clock))?;
+    let fragment = SequenceFragment {
+        empty: false,
+        start,
+        accept,
+        leading_clock: Some(clock),
+        trailing_clock: Some(clock),
+    };
+    sequence.finish(fragment, locals, Vec::new(), Vec::new())
 }
 
 impl Codegen<'_> {
@@ -318,6 +402,8 @@ impl Codegen<'_> {
             strong_default,
             instances: Vec::new(),
             origin,
+            pending: None,
+            scope: Vec::new(),
         };
         let previous_clock = self.sampled_clock.replace(flowing);
         let previous_leading = self.assertion_leading_clock.replace(clock);
@@ -422,6 +508,9 @@ impl Codegen<'_> {
             }
             _ => {}
         }
+        if let Some(pending) = builder.pending.take() {
+            return self.lower_initialized_property(path, node, top, pending, builder);
+        }
         if let NodeKind::AssertionExpr(AssertionExprKind::Simple {
             expr,
             repeated: false,
@@ -440,14 +529,28 @@ impl Codegen<'_> {
                         .iter()
                         .map(|binding| self.expression_key(binding.actual))
                         .collect::<Vec<_>>();
-                    let local_formal = bindings.iter().any(|binding| {
-                        self.db.assertion_formal_direction(binding.formal).is_some()
-                    });
+                    let local_formals = bindings
+                        .iter()
+                        .map(|binding| self.db.assertion_formal_direction(binding.formal).is_some())
+                        .collect::<Vec<_>>();
                     if matches!(
                         self.kind(body),
                         NodeKind::AssertionExpr(AssertionExprKind::Invalid { .. })
                     ) {
-                        return self.lower_recursive_reentry(node, instance, target, builder);
+                        return self.lower_recursive_reentry(instance, target, builder);
+                    }
+                    let inits = self.property_instance_inits(instance);
+                    // An instance inside an expansion of its own property
+                    // with the same other actuals starts that expansion
+                    // again with its own local values (16.13.17).
+                    if !inits.is_empty() {
+                        if let Some(index) = builder.instances.iter().rposition(|frame| {
+                            frame.target == target
+                                && frame.local_formals == local_formals
+                                && same_actuals(frame, &values)
+                        }) {
+                            return self.lower_initialized_reentry(path, instance, index, builder);
+                        }
                     }
                     if builder.instances.iter().any(|frame| frame.body == body)
                         || builder.instances.len() >= PROPERTY_INSTANCE_DEPTH_LIMIT
@@ -457,39 +560,49 @@ impl Codegen<'_> {
                             self.assertion_location(node, builder.origin)
                         ));
                     }
-                    if local_formal && self.instance_recurses(target, body) {
-                        return Err(format!(
-                            "recursive property `{}` with local variable formal arguments at {} is not supported (SV 16.13.17)",
-                            self.node(target).name,
-                            self.assertion_location(node, builder.origin)
-                        ));
-                    }
+                    let frame = builder.instances.len();
                     builder.instances.push(InstanceFrame {
                         instance,
                         target,
                         body,
                         values,
+                        local_formals,
                         clock: self.sampled_clock,
+                        inits: inits.clone(),
+                        init_clock: None,
+                        init_body: None,
                         calls: Vec::new(),
                     });
                     let capture = self.assertion_instance_depth == 0;
-                    // Property operands start after the property attempt, so
-                    // they cannot initialize its locals (16.10).
-                    let enclosing = self.assertion_property_locals.len();
-                    let locals = self.instance_initialized_locals(instance);
-                    self.assertion_property_locals.extend(locals);
+                    // The instance's locals are initialized by a binding in
+                    // front of its body (F.4.2), not at an attempt's start.
+                    let inlined = inits
+                        .iter()
+                        .map(|init| init.local)
+                        .filter(|local| self.assertion_inlined_formals.insert(*local))
+                        .collect::<Vec<_>>();
+                    let enclosing = builder.pending.take();
+                    builder.pending = (!inits.is_empty()).then_some(PendingInit {
+                        frame,
+                        inits,
+                        split: false,
+                    });
                     let result = self.lower_assertion_instance(instance, capture, |this, body| {
                         this.lower_property_node(path, body, top, builder)
                     });
-                    self.assertion_property_locals.truncate(enclosing);
+                    builder.pending = enclosing;
+                    for local in inlined {
+                        self.assertion_inlined_formals.remove(&local);
+                    }
                     let frame = builder
                         .instances
                         .pop()
                         .ok_or_else(|| "property instance frame is missing".to_owned())?;
                     let root =
                         result?.ok_or_else(|| "assertion instance body is missing".to_owned())?;
+                    let target = frame.init_body.unwrap_or(root);
                     for call in frame.calls {
-                        builder.nodes[call as usize] = IrPropertyNode::Call { target: root };
+                        builder.nodes[call as usize] = IrPropertyNode::Call { target };
                     }
                     return Ok(root);
                 }
@@ -597,7 +710,20 @@ impl Codegen<'_> {
                                 "the antecedent of an implication or followed-by must be a sequence at {location} (SV 16.13.6, 16.13.9)"
                             ));
                         }
+                        // An antecedent with locals of its own passes on
+                        // only those, so it carries the enclosing ones the
+                        // consequent reads (16.10).
+                        self.assertion_carried_locals =
+                            self.live_locals(right, &builder.scope, &[]);
                         let antecedent = self.lower_property_sequence(path, left, builder)?;
+                        let assigned = antecedent
+                            .locals()
+                            .iter()
+                            .filter_map(|local| {
+                                let node = NodeId::from_index(local.declaration.checked_sub(1)? as usize);
+                                self.db.is_assertion_local_var(node).then_some(node)
+                            })
+                            .collect::<Vec<_>>();
                         let antecedent = builder.sequence(antecedent)?;
                         // The consequent of |-> and |=> is clocked by the
                         // antecedent's end clock (decision A13-D1);
@@ -616,7 +742,10 @@ impl Codegen<'_> {
                             Some(clock) => self.sampled_clock.replace(clock),
                             None => self.sampled_clock,
                         };
+                        let scope = builder.scope.len();
+                        builder.scope.extend(assigned);
                         let consequent = self.lower_property_node(path, right, false, builder);
+                        builder.scope.truncate(scope);
                         self.sampled_clock = previous;
                         let consequent = consequent?;
                         builder.push(
@@ -697,15 +826,19 @@ impl Codegen<'_> {
                 let otherwise = else_expr
                     .map(|expr| self.lower_property_node(path, expr, false, builder))
                     .transpose()?;
-                let condition = builder.atom(condition)?;
-                builder.push(
-                    IrPropertyNode::If {
-                        condition,
+                let node = match condition {
+                    PropertyCondition::Sampled(condition) => IrPropertyNode::If {
+                        condition: builder.atom(condition)?,
                         then,
                         otherwise,
                     },
-                    self.flowing_clock()?,
-                )
+                    PropertyCondition::Local(condition) => IrPropertyNode::LocalIf {
+                        condition: builder.sequence(condition)?,
+                        then,
+                        otherwise,
+                    },
+                };
+                builder.push(node, self.flowing_clock()?)
             }
             AssertionExprKind::Case {
                 expr,
@@ -883,42 +1016,21 @@ impl Codegen<'_> {
         }
     }
 
-    /// Whether the expansion `body` of property `target` instantiates
-    /// `target` again (a recursive property, 16.13.17).
-    fn instance_recurses(&self, target: NodeId, body: NodeId) -> bool {
-        let mut stack = vec![body];
-        let mut seen = HashSet::new();
-        while let Some(node) = stack.pop() {
-            if !seen.insert(node) {
-                continue;
-            }
-            if let NodeKind::AssertionExpr(AssertionExprKind::Simple { expr, .. }) = self.kind(node)
-            {
-                if matches!(
-                    self.kind(*expr),
-                    NodeKind::Expr(ExprKind::AssertionInstance { target: inner, .. }) if *inner == target
-                ) {
-                    return true;
-                }
-            }
-            stack.extend(self.assertion_operands(node));
-        }
-        false
-    }
-
     /// The re-entry of a recursive property instance (16.13.17), which the
     /// frontend leaves unexpanded: a call of the nearest enclosing expansion
     /// of the same property when that expansion repeats exactly (same
-    /// actuals in every later cycle, same flowing clock, no local variable
-    /// formals). Anything else is a located limit, never an approximation.
+    /// actuals in every later cycle, same flowing clock). A property with
+    /// local variables is re-entered at the instance the frontend expands
+    /// (`lower_initialized_reentry`), so reaching its unexpanded re-entry
+    /// means its other actuals changed. Anything else is a located limit,
+    /// never an approximation.
     fn lower_recursive_reentry(
         &mut self,
-        node: NodeId,
         instance: NodeId,
         target: NodeId,
         builder: &mut PropertyBuilder,
     ) -> Result<u32, String> {
-        let location = self.assertion_location(node, builder.origin);
+        let location = self.assertion_location(instance, builder.origin);
         let site = self.source_span(instance);
         let index = match (builder.instances.first(), builder.instances.last()) {
             (Some(root), Some(parent)) => self
@@ -931,9 +1043,9 @@ impl Codegen<'_> {
                 "recursive property instance at {location} does not repeat an enclosing expansion with the same actual arguments, which llg does not support (SV 16.13.17)"
             ));
         };
-        if !self.assertion_property_locals.is_empty() {
+        if !builder.instances[index].inits.is_empty() {
             return Err(format!(
-                "recursive property instance at {location} is evaluated with property local variables, which llg does not support (SV 16.13.17)"
+                "recursive property instance at {location} re-enters a property with local variables after its other actual arguments changed; this is not supported (SV 16.13.17)"
             ));
         }
         let clock = self.flowing_clock()?;
@@ -948,6 +1060,397 @@ impl Codegen<'_> {
         let call = builder.push(IrPropertyNode::Call { target: u32::MAX }, clock)?;
         builder.instances[index].calls.push(call);
         Ok(call)
+    }
+
+    /// The local variable initializations of property instance `instance`
+    /// (16.8.2, 16.10): its input local formals in declaration order, then
+    /// its declared locals with a declaration assignment in declaration
+    /// order. Locals its body never names need none.
+    fn property_instance_inits(&self, instance: NodeId) -> Vec<LocalInit> {
+        let (formals, declared) = self.instance_locals(instance);
+        formals
+            .into_iter()
+            .filter(|formal| formal.direction == DbDirection::Input)
+            .map(|formal| LocalInit {
+                local: formal.formal,
+                source: formal.actual,
+                port: Some(formal.port),
+            })
+            .chain(declared.into_iter().filter_map(|local| {
+                self.db
+                    .assertion_local_initializer(local)
+                    .map(|source| LocalInit {
+                        local,
+                        source,
+                        port: None,
+                    })
+            }))
+            .collect()
+    }
+
+    /// `node`, the body of an instance whose locals `pending` initializes,
+    /// preceded by those initializations at its semantic leading clock:
+    /// `(1'b1, E) |-> node` (F.4.2 `push`; 16.14.7: at "the earliest tick of
+    /// the semantic leading clock that is at or after the beginning of the
+    /// evaluation attempt"). With two or more semantic leading clocks they
+    /// are split over the operands of `and`, `or` and `not`, so each leading
+    /// clock has its own copy of the locals (16.14.7).
+    fn lower_initialized_property(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        top: bool,
+        pending: PendingInit,
+        builder: &mut PropertyBuilder,
+    ) -> Result<u32, String> {
+        let flowing = self.flowing_clock()?;
+        let clocks = self.semantic_leading_clocks(path, node)?.resolved(flowing);
+        if let [clock] = clocks.as_slice() {
+            let clock = *clock;
+            if !pending.split {
+                builder.instances[pending.frame].init_clock = Some(clock);
+            }
+            let assigned = pending
+                .inits
+                .iter()
+                .map(|init| init.local)
+                .collect::<Vec<_>>();
+            let carried = self.live_locals(node, &builder.scope, &assigned);
+            let binding = self.lower_local_binding(path, &pending.inits, clock, &carried)?;
+            let antecedent = builder.sequence(binding)?;
+            let scope = builder.scope.len();
+            builder.scope.extend(assigned);
+            let body = self.lower_property_node(path, node, top, builder);
+            builder.scope.truncate(scope);
+            let body = body?;
+            if !pending.split {
+                builder.instances[pending.frame].init_body = Some(body);
+            }
+            return builder.push(
+                IrPropertyNode::Implication {
+                    antecedent,
+                    consequent: body,
+                    overlapped: true,
+                    followed_by: false,
+                },
+                flowing,
+            );
+        }
+        let instance = builder.instances[pending.frame].instance;
+        let location = self.assertion_location(instance, builder.origin);
+        let split = PendingInit {
+            split: true,
+            ..pending
+        };
+        match self.kind(node) {
+            NodeKind::AssertionExpr(AssertionExprKind::Binary {
+                op: op @ (AssertionBinaryOp::And | AssertionBinaryOp::Or),
+                left,
+                right,
+            }) => {
+                let (op, left, right) = (*op, *left, *right);
+                builder.pending = Some(split.clone());
+                let left = self.lower_property_node(path, left, false, builder)?;
+                builder.pending = Some(split);
+                let right = self.lower_property_node(path, right, false, builder)?;
+                builder.push(
+                    IrPropertyNode::Binary {
+                        op: if op == AssertionBinaryOp::And {
+                            IrPropertyBinaryOp::And
+                        } else {
+                            IrPropertyBinaryOp::Or
+                        },
+                        left,
+                        right,
+                    },
+                    flowing,
+                )
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::Unary {
+                op: AssertionUnaryOp::Not,
+                expr,
+                ..
+            }) => {
+                let expr = *expr;
+                builder.pending = Some(split);
+                let operand = self.lower_property_node(path, expr, false, builder)?;
+                builder.push(IrPropertyNode::Not { operand }, flowing)
+            }
+            _ => Err(format!(
+                "the local variables of the property instance at {location} would be initialized at more than one semantic leading clock below an operator other than `and`, `or` or `not`; this is not supported (SV 16.14.7)"
+            )),
+        }
+    }
+
+    /// An instance of a property with local variables inside an expansion
+    /// of the same property whose other actuals it repeats (16.13.17): it
+    /// starts that expansion's body again, after a binding that gives the
+    /// expansion's locals this instance's actual values, by value, so every
+    /// recursion level has its own locals and its parent's stay unchanged.
+    fn lower_initialized_reentry(
+        &mut self,
+        path: &str,
+        instance: NodeId,
+        index: usize,
+        builder: &mut PropertyBuilder,
+    ) -> Result<u32, String> {
+        let location = self.assertion_location(instance, builder.origin);
+        let clock = self.flowing_clock()?;
+        let frame = &builder.instances[index];
+        if !frame
+            .clock
+            .is_some_and(|entry| clocks::same_clock(&entry, &clock))
+        {
+            return Err(format!(
+                "recursive property instance at {location} is reached under a different clock than its expansion, which llg does not support (SV 16.13.17)"
+            ));
+        }
+        let Some(init_clock) = frame.init_clock else {
+            return Err(format!(
+                "recursive property instance at {location} re-enters a property whose local variables are initialized at more than one semantic leading clock; this is not supported (SV 16.13.17, 16.14.7)"
+            ));
+        };
+        let NodeKind::Expr(ExprKind::AssertionInstance { bindings, .. }) = self.kind(instance)
+        else {
+            return Err(format!(
+                "recursive property instance at {location} has no actuals"
+            ));
+        };
+        let inits = frame
+            .inits
+            .iter()
+            .map(|init| match init.port {
+                Some(port) => {
+                    let name = &self.node(port).name;
+                    bindings
+                        .iter()
+                        .find(|binding| self.node(binding.formal).name == *name)
+                        .map(|binding| LocalInit {
+                            source: binding.actual,
+                            ..*init
+                        })
+                        .ok_or_else(|| {
+                            format!(
+                                "recursive property instance at {location} binds no actual to local formal `{name}`"
+                            )
+                        })
+                }
+                None => Ok(*init),
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        // The expansion's body may read any local its evaluation has.
+        let assigned = inits.iter().map(|init| init.local).collect::<Vec<_>>();
+        let mut carried = Vec::new();
+        for local in &builder.scope {
+            if !assigned.contains(local) && !carried.contains(local) {
+                carried.push(*local);
+            }
+        }
+        let binding = self.lower_local_binding(path, &inits, init_clock, &carried)?;
+        let antecedent = builder.sequence(binding)?;
+        let call = builder.push(IrPropertyNode::Call { target: u32::MAX }, clock)?;
+        builder.instances[index].calls.push(call);
+        builder.push(
+            IrPropertyNode::Implication {
+                antecedent,
+                consequent: call,
+                overlapped: true,
+                followed_by: false,
+            },
+            clock,
+        )
+    }
+
+    /// The locals of `scope` other than `assigned` that an evaluation of
+    /// `node` may read: those it names, also in its instances' actuals,
+    /// bodies and locals' declaration assignments, and every one when it
+    /// re-enters a recursive property, whose expansion may read any of them.
+    fn live_locals(&self, node: NodeId, scope: &[NodeId], assigned: &[NodeId]) -> Vec<NodeId> {
+        if scope.is_empty() {
+            return Vec::new();
+        }
+        let mut named = HashSet::new();
+        let mut all = false;
+        let mut stack = vec![node];
+        let mut seen = HashSet::new();
+        while let Some(current) = stack.pop() {
+            if !seen.insert(current) {
+                continue;
+            }
+            match self.kind(current) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) if self.db.is_assertion_local_var(*target) => {
+                    named.insert(*target);
+                    if let Some(initializer) = self.db.assertion_local_initializer(*target) {
+                        stack.push(initializer);
+                    }
+                }
+                NodeKind::Expr(ExprKind::AssertionInstance { body, bindings, .. }) => {
+                    if matches!(
+                        self.kind(*body),
+                        NodeKind::AssertionExpr(AssertionExprKind::Invalid { .. })
+                    ) {
+                        all = true;
+                        break;
+                    }
+                    stack.push(*body);
+                    stack.extend(bindings.iter().map(|binding| binding.actual));
+                }
+                _ => {}
+            }
+            stack.extend(self.node(current).children.iter().copied());
+        }
+        let mut live = Vec::new();
+        for local in scope {
+            if (all || named.contains(local)) && !assigned.contains(local) && !live.contains(local)
+            {
+                live.push(*local);
+            }
+        }
+        live
+    }
+
+    /// Whether `node` names a local variable of `locals`.
+    fn names_local(&self, node: NodeId, locals: &HashSet<NodeId>) -> bool {
+        let mut stack = vec![node];
+        while let Some(current) = stack.pop() {
+            if let NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) = self.kind(current)
+            {
+                if locals.contains(target) {
+                    return true;
+                }
+            }
+            stack.extend(self.node(current).children.iter().copied());
+        }
+        false
+    }
+
+    /// Whether `node` names any local assertion variable.
+    fn names_assertion_local(&self, node: NodeId) -> bool {
+        let mut stack = vec![node];
+        while let Some(current) = stack.pop() {
+            if let NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) = self.kind(current)
+            {
+                if self.db.is_assertion_local_var(*target) {
+                    return true;
+                }
+            }
+            stack.extend(self.node(current).children.iter().copied());
+        }
+        false
+    }
+
+    /// Lower with a fresh table of local slots, as a sequence graph does;
+    /// returns the result and the slots it bound.
+    fn with_local_slots<T>(
+        &mut self,
+        lower: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<(T, Vec<IrSequenceLocal>), String> {
+        let previous_locals = self.assertion_local_bindings.replace(HashMap::new());
+        let previous_initializers = self.assertion_local_initializers.replace(HashMap::new());
+        let result = lower(self).map(|value| (value, self.assertion_local_table()));
+        self.assertion_local_bindings = previous_locals;
+        self.assertion_local_initializers = previous_initializers;
+        result
+    }
+
+    /// The one-tick sequence `(1'b1, E)` on `clock` that performs `inits`
+    /// (F.4.2): the formals from their actuals, then the declared locals in
+    /// declaration order (16.10: "all initialization assignments to local
+    /// variable formal arguments shall be performed before any
+    /// initialization assignment to a local variable declared in an
+    /// assertion_variable_declaration"). Actuals read the values the
+    /// evaluation has before the binding: when one names a local the binding
+    /// assigns (a recursive instance), every formal goes through a
+    /// temporary first. The graph also carries `carried`, the enclosing
+    /// locals the evaluation it starts may read.
+    fn lower_local_binding(
+        &mut self,
+        path: &str,
+        inits: &[LocalInit],
+        clock: SampledClock,
+        carried: &[NodeId],
+    ) -> Result<IrSequence, String> {
+        let assigned = inits.iter().map(|init| init.local).collect::<HashSet<_>>();
+        let staged = inits
+            .iter()
+            .any(|init| init.port.is_some() && self.names_local(init.source, &assigned));
+        let (items, locals) = self.with_local_slots(|this| {
+            let mut targets = Vec::with_capacity(inits.len());
+            for init in inits {
+                let binding = this.assertion_local_binding(init.local)?.ok_or_else(|| {
+                    format!(
+                        "local variable `{}` at {} has no local slot",
+                        this.node(init.local).name,
+                        this.source_location(init.local)
+                    )
+                })?;
+                targets.push(binding);
+            }
+            for local in carried {
+                this.assertion_local_binding(*local)?;
+            }
+            let mut items = Vec::new();
+            let mut copies = Vec::new();
+            for (init, target) in inits.iter().zip(&targets) {
+                if init.port.is_none() && !copies.is_empty() {
+                    items.extend(std::mem::take(&mut copies));
+                }
+                let value = this.lower_expr(path, init.source)?;
+                if value.is_real() || !this.sampled_compatible(&value) {
+                    return Err(format!(
+                        "local variable `{}` declared at {} needs one packed sampled initial value",
+                        this.node(init.local).name,
+                        this.source_location(init.local)
+                    ));
+                }
+                if staged && init.port.is_some() {
+                    let bindings = this
+                        .assertion_local_bindings
+                        .as_mut()
+                        .ok_or_else(|| "local binding has no slot table".to_owned())?;
+                    let temporary = AssertionLocalBinding {
+                        slot: u32::try_from(bindings.len())
+                            .map_err(|_| "sequence has too many local assertion variables")?,
+                        ..*target
+                    };
+                    bindings.insert(init.source, temporary);
+                    items.push(local_assignment(temporary, value));
+                    let read = IrExpr::new(
+                        IrExprKind::LocalRead(format!(
+                            "llg_sequence_local_read(data, {}u)",
+                            temporary.slot
+                        )),
+                        temporary.width,
+                        temporary.signed,
+                        None,
+                    );
+                    copies.push(local_assignment(*target, read));
+                } else {
+                    items.push(local_assignment(*target, value));
+                }
+            }
+            items.extend(copies);
+            Ok(items)
+        })?;
+        let mut sequence = SequenceBuilder::new();
+        let start = sequence.state()?;
+        let accept = sequence.state()?;
+        sequence.edge_with_clock(start, accept, zero_range(), Some(true_atom()), Some(clock))?;
+        sequence.attach_match_items(accept, items)?;
+        let fragment = SequenceFragment {
+            empty: false,
+            start,
+            accept,
+            leading_clock: Some(clock),
+            trailing_clock: Some(clock),
+        };
+        sequence.finish(fragment, locals, Vec::new(), Vec::new())
     }
 
     /// A sequence operand used as a property (16.13.1). A one-tick Boolean
@@ -1012,15 +1515,28 @@ impl Codegen<'_> {
         Ok(sequence)
     }
 
-    /// `if`/`case` conditions are sampled Booleans of the starting tick.
-    fn lower_property_condition(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
-        let condition = self.lower_boolean_expr(path, node)?;
-        if condition.is_real() || !self.sampled_compatible(&condition) {
-            return Err(format!(
-                "property condition must be a packed sampled expression in `{path}`"
-            ));
+    /// `if`/`case` conditions are sampled Booleans of the starting tick; one
+    /// that names local variables is read with the evaluation's locals.
+    fn lower_property_condition(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<PropertyCondition, String> {
+        let lower = |this: &mut Self| {
+            let condition = this.lower_boolean_expr(path, node)?;
+            if condition.is_real() || !this.sampled_compatible(&condition) {
+                return Err(format!(
+                    "property condition must be a packed sampled expression in `{path}`"
+                ));
+            }
+            Ok(property_truth(condition))
+        };
+        if !self.names_assertion_local(node) {
+            return lower(self).map(PropertyCondition::Sampled);
         }
-        Ok(property_truth(condition))
+        let clock = self.flowing_clock()?;
+        let (condition, locals) = self.with_local_slots(lower)?;
+        local_condition(condition, locals, clock).map(PropertyCondition::Local)
     }
 
     /// `case` is `if (b === b1) p1 else case ...`, with the case comparison
@@ -1034,19 +1550,36 @@ impl Codegen<'_> {
         default_case: Option<NodeId>,
         builder: &mut PropertyBuilder,
     ) -> Result<u32, String> {
-        let selector = self.lower_expr(path, selector)?;
+        // Expressions that name local variables are read with the
+        // evaluation's locals (16.10).
+        let local = self.names_assertion_local(selector)
+            || items
+                .iter()
+                .flat_map(|item| &item.expressions)
+                .any(|expression| self.names_assertion_local(*expression));
+        let lower = |this: &mut Self| {
+            let selector = this.lower_expr(path, selector)?;
+            let mut lowered = Vec::with_capacity(items.len());
+            for item in items {
+                let mut expressions = Vec::with_capacity(item.expressions.len());
+                for expression in &item.expressions {
+                    expressions.push(this.lower_expr(path, *expression)?);
+                }
+                lowered.push((expressions, item.body));
+            }
+            Ok((selector, lowered))
+        };
+        let ((selector, lowered), locals) = if local {
+            let (lowered, locals) = self.with_local_slots(lower)?;
+            (lowered, Some(locals))
+        } else {
+            (lower(self)?, None)
+        };
         let mut width = selector.width;
         let mut signed = selector.signed;
-        let mut lowered = Vec::with_capacity(items.len());
-        for item in items {
-            let mut expressions = Vec::with_capacity(item.expressions.len());
-            for expression in &item.expressions {
-                let expression = self.lower_expr(path, *expression)?;
-                width = width.max(expression.width);
-                signed &= expression.signed;
-                expressions.push(expression);
-            }
-            lowered.push((expressions, item.body));
+        for expression in lowered.iter().flat_map(|item| &item.0) {
+            width = width.max(expression.width);
+            signed &= expression.signed;
         }
         for expression in std::iter::once(&selector).chain(lowered.iter().flat_map(|item| &item.0))
         {
@@ -1098,15 +1631,23 @@ impl Codegen<'_> {
             let condition = condition
                 .ok_or_else(|| format!("property case item has no expression in `{path}`"))?;
             let then = self.lower_property_node(path, body, false, builder)?;
-            let condition = builder.atom(condition)?;
-            tail = Some(builder.push(
-                IrPropertyNode::If {
-                    condition,
+            let node = match &locals {
+                None => IrPropertyNode::If {
+                    condition: builder.atom(condition)?,
                     then,
                     otherwise: tail,
                 },
-                self.flowing_clock()?,
-            )?);
+                Some(locals) => IrPropertyNode::LocalIf {
+                    condition: builder.sequence(local_condition(
+                        condition,
+                        locals.clone(),
+                        self.flowing_clock()?,
+                    )?)?,
+                    then,
+                    otherwise: tail,
+                },
+            };
+            tail = Some(builder.push(node, self.flowing_clock()?)?);
         }
         tail.ok_or_else(|| format!("property case has no items in `{path}`"))
     }
