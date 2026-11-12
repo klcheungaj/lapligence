@@ -116,6 +116,37 @@ impl EmitCtx<'_, '_> {
         // formals select a specialization (`record_refs`).
         let records = self.cg.record_ref_bindings(&formals, &bound);
         let dispatch = self.cg.record_ref_dispatch(h, virtual_call_info.is_some());
+        // A column formal bound to a record that holds native members (an
+        // element, or a record property) reads it through its address, which
+        // publishes no change: a waiter on the formal could never resume.
+        let unwatched_cell = records.iter().find(|record| {
+            record.cell
+                && self.cg.fixed_value_width(record.formal).is_none()
+                && formals
+                    .iter()
+                    .position(|(formal, _)| *formal == record.formal)
+                    .is_some_and(|index| match dispatch {
+                        RecordRefDispatch::Virtual => {
+                            self.cg.any_override_waits_on_record_ref(ft, callee_inst)
+                        }
+                        _ => self.cg.waits_on_ref_formal(ft, callee_inst, index),
+                    })
+        });
+        if let Some(record) = unwatched_cell {
+            let actual = formals
+                .iter()
+                .position(|(formal, _)| *formal == record.formal)
+                .map_or(h, |index| bound[index].expr);
+            let node = self.cg.node(actual);
+            return Err(format!(
+                "task `{name}` waits on record `ref` formal `{}` of the column form (16 or more cells), whose actual holds string, real, handle or container members and publishes no change that form follows: the wait could never resume (SIM-009) at {}:{}:{} in `{}`",
+                self.cg.node(record.formal).name,
+                node.file.as_deref().unwrap_or("<unknown>"),
+                node.line,
+                node.col,
+                self.cg.source_path(&self.path)
+            ));
+        }
         if let Some(select) = self.cg.record_ref_select(&self.path, &formals, &bound)? {
             let waits = match dispatch {
                 RecordRefDispatch::Virtual => {
@@ -766,6 +797,14 @@ impl EmitCtx<'_, '_> {
                         ref_static,
                     )?);
                     self.stop_if_unselected(&mut out_args, *io, callee_inst, idx, h);
+                    if self
+                        .cg
+                        .enclosing_func_task(*io)
+                        .is_some_and(|task| self.cg.waits_on_ref_formal(task, callee_inst, idx))
+                    {
+                        self.cg
+                            .observe_waited_ref_actual(&self.path, bound[idx].expr)?;
+                    }
                 }
                 if !bound[idx].string && !matches!(out_args.last(), Some(IrCallArg::ElementRef(_)))
                 {

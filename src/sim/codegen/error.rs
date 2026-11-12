@@ -21,6 +21,11 @@ pub(crate) fn located(location: &str, message: impl fmt::Display) -> String {
     format!("{LOCATION_MARK}{location}{LOCATION_MARK}{message}")
 }
 
+/// Whether `message` already carries a framed location ([`located`]).
+pub(crate) fn is_located(message: &str) -> bool {
+    message.contains(LOCATION_MARK)
+}
+
 /// Split the first framed location out of `detail`.
 fn take_location(detail: String) -> (String, Option<String>) {
     let Some(start) = detail.find(LOCATION_MARK) else {

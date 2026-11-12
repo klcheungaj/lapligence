@@ -466,6 +466,99 @@ impl Codegen<'_> {
         dependencies
     }
 
+    /// A `ref` actual bound to a formal its task waits on, when the actual
+    /// names storage inside a class object. The waiter follows the
+    /// reference's own marker: an element of a container property
+    /// (`c.q[i]`, `c.a[i].m`) takes the container's marker, which the
+    /// property then publishes on its object. A binding into a record
+    /// property (`c.r.a`) has no marker a direct store reaches, so the call
+    /// rejects rather than waiting forever.
+    pub(in crate::sim::codegen) fn observe_waited_ref_actual(
+        &mut self,
+        path: &str,
+        actual: NodeId,
+    ) -> Result<(), String> {
+        let mut node = actual;
+        loop {
+            if let Some(container) = self
+                .class_container_property(node)
+                .filter(|_| self.container_property_declaration(node).is_some())
+            {
+                let receiver = match self
+                    .container_of(node)
+                    .and_then(|container| self.model.containers[container.ir].receiver.clone())
+                {
+                    Some(receiver) => Some(receiver),
+                    None => self
+                        .container_property_declaration(node)
+                        .and_then(|field| self.class_receiver_for(path, node, field).ok()),
+                };
+                let Some(receiver) = receiver else {
+                    return Err(self.unobservable_read(
+                        path,
+                        actual,
+                        &format!(
+                            "an element of container class property `{}` bound to a `ref` formal its task waits on, selected through a handle the call cannot name,",
+                            self.node(node).name
+                        ),
+                    ));
+                };
+                self.class_container_dependencies(receiver, container);
+                return Ok(());
+            }
+            if let Some(field) = self.class_record_property(node) {
+                return Err(self.unobservable_read(
+                    path,
+                    actual,
+                    &format!(
+                        "storage of record class property `{}` bound to a `ref` formal its task waits on",
+                        self.node(field).name
+                    ),
+                ));
+            }
+            node = match self.kind(node) {
+                // A member array is a detached array node, named by the
+                // select's path child (`c.fa` in `c.fa[i]`, `c.r.arr` in
+                // `c.r.arr[1]`).
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                    if !matches!(self.kind(*base), NodeKind::Expr(_)) =>
+                {
+                    let path_child = self.node(node).children.iter().copied().find(|child| {
+                        !indices.contains(child)
+                            && matches!(
+                                self.kind(*child),
+                                NodeKind::Expr(ExprKind::HierPath { .. })
+                            )
+                    });
+                    match path_child {
+                        Some(child) => child,
+                        None => return Ok(()),
+                    }
+                }
+                NodeKind::Expr(
+                    ExprKind::ArraySelect { base, .. }
+                    | ExprKind::BitSelect { base, .. }
+                    | ExprKind::PartSelect { base, .. }
+                    | ExprKind::IndexedPartSelect { base, .. },
+                ) => *base,
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => match refs.first() {
+                    Some(Some(first))
+                        if matches!(
+                            self.kind(*first),
+                            NodeKind::Expr(
+                                ExprKind::ArraySelect { .. } | ExprKind::BitSelect { .. }
+                            )
+                        ) =>
+                    {
+                        *first
+                    }
+                    _ => return Ok(()),
+                },
+                _ => return Ok(()),
+            };
+        }
+    }
+
     /// The native record property `node` names (`h.r`, `h.r.a`, or `r` in a
     /// method of its class): one value per object, whose leaves have no
     /// storage a wait could name.
