@@ -1568,6 +1568,43 @@ impl<'a> Codegen<'a> {
         // and ports with selected actuals, merge like inout connections and
         // lose their link (`nets/port_merges.rs`, decisions A21-D4, A21-D5).
         let writers = self.net_writer_index(&nodes);
+        // Converting ports join their bits for a strength reader an earlier
+        // lowering found (T1-D13); the others are indexed for this
+        // lowering's readers. The joined nets are bit-level nets for the
+        // merge decision below.
+        let converting = self.converting_links(&port_merges::MergeContext {
+            nodes: &nodes,
+            writers: &writers,
+            parent: &parent,
+            true_aliases: &true_aliases,
+            bit_nets: &alias_nets,
+            cells: &cell_plan,
+        });
+        let mut joined_ports = Vec::new();
+        for link in converting {
+            if !self.strength_links.requested.contains(&link.port) {
+                self.strength_links
+                    .links
+                    .insert(link.port, (link.sink, link.source));
+                self.strength_links
+                    .by_sink
+                    .entry(link.sink)
+                    .or_default()
+                    .push(link.port);
+                continue;
+            }
+            for (formal, actual) in &link.pairs {
+                alias_bits.extend([*actual, *formal]);
+                alias_nets.extend(actual.net().into_iter().chain(formal.net()));
+                alias_union(&mut alias_parent, &mut alias_rank, *actual, *formal);
+            }
+            if link.sink_wider {
+                self.strength_links.masked.insert(link.port, link.joined);
+            } else {
+                joined_ports.push(link.port);
+            }
+            self.strength_links.pairs.insert(link.port, link.pairs);
+        }
         let merges = self.merged_net_ports(&port_merges::MergeContext {
             nodes: &nodes,
             writers: &writers,
@@ -1597,6 +1634,14 @@ impl<'a> Codegen<'a> {
             self.port_aliases.insert(merge.port);
             merged_ports.insert(merge.port);
         }
+        // A joined converting port is a selected merge; one that keeps a link
+        // for its sink's other bits still joins the net types of its pairs.
+        for port in joined_ports {
+            inout_ports.push(port);
+            array_ports.insert(port);
+            self.port_aliases.insert(port);
+        }
+        merged_ports.extend(self.strength_links.pairs.keys().copied());
         self.warn_unmerged_uwire_ports(&nodes, &merged_ports);
 
         // Port traversal order must not split a whole-net connection from a

@@ -19,6 +19,15 @@
 //! `%v` shows and an event wakes on the strength of the bits selected now
 //! (decision T1-D12). Bits past the net, or an unknown index, read StX, the
 //! strength a value select there gives.
+//!
+//! A port link that converts (a width or type change between two nets)
+//! drives its sink with one strength. When a reader names the sink's strength
+//! (`%v`, or an event, implicit event list, `wait` or `$monitor` while the
+//! source's strength can change alone), the lowering records the port
+//! ([`Codegen::note_strength_link_reader`]) and the model is lowered again
+//! with the port's overlapping bits joined into one net, so the sink shows
+//! and wakes on the source's strength (decision T1-D13,
+//! `nets/port_merges.rs`). A design without such a reader keeps every link.
 
 use super::*;
 use crate::sim::emit_c::LLG_MAX_WIDTH;
@@ -38,6 +47,33 @@ pub(in super::super) struct StrengthNets {
     groups: Vec<bool>,
     /// The dependency name of each signal with a bit on such a net.
     signals: HashMap<String, usize>,
+}
+
+/// Converting port links and the strength readers of their sinks (module
+/// docs).
+#[derive(Default)]
+pub(in super::super) struct StrengthLinks {
+    /// Ports an earlier lowering found read for strength; this lowering
+    /// joins their bits.
+    pub(in super::super) requested: HashSet<NodeId>,
+    /// The joined ports: their (formal bit, actual bit) pairs, least
+    /// significant bits aligned.
+    pub(in super::super) pairs: HashMap<NodeId, Vec<(AliasBit, AliasBit)>>,
+    /// Joined ports whose sink is wider than the bits they join: the link
+    /// stays for the sink's other bits and drives the joined low bits z.
+    pub(in super::super) masked: HashMap<NodeId, u32>,
+    /// Converting ports that keep their link: (sink net, source net).
+    pub(in super::super) links: HashMap<NodeId, (NodeId, NodeId)>,
+    /// The ports of [`Self::links`] by sink net.
+    pub(in super::super) by_sink: HashMap<NodeId, Vec<NodeId>>,
+    /// The ports of [`Self::links`] by a net group their sink has a bit in,
+    /// built for the first reader, once every group exists.
+    by_group: Option<HashMap<usize, Vec<NodeId>>>,
+    /// The ports of [`Self::links`] by their sink's dependency name, built
+    /// with [`Self::by_group`].
+    by_name: HashMap<String, Vec<NodeId>>,
+    /// Ports whose sink a strength reader of this lowering names.
+    found: HashSet<NodeId>,
 }
 
 impl Codegen<'_> {
@@ -119,6 +155,7 @@ impl Codegen<'_> {
         &mut self,
         reads: &mut Vec<IrDependency>,
     ) -> Result<(), String> {
+        self.note_strength_link_reads(reads);
         if self.strength_nets.signals.is_empty() {
             return Ok(());
         }
@@ -185,6 +222,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
+        self.note_strength_link_reader(node, false);
         if self.strength_nets.signals.is_empty() {
             return Ok(None);
         }
@@ -323,6 +361,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrDisplayArg>, String> {
+        self.note_strength_link_reader(node, true);
         Ok(self
             .net_strength_expr(path, node, |_, _| true)?
             .map(IrDisplayArg::Strength))
@@ -620,5 +659,160 @@ impl Codegen<'_> {
             }
         }
         reads
+    }
+
+    /// Record the converting port links whose sink `node` (a net, a
+    /// projection of nets or a dynamic select of one) has a bit on: every
+    /// one for a `%v` reader (`display`), otherwise those whose source's
+    /// strength can change alone (module docs).
+    fn note_strength_link_reader(&mut self, node: NodeId, display: bool) {
+        if self.strength_links.links.is_empty() {
+            return;
+        }
+        let node = match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. } | ExprKind::IndexedPartSelect { base, .. },
+            ) if self.dynamic_strength_index(node).is_some() => *base,
+            _ => node,
+        };
+        let Ok(bits) = self.alias_expression_bits(node, node) else {
+            return;
+        };
+        self.index_strength_links();
+        let mut ports = Vec::new();
+        for bit in bits {
+            let Some((group, _)) = self.electrical_bit(bit) else {
+                continue;
+            };
+            let by_group = self.strength_links.by_group.as_ref();
+            for port in by_group
+                .and_then(|map| map.get(&group))
+                .into_iter()
+                .flatten()
+            {
+                if !ports.contains(port) {
+                    ports.push(*port);
+                }
+            }
+        }
+        self.note_strength_links(ports, display);
+    }
+
+    /// Index the sinks of the converting links by group and dependency
+    /// name, once every group exists (the first reader).
+    fn index_strength_links(&mut self) {
+        if self.strength_links.by_group.is_some() {
+            return;
+        }
+        let mut by_group: HashMap<usize, Vec<NodeId>> = HashMap::new();
+        let mut by_name: HashMap<String, Vec<NodeId>> = HashMap::new();
+        for (sink, ports) in &self.strength_links.by_sink {
+            let Some(info) = self.signal_of(*sink) else {
+                continue;
+            };
+            by_name
+                .entry(self.signal_dependency_name(info.ir))
+                .or_default()
+                .extend(ports);
+            {
+                let signal = self.model.signal(info.ir);
+                let mut groups = signal
+                    .net_driver
+                    .iter()
+                    .map(|(group, _)| *group)
+                    .chain(signal.net_alias.iter().map(|binding| binding.group))
+                    .collect::<Vec<_>>();
+                groups.sort_unstable();
+                groups.dedup();
+                for group in groups {
+                    by_group.entry(group).or_default().extend(ports);
+                }
+            }
+        }
+        self.strength_links.by_group = Some(by_group);
+        self.strength_links.by_name = by_name;
+    }
+
+    /// [`Self::note_strength_link_reader`] for a process's read set: an
+    /// implicit event list or a `wait` that reads a sink.
+    fn note_strength_link_reads(&mut self, reads: &[IrDependency]) {
+        if self.strength_links.links.is_empty() {
+            return;
+        }
+        self.index_strength_links();
+        let mut ports = Vec::new();
+        for read in reads {
+            let name = match read {
+                IrDependency::PackedRange { storage, .. } => match &**storage {
+                    IrDependency::Scalar(name) => name,
+                    _ => continue,
+                },
+                IrDependency::Scalar(name) => name,
+                _ => continue,
+            };
+            for port in self.strength_links.by_name.get(name).into_iter().flatten() {
+                if !ports.contains(port) {
+                    ports.push(*port);
+                }
+            }
+        }
+        self.note_strength_links(ports, false);
+    }
+
+    /// Record `ports` and, along each source that is itself the sink of
+    /// such a link, the links it reads through. An event reader records
+    /// only a chain whose first source's strength can change alone.
+    fn note_strength_links(&mut self, ports: Vec<NodeId>, display: bool) {
+        for port in ports {
+            if self.strength_links.found.contains(&port) {
+                continue;
+            }
+            let mut chain = Vec::new();
+            let mut pending = vec![port];
+            let mut varies = false;
+            while let Some(port) = pending.pop() {
+                if chain.contains(&port) {
+                    continue;
+                }
+                chain.push(port);
+                let Some(&(_, source)) = self.strength_links.links.get(&port) else {
+                    continue;
+                };
+                match self.strength_links.by_sink.get(&source) {
+                    Some(next) => pending.extend(next.iter().copied()),
+                    None => varies |= self.net_strength_varies(source),
+                }
+            }
+            if display || varies {
+                self.strength_links.found.extend(chain);
+            }
+        }
+    }
+
+    /// Whether a bit of `net` is on a group whose strength can change alone.
+    fn net_strength_varies(&self, net: NodeId) -> bool {
+        let Some(info) = self.signal_of(net) else {
+            return false;
+        };
+        let signal = self.model.signal(info.ir);
+        signal
+            .net_driver
+            .iter()
+            .map(|(group, _)| *group)
+            .chain(signal.net_alias.iter().map(|binding| binding.group))
+            .any(|group| self.strength_varies(group))
+    }
+
+    /// The converting ports a strength reader found in this lowering, for a
+    /// further lowering that joins them.
+    pub(in crate::sim::codegen::lowering) fn strength_link_retries(&self) -> Vec<NodeId> {
+        let mut ports = self
+            .strength_links
+            .found
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        ports.sort_by_key(|port| port.index());
+        ports
     }
 }

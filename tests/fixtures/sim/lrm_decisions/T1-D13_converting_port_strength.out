@@ -1,0 +1,12 @@
+1: wi{i=00 St0 We0} ni{n=0} si{s=001 St0 St0 St1} lf{l=000 St0} nl{l=00 We0} wo{q=00 St0 We0} di{d=00 We0}
+3: wi{i=00 St0 St0} ni{n=0} si{} lf{} nl{l=00 St0} wo{} di{}
+5: wi{i=00 St0 We0} ni{n=0} si{} lf{} nl{l=00 We0} wo{} di{}
+7: wi{i=0x St0 WeX} ni{n=x} si{s=xx1 StX StX St1} lf{l=00x StX} nl{l=0x WeX} wo{} di{d=0x WeX}
+9: wi{i=01 St0 St1} ni{n=1} si{s=111 St1 St1 St1} lf{l=001 St1} nl{l=01 St1} wo{} di{}
+11: wi{i=00 St0 We0} ni{n=0} si{s=001 St0 St0 St1} lf{l=000 St0} nl{l=00 We0} wo{} di{d=00 We0}
+13: wi{} ni{} si{} lf{} nl{} wo{q=01 St0 St1} di{}
+15: wi{} ni{} si{} lf{} nl{} wo{q=01 St0 We1} di{}
+17: wi{} ni{} si{} lf{} nl{} wo{} di{d=01 Pu1}
+19: wi{i=01 St0 We1} ni{n=1} si{s=111 St1 St1 St1} lf{l=001 St1} nl{l=01 We1} wo{} di{}
+21: wi{i=0z St0 HiZ} ni{n=x} si{s=xx1 StX StX St1} lf{l=00z HiZ} nl{l=0x WeX} wo{} di{}
+22 end

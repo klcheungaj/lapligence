@@ -866,8 +866,11 @@ behaviour follows the format.
   vector net do (T1-D12).
 - An event control in a task or function body on such a net, even `@(w)`,
   does not run on a strength-only change; the same control in a process does.
-- A net read through a port link that converts, such as a widening port, shows
-  and wakes on the strength of the link, not of the net outside.
+- A net on the sink side of a port between nets of different widths shows and
+  wakes on the strong strength of the port's link, not on the source's, when
+  the port cannot merge: a net delay on either side, a port strength, specify
+  paths or SDF, `--vpi-port-delays`. Other such ports carry the strength
+  (T1-D13).
 
 ### Cause
 
@@ -875,21 +878,21 @@ A dynamic select reads the bytes of its net's strength view that the lowered
 packed select names; an element of a net array lowers to an array read, whose
 cells have one view each. Subroutine bodies are lowered before the processes
 that collect net drivers, so when their event controls are lowered no net is
-known to vary in strength. A converting port stays a continuous assignment,
-whose driver has one strength.
+known to vary in strength. A port that cannot merge stays a continuous
+assignment, whose driver has one strength.
 
 ### Intended direction
 
 Select among the cells' views by the array index; mark the varying nets before
-subroutine bodies are lowered. A converting port needs strength carried
-through a link, which only matters for a design reading strength across one.
+subroutine bodies are lowered. A port that cannot merge needs strength carried
+through its link, which only matters for a design reading strength across one.
 
 ### Reproduce
 
 Two drivers of different strength on `n[1]` of `wire n[1:0]`, `i = 1`, and
 `always @(n[i]) $display("%v", n[i])`; a task that loops on `@(w)` for a
-one-bit net `w` with such drivers; that net on a two-bit input port with
-`always @(i)`.
+one-bit net `w` with such drivers; that net on a two-bit input port whose
+formal declares a net delay, with `always @(i)`.
 
 ## Strength views past the packed width limit
 

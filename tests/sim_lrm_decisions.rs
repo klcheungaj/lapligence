@@ -115,6 +115,14 @@ fn t1_d12_dynamic_select_strength() {
 }
 
 #[test]
+fn t1_d13_converting_port_strength() {
+    run_decision(
+        "T1-D13_converting_port_strength",
+        include_str!("fixtures/sim/lrm_decisions/T1-D13_converting_port_strength.out"),
+    );
+}
+
+#[test]
 fn t1_d9_output_port_delay_merges() {
     run_decision(
         "T1-D9_output_port_delay_merges",

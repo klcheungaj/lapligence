@@ -1550,7 +1550,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   reports the resolved strength range (mnemonic, two-digit range, L/H) of nets,
   their constant selects, aliases and net-array cells, and of the bits a
   dynamic bit or indexed part-select of a vector net selects (StX past the net;
-  decision T1-D12); strength-only changes
+  decision T1-D12), and through a port between nets of different widths once
+  a reader names its sink's strength (decision T1-D13); strength-only changes
   reach `%v` monitors, and readers that name the net (event controls, implicit
   event lists, `wait`, `$monitor` arguments; decision T1-D8), while edges and
   derived values wake only on value changes. The

@@ -2053,7 +2053,60 @@ impl<'a> Codegen<'a> {
         reads: Vec<IrDependency>,
         alias_bindings: Option<Vec<(IrNetAliasBinding, u32)>>,
     ) -> Result<(), String> {
-        let rhs = apply_lhs_assignment_context(&self.model, &lhs, rhs);
+        let mut rhs = apply_lhs_assignment_context(&self.model, &lhs, rhs);
+        // The low sink bits a strength join made one net with the source
+        // are driven z, which no resolution sees (T1-D13).
+        if let Some(&joined) = self.strength_links.masked.get(&port) {
+            // The value a link writes takes the sink's width as an
+            // assignment does (its own signedness extends it).
+            if let Some(sink) = packed_lhs_width(&self.model, &lhs).filter(|w| *w > rhs.width()) {
+                let signed = rhs.signed();
+                rhs = IrExpr::convert_to(rhs, sink, signed);
+            }
+            let width = rhs.width();
+            if joined >= width {
+                return Err(format!(
+                    "port `{}` joins all {width} bits of its link",
+                    self.display_name(port)
+                ));
+            }
+            let high = IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(rhs),
+                    left: i64::from(width) - 1,
+                    right: i64::from(joined),
+                },
+                width - joined,
+                false,
+                None,
+            );
+            let z = IrConst::packed(
+                Vec::new(),
+                Vec::new(),
+                (0..joined.div_ceil(64))
+                    .map(|word| {
+                        let bits = (joined - word * 64).min(64);
+                        if bits == 64 {
+                            u64::MAX
+                        } else {
+                            (1u64 << bits) - 1
+                        }
+                    })
+                    .collect(),
+                joined,
+                false,
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+            rhs = IrExpr::new(
+                IrExprKind::Concat {
+                    parts: vec![high, IrExpr::new(IrExprKind::Const(z), joined, false, None)],
+                },
+                width,
+                false,
+                None,
+            );
+        }
         let shape = if reads.is_empty() {
             IrShape::RunOnce
         } else {

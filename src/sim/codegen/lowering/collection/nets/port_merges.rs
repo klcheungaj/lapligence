@@ -57,6 +57,20 @@
 //! inout union must have a driver besides the port. An output port whose
 //! actual declares the delay and whose formal declares none merges too, so
 //! the formal shows the delayed net (T1-D9).
+//!
+//! A port between two nets that converts (their widths or packed types
+//! differ) keeps its link, which drives the sink with one strength. When a
+//! reader names the sink's strength, a further lowering joins the bits both
+//! sides have, least significant bits aligned, in the bit-level union, so
+//! the sink shows the source's strength and wakes on its strength-only
+//! changes (T1-D13, `strength_views.rs`). A sink no wider than the joined
+//! bits loses its link; a wider one keeps it for its other bits (a widening
+//! input's extension, a widening output's high actual bits), and the link
+//! drives the joined bits z, which no resolution sees. A converting port
+//! that a merge could not keep exact (the conditions above) keeps its link
+//! and its strength, as do one whose signed source widens (its extension
+//! copies the sign bit) and one whose source is the sink of a widening
+//! converting port.
 
 use super::super::net_cells::NetCellPlan;
 use super::*;
@@ -99,6 +113,20 @@ pub(super) struct PortMerges {
     pub(super) whole: Vec<NodeId>,
     /// Selected actuals, joined by the bit-level union.
     pub(super) selected: Vec<SelectedPortMerge>,
+}
+
+/// A port between two nets that converts (module docs).
+pub(super) struct ConvertingLink {
+    pub(super) port: NodeId,
+    pub(super) sink: NodeId,
+    pub(super) source: NodeId,
+    /// (formal bit, actual bit) pairs of the bits both sides have, least
+    /// significant bits aligned; only for a port a reader asked for.
+    pub(super) pairs: Vec<(AliasBit, AliasBit)>,
+    /// The number of bits both sides have.
+    pub(super) joined: u32,
+    /// The sink has bits past the joined ones.
+    pub(super) sink_wider: bool,
 }
 
 /// The root of `net` in the whole-net inout forest.
@@ -202,6 +230,146 @@ impl Codegen<'_> {
             }
         }
         merges
+    }
+
+    /// The input and output ports between two nets that convert and that a
+    /// join would keep exact: both nets of a type a merge supports, outside
+    /// any net alias, without a delay, a port strength, a member write the
+    /// resolved group rejects or a specify block (module docs). None in a
+    /// model whose ports never merge.
+    pub(super) fn converting_links(&self, context: &MergeContext<'_>) -> Vec<ConvertingLink> {
+        if !self.merge_ports || self.reads_sdf() {
+            return Vec::new();
+        }
+        let mut specify = None;
+        let mut links = Vec::new();
+        for port in context.nodes {
+            let NodeKind::Port {
+                direction,
+                high: Some(actual),
+                low: Some(formal),
+                high_expr,
+                strength0,
+                strength1,
+                ..
+            } = self.kind(*port)
+            else {
+                continue;
+            };
+            let output = match direction {
+                DbDirection::Input => false,
+                DbDirection::Output => true,
+                _ => continue,
+            };
+            // The actual names the whole net, below any conversion the
+            // frontend inserted.
+            let mut expression = high_expr.unwrap_or(*actual);
+            while self.db.is_implicit_conversion(expression) {
+                match self.kind(expression) {
+                    NodeKind::Expr(ExprKind::Cast { operand, .. }) => expression = *operand,
+                    _ => break,
+                }
+            }
+            let whole = expression == *actual
+                || matches!(self.kind(expression),
+                    NodeKind::Expr(ExprKind::Ref { target: Some(target) }) if target == actual);
+            if !whole
+                || actual == formal
+                || self
+                    .node(*port)
+                    .children
+                    .iter()
+                    .any(|child| matches!(self.kind(*child), NodeKind::IfaceConn { .. }))
+                || !self.db.multi_port_components(*port).is_empty()
+                || self.db.multi_port_of(*port).is_some()
+                || !self.mergeable_port_net(*actual, context.true_aliases)
+                || !self.mergeable_port_net(*formal, context.true_aliases)
+                || self.db.net_delay(*actual).is_some()
+                || self.db.net_delay(*formal).is_some()
+            {
+                continue;
+            }
+            // Two nets of one packed type merge or alias without a link.
+            let storage = |net: NodeId| {
+                self.signal_of(net)
+                    .and_then(|info| self.model.signals.get(info.ir))
+                    .map(|signal| &signal.ty)
+                    .filter(|ty| matches!(ty, IrType::Packed { .. }))
+            };
+            let (outer, inner) = match (storage(*actual), storage(*formal)) {
+                (Some(outer), Some(inner)) if outer != inner => (outer, inner),
+                _ => continue,
+            };
+            // A signed source widens with copies of its sign bit, which no
+            // join shows: the link stays.
+            let source_signed = if output { inner } else { outer };
+            let source_signed = matches!(source_signed, IrType::Packed { signed: true, .. });
+            let specify = specify.get_or_insert_with(|| self.specify_instances());
+            if [*port, *actual]
+                .iter()
+                .filter_map(|node| self.owning_inst(*node))
+                .any(|instance| specify.contains(&instance))
+                || self
+                    .effective_port_driver_strengths(*port, *strength0, *strength1, Some(*formal))
+                    .ok()
+                    != Some((6, 6))
+                || self
+                    .unsupported_member_write(context.nodes, context.writers, &[*actual, *formal])
+                    .is_some()
+            {
+                continue;
+            }
+            let (actual_width, formal_width) = (outer.width(), inner.width());
+            let joined = actual_width.min(formal_width);
+            let (sink, source, sink_bits) = if output {
+                (*actual, *formal, actual_width)
+            } else {
+                (*formal, *actual, formal_width)
+            };
+            if joined == 0 || (source_signed && sink_bits > joined) {
+                continue;
+            }
+            // Only a port a reader asked for joins; the others need no bits.
+            let pairs = if self.strength_links.requested.contains(port) {
+                let (Ok(actual_bits), Ok(formal_bits)) = (
+                    self.alias_expression_bits(*port, *actual),
+                    self.alias_expression_bits(*port, *formal),
+                ) else {
+                    continue;
+                };
+                if actual_bits.len() != actual_width as usize
+                    || formal_bits.len() != formal_width as usize
+                {
+                    continue;
+                }
+                let joined = joined as usize;
+                formal_bits[formal_bits.len() - joined..]
+                    .iter()
+                    .copied()
+                    .zip(actual_bits[actual_bits.len() - joined..].iter().copied())
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            links.push(ConvertingLink {
+                port: *port,
+                sink,
+                source,
+                pairs,
+                joined,
+                sink_wider: sink_bits > joined,
+            });
+        }
+        // The sink of a widening link passes its source's strength on only
+        // through ports of its own width: a converting port it is the source
+        // of keeps its link (industry-standard behaviour).
+        let widened = links
+            .iter()
+            .filter(|link| link.sink_wider)
+            .map(|link| link.sink)
+            .collect::<HashSet<_>>();
+        links.retain(|link| !widened.contains(&link.source));
+        links
     }
 
     /// Close the seed merges over the connections a merge changes; each
