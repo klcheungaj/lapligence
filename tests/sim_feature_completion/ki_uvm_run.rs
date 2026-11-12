@@ -23,6 +23,22 @@ fn unused_locals() {
     );
 }
 
+/// A type reaches the specializations of a generic class through two
+/// spellings, as a library's `uvm_typeid #(CB)` and `uvm_typeid #(T)` do;
+/// both name one specialization. `generated_c_determinism` generates the same
+/// fixture repeatedly: the spelling the frontend keeps varies between runs
+/// and must not reorder the classes.
+#[test]
+fn specialization_spellings() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "specialization_spellings",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_run/specialization_spellings.out"),
+        &[],
+        &[],
+    );
+}
+
 /// Randomize through base-class handles over 40 derived classes. The model
 /// is about 2 MB of C; the dispatch shape, not C optimization, is under test,
 /// so the model builds at `-O0`.

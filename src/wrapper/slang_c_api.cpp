@@ -2546,7 +2546,11 @@ bool isSyntheticLValue(const Expression& expression) {
 // A key that orders the specializations of one generic class by their
 // parameter values: printed values and types, plus the declaring path and
 // source position of each type, which tell apart same-named types of
-// different scopes.
+// different scopes. A type parameter contributes its canonical type only:
+// Slang keys a specialization by matching types, and the spelling it keeps
+// (`CB` of an enclosing specialization or the class name itself) is
+// whichever reference created the specialization first, an order that
+// follows Slang's hash maps and so changes between runs.
 std::string specializationOrderKey(const Type& specialization) {
   std::string key;
   if (specialization.kind != SymbolKind::ClassType)
@@ -2558,17 +2562,16 @@ std::string specializationOrderKey(const Type& specialization) {
       key += '\x1f';
     }
     else if (member.kind == SymbolKind::TypeParameter) {
-      const Type& type = member.as<TypeParameterSymbol>().targetType.getType();
-      for (const Type* named : {&type, &type.getCanonicalType()}) {
-        key += named->toString();
-        key += '\x1e';
-        key += named->getHierarchicalPath();
-        key += '\x1e';
-        key += std::to_string(named->location.buffer().getId());
-        key += ':';
-        key += std::to_string(named->location.offset());
-        key += '\x1f';
-      }
+      const Type& type =
+          member.as<TypeParameterSymbol>().targetType.getType().getCanonicalType();
+      key += type.toString();
+      key += '\x1e';
+      key += type.getHierarchicalPath();
+      key += '\x1e';
+      key += std::to_string(type.location.buffer().getId());
+      key += ':';
+      key += std::to_string(type.location.offset());
+      key += '\x1f';
     }
   }
   return key;
