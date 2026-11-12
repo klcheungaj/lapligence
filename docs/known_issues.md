@@ -3326,25 +3326,34 @@ pins the current output; its readme row gives the simulator's.
 
 ### Override visibility the frontend rejects
 
-**Symptom.** The UVM 1.2 and 1.1d `registers/models/coverage` example stops
-in the frontend: its register classes override the protected `sample` method
-of `uvm_reg` as a public virtual method, which the frontend reports as an
-error. The industry-standard simulator accepts the example.
+**Symptom.** Examples whose classes override a virtual method with another
+visibility stop in the frontend, which reports the override as an error. The
+UVM 1.2 and 1.1d `registers/models/coverage` example overrides the protected
+`sample` method of `uvm_reg` as a public method; the UVM 1.1d APB agent
+(`integrated/apb`) overrides the public `run_phase` of `uvm_component` as a
+protected task, which stops the nine 1.1d examples built on that agent
+(`integrated/codec` and the `registers` examples `integration/10direct`,
+`integration/20layered`, `models/broadcast`, `models/fifo_reg`, `primer`,
+`sequence_api` and both `vertical_reuse` runs). The industry-standard
+simulator accepts these examples.
 
-**Cause.** The frontend applies the later standards' rule that an override
-keeps the overridden method's visibility; SV 2009 (8.19) does not state it.
+**Cause.** SV 2009 8.19 lists the encapsulation criteria among the
+information a virtual method's prototype provides and requires overrides to
+"follow the prototype exactly", naming return and argument types; the
+frontend reads that as requiring the same visibility (decision S08-D1, open).
 
-**Intended direction.** Decide whether to downgrade this frontend error for
-the 2009 edition, which needs a patch to the vendored frontend.
+**Intended direction.** Decide whether to accept a visibility change in an
+override as a warning; the wrapper can set the diagnostic's severity without
+a frontend patch.
 
 ### Mixed blocking and nonblocking assignments stop the run
 
-**Symptom.** The `ubus` and `registers/models/broadcast` examples mix blocking
-and nonblocking assignments in one process. Lint rule `mixed-assignments`
-(LINT-016) is an error by default, so `llg` stops before generating the model;
-the industry-standard simulator runs them. With the rule set to a warning
-(`[lint.rules.mixed-assignments] severity = "warning"` in a `--config` file)
-both examples run.
+**Symptom.** The `ubus`, `integrated/codec` and `registers/models/broadcast`
+examples mix blocking and nonblocking assignments in one process. Lint rule
+`mixed-assignments` (LINT-016) is an error by default, so `llg` stops before
+generating the model; the industry-standard simulator runs them. With the
+rule set to a warning (`[lint.rules.mixed-assignments] severity = "warning"`
+in a `--config` file) generation continues.
 
 **Cause.** Always-on lint with blocking errors is a product decision
 (2026-10-06).
@@ -3372,6 +3381,65 @@ with "cannot resolve array base of select `count`". The statement forms
 
 **Intended direction.** Lower the prefix-increment expression through the
 same element reference as the statement form.
+
+### Interface instance inside an interface, through a virtual interface
+
+**Symptom.** `vif = agent.vif.tx;`, where `agent.vif` is a virtual interface
+whose interface instantiates interface `tx`, stops generation with "chandle
+values can only be copied from chandle or null". The UVM 1.2
+`integrated/codec` example's driver selects its transmit interface this way;
+the industry-standard simulator runs it.
+
+**Cause.** A virtual interface value designates one interface instance;
+codegen has no mapping from an instance to the interface instances declared
+inside it (25.9 allows a virtual interface to be assigned "An interface
+instance of the same type", which includes a nested one).
+
+**Intended direction.** Give each interface type with nested interface
+instances a per-instance table of its children, and lower a member select of
+a virtual interface that names one to a lookup in it.
+
+**Reproduce.** A driver class holding `virtual top_if top` assigns
+`vif = top.tx` and drives `vif.Tx` on a clock edge; the industry-standard
+simulator prints `15 Tx=1`.
+
+### Sequence declared in a clocking block
+
+**Symptom.** `if (!sigs.mck.at_posedge.triggered) @(sigs.mck);`, where
+`at_posedge` is a sequence declared inside clocking block `mck`, stops
+generation with "concurrent assertions require one explicit signal clock".
+The UVM APB agent (`integrated/apb/apb_master.sv`) uses it only inside a
+branch selected by a tool's predefined macro; without that macro the agent
+waits for an extra clock edge before each transfer, so the register examples
+built on it (`integration/10direct`, `integration/20layered`) reach their
+final checks later than with the industry-standard simulator, which takes its
+own branch. Their verdicts and counts match.
+
+**Cause.** Sequence and property declarations within a clocking block take
+the block's clocking event (16.17); codegen requires an explicit signal clock
+on the sequence itself.
+
+**Intended direction.** Infer a sequence's clock from its enclosing clocking
+block.
+
+### Run-time crash in the deferred change check (register broadcast)
+
+**Symptom.** The UVM 1.2 `registers/models/broadcast` example (run with the
+`mixed-assignments` rule as a warning) generates and builds, then stops with a
+segmentation fault at time 0 while the register model is configured. The
+industry-standard simulator runs it to the expected `UVM_HDL_READ` fatal error
+at 830 ns.
+
+**Cause.** Under investigation. A debugger shows the deferred change check
+that runs before a `$display` (T1-D11 coalescing) settling a record whose
+storage key no longer holds a value (a 32-bit signed variable's record now
+points into reused string memory), on the clocking-edge history path.
+
+**Intended direction.** Find which write leaves a pending change record for
+storage that is freed before the check (an automatic variable or a container
+element is the likely owner) and drop or settle the record when the storage
+goes away.
+
 
 ## Semantic tokens around text macros (llg_ls)
 
