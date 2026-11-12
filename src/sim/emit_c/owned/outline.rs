@@ -243,12 +243,7 @@ impl Check<'_, '_, '_> {
                 .iter()
                 .any(|scope| scope.contains_key(name))
             || frame.shared_cells.contains_key(name)
-            || frame
-                .ctx
-                .model
-                .native_accesses
-                .iter()
-                .any(|access| access.name == name)
+            || frame.ctx.model.native_access(name).is_some()
         {
             self.reject();
         }

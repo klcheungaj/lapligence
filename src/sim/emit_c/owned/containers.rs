@@ -94,12 +94,7 @@ impl Frame<'_, '_> {
                 Ok("_this".to_owned())
             }
             IrChandleExpr::LocalRead(name) => {
-                let Some(access) = self
-                    .ctx
-                    .model
-                    .native_accesses
-                    .iter()
-                    .find(|access| &access.name == name)
+                let Some(access) = self.ctx.model.native_access(name).map(|(_, access)| access)
                 else {
                     return local(name);
                 };
