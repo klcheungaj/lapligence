@@ -1811,7 +1811,8 @@ impl Validator<'_> {
 }
 
 /// Statements an [`IrExprKind::Sequence`] may run: lexical declarations,
-/// blocking copies, function calls and randomize solves, none of which
+/// blocking copies (including event rebinding), function calls and
+/// randomize solves, none of which
 /// suspends or leaves the expression.
 fn sequence_statement(statement: &IrStmt) -> bool {
     match statement.unlocated() {
@@ -1822,6 +1823,9 @@ fn sequence_statement(statement: &IrStmt) -> bool {
         | IrStmt::FixedArrayFill { nba: false, .. }
         | IrStmt::Assign { nba: false, .. }
         | IrStmt::Call(_) => true,
+        // An event variable rebound to a received mailbox message: a handle
+        // copy that neither suspends nor triggers.
+        IrStmt::EventAssign { .. } => true,
         IrStmt::Object(operation) => matches!(
             operation.as_ref(),
             IrObjectStmt::StringAssign(..)

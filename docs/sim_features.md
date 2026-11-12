@@ -2640,8 +2640,13 @@ These are bounded implementations, not full verification-infrastructure support.
   resume; a receiver killed first keeps its message (decision AB-O3). Mailbox handles work in arrays, queues, record members, class properties
   and by-value/`ref` formals
   ([sim_017](../tests/fixtures/sim/feature_completion/sim_017/readme.md)).
-  Associative-array messages, whole unpacked-array variable operands and
-  aggregate `try_get` in loop conditions reject (see known issues).
+  Aggregate `try_put/try_get/try_peek` work as statements, in assignments,
+  system-task arguments, `if` and loop conditions and loop steps; one in a
+  loop condition retrieves and copies out at every test, one in a skipped
+  `&&`/`||`/`->` operand or `?:` arm never runs. Associative-array messages,
+  whole unpacked-array variable operands (both non-singular, rejected by
+  industry-standard behaviour too) and aggregate try methods in other
+  expressions reject (see known issues).
   SV §15.4 **[SV-2005]**.
 
 ### Assertions and sampled values — partial

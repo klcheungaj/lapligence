@@ -157,12 +157,25 @@ fn blocking_get_type_mismatch_ends_the_simulation() {
     });
 }
 
+/// The probed industry-standard output: loop conditions retrieve at every
+/// test and skipped operands never retrieve.
+#[test]
+fn aggregate_try_methods_in_loop_conditions_and_skipped_operands() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "loop_conditions",
+        include_str!("../fixtures/sim/feature_completion/sim_017/loop_conditions.out"),
+        &[],
+        &[],
+    );
+}
+
 #[test]
 fn associative_array_messages_are_explicit_rejections() {
     sim_cli::reject_case(
         SUITE,
         "neg_assoc_message",
-        "mailbox message of type `int$[string]` in `tb` is not supported: the message is an associative array, which has no nested value form (SIM-017)",
+        "neg_assoc_message.sv:12:11: [CODEGEN-001] mailbox message of type `int$[string]` in `tb` is not supported: the message is an associative array, which has no nested value form (SIM-017)",
     );
 }
 
@@ -171,15 +184,20 @@ fn whole_array_variable_messages_are_explicit_rejections() {
     sim_cli::reject_case(
         SUITE,
         "neg_array_variable",
-        "a whole array variable operand is not supported (SIM-017)",
+        "neg_array_variable.sv:13:11: [CODEGEN-001] mailbox message of unpacked array type `int$[0:3]` in `tb` is supported only from an assignment pattern or into and out of record members; a whole array variable operand is not supported (SIM-017)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_array_variable_get",
+        "neg_array_variable_get.sv:12:11: [CODEGEN-001] mailbox message of unpacked array type `int$[0:3]` in `tb` is supported only from an assignment pattern or into and out of record members; a whole array variable operand is not supported (SIM-017)",
     );
 }
 
 #[test]
-fn record_try_get_in_a_loop_condition_is_an_explicit_rejection() {
+fn record_try_get_in_a_case_expression_is_an_explicit_rejection() {
     sim_cli::reject_case(
         SUITE,
-        "neg_loop_condition",
-        "mailbox `try_get` with an aggregate or selected operand in `tb` is supported only as a statement, in an assignment, a system-task argument or an if condition (SIM-017)",
+        "neg_case_expression",
+        "neg_case_expression.sv:13:11: [CODEGEN-004] mailbox `try_get` with an aggregate or selected operand in `tb` is supported only as a statement, in an assignment, a system-task argument, an if condition or a loop condition or step (SIM-017)",
     );
 }

@@ -59,9 +59,12 @@ impl Codegen<'_> {
             } else {
                 format!("member `{}`", aggregate_path_suffix(&leaf.path))
             };
-            return Err(format!(
-                "mailbox message of type `{}` in `{path}` is not supported: {part} is an associative array, which has no nested value form (SIM-017)",
-                descriptor.name
+            return Err(crate::sim::codegen::error::located(
+                &self.source_location(site),
+                format!(
+                    "mailbox message of type `{}` in `{path}` is not supported: {part} is an associative array, which has no nested value form (SIM-017)",
+                    descriptor.name
+                ),
             ));
         }
         let ty = match self
@@ -122,7 +125,7 @@ impl Codegen<'_> {
             };
             let fill = self
                 .native_assign_into(path, &endpoint, descriptor, source, false)
-                .map_err(|error| Self::fixed_array_message_error(path, descriptor, error))?;
+                .map_err(|error| self.fixed_array_message_error(path, descriptor, source, error))?;
             before.push(fill);
         }
         before.extend(self.companions_to_element_items(value)?);
@@ -172,9 +175,10 @@ impl Codegen<'_> {
         {
             after.push(writeback);
         } else {
-            return Err(Self::fixed_array_message_error(
+            return Err(self.fixed_array_message_error(
                 path,
                 descriptor,
+                destination,
                 format!(
                     "mailbox destination of type `{}` in `{path}` is not a supported record variable",
                     descriptor.name
@@ -192,11 +196,20 @@ impl Codegen<'_> {
 impl Codegen<'_> {
     /// A whole unpacked-array variable has no leaf transfer to or from a
     /// message value; records (including array members) and patterns do.
-    fn fixed_array_message_error(path: &str, descriptor: &TypeDescriptor, error: String) -> String {
+    fn fixed_array_message_error(
+        &self,
+        path: &str,
+        descriptor: &TypeDescriptor,
+        operand: NodeId,
+        error: String,
+    ) -> String {
         if matches!(descriptor.shape, TypeShape::FixedArray { .. }) {
-            format!(
-                "mailbox message of unpacked array type `{}` in `{path}` is supported only from an assignment pattern or into and out of record members; a whole array variable operand is not supported (SIM-017)",
-                descriptor.name
+            crate::sim::codegen::error::located(
+                &self.source_location(operand),
+                format!(
+                    "mailbox message of unpacked array type `{}` in `{path}` is supported only from an assignment pattern or into and out of record members; a whole array variable operand is not supported (SIM-017)",
+                    descriptor.name
+                ),
             )
         } else {
             error
