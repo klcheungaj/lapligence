@@ -39,7 +39,7 @@ Rules used throughout:
   like disable iff but their abort condition is evaluated using sampled value
   as a regular Boolean expression in assertions." 16.15.8 ab) (L27439-27441):
   accept_on is nonvacuous only if "expression_or_dist does not hold in any
-  time step of that evaluation attempt" (decisions S38-D2, S38-D9).
+  time step of that evaluation attempt" (decisions S38-D13, S38-D9).
 - Disable. 16.15.1 (L26432-26434): "When the property for the assert
   statement is evaluated to be disabled, no action_block statement is
   executed." 16.16 (L27555-27556): "If an assertion has a disable iff clause,
@@ -109,16 +109,18 @@ Ticks 1-8 are the posedges at 5..75; `$finish` ends the run at 80.
   `55000 d1 cover`, no `d1 fail` (without the pulse there would be two
   covers).
 - `ab1` `s3 |=> accept_on (g) always [0:3] h`: the tick-1 attempt would fail
-  on tick 4 (`h` 0), but the sampled value of `g` is 1 in time step 28, so
-  it succeeds vacuously at 28. The other attempts have `s3` 0 and pass
-  vacuously on their tick: `ab1 pass` at 15, 25, 28, 35, 45, 55, 65, 75.
-  `ab1c` covers the abort of 28 (a fired `accept_on` is a cover hit,
-  S38-D10) and nothing else: `28000 ab1 cover`.
+  on tick 4 (`h` 0), but `g` rises at 27, so it succeeds vacuously at 27
+  (an asynchronous abort acts in the time step its condition holds, with its
+  current value: S38-D13). The other attempts have `s3` 0 and pass
+  vacuously on their tick: `ab1 pass` at 15, 25, 27, 35, 45, 55, 65, 75.
+  `ab1c` covers the abort of 27 (a fired `accept_on` is a cover hit,
+  S38-D10) and nothing else: `27000 ab1 cover`.
 - `ab2` `sync_accept_on (g)`: the condition is sampled only at clock ticks
   and is 0 on every tick, so the attempt fails at 35.
-- `rj1` `reject_on (g)`: fails at 28.
-- `ab3` `s4 |=> accept_on (g2) always [0:2] h2`: the glitch at 62 is never a
-  sampled 1, so the attempt (ticks 6-8) fails at 75 when `h2` is 0.
+- `rj1` `reject_on (g)`: fails at 27.
+- `ab3` `s4 |=> accept_on (g2) always [0:2] h2`: the glitch at 62 has ended
+  when the time step's abort check reads `g2`, so the attempt (ticks 6-8)
+  fails at 75 when `h2` is 0.
 - `es` `s5 |=> s_eventually k`: pending at the end with an `s_eventually`
   obligation, fails at 80. `sn` `s5 |=> s_nexttime [4] k2` needs tick 11: a
   pending strong obligation that is no `s_eventually`, so no result. `ens`
@@ -192,13 +194,11 @@ are whole `initial` procedures and start one attempt on tick 1 (S38-D6),
 passing at 15. The static `s1` (`a ##1 b`) passes at 15 (tick-1 attempt) and
 fails at 25 (tick 2), 35 (tick 3) and 35 (tick 4, `a` 0).
 
-Other simulators were seen to differ from `outcomes` in two ways, which the
+Other simulators were seen to differ from `outcomes` in one way, which the
 expected lines keep. Some skip the pass actions of the vacuous successes
 (`ab1` at 15, 25 and 35-75, and every `ew pass`); llg runs them
 (decision S38-D11; 20.12 L35137-35139: "By default, the pass action is
-executed on vacuous success"). Some evaluate the `accept_on`/`reject_on`
-condition with its current value, so `ab1` and `rj1` resolve at 27 instead
-of 28; llg uses the sampled value (decision S38-D2; 16.13.14 L25265-25267).
+executed on vacuous success").
 
 ## A03 negatives
 

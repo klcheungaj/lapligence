@@ -2214,9 +2214,11 @@ int llg_assertion_register_sequence_control(
  *   NEXTTIME      first = operand, min = tick count; STRONG flag
  *   ALWAYS / EVENTUALLY  first = operand, [min, max] ticks; STRONG flag
  *   UNTIL         first = left, second = right; STRONG, OVERLAPPED (until_with)
- *   ABORT         first = condition atom, second = operand; ACCEPT, SYNC
+ *   ABORT         first = condition atom, second = operand; ACCEPT, SYNC;
+ *                 without SYNC, third = the condition atom on current values
  *   CALL          first = node the recursive instance evaluates
- * Atoms read Preponed sampled values. Ticks are counted on the node's clock:
+ * Atoms read Preponed sampled values, except the current-value atoms of
+ * ABORT `third`, checked in Observed after the clock ticks. Ticks are counted on the node's clock:
  * the assertion's leading clock, or with `clock_count` nonzero the entry
  * `clock` of `clocks` (whose entry 0 is the leading clock). A node starts at
  * the nearest tick of its clock at or after the point where its parent

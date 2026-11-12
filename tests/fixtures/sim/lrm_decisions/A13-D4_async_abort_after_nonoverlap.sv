@@ -1,17 +1,16 @@
 // Decision A13-D4: an asynchronous accept_on/reject_on that is the
 // consequent of |=> starts in the time step after the antecedent's tick,
 // not at the consequent's first clock tick. The abort condition b pulses
-// from 7 to 8 between the ticks 5 and 15; its sampled value is 1 in the time
-// step 8, so a1 is accepted (passes) and a2 is rejected (fails) at 8. This
-// also applies to singly clocked assertions; llg formerly began the abort
-// window at the tick 15, where a1 failed and a2 passed.
+// from 7 to 8 between the ticks 5 and 15; it holds in the time step 7
+// (S38-D13), so a1 is accepted (passes) and a2 is rejected (fails) at 7.
+// This also applies to singly clocked assertions; llg formerly began the
+// abort window at the tick 15, where a1 failed and a2 passed.
 //
 // IEEE 1800-2009 F.3.4.3.3 (SystemVerilog-1800-2009.txt L70633):
 // "(S |=> Q) ((S ##1 @(1) 1) |-> Q)." F.5.1.2 (L71037):
 // "T p ((accept_on(b) p), c) = (accept_on(b) T p (p, c))." 16.13.14
 // (L25265-25267): "The operators accept_on and reject_on are evaluated at
-// the granularity of the simulation time step like disable iff but their
-// abort condition is evaluated using sampled value".
+// the granularity of the simulation time step like disable iff".
 `timescale 1ns / 1ns
 module tb;
   logic clk = 1'b0, a = 1'b0, b = 1'b0, q = 1'b0;

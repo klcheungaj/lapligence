@@ -2247,12 +2247,6 @@ Reproduce with
   functions, or a static assertion of a procedural checker (17.3). Every
   other read takes the value saved when the instance was queued
   (16.15.6.1).
-- `accept_on`/`reject_on` are checked at the first signal update of each time
-  step (with that step's sampled values) and at every clock tick. A time step
-  in which no signal changes does not check them, so an abort whose condition
-  rose in an earlier step is reported at the next step with an update instead
-  of the first step in which its sampled value is 1. Only the action time can
-  differ; the verdict cannot.
 - An `expect` whose evaluation is disabled by its `disable iff` ends without
   a result and leaves its caller blocked, as 16.18 literally says ("block
   until the given property succeeds or fails").
@@ -2262,14 +2256,13 @@ Reproduce with
 A saved value lives in the frame of one instance's attempt; sampled value
 histories, `disable iff` conditions and clock gates are evaluated per
 assertion, and a procedural checker's assertions are registered once for all
-the procedures that queue them; asynchronous aborts are driven from the
-signal-write hook.
+the procedures that queue them. A disabled `expect` follows the 16.18 text
+literally.
 
 ### Intended direction
 
 Evaluate the per-assertion forms per attempt where a saved value reaches
-them, and drive the asynchronous abort check from the scheduler's time-step
-entry.
+them.
 
 ### Reproduce
 
@@ -2277,7 +2270,7 @@ entry.
 [sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md);
 `expect_disable_blocks.sv` in
 [sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md) for the
-blocked `expect` caller; the abort timing needs a small hand-written case.
+blocked `expect` caller.
 
 ## Multiclock and recursive assertion limits after ADV-013
 
@@ -2376,12 +2369,12 @@ the VPI callbacks of 39.4.2.1 are delivered), not at the event itself.
 These assertions evaluate each clock event at the next global clock tick
 from operands captured at the event. An `expect` would block its caller and
 an end point would publish its matches one global clock tick late; an
-asynchronous abort reads sampled values between assertion clock ticks, which
-the captured operands do not keep. A captured operand is a packed value.
+asynchronous abort reads current values between assertion clock ticks
+(S38-D13), which the captured operands do not keep. A captured operand is a packed value.
 
 ### Intended direction
 
-Capture the abort condition once per time step while evaluations are pending,
+Capture the abort condition at each of its checks while evaluations are pending,
 keep real operands as their 64-bit images, and resume an `expect` caller at
 the global clock tick.
 

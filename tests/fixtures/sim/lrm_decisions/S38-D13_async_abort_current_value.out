@@ -1,0 +1,12 @@
+23 r1 fail
+26 r3 pass
+30 r1 fail
+30 r2 pass
+30 r4 pass
+30 r4 fail
+39 r5 fail
+40 r5 fail
+50 r1 fail
+50 r2 pass
+50 r3 fail
+55 end

@@ -207,7 +207,9 @@ property that the predicate/sequence forms cannot represent
 (`assertions/property.rs`): every node and sequence carries its own clock from
 the program's clock list (leading clock first), single-tick operands are
 sampled atoms on their clock, and the `strong`/`weak` default comes from the
-assertion kind. A recursive re-entry (16.13.17), which Slang leaves
+assertion kind. The emitter also renders the condition of each asynchronous
+`accept_on`/`reject_on` as a current-value atom after the sampled ones (its
+ABORT node's `third`), which the runtime checks between ticks (S38-D13). A recursive re-entry (16.13.17), which Slang leaves
 unexpanded, becomes `IrPropertyNode::Call` of the nearest enclosing expansion
 of the same property whose actuals have equal structural keys and whose
 flowing clock is the same (Annex F.7); the call site's actuals are read from

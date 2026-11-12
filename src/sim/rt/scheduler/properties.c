@@ -301,11 +301,12 @@ static void property_tick_children(llg_property_ctx_t* ctx, llg_property_inst_t*
 
 /* An abort condition holding in a time step of the evaluation decides it:
  * true for accept_on, false for reject_on; the evaluation is vacuous
- * (16.13.14, 16.15.8 ab/ac). */
-static int property_abort_fires(llg_property_ctx_t* ctx, llg_property_inst_t* inst) {
+ * (16.13.14, 16.15.8 ab/ac). `atom` is the condition's sampled atom at a
+ * clock tick, or for accept_on/reject_on between ticks its current one. */
+static int property_abort_fires(llg_property_ctx_t* ctx, llg_property_inst_t* inst,
+                                uint32_t atom) {
+    if (!property_atom(ctx, atom)) return 0;
     const llg_property_node_t* node = inst->node;
-    if (!(node->flags & LLG_PROPERTY_SYNC)) inst->abort_checked = g.now + 1;
-    if (!property_atom(ctx, node->first)) return 0;
     property_resolve(inst, (node->flags & LLG_PROPERTY_ACCEPT) ? LLG_PROP_TRUE : LLG_PROP_FALSE,
                      0);
     return 1;
@@ -324,7 +325,7 @@ static int property_abort_due(const llg_property_ctx_t* ctx, const llg_property_
         return ctx->event.signal == clock && ctx->event.edge == edge &&
                property_reached(inst, clock, edge, &ctx->event);
     }
-    return inst->abort_checked != g.now + 1 && (!inst->strict || g.now > inst->launch.time);
+    return !inst->strict || g.now > inst->launch.time;
 }
 
 /* Step an implication or followed-by antecedent and start one consequent per
@@ -482,7 +483,7 @@ static void property_tick(llg_property_ctx_t* ctx, llg_property_inst_t* inst) {
         // The outer condition is checked before the operand is stepped, so
         // an abort takes precedence over an evaluation ending in the same
         // step and the outermost of nested aborts wins (16.13.14).
-        if (property_abort_due(ctx, inst) && property_abort_fires(ctx, inst)) return;
+        if (property_abort_due(ctx, inst) && property_abort_fires(ctx, inst, node->first)) return;
         if (start) property_spawn(ctx, inst, node->second, inst->launch, inst->strict, inst->locals);
         else property_tick_children(ctx, inst);
         break;
@@ -688,12 +689,13 @@ static void property_settle(llg_property_inst_t* inst) {
     }
 }
 
-/* Between ticks only asynchronous abort conditions can change a result. */
+/* Between ticks only asynchronous abort conditions can change a result;
+ * they read current values (field `third`). */
 static void property_async(llg_property_ctx_t* ctx, llg_property_inst_t* inst) {
     if (inst->status || inst->ticks == 0 || g.finish) return;
     const llg_property_node_t* node = inst->node;
     if (node->kind == LLG_PROPERTY_ABORT && !(node->flags & LLG_PROPERTY_SYNC) &&
-        property_abort_due(ctx, inst) && property_abort_fires(ctx, inst))
+        property_abort_due(ctx, inst) && property_abort_fires(ctx, inst, node->third))
         return;
     for (llg_property_inst_t* child = inst->children; child && !g.finish; child = child->next)
         property_async(ctx, child);
@@ -903,15 +905,10 @@ static void property_attempt_begin(llg_concurrent_assertion_t* assertion,
     assertion->property_attempts_tail = attempt;
 }
 
-/* Asynchronous accept_on/reject_on read sampled values, which are fixed for
- * a whole time step, so one check per step and assertion is exact. */
 static void property_assertions_async_pass(void) {
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion && !g.finish;
          assertion = assertion->next) {
-        if (!assertion->property_async || !assertion->property_attempts ||
-            assertion->property_async_checked == g.now + 1)
-            continue;
-        assertion->property_async_checked = g.now + 1;
+        if (!assertion->property_async || !assertion->property_attempts) continue;
         llg_property_ctx_t ctx = {assertion, assertion->property, {0}, 0};
         llg_property_inst_t** link = &assertion->property_attempts;
         llg_property_inst_t* previous = NULL;
@@ -932,8 +929,16 @@ static void property_assertions_async_pass(void) {
     }
 }
 
+/* Observed region, after the clock ticks of the pass: accept_on/reject_on
+ * act in the time step their condition holds, with its current value
+ * (decision of the abort timing; 16.12 reads sampled values). They are
+ * checked in the first pass of each time step, where an evaluation whose
+ * abort starts strictly after its launch step becomes due, and in every
+ * pass after a signal write. */
 static void property_assertions_async(void) {
-    if (!g.property_async_count) return;
+    if (!g.property_async_pending && g.property_async_step == g.now + 1) return;
+    g.property_async_pending = 0;
+    g.property_async_step = g.now + 1;
     assertion_events_enter();
     property_assertions_async_pass();
     assertion_events_leave();
@@ -1047,6 +1052,9 @@ static int valid_property_program(const llg_property_program_t* program, sv4_t* 
         case LLG_PROPERTY_ABORT:
             atom = node->first;
             operands[0] = node->second;
+            // accept_on/reject_on also read the condition's current value.
+            if (!(node->flags & LLG_PROPERTY_SYNC) && node->third >= program->atom_count)
+                return 0;
             break;
         case LLG_PROPERTY_CALL: {
             // A recursive instance may name any node, but a chain of CALLs

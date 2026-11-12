@@ -356,8 +356,6 @@ typedef struct llg_property_inst {
     /* Own-clock ticks evaluated so far (the next is relative tick `ticks`);
      * for nodes without a clock of their own, 1 once started. */
     uint64_t ticks;
-    /* Simulation time + 1 of the last asynchronous abort check. */
-    uint64_t abort_checked;
     uint8_t status;     /* 0 pending, 1 true, 2 false */
     uint8_t nonvacuous; /* valid once resolved (16.15.8) */
     uint8_t strict;     /* starts strictly after `launch` */
@@ -574,10 +572,8 @@ typedef struct llg_concurrent_assertion {
     uint32_t** property_ranks;
     llg_property_inst_t* property_attempts;
     llg_property_inst_t* property_attempts_tail;
-    /* The program has an asynchronous accept_on/reject_on, and the time + 1
-     * of the step whose sampled abort conditions were last checked. */
+    /* The program has an asynchronous accept_on/reject_on. */
     int property_async;
-    uint64_t property_async_checked;
     /* Global clocking future sampled value functions (16.9.4): the global
      * clock, the capture callback and slot count, the deferred evaluation
      * queue with its recycled entries, and the replay state (the entry's
@@ -833,8 +829,13 @@ typedef struct {
     llg_acov_event_queue_t assertion_events;
     // vpiAssertionSysEnd ran: no control enables an assertion again.
     int assertions_ended;
-    // Registered property assertions with an asynchronous abort condition.
+    // Registered property assertions with an asynchronous abort condition;
+    // with any, a signal written since their last check, and the time + 1
+    // of the step they were last checked in (decision of the abort timing:
+    // checked in Observed, after the clock ticks, with current values).
     uint64_t property_async_count;
+    int property_async_pending;
+    uint64_t property_async_step;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
     // Pending deferred assertion reports of the current pass and the

@@ -1083,14 +1083,6 @@ fn s38_d1_end_of_simulation_strength() {
 }
 
 #[test]
-fn s38_d2_async_abort_sampled() {
-    run_decision(
-        "S38-D2_async_abort_sampled",
-        include_str!("fixtures/sim/lrm_decisions/S38-D2_async_abort_sampled.out"),
-    );
-}
-
-#[test]
 fn s38_d3_pending_operand_vacuous() {
     run_decision(
         "S38-D3_pending_operand_vacuous",
@@ -1167,6 +1159,14 @@ fn s38_d12_end_of_simulation_fail_before_final() {
     run_decision(
         "S38-D12_end_of_simulation_fail_before_final",
         include_str!("fixtures/sim/lrm_decisions/S38-D12_end_of_simulation_fail_before_final.out"),
+    );
+}
+
+#[test]
+fn s38_d13_async_abort_current_value() {
+    run_decision(
+        "S38-D13_async_abort_current_value",
+        include_str!("fixtures/sim/lrm_decisions/S38-D13_async_abort_current_value.out"),
     );
 }
 

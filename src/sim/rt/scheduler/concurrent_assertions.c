@@ -409,8 +409,9 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
 }
 
 static void assertion_abort_condition_changed(void) {
-    property_assertions_async();
-    if (g.finish) return;
+    // Asynchronous aborts of property programs read current values in the
+    // next Observed pass (property_assertions_async).
+    if (g.property_async_count) g.property_async_pending = 1;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
         if ((assertion->enabled || assertion_has_attempts(assertion)) &&
@@ -986,6 +987,8 @@ static int run_concurrent_assertions(void) {
     assertion_events_enter();
     int ok = run_concurrent_assertions_pass();
     assertion_events_leave_tick();
+    if (LLG_CO_UNLIKELY(g.property_async_count) && ok && !g.finish)
+        property_assertions_async();
     return ok && !g.finish;
 }
 

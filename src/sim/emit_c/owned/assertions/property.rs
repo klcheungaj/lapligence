@@ -7,12 +7,33 @@ pub(super) fn program_name(index: usize) -> String {
     format!("llg_assertion_{index}_property")
 }
 
+/// The conditions of the asynchronous `accept_on`/`reject_on` nodes, in node
+/// order: each is also an atom on current values, numbered after the
+/// sampled atoms, which the runtime checks between clock ticks (decision of
+/// the abort timing).
+fn current_abort_atoms(property: &IrProperty) -> Vec<(usize, u32)> {
+    property
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| match *node {
+            IrPropertyNode::Abort {
+                condition,
+                sync: false,
+                ..
+            } => Some((index, condition)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn atom_callback(
     model: &IrModel,
     constants: &super::super::super::constants::PackedConstants,
     backend: crate::sim::value_backend::ValueBackend,
     name: &str,
     property: &IrProperty,
+    current: &[(usize, u32)],
 ) -> Result<String, String> {
     let ctx = RCtx {
         value_backend: backend,
@@ -35,6 +56,18 @@ fn atom_callback(
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
         frame.line(format!("return {result}; }}"));
     }
+    let sampled = property.atoms().len();
+    for (offset, &(_, condition)) in current.iter().enumerate() {
+        frame.line(format!("case {}u: {{", sampled + offset));
+        frame.sampled_reads = false;
+        let value = frame.expression(&property.atoms()[condition as usize]);
+        frame.sampled_reads = true;
+        let value = value?;
+        let result = frame.scalar("int", value.truth());
+        frame.discard(value);
+        frame.line("llg_value_scopes_end_since(_llg_frame_base);");
+        frame.line(format!("return {result}; }}"));
+    }
     frame.line("default: break; }");
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
     frame.line("return 0;");
@@ -51,8 +84,9 @@ fn bound(max: Option<u32>) -> String {
 }
 
 /// `{kind, flags, first, second, third, min, max[, clock]}` for one node;
-/// the clock index only in a multiclocked program.
-fn node_row(node: &IrPropertyNode, clock: Option<u32>) -> String {
+/// the clock index only in a multiclocked program. `current` is the
+/// current-value atom of an asynchronous abort node.
+fn node_row(node: &IrPropertyNode, clock: Option<u32>, current: Option<u32>) -> String {
     const NONE: &str = "LLG_PROPERTY_NONE";
     fn flag(set: bool, name: &'static str) -> &'static str {
         if set {
@@ -209,7 +243,9 @@ fn node_row(node: &IrPropertyNode, clock: Option<u32>) -> String {
             ),
             format!("{condition}u"),
             format!("{operand}u"),
-            NONE.to_owned(),
+            current
+                .map(|atom| format!("{atom}u"))
+                .unwrap_or_else(|| NONE.to_owned()),
             0,
             "0ULL".to_owned(),
         ),
@@ -245,11 +281,13 @@ pub(super) fn render(
     }
     let name = program_name(index);
     let atom_name = format!("{name}_atom");
+    let current = current_abort_atoms(property);
+    let atom_count = property.atoms().len() + current.len();
     let atom = if property.atoms().is_empty() {
         "NULL".to_owned()
     } else {
         out.push_str(&atom_callback(
-            model, constants, backend, &atom_name, property,
+            model, constants, backend, &atom_name, property, &current,
         )?);
         atom_name
     };
@@ -270,7 +308,15 @@ pub(super) fn render(
         property.nodes().len()
     ));
     for (index, node) in property.nodes().iter().enumerate() {
-        out.push_str(&node_row(node, property.node_clocks().get(index).copied()));
+        let current_atom = current
+            .iter()
+            .position(|&(node, _)| node == index)
+            .map(|offset| (property.atoms().len() + offset) as u32);
+        out.push_str(&node_row(
+            node,
+            property.node_clocks().get(index).copied(),
+            current_atom,
+        ));
     }
     out.push_str("};\n");
     // A singly clocked program keeps the shorter initializer; its clock
@@ -306,7 +352,7 @@ pub(super) fn render(
         property.nodes().len(),
         property.root(),
         property.sequences().len(),
-        property.atoms().len(),
+        atom_count,
     ));
     Ok(out)
 }
