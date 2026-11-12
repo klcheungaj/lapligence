@@ -350,10 +350,17 @@ impl Codegen<'_> {
                     });
                 } else if *is_out {
                     if !bound[idx].string {
-                        return Err(format!(
-                            "string-returning function `{}` does not support packed output formals",
-                            self.node(ft).name
-                        ));
+                        let (argument, formal_read) = self.packed_output_temp(
+                            path,
+                            node,
+                            idx,
+                            *io,
+                            callee_inst,
+                            &bound[idx],
+                        )?;
+                        arg_irs[idx] = Some(formal_read);
+                        out_args.push(argument);
+                        continue;
                     }
                     self.ensure_string_actual_writable(path, bound[idx].expr)?;
                     let writeback = self.lower_string_actual_address(path, bound[idx].expr)?;

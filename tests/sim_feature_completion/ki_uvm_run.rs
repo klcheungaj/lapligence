@@ -53,6 +53,23 @@ fn string_format_time_unit() {
     );
 }
 
+/// A string-returning function with packed output and inout formals, called
+/// inside expressions (a library's array-index parser returns the index and
+/// sets a wildcard flag this way): each actual receives its formal at the
+/// return, for automatic and static functions and class properties.
+#[test]
+fn string_function_packed_outputs() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "string_function_packed_outputs",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/string_function_packed_outputs.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// Randomize through base-class handles over 40 derived classes. The model
 /// is about 2 MB of C; the dispatch shape, not C optimization, is under test,
 /// so the model builds at `-O0`.

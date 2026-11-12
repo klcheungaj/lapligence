@@ -11,6 +11,90 @@ pub(in crate::sim::codegen) struct CallElementCopies {
 }
 
 impl<'a> Codegen<'a> {
+    /// The caller-side temporary of a packed output or inout formal bound in
+    /// an expression call `call` (copy-out at the return, decision S13-D1),
+    /// with the read of the formal's storage that later defaults observe.
+    pub(in super::super) fn packed_output_temp(
+        &mut self,
+        scope_path: &str,
+        call: NodeId,
+        idx: usize,
+        io: NodeId,
+        callee_inst: NodeId,
+        bound_arg: &BoundArg,
+    ) -> Result<(IrCallArg, IrExpr), String> {
+        let tname = format!("_t{}_{}", call.0, idx);
+        let read_actual = matches!(
+            self.kind(io),
+            NodeKind::FuncArg {
+                direction: DbDirection::Inout,
+                ..
+            }
+        );
+        let mode = super::super::containers::StreamTargetMode::CopyOut;
+        if self
+            .stream_mixed_targets(scope_path, bound_arg.expr, mode, Operation::Assignment)?
+            .is_some()
+        {
+            // An expression call has no statement after it to run the
+            // checked unpack in; statement calls support it.
+            return Err(format!(
+                "streaming `with` copy-out target whose range is runtime-valued or outside the array bounds is not supported for a function call inside an expression in `{scope_path}`"
+            ));
+        }
+        if self.container_element_path(bound_arg.expr).is_some()
+            || self.associative_string_element(bound_arg.expr).is_some()
+        {
+            // The element store needs a statement after the call.
+            return Err(format!(
+                "output or inout actual naming a queue, dynamic or associative array element is supported only when the call is a statement in `{scope_path}`"
+            ));
+        }
+        let (wb, actual_read, selector_inits) = self.lower_call_actual(
+            scope_path,
+            bound_arg.expr,
+            &format!("{}_{idx}", call.0),
+            read_actual,
+            TargetSelectors::AtCopyOut,
+        )?;
+        let init_ir = self.lower_call_temp_init_from_expr(io, bound_arg, actual_read)?;
+        let storage = self.static_formals.get(&(callee_inst, io)).cloned();
+        let (storage_addr, storage_lhs, storage_read) = if let Some(storage) = storage {
+            let lhs = IrLhs::Whole(storage.ir);
+            let read = sig_read_expr_full(&storage);
+            (
+                Some(format!("&{}", storage.global)),
+                Some(Box::new(lhs)),
+                Some(Box::new(read)),
+            )
+        } else {
+            (None, None, None)
+        };
+        // Later defaults observe the actual formal storage. Static
+        // outputs retain their old value; only inouts copy in. An
+        // automatic output instead starts with its typed local default.
+        let formal_read = storage_read.as_deref().cloned().unwrap_or_else(|| {
+            IrExpr::new(
+                IrExprKind::LocalRead(tname.clone()),
+                bound_arg.width,
+                bound_arg.signed,
+                None,
+            )
+        });
+        Ok((
+            IrCallArg::OutTemp {
+                name: tname,
+                init: init_ir.map(Box::new),
+                writeback: Box::new(wb),
+                storage_addr,
+                storage_lhs,
+                storage_read,
+                selector_inits,
+            },
+            formal_read,
+        ))
+    }
+
     /// The design node of source call `call` as the `vpiOrigin` of the
     /// frame it activates (37.39); `None` in a continuous assignment, whose
     /// evaluation runs in no thread (decision A19-D75).
@@ -533,73 +617,10 @@ impl<'a> Codegen<'a> {
                     });
                     continue;
                 }
-                let tname = format!("_t{}_{}", h.0, idx);
-                let read_actual = matches!(
-                    self.kind(*io),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Inout,
-                        ..
-                    }
-                );
-                let mode = super::super::containers::StreamTargetMode::CopyOut;
-                if self
-                    .stream_mixed_targets(scope_path, bound[idx].expr, mode, Operation::Assignment)?
-                    .is_some()
-                {
-                    // An expression call has no statement after it to run the
-                    // checked unpack in; statement calls support it.
-                    return Err(format!(
-                        "streaming `with` copy-out target whose range is runtime-valued or outside the array bounds is not supported for a function call inside an expression in `{scope_path}`"
-                    ));
-                }
-                if self.container_element_path(bound[idx].expr).is_some()
-                    || self.associative_string_element(bound[idx].expr).is_some()
-                {
-                    // The element store needs a statement after the call.
-                    return Err(format!(
-                        "output or inout actual naming a queue, dynamic or associative array element is supported only when the call is a statement in `{scope_path}`"
-                    ));
-                }
-                let (wb, actual_read, selector_inits) = self.lower_call_actual(
-                    scope_path,
-                    bound[idx].expr,
-                    &format!("{}_{idx}", h.0),
-                    read_actual,
-                    TargetSelectors::AtCopyOut,
-                )?;
-                let init_ir = self.lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
-                let storage = self.static_formals.get(&(callee_inst, *io)).cloned();
-                let (storage_addr, storage_lhs, storage_read) = if let Some(storage) = storage {
-                    let lhs = IrLhs::Whole(storage.ir);
-                    let read = sig_read_expr_full(&storage);
-                    (
-                        Some(format!("&{}", storage.global)),
-                        Some(Box::new(lhs)),
-                        Some(Box::new(read)),
-                    )
-                } else {
-                    (None, None, None)
-                };
-                // Later defaults observe the actual formal storage. Static
-                // outputs retain their old value; only inouts copy in. An
-                // automatic output instead starts with its typed local default.
-                arg_irs[idx] = Some(storage_read.as_deref().cloned().unwrap_or_else(|| {
-                    IrExpr::new(
-                        IrExprKind::LocalRead(tname.clone()),
-                        bound[idx].width,
-                        bound[idx].signed,
-                        None,
-                    )
-                }));
-                out_args.push(IrCallArg::OutTemp {
-                    name: tname,
-                    init: init_ir.map(Box::new),
-                    writeback: Box::new(wb),
-                    storage_addr,
-                    storage_lhs,
-                    storage_read,
-                    selector_inits,
-                });
+                let (argument, formal_read) =
+                    self.packed_output_temp(scope_path, h, idx, *io, callee_inst, &bound[idx])?;
+                arg_irs[idx] = Some(formal_read);
+                out_args.push(argument);
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
