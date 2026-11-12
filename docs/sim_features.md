@@ -3032,7 +3032,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `docs/known_issues.md` ("VPI object model limits"). Callbacks (SIM-043):
   `cbValueChange` on variables, nets, ports, array elements, whole unpacked
   arrays (each element write, with its index) and bit/part selects (value,
-  time and index per `s_cb_data`, at every changing write);
+  time and index per `s_cb_data`, at the check that sees a change, T1-D11);
   the time reasons in their Table 4-1 PLI regions (`cbAtStartOfSimTime`,
   `cbAfterDelay`, `cbNextSimTime` Pre-Active, a late zero-delay
   `cbAfterDelay` Inactive; `cbReadWriteSynch` Pre-NBA, then `cbNBASynch`
