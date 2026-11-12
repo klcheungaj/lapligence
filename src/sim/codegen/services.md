@@ -224,8 +224,16 @@ ABORT node's `third`), which the runtime checks between ticks (S38-D13). A recur
 unexpanded, becomes `IrPropertyNode::Call` of the nearest enclosing expansion
 of the same property whose actuals have equal structural keys and whose
 flowing clock is the same (Annex F.7); the call site's actuals are read from
-any expansion of the same site. Recursion through local variable formals is a
-located limit. A non-signal
+any expansion of the same site. An instance with local variable formals or
+declaration assignments becomes `(1'b1, local = init ...) |-> body` on the
+body's semantic leading clock, one initializer per leading-clock operand of
+`and`/`or`/`not` (16.14.7, A13-D8); its re-entry with equal non-local actuals
+binds the call site's local actuals to the frame's locals by value
+(temporaries when a source reads a target) and calls the frame's initialized
+body. Locals live in a consequent are carried through any nested antecedent
+that assigns locals of its own, and an `if`/`case` condition that names locals
+lowers to `IrPropertyNode::LocalIf`. Re-entries with changed non-local actuals
+or with locals split over several leading clocks are located limits. A non-signal
 `disable iff` condition, and an inherited `default disable iff` (Db
 `default_disable`, not for `expect`), become a hidden net driven by a
 synthetic process and shared per instance and condition node. `expect` action

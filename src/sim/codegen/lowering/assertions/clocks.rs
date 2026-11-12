@@ -58,6 +58,15 @@ impl LeadingClocks {
         }
     }
 
+    /// The leading clocks once `flowing` fills the inherited positions.
+    pub(super) fn resolved(&self, flowing: SampledClock) -> Vec<SampledClock> {
+        let mut clocks = self.clone();
+        if clocks.inherited {
+            clocks.add(flowing);
+        }
+        clocks.clocks
+    }
+
     /// `@(c) q`: c replaces an inherited leading clock of q.
     fn under(mut self, clock: SampledClock) -> Self {
         if self.inherited {

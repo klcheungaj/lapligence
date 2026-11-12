@@ -403,6 +403,22 @@ static int property_clocked_kind(uint32_t kind) {
            kind == LLG_PROPERTY_UNTIL;
 }
 
+/* The condition of an `if` that reads local variables (16.10): the atom of
+ * its graph's first transition, evaluated in a scratch attempt that inherits
+ * the node's locals. Out of line: only designs with such conditions reach
+ * it. */
+static LLG_OUTLYING int property_local_condition(llg_property_ctx_t* ctx,
+                                                 const llg_property_inst_t* inst,
+                                                 uint32_t index) {
+    const llg_sequence_graph_t* graph = ctx->program->sequences[index];
+    const llg_property_locals_t* locals = inst->locals;
+    llg_sequence_attempt_t* attempt = sequence_attempt_new(
+        graph, 0, locals ? locals->graph : NULL, locals ? locals->values : NULL);
+    int holds = !g.finish && graph->atom(graph->transitions[0].atom, attempt) != 0;
+    sequence_attempt_discard(attempt);
+    return holds;
+}
+
 /* `if (b) p else q`: b is sampled at the if's first tick, and the branch
  * it selects starts at that tick; a differently clocked branch first
  * evaluates at its own clock's nearest tick at or after it (decision
@@ -421,7 +437,10 @@ static void property_if_step(llg_property_ctx_t* ctx, llg_property_inst_t* inst,
     llg_property_ctx_t at = *ctx;
     at.event = *first;
     uint32_t branch;
-    if (property_atom(&at, node->first)) {
+    int holds = LLG_CO_UNLIKELY(node->flags & LLG_PROPERTY_LOCALS)
+                    ? property_local_condition(&at, inst, node->first)
+                    : property_atom(&at, node->first);
+    if (holds) {
         inst->phase = 1;
         branch = node->second;
     } else if (node->third != LLG_PROPERTY_NONE) {
@@ -1046,7 +1065,16 @@ static int valid_property_program(const llg_property_program_t* program, sv4_t* 
             operands[0] = node->second;
             break;
         case LLG_PROPERTY_IF:
-            atom = node->first;
+            if (node->flags & LLG_PROPERTY_LOCALS) {
+                // The condition is the atom of the graph's first transition.
+                if (node->first >= program->sequence_count) return 0;
+                const llg_sequence_graph_t* graph = program->sequences[node->first];
+                if (!graph->transition_count || !graph->atom ||
+                    graph->transitions[0].atom == LLG_SEQUENCE_EPSILON)
+                    return 0;
+            } else {
+                atom = node->first;
+            }
             operands[0] = node->second;
             operands[1] = node->third;
             break;
@@ -1083,7 +1111,8 @@ static int valid_property_program(const llg_property_program_t* program, sv4_t* 
             operands[0] == LLG_PROPERTY_NONE)
             return 0;
         if (atom != LLG_PROPERTY_NONE && atom >= program->atom_count) return 0;
-        if ((node->kind == LLG_PROPERTY_BOOLEAN || node->kind == LLG_PROPERTY_IF ||
+        if ((node->kind == LLG_PROPERTY_BOOLEAN ||
+             (node->kind == LLG_PROPERTY_IF && !(node->flags & LLG_PROPERTY_LOCALS)) ||
              node->kind == LLG_PROPERTY_ABORT) && atom == LLG_PROPERTY_NONE)
             return 0;
         if ((node->kind == LLG_PROPERTY_SEQUENCE || node->kind == LLG_PROPERTY_IMPLICATION ||

@@ -85,6 +85,7 @@ Frontend diagnostics keep Slang's text; the id is `SLANG-<name>` with the diagno
 | `ELAB-002` | error | the owned design database could not be built from the frontend snapshot | - |
 | `ELAB-003` | error | protected source envelopes are rejected by design | - |
 | `ELAB-004` | error | a construct outside the selected `--edition` profile | select another `--edition` |
+| `ELAB-005` | info | a `restrict property` statement, which simulation does not verify (SV 16.15.4); one per statement | - |
 | `ELAB-010` | error | rejected by design: legacy procedural assign/deassign form | - |
 | `ELAB-011` | error | rejected by design: MOS and resistive switch primitives | - |
 | `ELAB-012` | error | rejected by design: trireg charge storage | - |

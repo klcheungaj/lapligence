@@ -186,6 +186,19 @@ Cycle n is the posedge at 10n+5: `a` in cycles 1-3, `b` in 2-4, `d` = 1, 2,
   (`e2 = 0 != 2`) and 45 (`e4 = 8 != 5`), holds at 35 (S39-D9).
 - `sel`: `s = 8'h80 | d[3:0]`: 81, 82, 84 one cycle after each `a`.
 
+## property_local
+
+`logic [7:0] v = d; always (a |-> d == v)`: each attempt initializes its own
+`v` with `d` sampled at its first tick (16.10 L23800-23802: "a new copy of
+each of its local variables shall be created and, if present, the
+corresponding initialization assignment shall be performed"; F.4.2
+L70939-70940 places it at that tick), and `always` then compares every later
+tick where `a` holds. Sampled values: d = 0, 3, 3, 4, 4 and a = 0, 0, 1, 1, 0
+at 5, 15, 25, 35, 45. Attempt 5 (v = 0) fails at 25; attempts 15 and 25
+(v = 3) fail at 35; attempt 35 (v = 4) and later ones never fail, and
+`always` never completes, so no attempt passes. The expected output was
+confirmed against the industry-standard behaviour.
+
 ## match_items
 
 - `rep`: `(a, x += d, note(1, x))[*3]` then `(b, note(2, x), x = x + 1,
@@ -297,5 +310,4 @@ current `d` (2 at 25, 4 at 35).
 | `neg_property_output` | Slang | an output local formal of a property (16.13.19) |
 | `neg_match_call_output` | Slang | a match-item call with an output argument (16.11) |
 | `neg_match_call_timing` | llg | a match-item task with a timing control: it would not run within the Reactive region; the message names the assertion (`tb.c1`, `c1`) and its location, never the hidden host |
-| `neg_property_local` | llg | a property local read by a later property operand (`always`): unsupported form |
 | `neg_deferred_named_action` | Slang | a named block as a deferred assertion's action (16.4, see `named_action_blocks`) |

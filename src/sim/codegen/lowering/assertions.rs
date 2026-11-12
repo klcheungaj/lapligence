@@ -1520,6 +1520,7 @@ impl Codegen<'_> {
         self.assertion_local_bindings = Some(HashMap::new());
         self.assertion_local_initializers = Some(HashMap::new());
         let forced = std::mem::take(&mut self.assertion_forced_locals);
+        let carried = std::mem::take(&mut self.assertion_carried_locals);
         let mut builder = SequenceBuilder::new();
         let result = self
             .lower_sequence_fragment(path, node, &mut builder, role)
@@ -1529,25 +1530,22 @@ impl Codegen<'_> {
                         self.ensure_assertion_local_initializer(path, *local, binding)?;
                     }
                 }
+                // A graph without locals passes its inherited locals on
+                // unchanged; one with locals passes on only its own, so it
+                // takes the carried ones in as well.
+                if self
+                    .assertion_local_bindings
+                    .as_ref()
+                    .is_some_and(|bindings| !bindings.is_empty())
+                {
+                    for local in &carried {
+                        self.assertion_local_binding(*local)?;
+                    }
+                }
                 Ok(fragment)
             })
             .and_then(|fragment| {
-                let mut local_bindings = self
-                    .assertion_local_bindings
-                    .as_ref()
-                    .into_iter()
-                    .flat_map(|bindings| bindings.iter().map(|(node, binding)| (*node, *binding)))
-                    .collect::<Vec<_>>();
-                local_bindings.sort_by_key(|(_, binding)| binding.slot);
-                let locals = local_bindings
-                    .iter()
-                    .map(|(node, binding)| IrSequenceLocal {
-                        declaration: node.index() as u64 + 1,
-                        width: binding.width,
-                        signed: binding.signed,
-                        two_state: binding.two_state,
-                    })
-                    .collect();
+                let locals = self.assertion_local_table();
                 let mut initializers = Vec::new();
                 if let Some(initializer_map) = self.assertion_local_initializers.as_ref() {
                     for (target, initializer) in initializer_map {
@@ -1580,6 +1578,27 @@ impl Codegen<'_> {
         self.assertion_local_bindings = previous_locals;
         self.assertion_local_initializers = previous_initializers;
         result
+    }
+
+    /// The local slots of the sequence graph being lowered, in slot order;
+    /// a local's declaration identifies it across graphs.
+    fn assertion_local_table(&self) -> Vec<IrSequenceLocal> {
+        let mut local_bindings = self
+            .assertion_local_bindings
+            .as_ref()
+            .into_iter()
+            .flat_map(|bindings| bindings.iter().map(|(node, binding)| (*node, *binding)))
+            .collect::<Vec<_>>();
+        local_bindings.sort_by_key(|(_, binding)| binding.slot);
+        local_bindings
+            .iter()
+            .map(|(node, binding)| IrSequenceLocal {
+                declaration: node.index() as u64 + 1,
+                width: binding.width,
+                signed: binding.signed,
+                two_state: binding.two_state,
+            })
+            .collect()
     }
 
     fn lower_sequence_fragment(

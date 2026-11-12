@@ -166,7 +166,12 @@ time step (16.14). Both branches of an `if`-`else` start at the tick that
 reads its condition (A13-D3). Single-clock programs have no clock list and run
 on the assertion's clock. Sequence operands reuse the sequence engine on their clock
 with their own zero-delay ranks. `LLG_PROPERTY_CALL` (a recursive property
-instance, 16.13.17) starts a fresh instance of its target node.
+instance, 16.13.17) starts a fresh instance of its target node; local variables
+reach it by value through the binding sequence that the call is the consequent
+of, so each recursion level owns its locals frame and the depth is bounded by
+the sequence thread budget. An `LLG_PROPERTY_IF` with `LLG_PROPERTY_LOCALS`
+reads a condition that names local variables through a scratch sequence
+attempt that inherits the instance's locals (`property_local_condition`).
 `llg_assertion_clock_pulse` writes a planned clock's hidden signal 1 then 0 at
 most once per time step. Every abort is checked first on each tick with the
 sampled value of its condition (the only check of `sync_accept_on`/`sync_reject_on`).

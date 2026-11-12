@@ -82,14 +82,23 @@ fn multiclocked_subsequence_with_an_empty_last_element() {
 }
 
 /// 16.15.4: `restrict property` is not verified in simulation, in every
-/// position a concurrent assertion may take.
+/// position a concurrent assertion may take; each statement is reported
+/// once (ELAB-005), however many instances elaborate it.
 #[test]
 fn restrict_property_is_not_simulated() {
     sim_cli::run_case(
         SUITE,
         "restrict",
         fixture!("restrict.out"),
-        "INFO: restrict.sv:21:5: [SIM-001] (tb @ 22 ns) $finish called\n",
+        concat!(
+            "INFO: restrict.sv:8:3: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:11:3: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:17:3: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:18:11: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:21:5: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:24:5: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:32:5: [SIM-001] (tb @ 22 ns) $finish called\n",
+        ),
         &[],
     );
 }
@@ -126,16 +135,80 @@ fn locals_disables_actions_and_end_across_domains() {
     sim_cli::run_case_checked_matrix(SUITE, "domains", &[], &|label, output| {
         assert_line_set(label, output, fixture!("domains.out"))
     });
+    sim_cli::run_case_checked_matrix(SUITE, "local_two_clocks", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("local_two_clocks.out"))
+    });
     sim_cli::reject_case(
         SUITE,
-        "neg_local_two_clocks",
-        "neg_local_two_clocks.sv:9:17 is initialized at the property attempt's start, which this \
-         property form does not support",
+        "neg_local_clocks_implies",
+        "neg_local_clocks_implies.sv:12:43 would be initialized at more than one semantic leading \
+         clock below an operator other than `and`, `or` or `not`; this is not supported (SV 16.14.7)",
     );
 }
 
-/// A02 negatives: the four 16.13.17 restrictions, and the located limit for
-/// recursion through local variable formals.
+/// A02 / 16.13.17, 16.8.2, 16.10, 16.14.7: local variable formals and
+/// declared locals with declaration assignments in recursive properties,
+/// each recursion level with its own copy initialized by value (the
+/// `fibonacci1` and `check_write_data_beat` examples among them); locals
+/// flowing through nested implications and recursion; `if` and `case`
+/// conditions that read locals.
+#[test]
+fn recursive_properties_with_local_variables() {
+    sim_cli::run_case_checked_matrix(SUITE, "rec_local_formal", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("rec_local_formal.out"))
+    });
+    sim_cli::run_case_checked_matrix(SUITE, "rec_reentry_locals", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("rec_reentry_locals.out"))
+    });
+    sim_cli::run_case_checked_matrix(SUITE, "rec_fibonacci", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("rec_fibonacci.out"))
+    });
+    sim_cli::run_case_checked_matrix(SUITE, "rec_check_write", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("rec_check_write.out"))
+    });
+    sim_cli::run_case_checked_matrix(SUITE, "rec_local_forms", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("rec_local_forms.out"))
+    });
+    sim_cli::run_case_checked_matrix(SUITE, "local_flow", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("local_flow.out"))
+    });
+    sim_cli::run_case_checked_matrix(SUITE, "local_if", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("local_if.out"))
+    });
+}
+
+/// A02: a recursion with local variable formals that never ends and whose
+/// live instances double every tick stops at the sequence thread budget
+/// with a report.
+#[test]
+fn unbounded_recursion_with_local_variables_reports_the_thread_budget() {
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "rec_budget",
+        &[],
+        &[("LLG_SEQUENCE_THREAD_LIMIT", "200")],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{label}: {stderr}");
+            assert!(
+                stderr.contains(
+                    "ERROR: [SIM-010] sequence thread budget exhausted: more than 200 live \
+                     sequence threads at time 75 (concurrent assertion g at "
+                ),
+                "{label}: {stderr}"
+            );
+            assert!(
+                !String::from_utf8_lossy(&output.stdout).contains("done"),
+                "{label}: the run must stop at the budget"
+            );
+        },
+    );
+}
+
+/// A02 negatives: the four 16.13.17 restrictions, and the located limits
+/// for a re-entry that repeats no enclosing expansion, for a property with
+/// locals re-entered after its other actuals changed, and for one whose
+/// locals have two semantic leading clocks.
 #[test]
 fn illegal_recursive_properties_are_rejected() {
     sim_cli::reject_case(
@@ -164,8 +237,22 @@ fn illegal_recursive_properties_are_rejected() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_rec_local_formal",
-        "recursive property `count` with local variable formal arguments at",
+        "neg_rec_reentry_args",
+        "neg_rec_reentry_args.sv:8:21 does not repeat an enclosing expansion with the same \
+         actual arguments, which llg does not support (SV 16.13.17)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_rec_locals_args",
+        "neg_rec_locals_args.sv:9:33 re-enters a property with local variables after its other \
+         actual arguments changed; this is not supported (SV 16.13.17)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_rec_locals_clocks",
+        "neg_rec_locals_clocks.sv:7:42 re-enters a property whose local variables are \
+         initialized at more than one semantic leading clock; this is not supported (SV \
+         16.13.17, 16.14.7)",
     );
 }
 

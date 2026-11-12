@@ -283,9 +283,15 @@ fn local_formal_direction_type_and_actual_errors_are_located() {
         "neg_match_call_timing",
         "neg_match_call_timing.sv:11:16) (assertion `c1` at ",
     );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_property_local",
-        "neg_property_local.sv:7:17 is initialized at the property attempt's start, which this property form does not support",
-    );
+}
+
+/// A property local with a declaration assignment read by a later property
+/// operand: each attempt initializes its own copy at its first tick (16.10,
+/// F.4.2; FIN-001 A2).
+#[test]
+fn property_local_initialized_per_attempt_reaches_later_operands() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_039/property_local.out");
+    sim_cli::run_case_checked_matrix(SUITE, "property_local", &[], &|label, output| {
+        assert_sorted_stdout(label, output, expected)
+    });
 }
