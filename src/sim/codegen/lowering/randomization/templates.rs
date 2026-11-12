@@ -3231,6 +3231,7 @@ impl Codegen<'_> {
         let mut feeds = Vec::new();
         let mut commits = Vec::new();
         let mut posts = Vec::new();
+        let mut class_units = false;
         for (index, unit) in st.units.iter().enumerate() {
             let object = unit.object.as_ref();
             let point = |at: IrExpr| -> Vec<IrStmt> {
@@ -3632,47 +3633,61 @@ impl Codegen<'_> {
                     _ => None,
                 };
                 let cases = self.class_cases(slot.target);
-                let links = |child: &IrChandleExpr, at: Option<IrExpr>| -> Vec<Vec<IrStmt>> {
-                    let random = match (&cell_modes, &at) {
-                        (Some(cells), Some(at)) => {
-                            let off = IrExpr::new(
-                                IrExprKind::BitSel {
-                                    base: Box::new(cells.clone()),
-                                    idx: Box::new(at.clone()),
-                                },
-                                1,
-                                false,
-                                None,
-                            );
-                            IrExpr::new(
-                                IrExprKind::Bin {
-                                    op: IrBinOp::BitAnd,
-                                    a: Box::new(random.clone()),
-                                    b: Box::new(bit_not(off)),
-                                },
-                                1,
-                                false,
-                                None,
-                            )
-                        }
-                        _ => random.clone(),
-                    };
-                    cases
-                        .iter()
-                        .map(|case| {
-                            vec![rand(IrRandStmt::Link {
-                                problem,
-                                inst: inst(),
-                                slot: slot_index as u32,
-                                index: at.clone(),
-                                child: child.clone(),
-                                unit: st.unit_of_class[case],
-                                random: random.clone(),
-                            })]
+                // A slot whose class has derived classes takes the child's
+                // unit from its class through one table per problem: a
+                // class test per derived class in every unit would make a
+                // recursive `rand` handle cost classes x units per problem.
+                let by_class = cases.len() > 1;
+                class_units |= by_class;
+                let link =
+                    |child: &IrChandleExpr, at: Option<IrExpr>, unit: Option<u32>| -> IrStmt {
+                        let random = match (&cell_modes, &at) {
+                            (Some(cells), Some(at)) => {
+                                let off = IrExpr::new(
+                                    IrExprKind::BitSel {
+                                        base: Box::new(cells.clone()),
+                                        idx: Box::new(at.clone()),
+                                    },
+                                    1,
+                                    false,
+                                    None,
+                                );
+                                IrExpr::new(
+                                    IrExprKind::Bin {
+                                        op: IrBinOp::BitAnd,
+                                        a: Box::new(random.clone()),
+                                        b: Box::new(bit_not(off)),
+                                    },
+                                    1,
+                                    false,
+                                    None,
+                                )
+                            }
+                            _ => random.clone(),
+                        };
+                        rand(IrRandStmt::Link {
+                            problem,
+                            inst: inst(),
+                            slot: slot_index as u32,
+                            index: at,
+                            child: child.clone(),
+                            unit,
+                            random,
                         })
-                        .collect()
+                    };
+                let links = |child: &IrChandleExpr, at: Option<IrExpr>| -> Vec<IrStmt> {
+                    if by_class {
+                        return vec![link(child, at, None)];
+                    }
+                    match cases.first() {
+                        Some(case) => vec![IrStmt::Block(vec![link(
+                            child,
+                            at,
+                            Some(st.unit_of_class[case]),
+                        )])],
+                        None => Vec::new(),
+                    }
                 };
-                let local = format!("{tag}_l{index}_{slot_index}");
                 if let Some(array) = &slot.array {
                     let container = match (slot.owner, object) {
                         (Some(_), Some(object)) => {
@@ -3692,9 +3707,7 @@ impl Codegen<'_> {
                         container,
                         index: Box::new(at.clone()),
                     };
-                    let bodies = links(&child, Some(at));
-                    let body = self.class_case_chain(&local, &child, &cases, bodies);
-                    feed.push(counted(&counter, size, body));
+                    feed.push(counted(&counter, size, links(&child, Some(at))));
                     continue;
                 }
                 let (Some(object), Some((class, field))) = (object, slot.field) else {
@@ -3704,8 +3717,7 @@ impl Codegen<'_> {
                     object.clone(),
                     IrNativeAccessKind::ClassField { class, field },
                 ));
-                let bodies = links(&child, None);
-                feed.extend(self.class_case_chain(&local, &child, &cases, bodies));
+                feed.extend(links(&child, None));
             }
             if !feed.is_empty() {
                 feeds.push((index as u32, feed));
@@ -3713,6 +3725,15 @@ impl Codegen<'_> {
             if commit.len() > usize::from(index > 0) {
                 commits.push((index as u32, commit));
             }
+        }
+        if class_units {
+            let mut table = vec![crate::sim::ir::RAND_NONE; self.model.classes.len()];
+            for (class, unit) in &st.unit_of_class {
+                if let Some(entry) = table.get_mut(self.class_nodes[class]) {
+                    *entry = *unit;
+                }
+            }
+            self.model.rand_problems[problem].class_units = table;
         }
         let unit_of = |at: IrExpr| {
             assign32(

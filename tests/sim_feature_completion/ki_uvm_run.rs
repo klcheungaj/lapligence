@@ -89,6 +89,59 @@ fn wide_hierarchy_randomize_nests_below_the_class_count() {
     }
 }
 
+/// A recursive `rand` handle over a hierarchy of 14 classes: every object
+/// the chain links is randomized with its own class's constraints. The model
+/// is about 2 MB of C, so it builds at `-O0`.
+#[test]
+fn recursive_rand_handle() {
+    sim_cli::run_case_with_args(
+        SUITE,
+        "recursive_rand_handle",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_run/recursive_rand_handle.out"),
+        "INFO: recursive_rand_handle.sv:115:5: [SIM-001] (tb @ 0 ps) $finish called\n",
+        &[],
+        &["--model-opt-level", "O0"],
+    );
+}
+
+/// A randomize call through a handle whose class has a recursive `rand`
+/// handle builds one problem per class the object can have, each with one
+/// unit per class the handle can reach. Every unit links the handle once,
+/// whatever the child's class: a class test per derived class in every unit
+/// made the C cubic in the class count, and 34 classes did not generate in
+/// ten minutes. The bound on the generation time is the test's timeout.
+#[test]
+fn recursive_rand_handle_links_once_per_unit() {
+    const CLASSES: usize = 22;
+    let directory = sim_harness::TempDir::new("ki-uvm-run-recursive").expect("temporary directory");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/feature_completion/ki_uvm_run/recursive_rand_handle_wide.sv");
+    for (out, mode) in [("opt", None), ("no_opt", Some("--no-opt"))] {
+        let output = sim_harness::run_command(
+            Command::new(env!("CARGO_BIN_EXE_llg"))
+                .current_dir(directory.path())
+                .args(["--top", "tb", "--gen-only", "--out-dir", out])
+                .args(mode)
+                .arg(&fixture),
+            Duration::from_secs(60),
+        )
+        .expect("llg should generate within the time bound");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let model = std::fs::read_to_string(directory.path().join(out).join("sim/tb/model.c"))
+            .expect("model.c");
+        let links = model.matches("llg_cr_link(").count();
+        assert!(
+            links <= CLASSES * (CLASSES + 1),
+            "{out}: {links} link sites for {CLASSES} problems of {} units",
+            CLASSES + 1
+        );
+    }
+}
+
 /// The deepest `{` nesting of C source, outside string and character
 /// literals.
 fn max_block_depth(source: &str) -> usize {

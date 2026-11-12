@@ -453,6 +453,11 @@ int llg_cr_inst_random(const llg_cr_session_t* s, uint32_t inst);
  * LLG_CR_NONE for NULL. A handle array's element count is set first. */
 uint32_t llg_cr_link(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t index,
                      void* child, uint32_t unit, int random);
+/* The unit of an object of class `class_id` in a problem whose links take
+ * the unit from the child's class: entry `class_id` of the problem's
+ * `count`-entry class-to-unit table. A class the table does not map is an
+ * internal error (the generated code maps every class a slot can hold). */
+uint32_t llg_cr_class_unit(const uint32_t* units, uint32_t count, uint32_t class_id);
 void llg_cr_set_slot_size(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t count);
 /* After a solve: handle array slot `slot` keeps its first `count` elements;
  * instances no random link reaches any more leave llg_cr_visit (18.4). */
