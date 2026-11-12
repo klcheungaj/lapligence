@@ -682,9 +682,11 @@ impl Codegen<'_> {
         value: &RecordValue,
         initializer: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
-        let mut out = Vec::new();
-        self.lower_record_value_into(path, value, initializer, false, &mut out)?;
-        Ok(out)
+        self.lower_staged_record_initializer(path, initializer, |cg| {
+            let mut out = Vec::new();
+            cg.lower_record_value_into(path, value, initializer, false, &mut out)?;
+            Ok(out)
+        })
     }
 
     /// Evaluate `node` once into a fresh temporary of type `descriptor`.
@@ -2368,7 +2370,7 @@ impl Codegen<'_> {
         }
         let mut statements = self.declare_record_columns(&value);
         if let Some(initializer) = initializer {
-            self.lower_record_value_into(path, &value, initializer, false, &mut statements)?;
+            statements.extend(self.lower_record_initializer(path, &value, initializer)?);
         }
         Ok(statements)
     }

@@ -568,7 +568,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   [sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)).
   Other expressions (an `if` condition, a loop bound, a `return`, an
   initializer) bind nested elements and record-element members at each
-  evaluation.
+  evaluation; a record declaration initialized from a record element of a
+  nested container (`rec_t z = nas["x"][1]`, static or automatic, either
+  record storage form) binds it the same way.
   An associative array nested in an element (`int aa[string][int]`,
   `int qa[$][int]`) is bound the same way, so element access costs one lookup
   per level; it takes every method, whole reads and writes, patterns, `foreach`,

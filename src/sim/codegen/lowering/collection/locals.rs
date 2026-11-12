@@ -90,11 +90,21 @@ impl<'a> Codegen<'a> {
                     alias: None,
                     omit: false,
                 });
-                if let Some(initializer) = self
+                let initializer = self
                     .db
                     .var_initializer(node)
-                    .or_else(|| self.db.array_meta(node).and_then(|array| array.init))
+                    .or_else(|| self.db.array_meta(node).and_then(|array| array.init));
+                if let Some(initializer) = initializer
+                    .filter(|initializer| self.record_initializer_stages(node, *initializer))
                 {
+                    // A record read from a nested container element is no
+                    // scalar value until its element is staged: the record
+                    // assignment runs at the declaration's slot of the static
+                    // schedule, as a static block record's does.
+                    self.reserve_initializer_order(node);
+                    self.record_statement_initializers
+                        .push((node, initializer, path.to_owned()));
+                } else if let Some(initializer) = initializer {
                     let lowered = self.lower_declaration_initializer(
                         path,
                         node,

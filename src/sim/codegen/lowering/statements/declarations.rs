@@ -175,17 +175,24 @@ impl EmitCtx<'_, '_> {
             };
             let mut statements = vec![declare];
             if let Some(initializer) = self.cg.db.var_initializer(declaration) {
-                statements.push(
-                    self.cg
-                        .lower_native_value_assignment(
-                            &self.path,
-                            declaration,
-                            initializer,
-                            false,
-                            Operation::Assignment,
-                        )?
-                        .ok_or("native local initializer has no record assignment")?,
-                );
+                let path = &self.path;
+                statements.extend(self.cg.lower_staged_record_initializer(
+                    path,
+                    initializer,
+                    |cg| {
+                        Ok(vec![cg
+                            .lower_native_value_assignment(
+                                path,
+                                declaration,
+                                initializer,
+                                false,
+                                Operation::Assignment,
+                            )?
+                            .ok_or(
+                                "native local initializer has no record assignment",
+                            )?])
+                    },
+                )?);
             }
             return Ok(statements);
         }
@@ -549,6 +556,15 @@ impl EmitCtx<'_, '_> {
                 .and_then(|array| array.init)
         });
         let (initializer, element) = self.split_record_element(initializer);
+        // A record read from a nested container element (`p_t z = pas["x"][1]`)
+        // is no scalar value until its element is staged: the declaration
+        // takes its default and a staged assignment stores the initializer.
+        let (initializer, staged) = match initializer {
+            Some(source) if self.cg.record_initializer_stages(declaration, source) => {
+                (None, Some(source))
+            }
+            other => (other, None),
+        };
         let init = initializer
             .map(|initializer| {
                 let expr = self.cg.lower_expr(&self.path, initializer)?;
@@ -575,7 +591,27 @@ impl EmitCtx<'_, '_> {
             info.two_state,
             init,
         );
-        self.with_record_element(declaration, declare, element)
+        let mut statements = self.with_record_element(declaration, declare, element)?;
+        if let Some(source) = staged {
+            let path = &self.path;
+            statements.extend(
+                self.cg
+                    .lower_staged_record_initializer(path, source, |cg| {
+                        Ok(vec![cg
+                            .lower_unpacked_aggregate_assignment(
+                                path,
+                                declaration,
+                                source,
+                                false,
+                                Operation::Assignment,
+                            )?
+                            .ok_or(
+                                "record local initializer has no record assignment",
+                            )?])
+                    })?,
+            );
+        }
+        Ok(statements)
     }
 
     /// Separate an initializer naming a whole record element. It is no

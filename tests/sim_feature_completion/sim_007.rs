@@ -154,6 +154,46 @@ fn record_element_members_take_event_controls_and_selects() {
     sim_cli::run_case_backend_parity(SUITE, "record_element_selects", selects, &[], &[]);
 }
 
+/// FIN-001 R2: record declarations initialized from an element of a nested
+/// container, static and automatic, in both record storage forms. The static
+/// ones read before time 0, when the associative key does not exist yet: the
+/// default record, with the SV 7.8.6 warning for each missing-key read.
+#[test]
+fn record_initializers_read_nested_container_elements() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_007/record_nested_element_initializers.out"
+    );
+    for cells in ["N=3", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_nested_element_initializers",
+            expected,
+            &["-D", cells],
+            &[],
+        );
+        let (_dir, output) = sim_cli::run_case_keeping_dir(
+            SUITE,
+            "record_nested_element_initializers",
+            true,
+            &["-D", cells],
+            &[],
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let missing = stderr
+            .lines()
+            .filter(|line| {
+                crate::sim_harness::has_message(
+                    line,
+                    "SIM-012",
+                    "",
+                    "associative-array read of a nonexistent entry returns the default",
+                )
+            })
+            .count();
+        assert_eq!(missing, 2, "{cells}: {stderr}");
+    }
+}
+
 #[test]
 fn run_time_indices_select_below_record_elements() {
     let selects =

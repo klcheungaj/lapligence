@@ -519,18 +519,26 @@ impl Codegen<'_> {
         declaration: NodeId,
         initializer: NodeId,
     ) -> Result<IrStmt, String> {
-        self.lower_unpacked_aggregate_assignment(
-            path,
-            declaration,
-            initializer,
-            false,
-            Operation::Assignment,
-        )?
-        .ok_or_else(|| {
-            format!(
-                "initializer of record `{}` in `{path}` has no record assignment",
-                self.node(declaration).name
-            )
+        let mut statements = self.lower_staged_record_initializer(path, initializer, |cg| {
+            let statement = cg
+                .lower_unpacked_aggregate_assignment(
+                    path,
+                    declaration,
+                    initializer,
+                    false,
+                    Operation::Assignment,
+                )?
+                .ok_or_else(|| {
+                    format!(
+                        "initializer of record `{}` in `{path}` has no record assignment",
+                        cg.node(declaration).name
+                    )
+                })?;
+            Ok(vec![statement])
+        })?;
+        Ok(match statements.len() {
+            1 => statements.remove(0),
+            _ => IrStmt::Block(statements),
         })
     }
 

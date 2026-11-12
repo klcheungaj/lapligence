@@ -2046,6 +2046,64 @@ impl Codegen<'_> {
         Ok(before)
     }
 
+    /// Whether the declaration initializer `initializer` reads an element of
+    /// a nested container (`nas["x"][1]`) or a container member of an element,
+    /// which must be staged around it (see [`Self::stage_initializer`]),
+    /// outside any other staging.
+    pub(in crate::sim::codegen) fn initializer_stages(&self, initializer: NodeId) -> bool {
+        if !self.element_staging_possible
+            || !self.staged_element_members.is_empty()
+            || !self.staged_nested_elements.is_empty()
+        {
+            return false;
+        }
+        let (mut members, mut nested) = (Vec::new(), Vec::new());
+        if !self.stage_whole_read(initializer, &mut members, &mut nested) {
+            self.collect_staged_members(initializer, false, &mut members, &mut nested);
+        }
+        !members.is_empty() || !nested.is_empty()
+    }
+
+    /// Whether `declaration` is an unpacked record or union whose initializer
+    /// is a whole nested container element ([`Self::initializer_stages`]).
+    pub(in crate::sim::codegen) fn record_initializer_stages(
+        &self,
+        declaration: NodeId,
+        initializer: NodeId,
+    ) -> bool {
+        matches!(
+            self.query_descriptor(declaration).map(|descriptor| &descriptor.shape),
+            Some(TypeShape::Aggregate(layout))
+                if matches!(layout.kind, AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion)
+        ) && self.initializer_stages(initializer)
+    }
+
+    /// The statements `lower` gives for a record declaration initializer
+    /// `initializer`, with the nested container elements and element members
+    /// it reads staged around them as an assignment statement stages its
+    /// source (`rec_t z = nas["x"][1];`). Without anything to stage, or inside
+    /// another staging, the statements are `lower`'s alone.
+    pub(in crate::sim::codegen) fn lower_staged_record_initializer(
+        &mut self,
+        path: &str,
+        initializer: NodeId,
+        lower: impl FnOnce(&mut Self) -> Result<Vec<IrStmt>, String>,
+    ) -> Result<Vec<IrStmt>, String> {
+        if !self.initializer_stages(initializer) {
+            return lower(self);
+        }
+        let lowered = self
+            .stage_initializer(path, initializer)
+            .and_then(|before| Ok((before, lower(self)?)));
+        self.end_element_member_staging();
+        let (mut before, body) = lowered?;
+        if before.is_empty() {
+            return Ok(body);
+        }
+        before.extend(body);
+        Ok(vec![IrStmt::Block(before)])
+    }
+
     /// Stage the queue and dynamic-array members of container record
     /// elements (and queues or dynamic arrays nested in container elements)
     /// that the expression `node` reads: a condition, loop bound,
