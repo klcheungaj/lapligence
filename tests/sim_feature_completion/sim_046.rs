@@ -1115,6 +1115,41 @@ fn statement_and_toggle_sections_save_and_merge_across_runs() {
     }
 }
 
+/// S46-D11 with statement and FSM sections: a section saved by a model with
+/// other statements or other FSMs is not merged, `$coverage_merge` returns
+/// SV_COV_ERROR and no count changes (readme.md).
+#[test]
+fn statement_and_fsm_sections_of_another_model_do_not_merge() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/merge_foreign.out");
+    for optimized in [false, true] {
+        let label = format!("{SUITE}/merge_foreign, optimized={optimized}");
+        let (_directory, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "merge_foreign",
+            optimized,
+            &[],
+            &[],
+            &[(&[], &[]), (&["-D", "MORE"], &["+merge"])],
+        );
+        let stdout: String = outputs
+            .iter()
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+            .collect();
+        assert_eq!(stdout, expected, "{label}");
+        assert!(outputs[0].status.success(), "{label}");
+        assert!(llg_messages(&outputs[0]).is_empty(), "{label}");
+        assert_eq!(outputs[1].status.code(), Some(1), "{label}");
+        assert_eq!(
+            llg_messages(&outputs[1]),
+            [
+                "ERROR: [SIM-010] $coverage_merge at tb:26:33: coverage database `s.db` was not merged: it was saved by a model with different statements; no coverage changed",
+                "ERROR: [SIM-010] $coverage_merge at tb:27:16: coverage database `f.db` was not merged: it was saved by a model with different FSMs; no coverage changed",
+            ],
+            "{label}"
+        );
+    }
+}
+
 /// S46-D14: toggle coverage counts the packed nets and variables of an
 /// instance, its loop and conditional generate scopes and its ports, and no
 /// array, real, string, event, block or package variable (readme.md).

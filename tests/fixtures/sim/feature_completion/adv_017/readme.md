@@ -343,5 +343,7 @@ concatenation, which has no object.
 Each is rejected before simulation: a state_vector naming no signal of its
 module (`neg_fsm_signal`), a state vector without states
 (`neg_fsm_states`), `enum` without a name (`neg_fsm_malformed`), a
-part-select outside the declared range (`neg_fsm_select`) and a state value
-that does not fit the state vector (`neg_fsm_value`).
+part-select outside the declared range (`neg_fsm_select`), a state value
+that does not fit the state vector (`neg_fsm_value`) and a 65-bit state
+vector (`neg_fsm_width`: llg covers state vectors of 1 to 64 bits, an llg
+limitation listed in known issues).

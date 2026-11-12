@@ -557,6 +557,26 @@ comment "".
   with a negative type weight is not loaded (the whole file is refused,
   S46-D3), so the run reports the declared options and 0.00.
 
+## merge_foreign.sv
+
+40.3.2.4 L66334-66335: "If name does not exist or does not correspond to
+a coverage database from the same design, an error shall occur."; L66342-66343:
+"`SV_COV_ERROR. The coverage data were not found, or they did not correspond
+to this design, or another error occurred." The first run (no defines)
+saves `s.db` and `f.db` (`save 1 1`). The second run is built with
+`-D MORE`: one more statement (`n = 2`) and one more FSM state (`C`), so
+both sections are foreign (decision S46-D11): each merge returns -1 with a
+run-time error and the run exits with status 1.
+
+Statements of the `-D MORE` model in order (S46-D13; a timing control and
+its statement are two): the block, `cs = 1`, `#1 n = 1` (2), `n = 2`, the
+`if`, its block, `s = ...`, `f = ...`, the merge `$display`, the last
+`$display`, the `else` branch's `$display` and `$finish`. When `s` is read
+the first 8 have started; when the last `$display` reads its arguments,
+11 (not the `else` branch, which the first run covered, nor `$finish`).
+`cs` is 0 (state `A`) at time 0 and 1 (`B`) after its write: 2 covered
+states before and after. `before 8 2 after 11 2`: the merges added nothing.
+
 ## Negative cases
 
 | Fixture | Rejected construct | Owner |

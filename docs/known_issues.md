@@ -3266,9 +3266,15 @@ state numbering shared by all assertion engines.
 
 `tests/fixtures/sim/lrm_decisions/S46-D5_unavailable_kinds.sv`,
 `S46-D6_string_scope_is_definition.sv`,
-`S46-D14_toggle_coverage.sv`, `S46-D15_loaded_type_options.sv`;
+`S46-D14_toggle_coverage.sv`, `S46-D15_loaded_type_options.sv` (type
+options), `A17-D2_control_callbacks.sv` (stepping),
+`A17-D5_instance_callbacks.sv`, `A19-D59_sequence_and_property_operators.sv`,
+`A17-D11_fsm_pragmas.sv` to `A17-D13_fsm_objects.sv`;
 `tests/fixtures/sim/feature_completion/sim_046/db_errors.sv` (`-G W=3`
-reads a database of the W = 4 model), `option_kinds.sv` (`--code-coverage`).
+reads a database of the W = 4 model), `merge_foreign.sv` (statement and
+FSM sections of another model), `option_kinds.sv` (`--code-coverage`);
+`tests/fixtures/sim/feature_completion/adv_017/neg_fsm_width.sv` (a 65-bit
+state vector), `relations.sv` (declarations without bodies).
 
 ## Semantic tokens around text macros (llg_ls)
 
