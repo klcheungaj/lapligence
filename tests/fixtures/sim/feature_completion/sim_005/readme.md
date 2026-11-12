@@ -10,7 +10,8 @@ llg.
 
 Reals keep numeric semantics throughout: a real `ref` formal is the actual's
 `double` cell, real arrays are `double` cells inside and across subroutines,
-and comparisons use real `==`, never a bit pattern. Shortreal storage rounds
+and comparisons use real `==`, never a bit pattern, except case equality of
+real arrays (decision R05-D4). Shortreal storage rounds
 to the nearest IEEE single.
 
 | Fixture | Clause and independent oracle |
@@ -21,6 +22,7 @@ to the nearest IEEE single.
 | `real_array_methods` | §§7.12.1, 7.12.2. Stable numeric `sort`/`rsort`/`reverse` of {1.5,-2,4.25,0.5,-2}; the three in-place changes of `a[0]` in one time step wake its waiter once. Shortreal 0.1/0.2/0.3 sort to `3dcccccd` `3e4ccccd` `3e99999a`. `reverse` moves rows whole, then reverses row 1. A NaN keeps its position and the keys on each side sort separately: {1,3,NaN,-1,2}. Over {3,1,2,1,-0.0,0.0}: `find` x>1.5 gives 3 2; `find_index` x<2.5 gives indices 1..5; `find_first` x<2 is 1.0; `find_last_index` x==1 is 3; `min` is the first minimum -0.0 (`8000000000000000`, since 0.0 < -0.0 is false); `max` 3.0; `unique` keeps 3,1,2,-0.0 (indices 0 1 2 4, -0.0 == 0.0). Stable `sort` gives -0.0 0.0 1 1 2 3; `rsort` then `reverse` gives 0.0 ... 3.0. A dynamic array sorts to -1 0.25 0.5 2 and `find` with `e.index != 1` gives 0.50 and 2.0. With NaNs, `min` skips them (-3.0) and every NaN is unique (4). `max` of an empty queue is empty. |
 | `real_sampled` | §16.9.3. Procedural `$sampled` returns the Preponed values 1.25 and shortreal 0.5 (`3f000000`). On posedges at 5..55 the samples are 2.5, 2.5, 0.0, -0.0, NaN, NaN. `$past`, `$stable` and `$changed` of a real are illegal (§16.6.1, `SystemVerilog-1800-2009.txt` L21575-21576: "The following types are not allowed: — Noninteger types (shortreal, real, and realtime)"). |
 | `real_numeric_extremes` | §§6.12.2, 20.5. Conversion to integral rounds half away from zero and keeps the low target bits: 1e20 mod 2^32 = 1661992960, mod 2^64 = 7766279631452241920, 301 mod 256 = 45; -0.5 -1, 0.5 1, 1.5 2, -2.5 -3. `$rtoi` truncates: -1, 2. Policy: a nonfinite real converted to an integral type yields 0 (the standard leaves it unspecified). Shortreal: 2^24+1 rounds to 16777216, 1e40 overflows to +inf `7f800000`, 1e-45 rounds to the smallest subnormal `00000001`, -0.0 is `80000000`. The largest double times 2 is +inf; the smallest subnormal halves to +0 (ties to even). -0.0 == 0.0. NaN compares unequal and unordered; a payload NaN is still NaN. |
+| `real_array_case_equality` | §7.4.3 (`SystemVerilog-1800-2009.txt` L8089, L8095: "The following operations can be performed on all arrays, packed or unpacked." ... "Equality operations on the array or slice of the array"), §11.4.5 L14775 ("These four operators compare operands bit for bit."), decision R05-D4. `ra` = {1,2,3} equals `rb` and differs from `rc` = {1,2.5,3} in element 1: `===` 1 0, `!==` 1 0, `==` 1, `!=` 1. Slices `[0:1]` hold {1,2} and {1,2.5}: 0, and `[1:2]` {2,3} and {2.5,3}: `!==` 1. Rows: `m2a === m2a` 1, `m2b` differs in `[1][1]`: 0, row 0 matches: 1. Shortreal {0.5,0.25} twice: 1 0. 0.0 against -0.0: numeric `==` 1, bit patterns differ, `===` 0. The same quiet NaN: numeric `==` 0 (NaN is unordered), equal patterns, `===` 1 and `!==` 0; `ra !== rc` holds, so `condition` prints. Industry-standard behaviour agrees on every line except the slices, where it reports `[0:1]` equal and `[1:2]` not different under both `==` and `===`, against 7.4.3; llg follows the text there. |
 | `real_ref`, `real_array_value`, `real_sample` | Adopted FND-002 witnesses with quiet `$finish(0)`: 1.75, `1.25 2.50`, 1.25. |
 
 ## Negatives
@@ -28,7 +30,7 @@ to the nearest IEEE single.
 | Fixture | Boundary |
 | --- | --- |
 | `neg_real_bitwise`, `neg_real_concat`, `neg_real_select`, `neg_real_edge` | §§6.12.1, 11.3.1 Table 11-1, 11.4.12, 9.4.2: bitwise operators, concatenation, selects and edge descriptors need integral operands (frontend). Adopted FND-002 `neg_real_bitwise`. |
-| `neg_real_case_equality`, `neg_real_array_case_equality` | Table 11-1: case equality is not a real operator, also over real arrays (llg; the frontend accepts the syntax). |
+| `neg_real_case_equality` | Table 11-1 (`SystemVerilog-1800-2009.txt` L14254-14255): case equality is not an operator of a real operand (llg; the frontend accepts the syntax). An array of reals is not a real operand (`real_array_case_equality`). |
 | `neg_real_rose` | §16.9.3: `$rose`/`$fell` read a least significant bit, which a real lacks. |
 | `neg_automatic_nba`, `neg_ref_nba` | §§6.21, 10.4.2, 13.5.2: no NBA to automatic variables or ref formals (adopted FND-002 witnesses). |
 | `neg_real_map` | §7.12.3: reduction methods need integral array elements; the adopted FND-002 `real_map` witness is frontend-illegal. |

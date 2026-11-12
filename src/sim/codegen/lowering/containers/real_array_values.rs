@@ -24,7 +24,10 @@ pub(in super::super) const REAL_ARRAY_ELEMENTWISE_LIMIT: u64 = 4096;
 
 impl Codegen<'_> {
     /// `==`/`!=` over real fixed arrays: numeric element equality in
-    /// declaration order (SV 7.4.6, 11.4.5); never a bit-pattern compare.
+    /// declaration order (SV 7.4.3, 11.4.5). `===`/`!==` compare each element's
+    /// IEEE 754 bit pattern, as for real members of other aggregates (decision
+    /// R05-D3, industry-standard behaviour): Table 11-1 bars only a real or
+    /// shortreal operand itself, which the scalar path rejects.
     pub(in super::super) fn lower_real_array_equality(
         &mut self,
         path: &str,
@@ -41,11 +44,6 @@ impl Codegen<'_> {
         let Some((dims, _)) = self.real_array_shape(operands[0]) else {
             return Ok(None);
         };
-        if matches!(operation, Operation::CaseEqual | Operation::CaseNotEqual) {
-            return Err(format!(
-                "case equality on a real operand in `{path}` is illegal (SV 11.3.1, Table 11-1)"
-            ));
-        }
         let left = self.real_array_values(path, operands[0], &dims)?;
         let right = self.real_array_values(path, operands[1], &dims)?;
         if left.len() != right.len() {
@@ -53,11 +51,15 @@ impl Codegen<'_> {
                 "real-array equality operands disagree in size in `{path}`"
             ));
         }
+        let case = matches!(operation, Operation::CaseEqual | Operation::CaseNotEqual);
         let equal = left
             .into_iter()
             .zip(right)
             .map(|(a, b)| {
-                IrExpr::new(
+                if case {
+                    return super::super::real_leaf_case_cmp_ir(IrBinOp::CaseEq, a, b, path);
+                }
+                Ok(IrExpr::new(
                     IrExprKind::Bin {
                         op: IrBinOp::Eq,
                         a: Box::new(a),
@@ -66,8 +68,10 @@ impl Codegen<'_> {
                     1,
                     false,
                     None,
-                )
+                ))
             })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
             .reduce(|all, next| {
                 IrExpr::new(
                     IrExprKind::Bin {
@@ -81,19 +85,21 @@ impl Codegen<'_> {
                 )
             })
             .ok_or_else(|| format!("real-array equality has no elements in `{path}`"))?;
-        Ok(Some(if operation == Operation::NotEqual {
-            IrExpr::new(
-                IrExprKind::Un {
-                    op: IrUnOp::LogNot,
-                    a: Box::new(equal),
-                },
-                1,
-                false,
-                None,
-            )
-        } else {
-            equal
-        }))
+        Ok(Some(
+            if matches!(operation, Operation::NotEqual | Operation::CaseNotEqual) {
+                IrExpr::new(
+                    IrExprKind::Un {
+                        op: IrUnOp::LogNot,
+                        a: Box::new(equal),
+                    },
+                    1,
+                    false,
+                    None,
+                )
+            } else {
+                equal
+            },
+        ))
     }
 
     /// Declaration-order element values of a real fixed-array expression

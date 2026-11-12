@@ -1259,8 +1259,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   numeric casts and ordinary `case` comparisons have paths. Real-to-integral
   conversion rounds half away from zero and keeps the low target bits;
   nonfinite reals convert to 0. Bitwise, reduction, shifts, concatenation,
-  case equality (also over real arrays), real selects, real edge descriptors
-  and `$rose/$fell` of reals reject as illegal. V §4.1.1 **[1995]**.
+  case equality of a real operand, real selects, real edge descriptors and
+  `$rose/$fell` of reals reject as illegal. Case equality of real fixed arrays
+  compares element bit patterns (decision R05-D4). V §4.1.1 **[1995]**.
 - 🟨 **Static and dynamic casts** — Typed, size and sign casts preserve width,
   state and conversion boundaries in admitted scalar/vector and fixed contexts.
   `$cast` supports packed/real values, enum membership against the complete

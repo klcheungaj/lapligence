@@ -654,6 +654,14 @@ fn r05_d3_real_member_case_equality() {
 }
 
 #[test]
+fn r05_d4_real_array_case_equality() {
+    run_decision(
+        "R05-D4_real_array_case_equality",
+        include_str!("fixtures/sim/lrm_decisions/R05-D4_real_array_case_equality.out"),
+    );
+}
+
+#[test]
 fn r11_d1_sibling_port_net_types() {
     run_decision(
         "R11-D1_sibling_port_net_types",
