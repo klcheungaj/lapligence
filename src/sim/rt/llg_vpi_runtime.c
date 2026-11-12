@@ -1919,15 +1919,15 @@ static vpiHandle rts_auto_by_name(const char* name) {
         if (handle && *p == '[') {
             /* An element of an unpacked array member: all its indices. */
             int64_t indices[16];
-            uint32_t count = 0;
-            while (*p == '[' && count < 16u) {
+            uint32_t given = 0;
+            while (*p == '[' && given < 16u) {
                 char* end = NULL;
                 long long value = strtoll(p + 1, &end, 10);
                 if (!end || end == p + 1 || *end != ']') break;
-                indices[count++] = (int64_t)value;
+                indices[given++] = (int64_t)value;
                 p = end + 1;
             }
-            vpiHandle element = *p == '[' ? NULL : rts_auto_by_multi_index(decode_handle(handle, NULL), indices, count);
+            vpiHandle element = *p == '[' ? NULL : rts_auto_by_multi_index(decode_handle(handle, NULL), indices, given);
             release_handle(handle);
             handle = element;
         }
