@@ -264,7 +264,7 @@ fn const_ref_callback_reads_are_live_and_not_writable_calls() {
     let call = IrCallExpr::new(0, vec![arg], IrDepth::PROC, false);
     let result = frame.pure_callback_call(&call).unwrap();
     frame.discard(result);
-    assert!(find_copy(frame.body(), "&G_value").is_some());
+    assert!(find_copy(&frame.body(), "&G_value").is_some());
     assert!(!frame.body().contains("f_read("));
     assert!(!frame.body().contains("llg_ba("));
     assert!(!frame.body().contains("llg_ba_from("));

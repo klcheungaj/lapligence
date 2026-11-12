@@ -129,7 +129,9 @@ impl Frame<'_, '_> {
         let address = if self.cell_eligibility.permits(name) {
             self.frame_cell(kind.c_type(), Some(kind.destructor()))
         } else {
-            self.native_reserve(kind).address
+            let address = self.native_reserve(kind).address;
+            self.check_native_use(&address);
+            address
         };
         let binding = NativeBinding {
             address,

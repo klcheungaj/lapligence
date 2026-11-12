@@ -297,7 +297,7 @@ fn sampled_expression_uses_snapshot_reads_then_restores_live_reads() {
     let value = frame.expression(&read).unwrap();
     frame.discard(value);
     assert!(frame.body().contains("llg_sampled_copy(&G_value,"));
-    assert!(find_copy(frame.body(), "&G_value").is_some());
+    assert!(find_copy(&frame.body(), "&G_value").is_some());
     assert!(frame.slots.iter().all(|used| !used));
 }
 

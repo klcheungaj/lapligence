@@ -63,8 +63,8 @@ fn callback_expansions_rename_all_internal_labels_and_gotos() {
         let value = frame.expression(&call(1, vec![], 32)).unwrap();
         frame.discard(value);
     }
-    let labels: Vec<_> = frame
-        .body()
+    let body = frame.body();
+    let labels: Vec<_> = body
         .lines()
         .filter_map(|line| line.trim().strip_suffix(": ;"))
         .collect();

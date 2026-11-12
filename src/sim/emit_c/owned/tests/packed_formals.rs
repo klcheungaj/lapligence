@@ -87,7 +87,7 @@ fn callback_member_writes_and_nested_reads_use_private_owners() {
     }
     assert!(model.signals.is_empty());
     assert_eq!(frame.body().matches("sv4_select_plan_set(").count(), 2);
-    assert!(find_copy(frame.body(), "&a0").is_none());
+    assert!(find_copy(&frame.body(), "&a0").is_none());
     assert!(!frame.body().contains("llg_ba("));
     assert!(!frame.body().contains("llg_ba_from("));
     assert!(frame.slots.iter().all(|used| !used));
@@ -114,7 +114,7 @@ fn input_member_plan_resolves_the_materialized_input_cell() {
     let value = frame.expression(&number(0x5a, 8)).unwrap();
     frame.store(&target, value, false, "0").unwrap();
     frame.release_target(target);
-    assert!(find_copy(frame.body(), "&a0").is_none());
+    assert!(find_copy(&frame.body(), "&a0").is_none());
     assert!(frame.slots.iter().all(|used| !used));
 }
 
@@ -158,7 +158,7 @@ fn packed_ref_member_updates_via_the_original_reference_descriptor() {
     assert!(!frame.body().contains("llg_ref_read(r0)"));
     assert!(frame.body().contains("llg_ref_write_masked(r0,"));
     assert!(frame.body().contains("sv4_select_plan_set("));
-    assert!(find_copy(frame.body(), "&r0").is_none());
+    assert!(find_copy(&frame.body(), "&r0").is_none());
     assert!(frame.slots.iter().all(|used| !used));
 }
 

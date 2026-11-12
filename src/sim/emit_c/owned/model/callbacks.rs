@@ -169,7 +169,7 @@ fn render_with_frame(
                 let finished = frame.into_coframe()?;
                 (finished.body, Some(finished.layout), finished.cached_locals)
             } else {
-                (frame.body().to_owned(), None, String::new())
+                (frame.body().into_owned(), None, String::new())
             };
             let frame_pointer = if coroutine {
                 format!(
