@@ -89,6 +89,26 @@ fn monitor_follows_record_members_exactly() {
     sim_cli::run_case_backend_parity(SUITE, "monitor_record_property", expected, &[], &[]);
 }
 
+/// FIN-001 R1: a `$monitor` of a function or nonvirtual method call
+/// evaluates when storage the callee reads through the call's handles
+/// changes, not at every slot.
+#[test]
+fn monitor_of_a_call_follows_what_the_callee_reads() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/monitor_method_calls.out");
+    sim_cli::run_case(SUITE, "monitor_method_calls", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "monitor_method_calls", expected, &[], &[]);
+}
+
+/// FIN-001 R1: a callee local that holds different handles on different
+/// paths names no receiver, so the monitor evaluates at every slot.
+#[test]
+fn monitor_of_a_call_through_an_unbound_local_evaluates_every_slot() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_025/monitor_method_every_slot.out");
+    sim_cli::run_case(SUITE, "monitor_method_every_slot", expected, "", &[]);
+}
+
 #[test]
 fn reports_in_class_methods_keep_their_receiver() {
     let expected =
@@ -219,6 +239,13 @@ fn neg_class_storage_limits_are_diagnosed() {
         "neg_method_formal_strobe",
         "automatic variable 'a' cannot be traced",
     );
+}
+
+#[test]
+fn neg_monitor_calls_the_postponed_evaluator_cannot_run() {
+    const PENDING: &str = "P05 ownership emission is not yet implemented for side-effect-capable evaluator expressions";
+    sim_cli::reject_case(SUITE, "neg_monitor_virtual_method", PENDING);
+    sim_cli::reject_case(SUITE, "neg_monitor_handle_local_helper", PENDING);
 }
 
 #[test]

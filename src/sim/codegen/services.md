@@ -138,8 +138,13 @@ rebinding moves the triggers. A member of a native record property is exact
 too, through its record's contents marker
 (`IrNativeAccessKind::ClassRecord`), and a static subroutine record's through
 `IrDependency::NativeValue`. A path no dependency can follow rejects with its
-location. An argument that calls
-into class storage, selects a virtual-interface member or `%p`s a class object sets
+location. A call of a function or nonvirtual method is exact too when
+`report_plan` (`collection/dynamic_reads/report_plan.rs`) finds that every class
+read of its body binds through the call's handles, without lowering anything;
+`report_dependencies` then names that storage through the wait planner's callee
+walk, and a read the walk cannot bind after all is a located error. A call
+that does not bind (a virtual method, a callee local holding different
+handles), a virtual-interface member or `%p` of a class object sets
 `IrStmt::MonitorSet::poll`: the runtime then re-evaluates it at every settled slot
 (`LLG_MONITOR_READ_POLL`). An
 argument that computes only from `$time`, `$stime` or `$realtime` is listed in

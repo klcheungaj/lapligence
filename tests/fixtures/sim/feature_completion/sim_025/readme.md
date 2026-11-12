@@ -46,12 +46,35 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
 - `scope_time`: `$time` alone never triggers a report (L36517-36518); two
   `$fmonitor` lists registered by different instances stay active together
   (L36676-36677) and `%m` names each instance.
-- `dynamic_members`: storage chosen through a class or virtual-interface
-  handle has no fixed signal to watch, so a `$monitor` whose arguments call a
-  method, read a handle formal, print an object with `%p` or select a
-  virtual-interface member re-evaluates at every settled slot and reports when
-  the value differs (a rebound handle included). A process handle prints
-  `process` in the Postponed region.
+- `dynamic_members`: a `$monitor` reports when storage chosen through a class
+  or virtual-interface handle changes, a rebound handle included. Printing an
+  object with `%p` or selecting a virtual-interface member has no fixed
+  signal to watch, so this list re-evaluates at every settled slot and reports
+  when the value differs. A process handle prints `process` in the Postponed
+  region.
+- `monitor_method_calls` (FIN-001 R1): L36516-36519 "each time a variable or an
+  expression in the argument list changes value ... the entire argument list is
+  displayed at the end of the time step". A function or nonvirtual method call
+  changes value only when storage its body reads changes (9.4.2 L11837-11838:
+  "Changing the value of object data members ... referenced by a method or
+  function shall cause the event expression to be reevaluated"), so the list
+  evaluates on those stores: through the receiver, a nested method call on
+  `this`, a handle formal copied to a handle local, a module handle the body
+  names, a handle property (`n.get()`, `h.n.get()`) and a container property.
+  Every list carries an evaluation counter: nothing evaluates at 1, 7, 9 and 15
+  (another variable), 2 (a property the calls do not read), 4 (another
+  object), 11 (`h.v`, which the second list does not read) or 17 (a packed
+  property beside the queue); each store the calls read evaluates once (3, 6,
+  10, 13, 16, 18), as does a rebound handle (5, 12, 19) and a new list (0, 8,
+  14). Some simulators evaluate such a call again only when its receiver
+  handle or a static variable it names changes, and reject a class handle
+  actual; llg follows the clauses (decisions B2, S25-D9).
+- `monitor_method_every_slot` (FIN-001 R1): a callee local that holds `a` or `b`
+  depending on a run-time choice names no single receiver, so the list
+  evaluates at every settled slot (llg policy, the cost of following it): the
+  counter moves in each slot, and the value changes at 2, 4 and 6 as
+  L36516-36519 asks. Some simulators reject a class handle in a `$monitor`
+  argument.
 - `class_property_reports` (decision S25-D9): properties through a handle, a
   chain, a handle array element, static and parameterized classes, with strings,
   reals, containers and selects. L18646-18652 bars only variables of automatic
@@ -143,6 +166,11 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
   second. A failed evaluation prints nothing.
 - `neg_method_formal_strobe`: a method's formals are automatic (L18646-18652);
   its properties are not.
+- `neg_monitor_virtual_method`, `neg_monitor_handle_local_helper`: the
+  read-only Postponed evaluator does not yet dispatch a virtual method, nor run
+  a statement-bodied function with a class-handle local when no argument of
+  the list has private effects; both reject before C compilation (known issue
+  "Deferred reports that name class state or activation storage").
 - `monitor_record_property` (FIN-001 R0, decision S07-D18): L36516-36519 "each
   time a variable or an expression in the argument list changes value ... the
   entire argument list is displayed at the end of the time step". A member of an

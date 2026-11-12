@@ -2033,9 +2033,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   classes, also in class methods, where the report keeps its object: a `$monitor`
   watches the handles and properties on the path exactly and follows a rebinding,
   and a null handle on the path when the report evaluates stops the run
-  (S25-D9). Arguments that call a method or a function reading class storage,
-  or select a virtual-interface member, make a `$monitor` re-evaluate every
-  slot. A `$monitor` of a member of an unpacked structure property or static
+  (S25-D9). A call of a function or nonvirtual method is watched exactly
+  through what its body reads via the call's receiver, handle formals, handle
+  properties and static handles; a read no handle binds, a virtual-interface
+  member or `%p` of an object makes a `$monitor` re-evaluate every slot. A
+  `$monitor` of a member of an unpacked structure property or static
   subroutine record with a string, real or handle member follows the record's
   contents marker exactly. Automatic variables stay illegal (SV 13.3.2);
   `final` blocks reject; pending reports are dropped at `$finish`

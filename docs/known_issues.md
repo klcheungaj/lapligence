@@ -1510,9 +1510,24 @@ when a listed value changed. What is left:
 
 - **`$monitor` through a computed handle** (`f().v`) rejects: nothing can name the
   storage without calling the function again.
-- **Reads through a method, a function with a handle formal, a virtual-interface
-  member or `%p` of an object** are not exact: such a `$monitor` re-evaluates at
-  every settled slot, which costs one evaluation per slot.
+- **Some reads are not exact**: such a `$monitor` re-evaluates at every settled
+  slot, which costs one evaluation per slot. These are a virtual-interface member,
+  `%p` of an object, a mailbox or semaphore method other than a callee's
+  `num()`, and a call whose callee reads class storage through a handle that
+  is not bound: a callee local that holds different handles on different
+  paths ([`monitor_method_every_slot.sv`](../tests/fixtures/sim/feature_completion/sim_025/monitor_method_every_slot.sv)),
+  an implicit `this` in a report issued inside a method, a receiver or actual
+  other than a static handle variable or a handle property chain from one
+  (`arr[0].get()`), or a virtual-interface member read inside the callee.
+  Calls of functions and nonvirtual methods whose reads bind are exact
+  ([`monitor_method_calls.sv`](../tests/fixtures/sim/feature_completion/sim_025/monitor_method_calls.sv)).
+- **A virtual method call, or a statement-bodied function with a class-handle
+  local in a list with no argument that has private effects**, rejects before C
+  compilation with an unlocated "side-effect-capable evaluator expressions"
+  error: the read-only Postponed evaluator does not dispatch virtual methods or
+  run such a body yet
+  ([`neg_monitor_virtual_method.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_monitor_virtual_method.sv),
+  [`neg_monitor_handle_local_helper.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_monitor_handle_local_helper.sv)).
 
 A report reads container and string actuals at the end of the slot, and builds
 a conversion or an unpacked concatenation then ([S25-D8](lrm_decisions.md)). A
