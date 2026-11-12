@@ -55,6 +55,14 @@ impl Codegen<'_> {
         bit_nets: &HashSet<NodeId>,
         cells: &NetCellPlan,
     ) -> Result<Vec<(NetPoint, NetPoint)>, String> {
+        // A converting port joined for a strength reader pairs the bits both
+        // sides have (T1-D13, `nets/port_merges.rs`).
+        if let Some(pairs) = self.strength_links.pairs.get(&port) {
+            return Ok(pairs
+                .iter()
+                .map(|(formal, actual)| (formal.point(), actual.point()))
+                .collect());
+        }
         if let Some(pairs) = actual
             .filter(|_| !selected_formal)
             .map(|actual| self.net_array_inout_pairs(port, actual, low))

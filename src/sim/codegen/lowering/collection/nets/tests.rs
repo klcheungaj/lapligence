@@ -723,3 +723,97 @@ endmodule
     );
     assert_eq!(group_widths(&model), [2, 4, 2]);
 }
+
+const CONVERTING_PORTS: &str = r#"
+module wide(input wire [1:0] i);
+endmodule
+module narrow(input wire n);
+endmodule
+module signed_wide(input wire [2:0] s);
+endmodule
+module chain(input wire [1:0] m);
+    wide2 inner(m);
+endmodule
+module wide2(input wire [2:0] l);
+endmodule
+module same(input wire [1:0] e);
+endmodule
+module tb;
+    wire w;
+    wire [1:0] v;
+    wire signed [1:0] vs;
+    wide a(w);
+    narrow b(v);
+    signed_wide c(vs);
+    chain d(w);
+    same f(v);
+endmodule
+"#;
+
+/// The converting links of `CONVERTING_PORTS` by instance-relative port
+/// name, after building net groups with `requested` joined.
+fn converting_links_of(requested: &[&str]) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let compiled = crate::core::compile::compile_sources_checked(
+        &[crate::core::compile::OwnedSource::compilation_unit(
+            "converting_ports.sv",
+            CONVERTING_PORTS,
+        )],
+        &crate::core::compile::CompileOpts {
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let database = Db::from_slang(&compiled.snapshot).unwrap();
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+    let mut cg = Codegen::new(&semantic);
+    cg.merge_ports = true;
+    cg.collect_design().unwrap();
+    let ports = database
+        .node_ids()
+        .filter(|node| matches!(database.node_kind(*node), NodeKind::Port { .. }))
+        .collect::<Vec<_>>();
+    let name = |cg: &Codegen<'_>, port: NodeId| cg.display_name(port);
+    cg.strength_links.requested = ports
+        .iter()
+        .copied()
+        .filter(|port| requested.contains(&name(&cg, *port).as_str()))
+        .collect();
+    cg.bind_reference_ports().unwrap();
+    cg.collect_timescales();
+    cg.build_net_groups().unwrap();
+    let sorted = |ports: Vec<NodeId>| {
+        let mut names = ports
+            .into_iter()
+            .map(|port| name(&cg, port))
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    };
+    let links = sorted(cg.strength_links.links.keys().copied().collect());
+    let joined = sorted(
+        cg.strength_links
+            .pairs
+            .keys()
+            .copied()
+            .filter(|port| cg.port_aliases.contains(port))
+            .collect(),
+    );
+    let masked = sorted(cg.strength_links.masked.keys().copied().collect());
+    (links, joined, masked)
+}
+
+#[test]
+fn converting_ports_join_only_when_a_reader_asked() {
+    // A signed source that widens and a port fed by a widened sink keep
+    // their links and are no candidates; a same-width port is no link.
+    let (links, joined, masked) = converting_links_of(&[]);
+    assert_eq!(links, ["tb.a.i", "tb.b.n", "tb.d.m"]);
+    assert!(joined.is_empty() && masked.is_empty());
+    // A narrowing sink loses its link; a widening one keeps it for its
+    // extension bit.
+    let (links, joined, masked) = converting_links_of(&["tb.a.i", "tb.b.n"]);
+    assert_eq!(links, ["tb.d.m"]);
+    assert_eq!(joined, ["tb.b.n"]);
+    assert_eq!(masked, ["tb.a.i"]);
+}

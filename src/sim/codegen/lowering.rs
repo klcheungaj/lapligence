@@ -58,7 +58,9 @@
 //!   for a `wire` sink only its port drives, merged with its source, A21-D2),
 //!   or where its sink would differ from its source: a net sink with drivers
 //!   of its own or a type of its own then merges with its source like an
-//!   inout connection (`collection/nets/port_merges.rs`, A21-D4);
+//!   inout connection (`collection/nets/port_merges.rs`, A21-D4); a port
+//!   between nets of different widths joins the bits both sides have once a
+//!   strength reader names its sink (T1-D13);
 //! - every inout port collapses its parent + child nets into ONE resolved
 //!   simulated net (`llg_net_t`, LRM §23.3.3.7): each member net gets a
 //!   driver slot, whole-signal writes lower to `llg_net_write`, and every
@@ -538,6 +540,10 @@ struct LoweredModel {
     /// root net does not start at X on every bit: lowered again with these
     /// ports kept as links (`collection/port_aliases.rs`).
     retry_ports: Vec<NodeId>,
+    /// Converting net ports whose sink a strength reader names: lowered
+    /// again with their bits joined (`collection/nets/port_merges.rs`,
+    /// decision T1-D13).
+    strength_link_ports: Vec<NodeId>,
 }
 
 /// The semantic model of a design that passed the simulation checks.
@@ -680,19 +686,46 @@ fn lower_model_retrying(
     record_columns: &HashSet<TypeId>,
 ) -> Result<LoweredModel, String> {
     let mut excluded = HashSet::new();
+    let mut strength = HashSet::new();
     for _ in 0..MAX_PORT_COLLAPSE_RETRIES {
-        let lowered = lower_model_with(db, options, sharing, &excluded, record_columns)?;
-        if lowered.retry_ports.is_empty() {
+        let lowered = lower_model_with(
+            db,
+            options,
+            sharing,
+            &PortPlan {
+                excluded: &excluded,
+                strength: &strength,
+            },
+            record_columns,
+        )?;
+        if lowered.retry_ports.is_empty() && lowered.strength_link_ports.is_empty() {
             return Ok(lowered);
         }
         excluded.extend(lowered.retry_ports.iter().copied());
+        strength.extend(lowered.strength_link_ports.iter().copied());
     }
     let bound = if sharing == PortSharing::Separate {
         PortSharing::Separate
     } else {
         PortSharing::Merges
     };
-    lower_model_with(db, options, bound, &HashSet::new(), record_columns)
+    lower_model_with(
+        db,
+        options,
+        bound,
+        &PortPlan {
+            excluded: &HashSet::new(),
+            strength: &strength,
+        },
+        record_columns,
+    )
+}
+
+/// The ports a lowering treats apart from the sharing rule: collapsed
+/// sinks kept as links, and converting ports joined for a strength reader.
+struct PortPlan<'a> {
+    excluded: &'a HashSet<NodeId>,
+    strength: &'a HashSet<NodeId>,
 }
 
 /// Which ports a lowering lets share storage or merge their nets.
@@ -717,7 +750,7 @@ fn lower_model_with(
     db: &Db,
     options: &CodegenOptions,
     sharing: PortSharing,
-    excluded_ports: &HashSet<NodeId>,
+    ports: &PortPlan<'_>,
     record_columns: &HashSet<TypeId>,
 ) -> Result<LoweredModel, String> {
     let waveform = options.waveform.as_ref();
@@ -730,7 +763,8 @@ fn lower_model_with(
     cg.collapse_ports = sharing == PortSharing::All;
     cg.alias_net_ports = matches!(sharing, PortSharing::All | PortSharing::Nets);
     cg.merge_ports = sharing != PortSharing::Separate;
-    cg.port_collapse_exclusions = excluded_ports.clone();
+    cg.port_collapse_exclusions = ports.excluded.clone();
+    cg.strength_links.requested = ports.strength.clone();
     cg.record_column_types = record_columns.clone();
     cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
@@ -848,6 +882,7 @@ fn lower_model_with(
     // Every driver site and delayed-driver start now exists.
     net_delay_layout::assign_net_delay_layouts(&mut model);
     let retry_ports = cg.port_collapse_retries(&model);
+    let strength_link_ports = cg.strength_link_retries();
     if model.waveform {
         cg.collect_wave_variables(&mut model);
     }
@@ -940,6 +975,7 @@ fn lower_model_with(
         coverage_api_used,
         shared_variable_ports,
         retry_ports,
+        strength_link_ports,
     })
 }
 
@@ -1688,6 +1724,9 @@ struct Codegen<'a> {
     shared_run_slot_bits: u64,
     /// Ports a previous lowering showed must keep their link.
     port_collapse_exclusions: HashSet<NodeId>,
+    /// Converting net ports and the strength readers of their sinks
+    /// (`collection/nets/port_merges.rs`, T1-D13).
+    strength_links: collection::StrengthLinks,
     /// Record types stored as columns by the design's selections, beyond
     /// those their shape puts in column layout.
     record_column_types: HashSet<TypeId>,
@@ -2475,6 +2514,7 @@ impl<'a> Codegen<'a> {
             merge_ports: false,
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),
+            strength_links: Default::default(),
             record_column_types: HashSet::new(),
             pattern_stops: Vec::new(),
             port_start_checks: Vec::new(),

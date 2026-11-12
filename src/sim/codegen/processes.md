@@ -113,9 +113,10 @@ SDF, the model keeps the VPI catalog and the source is a variable, the model
 is generated with `--vpi-port-delays`, the sink is a ref-port target, or a source that does not start at X has
 a time-0 observer of the sink. For a net source that start is known only
 after lowering: `lower_model` lowers again with those ports kept
-(`port_collapse_retries`), and again as a VPI model (variable sinks keep
-their links, net ports merge; A21-D6) when the lowered model keeps the VPI
-catalog (known only after the bodies).
+(`port_collapse_retries`), with converting net ports whose sink a strength
+reader names joined (`strength_link_retries`, T1-D13), and again as a VPI
+model (variable sinks keep their links, net ports merge; A21-D6) when the
+lowered model keeps the VPI catalog (known only after the bodies).
 Interface/modport bodies use the actual Slang-bound instance; a simple modport
 port resolves to its same-named interface member. Connection indices must be
 elaborated constants (including genvars), except a variable output target: it is

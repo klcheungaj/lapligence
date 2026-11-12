@@ -67,7 +67,11 @@ under `unconnected_drive` is a pull-strength slot of its port on every net or
 net-array formal (variables receive the value only); input net-array links and
 gate outputs on net-array cells publish through their port/gate cell slots.
 `%v` on a net, its constant projections, aliases or net-array cells reads a lazily
-created strength-view signal (`collection/strength_views.rs`); monitors depend on
+created strength-view signal (`collection/strength_views.rs`); a dynamic bit or
+indexed part-select of a vector net reads the view bytes its lowered offset selects,
+StX past the net (T1-D12). A converting port between nets whose sink a strength
+reader names is recorded, and a second lowering joins the bits both sides have
+(`nets/port_merges.rs`, T1-D13); monitors depend on
 that view, so strength-only changes reach them without waking value readers. An
 event control naming a net, an implicit event list, `wait` and `$monitor` also watch
 the views of the bits they name (T1-D8), only on groups `note_strength_nets` marks

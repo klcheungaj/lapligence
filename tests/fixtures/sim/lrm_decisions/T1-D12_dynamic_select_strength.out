@@ -1,0 +1,22 @@
+0 monitor v[idx]=0
+1: {v[idx]=0 We0} {u[k+:2]=01 We0 St1} {u[m-:2]=01 We0 St1} {r[k]=1 St1} {r[m+:2]=00 St0 We0} {v[pick]=0}
+2 monitor v[idx]=0
+3: {v[idx]=0 St0} {u[k+:2]=01 St0 St1} {u[m-:2]=01 St0 St1} {r[m+:2]=00 St0 St0} {v[pick]=0}
+4 monitor v[idx]=0
+5: {v[idx]=0 We0} {u[k+:2]=01 We0 St1} {u[m-:2]=01 We0 St1} {r[m+:2]=00 St0 We0} {v[pick]=0}
+6 monitor v[idx]=x
+7: {v[idx]=x WeX} {u[k+:2]=x1 WeX St1} {u[m-:2]=x1 WeX St1} {r[m+:2]=0x St0 WeX} {v[pick]=x}
+8 monitor v[idx]=1
+9: {v[idx]=1 St1} {u[k+:2]=11 St1 St1} {u[m-:2]=11 St1 St1} {r[m+:2]=01 St0 St1} {v[pick]=1}
+10 monitor v[idx]=0
+11: {v[idx]=0 We0} {u[k+:2]=01 We0 St1} {u[m-:2]=01 We0 St1} {r[m+:2]=00 St0 We0} {v[pick]=0}
+12 monitor v[idx]=0
+13: {v[idx]=0 St0} {u[k+:2]=1z Pu1 HiZ} {u[m-:2]=z0 HiZ We0} {r[k]=0 We0} {r[m+:2]=01 We0 St1} {v[pick]=0}
+15: {u[m-:2]=z0 HiZ St0} {r[k]=0 St0} {r[m+:2]=01 St0 St1}
+17: {u[k+:2]=x1 StX Pu1} {u[m-:2]=1z Pu1 HiZ} {r[k]=1 St1} {r[m+:2]=1x St1 StX}
+18 monitor v[idx]=0
+19: {v[idx]=0 We0} {v[pick]=0}
+20 monitor v[idx]=x
+21: {v[idx]=x StX} {u[k+:2]=1x St1 StX} {u[m-:2]=x1 StX Pu1} {r[k]=x StX} {r[m+:2]=xx StX StX} {v[pick]=x}
+23: {u[k+:2]=xx StX StX} {u[m-:2]=1x St1 StX} {r[m+:2]=10 St1 St0}
+24 end
