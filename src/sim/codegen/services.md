@@ -251,8 +251,11 @@ arrays) go through a lexical native value of the message type
 type identity is the static equivalence key `mailbox_message_key` (SV 6.22.2), and
 the runtime only compares it. Destinations that are not whole variables receive into
 a local and copy out after the retrieval with selectors frozen at the call (a `ref`
-argument, Annex G.4); expression-form `try_*` calls that need this are hoisted only
-before assignments, system-task calls and `if` conditions. `IrMailboxTarget::AtDelivery` destinations (AB-O3):
+argument, Annex G.4); expression-form `try_*` calls that need this are hoisted
+before assignments, system-task calls and `if` conditions, and run in place as an
+`IrExprKind::Sequence` in loop conditions and steps and in operands that may be
+skipped (later `&&`/`||`/`->` operands, `?:` arms; SV 11.3.5); other expressions
+reject. `IrMailboxTarget::AtDelivery` destinations (AB-O3):
 `mailbox_target_at_delivery` docs. Container kinds keep
 distinct storage, key conversion, notification and lifetime rules; another container's admitted operation is not a fallback.
 The frontend flattens `c[i][b]` into one select: split indices at the container

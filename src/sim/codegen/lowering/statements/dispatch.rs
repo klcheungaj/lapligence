@@ -36,7 +36,7 @@ impl EmitCtx<'_, '_> {
             hoist || matches!(self.cg.kind(h), NodeKind::Stmt(StmtKind::IfElse { .. }));
         let saved_mailbox = std::mem::replace(
             &mut self.cg.mailbox_statement_prelude,
-            mailbox_hoist.then(Vec::new),
+            mailbox_hoist.then(|| (h, Vec::new())),
         );
         // A value-form randomize call runs before a statement that evaluates
         // it exactly once (IEEE 1800-2009 18.6.1).
@@ -114,7 +114,7 @@ impl EmitCtx<'_, '_> {
             prelude.append(&mut statements);
             statements = prelude;
         }
-        if let Some(mut prelude) = mailbox_prelude.filter(|prelude| !prelude.is_empty()) {
+        if let Some((_, mut prelude)) = mailbox_prelude.filter(|(_, prelude)| !prelude.is_empty()) {
             prelude.append(&mut statements);
             statements = prelude;
         }

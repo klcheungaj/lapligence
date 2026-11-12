@@ -456,28 +456,58 @@ impl Codegen<'_> {
         Ok((before, target, after))
     }
 
-    /// Hoist the statements an expression-form mailbox method needs before
-    /// the enclosing statement; only statements that evaluate the call once
-    /// accept them.
-    pub(in super::super) fn mailbox_expression_prelude(
+    /// The value of an expression-form mailbox method at `node` whose
+    /// operand needs `statements` (SIM-017). A statement that evaluates the
+    /// call exactly once runs them before itself. An operand that some
+    /// evaluations skip (a later operand of `&&`, `||` or `->`, or an arm of
+    /// `?:`; IEEE 1800-2009 11.3.5) and a loop condition or step (tested
+    /// anew at every iteration, 12.7) run them in place as part of the
+    /// value, so a skipped call never moves a message and each test
+    /// retrieves its own.
+    pub(in super::super) fn mailbox_expression_value(
         &mut self,
         path: &str,
+        node: NodeId,
         name: &str,
         statements: Vec<IrStmt>,
-    ) -> Result<(), String> {
+        value: IrExpr,
+    ) -> Result<IrExpr, String> {
         if statements.is_empty() {
-            return Ok(());
+            return Ok(value);
         }
-        match self.mailbox_statement_prelude.as_mut() {
-            Some(prelude) => {
-                prelude.extend(statements);
-                Ok(())
+        let root = self
+            .mailbox_statement_prelude
+            .as_ref()
+            .map(|(root, _)| *root);
+        let in_place = match root {
+            Some(root) => self.in_conditional_operand(node, root),
+            None if self.in_loop_header(node) => true,
+            None => {
+                return Err(crate::sim::codegen::error::located(
+                    &self.source_location(node),
+                    format!(
+                        "mailbox `{name}` with an aggregate or selected operand in `{}` is supported only as a statement, in an assignment, a system-task argument, an if condition or a loop condition or step (SIM-017)",
+                        self.source_path(path)
+                    ),
+                ))
             }
-            None => Err(format!(
-                "mailbox `{name}` with an aggregate or selected operand in `{}` is supported only as a statement, in an assignment, a system-task argument or an if condition (SIM-017)",
-                self.source_path(path)
-            )),
+        };
+        if in_place {
+            let (width, signed) = (value.width, value.signed);
+            return Ok(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements,
+                    value,
+                })),
+                width,
+                signed,
+                None,
+            ));
         }
+        if let Some((_, prelude)) = self.mailbox_statement_prelude.as_mut() {
+            prelude.extend(statements);
+        }
+        Ok(value)
     }
 
     /// Append a `try_get`/`try_peek` whose result lands in a status local,

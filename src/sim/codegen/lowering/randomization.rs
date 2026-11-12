@@ -546,7 +546,7 @@ impl Codegen<'_> {
 
     /// Whether `node` lies in an operand of `root` that some evaluations
     /// skip: a later operand of `&&`, `||` or `->`, or an arm of `?:`.
-    fn in_conditional_operand(&self, node: NodeId, root: NodeId) -> bool {
+    pub(super) fn in_conditional_operand(&self, node: NodeId, root: NodeId) -> bool {
         let mut child = node;
         let mut current = self.node(node).parent;
         while let Some(parent) = current {
@@ -578,7 +578,7 @@ impl Codegen<'_> {
     /// Whether the nearest statement around `node` is the header of a loop
     /// (a `while` or `do...while` condition, a `for` condition or step), or
     /// an assignment there.
-    fn in_loop_header(&self, node: NodeId) -> bool {
+    pub(super) fn in_loop_header(&self, node: NodeId) -> bool {
         let mut current = self.node(node).parent;
         while let Some(parent) = current {
             match self.kind(parent) {

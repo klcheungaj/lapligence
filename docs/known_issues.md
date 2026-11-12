@@ -1196,37 +1196,47 @@ peak before the first collection (`LLG_GC_STATS=1` reports `peak`).
 
 ## Mailbox message forms without a nested value
 
-**Status:** open (SIM-017).
+**Status:** open (SIM-017); the two message types below are kept as explicit
+rejections by design.
 
 ### Symptom
 
-These mailbox forms stop compilation with a SIM-017 diagnostic:
+These mailbox forms stop compilation with a located SIM-017 diagnostic:
 
 - a message whose type is, or has a member that is, an associative array;
-- a whole unpacked fixed-array variable as a `put` source or a `get`
-  destination (assignment patterns and record members of array type work);
-- `try_put`/`try_get`/`try_peek` with a record, array or selected operand used
-  in a loop condition, or in another expression that is not a statement, an
-  assignment, a system-task argument or an `if` condition.
+- a whole unpacked fixed-array variable (or a row or slice of one) as a `put`
+  source, or a whole one as a `get` destination (assignment patterns and
+  record members of array type work);
+- `try_put`/`try_get`/`try_peek` with a record, array or selected operand in
+  an expression that is not a statement, an assignment, a system-task
+  argument, an `if` condition or a loop condition or step (for example a
+  `case` expression, a `repeat` count or a variable initializer).
 
 ### Cause
 
-An aggregate message is one descriptor-backed runtime value. The runtime
-nests queues and dynamic arrays in such values but has no nested associative
-form, and a whole fixed-array variable has no leaf transfer to or from a
-lexical native value. The aggregate copy-in and copy-out are statements, which
-the lowering hoists only for the statement contexts listed above.
+A message is a singular expression (IEEE 1800-2009 15.4.3), and an
+associative or unpacked array is not singular (6.4); industry-standard
+behaviour rejects both as messages. llg's aggregate messages (records,
+queues, dynamic arrays and pattern-built unpacked arrays) are an extension,
+and these two types stay outside it: the runtime message value has no nested
+associative form, a whole fixed-array source is rejected by a guard although
+the native transfer could copy it, and a whole fixed-array destination has no
+transfer out of a message value. The aggregate copy-in and copy-out of the
+expression forms run before a statement that evaluates the call once, or in
+place at each evaluation of a loop condition or step and of an operand that
+may be skipped; other expression contexts have neither placement.
 
 ### Intended direction
 
-Add a nested associative value form, give fixed-array variables the leaf
-transfer that record members already have, and hoist the copy statements into
-loop conditions.
+None for the two message types (they follow industry-standard behaviour). The
+remaining expression contexts can use the in-place placement once a design
+needs them.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_017/neg_assoc_message.sv`,
-`neg_array_variable.sv` and `neg_loop_condition.sv`.
+`neg_array_variable.sv`, `neg_array_variable_get.sv` and
+`neg_case_expression.sv`.
 
 ## Rejected process-handle forms
 

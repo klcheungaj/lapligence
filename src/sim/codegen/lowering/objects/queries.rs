@@ -116,7 +116,7 @@ impl Codegen<'_> {
                 let receiver = *receiver;
                 let args = self.node(node).children.get(1..).unwrap_or_default();
                 let mailbox = self.lower_chandle(path, receiver)?;
-                let value = match (name.as_str(), args) {
+                match (name.as_str(), args) {
                     ("num", []) => {
                         return Ok(Some(object_query(
                             IrObjectQuery::MailboxNum(mailbox),
@@ -126,34 +126,44 @@ impl Codegen<'_> {
                     }
                     ("try_put", [value]) => {
                         let (before, value) = self.lower_mailbox_put_operand(path, *value)?;
-                        self.mailbox_expression_prelude(path, &name, before)?;
-                        IrObjectQuery::MailboxTryPut { mailbox, value }
+                        let query =
+                            object_query(IrObjectQuery::MailboxTryPut { mailbox, value }, 32, true);
+                        return self
+                            .mailbox_expression_value(path, node, &name, before, query)
+                            .map(Some);
                     }
                     ("try_get" | "try_peek", [target]) => {
                         let (before, target, after) =
                             self.lower_mailbox_get_operand(path, *target)?;
+                        let peek = name == "try_peek";
                         if after.is_empty() {
-                            self.mailbox_expression_prelude(path, &name, before)?;
-                            IrObjectQuery::MailboxTryGet {
-                                mailbox,
-                                target,
-                                peek: name == "try_peek",
-                            }
-                        } else {
-                            // The copy-out must follow the retrieval, so the
-                            // whole operation runs before the statement.
-                            let mut statements = before;
-                            let status = self.mailbox_try_get_status(
-                                node,
-                                mailbox,
-                                target,
-                                name == "try_peek",
-                                after,
-                                &mut statements,
+                            let query = object_query(
+                                IrObjectQuery::MailboxTryGet {
+                                    mailbox,
+                                    target,
+                                    peek,
+                                },
+                                32,
+                                true,
                             );
-                            self.mailbox_expression_prelude(path, &name, statements)?;
-                            return Ok(Some(status));
+                            return self
+                                .mailbox_expression_value(path, node, &name, before, query)
+                                .map(Some);
                         }
+                        // The copy-out must follow the retrieval, so the
+                        // whole operation runs before the value is read.
+                        let mut statements = before;
+                        let status = self.mailbox_try_get_status(
+                            node,
+                            mailbox,
+                            target,
+                            peek,
+                            after,
+                            &mut statements,
+                        );
+                        return self
+                            .mailbox_expression_value(path, node, &name, statements, status)
+                            .map(Some);
                     }
                     ("num" | "try_put" | "try_get" | "try_peek", _) => {
                         return Err(format!(
@@ -161,8 +171,7 @@ impl Codegen<'_> {
                         ));
                     }
                     _ => return Ok(None),
-                };
-                return Ok(Some(object_query(value, 32, true)));
+                }
             }
             NodeKind::MethodCall {
                 name,
