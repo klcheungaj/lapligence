@@ -1,0 +1,12 @@
+declared g weight 2 goal 100 merge 0 comment "g declared"
+declared g::p weight 1 goal 100 comment ""
+declared h weight 1
+declared g 0.00 h 0.00 total 0.00
+loaded g weight 2 goal 100 merge 0 comment "g declared"
+loaded g::p weight 1 goal 100 comment ""
+loaded h weight 1
+loaded g 0.00 h 0.00 total 0.00
+written g weight 5 goal 100 merge 0 comment "g declared"
+written g::p weight 1 goal 100 comment ""
+written h weight 1
+written g 0.00 h 0.00 total 0.00

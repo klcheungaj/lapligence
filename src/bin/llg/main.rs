@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [lint options] [wave options] [build options] [<file.sv>...] [-- <plusargs>...]
-//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --vpi-port-delays  --stop-policy <resume|exit>  --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled  --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --neg-timing-checks  --no-neg-timing-checks  --sdf [min:|typ:|max:][<scope>=]<file.sdf>
+//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --vpi-port-delays  --stop-policy <resume|exit>  --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled  --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --neg-timing-checks  --no-neg-timing-checks  --index-checks  --no-index-checks  --code-coverage[=statement,toggle]  --no-code-coverage  --sdf [min:|typ:|max:][<scope>=]<file.sdf>
 //! lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error
 //! wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
@@ -40,6 +40,12 @@
 //! `--lint-json <path>` (the token after the flag is the output path when it
 //! does not start with `-`). Frontend diagnostics remain on stderr. Exit
 //! codes: 0 clean, 1 on lint errors, 2 usage errors.
+//!
+//! `--code-coverage[=statement,toggle]` (`simulator.code_coverage`) compiles
+//! statement and toggle coverage (both without a list) into the model and
+//! starts it at time 0, as a `$coverage_control` START at time 0 would, so a
+//! design needs no `$coverage_*` call; `--no-code-coverage` cancels the
+//! configured kinds.
 //!
 //! `--wave <file>` makes the model dump every signal (or `--wave-depth N`
 //! levels below each top) into a `.vcd` or `.fst` file from time 0, without
@@ -288,6 +294,7 @@ fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
         vpi_port_delays,
         stop_policy,
         index_checks,
+        code_coverage,
         path_pulse,
         timing_checks,
         sdf,
@@ -458,6 +465,7 @@ fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
             timing_checks,
             sdf,
             user_system_functions,
+            code_coverage,
             ..Default::default()
         },
     );

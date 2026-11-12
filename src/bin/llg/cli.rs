@@ -130,6 +130,10 @@ pub(crate) struct Cli {
     /// size where some simulators stop it (default on); off applies the
     /// text's result, or an empty array for a `new[]` size.
     pub index_checks: Option<bool>,
+    /// `--code-coverage[=statement,toggle]` / `--no-code-coverage`: collect
+    /// statement and toggle coverage from time 0 without a `$coverage_*`
+    /// call (no list: both; the negation: neither).
+    pub code_coverage: Option<sim::codegen::CodeCoverageKinds>,
     /// `--sdf [min:|typ:|max:][scope=]file`, repeatable: SDF files annotated
     /// before simulation starts, in order (IEEE 1800-2009 32).
     pub sdf: Vec<sim::codegen::SdfCommand>,
@@ -183,6 +187,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut timing_check_messages: Option<bool> = None;
     let mut neg_timing_checks: Option<bool> = None;
     let mut index_checks: Option<bool> = None;
+    let mut code_coverage: Option<sim::codegen::CodeCoverageKinds> = None;
     let mut sdf: Vec<sim::codegen::SdfCommand> = Vec::new();
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
@@ -295,6 +300,12 @@ Options:
                               X/Z new[] size, instead of stopping (default:
                               stop)
       --index-checks         Stop on those accesses (overrides llg.toml)
+      --code-coverage[=statement,toggle]
+                              Collect statement and toggle coverage (default:
+                              both) from time 0, as a $coverage_control START
+                              at time 0 would, without a $coverage_* call
+      --no-code-coverage     Collect only the coverage the design or the VPI
+                              asks for (overrides llg.toml)
       --sdf [min:|typ:|max:][<scope>=]<file.sdf>
                               Annotate the SDF file into <scope> (default: the
                               top instance) before simulation starts, with the
@@ -691,6 +702,20 @@ Options:
             "--no-neg-timing-checks" => neg_timing_checks = Some(false),
             "--index-checks" => index_checks = Some(true),
             "--no-index-checks" => index_checks = Some(false),
+            "--code-coverage" => code_coverage = Some(sim::codegen::CodeCoverageKinds::ALL),
+            "--no-code-coverage" => {
+                code_coverage = Some(sim::codegen::CodeCoverageKinds::default());
+            }
+            option if option.starts_with("--code-coverage=") => {
+                let list = &option["--code-coverage=".len()..];
+                match sim::codegen::CodeCoverageKinds::parse(list.split(',')) {
+                    Ok(kinds) => code_coverage = Some(kinds),
+                    Err(error) => {
+                        usage_error!(CLI_OPTION_VALUE, "--code-coverage: {error}");
+                        return Err(2);
+                    }
+                }
+            }
             "--lint-only" => lint_only = Some(true),
             "--no-lint-only" => {
                 lint_only = Some(false);
@@ -766,6 +791,7 @@ Options:
         timing_check_messages,
         neg_timing_checks,
         index_checks,
+        code_coverage,
         sdf,
     })
 }

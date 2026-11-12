@@ -256,4 +256,9 @@ fn fsm_pragma_errors_are_reported() {
         "neg_fsm_value",
         "neg_fsm_value.sv:5:3: FSM `cs` state `S4` is not a known value of the 2-bit state vector (IEEE 1800-2009 40.4.6)",
     );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_fsm_width",
+        "neg_fsm_width.sv:5:3: unsupported: FSM `cs` state vector is 65 bits wide; llg covers FSM state vectors of 1 to 64 bits",
+    );
 }

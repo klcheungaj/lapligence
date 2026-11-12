@@ -113,6 +113,7 @@ pub(super) struct RawSimulator {
     pub timing_check_messages: Option<bool>,
     pub neg_timing_checks: Option<bool>,
     pub index_checks: Option<bool>,
+    pub code_coverage: Option<Vec<String>>,
     pub plusargs: Option<Vec<String>>,
 }
 

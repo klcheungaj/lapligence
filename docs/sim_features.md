@@ -3168,8 +3168,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `option.name` defaults to a unique `<scope>.<group>#<k>` (S46-D1).
   `$set_coverage_db_name` saves every covergroup's coverage at the end of the
   run, after `final` procedures, to a versioned, checksummed, host-independent
-  llg database; `$load_coverage_db` adds a saved run to type coverage, joining
-  the live instance of the same name (S46-D2). A missing, corrupt or foreign
+  llg database, with the type options in effect; `$load_coverage_db` adds a
+  saved run to type coverage, joining the live instance of the same name
+  (S46-D2), and keeps the run's own type options (S46-D15); databases of the
+  previous format version still load. A missing, corrupt or foreign
   database (other covergroups, bins or options layout) is a located run-time
   error that changes nothing (S46-D3). Instances outlive their last handle
   (S44-D3). Value counters are dense up to 4096 bins and sparse beyond, and
@@ -3214,9 +3216,11 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_get(vpiStatementCoverage | vpiToggleCoverage, instance)` and
   `vpiCovered`/`vpiCoverMax`/`vpiCoveredCount` on statements, nets,
   variables and bits. A design whose `$coverage_*` calls name a kind
-  collects it from time 0; a model built with `--vpi` or `--dpi-lib` has
-  both available and stopped until START; any other model is generated
-  unchanged. Covergroups are not
+  collects it from time 0, and so does a model built with
+  `--code-coverage[=statement,toggle]` (`simulator.code_coverage`) for the
+  kinds it names, without any `$coverage_*` call; a model built with
+  `--vpi` or `--dpi-lib` has both available and stopped until START; any
+  other model is generated unchanged. Covergroups are not
   a 40.3.1 coverage type and are reached only through the 19.8 and 19.9
   methods and tasks. SV 40 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and

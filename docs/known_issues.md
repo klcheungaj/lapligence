@@ -3170,11 +3170,13 @@ S46-D14 and A19-D46.
 ### Symptom
 
 - Statement and toggle coverage are collected only in a model whose
-  `$coverage_*` calls name them (from time 0) or that is built with
-  `--vpi` or `--dpi-lib` (stopped until a START); llg has no command-line
-  coverage switch. A model that loads a VPI application at run time
-  (`LLG_VPI_PLUGIN`) without either has neither kind: queries return 0 and
-  CHECK reports `SV_COV_NOCOV`.
+  `$coverage_*` calls name them or that is built with `--code-coverage`
+  (`simulator.code_coverage`) for them (both from time 0), or that is built
+  with `--vpi` or `--dpi-lib` (stopped until a START). A model that loads a
+  VPI application at run time (`LLG_VPI_PLUGIN`) without any of these has
+  neither kind: queries return 0 and CHECK reports `SV_COV_NOCOV`. The
+  option is a generation option: a built model cannot change its kinds at
+  run time.
 - Toggle coverage counts packed integral nets and variables of instances,
   their generate scopes and ports; unpacked arrays, reals, strings,
   events, handles, class properties, and block, subroutine and package
@@ -3189,8 +3191,10 @@ S46-D14 and A19-D46.
   different model is rejected as a whole; records are not matched by name
   across designs.
 - Type options (`type_option.weight`, `goal`, `comment`,
-  `merge_instances`) are not saved; a loaded run uses the current model's
-  type options.
+  `merge_instances`) are saved (format version 2), but a load applies none
+  of them: a loaded run uses the current model's type options, as
+  industry-standard behaviour does (S46-D15). No llg tool reads the saved
+  values yet; a database of format version 1 still loads.
 - VPI assertion API (ADV-017): assertion handles answer the static 39.3.2
   properties, `vpiFile`/`vpiLineNo`/`vpiColumn` and the 40.5.3 counters,
   and run the 39.4 callbacks and 39.5 controls, with these limits:
@@ -3253,16 +3257,24 @@ atomic.
 
 ### Intended direction
 
-No owner. A command-line switch to collect code coverage without a
-`$coverage_*` call would be an `llg` option feeding the same gating.
+No owner. The command-line switch exists (`--code-coverage`); the
+other limits stay as documented unless a user needs them: UCIS or another
+interchange format is out of scope, and assertion stepping (A17-D2) needs a
+state numbering shared by all assertion engines.
 
 ### Reproduce
 
 `tests/fixtures/sim/lrm_decisions/S46-D5_unavailable_kinds.sv`,
 `S46-D6_string_scope_is_definition.sv`,
-`S46-D14_toggle_coverage.sv`;
+`S46-D14_toggle_coverage.sv`, `S46-D15_loaded_type_options.sv` (type
+options), `A17-D2_control_callbacks.sv` (stepping),
+`A17-D5_instance_callbacks.sv`, `A19-D59_sequence_and_property_operators.sv`,
+`A17-D11_fsm_pragmas.sv` to `A17-D13_fsm_objects.sv`;
 `tests/fixtures/sim/feature_completion/sim_046/db_errors.sv` (`-G W=3`
-reads a database of the W = 4 model).
+reads a database of the W = 4 model), `merge_foreign.sv` (statement and
+FSM sections of another model), `option_kinds.sv` (`--code-coverage`);
+`tests/fixtures/sim/feature_completion/adv_017/neg_fsm_width.sv` (a 65-bit
+state vector), `relations.sv` (declarations without bodies).
 
 ## Semantic tokens around text macros (llg_ls)
 

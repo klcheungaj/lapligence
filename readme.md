@@ -286,6 +286,9 @@ Common options:
   reject limit is a settings error.
 - `--[no-]timing-checks`, `--[no-]notifiers`, `--[no-]timing-check-messages`:
   timing-check evaluation, notifier updates and messages (all on by default).
+- `--code-coverage[=statement,toggle]`: collect statement and toggle coverage
+  (both without a list) from time 0 without any `$coverage_*` call in the
+  design; `--no-code-coverage` cancels `simulator.code_coverage`.
 - `--stop-policy <resume|exit>`: `$stop` resumes in the same time step (default);
   `exit` returns without draining work or running final blocks.
 - `--`: pass the remaining arguments to the generated simulator for

@@ -1,6 +1,6 @@
 // ── Coverage database (IEEE 1800-2009 19.9, 40.3.2.4, 40.3.2.5) ─────────────
 //
-// One simulator-owned file format, version 1, holds functional coverage (the
+// One simulator-owned file format, version 2, holds functional coverage (the
 // covergroup records of a run), assertion coverage (coverage/assertions.c),
 // FSM coverage (coverage/fsm.c), and statement and toggle coverage
 // (coverage/code.c).
@@ -12,7 +12,12 @@
 //
 // The payload holds each section of `sections`, in bit order (functional,
 // assertion, FSM, statement, then toggle), as a u64 byte length and its
-// body, so a reader finds one section without parsing the others. The FSM,
+// body, so a reader finds one section without parsing the others. Version 2
+// ends the functional section with the type options in effect at the save
+// for every covergroup type (19.7.1: weight, goal, merge_instances and
+// comment, then per coverpoint and cross weight, goal and comment), so the
+// file records the run completely; a load checks them and applies none
+// (S46-D15). A loader reads versions 1 and 2. The FSM,
 // statement and toggle sections carry their schema hash at the start of
 // their body; a reader without a section bit rejects the file as having
 // unknown sections.
@@ -25,7 +30,12 @@
 // database changes nothing. A save writes a temporary file and replaces the
 // target only when the file is complete.
 
-#define LLG_COV_DB_VERSION 1u
+#define LLG_COV_DB_VERSION 2u
+// The oldest version a load accepts.
+#define LLG_COV_DB_VERSION_MIN 1u
+// The revision of the schema hashes, fixed while their inputs are: a file of
+// any accepted version matches the model that saved it.
+#define LLG_COV_DB_SCHEMA 1u
 #define LLG_COV_DB_FUNCTIONAL 1u
 #define LLG_COV_DB_ASSERTION 2u
 #define LLG_COV_DB_FSM 4u
@@ -267,7 +277,7 @@ static uint64_t llg_cov_model_group_hash(size_t index) {
 // The functional coverage schema of the model: its declarations in order.
 static uint64_t llg_cov_functional_hash(void) {
     uint64_t hash = LLG_COV_FNV_OFFSET;
-    llg_cov_fnv_u64(&hash, LLG_COV_DB_VERSION);
+    llg_cov_fnv_u64(&hash, LLG_COV_DB_SCHEMA);
     llg_cov_fnv_u64(&hash, llg_cov_n_model_groups);
     for (size_t i = 0; i < llg_cov_n_model_groups; ++i)
         llg_cov_fnv_u64(&hash, llg_cov_model_group_hash(i));
@@ -517,6 +527,38 @@ static void llg_cov_put_record(llg_cov_buf_t* buf, const llg_cov_inst_t* const* 
     }
 }
 
+// A text field written from out-of-line code: the same bytes as
+// llg_cov_put_text, which stays inlined into its callers.
+LLG_OUTLYING static void llg_cov_put_text_outlying(llg_cov_buf_t* buf, const char* text) {
+    size_t len = text ? strlen(text) : 0u;
+    if (len > LLG_COV_DB_MAX_TEXT) len = LLG_COV_DB_MAX_TEXT;
+    llg_cov_put_u32(buf, (uint32_t)len);
+    llg_cov_put(buf, text ? text : "", len);
+}
+
+// The type options of every covergroup type of the model, in model order:
+// the values in effect, procedural writes included (19.7.1). Not `cold`:
+// a call to a cold function would split the saving code around it.
+LLG_OUTLYING static void llg_cov_put_type_options(llg_cov_buf_t* buf) {
+    llg_cov_put_u32(buf, (uint32_t)llg_cov_n_model_types);
+    for (size_t t = 0; t < llg_cov_n_model_types; ++t) {
+        const llg_cov_type_t* type = llg_cov_model_types[t];
+        llg_cov_put_text_outlying(buf, type->name);
+        llg_cov_put_u64(buf, (uint64_t)type->weight);
+        llg_cov_put_u64(buf, (uint64_t)type->goal);
+        llg_cov_put_u8(buf, type->merge);
+        llg_cov_put_text_outlying(buf, type->comment_set ? type->comment : type->declared_comment);
+        llg_cov_put_u32(buf, type->n_items);
+        for (uint32_t i = 0; i < type->n_items; ++i) {
+            const llg_cov_type_decl_t* decl = &type->declared_items[i];
+            const llg_cov_type_item_t* item = type->items ? &type->items[i] : NULL;
+            llg_cov_put_u64(buf, (uint64_t)(item ? item->weight : decl->weight));
+            llg_cov_put_u64(buf, (uint64_t)(item ? item->goal : decl->goal));
+            llg_cov_put_text_outlying(buf, item ? item->comment : decl->comment);
+        }
+    }
+}
+
 // The functional section: per type with records, its records. A live
 // instance is written together with the loaded record of the same layout
 // key and name, so the file holds what the run reported (S46-D2).
@@ -564,6 +606,7 @@ static void llg_cov_put_functional(llg_cov_buf_t* buf) {
         free(written);
         free(all);
     }
+    llg_cov_put_type_options(buf);
 }
 
 static void llg_acov_put_section(llg_cov_buf_t* buf);
@@ -654,6 +697,7 @@ static int llg_cov_db_save(const char* name, uint32_t sections, const char* site
 typedef struct {
     unsigned char* data;
     size_t len;
+    uint32_t version;
     uint32_t sections;
     uint64_t functional_hash;
     uint64_t assertion_hash;
@@ -700,13 +744,13 @@ static const char* llg_cov_db_read(const char* name, llg_cov_db_file_t* db, int*
     if (error) return error;
     llg_cov_reader_t reader = {db->data, db->len, 0, NULL};
     char magic[8];
-    uint32_t version;
     uint64_t length;
     if (db->len < LLG_COV_DB_HEADER_BYTES + 8u) return "the file is not an llg coverage database";
     if (!llg_cov_get(&reader, magic, sizeof magic) ||
         memcmp(magic, llg_cov_db_magic, sizeof magic) != 0)
         return "the file is not an llg coverage database";
-    if (!llg_cov_get_u32(&reader, &version) || version != LLG_COV_DB_VERSION)
+    if (!llg_cov_get_u32(&reader, &db->version) || db->version < LLG_COV_DB_VERSION_MIN ||
+        db->version > LLG_COV_DB_VERSION)
         return "the database version is not supported";
     if (!llg_cov_get_u32(&reader, &db->sections) ||
         !llg_cov_get_u64(&reader, &db->functional_hash) ||
@@ -945,9 +989,44 @@ static int llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
     return 1;
 }
 
-// Parse the functional section in one of two passes: validation stages a
-// record per database record into `staged`; publication adds the counters
-// of record r to `targets[r]`.
+// Check the type options that end a version 2 functional section: one
+// entry per covergroup type of the model, in model order. A load applies
+// none of them: the run keeps its own type options, declared or written
+// (19.9 is silent; industry-standard behaviour, decision S46-D15).
+LLG_OUTLYING static int llg_cov_db_type_options(llg_cov_reader_t* reader) {
+    uint32_t types;
+    if (!llg_cov_get_u32(reader, &types)) return 0;
+    if (types != llg_cov_n_model_types)
+        return llg_cov_fail(reader, "the type options do not match the model's covergroup types");
+    for (uint32_t t = 0; t < types; ++t) {
+        const llg_cov_type_t* type = llg_cov_model_types[t];
+        const char* text;
+        uint32_t name_len, text_len, items;
+        int64_t weight, goal;
+        uint8_t merge;
+        if (!llg_cov_get_text(reader, &text, &name_len)) return 0;
+        if (strlen(type->name) != name_len || memcmp(type->name, text, name_len) != 0)
+            return llg_cov_fail(reader, "the type options do not match the model's covergroup types");
+        if (!llg_cov_get_i64(reader, &weight) || !llg_cov_get_i64(reader, &goal) ||
+            !llg_cov_get_u8(reader, &merge) || !llg_cov_get_text(reader, &text, &text_len) ||
+            !llg_cov_get_u32(reader, &items))
+            return 0;
+        if (items != type->n_items)
+            return llg_cov_fail(reader, "the type options do not match the model's covergroup types");
+        if (weight < 0 || merge > 1u) return llg_cov_fail(reader, "a type has invalid options");
+        for (uint32_t i = 0; i < items; ++i) {
+            if (!llg_cov_get_i64(reader, &weight) || !llg_cov_get_i64(reader, &goal) ||
+                !llg_cov_get_text(reader, &text, &text_len))
+                return 0;
+            if (weight < 0) return llg_cov_fail(reader, "a type has invalid options");
+        }
+    }
+    return 1;
+}
+
+// Parse the records of the functional section in one of two passes:
+// validation stages a record per database record into `staged`;
+// publication adds the counters of record r to `targets[r]`.
 static int llg_cov_db_functional(llg_cov_reader_t* reader, llg_cov_inst_t*** staged,
                                  size_t* n_staged, size_t* staged_cap, llg_cov_inst_t** targets) {
     uint32_t types = 0;
@@ -1004,7 +1083,8 @@ void llg_cov_load_db(llg_string_t name, const char* site) {
     size_t n_staged = 0, staged_cap = 0;
     if (!error) {
         llg_cov_reader_t reader = {db.data, db.functional_end, db.functional_at, NULL};
-        if (!llg_cov_db_functional(&reader, &staged, &n_staged, &staged_cap, NULL))
+        if (!llg_cov_db_functional(&reader, &staged, &n_staged, &staged_cap, NULL) ||
+            (db.version >= 2u && !llg_cov_db_type_options(&reader)))
             error = reader.error;
         else if (reader.pos != reader.len)
             error = "the functional section has trailing data";

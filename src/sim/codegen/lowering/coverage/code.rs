@@ -5,9 +5,10 @@
 //! S46-D13): a `$coverage_*` call whose type argument may name the kind
 //! (a constant `SV_COV_STATEMENT`/`SV_COV_TOGGLE`, or a type that is not a
 //! constant), or the VPI catalog of `--vpi`/`--dpi-lib`, whose applications
-//! may ask through `vpi_control`. A `$coverage_*` request also starts the
-//! kind at time 0 (40.3.2.1: coverage starts automatically for the
-//! hierarchy enabled for it); the catalog alone makes it available but
+//! may ask through `vpi_control`, or the invocation's `--code-coverage`
+//! (`simulator.code_coverage`). A `$coverage_*` request or the option also
+//! starts the kind at time 0 (40.3.2.1: coverage starts automatically for
+//! the hierarchy enabled for it); the catalog alone makes it available but
 //! stopped until a start request. Every other model is generated exactly
 //! as before.
 //!
@@ -35,9 +36,18 @@ pub(in crate::sim::codegen::lowering) struct CodeCoveragePlan {
 
 impl Codegen<'_> {
     /// Decide which code coverage kinds the model carries before any body
-    /// is lowered: `vpi` is the catalog option.
-    pub(in crate::sim::codegen::lowering) fn plan_code_coverage(&mut self, vpi: bool) {
-        let mut plan = CodeCoveragePlan::default();
+    /// is lowered: `vpi` is the catalog option and `requested` the kinds
+    /// the invocation starts at time 0, like a call naming them.
+    pub(in crate::sim::codegen::lowering) fn plan_code_coverage(
+        &mut self,
+        vpi: bool,
+        requested: CodeCoverageKinds,
+    ) {
+        let mut plan = CodeCoveragePlan {
+            statement_started: requested.statement,
+            toggle_started: requested.toggle,
+            ..CodeCoveragePlan::default()
+        };
         let roots = self
             .design_nodes()
             .into_iter()

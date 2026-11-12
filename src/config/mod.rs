@@ -264,6 +264,9 @@ pub struct SimulatorConfig {
     /// Whether an invalid index or key that some simulators stop the run on
     /// stops it (otherwise the text's result applies).
     pub index_checks: Option<bool>,
+    /// Statement and toggle coverage collected from time 0 without a
+    /// `$coverage_*` call; an empty list requests neither.
+    pub code_coverage: Option<crate::sim::codegen::CodeCoverageKinds>,
     /// Arguments passed to the generated simulator.
     pub plusargs: Option<Vec<String>>,
 }

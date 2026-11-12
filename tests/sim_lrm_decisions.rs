@@ -4100,6 +4100,33 @@ fn s46_d2_loaded_runs_join_instances() {
 }
 
 #[test]
+fn s46_d15_loaded_type_options() {
+    // Two runs in one directory: the first saves, the second (+load) loads.
+    let expected = include_str!("fixtures/sim/lrm_decisions/S46-D15_loaded_type_options.out");
+    for optimized in [false, true] {
+        let (_directory, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "S46-D15_loaded_type_options",
+            optimized,
+            &[],
+            &[],
+            &[(&[], &[]), (&[], &["+load"])],
+        );
+        let label = format!("S46-D15, optimized={optimized}");
+        let mut stdout = String::new();
+        for output in &outputs {
+            assert!(
+                output.status.success(),
+                "{label}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+        }
+        assert_eq!(stdout, expected, "{label}");
+    }
+}
+
+#[test]
 fn s46_d3_failed_load_changes_nothing() {
     let expected =
         include_str!("fixtures/sim/lrm_decisions/S46-D3_failed_load_changes_nothing.out");
