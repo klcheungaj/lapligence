@@ -407,6 +407,28 @@ fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
     if lint_only {
         return Next::Exit(0);
     }
+    // `restrict property` "is not verified in simulation" (IEEE 1800-2009
+    // 16.15.4): code generation creates nothing for it, which each
+    // statement reports once.
+    for statement in codegen_db.restrict_property_statements() {
+        let node = codegen_db.node(statement);
+        let mut location = format!(
+            "{}:{}:{}",
+            node.file.as_deref().unwrap_or("<unknown>"),
+            node.line,
+            node.col
+        );
+        if let Some(logical) = codegen_db.logical_position(statement) {
+            location.push_str(&format!(" (`line {}:{})", logical.file, logical.line));
+        }
+        reporter.emit(
+            Message::new(
+                &catalog::ELAB_RESTRICT,
+                "`restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)",
+            )
+            .location(location),
+        );
+    }
 
     // 3. Reuse the validated owned semantic database.
     let optimization = if no_opt {

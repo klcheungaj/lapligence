@@ -233,7 +233,12 @@ Attempts start at the `posedge c1` ticks 10, 30, 50, 70, 90 unless noted.
 16.15.4 (L26658-26659): "the restrict property statement is not verified in
 simulation and has no action block". Module-level, generate, `initial` and
 procedural `restrict property` statements whose properties fail produce no
-output and no assertion; the ordinary `a1` beside them passes.
+output and no assertion; the ordinary `a1` beside them passes. Industry-standard
+behaviour prints only `done n=2` for the same design without the checker
+(probed 2026-11-12; the probed tool rejected the checker declaration). llg reports
+each statement once as `ELAB-005` INFO: six reports for the six statements
+(module `sub` instantiated twice, checker `chk`, module item, `initial`,
+procedural, and the two-iteration generate loop).
 
 ## `mc_segment.sv`
 

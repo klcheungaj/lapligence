@@ -26,6 +26,34 @@ pub enum ConcurrentAssertionKind {
     Restrict,
 }
 
+impl Db {
+    /// The `restrict property` statements of the elaborated design (16.15.4),
+    /// one per source statement: instances, generate iterations and repeated
+    /// bodies that share a statement's position report it once. In source
+    /// position order; empty for a design without one.
+    pub fn restrict_property_statements(&self) -> Vec<NodeId> {
+        let mut seen = HashSet::new();
+        let mut statements: Vec<NodeId> = self
+            .node_ids()
+            .filter(|&id| {
+                let node = self.node(id);
+                matches!(
+                    node.kind,
+                    NodeKind::Stmt(StmtKind::ConcurrentAssertion {
+                        kind: ConcurrentAssertionKind::Restrict,
+                        ..
+                    })
+                ) && seen.insert((node.file.clone(), node.line, node.col))
+            })
+            .collect();
+        statements.sort_by(|&a, &b| {
+            let (a, b) = (self.node(a), self.node(b));
+            (&a.file, a.line, a.col).cmp(&(&b.file, b.line, b.col))
+        });
+        statements
+    }
+}
+
 /// Operators in the owned assertion-expression graph.  Keeping these
 /// separate from ordinary expression operators prevents a property operator
 /// from being mistaken for a four-state value operation during lowering.

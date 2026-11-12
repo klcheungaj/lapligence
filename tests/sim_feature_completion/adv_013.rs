@@ -82,14 +82,23 @@ fn multiclocked_subsequence_with_an_empty_last_element() {
 }
 
 /// 16.15.4: `restrict property` is not verified in simulation, in every
-/// position a concurrent assertion may take.
+/// position a concurrent assertion may take; each statement is reported
+/// once (ELAB-005), however many instances elaborate it.
 #[test]
 fn restrict_property_is_not_simulated() {
     sim_cli::run_case(
         SUITE,
         "restrict",
         fixture!("restrict.out"),
-        "INFO: restrict.sv:21:5: [SIM-001] (tb @ 22 ns) $finish called\n",
+        concat!(
+            "INFO: restrict.sv:8:3: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:11:3: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:17:3: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:18:11: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:21:5: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:24:5: [ELAB-005] `restrict property` is not verified in simulation and creates no assertion (IEEE 1800-2009 16.15.4)\n",
+            "INFO: restrict.sv:32:5: [SIM-001] (tb @ 22 ns) $finish called\n",
+        ),
         &[],
     );
 }

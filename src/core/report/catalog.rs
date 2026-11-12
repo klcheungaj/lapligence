@@ -243,6 +243,13 @@ pub const ELAB_EDITION: MessageDef = def(
     "a construct outside the selected `--edition` profile",
     "select another `--edition`",
 );
+pub const ELAB_RESTRICT: MessageDef = def(
+    Tool::Elab,
+    5,
+    Severity::Info,
+    "a `restrict property` statement, which simulation does not verify (SV 16.15.4); one per statement",
+    NONE,
+);
 
 pub const LINT_SUMMARY: MessageDef = def(
     Tool::Lint,
@@ -459,6 +466,7 @@ pub const HOST_MESSAGES: &[&MessageDef] = &[
     &ELAB_DB_BUILD,
     &ELAB_PROTECTED,
     &ELAB_EDITION,
+    &ELAB_RESTRICT,
     &LINT_SUMMARY,
     &CODEGEN_SUMMARY,
     &CODEGEN_UNSUPPORTED,

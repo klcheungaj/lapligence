@@ -1,7 +1,15 @@
 // ADV-013 follow-up: `restrict property` (16.15.4 L26658-26659) "is not verified
 // in simulation and has no action block". Module-level, generate, initial and
 // procedural restrict statements whose properties fail create no assertion
-// and no output; an ordinary assertion beside them still runs.
+// and no output; an ordinary assertion beside them still runs. llg reports
+// each statement once (ELAB-005): the generate loop, the two `sub`
+// instances and the checker instance add no further reports.
+module sub (input logic clk, input logic v);
+  restrict property (@(posedge clk) !v);
+endmodule
+checker chk (clk, v);
+  restrict property (@(posedge clk) !v);
+endchecker
 module tb;
   logic clk = 0, ctr = 1;
   int n;
@@ -15,6 +23,9 @@ module tb;
   for (genvar i = 0; i < 2; i++) begin : g
     restrict property (@(posedge clk) ctr != ctr);
   end
+  sub s1 (clk, ctr);
+  sub s2 (clk, ctr);
+  chk c1 (clk, ctr);
   a1: assert property (@(posedge clk) ctr) else $display("unexpected");
   initial begin
     #22 $display("done n=%0d", n);
