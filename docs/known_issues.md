@@ -3108,10 +3108,23 @@ At run time:
   coverpoint, which pair of bins it stopped at, and overlaps from that pair
   on are not reported.
 
-`option.per_instance`, `option.cross_num_print_missing`, `option.goal`,
-`type_option.goal` and the `comment` options are stored (names and comments
-also in the coverage database) but change nothing else: llg writes no
-coverage report.
+These options are stored, can be read back and written where 19.7 allows,
+but change no number, because their only effect in Table 19-1 and Table
+19-3 is on the coverage report, which llg does not write (a report through
+`$get_coverage` text or a report file is out of scope until a user asks for
+one):
+
+- `option.goal` and `type_option.goal`: the target a report compares
+  coverage with;
+- `option.comment` and `type_option.comment`: saved in the coverage
+  database (with `option.name`), shown in no report;
+- `option.cross_num_print_missing`: the missing cross products a report
+  lists; the database keeps none;
+- `option.per_instance`: llg always keeps instance coverage, which Table
+  19-1 allows when the option is 0 ("implementations are not required to
+  save instance-specific information"), so `get_inst_coverage()` reports it
+  either way. Some simulators return 0 from `get_inst_coverage()` when the
+  option is 0; portable fixtures set it.
 
 ### Cause
 
