@@ -87,6 +87,7 @@ impl Codegen<'_> {
                 args: values,
                 scope,
                 binding: None,
+                time_unit_fs: self.timescale_of_node(format_node).unit_fs,
             });
         }
         let format = self.lower_string(path, format_node)?;
@@ -103,6 +104,7 @@ impl Codegen<'_> {
                     .map(str::to_owned)
                     .unwrap_or_else(|| self.library_binding(self.inst)),
             ),
+            time_unit_fs: self.timescale_of_node(format_node).unit_fs,
         })
     }
 

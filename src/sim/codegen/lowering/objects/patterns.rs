@@ -177,6 +177,7 @@ impl Codegen<'_> {
             args,
             scope: self.display_path(path).to_owned(),
             binding: None,
+            time_unit_fs: 0,
         }))
     }
 
@@ -205,6 +206,7 @@ impl Codegen<'_> {
             args,
             scope: self.display_path(path).to_owned(),
             binding: None,
+            time_unit_fs: 0,
         }))
     }
 

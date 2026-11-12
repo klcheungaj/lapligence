@@ -211,12 +211,17 @@ impl Frame<'_, '_> {
                 args,
                 scope,
                 binding,
+                time_unit_fs,
             } => {
                 let format = self.string(format)?;
                 // Reserve before publishing formatter arguments: this is the
                 // last allocation before their consuming, non-yielding call.
                 let result = self.native_reserve(NativeKind::String);
-                let arguments = self.formatted_arguments(args, self.ctx.model.precision_fs)?;
+                let unit = match *time_unit_fs {
+                    0 => self.ctx.model.precision_fs,
+                    unit => unit,
+                };
+                let arguments = self.formatted_arguments(args, unit)?;
                 self.line(super::super::destinations::assign_string(
                     &result.address,
                     &match binding {

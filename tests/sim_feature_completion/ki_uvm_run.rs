@@ -39,6 +39,20 @@ fn specialization_spellings() {
     );
 }
 
+/// `%t` in `$swrite`, `$sformat` and `$sformatf` (literal and run-time
+/// formats) reads its value in the calling scope's time unit, as `$display`
+/// does: a library's report server stamps every message this way.
+#[test]
+fn string_format_time_unit() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "string_format_time_unit",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_run/string_format_time_unit.out"),
+        &[],
+        &[],
+    );
+}
+
 /// Randomize through base-class handles over 40 derived classes. The model
 /// is about 2 MB of C; the dispatch shape, not C optimization, is under test,
 /// so the model builds at `-O0`.

@@ -184,6 +184,7 @@ impl EmitCtx<'_, '_> {
             args: values,
             scope: self.format_scope(site),
             binding: None,
+            time_unit_fs: self.cg.timescale_of_node(site).unit_fs,
         })
     }
 

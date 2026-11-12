@@ -225,6 +225,10 @@ pub enum IrStringExpr {
         /// The `%l` text of a format known only at run time; lowering expands
         /// `%l` in a literal format, which has none.
         binding: Option<String>,
+        /// The calling scope's time unit, which `%t` reads its values in
+        /// (21.3.3, 20.4.2); 0 for formatter templates that have no `%t`
+        /// (`%p` text), which take the design precision.
+        time_unit_fs: u64,
     },
     Case(Box<IrStringExpr>, bool),
     Substr(Box<IrStringExpr>, Box<IrExpr>, Box<IrExpr>),

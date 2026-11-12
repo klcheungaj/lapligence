@@ -176,7 +176,8 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             args,
             scope,
             binding,
-        } => render_string_format(ctx, format, args, scope, binding.as_deref())?,
+            time_unit_fs,
+        } => render_string_format(ctx, format, args, scope, binding.as_deref(), *time_unit_fs)?,
         IrStringExpr::Case(value, upper) => format!(
             "llg_string_case({}, {})",
             string(ctx, value)?,
@@ -197,6 +198,7 @@ fn render_string_format(
     args: &[IrDisplayArg],
     scope: &str,
     binding: Option<&str>,
+    time_unit_fs: u64,
 ) -> Result<String, String> {
     let format = string(ctx, format)?;
     let scope = c_string_literal(scope);
@@ -244,6 +246,12 @@ fn render_string_format(
             ),
         };
         statements.push(assignment);
+        // A zero unit reads `%t` values in the design precision.
+        if time_unit_fs != 0 {
+            statements.push(format!(
+                "_llg_format_args[{index}].time_unit_fs = {time_unit_fs}ULL;"
+            ));
+        }
     }
     statements.push(format!(
         "llg_string_t _llg_format_result = {formatter}(_llg_format, _llg_format_args, {}, {scope}{trailing});",

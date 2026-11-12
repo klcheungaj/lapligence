@@ -1,0 +1,3 @@
+default: display=1000000 sformatf=1000000 pkg=1000000 | 1000000
+ns: display=1500 ns swrite=1500 ns sformat=1500 ns pkg=1500 ns | 1500 ns
+dynamic: 1500 ns
