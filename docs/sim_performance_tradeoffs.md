@@ -529,8 +529,10 @@ processes or clock edges, at the cost of a few bytes per object.
   also removes by-value `sv4_t` copies from every publication. On the compact
   backend a write of at most 64 bits keeps plain copies of its values instead
   of a registered snapshot scope: this speeds every narrow write, with or
-  without a record. Per-write consumers (VPI, waveforms, `disable iff`,
-  force, switches, timing checks) are unchanged. Generated C changes only
+  without a record. Per-write consumers (waveforms, timing checks, monitors,
+  coverage) are unchanged; `disable iff`, force expressions, switch controls
+  and VPI value-change callbacks moved to the check later (next section).
+  Generated C changes only
   where a class handle store passes the previous handle
   (`llg_handle_changed`), and an event-clock sampled process calls
   `llg_wait_gate_at_write` before it arms.
@@ -571,6 +573,70 @@ processes or clock edges, at the cost of a few bytes per object.
   wait-source row grows from 80 to 88 B, a clocking history entry from 56 to
   64 B, and the process record and the wait record keep their sizes.
   Executable size +1.3–1.8%.
+
+### Consumers moved to the check
+
+- **Trade-off:** a consumer called at each write pays for every
+  intermediate value but needs no record; called at the check, it sees one
+  change per check, but the storage it observes must open a record at its
+  first write in a turn.
+- **Decision:** each consumer counts itself on its storage's wait-source row
+  (`checks`), so `change_begin` opens a record for it and
+  `check_consumers_changed` calls it after the waiters. Force reads count
+  per expression, a switch control watch and a VPI value-change watch once
+  per row. Rows needing a keep-alive share one subscription (`keep`) with
+  timing check terminals; a VPI watch keeps its row through its own
+  subscription, which carries the count of watches at the check, so the row
+  stays 88 B. A `disable iff` condition is a hidden signal written by a
+  process sensitive to what it reads (generated C changes only for designs
+  with `disable iff`), and its row's value watch calls the disable consumer.
+  The check that ends a process turn now runs before net deferral ends, so
+  nets the check updates resolve with those of the turn. GCC stopped
+  inlining one edge test in `clocking_edge_note` after these changes (the
+  clocking-block row ran 5.4% slower, 0 of 10 pairs faster); that call is
+  forced inline again.
+- **Waveforms are not moved.** Marking dumped variables at the check
+  (a wave mark on each dumped row) was implemented and measured: rows with
+  `--wave` lost 6–15% (two NBAs per register per cycle +15.1%, 2,000-waiter
+  clock +8.4%, array cells +7.2%, every write a waited change +6.8%; 0–2 of
+  10 pairs faster), because every write of a dumped variable then opens and
+  settles a record, against a hash lookup and a dirty flag per write. Rows
+  whose values return within a turn gained (glitch row −70%). It is kept on
+  a side branch for a user decision.
+- **Evidence:** 10 alternating pairs per row from one fixed path
+  (`pairs_fixed.py`), each pinned to an idle CPU, CPU seconds of the model
+  process, medians; rows above +0.5% settled with 100 pairs. Base is the dev
+  tip the change merges onto; tip has all four moves.
+
+  | Workload | Base s | Tip s | Ratio | Pairs tip faster |
+  | --- | ---: | ---: | ---: | ---: |
+  | many-masked-20k | 0.261 | 0.262 | 1.005 | 4/10 |
+  | many-registers-10k | 0.091 | 0.090 | 0.992 | 57/100 |
+  | tasks | 0.074 | 0.075 | 1.002 | see below |
+  | wide-values | 0.321 | 0.321 | 1.000 | 50/100 |
+  | zero-delay | 0.126 | 0.127 | 1.001 | 3/10 |
+  | 2,000 waiters on one clock | 1.492 | 1.487 | 0.997 | 7/10 |
+  | Every write changes a waited variable once per turn | 0.284 | 0.271 | 0.955 | 91/100 |
+  | Clocking block present, 500 unwaited array cells written per cycle | 0.585 | 0.584 | 0.999 | 6/10 |
+  | 256 array cells, each read by an `always @*` | 0.220 | 0.213 | 0.968 | 7/10 |
+  | Two NBAs per register per cycle | 9.253 | 9.269 | 1.002 | 4/10 |
+  | 100 concurrent assertions, 1,000 writes per cycle | 3.665 | 2.864 | 0.781 | 10/10 |
+  | Same rows with `--wave` (10 rows) | | | 0.977–1.016 | |
+
+  Rows with 100 pairs were settled. The `tasks` row read +0.88% (40/100) and
+  +1.03% (49/100) with base first, but −0.70% (44/100) with the two
+  executables swapped: the harness position costs that short row about
+  0.85%, so the change is about +0.2%. The glitch row with `--wave` stays
+  +1.3% (22/100) and +1.6% with the executables swapped, while it executes
+  0.19% fewer instructions. It uses none of the moved consumers; the hot
+  value-scope and wait-registration functions changed their offset within a
+  64-byte line. This placement effect is not resolved. The concurrent-assertion row gains because a write no longer walks every
+  concurrent assertion looking for a `disable iff` condition stored there
+  (that row has none); only the hidden condition signals carry a watch.
+  The R0 record-marker rows (12 packed and string read/write/read-modify-write
+  rows) are within 0.966–1.003. Peak RSS is unchanged; the wait-source row
+  stays 88 B and a value watch subscription grows from 32 to 40 B (one
+  48-byte allocation either way).
 
 ### Bounded retention of finished work
 
