@@ -148,7 +148,10 @@ void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change) {
         llg_dependency_changed(shape);
 }
 
-static int ev_matches(sv4_t old, sv4_t new, int kind) {
+// Always inlined into clocking_edge_note, which every publication of a
+// signal with clocking history runs: left to GCC's unit-growth limits, the
+// out-of-line call there cost the clocking-block row about 5%.
+LLG_CO_INLINE int ev_matches_inline(sv4_t old, sv4_t new, int kind) {
     if (kind == LLG_EV_ANY) return !sv4_same(old, new);
     // Edge controls use only the LSB. Read without allocating one-bit values.
     unsigned a = llg_sv4_state(old, 0);
@@ -157,6 +160,10 @@ static int ev_matches(sv4_t old, sv4_t new, int kind) {
     if (b == 3) b = 2;
     return kind == LLG_EV_POSEDGE ? (a == 0 && b != 0) || (a == 2 && b == 1)
                                   : (a == 1 && b != 1) || (a == 2 && b == 0);
+}
+
+static int ev_matches(sv4_t old, sv4_t new, int kind) {
+    return ev_matches_inline(old, new, kind);
 }
 
 static int ev_inline_matches(llg_wait_t* wait, sv4_t value, int kind) {
@@ -317,12 +324,12 @@ static void clocking_edge_note(llg_clocking_edge_t* edge, sv4_t old, sv4_t value
     if (edge->time != g.now) edge->occurred = 0;
     edge->time = g.now;
     edge->occurred |= CLOCKING_ANY;
-    if (ev_matches(old, value, LLG_EV_POSEDGE)) {
+    if (ev_matches_inline(old, value, LLG_EV_POSEDGE)) {
         edge->occurred |= CLOCKING_POSEDGE;
         if (edge->keep_ticks && edge->posedge_count != UINT64_MAX)
             edge->posedge_count++;
     }
-    if (ev_matches(old, value, LLG_EV_NEGEDGE)) {
+    if (ev_matches_inline(old, value, LLG_EV_NEGEDGE)) {
         edge->occurred |= CLOCKING_NEGEDGE;
         if (edge->keep_ticks && edge->negedge_count != UINT64_MAX)
             edge->negedge_count++;
