@@ -1355,9 +1355,10 @@ impl<'a> Codegen<'a> {
     /// return variable, `this` for a non-static method, the formals, then
     /// the automatic locals the body declares at its top level, each in
     /// declaration order; array variables (fixed-size, dynamic, queue and
-    /// associative) follow all the others, formals first. Block-scope
-    /// locals belong to the frames of their blocks (decision A19-D76) and
-    /// static locals are no automatics. The catalog capture types them.
+    /// associative) follow all the others, formals first. The locals of
+    /// the body's blocks follow, flagged and named by their block path; the
+    /// frame does not list them (decisions A19-D76, A19-D88). Static locals
+    /// are no automatics. The catalog capture types them.
     fn vpi_automatics(
         &self,
         ft: NodeId,
@@ -1377,6 +1378,7 @@ impl<'a> Codegen<'a> {
             array_type: None,
             signed: false,
             element: None,
+            block: false,
         };
         let is_array = |node: NodeId| {
             matches!(
@@ -1438,28 +1440,25 @@ impl<'a> Codegen<'a> {
                 .copied()
                 .filter(|child| self.node(*child).parent == Some(*statement))
         });
-        let mut local_arrays = Vec::new();
-        for child in declared {
+        // Where a body local's value lives, and whether it is listed with
+        // the arrays; `None` for a variable that is no automatic.
+        let storage_of = |child: NodeId| -> Option<(IrVpiAutoStorage, bool)> {
             if !matches!(
                 self.kind(child),
                 NodeKind::Var { .. } | NodeKind::Array { .. }
             ) || self.db.variable_lifetime(child) != VariableLifetime::Automatic
             {
-                continue;
+                return None;
             }
-            let name = self.node(child).name.clone();
             if let Some(container) = self
                 .container_globals
                 .get(&child)
                 .filter(|_| self.is_subroutine_container(child))
             {
-                local_arrays.push(entry(
-                    name,
-                    child,
-                    IrVpiAutoStorage::Container(container.ir),
-                ));
+                Some((IrVpiAutoStorage::Container(container.ir), true))
             } else if is_array(child) {
-                // A fixed-size array is one packed image local, real cells
+                // A fixed-size array is one packed image local, real cells,
+                // a keyed container of packed cells (an activation array)
                 // or a descriptor-backed value without a VPI form.
                 let storage = if let Some(array) = self
                     .array_globals
@@ -1469,29 +1468,87 @@ impl<'a> Codegen<'a> {
                     IrVpiAutoStorage::Array(array.ir)
                 } else if let Some(local) = locals.get(&child) {
                     IrVpiAutoStorage::Local(local.0.clone())
+                } else if let Some(array) = self
+                    .array_globals
+                    .get(&child)
+                    .filter(|array| self.model.arrays[array.ir].activation)
+                {
+                    IrVpiAutoStorage::Array(array.ir)
                 } else {
                     IrVpiAutoStorage::Unstored
                 };
-                local_arrays.push(entry(name, child, storage));
+                Some((storage, true))
             } else if let Some(local) = locals
                 .get(&child)
                 .map(|local| &local.0)
                 .or_else(|| chandle_locals.get(&child))
             {
-                automatics.push(entry(name, child, IrVpiAutoStorage::Local(local.clone())));
+                Some((IrVpiAutoStorage::Local(local.clone()), false))
             } else if matches!(
                 self.db
                     .type_descriptor(child)
                     .map(|descriptor| &descriptor.shape),
                 Some(TypeShape::Aggregate(_))
             ) {
-                // An unpacked structure or union is a record value with no
-                // cell the frame can name: listed without a value.
-                automatics.push(entry(name, child, IrVpiAutoStorage::Unstored));
+                // An unpacked structure or union is a record value: its
+                // activation value when it has one (its members are served
+                // when the capture types it as a record), else listed
+                // without a value.
+                let storage = match self.native_roots.get(&child) {
+                    Some(value) if self.model.native_values[*value].activation => {
+                        IrVpiAutoStorage::NativeValue(*value)
+                    }
+                    _ => IrVpiAutoStorage::Unstored,
+                };
+                Some((storage, false))
+            } else {
+                None
+            }
+        };
+        let mut local_arrays = Vec::new();
+        for child in declared {
+            let Some((storage, listed_with_arrays)) = storage_of(child) else {
+                continue;
+            };
+            let automatic = entry(self.node(child).name.clone(), child, storage);
+            if listed_with_arrays {
+                local_arrays.push(automatic);
+            } else {
+                automatics.push(automatic);
             }
         }
         automatics.extend(arrays);
         automatics.extend(local_arrays);
+        // The locals of the body's blocks, named by their block path from
+        // the frame, in declaration order (decision A19-D88).
+        let frame_path = self.vpi_path(ft);
+        let mut pending = vec![ft];
+        let mut seen = HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !seen.insert(node) {
+                continue;
+            }
+            if let Some(path) = self.vpi_block_local_path(node, ft, &frame_path) {
+                if let Some((storage, _)) = storage_of(node) {
+                    let mut automatic = entry(path, node, storage);
+                    automatic.block = true;
+                    automatics.push(automatic);
+                }
+            }
+            // A fork's blocks run in their own processes, not this frame.
+            if matches!(self.kind(node), NodeKind::Stmt(StmtKind::Fork { .. })) {
+                continue;
+            }
+            let first = pending.len();
+            pending.extend(
+                self.node(node)
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|child| self.node(*child).parent == Some(node)),
+            );
+            pending[first..].reverse();
+        }
         automatics
     }
 

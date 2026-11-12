@@ -2785,6 +2785,15 @@ fn a19_d87_nested_records_and_static_properties() {
 }
 
 #[test]
+fn a19_d88_catalog_gaps() {
+    run_vpi_decision(
+        "A19-D88_catalog_gaps",
+        &["task $d88(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D88_catalog_gaps.out"),
+    );
+}
+
+#[test]
 fn a19_d75_frame_origins() {
     run_vpi_decision(
         "A19-D75_frame_origins",

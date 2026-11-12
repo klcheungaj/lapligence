@@ -524,14 +524,25 @@ impl Codegen<'_> {
             }
             TypeShape::Opaque { .. } => self.vpi_handle_shape(descriptor),
             // An unpacked or tagged aggregate is a record value, not a
-            // packed cell: it is listed without a value.
+            // packed cell: an unpacked structure kept as an activation
+            // record value gives its members (decision A19-D88), any other
+            // is listed without a value.
             TypeShape::Aggregate(layout)
                 if !matches!(
                     layout.kind,
                     AggregateKind::PackedStruct | AggregateKind::PackedUnion
                 ) =>
             {
-                None
+                match &automatic.storage {
+                    IrVpiAutoStorage::NativeValue(value) => model
+                        .native_values
+                        .get(*value)
+                        .and_then(|value| model.native_types.get(value.ty))
+                        .and_then(|stored| {
+                            self.vpi_record_shape(dynamic, typespecs, descriptor, stored, 0)
+                        }),
+                    _ => None,
+                }
             }
             TypeShape::PackedAtom { .. } | TypeShape::Aggregate(_) => descriptor
                 .info
@@ -594,17 +605,17 @@ impl Codegen<'_> {
     /// The layout of every class: its name, base and properties in object
     /// field order (base fields first; hidden runtime fields stay `None`).
     /// Build the class layouts and items of `dynamic`; returns the body of
-    /// each constraint item as `(class, item, body)`, whose constraint
-    /// items the code tables build.
+    /// each constraint and method item as `(class, item, body)`, whose
+    /// constraint items or statement the code tables build.
     pub(super) fn vpi_dynamic_classes(
         &self,
         model: &IrModel,
         dynamic: &mut IrVpiDynamic,
         typespecs: &mut TypespecTable,
     ) -> Vec<(usize, usize, NodeId)> {
-        let mut constraints = Vec::new();
+        let mut bodies = Vec::new();
         if model.classes.is_empty() {
-            return constraints;
+            return bodies;
         }
         let mut names = vec![String::new(); model.classes.len()];
         let mut own: Vec<Vec<(usize, IrVpiField)>> = vec![Vec::new(); model.classes.len()];
@@ -719,7 +730,7 @@ impl Codegen<'_> {
                 .db
                 .class_metadata(*class)
                 .is_some_and(|metadata| metadata.is_abstract);
-            entry.items = self.vpi_class_items(typespecs, *class, *class_index, &mut constraints);
+            entry.items = self.vpi_class_items(typespecs, *class, *class_index, &mut bodies);
             // A generic class definition is only the source of its
             // specializations, which are the class types objects have.
             entry.is_generic = self.db.semantic_detail(*class) == Some("GenericClassDef");
@@ -727,7 +738,7 @@ impl Codegen<'_> {
             entry.line = node.line;
             entry.file = node.file().map(str::to_owned);
         }
-        constraints
+        bodies
     }
 
     /// A static property of a class (8.9) with its model storage and
@@ -873,7 +884,7 @@ impl Codegen<'_> {
         typespecs: &mut TypespecTable,
         class: NodeId,
         class_index: usize,
-        constraints: &mut Vec<(usize, usize, NodeId)>,
+        bodies: &mut Vec<(usize, usize, NodeId)>,
     ) -> Vec<IrVpiClassItem> {
         let mut items = Vec::new();
         for child in &self.node(class).children {
@@ -901,6 +912,10 @@ impl Codegen<'_> {
                     ..
                 } => {
                     let method = items.len();
+                    // 37.37: the method body is its vpiStmt.
+                    if let Some(body) = self.db.subroutine_body(*child) {
+                        bodies.push((class_index, method, body));
+                    }
                     let imports = self.vpi_method_imports(*child);
                     items.push(IrVpiClassItem {
                         imports,
@@ -956,7 +971,7 @@ impl Codegen<'_> {
                 }
                 NodeKind::ConstraintBlock(info) => {
                     if let Some(body) = info.body {
-                        constraints.push((class_index, items.len(), body));
+                        bodies.push((class_index, items.len(), body));
                     }
                     let bit = self.constraint_mode_bits.get(child);
                     items.push(IrVpiClassItem {

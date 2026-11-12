@@ -2899,7 +2899,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   methods and the events of a definition's event array property, A19-D85; the
   source locations of class properties, container elements, ranges and the
   range bounds and indices made per request, and the identity of ranges and
-  those constants, A19-D86). A generated
+  those constants, A19-D86; sparse fixed-size arrays, class methods by
+  name with their statements, the members of record automatics and of
+  wide or sparse automatic arrays, and the locals of a task's or function's
+  blocks while the block runs, A19-D88). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, constant element/bit/part selects in the name, and
   associative array elements by integral or string key, `tb.aa["x"]`, decision A19-D81),

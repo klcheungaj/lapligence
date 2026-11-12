@@ -284,7 +284,8 @@ pub struct IrVpiClassItem {
     /// The package items name references in a method reached through its
     /// import declarations (37.12 detail 4), in declaration order.
     pub(in crate::sim) imports: Vec<super::IrVpiImport>,
-    /// Root entry in [`IrModel::vpi_code`] of a constraint.
+    /// Root entry in [`IrModel::vpi_code`] of a constraint (its items) or
+    /// of a method (its body statement).
     pub(in crate::sim) code: Option<u32>,
     /// The object field holding a constraint's hidden `constraint_mode`
     /// off bit (18.9).

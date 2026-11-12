@@ -1,0 +1,37 @@
+tb.C::get: type=20 name=get full=tb.C::get line=17 defn=C
+  stmt type=4 line=17
+    stmt type=3 line=18
+    stmt type=691 line=19
+tb.C::run: type=59 name=run full=tb.C::run line=21 defn=C
+  stmt type=3 line=22
+tb.C::sf: type=20 name=sf full=tb.C::sf line=24 defn=C
+  stmt type=691 line=25
+tb.C::nop: type=20 name=nop full=tb.C::nop line=27 defn=C
+  stmt NULL
+tb.D::run: type=59 name=run full=tb.D::run line=31 defn=D
+  stmt type=3 line=32
+tb.D::get: NULL
+tb.c.get: type=20 name=get full=tb.C::get line=17 defn=C
+  stmt type=4 line=17
+    stmt type=3 line=18
+    stmt type=691 line=19
+tb.d.run: type=59 name=run full=tb.D::run line=31 defn=D
+  stmt type=3 line=32
+tb.d.get: type=20 name=get full=tb.C::get line=17 defn=C
+  stmt type=4 line=17
+    stmt type=3 line=18
+    stmt type=691 line=19
+tb.c.missing: NULL
+tb.C::missing: NULL
+mpkg::PC::pget: type=20 name=pget full=mpkg::PC::pget line=9 defn=PC
+  stmt type=691 line=10
+method of tb.c: type=20 name=get full=tb.C::get line=17 defn=C
+  stmt type=4 line=17
+    stmt type=3 line=18
+    stmt type=691 line=19
+method of tb.c: type=59 name=run full=tb.C::run line=21 defn=C
+  stmt type=3 line=22
+method of tb.c: type=20 name=sf full=tb.C::sf line=24 defn=C
+  stmt type=691 line=25
+method of tb.c: type=20 name=nop full=tb.C::nop line=27 defn=C
+  stmt NULL

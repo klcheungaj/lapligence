@@ -386,6 +386,19 @@ behind a `ref` descriptor) or a `double` array (`LLG_VPI_AUTO_REALS`) is read
 and written in place, with the same ended-frame error (A19-D83, A19-D84).
 `vpi_handle_by_name` finds an automatic, element or member of the innermost
 live activation of the named subprogram once the static lookup fails (A19-D84).
+A fixed-size array automatic kept in a keyed container is read cell by cell
+through its `llg_fixed_array_t` (`LLG_VPI_AUTO_FIXED`); an unpacked
+structure automatic kept as a record value is a dynamic-layer record whose
+members are dynamic elements; an element of an unpacked array member of a
+structure kept as a packed image is a part whose `span` is its element
+offset + 1. A block's locals are table entries flagged
+`LLG_VPI_AUTO_BLOCK`, named by their block path (`blk.x`): the declaration
+stores the address and the block's end (and every jump out of it) clears
+it, so `vpi_handle_by_name` and `vpiVariables` of the block find them only
+while the block runs, and `vpiAutomatics` skips them (A19-D88). A sparse
+module array (`LLG_VPI_OBJ_SPARSE`, its storage the `llg_fixed_array_t`)
+reads cells without allocating and writes through `llg_ba`, so waiters and
+callbacks see the change (A19-D88).
 A model ends a frame
 before releasing the value scopes that hold its body locals, so
 cbEndOfFrame still reads them (A19-D78).

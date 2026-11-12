@@ -55,6 +55,9 @@ struct Entry {
     member: bool,
     slice: bool,
     fixed_cell: bool,
+    /// The `llg_fixed_array_t` of an array kept in a keyed (sparse)
+    /// container: its elements are that container's cells.
+    sparse: Option<String>,
     record: bool,
     detail: &'static str,
     event: String,
@@ -107,6 +110,7 @@ impl Entry {
             member: false,
             slice: false,
             fixed_cell: false,
+            sparse: None,
             record: false,
             detail: "0",
             event: "NULL".to_owned(),
@@ -185,6 +189,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
     // runtime's relation iterations follow (decision A19-D47).
     let mut entries = BTreeMap::<String, (usize, Entry)>::new();
     for object in objects {
+        let mut sparse = None;
         let (packed, real_value, net_pointer, dims) = if let Some(signal) = object.signal {
             let Some((packed, real_value, net)) = signal_storage(model, signal) else {
                 // A malformed/optimized-away storage reference is not a
@@ -196,9 +201,11 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             let Some(array) = model.arrays.get(array) else {
                 continue;
             };
-            // Sparse arrays live in a keyed container, not flat element
-            // cells; they are not VPI-visible (documented limit), except
-            // the one cell of a scalar record member.
+            // A sparse array keeps its cells in a keyed container, not
+            // flat element cells: the row names the container, whose cells
+            // the runtime looks up per element. Lexical activation arrays
+            // have no static storage and record columns are reached through
+            // their members (the one cell of a scalar record member).
             if object.fixed_cell {
                 (
                     format!("&{}", array.c_name),
@@ -206,8 +213,16 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                     "NULL".to_owned(),
                     Vec::new(),
                 )
-            } else if array.sparse() || array.activation || array.descriptor {
+            } else if array.activation || array.descriptor {
                 continue;
+            } else if array.sparse() {
+                sparse = Some(format!("&{}", array.c_name));
+                (
+                    "NULL".to_owned(),
+                    "NULL".to_owned(),
+                    "NULL".to_owned(),
+                    array.dims.clone(),
+                )
             } else if array.real {
                 (
                     "NULL".to_owned(),
@@ -327,6 +342,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             member: object.member,
             slice: object.slice,
             fixed_cell: object.fixed_cell,
+            sparse,
             record: object.kind == IrVpiObjectKind::Record,
             detail: object.detail.unwrap_or("0"),
             event,
@@ -769,6 +785,9 @@ fn pack_objects(
         if entry.fixed_cell {
             flags.push("LLG_VPI_OBJ_FIXED_CELL");
         }
+        if entry.sparse.is_some() {
+            flags.push("LLG_VPI_OBJ_SPARSE");
+        }
         if entry.record {
             flags.push("LLG_VPI_OBJ_RECORD");
         }
@@ -919,7 +938,7 @@ fn pack_objects(
             });
         let storage = match udp_puts[index] {
             Some(record) => Some(format!("&llg_vpi_udp_puts[{record}]")),
-            None => storage,
+            None => storage.or_else(|| entry.sparse.clone()),
         };
         let references = [
             (REF_PACKED, present(&entry.packed)),

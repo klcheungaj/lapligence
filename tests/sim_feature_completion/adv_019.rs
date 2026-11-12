@@ -353,6 +353,42 @@ fn deeper_dynamic_objects_give_elements_members_and_static_properties() {
     );
 }
 
+#[test]
+fn sparse_fixed_arrays_give_elements_values_puts_and_callbacks() {
+    let directory = sim_harness::TempDir::new("adv019-sparse").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "sparse", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "sparse",
+        include_str!("../fixtures/sim/feature_completion/adv_019/sparse.out"),
+        &[
+            "--define-system-task",
+            "task $sparse(input int)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn class_methods_are_found_by_name_and_give_their_statements() {
+    let directory = sim_harness::TempDir::new("adv019-methods").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "methods", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "methods",
+        include_str!("../fixtures/sim/feature_completion/adv_019/methods.out"),
+        &[
+            "--define-system-task",
+            "task $methods(input int)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 /// The answers of one catalog walk: the object types it reached and, per
 /// type, the (kind, name) queries answered without an error.
 struct Walk {
@@ -622,4 +658,22 @@ fn catalog_walk_matches_the_vpi_catalog() {
         }
         assert!(errors.is_empty(), "{label}:\n{}", errors.join("\n"));
     }
+}
+
+#[test]
+fn stored_automatics_and_block_locals_are_found_read_and_written() {
+    let directory = sim_harness::TempDir::new("adv019-block-locals").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "block_locals", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "block_locals",
+        include_str!("../fixtures/sim/feature_completion/adv_019/block_locals.out"),
+        &[
+            "--define-system-task",
+            "task $locals(input int)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
 }

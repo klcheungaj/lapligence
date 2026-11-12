@@ -79,6 +79,10 @@ test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
 test s42systf sim_042::system_functions_follow_the_return_conventions
 test s42values sim_042::values_cover_every_format_and_put_mode
 test walk adv_019::catalog_walk_matches_the_vpi_catalog
+test a19sparse adv_019::sparse_fixed_arrays_give_elements_values_puts_and_callbacks
+test a19methods adv_019::class_methods_are_found_by_name_and_give_their_statements
+test a19locals adv_019::stored_automatics_and_block_locals_are_found_read_and_written
+test a19d88 sim_lrm_decisions::a19_d88_catalog_gaps
 
 node null 37.5 type=NULL
   iterate vpiModule implemented walk
@@ -101,6 +105,9 @@ node null 37.5 type=NULL
   handle vpiSysFuncCall extension walk vpiSysTfCall under its call-type names
   handle vpiSysTaskCall extension walk vpiSysTfCall under its call-type names
 
+# IEEE 1800-2009 VPI has no checker object: a checker instance is a
+# vpiModule scope (sim_vpi::vpi_checker_instances_are_hierarchy_scopes,
+# decision A19-D88).
 node module 37.5 type=vpiModule
   get vpiTopModule implemented walk
   get vpiDefDecayTime n/a trireg nets and the `default_decay_time directive are unsupported by user decision (ADV-006)
@@ -428,7 +435,10 @@ node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,cl
   iterate vpiTypedef implemented walk
   iterate vpiLetDecl error walk let declarations are not objects; industry-standard behaviour refuses it (decision A19-D65)
 
+# A class method is found by its full name (`top.C::m`) or through a class
+# variable (`top.c.m`) and has its body as vpiStmt (decision A19-D88).
 node task_func 37.12 members=task,function
+  func vpi_handle_by_name implemented a19methods
   handle vpiStmt implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
@@ -446,6 +456,7 @@ node task_func 37.12 members=task,function
   str vpiDPICIdentifier implemented walk
 
 node named_begin 37.12 type=vpiNamedBegin
+  iterate vpiVariables implemented a19d88
   get vpiCovered implemented walk
   get vpiCoverMax implemented walk
   get vpiCoveredCount implemented walk
@@ -508,7 +519,7 @@ node begin 37.12 type=vpiBegin
   iterate vpiPropertyDecl implemented walk
   iterate vpiSequenceDecl implemented walk
   iterate vpiNamedEvent implemented walk
-  iterate vpiVariables implemented walk
+  iterate vpiVariables implemented a19locals
   iterate vpiReg implemented walk
   iterate vpiRegArray implemented walk
   iterate vpiParameter implemented walk
@@ -863,7 +874,11 @@ node time_var 37.17 type=vpiTimeVar
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
+# An array kept in a keyed container (more than 4096 cells, or more bits
+# than one packed value) answers as a dense one (decision A19-D88).
 node array_var 37.17 type=vpiRegArray
+  func vpi_get_value_array implemented a19sparse
+  func vpi_put_value_array implemented a19sparse
   get vpiArrayType implemented walk
   get vpiIsMemory implemented walk
   iterate vpiReg implemented walk
@@ -1596,13 +1611,17 @@ node user_systf 37.38 type=vpiUserSystf
   get vpiUserDefn extension walk the registration data of vpi_get_systf_info as properties (S99)
   str vpiName extension walk the registration data of vpi_get_systf_info as properties (S99)
 
+# A frame stays the task's or function's inside its blocks (decision
+# A19-D76); the locals of a block are its variables while it runs: found by
+# name (`top.t.blk.x`) and listed by vpiVariables of the block, not by
+# vpiAutomatics (decision A19-D88).
 node frame 37.39 type=vpiFrame
   get vpiActive implemented a19d44
   handle vpiOrigin implemented walk
   handle vpiParent implemented a19thr
   handle vpiStmt implemented a19d44
   handle vpiThread implemented a19thr
-  iterate vpiAutomatics implemented walk
+  iterate vpiAutomatics implemented a19locals
   str vpiFullName extension a19thr the full name of the task or function the frame activates, as other tools report it
 
 node thread 37.40 type=vpiThread

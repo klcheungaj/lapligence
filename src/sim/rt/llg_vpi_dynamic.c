@@ -543,8 +543,10 @@ typedef struct {
 #define DYN_DEFN_ROW (LLG_VPI_NONE - 3u)
 
 /* llg_vpi_runtime.c: the container automatic `index` of frame `serial`,
- * or 0 once that frame has ended; its vpiFullName prefix (the frame). */
+ * or 0 once that frame has ended; the same for a container or record
+ * automatic; its vpiFullName prefix (the frame). */
 static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* place);
+static int rts_auto_value_place(uint64_t serial, uint32_t index, dyn_place_t* place);
 static const char* rts_auto_frame_name(uint64_t serial);
 /* llg_vpi_runtime.c: where the automatic `index` of frame `serial` is
  * declared (37.3.3), 0 once that frame has ended; the located scope of its
@@ -717,7 +719,9 @@ static int dyn_container_place(uint32_t row, void* owner, uint32_t field, int64_
     memset(place, 0, sizeof(*place));
     place->row = LLG_VPI_NONE;
     if (row == DYN_AUTO_ROW) {
-        if (!rts_auto_container((uint64_t)serial, field, place)) return 0;
+        /* A record automatic is the top of its members' paths. */
+        if (!rts_auto_value_place((uint64_t)serial, field, place)) return 0;
+        return 1;
     } else if (row == DYN_STATIC_ROW) {
         const llg_vpi_class_static_t* entry = dyn_static(field);
         if (!entry) return 0;
@@ -1054,6 +1058,11 @@ static LLG_OUTLYING int dyn_resolve(const llg_vpi_slot_t* slot, dyn_target_t* t)
         return 0;
     }
     t->level = t->top;
+    if (t->top.shape->shape == LLG_VPI_SHAPE_RECORD) {
+        /* A record automatic: the path starts with one of its members. */
+        t->shape = t->top.shape;
+        t->value = (llg_value_t*)t->top.storage;
+    }
     uint32_t count = 1u + slot->span;
     for (uint32_t i = 0; i < count; ++i) {
         dyn_step_t step = dyn_step_at(slot, i);
@@ -1377,8 +1386,9 @@ static void dyn_element_put(const llg_vpi_slot_t* slot, const s_vpi_value* input
             llg_string_replace((llg_string_t*)storage, value);
         }
         /* The array the path starts in publishes the change to waiting
-         * processes: nested storage has no dependencies of its own. */
-        dyn_touch(&target.top);
+         * processes: nested storage has no dependencies of its own. A
+         * record automatic is an activation value no process waits on. */
+        if (target.top.shape->shape == LLG_VPI_SHAPE_CONTAINER) dyn_touch(&target.top);
         return;
     }
     sv4_t value;
@@ -1440,7 +1450,8 @@ static const llg_vpi_shape_t* dyn_element_shape(const llg_vpi_slot_t* slot) {
 /* Whether the last selection of element slot `slot` is a record member
  * (37.24: a member variable, not an array element). */
 static LLG_OUTLYING int dyn_is_member(const llg_vpi_slot_t* slot) {
-    return slot->kind == SLOT_DYNELEM && slot->span &&
+    /* A member of a record automatic has its member as its first step. */
+    return slot->kind == SLOT_DYNELEM && (slot->span || slot->lsb == DYN_AT_MEMBER) &&
            dyn_step_at(slot, slot->span).at == DYN_AT_MEMBER;
 }
 
@@ -1489,6 +1500,9 @@ static LLG_OUTLYING vpiHandle dyn_truncate(const llg_vpi_slot_t* slot) {
     }
     dyn_step_t steps[64];
     uint32_t count = slot->span;
+    /* A member of a record automatic: the automatic itself. */
+    if (!count && slot->object == DYN_AUTO_ROW)
+        return rts_auto_handle_by_serial((uint64_t)slot->right, (uint32_t)slot->aux);
     if (!count || count > 64u) return NULL;
     for (uint32_t i = 0; i < count; ++i) steps[i] = dyn_step_at(slot, i);
     return make_dyn_path(&place, (uint32_t)slot->aux, steps, count);
@@ -1796,9 +1810,15 @@ static vpiHandle dyn_item_handle(int type, const llg_vpi_slot_t* slot) {
             case vpiModule:
                 return dyn_class_container(class_index, type);
             case vpiStmt:
-                vpi_error("LLG_VPI_UNSUPPORTED",
-                          "the statements of class methods are not VPI objects in llg");
-                return NULL;
+                /* 37.37: the statement of the method body (NULL for an
+                 * empty body or a prototype, 37.12 detail 5). */
+                if (!g_vpi.code) {
+                    vpi_error("LLG_VPI_UNSUPPORTED",
+                              "statements are objects only in models generated with --vpi or "
+                              "--dpi-lib");
+                    return NULL;
+                }
+                return item->code ? code_handle(item->code - 1u) : NULL;
             default:
                 break;
         }
@@ -3092,6 +3112,13 @@ static LLG_OUTLYING void dyn_name_step(dyn_name_t* name, const dyn_place_t* plac
     for (uint32_t d = 0; d < count; ++d) dyn_name_index(name, indices[d], 1);
 }
 
+/* The vpiName of an automatic named `name`: a block local's ends its block
+ * path (`blk.q` names `q`, decision A19-D88). */
+static LLG_OUTLYING const char* dyn_auto_leaf(const char* name) {
+    const char* dot = strrchr(name, '.');
+    return dot ? dot + 1 : name;
+}
+
 /* `base` followed by the selections of `slot`'s path from `first` on
  * (`.member` for a member), resolving each nested container (its keys'
  * type) from the array `top`. */
@@ -3101,6 +3128,10 @@ static LLG_OUTLYING int dyn_name_path(dyn_name_t* name, const llg_vpi_slot_t* sl
     dyn_place_t level = *top;
     const llg_vpi_shape_t* shape = NULL;
     llg_value_t* value = NULL;
+    if (top->shape->shape == LLG_VPI_SHAPE_RECORD) {
+        shape = top->shape;
+        value = (llg_value_t*)top->storage;
+    }
     uint32_t count = 1u + slot->span;
     for (uint32_t i = 0; i < count && !name->failed; ++i) {
         dyn_step_t step = dyn_step_at(slot, i);
@@ -3204,7 +3235,7 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int full) {
         snprintf(base, length, "%s.%s", frame, place.name);
     }
     int ok = dyn_name_path(&name, slot, &place, 0,
-                           !full ? place.name
+                           !full ? (place.row == DYN_AUTO_ROW ? dyn_auto_leaf(place.name) : place.name)
                                  : base ? base : g_vpi.objects[place.row].full_name);
     free(base);
     char* text = ok ? dyn_text("%s", name.data) : NULL;
@@ -3431,6 +3462,19 @@ static int dyn_compare(const llg_vpi_slot_t* a, uint32_t a_index, const llg_vpi_
 
 /* ── names and indices ──────────────────────────────────────────────────── */
 
+/* The method `name` (`length` bytes) class `class_index` declares, or
+ * NULL. */
+static LLG_OUTLYING vpiHandle dyn_method_named(uint32_t class_index, const char* name, size_t length) {
+    const llg_vpi_class_t* layout = dyn_class(class_index);
+    for (uint32_t k = 0; layout && k < layout->item_count; ++k) {
+        const llg_vpi_class_item_t* item = dyn_item(class_index, k);
+        if (dyn_item_is_method(item) && strlen(item->name) == length &&
+            memcmp(item->name, name, length) == 0)
+            return item_handle(class_index, k);
+    }
+    return NULL;
+}
+
 /* The property `name` (`length` bytes) of the object a class place refers
  * to; the last declaration wins, so a derived class's property hides an
  * inherited one of the same name. */
@@ -3448,6 +3492,14 @@ static vpiHandle dyn_property_by_name(void* object, const char* name, size_t len
                            dyn_field_listed(class_index, i, vpiNamedEvent)
                        ? make_property(object, class_index, i)
                        : NULL;
+    }
+    /* A method of the object's class or of a base it inherits from
+     * (37.37: `top.p.get`); a derived class's declaration hides a base's. */
+    for (uint32_t current = class_index; current != LLG_VPI_NONE;) {
+        vpiHandle method = dyn_method_named(current, name, length);
+        if (method) return method;
+        uint32_t base = dyn_class(current)->base;
+        current = base ? base - 1u : LLG_VPI_NONE;
     }
     /* A static property through an object (37.17 detail 25: `p.Id`); a
      * derived class's declaration hides its base's. */
@@ -3804,8 +3856,8 @@ static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep,
 }
 
 /* vpi_handle_by_name of a static property by its full name (37.17 detail
- * 25: `top.Packet::Id`), or of an element or member after it; NULL when no
- * static property's full name starts `name`. */
+ * 25: `top.Packet::Id`), or of an element or member after it, or of a
+ * class method (`top.C::get`); NULL when none has that name. */
 static LLG_OUTLYING vpiHandle dyn_static_by_name(const char* name) {
     for (uint32_t i = 0; g_dyn.tables && i < g_dyn.tables->static_count; ++i) {
         char* full = dyn_static_full_name(DYN_STATIC_FIELD + i);
@@ -3818,6 +3870,17 @@ static LLG_OUTLYING vpiHandle dyn_static_by_name(const char* name) {
         vpiHandle property = make_static_property(DYN_STATIC_FIELD + i);
         return property ? dyn_walk_suffix(property, NULL, name + length, 0) : NULL;
     }
+    /* A method by its full name (37.37 detail 5: `top.C::get`). A
+     * parameterized class lists one definition per specialization under
+     * one name (decision A19-D36): the first one answers. */
+    for (uint32_t c = 0; c < dyn_class_count(); ++c) {
+        const char* full = dyn_class(c)->full_name;
+        size_t length = strlen(full);
+        if (strncmp(name, full, length) != 0 || strncmp(name + length, "::", 2) != 0) continue;
+        vpiHandle method =
+            dyn_method_named(c, name + length + 2u, strlen(name + length + 2u));
+        if (method) return method;
+    }
     return NULL;
 }
 
@@ -3825,6 +3888,39 @@ static LLG_OUTLYING vpiHandle dyn_static_by_name(const char* name) {
 static vpiHandle dyn_by_suffix(uint32_t row, const char* suffix) {
     vpiHandle start = object_handle(row);
     return dyn_walk_suffix(start, start, suffix, 0);
+}
+
+/* vpiMember of the record automatic `place` (automatic `field` of its
+ * frame): one element handle per member, in declaration order (37.24). */
+static LLG_OUTLYING vpiHandle dyn_record_members(const dyn_place_t* place, uint32_t field) {
+    dyn_list_t list = {0};
+    for (uint32_t m = 0; m < place->shape->member_count && !list.failed; ++m) {
+        dyn_step_t step;
+        memset(&step, 0, sizeof(step));
+        step.at = DYN_AT_MEMBER;
+        step.element = m;
+        dyn_list_push(&list, make_dyn_path(place, field, &step, 1u));
+    }
+    return dyn_list_iterator(vpiMember, &list);
+}
+
+/* `suffix` (starting with `.`) after the record automatic `place`: a
+ * member, then an element or member below it; NULL when it names none. */
+static LLG_OUTLYING vpiHandle dyn_record_suffix(const dyn_place_t* place, uint32_t field,
+                                                const char* suffix) {
+    const char* name = suffix + 1;
+    size_t length = strcspn(name, ".[");
+    for (uint32_t m = 0; m < place->shape->member_count; ++m) {
+        const llg_vpi_member_t* member = dyn_member(place->shape, m);
+        if (strlen(member->name) != length || strncmp(member->name, name, length) != 0) continue;
+        dyn_step_t step;
+        memset(&step, 0, sizeof(step));
+        step.at = DYN_AT_MEMBER;
+        step.element = m;
+        vpiHandle handle = make_dyn_path(place, field, &step, 1u);
+        return handle ? dyn_walk_suffix(handle, NULL, name + length, 0) : NULL;
+    }
+    return NULL;
 }
 
 /* `suffix` (starting with `[`) after the container automatic `place`

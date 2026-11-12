@@ -2805,20 +2805,13 @@ error (`LLG_VPI_UNSUPPORTED`, `LLG_VPI_INDEX` or `LLG_VPI_NOT_FOUND`) instead
 of a handle or value; `vpi_handle_by_name` of such an object returns NULL
 with no error status, as for a name that denotes nothing (S42-D11):
 
-- objects outside the generated catalog: sparse fixed arrays (stored in a keyed
-  container); among frame automatics (decisions A19-D76, A19-D82 to
-  A19-D84, A19-D87), the elements and members of automatics llg keeps as
-  descriptor-backed values rather than one packed image, real cells or a
-  container (fixed-size arrays wider than the packed transport, a
-  structure holding a string, real, handle or unpacked array member;
-  listed under `vpiAutomatics` with their size and no elements or
-  members), the
-  elements of an unpacked array member of an automatic structure, and the
-  automatic variables of blocks inside a task or function (llg models no
-  block frames, decisions A19-D44, A19-D76), tasks and functions of
-  packages, the
-  statements of class methods and class methods by name, programs, and checker objects (a checker instance is a module
-  scope with its variables; VPI-C1);
+- objects outside the generated catalog: the automatic variables of
+  process blocks (`initial`/`always` blocks have no frame) and of a fork's
+  blocks inside a task or function; a block of a task or function has no
+  frame of its own (decision A19-D76: `vpiFrame` stays the subprogram's;
+  its locals are served by name and by `vpiVariables` of the block while it
+  runs, decision A19-D88). A checker has no 2009 VPI object: a checker
+  instance is a module scope with its variables (decision A19-D88);
 - dynamic objects (VPI-O4) other than string, chandle and class variables,
   dynamic, queue and associative arrays (nested ones flattened to their
   innermost elements), fixed-size arrays of strings, chandles, class

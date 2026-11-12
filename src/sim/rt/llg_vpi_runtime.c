@@ -41,6 +41,8 @@ static int rts_identity(const llg_vpi_slot_t* slot, uint64_t identity[4]) {
     if (slot->kind == SLOT_AUTO) {
         identity[0] += ((uint64_t)slot->right << 8) + ((uint64_t)slot->count << 32);
         identity[1] |= (uint64_t)slot->lsb << 32;
+        /* An element of an array member; frame serials stay below 2^40. */
+        identity[3] ^= (uint64_t)slot->span << 40;
     }
     return 1;
 }
@@ -535,6 +537,14 @@ static uint32_t rts_auto_count(const rts_frame_t* frame) {
     return count;
 }
 
+/* The vpiName of automatic `entry`: a block local's name ends its block
+ * path (decision A19-D88). */
+static LLG_OUTLYING const char* rts_auto_name(const llg_vpi_auto_t* entry) {
+    if (!(entry->flags & LLG_VPI_AUTO_BLOCK)) return entry->name;
+    const char* dot = strrchr(entry->name, '.');
+    return dot ? dot + 1 : entry->name;
+}
+
 /* The table entry of an automatic-variable handle while its frame lives,
  * with the frame; NULL once the frame ended. */
 static const llg_vpi_auto_t* rts_auto(const llg_vpi_slot_t* slot, rts_frame_t** frame_out) {
@@ -608,8 +618,11 @@ static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
     rts_frame_t* frame = rts_frame_find(thread_slot, (uint64_t)identity, serial, NULL);
     uint32_t count = frame ? rts_auto_count(frame) : 0u;
     if (!count) return NULL;
+    const llg_vpi_auto_t* table = rts_auto_table(frame);
     rts_handles_t list = {0};
     for (uint32_t i = 0; i < count; ++i) {
+        /* A block's locals are its variables, not the frame's. */
+        if (table[i].flags & LLG_VPI_AUTO_BLOCK) continue;
         vpiHandle handle = rts_make(SLOT_AUTO, (uint32_t)thread_slot, identity);
         llg_vpi_slot_t* entry = handle ? decode_handle(handle, NULL) : NULL;
         if (entry) {
@@ -626,12 +639,15 @@ static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
 /* A SLOT_AUTO handle names a part of its automatic variable when `count`
  * (element offset + 1, row-major from the leftmost element) or `lsb` (a
  * typespec member node + 1) is set: an element of a fixed-size array kept
- * as one packed image (LLG_VPI_AUTO_IMAGE) or as real cells
- * (LLG_VPI_AUTO_REALS), a member of a structure or union kept as a packed
- * image (an unpacked one with LLG_VPI_AUTO_IMAGE, a packed one by its value
- * shape), or a member of such an element (decision A19-D83). Parts are read
- * and written through the variable's storage; nothing is kept per part. */
-static int rts_is_part(const llg_vpi_slot_t* slot) { return slot->count || slot->lsb; }
+ * as one packed image (LLG_VPI_AUTO_IMAGE), as real cells
+ * (LLG_VPI_AUTO_REALS) or as keyed cells (LLG_VPI_AUTO_FIXED), a member of
+ * a structure or union kept as a packed image (an unpacked one with
+ * LLG_VPI_AUTO_IMAGE, a packed one by its value shape), or a member of such
+ * an element (decisions A19-D83, A19-D88). With `lsb` naming an unpacked
+ * array member, `span` (element offset + 1, row-major) names one of its
+ * elements. Parts are read and written through the variable's storage;
+ * nothing is kept per part. */
+static int rts_is_part(const llg_vpi_slot_t* slot) { return slot->count || slot->lsb || slot->span; }
 
 struct rts_part {
     const llg_vpi_auto_t* entry;
@@ -641,10 +657,42 @@ struct rts_part {
     const llg_vpi_member_node_t* node;  /* a member's node, else NULL */
     const llg_vpi_shape_t* shape;       /* an element's shape, else NULL */
     uint64_t element;                   /* element offset, or LLG_VPI_NO_ELEMENT */
+    uint64_t member_element;            /* element of an array member, or LLG_VPI_NO_ELEMENT */
     uint32_t bit;                       /* image bits of a packed part */
     uint32_t width;
     int type;
 };
+
+/* The element count of an unpacked array typespec, 0 without ranges. */
+static LLG_OUTLYING uint64_t rts_typespec_elements(const llg_vpi_typespec_t* typespec) {
+    if (!typespec || typespec->type != vpiArrayTypespec || !typespec->range_count) return 0;
+    const int64_t* ranges = &g_vpi.types->ranges[2u * typespec->first_range];
+    uint64_t count = 1;
+    for (uint32_t d = 0; d < typespec->range_count; ++d) {
+        int64_t left = ranges[2u * d], right = ranges[2u * d + 1u];
+        count *= (uint64_t)(left > right ? left - right : right - left) + 1u;
+    }
+    return count;
+}
+
+/* The variable type of a packed element typespec (37.17). */
+static LLG_OUTLYING int rts_typespec_var_type(const llg_vpi_typespec_t* typespec) {
+    switch (typespec ? typespec->type : 0) {
+        case vpiIntTypespec: return vpiIntVar;
+        case vpiByteTypespec: return vpiByteVar;
+        case vpiShortIntTypespec: return vpiShortIntVar;
+        case vpiLongIntTypespec: return vpiLongIntVar;
+        case vpiIntegerTypespec: return vpiIntegerVar;
+        case vpiTimeTypespec: return vpiTimeVar;
+        case vpiBitTypespec: return vpiBitVar;
+        case vpiLogicTypespec: return vpiLogicVar;
+        case vpiEnumTypespec: return vpiEnumVar;
+        case vpiPackedArrayTypespec: return vpiPackedArrayVar;
+        case vpiStructTypespec: return vpiStructVar;
+        case vpiUnionTypespec: return vpiUnionVar;
+        default: return vpiUndefined;
+    }
+}
 
 /* The array typespec's leaf element: every unpacked dimension removed. */
 static const llg_vpi_typespec_t* rts_leaf_typespec(const llg_vpi_typespec_t* typespec) {
@@ -653,19 +701,19 @@ static const llg_vpi_typespec_t* rts_leaf_typespec(const llg_vpi_typespec_t* typ
     return typespec;
 }
 
+#define RTS_AUTO_CELLS (LLG_VPI_AUTO_IMAGE | LLG_VPI_AUTO_REALS | LLG_VPI_AUTO_FIXED)
+
 /* Whether automatic `entry` is a fixed-size array whose elements llg
- * serves (37.17 detail 4): one packed image or real cells. */
+ * serves (37.17 detail 4): one packed image, real cells or keyed cells. */
 static int rts_auto_fixed(const llg_vpi_auto_t* entry) {
     return entry->type == vpiArrayVar && entry->array_type == vpiStaticArray &&
-           (entry->flags & (LLG_VPI_AUTO_IMAGE | LLG_VPI_AUTO_REALS)) &&
-           !(entry->flags & LLG_VPI_AUTO_NO_VALUE);
+           (entry->flags & RTS_AUTO_CELLS) && !(entry->flags & LLG_VPI_AUTO_NO_VALUE);
 }
 
 /* The value shape of automatic `entry`: none for a fixed-size array, whose
  * row names its element shape. */
 static const llg_vpi_shape_t* rts_auto_value_shape(const llg_vpi_auto_t* entry) {
-    if (!entry->shape || (entry->type == vpiArrayVar &&
-                          (entry->flags & (LLG_VPI_AUTO_IMAGE | LLG_VPI_AUTO_REALS))))
+    if (!entry->shape || (entry->type == vpiArrayVar && (entry->flags & RTS_AUTO_CELLS)))
         return NULL;
     return dyn_shape(entry->shape - 1u);
 }
@@ -673,6 +721,8 @@ static const llg_vpi_shape_t* rts_auto_value_shape(const llg_vpi_auto_t* entry) 
 /* The typespec member nodes a part's value holds (a structure or union kept
  * as a packed image); 0 when it has no member objects. */
 static uint32_t rts_part_members(const rts_part_t* part, uint32_t* first) {
+    /* An element of an array member lists no members of its own. */
+    if (part->member_element != LLG_VPI_NO_ELEMENT) return 0;
     if (part->node) {
         *first = part->node->first_child;
         return part->node->child_count;
@@ -685,7 +735,7 @@ static uint32_t rts_part_members(const rts_part_t* part, uint32_t* first) {
         if (!(part->entry->flags & LLG_VPI_AUTO_IMAGE) &&
             !(shape && shape->shape == LLG_VPI_SHAPE_PACKED))
             return 0;
-    } else if (!(part->entry->flags & LLG_VPI_AUTO_IMAGE)) {
+    } else if (!(part->entry->flags & (LLG_VPI_AUTO_IMAGE | LLG_VPI_AUTO_FIXED))) {
         return 0;
     }
     *first = typespec->first_node;
@@ -696,6 +746,7 @@ static uint32_t rts_part_members(const rts_part_t* part, uint32_t* first) {
 static int rts_part(const llg_vpi_slot_t* slot, rts_part_t* part) {
     memset(part, 0, sizeof(*part));
     part->element = LLG_VPI_NO_ELEMENT;
+    part->member_element = LLG_VPI_NO_ELEMENT;
     part->entry = rts_auto(slot, &part->frame);
     if (!part->entry) {
         vpi_error("LLG_VPI_HANDLE",
@@ -724,6 +775,9 @@ static int rts_part(const llg_vpi_slot_t* slot, rts_part_t* part) {
             base = (uint32_t)((entry->size - 1u - offset) * width);
             part->bit = base;
             part->width = width;
+        } else if (entry->flags & LLG_VPI_AUTO_FIXED) {
+            /* The element's own cell is the image its parts lie in. */
+            part->width = part->typespec ? part->typespec->width : 0u;
         }
         if (part->shape) part->type = part->shape->type;
         else if (part->typespec && part->typespec->type == vpiStructTypespec) part->type = vpiStructVar;
@@ -740,6 +794,21 @@ static int rts_part(const llg_vpi_slot_t* slot, rts_part_t* part) {
         part->bit = base + node->lsb;
         part->width = node->width;
     }
+    if (slot->span) {
+        /* An element of an unpacked array member: its bits in the image. */
+        const llg_vpi_typespec_t* array = part->typespec;
+        uint64_t count = rts_typespec_elements(array);
+        if (!part->node || part->node->type != vpiRegArray || !count || slot->span > count ||
+            part->node->width % count)
+            return 0;
+        uint64_t offset = slot->span - 1u;
+        uint32_t width = (uint32_t)(part->node->width / count);
+        part->member_element = offset;
+        part->typespec = rts_leaf_typespec(array);
+        part->type = rts_typespec_var_type(part->typespec);
+        part->bit += (uint32_t)((count - 1u - offset) * width);
+        part->width = width;
+    }
     return 1;
 }
 
@@ -754,8 +823,9 @@ static int rts_part_type(const llg_vpi_slot_t* slot) {
     return rts_part(slot, &part) ? part.type : vpiUndefined;
 }
 
-/* A new handle to part (`count`, `member`) of automatic `base`. */
-static vpiHandle rts_part_make(const llg_vpi_slot_t* base, uint32_t count, uint32_t member) {
+/* A new handle to part (`count`, `member`, `span`) of automatic `base`. */
+static LLG_OUTLYING vpiHandle rts_part_make_at(const llg_vpi_slot_t* base, uint32_t count, uint32_t member,
+                                  uint32_t span) {
     /* Copied first: making the handle may move the slot table. */
     int thread_slot = base->aux;
     int64_t identity = base->left;
@@ -768,8 +838,71 @@ static vpiHandle rts_part_make(const llg_vpi_slot_t* base, uint32_t count, uint3
         slot->right = index;
         slot->count = count;
         slot->lsb = member;
+        slot->span = span;
     }
     return handle;
+}
+
+/* A new handle to part (`count`, `member`) of automatic `base`. */
+static vpiHandle rts_part_make(const llg_vpi_slot_t* base, uint32_t count, uint32_t member) {
+    return rts_part_make_at(base, count, member, 0u);
+}
+
+/* Whether a part is an unpacked array member (not one of its elements). */
+static LLG_OUTLYING int rts_part_array_member(const rts_part_t* part) {
+    return part->node && part->node->type == vpiRegArray &&
+           part->member_element == LLG_VPI_NO_ELEMENT;
+}
+
+/* The element of array member part `slot` at `offset`, or NULL with an
+ * error. */
+static LLG_OUTLYING vpiHandle rts_member_element(const llg_vpi_slot_t* slot, const rts_part_t* part,
+                                    uint64_t offset) {
+    if (offset >= rts_typespec_elements(part->typespec)) {
+        vpi_error("LLG_VPI_INDEX", "array index is outside the declared range");
+        return NULL;
+    }
+    return rts_part_make_at(slot, slot->count, slot->lsb, (uint32_t)(offset + 1u));
+}
+
+/* The row-major offset of the declared `indices` in array typespec
+ * `typespec`, or 0 with an error. */
+static LLG_OUTLYING int rts_typespec_offset(const llg_vpi_typespec_t* typespec, const int64_t* indices,
+                               uint32_t count, uint64_t* offset) {
+    if (!typespec || typespec->type != vpiArrayTypespec || count != typespec->range_count) {
+        vpi_error("LLG_VPI_INDEX", "wrong number of indices for the array");
+        return 0;
+    }
+    const int64_t* ranges = &g_vpi.types->ranges[2u * typespec->first_range];
+    uint64_t flat = 0;
+    for (uint32_t d = 0; d < count; ++d) {
+        int64_t left = ranges[2u * d], right = ranges[2u * d + 1u];
+        int64_t low = left < right ? left : right, high = left < right ? right : left;
+        if (indices[d] < low || indices[d] > high) {
+            vpi_error("LLG_VPI_INDEX", "array index is outside the declared range");
+            return 0;
+        }
+        flat = flat * ((uint64_t)(high - low) + 1u) +
+               (uint64_t)(left >= right ? left - indices[d] : indices[d] - left);
+    }
+    *offset = flat;
+    return 1;
+}
+
+/* The declared indices of element `offset` of array typespec `typespec`
+ * (leftmost first); the dimension count. */
+static LLG_OUTLYING uint32_t rts_typespec_indices(const llg_vpi_typespec_t* typespec, uint64_t offset,
+                                     int64_t* indices, uint32_t capacity) {
+    if (!typespec || !typespec->range_count || typespec->range_count > capacity) return 0;
+    const int64_t* ranges = &g_vpi.types->ranges[2u * typespec->first_range];
+    for (uint32_t d = typespec->range_count; d-- > 0;) {
+        int64_t left = ranges[2u * d], right = ranges[2u * d + 1u];
+        uint64_t extent = (uint64_t)(left > right ? left - right : right - left) + 1u;
+        uint64_t index = offset % extent;
+        offset /= extent;
+        indices[d] = left >= right ? left - (int64_t)index : left + (int64_t)index;
+    }
+    return typespec->range_count;
 }
 
 /* The packed shape a part's value reads and writes through. */
@@ -780,18 +913,38 @@ static llg_vpi_shape_t rts_part_packed_shape(const rts_part_t* part) {
     shape.shape = LLG_VPI_SHAPE_PACKED;
     shape.type = part->type;
     shape.width = part->width;
-    if (part->node) {
+    if (part->member_element != LLG_VPI_NO_ELEMENT && part->typespec) {
+        shape.is_signed = (part->typespec->flags & LLG_VPI_TS_SIGNED) != 0;
+        shape.two_state = (part->typespec->flags & LLG_VPI_TS_TWO_STATE) != 0;
+    } else if (part->node) {
         shape.is_signed = (part->node->flags & LLG_VPI_TS_SIGNED) != 0;
         shape.two_state = (part->node->flags & LLG_VPI_TS_TWO_STATE) != 0;
     }
     return shape;
 }
 
-/* The whole packed image a part lies in (an owned copy). */
+/* The whole packed image a part lies in (an owned copy): the variable's
+ * image, or the element's cell of an array kept in keyed cells. */
 static int rts_part_image(const rts_part_t* part, sv4_t* image) {
     if (!part->storage) {
         vpi_error("LLG_VPI_VALUE", "this automatic variable is not declared yet in its frame");
         return 0;
+    }
+    if (part->entry->flags & LLG_VPI_AUTO_FIXED) {
+        const llg_fixed_array_t* cells = (const llg_fixed_array_t*)part->storage;
+        const llg_vpi_typespec_t* leaf = rts_leaf_typespec(typespec_ref(part->entry->typespec));
+        if (part->element == LLG_VPI_NO_ELEMENT || part->element >= cells->total || !leaf ||
+            (uint64_t)part->bit + part->width > leaf->width) {
+            vpi_error("LLG_VPI_MODEL", "the storage of this automatic variable disagrees with its type");
+            return 0;
+        }
+        *image = sv4_clone(llg_fixed_array_peek(cells, part->element));
+        if (llg_sv4_width(*image) != leaf->width) {
+            sv4_destroy(image);
+            vpi_error("LLG_VPI_MODEL", "the storage of this automatic variable disagrees with its type");
+            return 0;
+        }
+        return 1;
     }
     *image = (part->entry->flags & LLG_VPI_AUTO_REF) ? llg_rt_ref_read((const llg_ref_t*)part->storage)
                                                      : sv4_clone((const sv4_t*)part->storage);
@@ -815,8 +968,11 @@ static int rts_part_has_value(const rts_part_t* part) {
                   "an unpacked structure or union has no value; access its members (37.17 detail 11)");
         return 0;
     }
-    if (part->node && (part->node->type == vpiRegArray || !part->width)) {
-        vpi_error("LLG_VPI_VALUE", "llg serves no value of this member of an automatic variable");
+    if (part->node && part->member_element == LLG_VPI_NO_ELEMENT &&
+        (part->node->type == vpiRegArray || !part->width)) {
+        vpi_error("LLG_VPI_VALUE", part->node->type == vpiRegArray
+                                       ? "an array variable has no value; access its elements (37.17 detail 11)"
+                                       : "llg serves no value of this member of an automatic variable");
         return 0;
     }
     if (part->element != LLG_VPI_NO_ELEMENT && !part->node && !part->shape) {
@@ -871,6 +1027,8 @@ static void rts_part_put(const llg_vpi_slot_t* slot, const s_vpi_value* input) {
     }
     sv4_part_select_set(&image, (int64_t)part.bit + part.width - 1, (int64_t)part.bit, value);
     if (part.entry->flags & LLG_VPI_AUTO_REF) llg_ref_write((llg_ref_t*)part.storage, image);
+    else if (part.entry->flags & LLG_VPI_AUTO_FIXED)
+        llg_ba(llg_fixed_array_cell((llg_fixed_array_t*)part.storage, part.element), image);
     else llg_ba((sv4_t*)part.storage, image);
     sv4_destroy(&image);
     sv4_destroy(&value);
@@ -950,7 +1108,28 @@ static vpiHandle rts_auto_by_multi_index(const llg_vpi_slot_t* slot, const int64
         if (!rts_alive(slot)) return NULL;
         return dyn_element_by_indices(&place, (uint32_t)slot->right, indices, count, 0);
     }
+    rts_part_t part;
+    if (rts_is_part(slot) && rts_alive(slot) && rts_part(slot, &part) &&
+        rts_part_array_member(&part)) {
+        uint64_t offset;
+        return rts_typespec_offset(part.typespec, indices, count, &offset)
+                   ? rts_member_element(slot, &part, offset)
+                   : NULL;
+    }
     return rts_fixed_element(slot, indices, count);
+}
+
+/* `[i]...` of an element of an array member, appended to `out`. */
+static LLG_OUTLYING int rts_member_index_path(const rts_part_t* part, char* out, size_t size, size_t* used) {
+    int64_t indices[16];
+    uint32_t dims = rts_typespec_indices(typespec_at(part->node->typespec), part->member_element,
+                                         indices, 16u);
+    for (uint32_t d = 0; d < dims; ++d) {
+        int written = snprintf(out + *used, size - *used, "[%lld]", (long long)indices[d]);
+        if (written < 0 || (size_t)written >= size - *used) return 0;
+        *used += (size_t)written;
+    }
+    return 1;
 }
 
 /* `name[i]...` of an element, `.member` of a member, appended to `out`. */
@@ -978,6 +1157,9 @@ static int rts_part_path(const llg_vpi_slot_t* slot, const rts_part_t* part, cha
             *used += (size_t)written;
         }
     }
+    if (part->member_element != LLG_VPI_NO_ELEMENT &&
+        !rts_member_index_path(part, out, size, used))
+        return 0;
     return 1;
 }
 
@@ -987,9 +1169,18 @@ static const char* rts_part_str(int property, const llg_vpi_slot_t* slot) {
     char* out = g_vpi.str_buffer;
     size_t size = sizeof(g_vpi.str_buffer), used = 0;
     int written;
+    if (property == vpiName && part.node && part.member_element != LLG_VPI_NO_ELEMENT) {
+        written = snprintf(out, size, "%s", part.node->name);
+        used = written < 0 ? size : (size_t)written;
+        if (used >= size || !rts_member_index_path(&part, out, size, &used)) {
+            vpi_error("LLG_VPI_LIMIT", "the VPI name is too long");
+            return NULL;
+        }
+        return out;
+    }
     if (property == vpiName && part.node) return part.node->name;
     if (property == vpiName)
-        written = snprintf(out, size, "%s", part.entry->name);
+        written = snprintf(out, size, "%s", rts_auto_name(part.entry));
     else if (property == vpiFullName)
         written = snprintf(out, size, "%s.%s", part.frame->name, part.entry->name);
     else if (property == vpiFile) {
@@ -1016,9 +1207,8 @@ static const char* rts_part_str(int property, const llg_vpi_slot_t* slot) {
 static PLI_INT64 rts_part_get(int property, const llg_vpi_slot_t* slot) {
     rts_part_t part;
     if (!rts_part(slot, &part)) return vpiUndefined;
-    int element = !part.node;
-    int packed = !rts_part_unpacked_aggregate(&part) && part.width &&
-                 !(part.node && part.node->type == vpiRegArray);
+    int element = !part.node || part.member_element != LLG_VPI_NO_ELEMENT;
+    int packed = !rts_part_unpacked_aggregate(&part) && part.width && !rts_part_array_member(&part);
     int real = (part.entry->flags & LLG_VPI_AUTO_REALS) != 0;
     switch (property) {
         /* 37.3.7: a part of an automatic variable is non-static too. */
@@ -1027,9 +1217,15 @@ static PLI_INT64 rts_part_get(int property, const llg_vpi_slot_t* slot) {
         case vpiStructUnionMember: return !element;
         case vpiAllocScheme: return vpiAutomaticScheme;
         case vpiLineNo: return part.entry->line;
-        case vpiArray: return part.node && part.node->type == vpiRegArray;
+        case vpiArray: return rts_part_array_member(&part);
+        case vpiArrayType:
+            /* An unpacked array member of a structure is a fixed array. */
+            if (rts_part_array_member(&part)) return vpiStaticArray;
+            break;
         case vpiConstantVariable: return 0;
         case vpiSize:
+            /* 37.17 detail 9: an array member's element count. */
+            if (rts_part_array_member(&part)) return (PLI_INT64)rts_typespec_elements(part.typespec);
             if (rts_part_unpacked_aggregate(&part)) return part.typespec->member_count;
             if (real) return part.shape && part.shape->shortreal ? 32 : 64;
             if (part.width) return part.width;
@@ -1037,7 +1233,8 @@ static PLI_INT64 rts_part_get(int property, const llg_vpi_slot_t* slot) {
         case vpiSigned:
             if (real || rts_part_unpacked_aggregate(&part)) return 0;
             if (part.shape) return part.shape->is_signed;
-            if (part.node) return (part.node->flags & LLG_VPI_TS_SIGNED) != 0;
+            if (part.node && part.member_element == LLG_VPI_NO_ELEMENT)
+                return (part.node->flags & LLG_VPI_TS_SIGNED) != 0;
             return part.typespec && (part.typespec->flags & LLG_VPI_TS_SIGNED) != 0;
         case vpiScalar:
         case vpiVector:
@@ -1056,6 +1253,7 @@ static vpiHandle rts_part_handle(int type, const llg_vpi_slot_t* slot) {
         case vpiParent:
             /* A member's parent is the value holding it, an element's its
              * array (37.17 details 13, 25). */
+            if (part.member_element != LLG_VPI_NO_ELEMENT) return rts_part_make(slot, slot->count, slot->lsb);
             if (part.node && part.node->parent) return rts_part_make(slot, slot->count, part.node->parent);
             if (part.node && slot->count) return rts_part_make(slot, slot->count, 0u);
             return rts_part_make(slot, 0u, 0u);
@@ -1081,8 +1279,10 @@ static vpiHandle rts_part_member_list(const llg_vpi_slot_t* slot, const rts_part
                                           : "vpiMember iterates a structure or union variable");
         return NULL;
     }
+    /* Copied: each new handle may move the slot table under `slot`. */
+    llg_vpi_slot_t base = *slot;
     rts_handles_t list = {0};
-    for (uint32_t i = 0; i < count; ++i) rts_push(&list, rts_part_make(slot, slot->count, first + i + 1u));
+    for (uint32_t i = 0; i < count; ++i) rts_push(&list, rts_part_make(&base, base.count, first + i + 1u));
     return rts_list(vpiMember, list.items, list.count, list.failed);
 }
 
@@ -1091,8 +1291,8 @@ static vpiHandle rts_part_member_list(const llg_vpi_slot_t* slot, const rts_part
  * is one object per declared dimension of the subprogram's variable,
  * located at the variable and its bounds at the subprogram (decision
  * A19-D86). */
-static vpiHandle rts_auto_ranges(const llg_vpi_auto_t* entry, rts_frame_t* frame) {
-    const llg_vpi_typespec_t* typespec = typespec_ref(entry->typespec);
+static vpiHandle rts_auto_ranges(const llg_vpi_auto_t* entry, rts_frame_t* frame,
+                                 const llg_vpi_typespec_t* typespec) {
     if (!typespec || !typespec->range_count) {
         vpi_error("LLG_VPI_RELATION", "this array has no declared range");
         return NULL;
@@ -1130,8 +1330,10 @@ static vpiHandle rts_fixed_elements(int type, const llg_vpi_slot_t* slot, const 
         vpi_error("LLG_VPI_RELATION", "this automatic variable is not declared yet in its frame");
         return NULL;
     }
+    /* Copied: each new handle may move the slot table under `slot`. */
+    llg_vpi_slot_t base = *slot;
     rts_handles_t list = {0};
-    for (uint32_t i = 0; i < part->entry->size; ++i) rts_push(&list, rts_part_make(slot, i + 1u, 0u));
+    for (uint32_t i = 0; i < part->entry->size; ++i) rts_push(&list, rts_part_make(&base, i + 1u, 0u));
     return rts_list(type, list.items, list.count, list.failed);
 }
 
@@ -1151,10 +1353,11 @@ static rts_frame_t* rts_frame_by_serial(uint64_t serial, int* thread_slot, uint6
     return NULL;
 }
 
-/* The container automatic `index` of frame `serial` as a dynamic-layer
- * place (its elements, decision A19-D82); 0 once the frame has ended or
- * when the variable keeps no container. */
-static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* place) {
+/* The container or record automatic `index` of frame `serial` as a
+ * dynamic-layer place (its elements or members, decisions A19-D82,
+ * A19-D88); 0 once the frame has ended or when the variable keeps
+ * neither. */
+static LLG_OUTLYING int rts_auto_value_place(uint64_t serial, uint32_t index, dyn_place_t* place) {
     rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
     if (!frame || index >= rts_auto_count(frame)) return 0;
     const llg_vpi_auto_t* entry = &rts_auto_table(frame)[index];
@@ -1162,7 +1365,9 @@ static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* plac
     void* storage = (entry->flags & LLG_VPI_AUTO_NO_VALUE)
                         ? NULL
                         : frame->slots[LLG_VPI_AUTOS_FIRST + index];
-    if (!shape || shape->shape != LLG_VPI_SHAPE_CONTAINER || !storage) return 0;
+    if (!shape || !storage ||
+        (shape->shape != LLG_VPI_SHAPE_CONTAINER && shape->shape != LLG_VPI_SHAPE_RECORD))
+        return 0;
     place->shape = shape;
     place->storage = storage;
     place->row = DYN_AUTO_ROW;
@@ -1177,6 +1382,12 @@ static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* plac
         place->dim_count = typespec->range_count;
     }
     return 1;
+}
+
+/* rts_auto_value_place of a container automatic only. */
+static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* place) {
+    return rts_auto_value_place(serial, index, place) &&
+           place->shape->shape == LLG_VPI_SHAPE_CONTAINER;
 }
 
 static int rts_auto_location(uint64_t serial, uint32_t index, uint32_t* line, const char** file) {
@@ -1238,9 +1449,29 @@ static int rts_auto_elements(const llg_vpi_slot_t* slot, dyn_place_t* place) {
  * associative array automatic: its elements (37.17 detail 4). */
 static LLG_OUTLYING vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* slot) {
     rts_part_t part;
+    dyn_place_t record;
+    if (type == vpiMember && !rts_is_part(slot) && slot->right >= 0 &&
+        rts_auto_value_place(slot->element, (uint32_t)slot->right, &record) &&
+        record.shape->shape == LLG_VPI_SHAPE_RECORD)
+        /* An unpacked structure kept as a record value (37.24 detail 1). */
+        return dyn_record_members(&record, (uint32_t)slot->right);
     if (type == vpiMember || rts_is_part(slot)) {
         if (!rts_part(slot, &part)) return NULL;
         if (type == vpiMember) return rts_part_member_list(slot, &part);
+        if (rts_part_array_member(&part)) {
+            /* An unpacked array member: its ranges and its elements in
+             * row-major order (37.17 details 4 and 6). */
+            if (type == vpiRange) return rts_auto_ranges(part.entry, part.frame, part.typespec);
+            const llg_vpi_typespec_t* leaf = rts_leaf_typespec(part.typespec);
+            if (type == vpiReg || type == vpiVarSelect || type == rts_typespec_var_type(leaf)) {
+                llg_vpi_slot_t base = *slot;
+                uint64_t count = rts_typespec_elements(part.typespec);
+                rts_handles_t list = {0};
+                for (uint64_t i = 0; i < count; ++i)
+                    rts_push(&list, rts_part_make_at(&base, base.count, base.lsb, (uint32_t)(i + 1u)));
+                return rts_list(type, list.items, list.count, list.failed);
+            }
+        }
         vpi_error("LLG_VPI_RELATION", "this object has no such iteration");
         return NULL;
     }
@@ -1248,7 +1479,7 @@ static LLG_OUTLYING vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* s
     const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
     if (type == vpiRange && entry && entry->type == vpiArrayVar &&
         entry->array_type == vpiStaticArray)
-        return rts_auto_ranges(entry, frame);
+        return rts_auto_ranges(entry, frame, typespec_ref(entry->typespec));
     if (rts_auto_fixed(entry)) {
         if (!rts_part(slot, &part)) return NULL;
         return rts_fixed_elements(type, slot, &part);
@@ -1282,6 +1513,14 @@ static LLG_OUTLYING vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* s
 /* vpi_handle_by_index of a container automatic: the element at `index`. */
 static vpiHandle rts_auto_by_index(const llg_vpi_slot_t* slot, PLI_INT32 index) {
     if (!rts_alive(slot)) return NULL;
+    rts_part_t part;
+    if (rts_is_part(slot) && rts_part(slot, &part) && rts_part_array_member(&part)) {
+        int64_t value = index;
+        uint64_t offset;
+        return rts_typespec_offset(part.typespec, &value, 1u, &offset)
+                   ? rts_member_element(slot, &part, offset)
+                   : NULL;
+    }
     if (rts_is_part(slot) || rts_auto_fixed(rts_auto(slot, NULL))) {
         int64_t value = index;
         return rts_fixed_element(slot, &value, 1u);
@@ -1314,6 +1553,11 @@ static const llg_vpi_auto_t* rts_auto_storage(const llg_vpi_slot_t* slot, dyn_pl
     if (place->shape && place->shape->shape == LLG_VPI_SHAPE_CONTAINER) {
         vpi_error("LLG_VPI_VALUE",
                   "an array variable has no value; access its elements (37.17 detail 11)");
+        return NULL;
+    }
+    if (place->shape && place->shape->shape == LLG_VPI_SHAPE_RECORD) {
+        vpi_error("LLG_VPI_VALUE",
+                  "an unpacked structure or union has no value; access its members (37.17 detail 11)");
         return NULL;
     }
     if (!place->shape || (entry->flags & LLG_VPI_AUTO_NO_VALUE)) {
@@ -1432,6 +1676,8 @@ static PLI_INT64 rts_auto_get(int property, const llg_vpi_slot_t* slot) {
             if (shape->shape == LLG_VPI_SHAPE_PACKED) return shape->width;
             if (shape->shape == LLG_VPI_SHAPE_CHANDLE) return 64;
             if (shape->shape == LLG_VPI_SHAPE_REAL) return shape->shortreal ? 32 : 64;
+            /* 37.17 detail 9: an unpacked structure's number of fields. */
+            if (shape->shape == LLG_VPI_SHAPE_RECORD) return shape->member_count;
             break;
         case vpiScalar:
         case vpiVector:
@@ -1524,6 +1770,59 @@ static rts_frame_t* rts_frame_for_name(const char* name, const char** rest) {
 
 static vpiHandle rts_auto_by_name(const char* name);
 
+/* The entry of the block local of `frame` whose block path `rest` starts
+ * with (then ends, or a `.` or `[` follows), the longest one, while its
+ * block has bound it; LLG_VPI_NONE without one. */
+static LLG_OUTLYING uint32_t rts_auto_block_by_name(const rts_frame_t* frame, const char* rest) {
+    const llg_vpi_auto_t* table = rts_auto_table(frame);
+    uint32_t found = LLG_VPI_NONE;
+    size_t best = 0;
+    for (uint32_t i = 0; table[i].name; ++i) {
+        if (!(table[i].flags & LLG_VPI_AUTO_BLOCK)) continue;
+        size_t length = strlen(table[i].name);
+        char next = rest[length];
+        if (length <= best || strncmp(table[i].name, rest, length) != 0 ||
+            (next != '\0' && next != '.' && next != '['))
+            continue;
+        if (!frame->slots[LLG_VPI_AUTOS_FIRST + i]) continue;
+        found = i;
+        best = length;
+    }
+    return found;
+}
+
+/* A statement scope's declarations (37.12) with, while a frame of its
+ * subprogram runs that has bound them, the block locals the scope declares
+ * (decision A19-D88): those of the innermost such frame of the running
+ * thread, else of the most recently entered one. */
+static LLG_OUTLYING vpiHandle rts_block_scope_iterate(int type, uint32_t row) {
+    const char* rest = NULL;
+    rts_frame_t* frame = llg_vpi_frames_on && rts.stack_count
+                             ? rts_frame_for_name(g_vpi.objects[row].full_name, &rest)
+                             : NULL;
+    if (!frame) return iterate_children(type, row);
+    const llg_vpi_auto_t* table = rts_auto_table(frame);
+    size_t prefix = strlen(rest);
+    rts_handles_t list = {0};
+    for (uint32_t child = g_vpi.first_child[row]; child; child = g_vpi.next_sibling[child - 1u])
+        if (child_matches(&g_vpi.objects[child - 1u], type))
+            rts_push(&list, object_handle(child - 1u));
+    uint64_t serial = frame->serial;
+    for (uint32_t i = 0; table[i].name; ++i) {
+        const llg_vpi_auto_t* entry = &table[i];
+        if (!(entry->flags & LLG_VPI_AUTO_BLOCK) || strncmp(entry->name, rest, prefix) != 0 ||
+            entry->name[prefix] != '.' || strchr(entry->name + prefix + 1u, '.') ||
+            !frame->slots[LLG_VPI_AUTOS_FIRST + i])
+            continue;
+        llg_vpi_model_object_t shown;
+        memset(&shown, 0, sizeof(shown));
+        shown.type = entry->type;
+        if (!child_matches(&shown, type)) continue;
+        rts_push(&list, rts_auto_handle_by_serial(serial, i));
+    }
+    return rts_list(type, list.items, list.count, list.failed);
+}
+
 /* vpi_handle_by_name relative to an automatic variable or a part of it (a
  * member name in a structure); NULL without an error when it has none. */
 static vpiHandle rts_auto_by_scoped_name(const llg_vpi_slot_t* scope, const char* name) {
@@ -1556,15 +1855,26 @@ static vpiHandle rts_auto_by_name(const char* name) {
     const llg_vpi_auto_t* table = rts_auto_table(frame);
     uint32_t index = 0;
     while (table[index].name &&
-           (strlen(table[index].name) != length || strncmp(table[index].name, rest, length) != 0))
+           ((table[index].flags & LLG_VPI_AUTO_BLOCK) || strlen(table[index].name) != length ||
+            strncmp(table[index].name, rest, length) != 0))
         ++index;
-    if (!table[index].name) return NULL;
+    if (!table[index].name) {
+        /* A block local by its block path (`blk.x`), while its block runs
+         * (decision A19-D88). */
+        index = rts_auto_block_by_name(frame, rest);
+        if (index == LLG_VPI_NONE) return NULL;
+        length = strlen(table[index].name);
+    }
     const char* p = rest + length;
     dyn_place_t place;
     if (*p == '[' && rts_auto_container(frame->serial, index, &place))
         /* A container automatic: its elements, nested elements and
          * structure members are dynamic elements. */
         return dyn_auto_suffix(&place, index, p);
+    if (*p == '.' && rts_auto_value_place(frame->serial, index, &place) &&
+        place.shape->shape == LLG_VPI_SHAPE_RECORD)
+        /* A record automatic: its members are dynamic elements. */
+        return dyn_record_suffix(&place, index, p);
     vpiHandle handle = rts_auto_handle_by_serial(frame->serial, index);
     if (*p == '[') {
         int64_t indices[16];
@@ -1606,6 +1916,21 @@ static vpiHandle rts_auto_by_name(const char* name) {
         vpiHandle next = found ? rts_part_make(slot, slot->count, found) : NULL;
         release_handle(handle);
         handle = next;
+        if (handle && *p == '[') {
+            /* An element of an unpacked array member: all its indices. */
+            int64_t indices[16];
+            uint32_t count = 0;
+            while (*p == '[' && count < 16u) {
+                char* end = NULL;
+                long long value = strtoll(p + 1, &end, 10);
+                if (!end || end == p + 1 || *end != ']') break;
+                indices[count++] = (int64_t)value;
+                p = end + 1;
+            }
+            vpiHandle element = *p == '[' ? NULL : rts_auto_by_multi_index(decode_handle(handle, NULL), indices, count);
+            release_handle(handle);
+            handle = element;
+        }
     }
     if (handle && *p) {
         release_handle(handle);
@@ -2147,7 +2472,7 @@ static const char* rts_get_str(int property, llg_vpi_slot_t* slot, int* handled)
         if (slot->kind == SLOT_AUTO) {
             rts_frame_t* frame = NULL;
             const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
-            if (property == vpiName) return entry->name;
+            if (property == vpiName) return rts_auto_name(entry);
             if (property == vpiFullName) {
                 snprintf(g_vpi.str_buffer, sizeof(g_vpi.str_buffer), "%s.%s", frame->name,
                          entry->name);
@@ -2359,16 +2684,18 @@ static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
     if (type == vpiCallback && rts_callback_owner(object_type)) return rts_callbacks(reference, slot);
     if (type == vpiUse && rts_simple_expr(object_type)) return rts_uses(slot);
     if (slot->kind == SLOT_UDPDEFN) {
+        /* Copied: each new handle may move the slot table under `slot`. */
+        uint32_t defn = (uint32_t)slot->aux;
         const llg_vpi_udp_t* udp = rts_udp(slot->aux);
         rts_handles_t list = {0};
         if (type == vpiIODecl) {
             for (uint32_t i = 0; i < udp->port_count; ++i)
-                rts_push(&list, rts_make(SLOT_UDPIO, (uint32_t)slot->aux, (int64_t)i));
+                rts_push(&list, rts_make(SLOT_UDPIO, defn, (int64_t)i));
             return rts_list(vpiIODecl, list.items, list.count, list.failed);
         }
         if (type == vpiTableEntry) {
             for (uint32_t i = 0; i < udp->entry_count; ++i)
-                rts_push(&list, rts_make(SLOT_TABLEENTRY, (uint32_t)slot->aux, (int64_t)i));
+                rts_push(&list, rts_make(SLOT_TABLEENTRY, defn, (int64_t)i));
             return rts_list(vpiTableEntry, list.items, list.count, list.failed);
         }
     }

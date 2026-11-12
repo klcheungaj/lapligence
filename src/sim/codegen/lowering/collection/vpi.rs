@@ -180,7 +180,7 @@ fn vpi_net_kind(table: &TypespecTable, typespec: Option<usize>) -> IrVpiVarKind 
 impl Codegen<'_> {
     /// The unit-separated hierarchical path of a scope or declaration, with
     /// generate blocks named per SV 27.4 and named statement blocks included.
-    fn vpi_path(&self, id: NodeId) -> Vec<String> {
+    pub(super) fn vpi_path(&self, id: NodeId) -> Vec<String> {
         // A package or `$unit` keys its objects apart from a module of the
         // same name: its key part ends in `::`, the separator its members'
         // full names take (37.10 detail 5).
@@ -2344,13 +2344,13 @@ impl Codegen<'_> {
                 owners.push((key, scope, CodeOwner::Delay(delays)));
             }
         }
-        let constraints = self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
+        let class_bodies = self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
         self.vpi_frame_automatics(model, &mut dynamic, &mut typespecs);
         let mut rows = objects.into_values().collect::<Vec<_>>();
         rows.sort_unstable_by_key(|(order, _)| *order);
         model.vpi_objects = rows.into_iter().map(|(_, object)| object).collect();
         if code {
-            self.populate_vpi_code(model, &mut typespecs, owners, &mut dynamic, constraints);
+            self.populate_vpi_code(model, &mut typespecs, owners, &mut dynamic, class_bodies);
         }
         model.vpi_typespecs = typespecs.entries;
         model.vpi_scope_typedefs = scope_typedefs;
@@ -2390,7 +2390,7 @@ impl Codegen<'_> {
         typespecs: &mut TypespecTable,
         owners: Vec<(String, String, CodeOwner)>,
         dynamic: &mut crate::sim::ir::IrVpiDynamic,
-        constraints: Vec<(usize, usize, NodeId)>,
+        class_bodies: Vec<(usize, usize, NodeId)>,
     ) {
         let mut statements = Vec::new();
         let mut conns = Vec::new();
@@ -2545,18 +2545,23 @@ impl Codegen<'_> {
                     }
                 }
             }
-            // The constraint items of class constraints (37.30). They live
-            // in a class, which is not a catalog scope: their expressions
-            // report no vpiScope.
-            for (class, item, body) in constraints {
-                let root = tables.constraint_root(body, None);
-                if let Some(target) = dynamic
+            // The constraint items of class constraints (37.30) and the
+            // statements of class methods (37.37). They live in a class,
+            // which is not a catalog scope: their expressions report no
+            // vpiScope.
+            for (class, item, body) in class_bodies {
+                let Some(target) = dynamic
                     .classes
                     .get_mut(class)
                     .and_then(|entry| entry.items.get_mut(item))
-                {
-                    target.code = Some(root);
-                }
+                else {
+                    continue;
+                };
+                target.code = if target.kind == crate::sim::ir::IrVpiClassItemKind::Constraint {
+                    Some(tables.constraint_root(body, None))
+                } else {
+                    tables.statement_root(body, None)
+                };
             }
             for (site, call) in model.vpi_compile_calls.iter().enumerate() {
                 let Some(nodes) = self.vpi_call_args.get(site) else {

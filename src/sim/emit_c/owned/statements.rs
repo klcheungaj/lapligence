@@ -26,6 +26,7 @@ impl Frame<'_, '_> {
     }
     pub(super) fn end_block(&mut self) {
         let first = self.marks.len().saturating_sub(1);
+        self.vpi_block_end(first, true);
         self.vpi_frame_end(first);
         if self.vpi_auto_depth == Some(self.marks.len()) {
             self.vpi_auto_depth = None;
@@ -87,6 +88,7 @@ impl Frame<'_, '_> {
             }
         }
         if target + 1 < self.marks.len() {
+            self.vpi_block_end(target + 1, false);
             self.vpi_frame_end(target + 1);
             self.line(format!(
                 "llg_value_scopes_end_since({});",
@@ -143,8 +145,12 @@ impl Frame<'_, '_> {
                 let pointer = self.new_native_value(self.ctx.model.native_values[*index].ty);
                 self.native_values.insert(*index, pointer);
                 self.declare_native_companions(*index)?;
+                self.vpi_auto_bind(VpiAutoKey::NativeValue(*index));
             }
-            IrStmt::NativeValueSharedDeclare(index) => self.shared_native_value(*index)?,
+            IrStmt::NativeValueSharedDeclare(index) => {
+                self.shared_native_value(*index)?;
+                self.vpi_auto_bind(VpiAutoKey::NativeValue(*index));
+            }
             IrStmt::NativeValueCopy { dst, src } => {
                 let target = self.native_value_address(*dst)?;
                 let source = self.native_value_read(*src)?;

@@ -273,7 +273,12 @@ pub(super) struct Frame<'a, 'm> {
     outline_light: bool,
     /// VPI frame automatics (37.39): the activation's address array and the
     /// entry of each body-scope local, stored where the local is declared.
-    vpi_autos: Option<(String, HashMap<VpiAutoKey, usize>)>,
+    /// A block local's entry is flagged: its declaration binds it without
+    /// making its scope the frame's.
+    vpi_autos: Option<(String, VpiAutoEntries)>,
+    /// The bound entries of block locals, with the lexical depth of their
+    /// declarations: leaving that scope clears them (decision A19-D88).
+    vpi_block_bound: Vec<(usize, usize)>,
     /// The serial of the VPI frame the body runs in (37.39), while it is
     /// rendered.
     vpi_frame_serial: Option<String>,
@@ -285,14 +290,21 @@ pub(super) struct Frame<'a, 'm> {
     branch_formals: Option<&'m IrFunc>,
 }
 
+/// The address-array entry of each body-scope automatic, flagged when it is
+/// a block local (decision A19-D88).
+type VpiAutoEntries = HashMap<VpiAutoKey, (usize, bool)>;
+
 /// A body-scope automatic a declaration binds: a local by IR name, or an
 /// automatic container.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum VpiAutoKey {
     Name(String),
     Container(usize),
-    /// A fixed-size real array: its `double` cells.
+    /// A fixed-size activation array: its `double` cells or its
+    /// `llg_fixed_array_t`.
     Array(usize),
+    /// An activation record value: its `llg_value_t`.
+    NativeValue(usize),
 }
 
 /// Whether a conditional's predicate cannot be X or Z, so its ambiguous arm
@@ -537,6 +549,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             outline_pressure: false,
             outline_light: false,
             vpi_autos: None,
+            vpi_block_bound: Vec::new(),
             vpi_frame_serial: None,
             vpi_auto_depth: None,
         }
@@ -1144,7 +1157,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     /// Record the address of VPI automatic `key` in the activation's
     /// address array once its declaration has bound it.
     fn vpi_auto_bind(&mut self, key: VpiAutoKey) {
-        let Some((slots, index)) = self
+        let Some((slots, (index, block))) = self
             .vpi_autos
             .as_ref()
             .and_then(|(slots, locals)| Some((slots.clone(), *locals.get(&key)?)))
@@ -1158,6 +1171,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 .get(container)
                 .map(|bound| format!("&{bound}")),
             VpiAutoKey::Array(array) => self.fixed_arrays.get(array).cloned(),
+            VpiAutoKey::NativeValue(value) => self.native_values.get(value).cloned(),
         };
         if let Some(address) = address {
             self.line(format!(
@@ -1165,7 +1179,37 @@ impl<'a, 'm> Frame<'a, 'm> {
                 index + model::VPI_AUTOS_FIRST
             ));
             let depth = self.marks.len();
-            self.vpi_auto_depth = Some(self.vpi_auto_depth.map_or(depth, |d| d.min(depth)));
+            if block {
+                self.vpi_block_bound.push((depth, index));
+            } else {
+                self.vpi_auto_depth = Some(self.vpi_auto_depth.map_or(depth, |d| d.min(depth)));
+            }
+        }
+    }
+
+    /// Clear the entries of the block locals declared in the lexical scopes
+    /// from mark index `first` on before those scopes are left: a block's
+    /// variables have no value outside it (decision A19-D88). `forget`
+    /// drops them from the bound set when the scopes end on every path.
+    fn vpi_block_end(&mut self, first: usize, forget: bool) {
+        let Some((slots, _)) = self.vpi_autos.as_ref() else {
+            return;
+        };
+        let slots = slots.clone();
+        let cleared = self
+            .vpi_block_bound
+            .iter()
+            .filter(|(depth, _)| *depth > first)
+            .map(|(_, index)| *index)
+            .collect::<Vec<_>>();
+        for index in cleared {
+            self.line(format!(
+                "{slots}[{}] = NULL;",
+                index + model::VPI_AUTOS_FIRST
+            ));
+        }
+        if forget {
+            self.vpi_block_bound.retain(|(depth, _)| *depth <= first);
         }
     }
 

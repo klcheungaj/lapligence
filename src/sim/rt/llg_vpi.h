@@ -42,6 +42,10 @@ extern "C" {
 /* `packed` names a one-cell descriptor array (a scalar member of a column
  * record) until the rows are decoded, then its cell, which never moves. */
 #define LLG_VPI_OBJ_FIXED_CELL 0x1000000u
+/* An unpacked array kept in a keyed container (more cells than the dense
+ * limit, or wider than one packed image): `storage` is its
+ * llg_fixed_array_t, `packed` NULL; element n is its cell n. */
+#define LLG_VPI_OBJ_SPARSE 0x2000000u
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),
@@ -462,7 +466,7 @@ typedef struct {
     uint32_t width;           /* vpiSize of a function, argument or parameter */
     uint32_t typespec;        /* typespec index + 1; 0: none */
     uint32_t owner;           /* an argument's method: item index (in its class) + 1 */
-    uint32_t code;            /* a constraint's root code row + 1 */
+    uint32_t code;            /* root code row + 1: a constraint's items, a method's body */
     uint32_t mode;            /* object field + 1 holding a constraint's off bit (18.9) */
     const char* value;        /* a parameter's digits (MSB first) or text; NULL for a real */
     double real;              /* a real parameter's value */
@@ -629,15 +633,17 @@ uint64_t llg_vpi_frame_enter(const char* full_name);
  * per-subprogram table. The activation's address array holds, for each row,
  * the storage of the variable's value shape (an sv4_t, double, llg_string_t,
  * void* handle or container), a packed `ref` formal's llg_ref_t
- * (LLG_VPI_AUTO_REF), the packed image or real cells of a fixed-size array
- * or unpacked structure (LLG_VPI_AUTO_IMAGE, LLG_VPI_AUTO_REALS), or nothing
+ * (LLG_VPI_AUTO_REF), the packed image, real cells or keyed cells of a
+ * fixed-size array or the packed image of an unpacked structure
+ * (LLG_VPI_AUTO_IMAGE, LLG_VPI_AUTO_REALS, LLG_VPI_AUTO_FIXED), or nothing
  * (LLG_VPI_AUTO_NO_VALUE). */
 typedef struct {
     const char* name;
     int32_t type;             /* vpiType */
     uint32_t line;
     /* Value shape index + 1 in the dynamic tables (0: none); for an array
-     * with LLG_VPI_AUTO_IMAGE or LLG_VPI_AUTO_REALS, its element's shape
+     * with LLG_VPI_AUTO_IMAGE, LLG_VPI_AUTO_REALS or LLG_VPI_AUTO_FIXED, its
+     * element's shape
      * (0: an unpacked structure element, typed by the typespec). */
     uint32_t shape;
     uint32_t typespec;        /* typespec index + 1; 0: none */
@@ -659,6 +665,16 @@ typedef struct {
 #define LLG_VPI_AUTO_IMAGE 0x10u
 /* The storage is the double cells of a fixed-size real array, row-major. */
 #define LLG_VPI_AUTO_REALS 0x20u
+/* The storage is the llg_fixed_array_t of a fixed-size array kept in a
+ * keyed container (more cells or bits than one packed image holds): its
+ * cell n is element n, row-major from the leftmost element. */
+#define LLG_VPI_AUTO_FIXED 0x40u
+/* A local of a block of the subprogram's body (37.39): its name is the
+ * block path from the frame (`blk.x`); the frame does not list it, the
+ * block's variables do. Its address is stored where its block declares it
+ * and cleared where the block ends, so it has a value only while the block
+ * runs (decision A19-D88). */
+#define LLG_VPI_AUTO_BLOCK 0x80u
 /* llg_vpi_frame_enter for a subprogram with automatic variables: `autos`
  * is its table, ended by a row with a NULL name; `slots` is the
  * activation's address array, zeroed by the model before it stores any

@@ -220,6 +220,9 @@ enum VpiAutoAccess {
     Ref,
     /// The `double` cells of a fixed-size real array.
     Reals,
+    /// The `llg_fixed_array_t` of a fixed-size activation array of packed
+    /// cells.
+    Fixed,
     /// Nothing: the variable is listed without a value.
     None,
 }
@@ -231,13 +234,11 @@ fn vpi_auto_access(
 ) -> VpiAutoAccess {
     match &automatic.storage {
         IrVpiAutoStorage::Unstored => VpiAutoAccess::None,
-        IrVpiAutoStorage::Array(array) => {
-            if model.arrays.get(*array).is_some_and(|array| array.real) {
-                VpiAutoAccess::Reals
-            } else {
-                VpiAutoAccess::None
-            }
-        }
+        IrVpiAutoStorage::Array(array) => match model.arrays.get(*array) {
+            Some(array) if array.real => VpiAutoAccess::Reals,
+            Some(array) if array.activation => VpiAutoAccess::Fixed,
+            _ => VpiAutoAccess::None,
+        },
         IrVpiAutoStorage::Formal(position) => {
             let Some(formal) = function.formals.get(*position) else {
                 return VpiAutoAccess::None;
@@ -323,7 +324,9 @@ fn vpi_automatic_rows(function: &IrFunc, model: &IrModel) -> String {
         let mut flags = Vec::new();
         if matches!(
             automatic.storage,
-            IrVpiAutoStorage::Local(_) | IrVpiAutoStorage::Container(_)
+            IrVpiAutoStorage::Local(_)
+                | IrVpiAutoStorage::Container(_)
+                | IrVpiAutoStorage::NativeValue(_)
         ) {
             flags.push("LLG_VPI_AUTO_LOCAL");
         }
@@ -341,7 +344,7 @@ fn vpi_automatic_rows(function: &IrFunc, model: &IrModel) -> String {
         match access {
             VpiAutoAccess::Cell => {}
             VpiAutoAccess::Ref => flags.push("LLG_VPI_AUTO_REF"),
-            VpiAutoAccess::Reals => {}
+            VpiAutoAccess::Reals | VpiAutoAccess::Fixed => {}
             VpiAutoAccess::None => flags.push("LLG_VPI_AUTO_NO_VALUE"),
         }
         // A fixed-size array's row carries its element shape instead of a
@@ -351,6 +354,7 @@ fn vpi_automatic_rows(function: &IrFunc, model: &IrModel) -> String {
             match access {
                 VpiAutoAccess::Cell | VpiAutoAccess::Ref => flags.push("LLG_VPI_AUTO_IMAGE"),
                 VpiAutoAccess::Reals => flags.push("LLG_VPI_AUTO_REALS"),
+                VpiAutoAccess::Fixed => flags.push("LLG_VPI_AUTO_FIXED"),
                 VpiAutoAccess::None => {}
             }
             if access != VpiAutoAccess::None && automatic.array_type.is_some() {
@@ -359,6 +363,9 @@ fn vpi_automatic_rows(function: &IrFunc, model: &IrModel) -> String {
         }
         if automatic.signed {
             flags.push("LLG_VPI_AUTO_SIGNED");
+        }
+        if automatic.block {
+            flags.push("LLG_VPI_AUTO_BLOCK");
         }
         rows.push_str(&format!(
             "    {{ {}, {type_code}, {}u, {}u, {}u, {}u, {}, {} }},\n",
@@ -455,15 +462,19 @@ fn vpi_automatics(frame: &mut Frame<'_, '_>, function: &IrFunc) -> (String, Stri
             IrVpiAutoStorage::This => Some("&_this".to_owned()),
             IrVpiAutoStorage::Formal(position) => vpi_formal_address(frame, function, *position),
             IrVpiAutoStorage::Local(name) => {
-                locals.insert(VpiAutoKey::Name(name.clone()), index);
+                locals.insert(VpiAutoKey::Name(name.clone()), (index, automatic.block));
                 continue;
             }
             IrVpiAutoStorage::Container(container) => {
-                locals.insert(VpiAutoKey::Container(*container), index);
+                locals.insert(VpiAutoKey::Container(*container), (index, automatic.block));
                 continue;
             }
             IrVpiAutoStorage::Array(array) => {
-                locals.insert(VpiAutoKey::Array(*array), index);
+                locals.insert(VpiAutoKey::Array(*array), (index, automatic.block));
+                continue;
+            }
+            IrVpiAutoStorage::NativeValue(value) => {
+                locals.insert(VpiAutoKey::NativeValue(*value), (index, automatic.block));
                 continue;
             }
             IrVpiAutoStorage::Unstored => None,

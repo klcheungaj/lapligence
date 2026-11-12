@@ -395,6 +395,7 @@ static vpiHandle rts_auto_by_index(const llg_vpi_slot_t* slot, PLI_INT32 index);
 static vpiHandle rts_auto_by_multi_index(const llg_vpi_slot_t* slot, const int64_t* indices,
                                          uint32_t count);
 static vpiHandle rts_auto_by_name(const char* name);
+static vpiHandle rts_block_scope_iterate(int type, uint32_t row);
 static vpiHandle rts_auto_by_scoped_name(const llg_vpi_slot_t* scope, const char* name);
 static int rts_type(const llg_vpi_slot_t* slot);
 static int rts_identity(const llg_vpi_slot_t* slot, uint64_t identity[4]);
@@ -623,6 +624,7 @@ static int has_array_properties(const llg_vpi_model_object_t* object) {
 }
 
 static int has_storage(const llg_vpi_model_object_t* object) {
+    if (object->flags & LLG_VPI_OBJ_SPARSE) return object->storage != NULL;
     return object->is_real ? object->real != NULL : object->packed != NULL;
 }
 
@@ -642,6 +644,10 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
         const llg_vpi_udp_put_t* put = (const llg_vpi_udp_put_t*)object->storage;
         if (object->dependency || object->shape || !put->state || !put->desc ||
             (put->record && put->record_offset < sizeof(llg_co_frame_t)))
+            return 0;
+    } else if (object->flags & LLG_VPI_OBJ_SPARSE) {
+        if (!object->storage || object->packed || object->real || object->is_real ||
+            object->dependency || object->shape || object->type != vpiRegArray)
             return 0;
     } else if (object->storage || object->dependency || object->shape) {
         return 0;
@@ -706,7 +712,7 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     if (is_array_type(object->type))
         return object->dim_count > 0 &&
                (object->is_real ? object->real != NULL && object->width == 0
-                                : object->packed != NULL && object->width != 0);
+                                : has_storage(object) && object->width != 0);
     if (is_net_type(object->type) || is_variable_type(object->type))
         return object->is_real ? object->real != NULL && object->width == 0
                                : object->packed != NULL && object->width != 0;
@@ -1386,7 +1392,7 @@ static int whole_unpacked_aggregate(const llg_vpi_slot_t* slot) {
  * packed ranges), else NULL. Its ranges are leftmost first. */
 static const llg_vpi_typespec_t* packed_array_typespec(uint32_t row, uint64_t element) {
     const llg_vpi_model_object_t* object = row_object(row);
-    if (!object || object->is_real || !object->packed || !g_vpi.types) return NULL;
+    if (!object || object->is_real || !has_storage(object) || !g_vpi.types) return NULL;
     const llg_vpi_typespec_t* typespec;
     if (element != LLG_VPI_NO_ELEMENT)
         typespec = is_array_type(object->type) ? element_typespec(object) : NULL;
@@ -1551,11 +1557,30 @@ static vpiHandle make_member(uint32_t row, uint64_t element, uint32_t node_index
 
 /* ── value storage ──────────────────────────────────────────────────────── */
 
+/* The packed cell a write, force or value-change watch addresses. A
+ * sparse array's cell is created on first use and never moves. */
 static sv4_t* packed_cell(const llg_vpi_target_t* target) {
     llg_vpi_model_object_t* object = row_object(target->object);
-    if (!object || object->is_real || !object->packed) return NULL;
+    if (!object || object->is_real) return NULL;
+    if (object->flags & LLG_VPI_OBJ_SPARSE)
+        return target->element == LLG_VPI_NO_ELEMENT
+                   ? NULL
+                   : llg_fixed_array_cell((llg_fixed_array_t*)object->storage, target->element);
+    if (!object->packed) return NULL;
     if (target->element == LLG_VPI_NO_ELEMENT) return object->packed;
     return object->packed + target->element;
+}
+
+/* The packed value a read sees: a sparse array's absent cell reads its
+ * default without being created. */
+static LLG_OUTLYING const sv4_t* packed_peek(const llg_vpi_target_t* target) {
+    llg_vpi_model_object_t* object = row_object(target->object);
+    if (object && !object->is_real && (object->flags & LLG_VPI_OBJ_SPARSE))
+        return target->element == LLG_VPI_NO_ELEMENT
+                   ? NULL
+                   : llg_fixed_array_peek((const llg_fixed_array_t*)object->storage,
+                                          target->element);
+    return packed_cell(target);
 }
 
 static double* real_cell(const llg_vpi_target_t* target) {
@@ -1643,7 +1668,7 @@ static int read_target(const llg_vpi_target_t* target, llg_vpi_datum_t* out) {
         out->real = *cell;
         return 1;
     } else {
-        sv4_t* cell = packed_cell(target);
+        const sv4_t* cell = packed_peek(target);
         if (!cell) return 0;
         out->packed = sv4_clone(cell);
     }
@@ -4220,7 +4245,7 @@ static vpiHandle element_by_indices(uint32_t row, const int64_t* indices, int co
 
 static vpiHandle bit_by_index(uint32_t row, uint64_t element, int64_t index, int quiet) {
     llg_vpi_model_object_t* object = row_object(row);
-    if (object->is_real || !object->packed ||
+    if (object->is_real || !has_storage(object) ||
         object->type == vpiPackedArrayVar || object->width < 1) {
         if (quiet != BIT_QUIET)
             vpi_error("LLG_VPI_INDEX", "object has no bit-selectable packed value");
@@ -5251,7 +5276,9 @@ static int storage_index(void) {
     size_t count = 0;
     for (uint32_t row = 0; row < g_vpi.object_count; ++row) {
         const llg_vpi_model_object_t* object = &g_vpi.objects[row];
-        if (!has_storage(object) || (object->flags & LLG_VPI_OBJ_SLICE) ||
+        /* A sparse array's cells are not one extent; its elements are not
+         * indexed by address. */
+        if (!has_storage(object) || (object->flags & (LLG_VPI_OBJ_SLICE | LLG_VPI_OBJ_SPARSE)) ||
             !(is_net_type(object->type) || is_variable_type(object->type) ||
               is_array_type(object->type)))
             continue;
@@ -9618,7 +9645,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type)) {
         /* 37.12: a statement scope iterates its declarations; the other
          * iterations are its statement's (37.69, 37.70). */
-        if (is_scope_iteration(type)) return iterate_children(type, slot->object);
+        if (is_scope_iteration(type)) return rts_block_scope_iterate(type, slot->object);
         uint32_t code = statement_scope_code(object);
         return code == LLG_VPI_NONE ? NULL : iterate_code(code, type);
     }
@@ -9779,7 +9806,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         return encode_handle(index);
     }
     if (type == vpiBit && (slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT) && object &&
-        !object->is_real && object->packed &&
+        !object->is_real && has_storage(object) &&
         !(slot->kind == SLOT_OBJECT && is_array_type(object->type))) {
         /* A scalar, one bit without a packed dimension (37.16 detail 25),
          * has no bits (decision A19-D47). */
@@ -9821,6 +9848,10 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
                       "a package holds no ports, processes, instances or structure (37.10)");
             return NULL;
         }
+        /* A named block's declarations include its block locals while a
+         * frame of its subprogram runs (decision A19-D88). */
+        if ((object->type == vpiNamedBegin || object->type == vpiNamedFork) && is_scope_iteration(type))
+            return rts_block_scope_iterate(type, slot->object);
         return iterate_children(type, slot->object);
     }
     vpi_error("LLG_VPI_UNSUPPORTED", "unsupported VPI one-to-many relation for this object");
@@ -11942,7 +11973,13 @@ void vpi_get_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_IN
             vpi_error("LLG_VPI_NOMEM", "VPI value conversion allocation failed");
             return;
         }
-        export_words(object->packed[flat], bits);
+        llg_vpi_target_t cell_target = {row, flat, 0u, 0u, 0, 0};
+        const sv4_t* cell = packed_peek(&cell_target);
+        if (!cell) {
+            vpi_error("LLG_VPI_VALUE", "this array element has no storage");
+            return;
+        }
+        export_words(*cell, bits);
         switch (format) {
             case vpiIntVal: {
                 PLI_INT32 value = low_int(bits, width, object->is_signed);
