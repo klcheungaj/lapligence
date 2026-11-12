@@ -131,6 +131,26 @@ fn net_read_in_target_select() {
     );
 }
 
+/// A package defined twice, by a guarded header compiled on its own and
+/// included again by the testbench in another compilation unit (a
+/// verification library's package file is): every reference names the
+/// first definition, and the design holds one package of that name.
+#[test]
+fn duplicate_package_definition() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "duplicate_package_definition",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/duplicate_package_definition.out"
+        ),
+        &[concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sim/feature_completion/ki_uvm_run/duplicate_package_definition_pkg.svh"
+        )],
+        &[],
+    );
+}
+
 /// Randomize through base-class handles over 40 derived classes. The model
 /// is about 2 MB of C; the dispatch shape, not C optimization, is under test,
 /// so the model builds at `-O0`.

@@ -318,7 +318,10 @@ impl Validator<'_> {
         let mut storage_names = HashSet::new();
         for (idx, container) in self.model.containers.iter().enumerate() {
             if !storage_names.insert(container.c_name.as_str()) {
-                return self.fail("containers", "duplicate container storage name");
+                return self.fail(
+                    format!("containers[{idx}]"),
+                    format!("duplicate container storage name `{}`", container.c_name),
+                );
             }
             validate_container_element(&container.element, &format!("containers[{idx}].element"))?;
             if !container.element.is_packed()

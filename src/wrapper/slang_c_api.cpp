@@ -2810,6 +2810,15 @@ public:
 
   template<std::derived_from<Symbol> T>
   void handle(const T& symbol) {
+    if constexpr (std::same_as<T, PackageSymbol>) {
+      // A second definition of a package name (the frontend warns) is never
+      // bound by a lookup: every reference resolves to the first. Simulation
+      // captures only that one, so the design holds one package per name; the
+      // language server keeps both definitions.
+      if (!capture.declarationOnly && !symbol.name.empty() &&
+          symbol.getCompilation().getPackage(symbol.name) != &symbol)
+        return;
+    }
     if constexpr (std::same_as<T, InstanceBodySymbol>) {
       // Every mode records the reached definition bodies so shadowed
       // duplicates are found (captureShadowedDefinitions); library-unit
