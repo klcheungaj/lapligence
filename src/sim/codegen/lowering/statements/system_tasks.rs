@@ -315,7 +315,9 @@ impl EmitCtx<'_, '_> {
                         // Trailing views no conversion prints: they only join
                         // the comparison that decides a report (T1-D8).
                         for argument in display_args_source {
-                            if let Some(view) = self.cg.varying_strength_view(*argument)? {
+                            if let Some(view) =
+                                self.cg.varying_strength_view(&self.path, *argument)?
+                            {
                                 display_args.push(crate::sim::ir::IrDisplayArg::Strength(view));
                             }
                         }

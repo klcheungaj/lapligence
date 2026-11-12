@@ -13,6 +13,12 @@
 //! (decision T1-D8). Only a net whose strength can change without its value
 //! has a view for them ([`Codegen::note_strength_nets`]): one with nothing but
 //! strong drivers shows one strength for each value, so it costs nothing.
+//!
+//! A select with a dynamic index (`v[i]`, `v[i +: 2]`) of a net reads the
+//! bytes of its net's view that the index selects when it is evaluated, so
+//! `%v` shows and an event wakes on the strength of the bits selected now
+//! (decision T1-D12). Bits past the net, or an unknown index, read StX, the
+//! strength a value select there gives.
 
 use super::*;
 use crate::sim::emit_c::LLG_MAX_WIDTH;
@@ -20,6 +26,10 @@ use crate::sim::ir::{IrDependency, IrDisplayArg, IrNetKind};
 
 /// Bits of view storage per net bit.
 const VIEW_BITS: u32 = 8;
+
+/// The view byte of a strong unknown (StX): low nibble -6 + 7, high nibble
+/// 6 + 7 (`llg_net_t.strength`).
+const STRENGTH_X: u64 = 0xd1;
 
 /// The nets whose strength can change while their value holds.
 #[derive(Default)]
@@ -172,6 +182,7 @@ impl Codegen<'_> {
     /// event on it, or a `$monitor` argument naming it, also compares this.
     pub(in super::super) fn varying_strength_view(
         &mut self,
+        path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
         if self.strength_nets.signals.is_empty() {
@@ -182,7 +193,21 @@ impl Codegen<'_> {
                 .iter()
                 .any(|(group, _)| cg.strength_varies(*group))
         };
-        self.net_strength_expr(node, varies)
+        self.net_strength_expr(path, node, varies)
+    }
+
+    /// The index of `node` when it is a select whose bits are not static
+    /// (a dynamic bit or indexed part-select): its strength view then reads
+    /// that index as well as the view.
+    pub(in super::super) fn dynamic_strength_index(&self, node: NodeId) -> Option<NodeId> {
+        let index = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { index, .. }) => *index,
+            NodeKind::Expr(ExprKind::IndexedPartSelect { base_expr, .. }) => *base_expr,
+            _ => return None,
+        };
+        self.alias_expression_bits(node, node)
+            .is_err()
+            .then_some(index)
     }
 
     /// The hierarchical source name of a net group, or its C name when no
@@ -295,16 +320,196 @@ impl Codegen<'_> {
     /// strong value-only formatting, which is exact for them.
     pub(in crate::sim::codegen::lowering) fn strength_display_arg(
         &mut self,
+        path: &str,
         node: NodeId,
     ) -> Result<Option<IrDisplayArg>, String> {
         Ok(self
-            .net_strength_expr(node, |_, _| true)?
+            .net_strength_expr(path, node, |_, _| true)?
             .map(IrDisplayArg::Strength))
+    }
+
+    /// The strength view of a net, a constant projection of nets or a
+    /// dynamic select of one, whose resolved bits `accept` admits.
+    fn net_strength_expr(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        accept: impl Fn(&Self, &[(usize, u32)]) -> bool,
+    ) -> Result<Option<IrExpr>, String> {
+        if self.dynamic_strength_index(node).is_some() {
+            return self.dynamic_select_strength(path, node, accept);
+        }
+        self.static_strength_expr(node, accept)
+    }
+
+    /// The view bytes a dynamic select of a net reads: those of the bits the
+    /// index selects, StX for bits past the net or for an unknown index
+    /// (module docs). The lowered select gives the index as an offset from
+    /// the net's least significant bit, so the view, eight bits per net bit
+    /// in the same order, takes it scaled. A select whose base is not a
+    /// static projection of nets, or that does not lower to a packed select
+    /// of it (a net-array element), has no view.
+    fn dynamic_select_strength(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        accept: impl Fn(&Self, &[(usize, u32)]) -> bool,
+    ) -> Result<Option<IrExpr>, String> {
+        let base = match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. } | ExprKind::IndexedPartSelect { base, .. },
+            ) => *base,
+            _ => return Ok(None),
+        };
+        let Some(view) = self.static_strength_expr(base, accept)? else {
+            return Ok(None);
+        };
+        let bits = view.width / VIEW_BITS;
+        let value = self.lower_expr(path, node)?;
+        // `high` says whether the offset names the window's most significant
+        // bit (`-:` on some ranges) instead of its least significant one.
+        let (low, count, high) = match value.kind() {
+            IrExprKind::BitSel { base, idx } if base.width == bits => ((**idx).clone(), 1, false),
+            IrExprKind::IdxPartSel {
+                base,
+                base_idx,
+                neg,
+                ..
+            } if base.width == bits => ((**base_idx).clone(), value.width, *neg),
+            _ => return Ok(None),
+        };
+        let too_wide = || {
+            format!(
+                "strength view of a {count}-bit dynamic select of a {bits}-bit net takes {VIEW_BITS} bits per net bit, past the packed width limit of {LLG_MAX_WIDTH} bits"
+            )
+        };
+        let bytes = |count: u32| -> Result<IrExpr, String> {
+            let width = count * VIEW_BITS;
+            let mut words = vec![0u64; width.div_ceil(64) as usize];
+            for byte in 0..count {
+                let bit = byte * VIEW_BITS;
+                words[(bit / 64) as usize] |= STRENGTH_X << (bit % 64);
+            }
+            let constant = IrConst::packed(words, Vec::new(), Vec::new(), width, false, None)
+                .map_err(|error| error.to_string())?;
+            Ok(IrExpr::new(IrExprKind::Const(constant), width, false, None))
+        };
+        let integer = |value: u64, width: u32, signed: bool| -> Result<IrExpr, String> {
+            let constant =
+                IrConst::packed(vec![value], Vec::new(), Vec::new(), width, signed, None)
+                    .map_err(|error| error.to_string())?;
+            Ok(IrExpr::new(
+                IrExprKind::Const(constant),
+                width,
+                signed,
+                None,
+            ))
+        };
+        let binary = |op: IrBinOp, a: IrExpr, b: IrExpr, width: u32, signed: bool| {
+            IrExpr::new(
+                IrExprKind::Bin {
+                    op,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                },
+                width,
+                signed,
+                None,
+            )
+        };
+        // One more bit than the offset, and at least 64, so that adding the
+        // padding cannot wrap an offset past the net into range.
+        let (width, signed) = (low.width.saturating_add(1).max(64), low.signed);
+        let low = IrExpr::convert_to(low, width, signed);
+        let shifted = |by: u32| -> Result<IrExpr, String> {
+            Ok(if by == 0 {
+                low.clone()
+            } else {
+                binary(
+                    IrBinOp::Add,
+                    low.clone(),
+                    integer(u64::from(by), width, signed)?,
+                    width,
+                    signed,
+                )
+            })
+        };
+        // A wider select pads the view with `count` StX bytes on each side,
+        // so a window that overlaps the net reads StX for its bits past it.
+        let (padded, pad) = if count == 1 {
+            (view, 0)
+        } else {
+            let total = bits
+                .checked_add(2 * count)
+                .and_then(|bits| bits.checked_mul(VIEW_BITS))
+                .filter(|width| *width <= LLG_MAX_WIDTH)
+                .ok_or_else(too_wide)?;
+            let parts = vec![bytes(count)?, view, bytes(count)?];
+            (
+                IrExpr::new(IrExprKind::Concat { parts }, total, false, None),
+                count,
+            )
+        };
+        // With `low` the window's least significant bit, it overlaps the net
+        // exactly when bit `low + count - 1` of a `bits + count - 1`-bit
+        // vector exists; the value select's own index conversion decides
+        // that, so an unknown or negative offset is out. An offset naming the
+        // most significant bit is `low + count - 1` already.
+        let (top, first) = if high {
+            (0, pad + 1 - count)
+        } else {
+            (count - 1, pad)
+        };
+        let span = bits + count - 1;
+        let inside = binary(
+            IrBinOp::CaseEq,
+            IrExpr::new(
+                IrExprKind::BitSel {
+                    base: Box::new(IrExpr::new(IrExprKind::Fill(1), span, false, Some(1))),
+                    idx: Box::new(shifted(top)?),
+                },
+                1,
+                false,
+                None,
+            ),
+            integer(1, 1, false)?,
+            1,
+            false,
+        );
+        let start = binary(
+            IrBinOp::Mul,
+            shifted(first)?,
+            integer(u64::from(VIEW_BITS), width, signed)?,
+            width,
+            signed,
+        );
+        let window = count * VIEW_BITS;
+        let slice = IrExpr::new(
+            IrExprKind::IdxPartSel {
+                base: Box::new(padded),
+                base_idx: Box::new(start),
+                width_expr: Box::new(lhs_integer_expr(i128::from(window))),
+                neg: false,
+            },
+            window,
+            false,
+            None,
+        );
+        Ok(Some(IrExpr::new(
+            IrExprKind::Mux {
+                sel: Box::new(inside),
+                a: Box::new(slice),
+                b: Box::new(bytes(count)?),
+            },
+            window,
+            false,
+            None,
+        )))
     }
 
     /// The strength view of a net or constant projection of nets whose
     /// resolved bits `accept` admits.
-    fn net_strength_expr(
+    fn static_strength_expr(
         &mut self,
         node: NodeId,
         accept: impl Fn(&Self, &[(usize, u32)]) -> bool,
@@ -372,7 +577,8 @@ impl Codegen<'_> {
         Ok(Some(view))
     }
 
-    /// The dependencies of a strength view expression.
+    /// The view dependencies of a strength view expression; those of a
+    /// dynamic select's index are the caller's.
     pub(in super::super) fn strength_view_reads(&self, view: &IrExpr) -> Vec<IrDependency> {
         let mut reads = Vec::new();
         let mut pending = vec![view];
@@ -386,8 +592,12 @@ impl Codegen<'_> {
                         }
                     }
                 }
-                IrExprKind::PartSel { base, .. } => pending.push(base),
+                IrExprKind::PartSel { base, .. } | IrExprKind::IdxPartSel { base, .. } => {
+                    pending.push(base)
+                }
                 IrExprKind::Concat { parts } => pending.extend(parts),
+                // A dynamic select's index and range check read no view.
+                IrExprKind::Mux { a, .. } => pending.push(a),
                 _ => {}
             }
         }

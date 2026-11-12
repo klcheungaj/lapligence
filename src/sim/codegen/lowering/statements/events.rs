@@ -514,7 +514,8 @@ impl EmitCtx<'_, '_> {
     /// event's trigger count moved. Qualifiers run only for a detected source.
     /// The language leaves the number of helper evaluations unspecified; this
     /// form performs one per value source at arm time and one per value source
-    /// per wake.
+    /// per wake. The strength view of a net source (T1-D8) is a source of its
+    /// own; for a dynamic select (T1-D12) it evaluates the index again.
     pub(super) fn process_event_plan(
         &mut self,
         h: NodeId,
@@ -564,7 +565,7 @@ impl EmitCtx<'_, '_> {
         let mut strength = Vec::new();
         for (source, condition) in &sources {
             if let Source::Value(expression, IrEdge::Any) = source {
-                if let Some(view) = self.cg.varying_strength_view(*expression)? {
+                if let Some(view) = self.cg.varying_strength_view(&self.path, *expression)? {
                     strength.push((Source::Strength(view), *condition));
                 }
             }
@@ -1221,13 +1222,36 @@ impl EmitCtx<'_, '_> {
             if self.cg.event_target_of(sig).is_some() {
                 continue;
             }
-            let Some(view) = self.cg.varying_strength_view(sig)? else {
+            let path = self.path.clone();
+            let Some(view) = self.cg.varying_strength_view(&path, sig)? else {
                 continue;
             };
-            let reads = self.cg.strength_view_reads(&view);
+            let mut reads = self.cg.strength_view_reads(&view);
             let condition = condition
                 .map(|condition| self.event_evaluator(condition).map(|(name, _)| name))
                 .transpose()?;
+            // A dynamic select also reads its index, which can name a
+            // process's automatic variables: its evaluator binds them as the
+            // value event's does.
+            if let Some(index) = self.cg.dynamic_strength_index(sig) {
+                let mut index_reads = self.cg.collect_read_signals(&path, index)?;
+                index_reads.extend(self.cg.shared_event_dependencies(index));
+                for read in index_reads {
+                    if !reads.contains(&read) {
+                        reads.push(read);
+                    }
+                }
+                let eval = self.evaluator_of(sig, view)?;
+                lowered.push((
+                    IrWaitSrc::Evaluated {
+                        eval,
+                        condition,
+                        reads,
+                    },
+                    IrEdge::Any,
+                ));
+                continue;
+            }
             if let (IrExprKind::SigRead(signal), None) = (view.kind(), &condition) {
                 let name = self.cg.model.signal(*signal).c_name.clone();
                 lowered.push((IrWaitSrc::Sig(name), IrEdge::Any));
@@ -1270,7 +1294,7 @@ impl EmitCtx<'_, '_> {
             .check_event_expression_effects(expression, &self.path)?;
         // A string expression such as an array element has no marker of its
         // own (SV 9.4.2): its digest stands for its value.
-        let mut value = if self.cg.is_string_expr(&self.path, expression) {
+        let value = if self.cg.is_string_expr(&self.path, expression) {
             let text = self.cg.lower_string(&self.path, expression)?;
             IrExpr::new(
                 IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringDigest(text))),
@@ -1281,6 +1305,14 @@ impl EmitCtx<'_, '_> {
         } else {
             self.cg.lower_expr(&self.path, expression)?
         };
+        let real = value.is_real();
+        Ok((self.evaluator_of(expression, value)?, real))
+    }
+
+    /// An event evaluator returning `value`, which reads what `expression`
+    /// reads: captured automatic variables and formals come from the
+    /// evaluator's context.
+    fn evaluator_of(&mut self, expression: NodeId, mut value: IrExpr) -> Result<String, String> {
         let (context, aliases) = self.cg.event_context_with_aliases(expression)?;
         // A fork-visible automatic array element names its declaration
         // local; the evaluator binds the captured cell under the context
@@ -1319,8 +1351,7 @@ impl EmitCtx<'_, '_> {
             });
         }
         let name = self.cg.new_fn_name(&self.path, "event_eval");
-        let real = value.is_real();
-        if real {
+        if value.is_real() {
             self.pre_fns.push(crate::sim::ir::IrPreFn::RealEval {
                 c_name: name.clone(),
                 value,
@@ -1335,7 +1366,7 @@ impl EmitCtx<'_, '_> {
                 real_item: false,
             });
         }
-        Ok((name, real))
+        Ok(name)
     }
 
     fn lower_event_spec(

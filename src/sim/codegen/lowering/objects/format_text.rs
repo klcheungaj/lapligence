@@ -302,7 +302,7 @@ impl Codegen<'_> {
             ));
         }
         if lower == b'v' {
-            if let Some(view) = self.strength_display_arg(node)? {
+            if let Some(view) = self.strength_display_arg(path, node)? {
                 return Ok(view);
             }
         }

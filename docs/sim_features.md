@@ -1548,7 +1548,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   undelayed `bufif`/`notif` gates with an unknown enable drive L/H. `tri0/tri1`
   and supplies are pull/supply sources, not post-resolution defaults. `%v`
   reports the resolved strength range (mnemonic, two-digit range, L/H) of nets,
-  their constant selects, aliases and net-array cells; strength-only changes
+  their constant selects, aliases and net-array cells, and of the bits a
+  dynamic bit or indexed part-select of a vector net selects (StX past the net;
+  decision T1-D12); strength-only changes
   reach `%v` monitors, and readers that name the net (event controls, implicit
   event lists, `wait`, `$monitor` arguments; decision T1-D8), while edges and
   derived values wake only on value changes. The
