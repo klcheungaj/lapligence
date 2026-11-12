@@ -102,6 +102,21 @@ fn virtual_interface_function_return() {
     );
 }
 
+/// Forward class typedefs in a module only name classes declared later: a
+/// register model included into a testbench module declares them.
+#[test]
+fn forward_class_typedef_in_module() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "forward_class_typedef_in_module",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/forward_class_typedef_in_module.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// Randomize through base-class handles over 40 derived classes. The model
 /// is about 2 MB of C; the dispatch shape, not C optimization, is under test,
 /// so the model builds at `-O0`.

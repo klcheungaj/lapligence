@@ -1247,6 +1247,8 @@ fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
                 | "Constraint"
                 | "ExplicitImport"
                 | "Export"
+                // `typedef class c;` only names a type declared later.
+                | "ForwardingTypedef"
                 | "Import"
                 | "LetDecl"
                 // Overload uses are captured as ordinary calls (SV 11.11).
