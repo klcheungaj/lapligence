@@ -829,13 +829,12 @@ typedef struct {
     llg_acov_event_queue_t assertion_events;
     // vpiAssertionSysEnd ran: no control enables an assertion again.
     int assertions_ended;
-    // Registered property assertions with an asynchronous abort condition;
-    // with any, a signal written since their last check, and the time + 1
-    // of the step they were last checked in (decision of the abort timing:
-    // checked in Observed, after the clock ticks, with current values).
-    uint64_t property_async_count;
-    int property_async_pending;
-    uint64_t property_async_step;
+    // Registered property assertions with an asynchronous abort condition,
+    // and with any, a signal written since their last check (S38-D13: they
+    // are checked in Observed, after the clock ticks, with current values).
+    // The pair fills the 8 bytes the count alone used to.
+    uint32_t property_async_count;
+    uint32_t property_async_pending;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
     // Pending deferred assertion reports of the current pass and the
@@ -920,6 +919,8 @@ typedef struct {
     // The saved values (16.15.6.1) of the procedural assertion attempt being
     // evaluated or reported, or NULL.
     llg_frame_t* assertion_values;
+    // The time + 1 of the step whose asynchronous aborts were last checked.
+    uint64_t property_async_step;
 } llg_rt_ctx_t;
 
 static llg_rt_ctx_t g;
