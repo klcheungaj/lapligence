@@ -188,6 +188,7 @@ impl Codegen<'_> {
         point: NodeId,
         info: &CoverpointInfo,
         width: u32,
+        signed: bool,
     ) -> Result<IrCoverAutomatic, String> {
         let point_name = self.coverpoint_name(point);
         if let Some(bin) = info.bins.first() {
@@ -198,12 +199,7 @@ impl Codegen<'_> {
                 ),
             ));
         }
-        let is_enum = info
-            .type_id
-            .and_then(|type_id| self.db.enum_type_metadata(type_id))
-            .or_else(|| self.enum_metadata_for_expr(info.expr))
-            .is_some();
-        if is_enum {
+        if self.coverpoint_enum(info, width, signed).is_some() {
             return Err(self.coverage_error(
                 point,
                 format!(

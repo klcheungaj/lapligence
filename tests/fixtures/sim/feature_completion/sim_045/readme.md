@@ -449,6 +449,7 @@ warning names the pair where it stopped. The run reports no overlap; samples
 | `neg_wide_exact` | a `[4]` bins array over 2^32 + 1 values of a 71-bit coverpoint (llg limitation) |
 | `neg_wide_point_argument` | a bins value of a 71-bit coverpoint read from a covergroup argument (llg limitation) |
 | `neg_wide_intersect_auto` | `intersect` on a 71-bit coverpoint with automatic bins (llg limitation) |
+| `neg_wide_enum` | an enum coverpoint of 70 bits (llg limitation: enum coverpoints of at most 64 bits) |
 | `neg_trans_argument_array` | `[]` transition bins whose value reads a covergroup argument (llg limitation) |
 | `neg_trans_argument_removal` | a transition value read from a covergroup argument in a coverpoint with ignore_bins transitions (llg limitation) |
 | `neg_trans_argument_overlap` | a transition value read from a covergroup argument where option.detect_overlap may be set (llg limitation) |

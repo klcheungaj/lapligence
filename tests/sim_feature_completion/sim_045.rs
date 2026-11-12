@@ -479,4 +479,9 @@ fn wide_coverpoint_limits_are_located_errors() {
         "neg_wide_intersect_auto",
         "neg_wide_intersect_auto.sv:10:34: binsof in bins `lo` of cross `ab` in covergroup `g` intersects coverpoint `ca`, which is wider than 64 bits and has automatic bins (llg limitation)",
     );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_enum",
+        "neg_wide_enum.sv:8:5: enum coverpoint `cp` of covergroup `g` is 70 bits wide; llg supports enum coverpoints of at most 64 bits (llg limitation)",
+    );
 }

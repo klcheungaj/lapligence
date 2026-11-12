@@ -1285,7 +1285,7 @@ impl<'a> Codegen<'a> {
         let automatic = if declares_bins {
             IrCoverAutomatic::None
         } else if let Some(wide_width) = wide_width {
-            self.coverage_wide_automatic(group_name, point, info, wide_width)?
+            self.coverage_wide_automatic(group_name, point, info, wide_width, info.ty.signed)?
         } else {
             match self.enum_coverpoint_keys(point, info, width, signed)? {
                 Some(keys) => IrCoverAutomatic::Enum(keys),
@@ -2321,16 +2321,15 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn enum_coverpoint_keys(
+    /// The enum type of a coverpoint of declared `width` and `signed`ness,
+    /// whose automatic bins are one per named value (19.5.2).
+    pub(super) fn coverpoint_enum(
         &self,
-        point: NodeId,
         info: &CoverpointInfo,
         width: u32,
         signed: bool,
-    ) -> Result<Option<Vec<u64>>, String> {
-        // An enum coverpoint has one bin per named value (19.5.2).
-        let Some(metadata) = info
-            .type_id
+    ) -> Option<&crate::core::db::EnumTypeMetadata> {
+        info.type_id
             .and_then(|type_id| self.db.enum_type_metadata(type_id))
             .or_else(|| self.enum_metadata_for_expr(info.expr))
             .or_else(|| match self.kind(info.expr) {
@@ -2343,7 +2342,16 @@ impl<'a> Codegen<'a> {
                 }
                 _ => None,
             })
-        else {
+    }
+
+    fn enum_coverpoint_keys(
+        &self,
+        point: NodeId,
+        info: &CoverpointInfo,
+        width: u32,
+        signed: bool,
+    ) -> Result<Option<Vec<u64>>, String> {
+        let Some(metadata) = self.coverpoint_enum(info, width, signed) else {
             return Ok(None);
         };
         let mut keys = Vec::with_capacity(metadata.members.len());
