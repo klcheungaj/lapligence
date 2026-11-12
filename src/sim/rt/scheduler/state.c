@@ -379,6 +379,9 @@ typedef struct llg_property_inst {
     uint8_t consumed_hit;
     /* Collapsed past an operator whose result is never cover-vacuous. */
     uint8_t carry_hit;
+    /* The values a procedural assertion instance saved when it was queued
+     * (16.15.6.1), owned by the attempt's root node; NULL elsewhere. */
+    llg_frame_t* values;
 } llg_property_inst_t;
 
 /* A sequence can advance on a clock other than its leading assertion clock.
@@ -588,12 +591,25 @@ typedef struct llg_concurrent_assertion {
     llg_assertion_lag_t* lag_head;
     llg_assertion_lag_t* lag_tail;
     llg_assertion_lag_t* lag_free;
+    /* Frames of the values that matured procedural instances saved when
+     * they were queued (16.15.6.1), oldest first, one per instance counted
+     * in `procedural_matured`; an armed `expect` keeps its one frame here.
+     * `expect_values` holds the frame of an `expect` until it is armed. A
+     * property-engine assertion only; empty for assertions saving nothing. */
+    llg_frame_t** queued_values;
+    size_t queued_head;
+    size_t queued_count;
+    size_t queued_capacity;
+    llg_frame_t* expect_values;
 } llg_concurrent_assertion_t;
 
 /* Discard the running attempts of an assertion whose disable iff holds or
  * that a control task kills, counting them for assertion coverage
  * (concurrent_assertions.c). */
 static void end_assertion_attempts(llg_concurrent_assertion_t* assertion, int killed);
+/* Saved values of matured procedural instances (concurrent_assertions.c). */
+static void queued_values_push(llg_concurrent_assertion_t* assertion, llg_frame_t* frame);
+static void queued_values_clear(llg_concurrent_assertion_t* assertion);
 
 typedef struct {
     uint64_t unit_fs;
@@ -900,6 +916,9 @@ typedef struct {
     int argc;
     char** argv;
     llg_q_queue_t* q_queues;
+    // The saved values (16.15.6.1) of the procedural assertion attempt being
+    // evaluated or reported, or NULL.
+    llg_frame_t* assertion_values;
 } llg_rt_ctx_t;
 
 static llg_rt_ctx_t g;

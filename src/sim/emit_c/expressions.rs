@@ -906,6 +906,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                         }
                     }
                     IrSampledFunc::Captured
+                    | IrSampledFunc::Queued
                     | IrSampledFunc::Future
                     | IrSampledFunc::Rising
                     | IrSampledFunc::Falling

@@ -1660,6 +1660,19 @@ impl Validator<'_> {
                                     .fail(path, "$past result shape disagrees with argument");
                             }
                         }
+                        IrSampledFunc::Queued => {
+                            if call.domain.is_some()
+                                || !matches!(call.argument.kind(), IrExprKind::Const(_))
+                                || (expr.width, expr.signed)
+                                    != (call.argument.width, call.argument.signed)
+                                || expr.width == 0
+                            {
+                                return self.fail(
+                                    path,
+                                    "queued assertion value read has an invalid shape",
+                                );
+                            }
+                        }
                         IrSampledFunc::Captured
                         | IrSampledFunc::Future
                         | IrSampledFunc::Rising

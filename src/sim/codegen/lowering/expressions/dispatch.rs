@@ -755,6 +755,11 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        if !self.queued_values.is_empty() {
+            if let Some(value) = self.queued_value_read(h) {
+                return Ok(value);
+            }
+        }
         if let Some(HoistedValue::Packed(name, width, signed)) = self.hoisted_value(h) {
             return Ok(IrExpr::new(
                 IrExprKind::LocalRead(name.clone()),

@@ -856,9 +856,12 @@ pub enum IrStmt {
     /// Reaching a procedural concurrent assertion (IEEE 1800-2009 16.15.6):
     /// queue one pending instance of the assertion whose
     /// [`super::IrAssertion::procedural`] index is `index` on the executing
-    /// process. It begins no evaluation itself.
+    /// process. It begins no evaluation itself. `captures` are the values the
+    /// instance saves (16.15.6.1), evaluated here in slot order and read
+    /// through [`super::IrSampledFunc::Queued`]; empty for most assertions.
     QueueProceduralAssertion {
         index: u32,
+        captures: Vec<IrExpr>,
     },
     /// `wait fork;`
     WaitFork,
@@ -944,6 +947,10 @@ pub enum IrStmt {
     Expect {
         identity: u64,
         fail_action: bool,
+        /// Values of automatic variables and `const'` casts the property
+        /// reads, saved when the statement executes (the one instance it
+        /// starts, like a procedural assertion's queued values).
+        captures: Vec<IrExpr>,
     },
     /// Immediate `assert`, `assume` or `cover`. The condition is evaluated
     /// once at this statement; omitted action arms remain `None` so codegen

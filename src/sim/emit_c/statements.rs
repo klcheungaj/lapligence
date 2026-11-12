@@ -1095,9 +1095,15 @@ fn render_stmt_scoped(
             args,
             scopes: assertion_scopes,
         } => render_assertion_control(ctx, *kind, args, assertion_scopes)?,
+        IrStmt::Expect { captures, .. } if !captures.is_empty() => {
+            return Err(
+                "an expect that saves values requires whole-model ownership emission".to_owned(),
+            )
+        }
         IrStmt::Expect {
             identity,
             fail_action,
+            ..
         } => format!(
             "    if (!llg_assertion_expect_start({identity}ULL, {})) return;\n    llg_wait_assertion({identity}ULL);\n",
             u8::from(*fail_action)

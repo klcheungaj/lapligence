@@ -322,6 +322,10 @@ impl<'a> Codegen<'a> {
                 ));
             }
         }
+        self.reject_queued_read(&argument, &format!("the argument of {name}"))?;
+        if let Some(gate) = &gate {
+            self.reject_queued_read(gate, &format!("the gating expression of {name}"))?;
+        }
         let clock = self.intern_sampled_clock(scope_path, source, gate)?;
         let domain = self.intern_sampled_domain(clock, argument.clone(), ticks);
         let (width, signed) = if kind == IrSampledFunc::Past {

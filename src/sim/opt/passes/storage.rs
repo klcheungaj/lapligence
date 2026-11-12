@@ -924,6 +924,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             suffix.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
         }
         IrStmt::WaveLimit(limit) => collect_expr_reads(limit, model, rw),
+        IrStmt::QueueProceduralAssertion { captures, .. } | IrStmt::Expect { captures, .. } => {
+            for capture in captures {
+                collect_expr_reads(capture, model, rw);
+            }
+        }
         IrStmt::WaveFileValue(path) => {
             path.expressions(&mut |expression| collect_expr_reads(expression, model, rw))
         }
@@ -1014,10 +1019,8 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::Fork { .. }
         | IrStmt::DisableTarget { .. }
         | IrStmt::DeferredAssertionDisable { .. }
-        | IrStmt::QueueProceduralAssertion { .. }
         | IrStmt::WaitFork
         | IrStmt::DisableFork
-        | IrStmt::Expect { .. }
         | IrStmt::MonitorEnable(_)
         | IrStmt::WaveFile(_)
         | IrStmt::WaveOn

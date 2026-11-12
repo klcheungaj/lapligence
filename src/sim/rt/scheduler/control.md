@@ -96,6 +96,19 @@ S99-D4). Each root clock event takes all matured instances as attempts;
 matured instances begin even while the assertion is off; KILL drops pending
 and matured instances (S99-D3). Procedural assertions are never
 single-attempt, end points or `expect`.
+An instance that reads automatic variables or `const'` casts (16.15.6.1) is
+queued by `llg_assertion_queue_values` with an `llg_frame_t` of those values,
+held in the record's `frame`. Lowering puts such assertions on the property
+engine. When it matures the frame moves to the assertion's `queued_values`
+ring (one per counted matured instance) or straight to the attempt that
+begins; the root `llg_property_inst_t` owns it (`values`, kept across
+`property_collapse`) and releases it with the attempt. While a root is
+evaluated or reported `g.assertion_values` names it, so generated evaluators
+read it through `llg_assertion_instance_value`, and `assertion_action` gives
+the action process a reference as its `frame`, which the same function reads
+there. Flushes, disabled starts, KILL and teardown release the frames. An
+`expect` hands its frame over with `llg_assertion_expect_values` before
+`llg_assertion_expect_start`, which moves it to the ring for its one attempt.
 `llg_sequence_match_call` appends a sequence match-item call (SV 16.11) with
 its owned argument frame directly to the matured array (kind
 `LLG_DEFERRED_MATCH_CALL`): it runs in the Reactive region in queue order with

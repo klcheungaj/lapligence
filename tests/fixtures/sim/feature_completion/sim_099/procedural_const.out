@@ -1,0 +1,22 @@
+[5] c1 fail
+[5] c1 fail
+[5] c1 fail
+[5] c2 fail 0
+[5] c2 fail 1
+[5] c2 fail 2
+[5] c3 fail 0
+[5] c3 pass 1
+[5] c3 fail 2
+[5] c4 fail const=0 sampled=0
+[5] c4 fail const=2 sampled=0
+[15] c1 pass
+[15] c1 pass
+[15] c1 pass
+[15] c2 fail 0
+[15] c2 pass 1
+[15] c2 fail 2
+[15] c3 fail 0
+[15] c3 pass 1
+[15] c3 fail 2
+[15] c4 fail const=0 sampled=3
+[15] c4 fail const=2 sampled=3

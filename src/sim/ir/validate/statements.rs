@@ -1638,7 +1638,9 @@ impl Validator<'_> {
                     }
                 }
             }
-            IrStmt::Expect { .. } => {}
+            IrStmt::Expect { captures, .. } => {
+                self.validate_captures(captures, formals, path)?;
+            }
             IrStmt::MonitorSet { descriptor, .. } => {
                 if let Some(descriptor) = descriptor {
                     self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
@@ -1847,7 +1849,8 @@ impl Validator<'_> {
                     self.validate_expr(value, formals, &format!("{path}.value"))?;
                 }
             }
-            IrStmt::QueueProceduralAssertion { index } => {
+            IrStmt::QueueProceduralAssertion { index, captures } => {
+                self.validate_captures(captures, formals, path)?;
                 if !self
                     .model
                     .assertions
@@ -1888,6 +1891,24 @@ impl Validator<'_> {
 }
 
 impl Validator<'_> {
+    /// The values a procedural assertion instance or an `expect` saves
+    /// (16.15.6.1) are packed: the runtime keeps them in frame value slots.
+    fn validate_captures(
+        &self,
+        captures: &[IrExpr],
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        for (slot, capture) in captures.iter().enumerate() {
+            let path = format!("{path}.captures[{slot}]");
+            if capture.width == 0 || capture.is_real() {
+                return self.fail(path, "a queued assertion value must be packed");
+            }
+            self.validate_expr(capture, formals, &path)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn validate_coverage_stmt(
         &self,
         operation: &crate::sim::ir::IrCoverageStmt,

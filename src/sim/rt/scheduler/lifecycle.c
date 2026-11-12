@@ -291,6 +291,9 @@ static void free_assertions(void) {
         }
         free(g.assertions->endpoint_slots);
         free(g.assertions->extra_clocks);
+        queued_values_clear(g.assertions);
+        free(g.assertions->queued_values);
+        llg_frame_release(g.assertions->expect_values);
         free(g.assertions);
         g.assertions = next;
     }

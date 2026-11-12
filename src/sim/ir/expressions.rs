@@ -757,6 +757,12 @@ pub enum IrSampledFunc {
     /// tick. `ticks` is the capture slot; `argument` is the captured
     /// expression, which the assertion's capture callback evaluates.
     Captured,
+    /// A value a procedural concurrent assertion instance saved when it was
+    /// queued (IEEE 1800-2009 16.15.6.1): an automatic variable or a `const'`
+    /// cast, read by the instance's evaluation attempt and its action block.
+    /// `ticks` is the slot in the instance's frame; `argument` is a constant
+    /// of the value's shape and is not evaluated.
+    Queued,
     /// `$future_gclk(argument)`: the argument's current sampled value when
     /// the event is evaluated, which is its value at the next global tick.
     Future,
@@ -781,8 +787,8 @@ impl IrSampledFunc {
 }
 
 /// One sampled-value call. `ticks` is the tick count of [`IrSampledFunc::Past`]
-/// and the capture slot of [`IrSampledFunc::Captured`] and the future status
-/// functions; zero otherwise.
+/// and the capture slot of [`IrSampledFunc::Captured`],
+/// [`IrSampledFunc::Queued`] and the future status functions; zero otherwise.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrSampledCall {
     pub(in crate::sim) kind: IrSampledFunc,

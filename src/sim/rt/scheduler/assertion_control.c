@@ -523,6 +523,7 @@ static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
                 if (assertion->procedural) {
                     procedural_cancel_pending(assertion);
                     assertion->procedural_matured = 0;
+                    if (assertion->queued_count) queued_values_clear(assertion);
                 }
                 if (assertion->kind == LLG_ASSERTION_EXPECT &&
                     assertion->expect_active) {
@@ -563,6 +564,25 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
     return result;
 }
 
+// The values an `expect` saves for its one attempt (SV 16.15.6.1, 16.18),
+// handed over just before llg_assertion_expect_start, which takes them.
+LLG_INTERNAL LLG_OUTLYING void llg_assertion_expect_values(uint64_t identity,
+                                                          llg_frame_t* frame) {
+    llg_concurrent_assertion_t* assertion = find_assertion(identity);
+    if (!assertion || assertion->kind != LLG_ASSERTION_EXPECT) {
+        llg_frame_release(frame);
+        return;
+    }
+    llg_frame_release(assertion->expect_values);
+    assertion->expect_values = frame;
+}
+
+static LLG_OUTLYING void expect_values_arm(llg_concurrent_assertion_t* assertion) {
+    queued_values_clear(assertion);
+    queued_values_push(assertion, assertion->expect_values);
+    assertion->expect_values = NULL;
+}
+
 int llg_assertion_expect_start(uint64_t identity, int has_fail_action) {
     if (!region_can_mutate("expect scheduling")) return 0;
     llg_concurrent_assertion_t* assertion = find_assertion(identity);
@@ -571,6 +591,7 @@ int llg_assertion_expect_start(uint64_t identity, int has_fail_action) {
         assertion->expect_active)
         return assertion_control_failure("expect has no unique inactive assertion instance");
     free_assertion_attempts(assertion);
+    if (assertion->expect_values) expect_values_arm(assertion);
     assertion->expect_active = 1;
     assertion->expect_started = 0;
     assertion->expect_outcome = 0;

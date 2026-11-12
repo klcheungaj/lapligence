@@ -110,6 +110,10 @@ static void property_inst_free(llg_property_inst_t* inst) {
     }
     if (inst->sequence) sequence_attempt_discard(inst->sequence);
     property_locals_release(inst->locals);
+    if (LLG_CO_UNLIKELY(inst->values != NULL)) {
+        llg_frame_release(inst->values);
+        inst->values = NULL;
+    }
     inst->sequence = NULL;
     inst->locals = NULL;
     inst->next = g.property_inst_pool;
@@ -180,11 +184,14 @@ static void property_collapse(llg_property_inst_t* inst, llg_property_inst_t* ch
     if (inst->sequence) sequence_attempt_discard(inst->sequence);
     property_locals_release(inst->locals);
     llg_property_inst_t* next = inst->next;
+    // A root keeps its attempt's saved values.
+    llg_frame_t* values = inst->values;
     uint8_t keep_true = (uint8_t)(inst->carry_true | (carry_true ? 1 : 0));
     uint8_t keep_false = (uint8_t)(inst->carry_false | (carry_false ? 1 : 0));
     uint8_t keep_hit = (uint8_t)(inst->carry_hit | (hit ? 1 : 0));
     *inst = *child;
     inst->next = next;
+    inst->values = values;
     inst->carry_true |= keep_true;
     inst->carry_false |= keep_false;
     inst->carry_hit |= keep_hit;
@@ -792,6 +799,18 @@ static int property_end_fails(const llg_property_inst_t* inst,
     }
 }
 
+/* property_report of an attempt with saved values: its action process takes
+ * a reference to them. */
+static LLG_OUTLYING void property_report_values(llg_concurrent_assertion_t* assertion, int pass,
+                                                int vacuous, uint64_t start,
+                                                llg_frame_t* values) {
+    llg_frame_t* saved = g.assertion_values;
+    g.assertion_values = values;
+    assertion_result(assertion, pass, vacuous, start);
+    g.assertion_values = saved;
+    llg_frame_release(values);
+}
+
 /* A cover counts a success as a hit unless it is cover-vacuous (decision
  * S38-D10); assert and assume keep the 16.15.8 vacuity. */
 static void property_report(llg_concurrent_assertion_t* assertion, llg_property_inst_t* root) {
@@ -799,7 +818,14 @@ static void property_report(llg_concurrent_assertion_t* assertion, llg_property_
     int vacuous = pass && (assertion->kind == LLG_ASSERTION_COVER ? root->cover_vacuous
                                                                   : !root->nonvacuous);
     uint64_t start = root->launch.time;
+    // The action of an instance that saved values reads them (16.15.6.1).
+    llg_frame_t* values = root->values;
+    root->values = NULL;
     property_inst_free(root);
+    if (LLG_CO_UNLIKELY(values != NULL)) {
+        property_report_values(assertion, pass, vacuous, start, values);
+        return;
+    }
     assertion_result(assertion, pass, vacuous, start);
 }
 
@@ -827,7 +853,10 @@ static void run_property_assertion(llg_concurrent_assertion_t* assertion,
     llg_property_inst_t* previous = NULL;
     while (*link) {
         llg_property_inst_t* attempt = *link;
+        // Evaluators read the values this attempt's instance saved.
+        g.assertion_values = attempt->values;
         property_tick(&ctx, attempt);
+        g.assertion_values = NULL;
         if (g.finish) return;
         if (!attempt->status) {
             previous = attempt;
@@ -841,20 +870,26 @@ static void run_property_assertion(llg_concurrent_assertion_t* assertion,
     }
     for (uint64_t starts = root_event ? assertion_root_starts(assertion) : 0; starts;
          starts--) {
-        property_attempt_begin(assertion, event);
+        property_attempt_begin(assertion, event, queued_values_take(assertion));
         if (g.finish) return;
         if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active) return;
     }
 }
 
 /* Begin one attempt of a property assertion at leading-clock `event`. */
+/* `values` are the saved values of the procedural instance (or `expect`)
+ * that begins it, owned by the attempt from here on, or NULL. */
 static void property_attempt_begin(llg_concurrent_assertion_t* assertion,
-                                   const llg_assertion_clock_event_t* event) {
+                                   const llg_assertion_clock_event_t* event,
+                                   llg_frame_t* values) {
     llg_property_ctx_t ctx = {assertion, assertion->property, *event, event->order};
     g.sequence_current = assertion;
     llg_property_inst_t* attempt = property_inst_new(
         assertion->property, assertion->property->root, property_launch_at(event), 0, NULL);
+    attempt->values = values;
+    g.assertion_values = values;
     property_tick(&ctx, attempt);
+    g.assertion_values = NULL;
     if (g.finish) {
         property_inst_free(attempt);
         return;
@@ -882,7 +917,9 @@ static void property_assertions_async_pass(void) {
         llg_property_inst_t* previous = NULL;
         while (*link && !g.finish) {
             llg_property_inst_t* attempt = *link;
+            g.assertion_values = attempt->values;
             property_async(&ctx, attempt);
+            g.assertion_values = NULL;
             if (!attempt->status) {
                 previous = attempt;
                 link = &attempt->next;

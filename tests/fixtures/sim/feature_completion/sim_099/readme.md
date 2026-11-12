@@ -416,6 +416,59 @@ Derivation:
   are not rejected as automatic variables; `d` counts the clocks, so `v1` and
   `v2` pass one clock after each attempt begins: 15, 25, 35, 45.
 
+## Saved values of procedural assertions (`procedural_automatic.sv`, `procedural_const.sv`, `expect_automatic.sv`, A1)
+
+Clauses used:
+
+- SV 16.15.6.1 L26882-26884: "a procedural concurrent assertion shall not
+  sample any const expression or automatic variable, but shall instead save
+  the value of the expression or variable at the time the assertion evaluation
+  attempt is added to the procedural assertion queue."
+- SV 16.15.6.1 L26940-26941: "any constant values that were passed into the
+  assertion instance due to constant or automatic variables will remain
+  constant for the duration of that instance's evaluation."
+- SV 16.15.6.1 L26961-26963: "The same rules that apply to procedural
+  concurrent assertion arguments also apply to variables appearing in their
+  action blocks ... they behave as inputs to the action block".
+- SV 16.15.6 L26758-26764: a matured instance begins "immediately within the
+  Observed region" in a time step of its leading clocking event, else "upon
+  the next clocking event".
+- SV 16.18 L27956-27957: the expect statement "starts a single thread of
+  evaluation for the given property on the subsequent clocking event";
+  L27982: "the property can refer to automatic variables as well as static
+  variables." L27953: "When the property succeeds or fails, the process
+  unblocks".
+
+`foo = 4'b1010` (bits 3..0 = 1, 0, 1, 0). The clock rises at 5, 15 and 25.
+
+`procedural_automatic.sv` (`bar = 4'b0110`, bits 3..0 = 0, 1, 1, 0):
+
+- a1, at every edge: four instances with i = 0..3 check `foo[i]`: fail, pass,
+  fail, pass, printing their own i in the action.
+- a2 queues i = 1, 2 at 5 and 15 (`n` is 0 and 1; 2 at 25). i = 2:
+  `foo[2]` is 0, vacuous pass at the edge (5 and 15). i = 1 from 5: `foo[1]`,
+  then `bar[1]` at 15, then `!foo[0]` at 25: pass at 25 with i = 1; the one
+  from 15 is still running at the end (32).
+- a3 saves `k = n` (0, 1, 2 at 5, 15, 25) before `k = 0`: `bar[0]` fails at 5,
+  `bar[1]` and `bar[2]` pass at 15 and 25.
+- a4 is queued at 7 with i = 2 and 3, a step without a clock tick; at 15
+  `foo[2]` fails and `foo[3]` passes.
+
+`procedural_const.sv` (`bar = 4'b1110`, bits 3..0 = 1, 1, 1, 0; `i` is a
+static module variable, 0 at 5 and 3 after each loop):
+
+- c1 samples i (0 at 5, 3 at 15): three fails at 5, three passes at 15.
+- c2 `foo[const'(i)] && bar[i]`: at 5 `bar[0]` is 0, three fails; at 15
+  `bar[3]` is 1, so only const 1 passes.
+- c3 `foo[const'(i)] && bar[const'(i)]`: const 1 passes, 0 and 2 fail.
+- c4 fails for const 0 and 2; the action prints the saved const value and
+  `$sampled(i)` (0 at 5, 3 at 15), the a8 example of the clause.
+
+`expect_automatic.sv`: `data` is incremented at every edge (NBA), so its
+sampled value at the edge at 5 + 10k is k. `wait_for(3)` starts at 5 and
+checks ticks 2..5 (15, 25, 35, 45): `data == 3` at 35, `ok = 1`.
+`wait_for(9)` starts at 45 and checks 55..85 (5..8): fails at 85, `ok = 0`.
+
 ## Rejections
 
 `$global_clock` as a clocking event and `$inferred_clock`/`$inferred_disable`
@@ -436,8 +489,7 @@ witnesses are in `../adv_013/`.
 | `neg_vif_sensitivity_formal.sv` | `:12:12: the implicit sensitivity of `tb` cannot follow a virtual-interface member that a called function reads through a handle other than a virtual-interface variable (IEEE 1800-2009 9.2.2.2.1, 25.9)` | SV 9.2.2.2.1 follows reads inside called functions; a handle formal has no value when the process arms its wait, so the read is rejected instead of left out (S99-D7). |
 | `neg_vif_sensitivity_method.sv` | `:13:19: the implicit sensitivity of `tb` cannot follow the storage a virtual-interface method call reads ...` | always_comb would follow the method body, whose instance the handle selects at run time. |
 | `neg_vif_sensitivity_handle.sv` | `:11:19: the implicit sensitivity of `tb` cannot follow a virtual-interface member read through a handle that is neither a variable nor a formal ...` | An element of a virtual-interface array is a handle expression the arming process does not evaluate again. |
-| `neg_procedural_automatic.sv` | `:9:47: automatic variable `i` in a procedural concurrent assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg does not capture queued values` | SV 16.15.6.1 L26882-26884: a procedural concurrent assertion "shall not sample any const expression or automatic variable, but shall instead save the value of the expression or variable at the time the assertion evaluation attempt is added to the procedural assertion queue"; llg keeps no values with a queued instance. |
-| `neg_procedural_const.sv` | `:9:45: a const cast in a procedural concurrent assertion takes its value when the assertion is queued ...` | The same rule for a `const'` cast. |
+| `neg_procedural_automatic_past.sv` | `:10:7: the argument of $past of this procedural concurrent assertion reads an automatic variable or a const cast, whose value the instance saves when it is queued (IEEE 1800-2009 16.15.6.1) ...` | SV 16.15.6.1 L26882-26884 saves the value per instance; the history of `$past` is kept per assertion on its clock, outside the instance's attempt. |
 | `neg_procedural_edge.sv` | `:8:5: the clock inferred from the procedure (`edge` of the expression at line 6, column 17) cannot clock a concurrent assertion in llg ...` | SV 16.15.6 c) infers `edge clk`; llg assertion clocks are a posedge or a negedge. |
 
 ## Built-in inventory (`builtin_inventory.tsv`)

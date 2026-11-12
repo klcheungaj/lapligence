@@ -180,6 +180,11 @@ const OPERATIONS: &[(&str, &str, &[Param])] = &[
         &[S, S],
     ),
     ("llg_assertion_captured", "llg_assertion_captured_to", &[S]),
+    (
+        "llg_assertion_instance_value",
+        "llg_assertion_instance_value_to",
+        &[S],
+    ),
     ("llg_rt_ref_read", "llg_rt_ref_read_to", &[S]),
     (
         "llg_dyn_value_get_nested",

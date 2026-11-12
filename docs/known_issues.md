@@ -2239,15 +2239,14 @@ Reproduce with
 
 ### Symptom
 
-- A procedural concurrent assertion (16.15.6) whose assertion or action
-  blocks read an automatic variable or a `const'` cast stops compilation at
-  that reference: llg queues instances without the values 16.15.6.1 saves at
-  queue time. A procedure whose inferred clock is `edge expr` is rejected the
-  same way.
-- An `expect` property that reads an automatic variable (16.18 allows it, as
-  in the LRM's `wait_for` example) is rejected ("unsupported sampled ...
-  expression"); static variables work and the action block may assign
-  automatic variables.
+- A procedural concurrent assertion (16.15.6) whose automatic variable or
+  `const'` cast is read where the assertion is evaluated outside its
+  instances' attempts stops compilation at the assertion: the argument or
+  gate of a sampled value function (`$past`, `$rose`, ...), a `disable iff`
+  condition, a clock's `iff`, an assertion with global clocking future
+  functions, or a static assertion of a procedural checker (17.3). Every
+  other read takes the value saved when the instance was queued
+  (16.15.6.1). A procedure whose inferred clock is `edge expr` is rejected.
 - `accept_on`/`reject_on` are checked at the first signal update of each time
   step (with that step's sampled values) and at every clock tick. A time step
   in which no signal changes does not check them, so an abort whose condition
@@ -2260,22 +2259,21 @@ Reproduce with
 
 ### Cause
 
-The per-process procedural assertion queue
-(`llg_assertion_queue`, kept with the deferred report queue) holds only the
-assertion of each pending instance, not values; the expect property is
-lowered once per assertion instance, where automatic storage has no static
-location; asynchronous aborts are driven from the signal-write hook.
+A saved value lives in the frame of one instance's attempt; sampled value
+histories, `disable iff` conditions and clock gates are evaluated per
+assertion, and a procedural checker's assertions are registered once for all
+the procedures that queue them; asynchronous aborts are driven from the
+signal-write hook.
 
 ### Intended direction
 
-Give each pending procedural instance (and `expect`) a frame of captured
-automatic and constant arguments read by its attempt, and drive the
-asynchronous abort check from the scheduler's time-step entry.
+Evaluate the per-assertion forms per attempt where a saved value reaches
+them, and drive the asynchronous abort check from the scheduler's time-step
+entry.
 
 ### Reproduce
 
-`neg_procedural_automatic.sv`, `neg_procedural_const.sv` and
-`neg_procedural_edge.sv` in
+`neg_procedural_automatic_past.sv` and `neg_procedural_edge.sv` in
 [sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md); the
 other items need small hand-written cases.
 
@@ -2420,15 +2418,15 @@ whose current-step obligation it can express on the constraint solver.
 Sampled histories of variables that are read with current values have no
 defined meaning in llg's sampling model. The current value of an automatic
 or `const'` actual is substituted whenever a static assertion of the
-checker is queued (17.3), and llg's procedural assertion queue keeps no
-values with a queued instance (the same limit as for procedural concurrent
-assertions, SIM-099).
+checker is queued (17.3); llg registers a procedural checker's assertions
+once for every procedure that queues them, and saves queued values only for
+the procedural concurrent assertions written in a procedure (SIM-099).
 
 ### Intended direction
 
 Derive the current-step obligations of sequence and property assumptions
-from their pending attempts; capture queued values with each procedural
-assertion instance.
+from their pending attempts; lower a procedural checker's actuals in the
+procedure that queues its assertions, so they can be saved per instance.
 
 ### Reproduce
 

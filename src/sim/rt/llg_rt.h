@@ -3495,6 +3495,19 @@ int llg_checker_assume_flag(uint32_t assume, int due);
 // deferred assertion reports (16.15.6.2, 16.15.6.4); the Observed region
 // matures the rest.
 void llg_assertion_queue(uint32_t index);
+// Queue an instance that saved the values of the automatic variables and
+// `const'` casts it reads (16.15.6.1) in `frame`, which it takes over: the
+// instance's attempt and its action process read them through
+// llg_assertion_instance_value, and the frame is released when the attempt
+// ends or the instance is flushed or discarded.
+void llg_assertion_queue_values(uint32_t index, llg_frame_t* frame);
+// The values an `expect` saves for the attempt it starts (16.18), taken over
+// by the llg_assertion_expect_start that follows.
+void llg_assertion_expect_values(uint64_t identity, llg_frame_t* frame);
+// Saved value `slot` of the procedural assertion instance whose attempt is
+// being evaluated, or whose action block the current process runs (a fresh
+// owner); a run-stopping error anywhere else.
+sv4_t llg_assertion_instance_value(uint32_t slot);
 int llg_assertion_gate_clock(uint64_t identity, llg_sampled_gate_fn gate);
 int llg_sampled_clock_register_event(uint64_t clock, llg_sampled_gate_fn gate,
                                      void* data);
@@ -3823,6 +3836,7 @@ void llg_system_to(sv4_t* dst, llg_string_t* command, int has_command);
 void llg_frame_read_value_to(sv4_t* dst, const llg_frame_t* frame, size_t slot);
 void llg_sampled_domain_past_to(sv4_t* dst, uint64_t identity, uint64_t ticks);
 void llg_assertion_captured_to(sv4_t* dst, uint32_t slot);
+void llg_assertion_instance_value_to(sv4_t* dst, uint32_t slot);
 void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref);
 /* String destination forms: `X_to(dst, ...)` replaces the expression owner at
  * dst (destroyed first; it must carry no change callback) with the string
