@@ -147,6 +147,16 @@ its string input after the suspensions and returns `r + 1` (12 and 13);
    (20.2): its C code never runs again (decision A18-D2), the final block
    prints `o4=8` and the run ends with status 0.
 
+`context_stack`: the text sets no stack size for foreign code; this checks
+llg's foreign call context (see the design readme). The design has a
+waiting exported task, so `cs_deep` runs on a context. It writes one byte per
+4096-byte page of a 6 MiB local frame, top down, and counts them: 6 MiB /
+4 KiB = 1536 pages, then waits 5 in `cs_wait`: `5 pages=1536`. A platform's
+default thread stack (musl 128 KiB, macOS 512 KiB, Windows 1 MiB) would
+fault; the 8 MiB default of `LLG_DPI_CONTEXT_STACK_BYTES` holds it. The test
+also builds the model with `-DLLG_DPI_CONTEXT_STACK_BYTES=16777216` and
+`BIG`: a 12 MiB frame, 3072 pages, which the default would not hold.
+
 ## Negative cases
 
 `neg_function_wait`: the imported function `c_func` calls the exported task

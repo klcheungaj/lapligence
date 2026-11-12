@@ -103,7 +103,11 @@ ever before.
   development host: about 3 us per call that also calls an exported task,
   against 125 us when every hand-off sleeps; a direct import call costs
   0.6 us. A chain that stays suspended spends at most one bound of CPU
-  time per suspension before it sleeps. The token itself is read only under
+  time per suspension before it sleeps. When the two threads share one
+  CPU (a one-CPU affinity or container), the poll cannot see the flag
+  change and only delays the other thread: a hand-off then costs about
+  19 us at the default bound against about 6 us with 0 (FIN-001 D2
+  measurement, 200000 calls). The token itself is read only under
   the mutex, so the flag adds no ordering of its own.
 - `llg_dpi_now` (the scope/site/depth chain state) stays one global: every
   crossing saves the state it replaces and restores it on the way back, and
