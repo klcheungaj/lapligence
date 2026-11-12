@@ -628,9 +628,15 @@ processes or clock edges, at the cost of a few bytes per object.
   executables swapped: the harness position costs that short row about
   0.85%, so the change is about +0.2%. The glitch row with `--wave` stays
   +1.3% (22/100) and +1.6% with the executables swapped, while it executes
-  0.19% fewer instructions. It uses none of the moved consumers; the hot
-  value-scope and wait-registration functions changed their offset within a
-  64-byte line. This placement effect is not resolved. The concurrent-assertion row gains because a write no longer walks every
+  0.19% fewer instructions. It uses none of the moved consumers. Cache
+  simulation puts the cost in instruction-cache set conflicts: more hot
+  runtime, model and C-library lines share the same 4 KiB-periodic sets
+  (L1i misses 98M on the base, 165M on the tip). Marking the rarely run
+  value-watch helpers cold removes the conflict on this row but creates
+  one on the clocking row with `--wave` (3.4M to 37M misses), and leaving
+  the VPI consumer out moves it there too (55M), so attributes only trade
+  the conflict between rows. This placement effect is not resolved. The
+  concurrent-assertion row gains because a write no longer walks every
   concurrent assertion looking for a `disable iff` condition stored there
   (that row has none); only the hidden condition signals carry a watch.
   The R0 record-marker rows (12 packed and string read/write/read-modify-write
