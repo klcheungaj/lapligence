@@ -3441,6 +3441,25 @@ element is the likely owner) and drop or settle the record when the storage
 goes away.
 
 
+### The bus example's run diverges after its first transfer
+
+**Symptom.** The UVM 1.2 and 1.1d `integrated/ubus` example (two masters,
+four slaves; run with the `mixed-assignments` rule as a warning) generates,
+builds and starts, then its interface assertions report the read, write,
+size, wait and error lines unknown at 75 ns and 85 ns, and the run makes no
+progress afterwards (stopped after about 400 s of CPU time). The
+industry-standard simulator completes it with no error.
+
+**Cause.** Under investigation. Each master's driver writes the shared bus
+variables (`sig_read`, `sig_write`, `sig_size`) with nonblocking assignments,
+`'bz` when it is idle, so the value the assertions sample depends on the
+order of those writes within a time step.
+
+**Intended direction.** Reduce the first transfer to a probe and compare the
+write order and the values sampled at 75 ns with the industry-standard
+simulator.
+
+
 ## Semantic tokens around text macros (llg_ls)
 
 **Status:** partially fixed by LS-MAC. Use sites, written arguments, open
