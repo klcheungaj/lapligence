@@ -697,9 +697,9 @@ row or slice of a larger array copied to or from a whole element
 (`m2[1] = da[k]`); a row of a multidimensional class property passed to a
 fixed-array formal or compared with `==`, and a bit select of one of its
 elements (`o.g[i][j][3]`); and a member of a packed element of a class array
-property as an output or inout actual. A fully constant path through a record
-nested in a record element (`oq[0].e[1].arr[2]`) fails with "cannot resolve
-array base of select"; a run-time index anywhere on that path works.
+property as an output or inout actual. A whole member array read from an
+element (`x = oq[0].arr`, `x = oq[0].e[1].arr`) fails without a location
+("hierarchical reference ... is not supported").
 
 ### Cause
 
@@ -1911,9 +1911,7 @@ limits apply to the form named:
 - both forms: a member array selected on a call result (`f().a[1]`), and a
   row of a multidimensional member array of a queue element at a run-time index
   (`q[0].a[k] = '{1, 2}`); assign through a record variable first. A whole member
-  array of an element written through an event control (`m.e[1].a <= @(e) v`), and
-  a record nested in an element of a nested associative array
-  (`oa[1]["a"].e[1].t[2] = s`).
+  array of an element written through an event control (`m.e[1].a <= @(e) v`).
 - both forms: a virtual-interface method that waits on a record `ref` formal bound
   to an element. A whole record property of a class written with `<=` (`c.r <= v`).
 - per-cell form, below 16 cells: a whole record assigned to or read from an

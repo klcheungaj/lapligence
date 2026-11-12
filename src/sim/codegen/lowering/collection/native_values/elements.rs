@@ -1112,10 +1112,9 @@ impl Codegen<'_> {
                         .is_some_and(|first| self.record_element_of(first).is_some())
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
-                self.db
-                    .array_select_path(node)
-                    .is_some_and(|(owner, _)| self.record_element_of(owner).is_some())
-                    || self.element_cell_select(node).is_some()
+                self.db.array_select_path(node).is_some_and(|(owner, _)| {
+                    self.record_element_of(owner).is_some() || self.names_element_member(owner)
+                }) || self.element_cell_select(node).is_some()
                     || self.names_element_member(*base)
             }
             NodeKind::Expr(
@@ -1177,17 +1176,17 @@ impl Codegen<'_> {
                     return Some((element, selection, path));
                 }
                 // A member array is named by a detached array node; the
-                // captured select path gives its element owner.
+                // captured select path gives its owner: the record element,
+                // or an element of a member array of it (`q[0].e[1].a[2]`).
                 let (element, selection, mut path) = match self.db.array_select_path(node) {
-                    Some((owner, members)) => (
-                        owner,
-                        self.record_element_of(owner)?,
-                        members
-                            .iter()
-                            .cloned()
-                            .map(AggregatePathPart::Member)
-                            .collect(),
-                    ),
+                    Some((owner, members)) => {
+                        let (element, selection, mut path) = match self.record_element_of(owner) {
+                            Some(selection) => (owner, selection, Vec::new()),
+                            None => self.element_member_parts(owner)?,
+                        };
+                        path.extend(members.iter().cloned().map(AggregatePathPart::Member));
+                        (element, selection, path)
+                    }
                     None => self.element_member_parts(*base)?,
                 };
                 for index in indices {
@@ -1466,14 +1465,16 @@ impl Codegen<'_> {
         let Some((owner, members)) = self.db.array_select_path(node) else {
             return Ok(None);
         };
-        let Some(selection) = self.record_element_of(owner) else {
-            return Ok(None);
+        // The owner is the record element or an element of a member array
+        // of it (`q[0].e[1].a[2][0]`).
+        let (selection, mut path) = match self.record_element_of(owner) {
+            Some(selection) => (selection, Vec::new()),
+            None => match self.element_member_parts(owner) {
+                Some((_, selection, path)) => (selection, path),
+                None => return Ok(None),
+            },
         };
-        let mut path: Vec<_> = members
-            .iter()
-            .cloned()
-            .map(AggregatePathPart::Member)
-            .collect();
+        path.extend(members.iter().cloned().map(AggregatePathPart::Member));
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
         for position in 0..=indices.len() {
             if let Some(leaf) = leaves.scalars.iter().find(|leaf| leaf.path == path) {

@@ -720,6 +720,24 @@ fn record_member_cells_are_selected_at_run_time() {
     }
 }
 
+/// FIN-001 R2: cells of a member array of a record element of a member
+/// array of a container element, constant, run-time and mixed indices, in both
+/// record storage forms.
+#[test]
+fn record_element_deep_cells_are_read_and_written() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_027/record_element_deep_cells.out");
+    for cells in ["N=3", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_element_deep_cells",
+            expected,
+            &["-D", cells],
+            &[],
+        );
+    }
+}
+
 /// FIN-001 C1 (c): whole unpacked-array elements to and from fixed-array
 /// variables and patterns.
 #[test]
