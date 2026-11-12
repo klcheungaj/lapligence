@@ -2246,7 +2246,7 @@ Reproduce with
   condition, a clock's `iff`, an assertion with global clocking future
   functions, or a static assertion of a procedural checker (17.3). Every
   other read takes the value saved when the instance was queued
-  (16.15.6.1). A procedure whose inferred clock is `edge expr` is rejected.
+  (16.15.6.1).
 - `accept_on`/`reject_on` are checked at the first signal update of each time
   step (with that step's sampled values) and at every clock tick. A time step
   in which no signal changes does not check them, so an abort whose condition
@@ -2273,7 +2273,7 @@ entry.
 
 ### Reproduce
 
-`neg_procedural_automatic_past.sv` and `neg_procedural_edge.sv` in
+`neg_procedural_automatic_past.sv` in
 [sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md);
 `expect_disable_blocks.sv` in
 [sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md) for the

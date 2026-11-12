@@ -20,8 +20,9 @@ pub(super) enum ClockSource<'a> {
     /// An event list written in the source: an assertion clocking event or
     /// a default clocking block.
     Written(&'a [EventSpec], NodeId),
-    /// The edge inferred from the enclosing procedure (16.15.6).
-    Procedure(EventSpec, NodeId),
+    /// The event expressions inferred from the enclosing procedure
+    /// (16.15.6): one edge, or the posedge and negedge of `edge`.
+    Procedure(Vec<EventSpec>, NodeId),
 }
 
 impl<'c, 'a> CodeTables<'c, 'a> {
@@ -125,10 +126,14 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         while let Some(node) = current {
             if matches!(cg.kind(node), NodeKind::Process { .. }) {
                 let body = cg.node(node).children.first().copied();
-                if let Some(ProcedureClock::Edge(spec)) =
-                    body.and_then(|body| cg.infer_procedure_clock(body))
-                {
-                    return Some((ClockSource::Procedure(spec, statement), true));
+                match body.and_then(|body| cg.infer_procedure_clock(body)) {
+                    Some(ProcedureClock::Edge(spec)) => {
+                        return Some((ClockSource::Procedure(vec![spec], statement), true));
+                    }
+                    Some(ProcedureClock::BothEdges(specs)) => {
+                        return Some((ClockSource::Procedure(specs, statement), true));
+                    }
+                    None => {}
                 }
                 break;
             }
@@ -692,7 +697,21 @@ impl<'c, 'a> CodeTables<'c, 'a> {
     ) -> (IrVpiCode, Children<'a>, Option<usize>) {
         match clock {
             ClockSource::Written(specs, at) => self.build(Item::Events(specs, at), scope),
-            ClockSource::Procedure(spec, at) => self.build(Item::OwnedEvent(spec, at), scope),
+            ClockSource::Procedure(mut specs, at) => {
+                if specs.len() == 1 {
+                    let spec = specs.remove(0);
+                    return self.build(Item::OwnedEvent(spec, at), scope);
+                }
+                // `edge e` is the or of its two edges, as a written event
+                // list is.
+                let mut code = self.located("vpiOperation", at);
+                code.subtype = "vpiEventOrOp";
+                let children = specs
+                    .into_iter()
+                    .map(|spec| ("vpiOperand", Item::OwnedEvent(spec, at)))
+                    .collect();
+                (code, children, scope)
+            }
         }
     }
 

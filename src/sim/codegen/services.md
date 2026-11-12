@@ -231,8 +231,8 @@ action blocks lower into `IrSampledFunc::Queued` slot reads; such an assertion
 always takes the property engine. An `expect` saves those of its property in
 `IrStmt::Expect::captures`. Reads evaluated outside an attempt (sampled value
 histories, `disable iff`, clock gates, global clocking futures, procedural
-checker assertions) and an inferred `edge` clock are located rejections, and
-its operands are not implicit sensitivities (S99-D2). Assertion-only `initial` and timing-free `always`
+checker assertions) are located rejections; an inferred `edge e` clock is the
+event clock of both edges of `e`. Its operands are not implicit sensitivities (S99-D2). Assertion-only `initial` and timing-free `always`
 procedures keep the static path. Deferred
 assertions retain issue-time values (packed, real, string, chandle/class handle
 captures; a method receiver naming static storage is read at maturity with an

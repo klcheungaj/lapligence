@@ -18,8 +18,10 @@ use crate::sim::ir::{IrSampledCall, IrSampledFunc};
 pub(in crate::sim::codegen) enum ProcedureClock {
     /// A `posedge` or `negedge` expression, with its `iff` qualifier.
     Edge(EventSpec),
-    /// `edge expression1`, which an assertion clock cannot use in llg.
-    BothEdges(NodeId),
+    /// `edge expression1`, captured as its posedge and its negedge event
+    /// expressions (each with the `iff` qualifier), the clocking event of
+    /// both edges.
+    BothEdges(Vec<EventSpec>),
 }
 
 impl Codegen<'_> {
@@ -109,7 +111,15 @@ impl Codegen<'_> {
                 continue;
             }
             candidates.push(if paired {
-                ProcedureClock::BothEdges(signal)
+                ProcedureClock::BothEdges(
+                    specs
+                        .iter()
+                        .filter(|spec| {
+                            flatten_clock_spec(spec).is_some_and(|(sig, _, _)| sig == signal)
+                        })
+                        .cloned()
+                        .collect(),
+                )
             } else {
                 ProcedureClock::Edge(spec.clone())
             });
@@ -193,14 +203,11 @@ impl Codegen<'_> {
         };
         match self.infer_procedure_clock(body) {
             None => Ok(None),
-            Some(ProcedureClock::BothEdges(signal)) => Err(format!(
-                "{}: the clock inferred from the procedure (`edge` of the expression at line \
-                 {}, column {}) cannot clock a concurrent assertion in llg; give the assertion \
-                 a posedge or negedge clock (IEEE 1800-2009 16.15.6)",
-                self.source_location(origin),
-                self.node(signal).line,
-                self.node(signal).col
-            )),
+            // `edge expression1` is the clocking event of both edges, ticking
+            // once per time step like any other event clock.
+            Some(ProcedureClock::BothEdges(specs)) => {
+                self.assertion_clock_from_specs(path, &specs, 0).map(Some)
+            }
             Some(ProcedureClock::Edge(spec)) => self
                 .lower_sampled_clock_spec(path, std::slice::from_ref(&spec))?
                 .map(Some)
@@ -216,23 +223,15 @@ impl Codegen<'_> {
 
     /// The clocking event that procedure body `body` infers for a checker
     /// instantiated in it, which its `$inferred_clock` formal defaults
-    /// stand for (17.4), or `None` when the procedure infers none.
+    /// stand for (17.4), as its event expressions, or `None` when the
+    /// procedure infers none.
     pub(in crate::sim::codegen) fn procedure_inferred_event(
         &self,
         body: NodeId,
-        origin: NodeId,
-    ) -> Result<Option<EventSpec>, String> {
-        match self.infer_procedure_clock(body) {
-            None => Ok(None),
-            Some(ProcedureClock::Edge(spec)) => Ok(Some(spec)),
-            Some(ProcedureClock::BothEdges(signal)) => Err(format!(
-                "{}: the clock inferred from the procedure (`edge` of the expression at line \
-                 {}, column {}) cannot clock a checker in llg; pass the checker a posedge or \
-                 negedge clock (IEEE 1800-2009 16.15.6, 17.4)",
-                self.source_location(origin),
-                self.node(signal).line,
-                self.node(signal).col
-            )),
+    ) -> Option<Vec<EventSpec>> {
+        match self.infer_procedure_clock(body)? {
+            ProcedureClock::Edge(spec) => Some(vec![spec]),
+            ProcedureClock::BothEdges(specs) => Some(specs),
         }
     }
 

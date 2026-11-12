@@ -469,6 +469,26 @@ sampled value at the edge at 5 + 10k is k. `wait_for(3)` starts at 5 and
 checks ticks 2..5 (15, 25, 35, 45): `data == 3` at 35, `ok = 1`.
 `wait_for(9)` starts at 45 and checks 55..85 (5..8): fails at 85, `ok = 0`.
 
+## Inferred `edge` clock (`procedural_edge.sv`, A1)
+
+Clauses used:
+
+- SV 16.15.6 L26790-26797: the inferred clock is the unique event expression
+  "of the form edge_identifier expression1 [ iff expression2 ]" whose terms
+  appear nowhere else in the procedure; `edge` is an edge_identifier.
+- SV 9.4.2 L11805: "An edge shall be detected whenever negedge or posedge is
+  detected."
+
+`clk` is a `bit` toggled every 5, so the clock ticks at 5, 10, ..., 30 (no
+initializer edge at 0). `a` is 1 except during [12, 22):
+
+- r1 `a`: passes at 5 and 10, fails at 15 and 20 (sampled 0), passes at 25
+  and 30.
+- r2 `1 ##1 a`: the attempt from 5 passes at 10; those ending at 15 and 20
+  fail; those ending at 25 and 30 pass.
+
+The industry-standard simulator gives the same lines for this source.
+
 ## Rejections
 
 `$global_clock` as a clocking event and `$inferred_clock`/`$inferred_disable`
@@ -490,7 +510,6 @@ witnesses are in `../adv_013/`.
 | `neg_vif_sensitivity_method.sv` | `:13:19: the implicit sensitivity of `tb` cannot follow the storage a virtual-interface method call reads ...` | always_comb would follow the method body, whose instance the handle selects at run time. |
 | `neg_vif_sensitivity_handle.sv` | `:11:19: the implicit sensitivity of `tb` cannot follow a virtual-interface member read through a handle that is neither a variable nor a formal ...` | An element of a virtual-interface array is a handle expression the arming process does not evaluate again. |
 | `neg_procedural_automatic_past.sv` | `:10:7: the argument of $past of this procedural concurrent assertion reads an automatic variable or a const cast, whose value the instance saves when it is queued (IEEE 1800-2009 16.15.6.1) ...` | SV 16.15.6.1 L26882-26884 saves the value per instance; the history of `$past` is kept per assertion on its clock, outside the instance's attempt. |
-| `neg_procedural_edge.sv` | `:8:5: the clock inferred from the procedure (`edge` of the expression at line 6, column 17) cannot clock a concurrent assertion in llg ...` | SV 16.15.6 c) infers `edge clk`; llg assertion clocks are a posedge or a negedge. |
 
 ## Built-in inventory (`builtin_inventory.tsv`)
 

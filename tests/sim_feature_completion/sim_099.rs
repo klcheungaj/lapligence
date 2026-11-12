@@ -432,8 +432,7 @@ fn procedural_assertions_save_automatic_and_const_values() {
 
 /// G5 / IEEE 1800-2009 16.15.6.1: a saved value read where the assertion is
 /// evaluated outside its instances' attempts (a sampled value function's
-/// history) stops compilation at the assertion, and so does an inferred
-/// `edge` clock.
+/// history) stops compilation at the assertion.
 #[test]
 fn procedural_assertion_forms_without_exact_semantics_are_rejected() {
     sim_cli::reject_case(
@@ -443,12 +442,27 @@ fn procedural_assertion_forms_without_exact_semantics_are_rejected() {
          concurrent assertion reads an automatic variable or a const cast, whose value the \
          instance saves when it is queued (IEEE 1800-2009 16.15.6.1)",
     );
-    sim_cli::reject_case(
+}
+
+/// G5 / IEEE 1800-2009 16.15.6 c): `edge clk` inferred from the procedure
+/// clocks its assertions at both edges of clk, once per time step.
+#[test]
+fn procedural_assertions_infer_an_edge_clock() {
+    let expected = time_step_sets(include_str!(
+        "../fixtures/sim/feature_completion/sim_099/procedural_edge.out"
+    ));
+    sim_cli::run_case_checked_matrix(
         SUITE,
-        "neg_procedural_edge",
-        "neg_procedural_edge.sv:8:5: the clock inferred from the procedure (`edge` of the \
-         expression at line 6, column 17) cannot clock a concurrent assertion in llg; give the \
-         assertion a posedge or negedge clock (IEEE 1800-2009 16.15.6)",
+        "procedural_edge",
+        &[],
+        &move |label: &str, output: &Output| {
+            assert!(output.status.success(), "{label}: {output:?}");
+            assert_eq!(
+                time_step_sets(&String::from_utf8_lossy(&output.stdout)),
+                expected,
+                "{label}"
+            );
+        },
     );
 }
 
