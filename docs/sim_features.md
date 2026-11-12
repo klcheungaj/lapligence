@@ -3148,7 +3148,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `default`, `wildcard`, `ignore_bins` and `illegal_bins` (a run-time error
   that ends the run, final procedures included, S45-D3), `iff`-guarded bins and bins values from
   covergroup arguments; transition bins (19.5.1) with `[*]`, `[->]` and `[=]`
-  repetition, `[]` transition arrays and `default sequence`; crosses (19.6)
+  repetition, `[]` transition arrays, `default sequence` and scalar
+  transition values from covergroup arguments, resolved per instance; crosses (19.6)
   of coverpoints and variables with `binsof`/`intersect` select expressions
   and cross `ignore_bins`/`illegal_bins`, counted with the 19.11.2
   denominators (S45-D1 to S45-D16). Options at their 19.7 levels: `weight`,

@@ -16,7 +16,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use crate::sim::ir::{
-    IrCoverBinKind, IrCoverRepeat, IrCoverTransBin, IrCoverTransSet, IrCoverTransStep,
+    IrCoverBinKind, IrCoverItem, IrCoverRepeat, IrCoverTransBin, IrCoverTransSet, IrCoverTransStep,
     IrCoverTransitions,
 };
 
@@ -31,10 +31,12 @@ pub(super) const MAX_START_ENTRIES: u64 = 1 << 20;
 /// The most class sequences one coverpoint's coverable counts may examine.
 pub(super) const MAX_CLASS_SEQUENCES: u64 = 1 << 20;
 
-/// One `trans_range_list`: the key ranges of its items and its repetition.
+/// One `trans_range_list`: the key ranges of its constant items, every item
+/// (constant or read from a covergroup argument), and its repetition.
 #[derive(Clone, Debug)]
 pub(super) struct StepSpec {
     pub(super) ranges: Vec<(u64, u64)>,
+    pub(super) items: Vec<IrCoverItem>,
     pub(super) repeat: IrCoverRepeat,
     pub(super) lo: u32,
     pub(super) hi: u32,
@@ -48,6 +50,9 @@ pub(super) struct BinSpec {
     pub(super) kind: IrCoverBinKind,
     pub(super) array: bool,
     pub(super) guard: Option<u32>,
+    /// A value reads a covergroup argument: each instance resolves the
+    /// items of every step when it is constructed (only scalar `bins`).
+    pub(super) dynamic: bool,
     pub(super) sets: Vec<Vec<StepSpec>>,
 }
 
@@ -185,7 +190,12 @@ fn removed_at_end(tables: &Tables, removals: &[Vec<usize>], window: &[usize]) ->
 }
 
 /// Build the transition tables of one coverpoint of `width` bits. An error
-/// names the bin (by index) that exceeds a limit.
+/// names the bin (by index) that exceeds a limit. When a bin is dynamic, the
+/// classes cover the constant values only and the tables also list every
+/// step's items, from which each instance builds its own classes, accept
+/// sets, start lists and scalar coverable counts; the caller rejects the
+/// forms whose counts need the searches below (removal bins, `[]` bins
+/// reading an argument, overlap checks).
 pub(super) fn build(
     width: u32,
     bins: Vec<BinSpec>,
@@ -225,6 +235,10 @@ pub(super) fn build(
     let mut states = 0u64;
     let mut window = 0u32;
     let mut default_bin = None;
+    // Per emitted step: the source step's items, when any bin is dynamic.
+    let dynamic = bins.iter().any(|bin| bin.dynamic);
+    let mut items = Vec::new();
+    let mut step_items = Vec::new();
     for (index, bin) in bins.iter().enumerate() {
         if bin.sets.is_empty() {
             default_bin = Some(index as u32);
@@ -271,6 +285,10 @@ pub(super) fn build(
                 }
                 for (offset, (position, lo, hi, repeat)) in shape.into_iter().enumerate() {
                     let last = offset + 1 == length;
+                    if dynamic {
+                        step_items.push(items.len() as u32);
+                        items.extend(set[position].items.iter().cloned());
+                    }
                     // A nonconsecutive repetition that ends its set ends at
                     // its last occurrence, as a goto repetition does
                     // (`3 [= 2]` is `...=>3...=>3`).
@@ -315,6 +333,10 @@ pub(super) fn build(
                 });
             }
         }
+    }
+
+    if dynamic {
+        step_items.push(items.len() as u32);
     }
 
     let mut start_lists = vec![Vec::new(); classes];
@@ -449,6 +471,8 @@ pub(super) fn build(
         default_bin,
         overlaps,
         overlap_stop,
+        items,
+        step_items,
     })
 }
 
@@ -628,6 +652,7 @@ mod tests {
     fn step(ranges: &[(u64, u64)], repeat: IrCoverRepeat, lo: u32, hi: u32) -> StepSpec {
         StepSpec {
             ranges: ranges.to_vec(),
+            items: Vec::new(),
             repeat,
             lo,
             hi,
@@ -645,6 +670,7 @@ mod tests {
             kind,
             array,
             guard: None,
+            dynamic: false,
             sets,
         }
     }

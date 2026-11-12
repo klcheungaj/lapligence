@@ -1312,6 +1312,31 @@ impl<'a> Codegen<'a> {
                     .options
                     .iter()
                     .any(|setter| self.coverage_option_may_be_set(*setter, "detect_overlap"));
+            // Values read from covergroup arguments give each instance its
+            // own classes; the compile-time searches over classes (removal
+            // and overlap) are not repeated per instance.
+            if let Some(index) = transition_bins.iter().position(|bin| bin.dynamic) {
+                let reason = if transition_bins
+                    .iter()
+                    .any(|bin| matches!(bin.kind, IrCoverBinKind::Ignore | IrCoverBinKind::Illegal))
+                {
+                    Some("in a coverpoint with ignore_bins or illegal_bins transitions")
+                } else if detect_overlap {
+                    Some("in a coverpoint whose option.detect_overlap may be set")
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    let bin = transition_nodes[index];
+                    return Err(self.coverage_error(
+                        bin,
+                        format!(
+                            "transition bins `{}` of coverpoint `{point_name}` in covergroup `{group_name}` read a covergroup argument {reason}; llg supports this only for constant transition values (llg limitation)",
+                            self.node(bin).name
+                        ),
+                    ));
+                }
+            }
             let tables = transitions::build(width, transition_bins, detect_overlap).map_err(|(index, message)| {
                 let bin = transition_nodes[index];
                 self.coverage_error(
@@ -1670,6 +1695,7 @@ impl<'a> Codegen<'a> {
             (build.guards.len() - 1) as u32
         });
         let mut sets = Vec::with_capacity(metadata.transitions.len());
+        let mut dynamic = false;
         for set in &metadata.transitions {
             let mut steps = Vec::with_capacity(set.len());
             for range in set {
@@ -1733,6 +1759,7 @@ impl<'a> Codegen<'a> {
                     (1u64 << width) - 1
                 };
                 let mut ranges = Vec::new();
+                let mut items = Vec::new();
                 for item in range.items.iter().copied() {
                     scratch.items.clear();
                     self.coverage_value_item(
@@ -1749,21 +1776,19 @@ impl<'a> Codegen<'a> {
                             IrCoverBound::Max => Some(max_key),
                             IrCoverBound::Slot(_) => None,
                         };
-                        match (key(value.lo), key(value.hi)) {
-                            (Some(lo), Some(hi)) => ranges.push((lo, hi)),
-                            _ => {
-                                return Err(self.coverage_error(
-                                    item,
-                                    format!(
-                                        "transition bins {describe} read a covergroup argument; llg supports only constant transition values (llg limitation)"
-                                    ),
-                                ))
-                            }
+                        // A value read from a covergroup argument is
+                        // resolved when the instance is constructed.
+                        if let (Some(lo), Some(hi)) = (key(value.lo), key(value.hi)) {
+                            ranges.push((lo, hi));
+                        } else {
+                            dynamic = true;
                         }
                     }
+                    items.extend(scratch.items.drain(..));
                 }
                 steps.push(transitions::StepSpec {
                     ranges,
+                    items,
                     repeat,
                     lo,
                     hi,
@@ -1787,12 +1812,21 @@ impl<'a> Codegen<'a> {
             }
             sets.push(steps);
         }
+        if dynamic && array {
+            return Err(self.coverage_error(
+                bin,
+                format!(
+                    "transition bins {describe} with `[]` read a covergroup argument; llg creates one bin per sequence only for constant transition values (llg limitation)"
+                ),
+            ));
+        }
         Ok(transitions::BinSpec {
             name: bin_name,
             site: Self::coverage_site(&build.path, self.node(bin)),
             kind,
             array,
             guard,
+            dynamic,
             sets,
         })
     }

@@ -243,9 +243,28 @@ fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions
             .flat_map(|(a, b)| [format!("{a}u"), format!("{b}u")])
             .collect(),
     );
+    // Values read from slots: the step items each instance resolves. Only
+    // such tables name the fields, so constant tables keep their text.
+    let dynamic = if tables.step_items.is_empty() {
+        String::new()
+    } else {
+        let items = static_array(
+            out,
+            "llg_cov_item_t",
+            &format!("{prefix}_titems"),
+            item_rows(&tables.items),
+        );
+        let step_items = static_array(
+            out,
+            "uint32_t",
+            &format!("{prefix}_tstep_items"),
+            u32_rows(&tables.step_items),
+        );
+        format!(", .items = {items}, .step_items = {step_items}")
+    };
     let name = format!("{prefix}_trans");
     out.push_str(&format!(
-        "static const llg_cov_trans_t {name} = {{ .n_classes = {}u, .bounds = {bounds}, .words = {}u, .accept = {accept}, .n_steps = {}u, .steps = {steps}, .n_sets = {}u, .sets = {sets}, .start_index = {start_index}, .start_sets = {start_sets}, .n_states = {}u, .window = {}u, .n_bins = {}u, .bins = {bins}, .default_bin = {}, .n_overlaps = {}u, .overlaps = {overlaps} }};\n",
+        "static const llg_cov_trans_t {name} = {{ .n_classes = {}u, .bounds = {bounds}, .words = {}u, .accept = {accept}, .n_steps = {}u, .steps = {steps}, .n_sets = {}u, .sets = {sets}, .start_index = {start_index}, .start_sets = {start_sets}, .n_states = {}u, .window = {}u, .n_bins = {}u, .bins = {bins}, .default_bin = {}, .n_overlaps = {}u, .overlaps = {overlaps}{dynamic} }};\n",
         tables.bounds.len(),
         tables.words,
         tables.steps.len(),

@@ -71,7 +71,11 @@ disjoint key segments; signed keys flip the sign bit. Transition bins become
 compile-time automata in `coverage/transitions.rs`, whose `Tables::consume`
 mirrors the runtime `llg_cov_consume`; it also sizes `[]` arrays, counts
 coverable sequences and finds `detect_overlap` pairs within fixed budgets
-(exceeding one is a located llg-limitation error). Cross select expressions
+(exceeding one is a located llg-limitation error; the overlap search warns
+where it stopped). Transition values that read covergroup arguments keep
+their items per step in the tables, and each instance builds its classes
+from them; such coverpoints may not need those searches (no `[]` bin
+reading an argument, no removal bins, no `detect_overlap`). Cross select expressions
 become DNF boxes over value-bin ranks (`cross_select`), at most
 `MAX_SELECT_BOXES` per bin. Options are checked at their 19.7 levels
 (`check_option`); type options must be constants. A clocking event on static

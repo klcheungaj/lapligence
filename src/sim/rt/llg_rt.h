@@ -3977,6 +3977,15 @@ typedef struct {
      * option.detect_overlap. */
     uint32_t n_overlaps;
     const uint32_t* overlaps;
+    /* Transition values read from slots (a covergroup argument, 19.5):
+     * step s holds items[step_items[s]] up to items[step_items[s + 1]].
+     * Each instance then resolves them by 19.5.6 when it is ready and builds
+     * its own classes, accept sets, start lists and scalar `bins` coverable
+     * counts; `bounds` and `accept` above hold the constant values only.
+     * Such tables have no ignore or illegal bins and no overlaps. NULL for
+     * constant tables. */
+    const llg_cov_item_t* items;
+    const uint32_t* step_items;
 } llg_cov_trans_t;
 typedef struct {
     const char* name;

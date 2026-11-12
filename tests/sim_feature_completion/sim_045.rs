@@ -193,10 +193,51 @@ fn invalid_transition_forms_are_located_errors() {
         "neg_trans_ignore_goto",
         "neg_trans_ignore_goto.sv:6:55: ignore_bins and illegal_bins `skip` of coverpoint `cp` in covergroup `g` cannot use goto or nonconsecutive repetition",
     );
+}
+
+/// Transition values read from covergroup arguments resolve per instance
+/// when it is constructed (19.5, 19.5.6), as value bins do.
+#[test]
+fn transition_values_read_covergroup_arguments() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_045/transition_arguments.out");
+    let ignored = "value is outside the coverpoint type and is ignored (IEEE 1800-2009 19.5.6)";
+    let limited = "range is limited to the values of the coverpoint type (IEEE 1800-2009 19.5.6)";
+    sim_cli::run_case_checked_matrix(SUITE, "transition_arguments", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(
+            llg_messages(output),
+            [
+                format!("WARNING: [SIM-011] tb:13:39: bins `out` {ignored}"),
+                format!("WARNING: [SIM-011] tb:14:41: bins `part` {limited}"),
+                format!("WARNING: [SIM-011] tb:13:39: bins `out` {ignored}"),
+                format!("WARNING: [SIM-011] tb:14:41: bins `part` {limited}"),
+                format!("WARNING: [SIM-011] tb:21:53: bins `o` {ignored}"),
+            ],
+            "{label}"
+        );
+    });
+}
+
+/// The transition forms whose counts need compile-time searches keep
+/// constant values (llg limitations).
+#[test]
+fn transition_argument_limits_are_located_errors() {
+    let describe = "transition bins `t` of coverpoint `cp` in covergroup `g`";
     sim_cli::reject_case(
         SUITE,
-        "neg_trans_argument",
-        "neg_trans_argument.sv:6:39: transition bins `t` of coverpoint `cp` in covergroup `g` read a covergroup argument; llg supports only constant transition values (llg limitation)",
+        "neg_trans_argument_array",
+        &format!("neg_trans_argument_array.sv:7:29: {describe} with `[]` read a covergroup argument; llg creates one bin per sequence only for constant transition values (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_argument_removal",
+        &format!("neg_trans_argument_removal.sv:7:29: {describe} read a covergroup argument in a coverpoint with ignore_bins or illegal_bins transitions; llg supports this only for constant transition values (llg limitation)"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_argument_overlap",
+        &format!("neg_trans_argument_overlap.sv:8:29: {describe} read a covergroup argument in a coverpoint whose option.detect_overlap may be set; llg supports this only for constant transition values (llg limitation)"),
     );
 }
 

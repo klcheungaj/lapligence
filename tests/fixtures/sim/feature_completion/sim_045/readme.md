@@ -33,6 +33,11 @@ instance-specific information, and some simulators then return 0 from
   (for classes only), or non-ref arguments to the coverage group. It shall be
   legal to use the $ primary in an open_value_range of the form
   [ expression : $ ] or [ $ : expression ]."
+- 19.5, L32513-32520: "trans_list ::= ( trans_set ) { , ( trans_set ) }",
+  "trans_set ::= trans_range_list { => trans_range_list }", "trans_item ::=
+  range_list": a transition's values are the same value ranges as a bin's,
+  so `transition_arguments` reads non-ref arguments in them as L32413-32420
+  allows (industry-standard behaviour accepts it).
 - 19.5, L32422-32431: "If a fixed number of bins is specified and that number
   is smaller than the specified number of values, then the possible bin values
   are uniformly distributed among the specified bins. The first 'n' specified
@@ -347,6 +352,34 @@ merged cross has no common layout: a run-time error at the type query (llg
 limitation), which reports 0.00; the instance values (get_inst_coverage 1)
 are 1/4 = 25.00 and 1/6 = 16.67.
 
+`transition_arguments.sv` (industry-standard behaviour, probed): the
+samples are 2 3 5 4 2 7 8 3 1 4 4 6 2 2 4 8 1 4 6 (positions 1 to 19); every
+coverpoint of `cg` has one bin unless noted, so it shows 100.00 when the bin
+is hit and 0.00 otherwise, and `all` is the mean of the eight coverpoints.
+
+- `a` = `new(2, 4, 20)`: `tr` (2=>3) at 1-2; `rng` ([2:4]=>5) at 2-3; `two`
+  (2=>4 or 4=>2) at 4-5; `out` (20=>1) is outside the 4-bit type, so the
+  bin is ignored with a run-time warning (19.5.6) and is not coverable, and
+  `c` (7=>8) at 6-7 makes `p_out` 100.00; `part` ([2:20]=>1) is limited to
+  [2:15]=>1 with a warning and hit at 8-9 (3 1); `rep` (2 [* 2] => 4) at
+  13-15; `g` (2 [-> 2] => 4) at 13-15; `p_mix`: `m` (2=>8) never, `k` (8=>1)
+  at 16-17: 50.00. `all` = (7 · 100 + 50) / 8 = 93.75.
+- `b` = `new(4, 6, 30)`: `tr` (4=>3) and `rng` ([4:6]=>5) never: 0.00;
+  `two` (4=>6) at 11-12; `out` (30=>1) ignored with a warning, `c` hit;
+  `part` ([4:30]=>1) limited to [4:15]=>1 with a warning, hit at 16-17 (8
+  1); `rep` (4 [* 2] => 6) at 10-12; `g` (4 [-> 2] => 6) at 10-12; `p_mix`:
+  `m` (4=>8) at 15-16, `k` at 16-17: 100.00. `all` = 6 · 100 / 8 = 75.00.
+- `cm` merges its instances (19.11.3): `m1` = `new(2, 20)` has `t` (2=>3,
+  hit), `c` (hit) and `n` (2=>9, never); its `o` (20=>1) is ignored with a
+  warning. `m2` = `new(4, 3)` has `t` (4=>3, never), `o` (3=>1, hit at 8-9),
+  `c` (hit) and `n` (4=>9, never). The union by name has `t`, `o`, `c`, `n`,
+  with `t`, `o` and `c` hit: 3/4 = 75.00. This line is the 19.11.3 union
+  that llg also applies to value bins (S45-D18); industry-standard behaviour
+  reports the mean of the instances, 58.33, when an argument removes a bin
+  in one instance, for value bins as for transition bins.
+
+The run-time warnings come once per instance, in construction order.
+
 `cross_classes.sv` (llg limitation): each of `sa`..`sd` is 32 single-value
 selects of one crossed coverpoint, so every coverpoint splits into 33 value
 classes (its bins 0..31 one by one, and bins 32..63); 33^4 = 1185921
@@ -374,7 +407,9 @@ warning names the pair where it stopped. The run reports no overlap; samples
 | `neg_trans_length0` | `(3 [* 1:1])`, a transition of length 0: its repeat_range evaluates to 1 (S45-D11; `(3 [-> 1])` and the other forms of S45-D19 are legal) |
 | `neg_trans_array_goto` | `[]` transition bins with a goto repetition (19.5.1) |
 | `neg_trans_ignore_goto` | ignore_bins with a nonconsecutive repetition (19.5.4) |
-| `neg_trans_argument` | a transition value read from a covergroup argument (llg limitation) |
+| `neg_trans_argument_array` | `[]` transition bins whose value reads a covergroup argument (llg limitation) |
+| `neg_trans_argument_removal` | a transition value read from a covergroup argument in a coverpoint with ignore_bins transitions (llg limitation) |
+| `neg_trans_argument_overlap` | a transition value read from a covergroup argument where option.detect_overlap may be set (llg limitation) |
 | `neg_cross_of_cross` | a cross of a cross (not 1800-2009 syntax) |
 | `neg_cross_transition` | a cross of a coverpoint with transition bins (llg limitation) |
 | `neg_trans_states` | `2 [* 70000]` needs more than 65536 automaton states in one coverpoint (llg limitation) |

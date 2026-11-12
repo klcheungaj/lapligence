@@ -159,6 +159,13 @@ pub struct IrCoverTransitions {
     /// The pair of `bins` declarations at which the detect_overlap search
     /// ran out of its budget; it and later pairs are not checked.
     pub(in crate::sim) overlap_stop: Option<(u32, u32)>,
+    /// Empty unless a transition value reads a slot (19.5): the items of
+    /// every step (`step_items[s]..step_items[s + 1]`), from which each
+    /// instance builds its own classes, accept sets, start lists and scalar
+    /// `bins` coverable counts. `bounds` and `accept` then cover the
+    /// constant values only.
+    pub(in crate::sim) items: Vec<IrCoverItem>,
+    pub(in crate::sim) step_items: Vec<u32>,
 }
 
 /// The repetition of a step; a step without repetition is `[* 1]`.
@@ -583,7 +590,7 @@ impl IrCovergroup {
                 ));
             }
             if let Some(transitions) = &point.transitions {
-                if !transitions.valid(max, self.guards) {
+                if !transitions.valid(max, self.guards, self.slots) {
                     return Err(format!(
                         "coverpoint `{}` transition bins are invalid",
                         point.name
@@ -632,7 +639,7 @@ impl IrCovergroup {
 
 impl IrCoverTransitions {
     /// The table invariants the runtime indexes by.
-    fn valid(&self, max_key: u64, guards: u32) -> bool {
+    fn valid(&self, max_key: u64, guards: u32, slots: u32) -> bool {
         let classes = self.bounds.len();
         let words = self.words as usize;
         let states = self.states as u64;
@@ -683,6 +690,37 @@ impl IrCoverTransitions {
                 .overlaps
                 .iter()
                 .all(|(a, b)| a < b && (*b as usize) < self.bins.len())
+            && self.dynamic_valid(max_key, slots)
+    }
+
+    /// Per-instance tables: one item range per step, items resolvable, and
+    /// none of the forms whose counts need compile-time searches.
+    fn dynamic_valid(&self, max_key: u64, slots: u32) -> bool {
+        if self.items.is_empty() && self.step_items.is_empty() {
+            return true;
+        }
+        let bound_valid = |bound: IrCoverBound| match bound {
+            IrCoverBound::Key(key) => key <= max_key,
+            IrCoverBound::Slot(slot) => slot < slots,
+            IrCoverBound::Min | IrCoverBound::Max => true,
+        };
+        self.step_items.len() == self.steps.len() + 1
+            && self.step_items.first() == Some(&0)
+            && self.step_items.windows(2).all(|pair| pair[0] <= pair[1])
+            && self.step_items.last().copied() == Some(self.items.len() as u32)
+            && self.items.iter().all(|item| {
+                bound_valid(item.lo)
+                    && bound_valid(item.hi)
+                    && match (item.lo, item.hi) {
+                        (IrCoverBound::Key(lo), IrCoverBound::Key(hi)) => lo <= hi,
+                        _ => item.site.is_some(),
+                    }
+            })
+            && self.overlaps.is_empty()
+            && self
+                .bins
+                .iter()
+                .all(|bin| !matches!(bin.kind, IrCoverBinKind::Ignore | IrCoverBinKind::Illegal))
     }
 }
 

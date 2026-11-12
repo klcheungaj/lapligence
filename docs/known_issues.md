@@ -3078,10 +3078,12 @@ These covergroups reject with located diagnostics:
   argument wider than 64 bits;
 - a `wildcard` bins value whose don't-care bits expand to more than 4096
   ranges;
-- transition bins whose values read a covergroup argument, or whose
-  expansion exceeds a compile-time budget of one coverpoint: 65536 automaton
-  states, 4096 sequences of one `[]` or removal bin, 2^20 start entries, or
-  2^20 value class sequences to count its bins;
+- transition bins whose expansion exceeds a compile-time budget of one
+  coverpoint: 65536 automaton states, 4096 sequences of one `[]` or removal
+  bin, 2^20 start entries, or 2^20 value class sequences to count its bins;
+- transition values read from a covergroup argument in a `[]` transition
+  bin, in a coverpoint with `ignore_bins` or `illegal_bins` transitions, or
+  in a coverpoint whose `option.detect_overlap` may be set;
 - a cross of a coverpoint that has transition bins, and a `binsof` that names
   a transition bin;
 - a cross select expression that expands to more than 1024 terms;
@@ -3109,8 +3111,11 @@ coverage report.
 ### Cause
 
 `ref` arguments are bound statically per distinct actual tuple. Bins values
-are 64-bit runtime keys. Transition bins are compiled to fixed automata, so
-their values must be constants. Crosses address coverpoint bins by value
+are 64-bit runtime keys. Transition bins are compiled to fixed automata;
+when a value reads a covergroup argument, each instance builds its own value
+classes when it is constructed, but the searches that count `[]` sequences,
+remove ignored and illegal sequences and find overlaps run only at compile
+time, on constant values. Crosses address coverpoint bins by value
 rank, so transition bins have no coordinate. Merged cross bins are matched
 by layout (coverpoint-bin coordinates and select signatures), not by the
 19.11.3 `<binname1,...,binnameN>` names; a name-keyed cross merge would need
