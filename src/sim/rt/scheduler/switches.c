@@ -129,6 +129,7 @@ static void switch_controls_release(void) {
         llg_wait_source_t* source = wait_source_find(watch->signal);
         if (!source || source->switches != watch) continue;
         source->switches = NULL;
+        source->checks--;
         wait_source_unkeep(source);
     }
     free(g_sw.watches);
@@ -675,8 +676,13 @@ void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t co
         watch->shadow = (uint64_t*)llg_checked_calloc(
             (size_t)watch->words * 3u + 1u, sizeof(uint64_t), "switch control watch");
         llg_wait_source_t* source = wait_source_get(watch->signal);
+        if (source->checks == UINT32_MAX) {
+            llg_msg(LLG_MSG_INTERNAL, NULL, "check consumer count overflow");
+            abort();
+        }
         wait_source_keep(source);
         source->switches = watch;
+        source->checks++;
         switch_watch_snapshot(watch);
         switch_watch_apply(watch, UINT32_MAX);
     }

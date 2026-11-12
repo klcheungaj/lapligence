@@ -163,11 +163,14 @@ on the rows of what it reads (`force_reads`, and `checks`, which counts
 every consumer that runs at the check), so `change_begin` opens a record
 for them and `sig_settle`/`real_settle` call `check_consumers_changed` at
 the check, after the waiters, which evaluates it again
-(`force_dependency_changed`). One waiter-less
+(`force_dependency_changed`); a switch control watch counts itself the same
+way and the check updates its switches (`switch_controls_changed`). The check
+that ends a process turn runs before net deferral ends, so the net updates it
+makes resolve with those of the turn. One waiter-less
 subscription (`keep`) keeps a row alive for timing check terminals, switch
 controls and force reads. Per-write consumers stay in `sig_publish`: VPI
-value change, waveforms, monitors, abort conditions, switches and timing
-checks, and the AA-D6 gate, which a gate-at-write wait
+value change, waveforms, monitors, abort conditions and timing checks, and
+the AA-D6 gate, which a gate-at-write wait
 latches at each write (`llg_wait_gate_at_write`, `payload.expression.gate_open`,
 walked through `write_walkers`); moving one to the check means calling it
 from `sig_settle` and counting what it observes in `wait_source_observed`. Ordered change logs (`llg_wait_changes`) also log per write.
@@ -248,8 +251,8 @@ levels per node (strongest known/possible 0 and 1). A driver-slot commit,
 force or release of a member net marks its nodes dirty and queues the net
 instead of resolving it; `llg_switch_control` marks a switch's ends. Direct
 controls (`llg_switch_controls_start`) watch their signals' storage through a
-waiter-less wait-source subscription (`llg_wait_source.switches`, like timing
-checks); a publication compares the stored words with a per-signal shadow and
+waiter-less wait-source subscription (`llg_wait_source.switches`, counted in
+`checks`); the check that sees a change (T1-D11) compares the stored words with a per-signal shadow and
 updates only the switches of changed bits. Each node's adjacency lists its
 non-off switches first (`n_active`, swapped in O(1) on a state change), so a
 solve never visits off switches. A flush round that a publication re-dirties

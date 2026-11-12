@@ -830,11 +830,14 @@ static int wait_source_armed(const llg_wait_source_t* source) {
 }
 
 // The consumers of a check that its row counts in `checks`, after the
-// waiters: force expressions that read the storage. `target` is packed
-// storage, else `real` is real storage.
+// waiters: force expressions that read the storage, then the direct switch
+// controls it drives (their networks are solved like any other switch
+// change, scheduler/switches.c). `target` is packed storage, else `real` is
+// real storage.
 static LLG_OUTLYING void check_consumers_changed(llg_wait_source_t* source, sv4_t* target,
                                                  double* real) {
     if (source->force_reads) force_dependency_changed(target, real, real != NULL);
+    if (source->switches) switch_controls_changed(source->switches);
 }
 
 // Whether a waiter or a consumer that runs at the check observes the row.
@@ -1468,7 +1471,6 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
     else if (!deferred || (source && !source->change)) source = wait_source_find(target);
     int watched = source && source->watchers;
     llg_timing_watch_t* timing = source ? source->timing : NULL;
-    llg_switch_watch_t* switches = source ? source->switches : NULL;
     if (cursor) {
         sig_settle(target, source, cursor, old, value,
                    change_bound(source->change, target) ? LLG_BOUND_SETTLE : LLG_BOUND_NONE,
@@ -1497,9 +1499,6 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
     // Timing check terminals only mark their sets; the checks run later in
     // the time step (llg_timing_checks_run).
     if (LLG_CO_UNLIKELY(timing != NULL)) timing_terminals_changed(timing);
-    // Direct switch controls set their switches' states; the networks are
-    // solved like any other switch change (scheduler/switches.c).
-    if (LLG_CO_UNLIKELY(switches != NULL)) switch_controls_changed(switches);
     // Watches run last, after every runtime consumer saw the new value.
     if (LLG_CO_UNLIKELY(watched)) value_watch_notify(target);
 }

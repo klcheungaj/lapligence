@@ -413,9 +413,9 @@ struct llg_wait_source {
     // Live force expressions that read the storage.
     uint32_t force_reads;
     // How many consumers that see one change per check instead of each write
-    // (T1-D11) observe the storage: its force reads. A deferred write of the
-    // storage opens a record (change_begin), and its check runs them
-    // (check_consumers_changed).
+    // (T1-D11) observe the storage: its force reads and its switch control
+    // watch. A deferred write of the storage opens a record (change_begin),
+    // and its check runs them (check_consumers_changed).
     uint32_t checks;
 };
 

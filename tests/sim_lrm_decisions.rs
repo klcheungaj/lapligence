@@ -253,6 +253,14 @@ fn t1_d11_force_at_check() {
 }
 
 #[test]
+fn t1_d11_switch_control_at_check() {
+    run_decision(
+        "T1-D11_switch_control_at_check",
+        include_str!("fixtures/sim/lrm_decisions/T1-D11_switch_control_at_check.out"),
+    );
+}
+
+#[test]
 fn t1_d4_port_delay_merges() {
     run_decision(
         "T1-D4_port_delay_merges",
