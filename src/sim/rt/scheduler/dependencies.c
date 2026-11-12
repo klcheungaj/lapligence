@@ -830,14 +830,17 @@ static int wait_source_armed(const llg_wait_source_t* source) {
 }
 
 // The consumers of a check that its row counts in `checks`, after the
-// waiters: force expressions that read the storage, then the direct switch
+// waiters: force expressions that read the storage, the direct switch
 // controls it drives (their networks are solved like any other switch
-// change, scheduler/switches.c). `target` is packed storage, else `real` is
-// real storage.
+// change, scheduler/switches.c), then, last, value watches at the check.
+// `target` is packed storage, else `real` is real storage. `checked` is 0
+// for a write outside a turn, whose publication runs the watches itself
+// after its other consumers.
 static LLG_OUTLYING void check_consumers_changed(llg_wait_source_t* source, sv4_t* target,
-                                                 double* real) {
+                                                 double* real, int checked) {
     if (source->force_reads) force_dependency_changed(target, real, real != NULL);
     if (source->switches) switch_controls_changed(source->switches);
+    if (checked) value_watch_checked(source, real ? (const void*)real : (const void*)target);
 }
 
 // Whether a waiter or a consumer that runs at the check observes the row.
@@ -1337,7 +1340,8 @@ LLG_CO_INLINE void sig_settle(sv4_t* target, llg_wait_source_t* source,
                                bound == LLG_BOUND_SETTLE);
         if (contents) fire_marker(contents);
     }
-    if (LLG_CO_UNLIKELY(source && source->checks)) check_consumers_changed(source, target, NULL);
+    if (LLG_CO_UNLIKELY(source && source->checks))
+        check_consumers_changed(source, target, NULL, cursor != NULL);
 }
 
 // The check of a history record: nothing waited on the storage or its bound
@@ -1499,8 +1503,13 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
     // Timing check terminals only mark their sets; the checks run later in
     // the time step (llg_timing_checks_run).
     if (LLG_CO_UNLIKELY(timing != NULL)) timing_terminals_changed(timing);
-    // Watches run last, after every runtime consumer saw the new value.
-    if (LLG_CO_UNLIKELY(watched)) value_watch_notify(target);
+    // Watches run last, after every runtime consumer saw the new value; a
+    // watch at the check sees a deferred write at its record's check. The
+    // consumers can drop the row, so a write outside a turn looks it up again.
+    if (LLG_CO_UNLIKELY(watched)) {
+        value_watch_notify(target);
+        if (!deferred && !cursor) value_watch_checked(wait_source_find(target), target);
+    }
 }
 
 // `old` must be complete: the first write's record keeps it.
@@ -1692,7 +1701,8 @@ static void real_settle(double* target, llg_wait_source_t* source,
     deferred_trigger_source_change(NULL, target);
     if (cursor) fire_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL, 0);
     else publish_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
-    if (LLG_CO_UNLIKELY(source && source->checks)) check_consumers_changed(source, NULL, target);
+    if (LLG_CO_UNLIKELY(source && source->checks))
+        check_consumers_changed(source, NULL, target, cursor != NULL);
 }
 
 // Real equality is bitwise: repeated NaNs with the same payload are
@@ -1725,7 +1735,10 @@ static void real_write(double* target, double value) {
         else publish_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
     }
     if (LLG_CO_UNLIKELY(llg_native_real_refs_live)) llg_native_ref_real_stored(target);
-    if (LLG_CO_UNLIKELY(watched)) value_watch_notify(target);
+    if (LLG_CO_UNLIKELY(watched)) {
+        value_watch_notify(target);
+        if (!deferred) value_watch_checked(wait_source_find(target), target);
+    }
     if (target_pin) llg_value_scope_end(target_pin);
 }
 

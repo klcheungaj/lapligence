@@ -164,13 +164,16 @@ every consumer that runs at the check), so `change_begin` opens a record
 for them and `sig_settle`/`real_settle` call `check_consumers_changed` at
 the check, after the waiters, which evaluates it again
 (`force_dependency_changed`); a switch control watch counts itself the same
-way and the check updates its switches (`switch_controls_changed`). The check
+way and the check updates its switches (`switch_controls_changed`), and so
+does a row's value watch with a VPI value-change callback
+(`llg_value_watch_add_at_check`, `value_watch_checked`, last); coverage
+and `disable iff` watches still see each write (`value_watch_notify`). The check
 that ends a process turn runs before net deferral ends, so the net updates it
 makes resolve with those of the turn. One waiter-less
 subscription (`keep`) keeps a row alive for timing check terminals, switch
-controls and force reads. Per-write consumers stay in `sig_publish`: VPI
-value change, waveforms, monitors, abort conditions and timing checks, and
-the AA-D6 gate, which a gate-at-write wait
+controls and force reads. Per-write consumers stay in `sig_publish`:
+waveforms, monitors, abort conditions, coverage watches and timing checks,
+and the AA-D6 gate, which a gate-at-write wait
 latches at each write (`llg_wait_gate_at_write`, `payload.expression.gate_open`,
 walked through `write_walkers`); moving one to the check means calling it
 from `sig_settle` and counting what it observes in `wait_source_observed`. Ordered change logs (`llg_wait_changes`) also log per write.

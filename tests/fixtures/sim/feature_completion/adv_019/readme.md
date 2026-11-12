@@ -688,8 +688,10 @@ reclaimed object would be a fatal error.
 - Class var changes. 38.36.1 (L64766-L64767): "The cbValueChange callback may
   be placed on a class var and will be called when its value changes, which
   indicates that it is referring to a new dynamic object (including a newly
-  constructed one) or no object." `tmp` changes in `make(2)`, `copy()` and
-  `tmp = null`: 2 changes at checks 1-3, 3 at check 4.
+  constructed one) or no object." `tmp` changes in `make(2)` and `copy()` in
+  one process turn, which calls the callback once at its check (T1-D11 in
+  `docs/lrm_decisions.md`), and in `tmp = null`: 1 change at checks 1-3, 2 at
+  check 4.
 
 ## declarations (37.10, 33.7)
 

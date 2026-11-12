@@ -239,10 +239,13 @@ Time reasons are one-shot region callbacks in their Table 4-1 PLI region
 following `LLG_REGION_PRE_NBA`, so work a read-write callback wakes runs
 before `cbNBASynch` (S43-D1); a zero-delay `cbAfterDelay` registered after
 Pre-Active goes to `LLG_REGION_INACTIVE` (S43-D2).
-`cbValueChange` uses `llg_value_watch_add`: a waiter-less subscription on the
-address's wait row that `sig_publish_changed`/`real_write` already look up,
-whose hook runs after every runtime consumer; never add a separate per-store
-lookup. A whole-array record holds one watch entry per element (bounded by
+`cbValueChange` uses `llg_value_watch_add_at_check`: a waiter-less
+subscription on the address's wait row that `sig_publish_changed`/`real_write`
+already look up, counted in the row's check consumers, so a write in a process
+turn or NBA batch opens a change record and the hook runs once at its check
+when the value differs (T1-D11), after the other check consumers; a write
+outside a turn runs it at once after every runtime consumer. Never add a
+separate per-store lookup. A whole-array record holds one watch entry per element (bounded by
 `LLG_VPI_MAX_ARRAY_WATCH_ELEMENTS`), so element writes stay on that path. Dispatch collects records in registration order before running any
 (value changes then run newest first, S43-D6) and frees removed ones only when
 the outermost dispatch ends, so callbacks may register/remove any callback.

@@ -1790,8 +1790,14 @@ int llg_rt_running(void);
 // LLG_REGION_PRE_ACTIVE_PLI so it may queue zero-delay callbacks there.
 void llg_time_slot_hook(void (*hook)(void));
 void llg_value_watch_hook(llg_value_watch_fn hook);
+// A value watch sees each write of `key`'s storage: its publication calls the
+// runtime's coverage and disable consumers. A watch at the check sees one
+// change per check (T1-D11) and calls the hook then, or at once for a write
+// outside a process turn. Add returns 0 for a NULL key.
 int llg_value_watch_add(const void* key);
 void llg_value_watch_remove(const void* key);
+int llg_value_watch_add_at_check(const void* key);
+void llg_value_watch_remove_at_check(const void* key);
 
 enum {
     LLG_STOP_POLICY_RESUME = 0,

@@ -19,7 +19,6 @@ late cbEndOfCompile: handle none
 [5] postponed: cbReadOnlySynch: put c=9 -> LLG_VPI_READ_ONLY, c=7
 [10] pre-active: cbAfterDelay
 [10] pre-active: cbNextSimTime #2
-[10] value: a (second watch)=3
 [10] value: a (second watch)=4
 [10] value: mem[2]=5a index=2
 [20] active: mem[2]=5a

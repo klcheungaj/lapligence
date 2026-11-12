@@ -12545,7 +12545,7 @@ static int watch_insert(llg_vpi_watch_t* watch) {
     }
     if (watch->event == LLG_VPI_WATCH_EVENT)
         llg_event_watch_add((llg_event_object_t*)(uintptr_t)watch->key);
-    else if (!llg_value_watch_add(watch->key)) return 0;
+    else if (!llg_value_watch_add_at_check(watch->key)) return 0;
     size_t bucket = watch_bucket(watch->key, g_vpi.watch_capacity);
     watch->next = g_vpi.watch_buckets[bucket];
     g_vpi.watch_buckets[bucket] = watch;
@@ -12562,7 +12562,7 @@ static void watch_unlink(llg_vpi_watch_t* watch) {
         --g_vpi.watch_count;
         if (watch->event == LLG_VPI_WATCH_EVENT)
             llg_event_watch_remove((llg_event_object_t*)(uintptr_t)watch->key);
-        else llg_value_watch_remove(watch->key);
+        else llg_value_watch_remove_at_check(watch->key);
         return;
     }
 }

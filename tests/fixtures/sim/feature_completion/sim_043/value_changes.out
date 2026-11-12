@@ -1,0 +1,8 @@
+2 vpi tb.h=1
+2 vpi tb.h=0
+4 vpi tb.v=1
+4 print
+4 vpi tb.v=0
+5 vpi tb.w=02
+7 vpi tb.r=2.5
+8 vpi tb.g=1

@@ -108,6 +108,7 @@ static void wait_subscription_insert(llg_wait_subscription_t* node,
 }
 
 static void wait_subscription_unlink(llg_wait_subscription_t* node);
+static uint32_t value_watch_checks(const llg_wait_source_t* source);
 
 // Gives the row its keep-alive subscription (`keep`) unless it has one.
 static LLG_OUTLYING void wait_source_keep(llg_wait_source_t* source) {
@@ -119,12 +120,14 @@ static LLG_OUTLYING void wait_source_keep(llg_wait_source_t* source) {
     source->keep = node;
 }
 
-// Drops the keep-alive subscription once nothing it stands for is left.
-// Unlinking the last subscriber frees the row itself, so the caller must not
-// use `source` afterwards.
+// Drops the keep-alive subscription once nothing it stands for is left (a
+// value watch keeps the row alive itself). Unlinking the last subscriber
+// frees the row itself, so the caller must not use `source` afterwards.
 static LLG_OUTLYING void wait_source_unkeep(llg_wait_source_t* source) {
     llg_wait_subscription_t* node = source->keep;
-    if (!node || source->timing || source->switches || source->checks) return;
+    if (!node || source->timing || source->switches ||
+        source->checks > value_watch_checks(source))
+        return;
     source->keep = NULL;
     wait_subscription_unlink(node);
     free(node);
@@ -176,48 +179,81 @@ static void llg_tcov_changed(const void* key);
 // `disable iff` conditions (concurrent_assertions.c).
 static int value_watch_disable;
 
-// A watched publication: the coverage monitors first, so a VPI value-change
-// callback already reads the coverage of the new value.
+// A watch's subscription, with how many of its watches see one change per
+// check (VPI cbValueChange, llg_value_watch_add_at_check); `watchers` counts
+// every watch. A row with such a watch counts once in `checks`.
+typedef struct {
+    llg_wait_subscription_t node;
+    uint32_t at_check;
+} llg_value_watch_node_t;
+
+// A watched publication, at each write: the coverage monitors and disable
+// conditions. A VPI value-change callback runs after them, at the check
+// (value_watch_checked), so it already reads the coverage of the new value.
 static void value_watch_notify(const void* key) {
     if (value_watch_disable) assertion_disable_signal_changed((sv4_t*)key);
     if (value_watch_fsm) llg_fcov_changed(key);
     if (value_watch_toggle) llg_tcov_changed(key);
-    if (value_watch_hook) value_watch_hook(key);
 }
 
-int llg_value_watch_add(const void* key) {
+// What the row's value watch counts in `checks`.
+static uint32_t value_watch_checks(const llg_wait_source_t* source) {
+    return source->watch && ((const llg_value_watch_node_t*)source->watch)->at_check;
+}
+
+// The check of a row with a watch at the check, or a write outside a turn.
+static LLG_OUTLYING void value_watch_checked(const llg_wait_source_t* source, const void* key) {
+    if (value_watch_hook && source && source->watch &&
+        ((const llg_value_watch_node_t*)source->watch)->at_check)
+        value_watch_hook(key);
+}
+
+static int value_watch_insert(const void* key, int at_check) {
     if (!key) return 0;
     llg_wait_source_t* source = wait_source_get(key);
     if (!source->watch) {
-        llg_wait_subscription_t* node = (llg_wait_subscription_t*)llg_checked_calloc(
+        llg_value_watch_node_t* node = (llg_value_watch_node_t*)llg_checked_calloc(
             1, sizeof(*node), "value watch");
-        node->source = source;
-        wait_subscription_insert(node, &source->head);
-        source->watch = node;
+        node->node.source = source;
+        wait_subscription_insert(&node->node, &source->head);
+        source->watch = &node->node;
     }
-    if (source->watchers == UINT32_MAX) {
+    llg_value_watch_node_t* node = (llg_value_watch_node_t*)source->watch;
+    if (source->watchers == UINT32_MAX || (at_check && source->checks == UINT32_MAX)) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "value watch count overflow");
         abort();
     }
     source->watchers++;
+    if (at_check && node->at_check++ == 0) source->checks++;
     return 1;
 }
 
+int llg_value_watch_add(const void* key) { return value_watch_insert(key, 0); }
+
+int llg_value_watch_add_at_check(const void* key) { return value_watch_insert(key, 1); }
+
 static void value_watch_drop(llg_wait_source_t* source) {
-    llg_wait_subscription_t* node = source->watch;
+    llg_value_watch_node_t* node = (llg_value_watch_node_t*)source->watch;
+    if (node->at_check) source->checks--;
     source->watch = NULL;
     source->watchers = 0;
     // Unlinking the last subscriber frees the row itself.
-    wait_subscription_unlink(node);
+    wait_subscription_unlink(&node->node);
     free(node);
 }
 
-void llg_value_watch_remove(const void* key) {
+static void value_watch_erase(const void* key, int at_check) {
     // A watch from an earlier runtime lifetime is already gone.
     llg_wait_source_t* source = wait_source_find(key);
     if (!source || !source->watchers) return;
+    llg_value_watch_node_t* node = (llg_value_watch_node_t*)source->watch;
+    if (at_check && node->at_check && --node->at_check == 0) source->checks--;
     if (--source->watchers == 0) value_watch_drop(source);
 }
+
+void llg_value_watch_remove(const void* key) { value_watch_erase(key, 0); }
+
+void llg_value_watch_remove_at_check(const void* key) { value_watch_erase(key, 1); }
 
 static void free_value_watches(void) {
     for (size_t slot = 0; slot < g.wait_sources_capacity; slot++) {

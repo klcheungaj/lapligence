@@ -52,6 +52,24 @@ fn callbacks_register_and_remove_callbacks_while_running() {
     );
 }
 
+/// T1-D11: a value-change callback sees one change per check, so a value
+/// changed and changed back within one process turn or NBA batch calls
+/// nothing.
+#[test]
+fn value_change_callbacks_see_one_change_per_check() {
+    let directory = sim_harness::TempDir::new("sim043").expect("temporary directory");
+    let Some(library) = plugin(&directory, "value_changes") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "value_changes",
+        include_str!("../fixtures/sim/feature_completion/sim_043/value_changes.out"),
+        VPI,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}
+
 /// A02: read-only phases and Postponed `$strobe`/`$monitor` evaluators
 /// cannot write; a read-write callback's write wakes ordinary downstream
 /// Active and NBA work.

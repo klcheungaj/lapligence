@@ -114,8 +114,9 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
   `$strobe`; Postponed PLI: `cbReadOnlySynch` tries `c=9`, gets
   `LLG_VPI_READ_ONLY` and reads `c=7` (S43-D5).
 - Time 10: `cbAfterDelay` (registered first) then `cbNextSimTime #2`
-  (re-registered at 5). `a=3` and `a=4` each call the second watch (no
-  coalescing); the removed first watch is silent. `mem[2]=8'h5a` calls the
+  (re-registered at 5). `a=3` and `a=4` in one process turn call the second
+  watch once, with 4, at the turn's check (T1-D11 in
+  `docs/lrm_decisions.md`); the removed first watch is silent. `mem[2]=8'h5a` calls the
   element watch with `index=2`, the rightmost index; `mem[1]` does not.
 - Time 20: the display, `$finish`, then `[20] cbEndOfSimulation a=4`.
 
@@ -207,3 +208,19 @@ Without `--vpi`, `--dpi-lib` or a user system task call site the model has no
 VPI object catalog: the run-time application gets callbacks (`after delay` at
 2) but `tb.v` is `missing`, and stderr names `--vpi`. With `--vpi` it is
 `found`.
+
+## value_changes (T1-D11)
+
+A value-change callback sees a change at a check, like a waiter
+(`docs/lrm_decisions.md` T1-D11, an llg decision that follows
+industry-standard behaviour; SV 38.36.1 L64642 "After value change on some
+variables" leaves open when, within a process, a change is seen). Time-0 callbacks are left out.
+
+- 1: `g = 1; g = 0;` in one turn: no callback.
+- 2: `h = 1; #0 h = 0;`: the `#0` ends the turn, so both changes call.
+- 3: `k <= 1; k <= 0;` in one NBA batch: no callback.
+- 4: `v = 1; $display; v = 0;`: the print is a check, so `v=1` calls before
+  the print's text and `v=0` after it.
+- 5: `w = 8'h01; w = 8'h02;`: one callback with the last value, `02`.
+- 6, 7: a real changed and changed back calls nothing; `r = 2.5` calls once.
+- 8: `g = 1` calls once.
