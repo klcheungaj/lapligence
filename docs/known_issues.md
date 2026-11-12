@@ -2812,6 +2812,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   its locals are served by name and by `vpiVariables` of the block while it
   runs, decision A19-D88). A checker has no 2009 VPI object: a checker
   instance is a module scope with its variables (decision A19-D88);
+  `cbForce`/`cbRelease` callbacks on the elements of a sparse fixed array
+  (one kept in a keyed container; its values, puts and value-change
+  callbacks are served, decision A19-D88);
 - dynamic objects (VPI-O4) other than string, chandle and class variables,
   dynamic, queue and associative arrays (nested ones flattened to their
   innermost elements), fixed-size arrays of strings, chandles, class

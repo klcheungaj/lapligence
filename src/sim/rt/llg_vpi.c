@@ -623,9 +623,19 @@ static int has_array_properties(const llg_vpi_model_object_t* object) {
            is_variable_type(type);
 }
 
+/* Whether `object` is a sparse array with its keyed cells (it has no
+ * flat cells). */
+static LLG_OUTLYING int sparse_storage(const llg_vpi_model_object_t* object) {
+    return (object->flags & LLG_VPI_OBJ_SPARSE) && object->storage != NULL;
+}
+
 static int has_storage(const llg_vpi_model_object_t* object) {
-    if (object->flags & LLG_VPI_OBJ_SPARSE) return object->storage != NULL;
     return object->is_real ? object->real != NULL : object->packed != NULL;
+}
+
+/* Whether `object` has values: flat cells or a sparse array's keyed ones. */
+static int has_values(const llg_vpi_model_object_t* object) {
+    return has_storage(object) || sparse_storage(object);
 }
 
 static uint64_t dims_element_count(const llg_vpi_model_object_t* object);
@@ -712,7 +722,7 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     if (is_array_type(object->type))
         return object->dim_count > 0 &&
                (object->is_real ? object->real != NULL && object->width == 0
-                                : has_storage(object) && object->width != 0);
+                                : has_values(object) && object->width != 0);
     if (is_net_type(object->type) || is_variable_type(object->type))
         return object->is_real ? object->real != NULL && object->width == 0
                                : object->packed != NULL && object->width != 0;
@@ -1392,7 +1402,7 @@ static int whole_unpacked_aggregate(const llg_vpi_slot_t* slot) {
  * packed ranges), else NULL. Its ranges are leftmost first. */
 static const llg_vpi_typespec_t* packed_array_typespec(uint32_t row, uint64_t element) {
     const llg_vpi_model_object_t* object = row_object(row);
-    if (!object || object->is_real || !has_storage(object) || !g_vpi.types) return NULL;
+    if (!object || object->is_real || !has_values(object) || !g_vpi.types) return NULL;
     const llg_vpi_typespec_t* typespec;
     if (element != LLG_VPI_NO_ELEMENT)
         typespec = is_array_type(object->type) ? element_typespec(object) : NULL;
@@ -1557,16 +1567,22 @@ static vpiHandle make_member(uint32_t row, uint64_t element, uint32_t node_index
 
 /* ── value storage ──────────────────────────────────────────────────────── */
 
-/* The packed cell a write, force or value-change watch addresses. A
- * sparse array's cell is created on first use and never moves. */
+/* Element `element` of sparse array `object`, created on first use; it
+ * never moves. */
+static LLG_OUTLYING sv4_t* sparse_cell(const llg_vpi_model_object_t* object, uint64_t element) {
+    return element == LLG_VPI_NO_ELEMENT
+               ? NULL
+               : llg_fixed_array_cell((llg_fixed_array_t*)object->storage, element);
+}
+
+/* The packed cell a write, force or value-change watch addresses. */
 static sv4_t* packed_cell(const llg_vpi_target_t* target) {
     llg_vpi_model_object_t* object = row_object(target->object);
-    if (!object || object->is_real) return NULL;
-    if (object->flags & LLG_VPI_OBJ_SPARSE)
-        return target->element == LLG_VPI_NO_ELEMENT
-                   ? NULL
-                   : llg_fixed_array_cell((llg_fixed_array_t*)object->storage, target->element);
-    if (!object->packed) return NULL;
+    if (!object || object->is_real || !object->packed)
+        /* A sparse array has no flat cells. */
+        return object && !object->is_real && (object->flags & LLG_VPI_OBJ_SPARSE)
+                   ? sparse_cell(object, target->element)
+                   : NULL;
     if (target->element == LLG_VPI_NO_ELEMENT) return object->packed;
     return object->packed + target->element;
 }
@@ -1683,7 +1699,7 @@ static int read_target(const llg_vpi_target_t* target, llg_vpi_datum_t* out) {
 
 static int target_writable(const llg_vpi_target_t* target, const char** reason) {
     llg_vpi_model_object_t* object = row_object(target->object);
-    if (!object || !has_storage(object)) {
+    if (!object || !has_values(object)) {
         *reason = "VPI object has no writable value";
         return 0;
     }
@@ -1780,7 +1796,7 @@ static int handle_target(const llg_vpi_slot_t* slot, llg_vpi_target_t* target) {
     target->two_state = 0;
     switch (slot->kind) {
         case SLOT_OBJECT:
-            if (!object || !(has_storage(object) || is_constant_type(object->type)) ||
+            if (!object || !(has_values(object) || is_constant_type(object->type)) ||
                 is_array_type(object->type))
                 return 0;
             /* An unpacked union member is the low bits of the shared extent. */
@@ -4132,7 +4148,7 @@ static vpiHandle member_from_suffix(uint32_t row, const char* suffix) {
     const llg_vpi_typespec_t* typespec = element == LLG_VPI_NO_ELEMENT
         ? typespec_ref(object->typespec) : element_typespec(object);
     if (!is_aggregate_typespec(typespec) || (object->flags & LLG_VPI_OBJ_RECORD) ||
-        (element == LLG_VPI_NO_ELEMENT && !has_storage(object)))
+        (element == LLG_VPI_NO_ELEMENT && !has_values(object)))
         return NULL;
     uint32_t first = typespec->first_node, count = typespec->node_count, node = LLG_VPI_NONE;
     while (*p == '.') {
@@ -4245,7 +4261,7 @@ static vpiHandle element_by_indices(uint32_t row, const int64_t* indices, int co
 
 static vpiHandle bit_by_index(uint32_t row, uint64_t element, int64_t index, int quiet) {
     llg_vpi_model_object_t* object = row_object(row);
-    if (object->is_real || !has_storage(object) ||
+    if (object->is_real || !has_values(object) ||
         object->type == vpiPackedArrayVar || object->width < 1) {
         if (quiet != BIT_QUIET)
             vpi_error("LLG_VPI_INDEX", "object has no bit-selectable packed value");
@@ -4417,7 +4433,7 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
             }
             return element_by_indices(slot->object, &value, 1, 0);
         }
-        if (is_constant_type(base->type) || !has_storage(base)) {
+        if (is_constant_type(base->type) || !has_values(base)) {
             vpi_error("LLG_VPI_INDEX", "object has no access by index");
             return NULL;
         }
@@ -5276,9 +5292,9 @@ static int storage_index(void) {
     size_t count = 0;
     for (uint32_t row = 0; row < g_vpi.object_count; ++row) {
         const llg_vpi_model_object_t* object = &g_vpi.objects[row];
-        /* A sparse array's cells are not one extent; its elements are not
-         * indexed by address. */
-        if (!has_storage(object) || (object->flags & (LLG_VPI_OBJ_SLICE | LLG_VPI_OBJ_SPARSE)) ||
+        /* A sparse array has no flat cells (has_storage is false): its
+         * elements are not indexed by address. */
+        if (!has_storage(object) || (object->flags & LLG_VPI_OBJ_SLICE) ||
             !(is_net_type(object->type) || is_variable_type(object->type) ||
               is_array_type(object->type)))
             continue;
@@ -9806,7 +9822,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         return encode_handle(index);
     }
     if (type == vpiBit && (slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT) && object &&
-        !object->is_real && has_storage(object) &&
+        !object->is_real && has_values(object) &&
         !(slot->kind == SLOT_OBJECT && is_array_type(object->type))) {
         /* A scalar, one bit without a packed dimension (37.16 detail 25),
          * has no bits (decision A19-D47). */
@@ -11859,7 +11875,7 @@ static int array_section(vpiHandle handle, const s_vpi_arrayvalue* values, const
     llg_vpi_slot_t* slot = checked_handle(handle, NULL);
     if (!slot) return 0;
     llg_vpi_model_object_t* object = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
-    if (!object || !is_array_type(object->type) || !has_storage(object)) {
+    if (!object || !is_array_type(object->type) || !has_values(object)) {
         vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_HANDLE", "%s needs an unpacked array handle",
                        routine);
         return 0;
@@ -13520,7 +13536,7 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     if (!handle_target(slot, &target)) {
         llg_vpi_model_object_t* array =
             slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
-        if (!array || !is_array_type(array->type) || !has_storage(array)) {
+        if (!array || !is_array_type(array->type) || !has_values(array)) {
             vpi_error("LLG_VPI_CALLBACK",
                       "cbValueChange needs a variable, net, array, element or select handle");
             return 0;
