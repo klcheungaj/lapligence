@@ -1,0 +1,78 @@
+== emembers
+tb.ea[1]: type=618 ea[1] tb.ea[1] size=6 member=0 element=1 value=- parent=ea
+  member: type=612 k tb.ea[1].k size=32 member=1 element=0 value=00000002 parent=ea[1]
+  member: type=116 fa tb.ea[1].fa size=2 member=1 element=0 value=- parent=ea[1] array_type=1
+    ranges: [0:1]
+    element: type=612 fa[0] tb.ea[1].fa[0] size=32 member=0 element=1 value=00000014 parent=fa
+    element: type=612 fa[1] tb.ea[1].fa[1] size=32 member=0 element=1 value=00000015 parent=fa
+  member: type=116 q tb.ea[1].q size=1 member=1 element=0 value=- parent=ea[1] array_type=4
+    ranges: none
+    element: type=612 q[0] tb.ea[1].q[0] size=32 member=0 element=1 value=00000016 parent=q
+  member: type=616 s tb.ea[1].s size=2 member=1 element=0 value=e1 parent=ea[1]
+  member: type=116 ss tb.ea[1].ss size=2 member=1 element=0 value=- parent=ea[1] array_type=1
+    ranges: [0:1]
+    element: type=616 ss[0] tb.ea[1].ss[0] size=0 member=0 element=1 value= parent=ss
+    element: type=616 ss[1] tb.ea[1].ss[1] size=1 member=0 element=1 value=x parent=ss
+  member: type=116 m tb.ea[1].m size=6 member=1 element=0 value=- parent=ea[1] array_type=1
+    ranges: [1:0] [0:2]
+    element: type=48 m[1][0] tb.ea[1].m[1][0] size=4 member=0 element=1 value=x parent=m
+    element: type=48 m[1][1] tb.ea[1].m[1][1] size=4 member=0 element=1 value=x parent=m
+    element: type=48 m[1][2] tb.ea[1].m[1][2] size=4 member=0 element=1 value=x parent=m
+    element: type=48 m[0][0] tb.ea[1].m[0][0] size=4 member=0 element=1 value=x parent=m
+    element: type=48 m[0][1] tb.ea[1].m[0][1] size=4 member=0 element=1 value=x parent=m
+    element: type=48 m[0][2] tb.ea[1].m[0][2] size=4 member=0 element=1 value=5 parent=m
+tb.eq[0].fa: type=116 fa tb.eq[0].fa size=2 member=1 element=0 value=- parent=eq[0] array_type=1
+  ranges: [0:1]
+  element: type=612 fa[0] tb.eq[0].fa[0] size=32 member=0 element=1 value=00000014 parent=fa
+  element: type=612 fa[1] tb.eq[0].fa[1] size=32 member=0 element=1 value=00000015 parent=fa
+property: type=116 fa NULL! size=2 member=0 element=0 value=- parent=NULL array_type=1
+  ranges: [0:1]
+  element: type=612 fa[0] NULL! size=32 member=0 element=1 value=0000000a parent=fa
+  element: type=612 fa[1] NULL! size=32 member=0 element=1 value=0000000b parent=fa
+property: type=116 sa NULL! size=2 member=0 element=0 value=- parent=NULL array_type=1
+  ranges: [0:1]
+  element: type=616 sa[0] NULL! size=1 member=0 element=1 value=p parent=sa
+  element: type=616 sa[1] NULL! size=1 member=0 element=1 value=q parent=sa
+property: type=116 la NULL! size=4 member=0 element=0 value=- parent=NULL array_type=1
+  ranges: [0:1] [0:1]
+  element: type=48 la[0][0] NULL! size=4 member=0 element=1 value=x parent=la
+  element: type=48 la[0][1] NULL! size=4 member=0 element=1 value=x parent=la
+  element: type=48 la[1][0] NULL! size=4 member=0 element=1 value=9 parent=la
+  element: type=48 la[1][1] NULL! size=4 member=0 element=1 value=x parent=la
+property: type=618 pr NULL! size=3 member=0 element=0 value=- parent=NULL
+  member: type=612 k NULL! size=32 member=1 element=0 value=00000001 parent=pr
+  member: type=116 fa NULL! size=2 member=1 element=0 value=- parent=pr array_type=1
+    ranges: [0:1]
+    element: type=612 fa[0] NULL! size=32 member=0 element=1 value=00000000 parent=fa
+    element: type=612 fa[1] NULL! size=32 member=0 element=1 value=00000002 parent=fa
+  member: type=616 s NULL! size=1 member=1 element=0 value=r parent=pr
+property: type=618 pe NULL! size=40 member=0 element=0 value=- parent=NULL
+  member: none!
+tb.ea[1].fa[1]: type=612 fa[1] tb.ea[1].fa[1] size=32 member=0 element=1 value=00000015 parent=fa
+tb.ea[1].q[0]: type=612 q[0] tb.ea[1].q[0] size=32 member=0 element=1 value=00000016 parent=q
+tb.ea[1].m[1][0]: type=48 m[1][0] tb.ea[1].m[1][0] size=4 member=0 element=1 value=x parent=m
+tb.ea[1].fa[2]: NULL
+tb.ea[1].m[1]: NULL!
+tb.c.fa[1]: type=612 fa[1] NULL! size=32 member=0 element=1 value=0000000b parent=fa
+tb.c.la[1][0]: type=48 la[1][0] NULL! size=4 member=0 element=1 value=9 parent=la
+index fa 0: type=612 fa[0] tb.ea[1].fa[0] size=32 member=0 element=1 value=00000014 parent=fa
+multi m [0][2]: type=48 m[0][2] tb.ea[1].m[0][2] size=4 member=0 element=1 value=5 parent=m
+multi la [1][0]: type=48 la[1][0] NULL! size=4 member=0 element=1 value=9 parent=la
+tb.ea[1].fa[1] indices: 1 handle=1
+tb.ea[1].m[0][2] indices: 2 0 handle=NULL!
+put tb.ea[1].fa[0]=200
+put tb.ea[1].q[0]=220
+put tb.ea[1].ss[1]="y"
+put tb.ea[1].m[1][0]=7
+put tb.eq[0].fa[1]=211
+put tb.eq[0].q[0]=222
+put tb.c.fa[0]=100
+put tb.c.sa[1]="zz"
+put tb.c.la[0][1]=3
+tb.c.pr.fa[1]: type=612 fa[1] NULL! size=32 member=0 element=1 value=00000002 parent=fa
+put tb.c.pr.k=9
+put tb.c.pr.fa[0]=8
+tb.ea[1].k[1]: NULL!
+tb.c.pe.k: NULL!
+ea[1].fa=200 21 q[0]=220 ss[1]=y m[1][0]=7 eq[0].fa[1]=211 eq[0].q[0]=222
+c.fa=100 11 c.sa[1]=zz c.la[0][1]=3 c.pr.k=9 c.pr.fa[0]=8 c.pe.k=5

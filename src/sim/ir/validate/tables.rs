@@ -180,6 +180,38 @@ impl Validator<'_> {
                         return self.fail(path, "VPI dynamic object has no valid storage or shape");
                     }
                 }
+                IrVpiObjectKind::RegArray if !object.cells.is_empty() => {
+                    // An array member of a structure kept as leaf cells:
+                    // one packed or real signal per cell of its ranges.
+                    let cells = object.dims.iter().try_fold(1u64, |total, (left, right)| {
+                        total.checked_mul(left.abs_diff(*right).checked_add(1)?)
+                    });
+                    if object.array.is_some()
+                        || object.signal.is_some()
+                        || !object.member
+                        || cells != Some(object.cells.len() as u64)
+                    {
+                        return self.fail(path, "VPI cell array disagrees with its ranges");
+                    }
+                    for signal in &object.cells {
+                        let Some(storage) = self.model.signals.get(*signal) else {
+                            return self.fail(
+                                path,
+                                "VPI cell array references an out-of-bounds IR signal",
+                            );
+                        };
+                        if matches!(storage.ty, crate::sim::ir::IrType::Real { .. }) != object.real
+                        {
+                            return self.fail(
+                                path,
+                                "VPI cell array element type disagrees with its storage",
+                            );
+                        }
+                    }
+                    if !object.real {
+                        self.validate_width(object.width, &format!("{path}.width"))?;
+                    }
+                }
                 IrVpiObjectKind::RegArray | IrVpiObjectKind::NetArray => {
                     let Some(array) = object.array else {
                         return self.fail(path, "VPI array is missing array storage");

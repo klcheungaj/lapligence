@@ -433,11 +433,11 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
     // them.
     let mut externally_read = vec![false; model.signals.len()];
     for object in vpi_objects {
-        if let Some(visible) = object
-            .signal
-            .and_then(|signal| externally_read.get_mut(signal))
-        {
-            *visible = true;
+        // The cells of an array member kept as leaves are VPI-visible too.
+        for signal in object.signal.iter().chain(&object.cells) {
+            if let Some(visible) = externally_read.get_mut(*signal) {
+                *visible = true;
+            }
         }
     }
     for variable in wave_variables {

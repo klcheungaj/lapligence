@@ -83,6 +83,9 @@ test a19sparse adv_019::sparse_fixed_arrays_give_elements_values_puts_and_callba
 test a19methods adv_019::class_methods_are_found_by_name_and_give_their_statements
 test a19locals adv_019::stored_automatics_and_block_locals_are_found_read_and_written
 test a19d88 sim_lrm_decisions::a19_d88_catalog_gaps
+test a19rmembers adv_019::structure_members_of_every_storage_form_are_listed_read_and_written
+test a19emembers adv_019::array_members_of_structure_values_and_fixed_class_properties_are_served
+test a19d89 sim_lrm_decisions::a19_d89_structure_members
 
 node null 37.5 type=NULL
   iterate vpiModule implemented walk
@@ -875,19 +878,21 @@ node time_var 37.17 type=vpiTimeVar
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 # An array kept in a keyed container (more than 4096 cells, or more bits
-# than one packed value) answers as a dense one (decision A19-D88).
+# than one packed value) answers as a dense one (decision A19-D88). An
+# unpacked or container member of a structure is an array var whose
+# elements are no members (vpiStructUnionMember FALSE, decision A19-D89).
 node array_var 37.17 type=vpiRegArray
   func vpi_get_value_array implemented a19sparse
   func vpi_put_value_array implemented a19sparse
   get vpiArrayType implemented walk
   get vpiIsMemory implemented walk
-  iterate vpiReg implemented walk
+  iterate vpiReg implemented a19emembers
   iterate vpiVarSelect implemented walk
   iterate vpiMemoryWord implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
   iterate vpiRange implemented walk
-  get vpiStructUnionMember implemented walk
+  get vpiStructUnionMember implemented a19d89
   func vpi_get_value error a19d65 a variable array has no value of its own (37.20 lists none); industry-standard behaviour refuses it (decision A19-D65)
   handle vpiIndex error a19d28 the text defines no index for a whole variable array (decision A19-D28)
   iterate vpiIndex implemented a19d28
@@ -925,9 +930,13 @@ node logic_var 37.17 type=vpiReg
   iterate vpiRange implemented walk
   get vpiAllocScheme implemented walk
 
+# vpiMember lists every member of a structure variable, element or
+# structure property in declaration order; an unpacked array member of
+# strings, handles or structures kept one leaf per cell is not listed and
+# the iteration reports an error (decision A19-D89).
 node struct_var 37.17 type=vpiStructVar
   get vpiPacked implemented walk
-  iterate vpiMember implemented walk
+  iterate vpiMember implemented a19rmembers
   iterate vpiBit implemented walk
   get vpiPackedArrayMember implemented walk
   get vpiConstantSelect implemented walk

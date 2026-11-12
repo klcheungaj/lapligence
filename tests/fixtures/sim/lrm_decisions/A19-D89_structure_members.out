@@ -1,0 +1,18 @@
+== d89 1
+tb.r: found
+tb.r members: arr k (error)
+tb.r.arr: found
+tb.r.arr[1]: found
+arr member=1 cell member=0
+callback on tb.r.arr[1]: registered
+tb.c: found
+c.pr members: fa s k
+tb.r.sa[0]: NULL (error)
+tb.ea[1].k[0]: NULL (error)
+tb.c.pe.k: NULL (error)
+== d89 2
+tb.r.arr[1]: found
+callback tb.r.arr[1]=9
+tb.c.pr.k: found
+1: woke on r.arr[1]=9
+r.arr[1]=9 c.pr.k=7 c.pe.k=4 ea[1].k=5

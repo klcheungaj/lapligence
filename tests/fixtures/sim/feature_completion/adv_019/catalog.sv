@@ -80,6 +80,8 @@ module tb;
   typedef struct packed { logic [3:0] hi; bit [3:0] lo; } pk_t;
   typedef union packed { logic [7:0] w; pk_t p; } pu_t;
   typedef struct { int a; real r; } rec_t;
+  // A structure with array, string and queue members (37.24).
+  typedef struct { int k; int fa [0:1]; string ms; int mq[$]; } mrec_t;
   typedef pk_t [1:0] pka_t;
   typedef enum logic [1:0] {lo_e, mid_e, hi_e} level_t;
   class Packet;
@@ -94,8 +96,13 @@ module tb;
     // detail 25, 37.27 detail 4).
     static int count = 3;
     static event ping;
+    // A fixed-size array property (37.17) and a structure property
+    // (37.24).
+    int fixed [0:1];
+    rec_t stp;
     function new(int i);
       id = i;
+      stp.a = i;
     endfunction
     function int get();
       return id;
@@ -163,6 +170,10 @@ module tb;
   string s2 [0:1][0:1];
   int nq[$][$];
   rec_t rq[$];
+  // Structure members (37.24): kept as member leaves, and in the elements
+  // of a queue.
+  mrec_t mr;
+  mrec_t mrq[$];
   event ev;
   event ev2;
   // A named event array (37.25).
@@ -351,6 +362,9 @@ module tb;
     s2[1][0] = "x";
     nq.push_back('{1, 2});
     rq.push_back(rec);
+    mr.ms = "m";
+    mr.mq.push_back(5);
+    mrq.push_back(mr);
     mem[1] = 4'h2;
     assert (iv == 1);
     begin

@@ -110,7 +110,19 @@ pub enum IrVpiShape {
     Record {
         members: Vec<(String, usize)>,
     },
-    /// Events, unions, fixed arrays inside values: listed, without a value.
+    /// A fixed-size array whose declared ranges, leftmost first, the shape
+    /// carries (37.17): a class instance property kept in a fixed-size
+    /// container (`inline` false), or an array member of a structure kept
+    /// as a value, whose cells are the items of one fixed-array value
+    /// (`inline` true, so every cell is a value). Cells are row-major.
+    FixedArray {
+        element: usize,
+        values: bool,
+        dims: Vec<(i64, i64)>,
+        inline: bool,
+    },
+    /// Events, unions and other members inside values: listed, without a
+    /// value.
     Other,
 }
 
@@ -124,7 +136,7 @@ impl IrVpiShape {
             Self::String => "vpiStringVar",
             Self::Class { .. } | Self::Builtin { .. } => "vpiClassVar",
             Self::Chandle => "vpiChandleVar",
-            Self::Container { .. } => "vpiArrayVar",
+            Self::Container { .. } | Self::FixedArray { .. } => "vpiArrayVar",
             Self::Event => "vpiNamedEvent",
             Self::EventArray { .. } => "vpiNamedEventArray",
             Self::VirtualInterface => "vpiRefObj",
@@ -141,7 +153,7 @@ impl IrVpiShape {
             Self::String => "LLG_VPI_SHAPE_STRING",
             Self::Class { .. } | Self::Builtin { .. } => "LLG_VPI_SHAPE_CLASS",
             Self::Chandle => "LLG_VPI_SHAPE_CHANDLE",
-            Self::Container { .. } => "LLG_VPI_SHAPE_CONTAINER",
+            Self::Container { .. } | Self::FixedArray { .. } => "LLG_VPI_SHAPE_CONTAINER",
             Self::Event => "LLG_VPI_SHAPE_EVENT",
             // Elements are reached as those of any fixed-size container.
             Self::EventArray { .. } => "LLG_VPI_SHAPE_CONTAINER",
@@ -381,6 +393,12 @@ impl IrVpiDynamic {
             let path = format!("vpi_dynamic.shapes[{index}]");
             let valid = match shape {
                 IrVpiShape::Container { element, .. } => *element < index,
+                IrVpiShape::FixedArray {
+                    element,
+                    values,
+                    dims,
+                    inline,
+                } => *element < index && !dims.is_empty() && (*values || !*inline),
                 IrVpiShape::EventArray { element, .. } => {
                     *element < index && self.shapes[*element] == IrVpiShape::Event
                 }
@@ -519,5 +537,26 @@ mod tests {
             members: vec![("a\0b".to_owned(), string)],
         };
         assert!(dynamic.validate(&model).is_err());
+    }
+
+    #[test]
+    fn a_fixed_array_needs_ranges_and_an_inline_one_values() {
+        let model = IrModel::new("tb".to_owned(), 1).expect("model");
+        let mut dynamic = IrVpiDynamic::default();
+        let string = dynamic.intern(IrVpiShape::String);
+        let fixed = |values, dims: Vec<(i64, i64)>, inline| IrVpiShape::FixedArray {
+            element: string,
+            values,
+            dims,
+            inline,
+        };
+        dynamic.shapes.push(fixed(true, vec![(0, 1), (2, 0)], true));
+        assert!(dynamic.validate(&model).is_ok());
+        dynamic.shapes[1] = fixed(true, Vec::new(), false);
+        assert!(dynamic.validate(&model).is_err());
+        dynamic.shapes[1] = fixed(false, vec![(0, 1)], true);
+        assert!(dynamic.validate(&model).is_err());
+        dynamic.shapes[1] = fixed(false, vec![(0, 1)], false);
+        assert!(dynamic.validate(&model).is_ok());
     }
 }

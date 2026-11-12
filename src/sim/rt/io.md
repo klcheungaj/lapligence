@@ -262,7 +262,12 @@ element or a `SLOT_CONN` handle. Port bits, primitive terminals and interface
 port reference objects are dynamic slots on their row (`SLOT_PORTBIT`,
 `SLOT_PRIMTERM`, `SLOT_REFOBJ`). A scalar member of a chosen column record is a row with
 `LLG_VPI_OBJ_FIXED_CELL`: the row names its one-cell descriptor, and decoding
-materializes the cell, which never moves. Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
+materializes the cell, which never moves. An unpacked array member of a
+structure kept one packed or real leaf per cell is a `vpiRegArray` row with
+`LLG_VPI_OBJ_CELLS`: its storage is a table of the cells' addresses in
+row-major order and its `dims` the member's ranges; a member kept in a
+descriptor column uses that column. A string, handle or container member is
+a dynamic row of its own (decision A19-D89). Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
 out of the name index; instance array elements are found by composing the
 array's full name with the indices.
 Net and variable connectivity (vpiDriver, vpiLoad, their local forms,
@@ -305,7 +310,13 @@ nested container, a cell of a multidimensional fixed array, a member of a
 structure element, shape `LLG_VPI_SHAPE_RECORD` with its
 `llg_vpi_member_t` rows) keeps its further steps in a path the slot owns
 (`use`, `span`), resolved level by level from the top container; a write
-publishes through the top container (decision A19-D87). The path, name
+publishes through the top container (decision A19-D87). An array member of
+a structure value is a container shape with `inline_value` (one
+`LLG_VALUE_FIXED_ARRAY` item of the record) and `dims`, the ranges a
+fixed-size class instance property also carries; a step path ending at
+such a member is the array var, one going past it an element, and a
+structure property kept as a record value is the top of its members'
+paths (decision A19-D89). The path, name
 and static-property helpers are `LLG_OUTLYING` (with `dyn_element_by_index`
 and `rts_auto_iterate`), so their code sits behind `.text` and adds no
 `.cold` part in front of it: the model and the scheduler keep their

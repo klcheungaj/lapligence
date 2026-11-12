@@ -633,9 +633,16 @@ static int has_storage(const llg_vpi_model_object_t* object) {
     return object->is_real ? object->real != NULL : object->packed != NULL;
 }
 
-/* Whether `object` has values: flat cells or a sparse array's keyed ones. */
+/* Whether `object` is an array member kept as one leaf per cell, with
+ * its table of cell addresses. */
+static LLG_OUTLYING int cells_storage(const llg_vpi_model_object_t* object) {
+    return (object->flags & LLG_VPI_OBJ_CELLS) && object->storage != NULL;
+}
+
+/* Whether `object` has values: flat cells, a sparse array's keyed ones or
+ * a member array's leaf cells. */
 static int has_values(const llg_vpi_model_object_t* object) {
-    return has_storage(object) || sparse_storage(object);
+    return has_storage(object) || sparse_storage(object) || cells_storage(object);
 }
 
 static uint64_t dims_element_count(const llg_vpi_model_object_t* object);
@@ -658,6 +665,10 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     } else if (object->flags & LLG_VPI_OBJ_SPARSE) {
         if (!object->storage || object->packed || object->real || object->is_real ||
             object->dependency || object->shape || object->type != vpiRegArray)
+            return 0;
+    } else if (object->flags & LLG_VPI_OBJ_CELLS) {
+        if (!object->storage || object->packed || object->real || object->dependency ||
+            object->shape || object->type != vpiRegArray || !(object->flags & LLG_VPI_OBJ_MEMBER))
             return 0;
     } else if (object->storage || object->dependency || object->shape) {
         return 0;
@@ -721,7 +732,7 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     if (is_declaration_type(object->type)) return !object->packed && !object->real;
     if (is_array_type(object->type))
         return object->dim_count > 0 &&
-               (object->is_real ? object->real != NULL && object->width == 0
+               (object->is_real ? (object->real != NULL || cells_storage(object)) && object->width == 0
                                 : has_values(object) && object->width != 0);
     if (is_net_type(object->type) || is_variable_type(object->type))
         return object->is_real ? object->real != NULL && object->width == 0
@@ -1189,6 +1200,7 @@ enum {
                          * `owner` >> 32 (LLG_VPI_NONE: none), member `extra` */
     RANGE_AUTO = 4,     /* an automatic variable: its table entry's address */
     RANGE_PROPERTY = 5, /* field `owner` & 0xffffffff of class layout `owner` >> 32 */
+    RANGE_MEMBER = 6,   /* an array member of a structure element: no owner */
 };
 
 typedef struct {
@@ -1575,14 +1587,25 @@ static LLG_OUTLYING sv4_t* sparse_cell(const llg_vpi_model_object_t* object, uin
                : llg_fixed_array_cell((llg_fixed_array_t*)object->storage, element);
 }
 
+/* Element `element` of an array member kept as one leaf per cell: the
+ * cell its table names (sv4_t* or double*). */
+static LLG_OUTLYING void* table_cell(const llg_vpi_model_object_t* object, uint64_t element) {
+    if (element == LLG_VPI_NO_ELEMENT || element >= dims_element_count(object)) return NULL;
+    return object->is_real ? (void*)((double* const*)object->storage)[element]
+                           : (void*)((sv4_t* const*)object->storage)[element];
+}
+
 /* The packed cell a write, force or value-change watch addresses. */
 static sv4_t* packed_cell(const llg_vpi_target_t* target) {
     llg_vpi_model_object_t* object = row_object(target->object);
-    if (!object || object->is_real || !object->packed)
-        /* A sparse array has no flat cells. */
-        return object && !object->is_real && (object->flags & LLG_VPI_OBJ_SPARSE)
-                   ? sparse_cell(object, target->element)
-                   : NULL;
+    if (!object || object->is_real || !object->packed) {
+        if (!object || object->is_real) return NULL;
+        /* A sparse array or a member array of leaf cells has no flat
+         * cells. */
+        if (object->flags & LLG_VPI_OBJ_SPARSE) return sparse_cell(object, target->element);
+        if (object->flags & LLG_VPI_OBJ_CELLS) return (sv4_t*)table_cell(object, target->element);
+        return NULL;
+    }
     if (target->element == LLG_VPI_NO_ELEMENT) return object->packed;
     return object->packed + target->element;
 }
@@ -1601,6 +1624,8 @@ static LLG_OUTLYING const sv4_t* packed_peek(const llg_vpi_target_t* target) {
 
 static double* real_cell(const llg_vpi_target_t* target) {
     llg_vpi_model_object_t* object = row_object(target->object);
+    if (object && object->is_real && (object->flags & LLG_VPI_OBJ_CELLS))
+        return (double*)table_cell(object, target->element);
     if (!object || !object->is_real || !object->real) return NULL;
     if (target->element == LLG_VPI_NO_ELEMENT) return object->real;
     return object->real + target->element;
@@ -3999,6 +4024,29 @@ static vpiHandle assertion_by_name(const char* name, vpiHandle scope);
  * that does not resolve (an index outside the declared range). */
 static vpiHandle member_from_suffix(uint32_t row, const char* suffix);
 
+/* Whether member `name` (`length` bytes) of the structure row `row` is
+ * declared by its type but kept without a VPI object: an unpacked array of
+ * strings, handles or structures stored one leaf per cell (decision
+ * A19-D89). */
+static LLG_OUTLYING int unserved_member(uint32_t row, const char* name, size_t length) {
+    const llg_vpi_model_object_t* object = row_object(row);
+    if (!object || !(object->flags & LLG_VPI_OBJ_RECORD)) return 0;
+    const llg_vpi_typespec_t* typespec = typespec_ref(object->typespec);
+    if (!is_aggregate_typespec(typespec)) return 0;
+    for (uint32_t i = 0; i < typespec->member_count; ++i) {
+        const char* member = g_vpi.types->members[typespec->first_member + i].name;
+        if (strlen(member) != length || strncmp(member, name, length) != 0) continue;
+        size_t total = strlen(object->full_name) + 1u + length + 1u;
+        char* full = (char*)malloc(total);
+        if (!full) return 0;
+        snprintf(full, total, "%s.%.*s", object->full_name, (int)length, name);
+        uint32_t found = find_row(full);
+        free(full);
+        return found == LLG_VPI_NONE;
+    }
+    return 0;
+}
+
 static vpiHandle lookup_full_name(const char* name, int* selected) {
     *selected = 0;
     uint32_t row = find_row(name);
@@ -4019,6 +4067,13 @@ static vpiHandle lookup_full_name(const char* name, int* selected) {
                 found = dyn_by_suffix(row, name + cut);
             } else if (strchr(name + cut, '.')) {
                 found = member_from_suffix(row, name + cut);
+                if (!found && name[cut] == '.' && !g_vpi.error_pending &&
+                    unserved_member(row, name + cut + 1, strcspn(name + cut + 1, ".["))) {
+                    vpi_error("LLG_VPI_UNSUPPORTED",
+                              "llg serves no VPI object for this member of a structure: an "
+                              "unpacked array of strings, handles or structures (decision A19-D89)");
+                    break;
+                }
             } else {
                 *selected = 1;
                 found = select_from_suffix(row, name + cut);
@@ -4155,6 +4210,9 @@ static vpiHandle member_from_suffix(uint32_t row, const char* suffix) {
         const char* segment = ++p;
         while (*p && *p != '.') ++p;
         size_t length = (size_t)(p - segment);
+        /* `m[i]`: a select of member `m`. */
+        const char* select = memchr(segment, '[', length);
+        if (select) length = (size_t)(select - segment);
         node = LLG_VPI_NONE;
         for (uint32_t i = 0; i < count; ++i) {
             const char* candidate = node_at(first + i)->name;
@@ -4164,6 +4222,12 @@ static vpiHandle member_from_suffix(uint32_t row, const char* suffix) {
             }
         }
         if (node == LLG_VPI_NONE) return NULL;
+        if (select) {
+            vpi_error("LLG_VPI_UNSUPPORTED",
+                      "llg serves no bit or part select of a member of a packed value or of an "
+                      "array element (decision A19-D89)");
+            return NULL;
+        }
         first = node_at(node)->first_child;
         count = node_at(node)->child_count;
     }
@@ -9440,7 +9504,7 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
             vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
             return NULL;
         }
-        uint32_t count = 0;
+        uint32_t count = 0, unserved = 0;
         size_t length = strlen(object->full_name);
         for (uint32_t i = 0; i < typespec->member_count; ++i) {
             const char* name = g_vpi.types->members[typespec->first_member + i].name;
@@ -9450,12 +9514,20 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
             snprintf(full, total, "%s.%s", object->full_name, name);
             uint32_t member = find_row(full);
             free(full);
-            /* Members kept outside the catalog (unpacked arrays, strings,
-             * handles) have no row. */
             if (member != LLG_VPI_NONE && row_object(member)->parent == object)
                 items[count++] = (uintptr_t)object_handle(member);
+            else
+                ++unserved;
         }
-        return make_list_iterator(vpiMember, items, count);
+        vpiHandle iterator = make_list_iterator(vpiMember, items, count);
+        /* An unpacked array of strings, handles or structures kept one
+         * leaf per cell has no row: the others are listed and the gap is
+         * reported (decision A19-D89). */
+        if (unserved)
+            vpi_error("LLG_VPI_UNSUPPORTED",
+                      "llg lists no VPI object for a member of this structure that is an "
+                      "unpacked array of strings, handles or structures (decision A19-D89)");
+        return iterator;
     }
     if ((slot->kind != SLOT_OBJECT && slot->kind != SLOT_ELEMENT && slot->kind != SLOT_MEMBER) ||
         !is_aggregate_typespec(typespec)) {
@@ -11975,7 +12047,9 @@ void vpi_get_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_IN
     for (PLI_UINT32 i = 0; i < num; ++i, out += unit) {
         uint64_t flat = first + i;
         if (object->is_real) {
-            double value = object->real[flat];
+            llg_vpi_target_t real_target = {row, flat, 0u, 0u, 0, 0};
+            const double* real = real_cell(&real_target);
+            double value = real ? *real : 0.0;
             if (format == vpiShortRealVal) {
                 float narrow = (float)value;
                 memcpy(out, &narrow, sizeof(narrow));

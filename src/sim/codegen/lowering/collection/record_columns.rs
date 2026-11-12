@@ -1180,14 +1180,6 @@ impl Codegen<'_> {
         }
     }
 
-    /// Whether only the design's selections put `root` in column layout: it
-    /// shows applications and dumps the objects of its leaf form.
-    pub(in super::super) fn chosen_record_column(&self, root: NodeId) -> bool {
-        self.db
-            .type_descriptor(root)
-            .is_some_and(|descriptor| !column_layout_of(descriptor, &HashSet::new()))
-    }
-
     /// Width of the packed image of a record of this type, if it has one.
     pub(in super::super) fn record_payload_width(descriptor: &TypeDescriptor) -> Option<u32> {
         fixed_width(descriptor)

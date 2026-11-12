@@ -46,6 +46,11 @@ extern "C" {
  * limit, or wider than one packed image): `storage` is its
  * llg_fixed_array_t, `packed` NULL; element n is its cell n. */
 #define LLG_VPI_OBJ_SPARSE 0x2000000u
+/* An unpacked array member of a structure kept as one leaf per cell:
+ * `storage` is a table of the cells' addresses (sv4_t*, or double* for a
+ * real array), row-major; `packed` and `real` are NULL; element n is the
+ * cell the table's entry n names. */
+#define LLG_VPI_OBJ_CELLS 0x4000000u
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),
@@ -421,6 +426,16 @@ typedef struct {
      * member table; 0 otherwise. */
     uint32_t first_member;
     uint32_t member_count;
+    /* A fixed-size array (vpiStaticArray) whose shape carries its declared
+     * ranges: dim_count (left, right) pairs at `dims`, leftmost first. Set
+     * for a class instance property and an array member of a structure
+     * value; an array that is a catalog row, an automatic or a static
+     * property carries its ranges there instead (dim_count 0). With
+     * `inline_value` the cells are the items of one LLG_VALUE_FIXED_ARRAY
+     * value (an array member of a structure value; `values` is 1). */
+    const int64_t* dims;
+    uint32_t dim_count;
+    uint8_t inline_value;
 } llg_vpi_shape_t;
 
 /* One member of a record shape (37.24), in declaration order: the shape of

@@ -75,6 +75,7 @@ static struct {
 } g_dyn;
 
 static void dyn_reclaimed(void* const* objects, size_t count);
+static int dyn_is_event_array(const llg_vpi_shape_t* shape);
 static vpiHandle dyn_iterator(unsigned sub_kind, uint32_t count);
 static char* dyn_text(const char* format, ...);
 
@@ -212,6 +213,13 @@ static int dyn_tables_valid(void) {
             const llg_vpi_member_t* member = &t->members[shape->first_member + m];
             if (!member->name || member->shape >= i) return 0;
         }
+        /* Ranges on the shape: a fixed-size array only, at most as many
+         * as a multi-index names; inline cells are values. */
+        int fixed = shape->shape == LLG_VPI_SHAPE_CONTAINER && shape->array_type == vpiStaticArray;
+        if (shape->dim_count &&
+            (!fixed || !shape->dims || shape->dim_count > DYN_MAX_DIMS || dyn_is_event_array(shape)))
+            return 0;
+        if (shape->inline_value && (!shape->dim_count || !shape->values)) return 0;
     }
     for (uint32_t i = 0; i < t->class_count; ++i) {
         const llg_vpi_class_t* layout = &t->classes[i];
@@ -567,8 +575,12 @@ static int dyn_is_event_array(const llg_vpi_shape_t* shape) {
 static LLG_OUTLYING uint32_t dyn_fixed_dim_count(const dyn_place_t* place) {
     if (dyn_is_event_array(place->shape)) return 1u;
     if (place->shape->shape != LLG_VPI_SHAPE_CONTAINER ||
-        place->shape->array_type != vpiStaticArray || place->row == LLG_VPI_NONE)
+        place->shape->array_type != vpiStaticArray)
         return 0u;
+    /* A class instance property or an array member of a structure value:
+     * its shape carries the ranges. */
+    if (place->shape->dim_count) return place->shape->dim_count;
+    if (place->row == LLG_VPI_NONE) return 0u;
     if (place->row == DYN_AUTO_ROW || place->row == DYN_STATIC_ROW)
         return place->dims ? place->dim_count : 0u;
     const llg_vpi_model_object_t* row = row_object(place->row);
@@ -580,6 +592,11 @@ static LLG_OUTLYING void dyn_fixed_dim(const dyn_place_t* place, uint32_t d, int
     if (dyn_is_event_array(place->shape)) {
         *left = place->shape->left;
         *right = place->shape->right;
+        return;
+    }
+    if (place->shape->dim_count) {
+        *left = place->shape->dims[2u * d];
+        *right = place->shape->dims[2u * d + 1u];
         return;
     }
     const int64_t* dims = place->row == DYN_AUTO_ROW || place->row == DYN_STATIC_ROW
@@ -667,6 +684,8 @@ static void* dyn_field_storage(void* object, uint32_t field, const llg_vpi_shape
         case LLG_VPI_SHAPE_EVENT:
         case LLG_VPI_SHAPE_VIF: return kind == LLG_VPI_FIELD_HANDLE ? storage : NULL;
         case LLG_VPI_SHAPE_CONTAINER: return kind == LLG_VPI_FIELD_PAYLOAD ? storage : NULL;
+        /* A record value's root starts with its llg_value_t. */
+        case LLG_VPI_SHAPE_RECORD: return kind == LLG_VPI_FIELD_PAYLOAD ? storage : NULL;
         default: return NULL;
     }
 }
@@ -749,7 +768,9 @@ static int dyn_container_place(uint32_t row, void* owner, uint32_t field, int64_
         place->row = row;
         place->name = object->name;
     }
-    return place->shape && place->storage && place->shape->shape == LLG_VPI_SHAPE_CONTAINER;
+    /* A structure property is the top of its members' paths (A19-D89). */
+    return place->shape && place->storage &&
+           (place->shape->shape == LLG_VPI_SHAPE_CONTAINER || place->shape->shape == LLG_VPI_SHAPE_RECORD);
 }
 
 static size_t dyn_container_size(const dyn_place_t* place) {
@@ -757,6 +778,8 @@ static size_t dyn_container_size(const dyn_place_t* place) {
     void* storage = place->storage;
     /* A nested container in its null default is empty. */
     if (!storage) return 0;
+    /* An array member of a structure value: one fixed-array value. */
+    if (shape->inline_value) return ((const llg_value_t*)storage)->desc->item_count;
     switch (shape->array_type) {
         /* A fixed array keeps dynamic array storage. */
         case vpiDynamicArray:
@@ -945,6 +968,7 @@ static LLG_OUTLYING llg_value_t* dyn_locate_step(const dyn_place_t* place, const
     if (step->at == DYN_AT_INDEX) {
         if (step->element >= dyn_container_size(place)) return NULL;
         *exists = 1;
+        if (shape->inline_value) return &((llg_value_t*)place->storage)->value.items[step->element];
         if (!shape->values) return NULL;
         sv4_t index = sv4_from_u64(step->element, 64, 0);
         llg_value_t* element = (shape->array_type == vpiDynamicArray || shape->array_type == vpiStaticArray)
@@ -998,6 +1022,18 @@ static LLG_OUTLYING int dyn_nested_level(llg_value_t* value, const llg_vpi_shape
     level->row = LLG_VPI_NONE;
     level->shape = shape;
     if (!value || !value->desc || shape->shape != LLG_VPI_SHAPE_CONTAINER) return 0;
+    if (shape->inline_value) {
+        /* An array member of a structure value: the value is the array. */
+        if (value->desc->kind != LLG_VALUE_FIXED_ARRAY || !value->value.items) return 0;
+        uint64_t cells = 1u;
+        for (uint32_t d = 0; d < shape->dim_count; ++d) {
+            int64_t left = shape->dims[2u * d], right = shape->dims[2u * d + 1u];
+            cells *= (uint64_t)(left > right ? left - right : right - left) + 1u;
+        }
+        if (value->desc->item_count != cells) return 0;
+        level->storage = value;
+        return 1;
+    }
     if (shape->array_type == vpiAssocArray) {
         if (value->desc->kind != LLG_VALUE_ASSOC) return 0;
         llg_nested_assoc_t* nested = value->value.assoc;
@@ -1049,9 +1085,10 @@ typedef struct {
     int packed;
 } dyn_target_t;
 
-/* Resolve `slot` (a SLOT_DYNELEM of storage); 0 with an error when its
- * array or any selection of its path no longer exists. */
-static LLG_OUTLYING int dyn_resolve(const llg_vpi_slot_t* slot, dyn_target_t* t) {
+/* Resolve the first `count` selections of `slot` (a SLOT_DYNELEM of
+ * storage); 0 with an error when its array or any of them no longer
+ * exists. */
+static LLG_OUTLYING int dyn_resolve_steps(const llg_vpi_slot_t* slot, uint32_t count, dyn_target_t* t) {
     memset(t, 0, sizeof(*t));
     if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right, &t->top)) {
         vpi_error("LLG_VPI_HANDLE", "the array of this element no longer exists");
@@ -1063,7 +1100,6 @@ static LLG_OUTLYING int dyn_resolve(const llg_vpi_slot_t* slot, dyn_target_t* t)
         t->shape = t->top.shape;
         t->value = (llg_value_t*)t->top.storage;
     }
-    uint32_t count = 1u + slot->span;
     for (uint32_t i = 0; i < count; ++i) {
         dyn_step_t step = dyn_step_at(slot, i);
         if (step.at == DYN_AT_MEMBER) {
@@ -1094,6 +1130,41 @@ static LLG_OUTLYING int dyn_resolve(const llg_vpi_slot_t* slot, dyn_target_t* t)
         t->packed = !t->level.shape->values;
     }
     return t->shape != NULL;
+}
+
+/* Resolve every selection of `slot` (dyn_resolve_steps). */
+static LLG_OUTLYING int dyn_resolve(const llg_vpi_slot_t* slot, dyn_target_t* t) {
+    return dyn_resolve_steps(slot, 1u + slot->span, t);
+}
+
+/* The position of the first selection after the last member selection of
+ * `slot`'s path (0: none): the indices from there select an element of the
+ * array that member is (37.24), or of the array the path starts in. */
+static LLG_OUTLYING uint32_t dyn_tail_first(const llg_vpi_slot_t* slot) {
+    uint32_t first = 0;
+    for (uint32_t i = 0; i <= slot->span; ++i)
+        if (dyn_step_at(slot, i).at == DYN_AT_MEMBER) first = i + 1u;
+    return first;
+}
+
+/* The array selection `first` of `slot`'s path selects in (dyn_tail_first):
+ * the array the path starts in, or an array member of a structure. 0 with
+ * an error when it no longer exists. */
+static LLG_OUTLYING int dyn_tail_level(const llg_vpi_slot_t* slot, uint32_t first, dyn_place_t* level) {
+    if (!first) {
+        if (dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right, level))
+            return 1;
+        vpi_error("LLG_VPI_HANDLE", "the array of this element no longer exists");
+        return 0;
+    }
+    dyn_target_t t;
+    if (!dyn_resolve_steps(slot, first, &t)) return 0;
+    if (t.packed || !dyn_nested_level(t.value, t.shape, level)) {
+        vpi_error("LLG_VPI_MODEL", "a nested array disagrees with its layout");
+        return 0;
+    }
+    level->owner = t.top.owner;
+    return 1;
 }
 
 /* A value element's storage for `shape`, when its kind agrees. */
@@ -1457,19 +1528,16 @@ static LLG_OUTLYING int dyn_is_member(const llg_vpi_slot_t* slot) {
 
 /* The number of indices and keys of element slot `slot`'s path. */
 static LLG_OUTLYING uint32_t dyn_index_count(const llg_vpi_slot_t* slot) {
-    uint32_t count = 0;
-    for (uint32_t i = 0; i <= slot->span; ++i) count += dyn_step_at(slot, i).at != DYN_AT_MEMBER;
-    return count;
+    /* An element of an array member: the indices after that member. */
+    return 1u + slot->span - dyn_tail_first(slot);
 }
 
 /* Whether element slot `slot` is an element of a fixed-size array of
  * more than one dimension. */
 static LLG_OUTLYING int dyn_multi_dimensional(const llg_vpi_slot_t* slot) {
     dyn_place_t place;
-    return slot->object != DYN_DEFN_ROW &&
-           dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right,
-                               &place) &&
-           dyn_fixed_dim_count(&place) > 1u;
+    return slot->object != DYN_DEFN_ROW && !dyn_is_member(slot) &&
+           dyn_tail_level(slot, dyn_tail_first(slot), &place) && dyn_fixed_dim_count(&place) > 1u;
 }
 
 /* An element handle that extends `slot`'s path by `step`. */
@@ -1490,6 +1558,34 @@ static LLG_OUTLYING vpiHandle dyn_extend(const llg_vpi_slot_t* slot, const dyn_s
     return make_dyn_path(&place, (uint32_t)slot->aux, steps, count);
 }
 
+/* The handle of the first `count` (at least 1) selections of `slot`'s
+ * path: the array member an element of it belongs to. */
+static LLG_OUTLYING vpiHandle dyn_prefix(const llg_vpi_slot_t* slot, uint32_t count) {
+    dyn_place_t place;
+    if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right, &place)) {
+        vpi_error("LLG_VPI_HANDLE", "the array of this element no longer exists");
+        return NULL;
+    }
+    dyn_step_t steps[64];
+    if (!count || count > 64u) return NULL;
+    for (uint32_t i = 0; i < count; ++i) steps[i] = dyn_step_at(slot, i);
+    return make_dyn_path(&place, (uint32_t)slot->aux, steps, count);
+}
+
+/* Whether element handle `slot` is an array member of a structure (37.24:
+ * an array variable of the structure, not a further dimension). */
+static LLG_OUTLYING int dyn_is_member_array(const llg_vpi_slot_t* slot) {
+    if (slot->kind != SLOT_DYNELEM || slot->object == DYN_DEFN_ROW || !dyn_is_member(slot)) return 0;
+    const llg_vpi_shape_t* shape = dyn_element_shape(slot);
+    return shape && shape->shape == LLG_VPI_SHAPE_CONTAINER && !dyn_is_event_array(shape);
+}
+
+/* The array an array member handle names, resolved at this access; 0 with
+ * an error when it no longer exists. */
+static LLG_OUTLYING int dyn_member_array(const llg_vpi_slot_t* slot, dyn_place_t* level) {
+    return dyn_tail_level(slot, 1u + slot->span, level);
+}
+
 /* The prefix of `slot` without its last selection: the structure holding
  * a member (37.17 detail 26). */
 static LLG_OUTLYING vpiHandle dyn_truncate(const llg_vpi_slot_t* slot) {
@@ -1503,6 +1599,12 @@ static LLG_OUTLYING vpiHandle dyn_truncate(const llg_vpi_slot_t* slot) {
     /* A member of a record automatic: the automatic itself. */
     if (!count && slot->object == DYN_AUTO_ROW)
         return rts_auto_handle_by_serial((uint64_t)slot->right, (uint32_t)slot->aux);
+    /* A member of a structure property: the property (A19-D89). */
+    if (!count && place.owner && place.shape->shape == LLG_VPI_SHAPE_RECORD) {
+        uint32_t class_index;
+        if (!dyn_object_class(place.owner, &class_index)) return NULL;
+        return make_property(place.owner, class_index, (uint32_t)slot->aux);
+    }
     if (!count || count > 64u) return NULL;
     for (uint32_t i = 0; i < count; ++i) steps[i] = dyn_step_at(slot, i);
     return make_dyn_path(&place, (uint32_t)slot->aux, steps, count);
@@ -2033,6 +2135,10 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                  * containing array, the outermost one for an element of a
                  * nested container (whose rows are no objects). */
                 if (dyn_is_member(slot)) return dyn_truncate(slot);
+                /* An element of an array member of a structure: that
+                 * member (37.24). */
+                uint32_t first = dyn_tail_first(slot);
+                if (first) return dyn_prefix(slot, first);
                 if (slot->object == DYN_AUTO_ROW)
                     return rts_auto_handle_by_serial((uint64_t)slot->right, (uint32_t)slot->aux);
                 if (slot->object == DYN_DEFN_ROW)
@@ -2077,25 +2183,37 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                               "iterate vpiIndex (37.17 detail 5)");
                     return NULL;
                 }
+                /* The index in the element's own array: the one the path
+                 * starts in, or an array member of a structure. */
+                uint32_t first = dyn_tail_first(slot);
+                dyn_step_t step = dyn_step_at(slot, first);
                 /* A string key is a string constant (decision A19-D23). */
-                if (slot->lsb == DYN_AT_STRING)
-                    return make_string_constant((const char*)slot->items, slot->count, scope);
-                if (slot->lsb == DYN_AT_INTEGRAL) {
-                    dyn_place_t place;
-                    if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux,
-                                             slot->right, &place))
-                        break;
-                    sv4_t key = dyn_integral_key(&place, slot->element);
+                if (step.at == DYN_AT_STRING) return make_string_constant(step.key, step.length, scope);
+                dyn_place_t place;
+                if (!dyn_tail_level(slot, first, &place)) return NULL;
+                if (step.at == DYN_AT_INTEGRAL) {
+                    sv4_t key = dyn_integral_key(&place, step.element);
                     int64_t value = sv4_to_i64(key);
                     if (!llg_sv4_signed(key) && llg_sv4_width(key) < 64u)
                         value = (int64_t)sv4_to_u64(key);
                     sv4_destroy(&key);
                     return dyn_constant(value, scope);
                 }
-                dyn_place_t place;
-                if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right, &place))
-                    break;
-                return dyn_constant(dyn_declared_index(&place, slot->element), scope);
+                return dyn_constant(dyn_declared_index(&place, step.element), scope);
+            }
+            if ((type == vpiLeftRange || type == vpiRightRange) && dyn_is_member_array(slot)) {
+                dyn_place_t level;
+                if (!dyn_member_array(slot, &level)) return NULL;
+                if (level.shape->array_type == vpiAssocArray) break;
+                int64_t left, right;
+                uint32_t scope = dyn_constant_scope(slot);
+                if (dyn_fixed_range(&level, &left, &right))
+                    return dyn_constant(type == vpiLeftRange ? left : right, scope);
+                if (dyn_fixed_dim_count(&level)) break;
+                /* 37.17 detail 6: [0:size-1]; NULL with no element. */
+                size_t size = dyn_container_size(&level);
+                if (!size) return NULL;
+                return dyn_constant(type == vpiLeftRange ? 0 : (int64_t)size - 1, scope);
             }
             if (type == vpiClassObj) {
                 int ok;
@@ -2353,6 +2471,70 @@ static LLG_OUTLYING vpiHandle dyn_list_iterator(int type, dyn_list_t* list) {
     return make_list_iterator(type, list->items, list->count);
 }
 
+static LLG_OUTLYING vpiHandle dyn_record_members(const dyn_place_t* place, uint32_t field);
+static LLG_OUTLYING void dyn_collect_leaves(dyn_list_t* list, const dyn_place_t* top, uint32_t field,
+                                            const dyn_place_t* level, dyn_step_t* steps,
+                                            uint32_t depth);
+
+/* vpiRange of a fixed-size array whose shape carries its ranges (37.17
+ * detail 4), leftmost first, from `origin`. */
+static LLG_OUTLYING vpiHandle dyn_shape_ranges(const llg_vpi_shape_t* shape,
+                                               const llg_vpi_range_origin_t* origin) {
+    dyn_list_t list = {0};
+    for (uint32_t d = 0; d < shape->dim_count; ++d)
+        dyn_list_push(&list, make_range(origin, d, shape->dims[2u * d], shape->dims[2u * d + 1u]));
+    return dyn_list_iterator(vpiRange, &list);
+}
+
+/* vpiRange, vpiReg and vpiVarSelect of an array member of a structure
+ * (37.17 details 4 and 7, 37.24): its declared ranges, or its innermost
+ * elements, each named by its path. The ranges take the source location of
+ * the declaration holding the structure (37.3.3), which owns no separate
+ * range object (decision A19-D86). */
+static LLG_OUTLYING vpiHandle dyn_iterate_member_array(const llg_vpi_slot_t* slot, int type) {
+    const llg_vpi_shape_t* shape = dyn_element_shape(slot);
+    if (type == vpiRange) {
+        if (!shape->dim_count) {
+            vpi_error("LLG_VPI_RELATION", "this array has no declared range");
+            return NULL;
+        }
+        uint32_t line = 0;
+        const char* file = NULL;
+        if (!dyn_location(slot, &line, &file)) {
+            line = 0;
+            file = NULL;
+        }
+        llg_vpi_range_origin_t origin = {
+            RANGE_MEMBER, 0u, 0u, LLG_VPI_NONE, dyn_constant_scope(slot), line, file };
+        return dyn_shape_ranges(shape, &origin);
+    }
+    const llg_vpi_shape_t* element = dyn_leaf_shape(shape);
+    if (!element || !dyn_element_type_matches(element, type)) {
+        vpi_error("LLG_VPI_RELATION", "unsupported VPI iteration for this dynamic object");
+        return NULL;
+    }
+    if (shape->key == LLG_VPI_KEY_OTHER) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "llg does not iterate associative arrays with a wildcard index");
+        return NULL;
+    }
+    dyn_place_t top, level;
+    if (!dyn_member_array(slot, &level) ||
+        !dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right, &top))
+        return NULL;
+    uint32_t count = 1u + slot->span;
+    if (count >= 64u) {
+        vpi_error("LLG_VPI_LIMIT", "this element path is too deep");
+        return NULL;
+    }
+    /* The steps are copied first: each handle may move the slot table. */
+    dyn_step_t steps[64];
+    for (uint32_t i = 0; i < count; ++i) steps[i] = dyn_step_at(slot, i);
+    dyn_list_t list = {0};
+    dyn_collect_leaves(&list, &top, (uint32_t)slot->aux, &level, steps, count);
+    return dyn_list_iterator(type, &list);
+}
+
 /* vpiRange of a fixed-size array static property (37.17 detail 4): its
  * declared ranges, leftmost first, located at the property (decision
  * A19-D86). */
@@ -2470,13 +2652,17 @@ static LLG_OUTLYING vpiHandle dyn_iterate_indices(const llg_vpi_slot_t* slot) {
     uint32_t scope = dyn_constant_scope(slot);
     uint32_t index = (uint32_t)(slot - g_vpi.slots);
     dyn_list_t list = {0};
-    dyn_place_t level = target.top;
+    /* The indices in the element's own array: after the last member
+     * selection, if any (37.24). */
+    uint32_t first = dyn_tail_first(slot);
+    dyn_place_t level;
+    if (!dyn_tail_level(slot, first, &level)) return NULL;
     const llg_vpi_shape_t* shape = NULL;
     llg_value_t* value = NULL;
-    for (uint32_t i = 0; i <= g_vpi.slots[index].span && !list.failed; ++i) {
+    for (uint32_t i = first; i <= g_vpi.slots[index].span && !list.failed; ++i) {
         dyn_step_t step = dyn_step_at(&g_vpi.slots[index], i);
         if (step.at == DYN_AT_MEMBER) break;
-        if (i && !dyn_nested_level(value, shape, &level)) break;
+        if (i > first && !dyn_nested_level(value, shape, &level)) break;
         if (step.at == DYN_AT_STRING) {
             dyn_list_push(&list, make_string_constant(step.key, step.length, scope));
         } else if (step.at == DYN_AT_INTEGRAL) {
@@ -2582,6 +2768,10 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                 items[0] = (uintptr_t)index;
                 return make_list_iterator(vpiIndex, items, 1u);
             }
+            if (dyn_is_member_array(slot)) {
+                if (dyn_refuse_dying(slot->pointer, "vpi_iterate")) return NULL;
+                return dyn_iterate_member_array(slot, type);
+            }
             if (slot->kind == SLOT_DYNELEM && type == vpiMember) {
                 /* 37.24: the members of an unpacked structure element. */
                 if (dyn_refuse_dying(slot->pointer, "vpi_iterate")) return NULL;
@@ -2611,6 +2801,16 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                     return NULL;
                 }
             }
+            if (place.shape->shape == LLG_VPI_SHAPE_RECORD && slot->kind == SLOT_PROPERTY &&
+                type == vpiMember) {
+                /* 37.24: the members of a structure property (A19-D89). */
+                if (!place.storage) {
+                    vpi_error("LLG_VPI_RELATION",
+                              "a property of a class definition has no members (37.27 detail 2)");
+                    return NULL;
+                }
+                return dyn_record_members(&place, (uint32_t)slot->aux);
+            }
             if (place.shape->shape != LLG_VPI_SHAPE_CONTAINER) {
                 if (slot->kind == SLOT_OBJECT) {
                     *handled = 0;
@@ -2624,6 +2824,16 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                 return NULL;
             }
             if (place.row == DYN_STATIC_ROW && type == vpiRange) return dyn_static_ranges((uint32_t)slot->aux);
+            if (type == vpiRange && place.shape->dim_count && slot->kind == SLOT_PROPERTY) {
+                /* A fixed-size class instance property: the ranges its
+                 * shape carries, located at the property (A19-D86). */
+                uint32_t declaring = dyn_declaring_class((uint32_t)slot->right, (uint32_t)slot->aux);
+                const llg_vpi_class_field_t* entry = dyn_field((uint32_t)slot->right, (uint32_t)slot->aux);
+                llg_vpi_range_origin_t origin = {
+                    RANGE_PROPERTY, (uint64_t)declaring << 32 | (uint32_t)slot->aux, 0u, LLG_VPI_NONE,
+                    dyn_class_located_scope(declaring), entry->line, entry->file };
+                return dyn_shape_ranges(place.shape, &origin);
+            }
             const llg_vpi_shape_t* element = dyn_leaf_shape(place.shape);
             if (!element || !dyn_element_type_matches(element, type)) break;
             if (!place.storage) {
@@ -2748,6 +2958,8 @@ static PLI_INT64 dyn_size(const dyn_place_t* place, int* ok) {
     if (shape->shape == LLG_VPI_SHAPE_PACKED) return shape->width;
     /* A chandle reads as a 64-bit image (decision A19-D21). */
     if (shape->shape == LLG_VPI_SHAPE_CHANDLE) return 64;
+    /* 37.17 detail 9: the number of fields of an unpacked structure. */
+    if (shape->shape == LLG_VPI_SHAPE_RECORD) return shape->member_count;
     *ok = 0;
     return 0;
 }
@@ -2942,6 +3154,17 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
                 if (property == vpiPacked || property == vpiVector || property == vpiScalar)
                     return 0;
             }
+            if (shape->shape == LLG_VPI_SHAPE_CONTAINER && dyn_is_member_array(slot)) {
+                /* 37.17 details 2, 9 and 21: an array member of a
+                 * structure is an array variable. */
+                if (property == vpiArrayType) return shape->array_type;
+                if (property == vpiArray) return 1;
+                if (property == vpiSize) {
+                    dyn_place_t level;
+                    if (!dyn_member_array(slot, &level)) return vpiUndefined;
+                    return (PLI_INT64)dyn_leaf_count(&level, 0);
+                }
+            }
             if (property == vpiSize) {
                 if (shape->shape == LLG_VPI_SHAPE_PACKED) return shape->width;
                 /* A chandle reads as a 64-bit image (decision A19-D21). */
@@ -2960,7 +3183,6 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
                 llg_vpi_live_t* entry = object ? live_get(object) : NULL;
                 return entry ? (PLI_INT64)entry->id : 0;
             }
-            if (property == vpiArrayType && shape->shape == LLG_VPI_SHAPE_CONTAINER) break;
             break;
         }
         case SLOT_PROPERTY:
@@ -3216,6 +3438,18 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int full) {
         return NULL;
     }
     dyn_name_t name = {0};
+    uint32_t first = full ? 0u : dyn_tail_first(slot);
+    if (first) {
+        /* An element of an array member of a structure: the member's name
+         * and the element's indices in it (`fa[1]`). */
+        const llg_vpi_member_t* member = dyn_member(dyn_path_shape(slot, place.shape, first - 1u),
+                                                    dyn_step_at(slot, first - 1u).element);
+        if (!member) return NULL;
+        int named = dyn_name_path(&name, slot, &place, first, member->name);
+        char* text = named ? dyn_text("%s", name.data) : NULL;
+        free(name.data);
+        return text;
+    }
     char* base = NULL;
     if (!full) {
         base = NULL;
@@ -3645,9 +3879,49 @@ static LLG_OUTLYING vpiHandle dyn_element_by_indices(const dyn_place_t* place, u
     return make_dyn_element(place, field, DYN_AT_INDEX, offset, NULL, 0);
 }
 
+/* The element of array member `slot` of a structure (37.24) at its
+ * declared `indices`, one per dimension (a dynamic array or queue index or
+ * an integral key for the others); NULL, with an error unless `quiet`. */
+static LLG_OUTLYING vpiHandle dyn_member_element(llg_vpi_slot_t* slot, const int64_t* indices,
+                                                 uint32_t count, int quiet) {
+    dyn_place_t level;
+    if (!dyn_member_array(slot, &level)) return NULL;
+    if (dyn_shape(level.shape->element)->shape == LLG_VPI_SHAPE_CONTAINER) {
+        /* 37.17 detail 4: no subarray (decision A20-D23). */
+        if (!quiet)
+            vpi_error("LLG_VPI_INDEX",
+                      "an element of a nested array needs every index; use vpi_handle_by_name");
+        return NULL;
+    }
+    uint32_t dims = dyn_fixed_dim_count(&level);
+    dyn_step_t step;
+    memset(&step, 0, sizeof(step));
+    if (dims > 1u) {
+        if (count != dims) {
+            if (!quiet) vpi_error("LLG_VPI_INDEX", "give one index per dimension of the array");
+            return NULL;
+        }
+        uint64_t offset;
+        if (!dyn_fixed_offset(&level, indices, &offset, quiet)) return NULL;
+        step.at = DYN_AT_INDEX;
+        step.element = offset;
+    } else {
+        if (count != 1u) {
+            if (!quiet) vpi_error("LLG_VPI_INDEX", "this array has one dimension");
+            return NULL;
+        }
+        if (!dyn_select_step(&level, indices[0], &step, quiet)) return NULL;
+    }
+    return dyn_extend(slot, &step);
+}
+
 static LLG_OUTLYING vpiHandle dyn_handle_by_multi_index(llg_vpi_slot_t* slot, const int64_t* indices,
                                            uint32_t count) {
     dyn_place_t place;
+    if (dyn_is_member_array(slot)) {
+        if (dyn_refuse_dying(slot->pointer, "vpi_handle_by_multi_index")) return NULL;
+        return dyn_member_element(slot, indices, count, 0);
+    }
     if (slot->kind == SLOT_DYNELEM || !dyn_place(slot, &place) ||
         place.shape->shape != LLG_VPI_SHAPE_CONTAINER) {
         vpi_error("LLG_VPI_INDEX", "object has no access by index");
@@ -3690,6 +3964,11 @@ static int dyn_parse_key(const char** cursor, char** key, size_t* length) {
 
 static vpiHandle dyn_handle_by_index(llg_vpi_slot_t* slot, PLI_INT32 index) {
     dyn_place_t place;
+    if (dyn_is_member_array(slot)) {
+        if (dyn_refuse_dying(slot->pointer, "vpi_handle_by_index")) return NULL;
+        int64_t indices[1] = {index};
+        return dyn_member_element(slot, indices, 1u, 0);
+    }
     if (slot->kind == SLOT_DYNELEM || !dyn_place(slot, &place) ||
         place.shape->shape != LLG_VPI_SHAPE_CONTAINER) {
         vpi_error("LLG_VPI_INDEX", "object has no access by index");
@@ -3742,13 +4021,38 @@ static LLG_OUTLYING int dyn_parse_step(const dyn_place_t* place, const char** cu
 }
 
 /* `[i]` after an element whose value holds a container: the element of
- * that container (37.17 detail 4), or NULL. */
-static LLG_OUTLYING vpiHandle dyn_suffix_nested(const llg_vpi_slot_t* slot, const char** cursor) {
+ * that container (37.17 detail 4), or NULL; fewer indices than a fixed-size
+ * array member has dimensions set `*partial`. */
+static LLG_OUTLYING vpiHandle dyn_suffix_nested(const llg_vpi_slot_t* slot, const char** cursor,
+                                                int* partial) {
     dyn_target_t target;
     dyn_place_t level;
     if (!dyn_resolve(slot, &target) || target.packed ||
         !dyn_nested_level(target.value, target.shape, &level))
         return NULL;
+    uint32_t dims = dyn_fixed_dim_count(&level);
+    if (dims > 1u) {
+        /* A fixed-size array member of more dimensions: one index each. */
+        int64_t indices[DYN_MAX_DIMS];
+        const char* q = *cursor;
+        for (uint32_t n = 0; n < dims; ++n) {
+            const char* r = q + 1;
+            if (*q != '[' || !parse_index(&r, &indices[n]) || *r != ']') {
+                /* Fewer indices than dimensions: a subarray (A20-D23). */
+                if (n && (*q == '\0' || *q == '.')) *partial = 1;
+                return NULL;
+            }
+            q = r + 1;
+        }
+        uint64_t offset;
+        if (!dyn_fixed_offset(&level, indices, &offset, 1)) return NULL;
+        dyn_step_t step;
+        memset(&step, 0, sizeof(step));
+        step.at = DYN_AT_INDEX;
+        step.element = offset;
+        *cursor = q;
+        return dyn_extend(slot, &step);
+    }
     dyn_step_t step;
     char* key = NULL;
     vpiHandle next = dyn_parse_step(&level, cursor, &step, &key) ? dyn_extend(slot, &step) : NULL;
@@ -3807,6 +4111,23 @@ static LLG_OUTLYING vpiHandle dyn_first_suffix(const dyn_place_t* place, uint32_
     return element;
 }
 
+/* Member `name` (`length` bytes) of the record value at `place` (an
+ * automatic or property `field`): its path handle, or NULL when the record
+ * has no member of that name. */
+static LLG_OUTLYING vpiHandle dyn_record_member(const dyn_place_t* place, uint32_t field, const char* name,
+                                                size_t length) {
+    for (uint32_t m = 0; m < place->shape->member_count; ++m) {
+        const llg_vpi_member_t* member = dyn_member(place->shape, m);
+        if (strlen(member->name) != length || strncmp(member->name, name, length) != 0) continue;
+        dyn_step_t step;
+        memset(&step, 0, sizeof(step));
+        step.at = DYN_AT_MEMBER;
+        step.element = m;
+        return make_dyn_path(place, field, &step, 1u);
+    }
+    return NULL;
+}
+
 /* Continue name `p` from `current` (a handle the walk owns unless it is
  * `keep`): `[i]` into a container nested in an element, `.name` a member
  * of a structure element or a property of the object a class variable,
@@ -3814,24 +4135,50 @@ static LLG_OUTLYING vpiHandle dyn_first_suffix(const dyn_place_t* place, uint32_
  * denotes nothing is NULL; one that names a subarray is NULL with an
  * error (decision A20-D23). */
 static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep, const char* p, int partial) {
+    int unserved_select = 0, unserved_member = 0;
     while (current && *p) {
         llg_vpi_slot_t* slot = decode_handle(current, NULL);
         vpiHandle next = NULL;
         if (*p == '[') {
             dyn_place_t place;
-            if (slot->kind == SLOT_DYNELEM)
-                next = dyn_suffix_nested(slot, &p);
-            else if (dyn_place(slot, &place) && place.shape->shape == LLG_VPI_SHAPE_CONTAINER)
-                next = dyn_first_suffix(&place, slot->kind == SLOT_PROPERTY ? (uint32_t)slot->aux : 0u,
-                                        &p, &partial);
+            if (slot->kind == SLOT_DYNELEM) {
+                const llg_vpi_shape_t* shape = dyn_element_shape(slot);
+                if (shape && shape->shape == LLG_VPI_SHAPE_PACKED)
+                    unserved_select = 1;
+                else
+                    next = dyn_suffix_nested(slot, &p, &partial);
+            } else if (dyn_place(slot, &place)) {
+                if (place.shape->shape == LLG_VPI_SHAPE_CONTAINER)
+                    next = dyn_first_suffix(&place, slot->kind == SLOT_PROPERTY ? (uint32_t)slot->aux : 0u,
+                                            &p, &partial);
+                else if (slot->kind == SLOT_PROPERTY && place.shape->shape == LLG_VPI_SHAPE_PACKED)
+                    unserved_select = 1;
+            }
         } else if (*p == '.') {
             const char* name = ++p;
             while (*p && *p != '.' && *p != '[') ++p;
             if (slot->kind == SLOT_DYNELEM) next = dyn_suffix_member(slot, name, (size_t)(p - name));
+            if (!next && slot->kind == SLOT_PROPERTY) {
+                /* A member of a structure property (decision A19-D89). */
+                dyn_place_t place;
+                if (dyn_place(slot, &place) && place.shape->shape == LLG_VPI_SHAPE_RECORD && place.storage)
+                    next = dyn_record_member(&place, (uint32_t)slot->aux, name, (size_t)(p - name));
+            }
             if (!next) {
                 int ok;
                 void* object = dyn_class_target(decode_handle(current, NULL), &ok);
                 if (ok && object) next = dyn_property_by_name(object, name, (size_t)(p - name));
+            }
+            if (!next) {
+                /* A structure kept as one packed value has no member objects. */
+                slot = decode_handle(current, NULL);
+                dyn_place_t place;
+                const llg_vpi_shape_t* shape = slot->kind == SLOT_DYNELEM ? dyn_element_shape(slot)
+                                               : dyn_place(slot, &place)  ? place.shape
+                                                                          : NULL;
+                if (shape && shape->shape == LLG_VPI_SHAPE_PACKED &&
+                    (shape->type == vpiStructVar || shape->type == vpiUnionVar))
+                    unserved_member = 1;
             }
         }
         if (current != keep) vpi_release_handle(current);
@@ -3852,6 +4199,15 @@ static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep,
         vpi_error("LLG_VPI_INDEX",
                   "a name with fewer indices than its array has dimensions names no object "
                   "(decision A20-D23)");
+    else if (unserved_select && !current)
+        /* Raised after the walk released its handles, which clears errors. */
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "llg serves no bit or part select of a dynamic element, member or property "
+                  "(decision A19-D89)");
+    else if (unserved_member && !current)
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "llg serves no member of a structure or union kept as one packed value in a "
+                  "class property or dynamic element (decision A19-D89)");
     return current;
 }
 
@@ -3910,17 +4266,8 @@ static LLG_OUTLYING vpiHandle dyn_record_suffix(const dyn_place_t* place, uint32
                                                 const char* suffix) {
     const char* name = suffix + 1;
     size_t length = strcspn(name, ".[");
-    for (uint32_t m = 0; m < place->shape->member_count; ++m) {
-        const llg_vpi_member_t* member = dyn_member(place->shape, m);
-        if (strlen(member->name) != length || strncmp(member->name, name, length) != 0) continue;
-        dyn_step_t step;
-        memset(&step, 0, sizeof(step));
-        step.at = DYN_AT_MEMBER;
-        step.element = m;
-        vpiHandle handle = make_dyn_path(place, field, &step, 1u);
-        return handle ? dyn_walk_suffix(handle, NULL, name + length, 0) : NULL;
-    }
-    return NULL;
+    vpiHandle handle = dyn_record_member(place, field, name, length);
+    return handle ? dyn_walk_suffix(handle, NULL, name + length, 0) : NULL;
 }
 
 /* `suffix` (starting with `[`) after the container automatic `place`

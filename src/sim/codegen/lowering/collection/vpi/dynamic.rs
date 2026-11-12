@@ -19,6 +19,30 @@ use crate::sim::ir::{
 /// types become [`IrVpiShape::Other`].
 const MAX_SHAPE_DEPTH: u32 = 64;
 
+/// The most declared ranges a fixed-size array shape carries: as many as
+/// the runtime's `vpi_handle_by_multi_index` names (`DYN_MAX_DIMS` in
+/// `llg_vpi_dynamic.c`). An array of more dimensions has no VPI form.
+const MAX_FIXED_DIMS: usize = 16;
+
+/// The declared ranges of a fixed-size array, leftmost first; `None` when
+/// there are none or more than [`MAX_FIXED_DIMS`].
+fn vpi_fixed_dims(dimensions: &[(i32, i32)]) -> Option<Vec<(i64, i64)>> {
+    (!dimensions.is_empty() && dimensions.len() <= MAX_FIXED_DIMS).then(|| {
+        dimensions
+            .iter()
+            .map(|(left, right)| (i64::from(*left), i64::from(*right)))
+            .collect()
+    })
+}
+
+/// What `vpi_dynamic_value` gives a dynamic row: its interned shape,
+/// typespec and declared ranges.
+struct DynamicValue {
+    shape: usize,
+    typespec: Option<usize>,
+    dims: Vec<(i64, i64)>,
+}
+
 impl Codegen<'_> {
     /// The storage of `id` when it is a static string, chandle or class
     /// variable or a dynamic array, queue or associative array: one an
@@ -61,7 +85,99 @@ impl Codegen<'_> {
         storage: IrVpiStorage,
     ) -> Option<IrVpiObject> {
         let descriptor = self.db.type_descriptor(id)?;
-        let mut dims = Vec::new();
+        let DynamicValue {
+            shape,
+            typespec,
+            dims,
+        } = self.vpi_dynamic_value(
+            model,
+            dynamic,
+            typespecs,
+            descriptor,
+            self.db.declared_typedef(id),
+            storage,
+            || {
+                self.db
+                    .array_meta(id)?
+                    .dimensions()
+                    .iter()
+                    .map(|bounds| {
+                        let (left, right) = (*bounds)?;
+                        Some((i64::from(left), i64::from(right)))
+                    })
+                    .collect()
+            },
+        )?;
+        Some(IrVpiObject {
+            full_name: self.vpi_full_name(id),
+            name: self.node(id).name.clone(),
+            kind: IrVpiObjectKind::Dynamic,
+            storage: Some(storage),
+            shape: Some(shape),
+            typespec,
+            dims,
+            ..IrVpiObject::default()
+        })
+    }
+
+    /// The catalog row of a string, handle or container member of an
+    /// unpacked structure kept as member leaves (37.24): `row` (its name
+    /// and source) made a dynamic object of the member's storage.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn vpi_member_dynamic_row(
+        &self,
+        model: &IrModel,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+        row: &IrVpiObject,
+        descriptor: &TypeDescriptor,
+        naming: Option<TypedefRef>,
+        storage: IrVpiStorage,
+    ) -> Option<IrVpiObject> {
+        let DynamicValue {
+            shape,
+            typespec,
+            dims,
+        } = self.vpi_dynamic_value(
+            model,
+            dynamic,
+            typespecs,
+            descriptor,
+            naming,
+            storage,
+            || {
+                let TypeShape::FixedArray { dimensions, .. } = &descriptor.shape else {
+                    return None;
+                };
+                vpi_fixed_dims(dimensions)
+            },
+        )?;
+        Some(IrVpiObject {
+            kind: IrVpiObjectKind::Dynamic,
+            storage: Some(storage),
+            shape: Some(shape),
+            typespec,
+            dims,
+            member: true,
+            ..row.clone()
+        })
+    }
+
+    /// The interned shape, typespec and declared ranges (`dims`, asked for
+    /// a fixed-size array only) of a dynamic object of type `descriptor`
+    /// kept in `storage`.
+    #[allow(clippy::too_many_arguments)]
+    fn vpi_dynamic_value(
+        &self,
+        model: &IrModel,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        naming: Option<TypedefRef>,
+        storage: IrVpiStorage,
+        dims: impl FnOnce() -> Option<Vec<(i64, i64)>>,
+    ) -> Option<DynamicValue> {
+        let mut ranges = Vec::new();
         let shape = match storage {
             IrVpiStorage::Object(index) => {
                 let object = model.objects.get(index)?;
@@ -79,10 +195,7 @@ impl Codegen<'_> {
                     return None;
                 }
                 if container.initial_size.is_some() {
-                    for bounds in self.db.array_meta(id)?.dimensions() {
-                        let (left, right) = (*bounds)?;
-                        dims.push((i64::from(left), i64::from(right)));
-                    }
+                    ranges = dims()?;
                     self.vpi_static_container_shape(
                         dynamic, typespecs, descriptor, container, false,
                     )?
@@ -96,15 +209,13 @@ impl Codegen<'_> {
         // dynamic array, queue, associative array or fixed array has its
         // array typespec (decision A19-D60).
         let typespec = match shape {
-            IrVpiShape::String => {
-                self.vpi_typespec(typespecs, descriptor, self.db.declared_typedef(id), 0)
-            }
+            IrVpiShape::String => self.vpi_typespec(typespecs, descriptor, naming, 0),
             _ if matches!(
                 descriptor.shape,
                 TypeShape::Container { .. } | TypeShape::FixedArray { .. }
             ) =>
             {
-                self.vpi_typespec(typespecs, descriptor, self.db.declared_typedef(id), 0)
+                self.vpi_typespec(typespecs, descriptor, naming, 0)
             }
             IrVpiShape::Chandle => Some(typespecs.intern(IrVpiTypespec {
                 kind: IrVpiTypespecKind::Chandle,
@@ -112,16 +223,10 @@ impl Codegen<'_> {
             })),
             _ => None,
         };
-        let shape = dynamic.intern(shape);
-        Some(IrVpiObject {
-            full_name: self.vpi_full_name(id),
-            name: self.node(id).name.clone(),
-            kind: IrVpiObjectKind::Dynamic,
-            storage: Some(storage),
-            shape: Some(shape),
+        Some(DynamicValue {
+            shape: dynamic.intern(shape),
             typespec,
-            dims,
-            ..IrVpiObject::default()
+            dims: ranges,
         })
     }
 
@@ -331,12 +436,18 @@ impl Codegen<'_> {
             if declared.name != stored.name {
                 return None;
             }
-            // An array member (fixed-size or a container) is listed
-            // without a value: members of structures are their own family.
+            // An array member is an array variable of the structure
+            // (37.24): a fixed-size array with its ranges, or a container.
             let shape = match &*stored.element {
-                IrContainerElement::FixedArray { .. } | IrContainerElement::Container { .. } => {
-                    IrVpiShape::Other
-                }
+                IrContainerElement::FixedArray { .. } => self
+                    .vpi_inline_fixed_shape(
+                        dynamic,
+                        typespecs,
+                        &declared.descriptor,
+                        &stored.element,
+                        depth + 1,
+                    )
+                    .unwrap_or(IrVpiShape::Other),
                 element => self.vpi_element_shape(
                     dynamic,
                     typespecs,
@@ -348,6 +459,83 @@ impl Codegen<'_> {
             members.push((declared.name.clone(), dynamic.intern(shape)));
         }
         Some(IrVpiShape::Record { members })
+    }
+
+    /// The shape of an array member of a structure kept as a value: one
+    /// fixed-array value whose items are the cells, row-major (37.17).
+    /// `None` for cells VPI does not reach (events, unions, nested
+    /// arrays).
+    fn vpi_inline_fixed_shape(
+        &self,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        element: &IrContainerElement,
+        depth: u32,
+    ) -> Option<IrVpiShape> {
+        let (
+            TypeShape::FixedArray {
+                dimensions,
+                element: element_type,
+            },
+            IrContainerElement::FixedArray {
+                dimensions: stored,
+                element: inner,
+            },
+        ) = (&descriptor.shape, element)
+        else {
+            return None;
+        };
+        if dimensions != stored {
+            return None;
+        }
+        let dims = vpi_fixed_dims(dimensions)?;
+        let shape = self.vpi_element_shape(dynamic, typespecs, element_type, inner, depth + 1);
+        if !matches!(
+            shape,
+            IrVpiShape::Packed { .. }
+                | IrVpiShape::Real { .. }
+                | IrVpiShape::String
+                | IrVpiShape::Chandle
+                | IrVpiShape::Class { .. }
+                | IrVpiShape::Builtin { .. }
+                | IrVpiShape::Record { .. }
+        ) {
+            return None;
+        }
+        Some(IrVpiShape::FixedArray {
+            element: dynamic.intern(shape),
+            values: true,
+            dims,
+            inline: true,
+        })
+    }
+
+    /// The shape of a fixed-size class instance property (37.17): the
+    /// fixed-size container the object keeps, with the declared ranges.
+    fn vpi_fixed_property_shape(
+        &self,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        container: &crate::sim::ir::IrContainer,
+    ) -> Option<IrVpiShape> {
+        let TypeShape::FixedArray { dimensions, .. } = &descriptor.shape else {
+            return None;
+        };
+        let dims = vpi_fixed_dims(dimensions)?;
+        let IrVpiShape::Container {
+            values, element, ..
+        } = self.vpi_static_container_shape(dynamic, typespecs, descriptor, container, true)?
+        else {
+            return None;
+        };
+        Some(IrVpiShape::FixedArray {
+            element,
+            values,
+            dims,
+            inline: false,
+        })
     }
 
     /// The shape of a container element: the storage kind comes from the
@@ -654,10 +842,24 @@ impl Codegen<'_> {
                 } else if let Some(container) =
                     slot.container.and_then(|index| model.containers.get(index))
                 {
-                    self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)
+                    if matches!(descriptor.shape, TypeShape::FixedArray { .. }) {
+                        self.vpi_fixed_property_shape(dynamic, typespecs, descriptor, container)
+                    } else {
+                        self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)
+                    }
+                    .unwrap_or(IrVpiShape::Other)
+                } else if let Some(value) = slot.native_value {
+                    // An unpacked structure property kept as a record
+                    // value gives its members, as a record automatic does
+                    // (decision A19-D89); any other is listed without one.
+                    model
+                        .native_values
+                        .get(value)
+                        .and_then(|value| model.native_types.get(value.ty))
+                        .and_then(|stored| {
+                            self.vpi_record_shape(dynamic, typespecs, descriptor, stored, 0)
+                        })
                         .unwrap_or(IrVpiShape::Other)
-                } else if slot.native_value.is_some() {
-                    IrVpiShape::Other
                 } else {
                     match slot.ty {
                         IrClassFieldType::Packed {

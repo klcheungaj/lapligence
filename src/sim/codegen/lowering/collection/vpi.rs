@@ -666,13 +666,17 @@ impl Codegen<'_> {
 
     /// Catalog rows of an unpacked structure or union variable whose members
     /// keep their own leaf storage: the record row, then one row per member
-    /// with a packed or real leaf and one record row per nested unpacked
-    /// structure. Members llg keeps elsewhere (unpacked arrays, strings,
-    /// handles, containers, and unpacked structures inside unions) are not
-    /// catalog objects.
+    /// with a packed or real leaf, one record row per nested unpacked
+    /// structure, a dynamic row per string, handle or container member and
+    /// an array row per unpacked array member of packed or real cells kept
+    /// as a column or as one leaf per cell (37.24). Other members (arrays
+    /// of strings, handles or structures kept as leaves, and unpacked
+    /// structures inside unions) are not catalog objects.
     #[allow(clippy::too_many_arguments)]
     fn vpi_record_rows(
         &self,
+        model: &IrModel,
+        dynamic: &mut crate::sim::ir::IrVpiDynamic,
         table: &mut TypespecTable,
         rows: &mut Vec<IrVpiObject>,
         template: &IrVpiObject,
@@ -717,6 +721,8 @@ impl Codegen<'_> {
             if nested_record {
                 if !union {
                     self.vpi_record_rows(
+                        model,
+                        dynamic,
                         table,
                         rows,
                         &row,
@@ -729,7 +735,45 @@ impl Codegen<'_> {
                 }
                 continue;
             }
-            let Some(leaf) = leaves.iter().find(|leaf| leaf.path == member_path) else {
+            let exact = leaves.iter().find(|leaf| leaf.path == member_path);
+            // A string, handle or container member is a dynamic object.
+            if let Some(storage) = exact.and_then(|leaf| {
+                leaf.object
+                    .map(crate::sim::ir::IrVpiStorage::Object)
+                    .or_else(|| {
+                        leaf.container
+                            .as_ref()
+                            .map(|info| crate::sim::ir::IrVpiStorage::Container(info.ir))
+                    })
+            }) {
+                if let Some(dynamic_row) = self.vpi_member_dynamic_row(
+                    model,
+                    dynamic,
+                    table,
+                    &row,
+                    &member.descriptor,
+                    member_naming,
+                    storage,
+                ) {
+                    rows.push(dynamic_row);
+                }
+                continue;
+            }
+            if matches!(member.descriptor.shape, TypeShape::FixedArray { .. }) {
+                if let Some(array_row) = self.vpi_member_array_row(
+                    table,
+                    &row,
+                    &member.descriptor,
+                    member_naming,
+                    &member_path,
+                    leaves,
+                    depth,
+                ) {
+                    rows.push(array_row);
+                }
+                continue;
+            }
+            let Some(leaf) = exact else {
                 continue;
             };
             let cell = leaf
@@ -786,6 +830,154 @@ impl Codegen<'_> {
                 ..row
             });
         }
+    }
+
+    /// The array row of an unpacked array member of a structure kept as
+    /// member leaves (37.24, 37.17): packed or real cells kept in one column
+    /// (`array`), or as one leaf per cell (`cells`, row-major). `None` for
+    /// cells of any other kind.
+    #[allow(clippy::too_many_arguments)]
+    fn vpi_member_array_row(
+        &self,
+        table: &mut TypespecTable,
+        row: &IrVpiObject,
+        descriptor: &TypeDescriptor,
+        naming: Option<TypedefRef>,
+        member_path: &[AggregatePathPart],
+        leaves: &[AggregateMemberInfo],
+        depth: u32,
+    ) -> Option<IrVpiObject> {
+        let TypeShape::FixedArray {
+            dimensions,
+            element,
+        } = &descriptor.shape
+        else {
+            return None;
+        };
+        let real = matches!(element.shape, TypeShape::Real { .. });
+        let width = if real {
+            0
+        } else {
+            Self::fixed_descriptor_width(element)?
+        };
+        let cell_count = usize::try_from(
+            dimensions
+                .iter()
+                .map(|(left, right)| u64::from(left.abs_diff(*right)) + 1)
+                .try_fold(1u64, u64::checked_mul)?,
+        )
+        .ok()?;
+        // The column holding the whole member (a column-layout record), or
+        // the one its cell leaves share (a member column).
+        let cells_of_member = || {
+            leaves.iter().filter(|leaf| {
+                leaf.path.len() == member_path.len() + dimensions.len()
+                    && leaf.path.starts_with(member_path)
+                    && leaf.path[member_path.len()..]
+                        .iter()
+                        .all(|part| matches!(part, AggregatePathPart::Index(_)))
+            })
+        };
+        let column = leaves
+            .iter()
+            .find(|leaf| leaf.path == member_path)
+            .and_then(|leaf| leaf.array.as_ref())
+            .or_else(|| {
+                let first = cells_of_member().next()?.array.as_ref()?;
+                cells_of_member()
+                    .all(|leaf| {
+                        leaf.array
+                            .as_ref()
+                            .is_some_and(|array| array.ir == first.ir)
+                    })
+                    .then_some(first)
+            })
+            .filter(|array| array.dims == *dimensions && array.real == real)
+            .map(|array| array.ir);
+        let mut cells = Vec::new();
+        if column.is_none() {
+            // One leaf per cell: each a packed or real signal, placed by its
+            // indices in row-major order.
+            let mut slots = vec![None; cell_count];
+            for leaf in cells_of_member() {
+                let signal = leaf.signal.as_ref()?;
+                if leaf.array.is_some() || signal.real != real {
+                    return None;
+                }
+                let mut offset = 0usize;
+                for (part, (left, right)) in leaf.path[member_path.len()..].iter().zip(dimensions) {
+                    let AggregatePathPart::Index(index) = part else {
+                        return None;
+                    };
+                    let (low, high) = ((*left).min(*right), (*left).max(*right));
+                    if *index < low || *index > high {
+                        return None;
+                    }
+                    let position = if left >= right {
+                        left - index
+                    } else {
+                        index - left
+                    };
+                    offset = offset * (usize::try_from(high - low).ok()? + 1)
+                        + usize::try_from(position).ok()?;
+                }
+                *slots.get_mut(offset)? = Some(signal.ir);
+            }
+            cells = slots.into_iter().collect::<Option<Vec<_>>>()?;
+        }
+        let element_typespec = self.vpi_typespec(table, element, None, depth + 1);
+        let ranges = match &element.shape {
+            TypeShape::PackedAtom { ranges } => ranges.len(),
+            _ => 0,
+        };
+        let var_kind = element_typespec.map_or_else(
+            || IrVpiVarKind::from_type_kind(&element.info.kind, ranges),
+            |typespec| typespec_var_kind(table.entries[typespec].kind, ranges),
+        );
+        let packed_range = (!real)
+            .then(|| {
+                let declared = match &element.shape {
+                    TypeShape::PackedAtom { ranges } => ranges.first().and_then(|range| {
+                        Some((
+                            i64::try_from(range.left).ok()?,
+                            i64::try_from(range.right).ok()?,
+                        ))
+                    }),
+                    _ => None,
+                };
+                declared.or_else(|| (width > 1).then(|| (i64::from(width) - 1, 0)))
+            })
+            .flatten();
+        Some(IrVpiObject {
+            kind: IrVpiObjectKind::RegArray,
+            width,
+            signed: element.info.signed,
+            real,
+            array: column,
+            var_kind: if real {
+                match element.shape {
+                    TypeShape::Real { shortreal: true } => IrVpiVarKind::ShortReal,
+                    _ => IrVpiVarKind::Real,
+                }
+            } else {
+                var_kind
+            },
+            packed_range,
+            two_state: element.two_state,
+            typespec: self.vpi_typespec(table, descriptor, naming, depth + 1),
+            // A column carries its ranges; leaf cells take the declared ones.
+            dims: if cells.is_empty() {
+                Vec::new()
+            } else {
+                dimensions
+                    .iter()
+                    .map(|(left, right)| (i64::from(*left), i64::from(*right)))
+                    .collect()
+            },
+            cells,
+            member: true,
+            ..row.clone()
+        })
     }
 
     /// How an application sees expression `node` as a structure connection:
@@ -1668,14 +1860,13 @@ impl Codegen<'_> {
                         ..IrVpiObject::default()
                     }));
                 }
-                // An unpacked structure or union kept as member leaves
-                // (procedural-block records are not catalog objects).
+                // An unpacked structure or union kept as member leaves or
+                // a structure kept in columns (procedural-block records are
+                // not catalog objects).
                 NodeKind::Var { .. }
-                    if self
-                        .unpacked_aggregates
-                        .get(&id)
-                        .is_some_and(|info| !info.columns || self.chosen_record_column(id))
-                        && !self.block_records.contains_key(&id) =>
+                    if self.unpacked_aggregates.get(&id).is_some_and(|info| {
+                        !info.columns || info.kind == AggregateKind::UnpackedStruct
+                    }) && !self.block_records.contains_key(&id) =>
                 {
                     let Some(descriptor) = self.db.type_descriptor(id) else {
                         continue;
@@ -1687,6 +1878,8 @@ impl Codegen<'_> {
                     });
                     let mut rows = Vec::new();
                     self.vpi_record_rows(
+                        model,
+                        &mut dynamic,
                         &mut typespecs,
                         &mut rows,
                         &template,

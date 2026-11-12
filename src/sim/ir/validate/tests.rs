@@ -2526,3 +2526,38 @@ fn dependency_names_resolve_like_a_signal_scan() {
     assert!(validator.valid_dependency(&IrDependency::real("r")));
     assert!(!validator.valid_dependency(&IrDependency::real("a")));
 }
+
+#[test]
+fn a_member_cell_array_names_one_signal_per_cell_of_its_ranges() {
+    let mut model = valid_model();
+    let mut cell = model.signals[0].clone();
+    cell.c_name = "cell".to_string();
+    model.signals.push(cell);
+    model.vpi_objects.push(crate::sim::ir::IrVpiObject {
+        full_name: "top.r.arr".to_string(),
+        name: "arr".to_string(),
+        kind: crate::sim::ir::IrVpiObjectKind::RegArray,
+        width: 1,
+        member: true,
+        cells: vec![0, 1],
+        dims: vec![(0, 1)],
+        ..Default::default()
+    });
+    if let Err(error) = model.validate() {
+        panic!("{}: {}", error.path(), error.detail());
+    }
+    model.vpi_objects[0].dims = vec![(0, 2)];
+    assert!(model.validate().is_err(), "three cells need three signals");
+    model.vpi_objects[0].dims = vec![(0, 1)];
+    model.vpi_objects[0].member = false;
+    assert!(
+        model.validate().is_err(),
+        "only a structure member keeps cells"
+    );
+    model.vpi_objects[0].member = true;
+    model.vpi_objects[0].cells = vec![0, 2];
+    assert!(model.validate().is_err(), "a cell signal must exist");
+    model.vpi_objects[0].cells = vec![0, 1];
+    model.vpi_objects[0].real = true;
+    assert!(model.validate().is_err(), "a real array needs real cells");
+}
