@@ -86,6 +86,22 @@ fn virtual_interface_type_parameter() {
     );
 }
 
+/// A function returns a virtual interface, and a static method copies one
+/// out through an `inout` formal: a library's configuration database reads
+/// a stored virtual interface this way.
+#[test]
+fn virtual_interface_function_return() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "virtual_interface_function_return",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/virtual_interface_function_return.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// Randomize through base-class handles over 40 derived classes. The model
 /// is about 2 MB of C; the dispatch shape, not C optimization, is under test,
 /// so the model builds at `-O0`.
