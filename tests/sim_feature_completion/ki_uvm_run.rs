@@ -70,6 +70,22 @@ fn string_function_packed_outputs() {
     );
 }
 
+/// A virtual interface type first reached through a class type parameter
+/// names the same interface type as its own spelling: a library's resource
+/// and configuration classes take the virtual interface as `T`.
+#[test]
+fn virtual_interface_type_parameter() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "virtual_interface_type_parameter",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/virtual_interface_type_parameter.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// Randomize through base-class handles over 40 derived classes. The model
 /// is about 2 MB of C; the dispatch shape, not C optimization, is under test,
 /// so the model builds at `-O0`.

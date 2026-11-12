@@ -1048,8 +1048,15 @@ struct Capture {
       virtualInterfaceTypes[&vif.iface.getDefinition()].push_back(&vif);
     }
     chargeRecord(output, sizeof(LlgSlangType));
+    // A virtual interface type is named by its interface, parameters and
+    // modport, which consumers parse as its identity: the spelling of the
+    // first reference may be an alias (a class type parameter prints as
+    // `cls::T`), and which reference comes first depends on traversal order.
+    const std::string spelling = canonical.kind == SymbolKind::VirtualInterfaceType
+                                     ? canonical.toString()
+                                     : input.toString();
     output.types.push_back({id, kind, flags, canonical.getBitWidth(),
-                            storeString(output, input.toString()),
+                            storeString(output, spelling),
                             LLG_SLANG_INVALID_ID, LLG_SLANG_INVALID_ID,
                             0, 0, 0, 0});
 
