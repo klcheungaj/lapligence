@@ -776,6 +776,7 @@ fn dump_accepts_driver_only_config_keys() {
          edition = \"sv2009\"\n\
          [simulator]\n\
          stop_policy = \"exit\"\n\
+         code_coverage = [\"toggle\"]\n\
          [build]\n\
          cc = \"cc\"\n",
     )
