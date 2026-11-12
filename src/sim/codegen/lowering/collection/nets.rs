@@ -3199,12 +3199,27 @@ impl<'a> Codegen<'a> {
     /// closes fail-closed checks for concatenations and other compound actuals
     /// that the supported direct/ref/select classifier intentionally ignores.
     fn nested_member_target(&self, node: NodeId, member_set: &HashSet<NodeId>) -> Option<NodeId> {
-        self.member_write_base(node, member_set).or_else(|| {
-            self.node(node)
-                .children
-                .iter()
-                .find_map(|child| self.nested_member_target(*child, member_set))
-        })
+        if let Some(member) = self.member_write_base(node, member_set) {
+            return Some(member);
+        }
+        // A select writes its base only; its index and range expressions are
+        // reads (`mem[bus.addr] <= d` writes `mem`, not `bus.addr`).
+        let reads: &[NodeId] = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { index, .. }) => std::slice::from_ref(index),
+            NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => &[*left, *right],
+            NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base_expr,
+                width_expr,
+                ..
+            }) => &[*base_expr, *width_expr],
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => indices,
+            _ => &[],
+        };
+        self.node(node)
+            .children
+            .iter()
+            .filter(|child| !reads.contains(child))
+            .find_map(|child| self.nested_member_target(*child, member_set))
     }
 
     /// Whether a task call binds an output/inout formal to a member: those

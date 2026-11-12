@@ -117,6 +117,20 @@ fn forward_class_typedef_in_module() {
     );
 }
 
+/// Interface nets driven by a clocking block and read in the select of a
+/// nonblocking assignment's target: a register file indexed by a bus
+/// address writes the register file, not the address net.
+#[test]
+fn net_read_in_target_select() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "net_read_in_target_select",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_run/net_read_in_target_select.out"),
+        &[],
+        &[],
+    );
+}
+
 /// Randomize through base-class handles over 40 derived classes. The model
 /// is about 2 MB of C; the dispatch shape, not C optimization, is under test,
 /// so the model builds at `-O0`.
