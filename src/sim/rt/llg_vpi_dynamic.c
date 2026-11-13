@@ -2683,9 +2683,9 @@ static LLG_OUTLYING vpiHandle dyn_iterate_indices(const llg_vpi_slot_t* slot) {
     /* 37.17 detail 5: the element's own index first, then outward, as a
      * static array element gives them (decision A19-D28). */
     for (uint32_t i = 0; !list.failed && i < list.count / 2u; ++i) {
-        uintptr_t first = list.items[i];
+        uintptr_t swapped = list.items[i];
         list.items[i] = list.items[list.count - 1u - i];
-        list.items[list.count - 1u - i] = first;
+        list.items[list.count - 1u - i] = swapped;
     }
     return dyn_list_iterator(vpiIndex, &list);
 }
