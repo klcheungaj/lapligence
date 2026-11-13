@@ -90,8 +90,9 @@ column. Expected values are derived by hand below; none were captured from
   in one image each, in the form of the record's leaves.
 - `chosen_vpi`: an application reads, watches and writes the scalar members of a
   chosen record and walks its members. Expected lines are the per-cell form's
-  output, compared line by line: `tb.r.s`, `tb.r.a` and `tb.r.a[3]` have no object
-  in either form.
+  output, compared line by line: the string member `tb.r.s`, the member array
+  `tb.r.a` and its element `tb.r.a[3]` are objects in both forms (decision
+  A19-D89).
 - `chosen_toggle`: toggle coverage entities are packed variables (S46-D14), so a
   chosen record changes neither count.
 - `chosen_observers`: writes to cells of a chosen record reach run-time index
