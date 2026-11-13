@@ -1588,24 +1588,30 @@ static LLG_OUTLYING sv4_t* sparse_cell(const llg_vpi_model_object_t* object, uin
 }
 
 /* Element `element` of an array member kept as one leaf per cell: the
- * cell its table names (sv4_t* or double*). */
+ * cell its table names (sv4_t* or double*); NULL for any other row. */
 static LLG_OUTLYING void* table_cell(const llg_vpi_model_object_t* object, uint64_t element) {
-    if (element == LLG_VPI_NO_ELEMENT || element >= dims_element_count(object)) return NULL;
+    if (!(object->flags & LLG_VPI_OBJ_CELLS) || element == LLG_VPI_NO_ELEMENT ||
+        element >= dims_element_count(object))
+        return NULL;
     return object->is_real ? (void*)((double* const*)object->storage)[element]
                            : (void*)((sv4_t* const*)object->storage)[element];
+}
+
+/* The packed cell of an array without flat cells: a sparse array's or a
+ * leaf-cell member array's. Out of line, so the write path keeps its
+ * shape. */
+static LLG_OUTLYING sv4_t* unflat_cell(const llg_vpi_model_object_t* object, uint64_t element) {
+    if (object->flags & LLG_VPI_OBJ_SPARSE) return sparse_cell(object, element);
+    return (sv4_t*)table_cell(object, element);
 }
 
 /* The packed cell a write, force or value-change watch addresses. */
 static sv4_t* packed_cell(const llg_vpi_target_t* target) {
     llg_vpi_model_object_t* object = row_object(target->object);
-    if (!object || object->is_real || !object->packed) {
-        if (!object || object->is_real) return NULL;
+    if (!object || object->is_real || !object->packed)
         /* A sparse array or a member array of leaf cells has no flat
          * cells. */
-        if (object->flags & LLG_VPI_OBJ_SPARSE) return sparse_cell(object, target->element);
-        if (object->flags & LLG_VPI_OBJ_CELLS) return (sv4_t*)table_cell(object, target->element);
-        return NULL;
-    }
+        return object && !object->is_real ? unflat_cell(object, target->element) : NULL;
     if (target->element == LLG_VPI_NO_ELEMENT) return object->packed;
     return object->packed + target->element;
 }
@@ -1624,9 +1630,9 @@ static LLG_OUTLYING const sv4_t* packed_peek(const llg_vpi_target_t* target) {
 
 static double* real_cell(const llg_vpi_target_t* target) {
     llg_vpi_model_object_t* object = row_object(target->object);
-    if (object && object->is_real && (object->flags & LLG_VPI_OBJ_CELLS))
-        return (double*)table_cell(object, target->element);
-    if (!object || !object->is_real || !object->real) return NULL;
+    if (!object || !object->is_real || !object->real)
+        /* A real member array of leaf cells has no flat cells. */
+        return object && object->is_real ? (double*)table_cell(object, target->element) : NULL;
     if (target->element == LLG_VPI_NO_ELEMENT) return object->real;
     return object->real + target->element;
 }
