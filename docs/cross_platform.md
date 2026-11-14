@@ -60,7 +60,7 @@ final link, so build.rs adds what that link needs:
 - On x86_64 Linux GNU, rustc links through its bundled lld by default, which
   ignores GCC's plugin; build.rs therefore selects GNU ld for GCC LTO archives.
   A later `-fuse-ld` (the `LLG_MOLD=1` wrapper's) still wins; mold runs the
-  plugin too. That bundled lld does read Clang bitcode (LLVM 22 reads older
+  plugin too. That bundled lld does read Clang bitcode (LLVM 23 reads older
   bitcode). CMake's IPO check needs `llvm-ar` beside a Linux Clang.
 - `LLG_SLANG_LTO`: unset or `auto` uses LTO in release builds and falls back to
   ordinary objects with a build warning when CMake's IPO check fails; `1`
@@ -80,7 +80,7 @@ final link, so build.rs adds what that link needs:
   without LTO and still fortified) and the glibc, macOS and Windows frontends
   are unchanged. glibc's fortify wrappers link under GCC LTO.
 - No cross-language LTO (`-Clinker-plugin-lto`): it needs a Clang whose LLVM
-  matches rustc's (LLVM 22 for Rust 1.98; hosts carry other Clang versions,
+  matches rustc's (LLVM 23 for Rust 1.100; hosts carry other Clang versions,
   Apple Clang and MSVC differ) and GCC cannot take part. Rust and C++ are each
   optimized as a whole; calls across the C ABI stay ordinary calls.
 - Every release link of a binary that uses the library (each test group and

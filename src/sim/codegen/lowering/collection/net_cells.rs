@@ -195,8 +195,7 @@ impl Codegen<'_> {
         }
         let mut fill = offsets.clone();
         let mut members = vec![0usize; offsets[classes]];
-        for cell in 0..cells {
-            let class = plan.class_of[cell];
+        for (cell, &class) in plan.class_of.iter().enumerate() {
             if class != u32::MAX {
                 members[fill[class as usize]] = cell;
                 fill[class as usize] += 1;

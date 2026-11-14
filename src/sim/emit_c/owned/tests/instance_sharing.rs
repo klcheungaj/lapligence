@@ -105,8 +105,8 @@ fn width_and_parameter_payload_differences_split_classes() {
     assert!(source.contains("llg_shared_body_1("));
     assert!(!source.contains("llg_shared_body_2("));
     let mut model = instance_model(8);
-    for index in 4..8 {
-        if let IrStmt::Assign { rhs, .. } = &mut model.processes[index].body[1] {
+    for process in &mut model.processes[4..8] {
+        if let IrStmt::Assign { rhs, .. } = &mut process.body[1] {
             *rhs = number(9, 8);
         }
     }

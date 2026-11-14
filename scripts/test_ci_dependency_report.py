@@ -123,7 +123,7 @@ class RemoteTest(unittest.TestCase):
         workflow = "\n".join([
             "      - uses: actions/checkout@v7",
             "        uses: actions/cache/restore@v6",
-            "      - uses: dtolnay/rust-toolchain@1.98.0",
+            "      - uses: dtolnay/rust-toolchain@1.100.0",
             "      - uses: taiki-e/install-action@nextest",
             "        uses: ./.github/actions/ccache-setup",
             "      - uses: 'actions/upload-artifact@v4' # quoted",

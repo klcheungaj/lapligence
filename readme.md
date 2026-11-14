@@ -74,7 +74,7 @@ Other table entries likewise remain configuration, not support claims.
 All platforms require:
 
 - A recursive Git checkout: `git submodule update --init --recursive`.
-- Rust and Cargo 1.98.0 from [rustup](https://rustup.rs/), as pinned in
+- Rust and Cargo 1.100.0 from [rustup](https://rustup.rs/), as pinned in
   [`rust-toolchain.toml`](rust-toolchain.toml).
 - CMake 3.20 or newer.
 - [Ninja](https://ninja-build.org/) on `PATH` to build simulation models:
@@ -146,7 +146,7 @@ cargo build --locked --release --bin llg --bin llg_ls \
 - Install Visual Studio Build Tools with the **Desktop development with C++**
   workload and the Windows SDK. Its **C++ CMake tools for Windows** component
   puts Ninja on the Developer PowerShell's `PATH`; a standalone Ninja works too.
-- Install CMake, Python 3, Git, and Rust 1.98.0.
+- Install CMake, Python 3, Git, and Rust 1.100.0.
 - Run the build from a matching MSVC Developer PowerShell.
 
 Build for x86_64:
