@@ -134,9 +134,14 @@ through `llg_value_handle_hooks_t` (retain on copy, release on drop, a pop moves
 the reference out). The scheduler installs the hooks at init and never clears
 them; `event_new` creates scheduler-owned events for new event elements (Table
 6-7), freed in `llg_rt_cleanup`, while missing or invalid reads yield null
-(Table 7-1). Element locators (`container/value_elements.c`) return borrowed
-element pointers valid until the next structural change; callers write members
-in place and then call the container's `*_touch`. Associative reads through an
+(Table 7-1). `forget` runs for each packed and real item just before an items
+array is freed (a record or fixed array dropped, popped, deleted or
+overwritten): generated code writes those leaves in place through the
+scheduler, which keys the turn's change records and clocking history by
+address (`llg_value_leaf_forget`). Element
+locators (`container/value_elements.c`) return borrowed element pointers valid
+until the next structural change; callers write members in place and then call
+the container's `*_touch`. Associative reads through an
 invalid key or of a nonexistent entry warn (SV 7.8.6) unless an explicit default
 is set; invalid-key writes warn and do nothing. Activation and class-property
 containers run without dependencies or notification.

@@ -184,6 +184,12 @@ typedef struct llg_value_handle_hooks_t {
     void (*publish)(sv4_t* marker);
     /* Store and publish a real variable (llg_ba_d). */
     void (*store_real)(double* target, double value);
+    /* Generated code writes record and fixed-array leaves in place through
+     * the scheduler, which can key a change record or clocking history by
+     * the leaf's address until the turn's check. Called with the address of
+     * each packed and real item just before its items array is freed
+     * (llg_value_leaf_forget). */
+    void (*forget)(void* leaf);
 } llg_value_handle_hooks_t;
 void llg_value_set_handle_hooks(const llg_value_handle_hooks_t* hooks);
 

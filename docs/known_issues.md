@@ -1993,24 +1993,27 @@ net-contribution batches.
 
 ## Unsupported force and release targets
 
-**Status:** narrowed (fin-gaps-e). Whole unpacked net arrays are forced and
+**Status:** narrowed (K3). Whole unpacked net arrays are forced and
 released (`sim_023/whole_net_arrays`); string, class-handle and event
-variables are rejected by decision S23-D5 (industry-standard behaviour).
+variables are rejected by decision S23-D5 (industry-standard behaviour). In
+SystemVerilog, elements of static unpacked array variables and members of
+their unpacked-structure elements are forced and released (decision S23-D6),
+including lazily allocated cells and the member arrays of records in both
+record storage forms.
 
 This legal target stops the run with a located error instead of being
-forced: an element of a static unpacked array variable in SV2009 (for
-example `force mem[1] = 7;` on `int mem[2]`), which reads as a "reference to
-a singular variable" under 10.6.2. The frontend rejects every select of a
-variable as a force or release target (its `BadProceduralForce` check, which
-llg promotes to an error), as IEEE 1364-2001 9.3.2 requires ("It cannot be a
-memory word"). Industry-standard behaviour forces such elements, also with a
-non-constant index evaluated when the force executes. Admitting it needs a
-tracked frontend patch (SV2009 only) and a force target for array cells,
-including lazily allocated sparse cells, in the force runtime (which today
-overlays packed and real signal storage only). Estimate: 1.5-2 days, plus a
-full suite and the language-server tests for the frontend patch.
+forced: a member of an element of an array of records that have a real,
+string, class-handle, chandle, event or container member (for example
+`force x[1].a = 1;` on `struct { int a; real r; } x[2]`). Such a record is a
+native value: a whole-element or whole-array write rebuilds its members, so a
+member has no fixed address the force runtime can overlay, and its waiters
+watch the array's change marker rather than the member. Supporting it needs a
+force target that names the array, the element and the member path, re-found
+after every write of the element, and those native write paths (element and
+whole-array copies, located nonblocking writes, member setters) keeping the
+forced member and publishing the array's marker after a force or release.
 
-Pinned by `static_memory_force_witness` in
+Reproduce: `native_record_member_is_a_known_limitation` in
 [sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md).
 
 ## Operator-overload update values on oversized or native targets
@@ -3495,9 +3498,10 @@ generation with "concurrent assertions require one explicit signal clock".
 The UVM APB agent (`integrated/apb/apb_master.sv`) uses it only inside a
 branch selected by a tool's predefined macro; without that macro the agent
 waits for an extra clock edge before each transfer, so the register examples
-built on it (`integration/10direct`, `integration/20layered`) reach their
-final checks later than with the industry-standard simulator, which takes its
-own branch. Their verdicts and counts match.
+built on it (`integration/10direct`, `integration/20layered`,
+`models/broadcast`) reach their final checks later than with the
+industry-standard simulator, which takes its own branch. Their verdicts and
+counts match.
 
 **Cause.** Sequence and property declarations within a clocking block take
 the block's clocking event (16.17); codegen requires an explicit signal clock
@@ -3505,25 +3509,6 @@ on the sequence itself.
 
 **Intended direction.** Infer a sequence's clock from its enclosing clocking
 block.
-
-### Run-time crash in the deferred change check (register broadcast)
-
-**Symptom.** The UVM 1.2 `registers/models/broadcast` example (run with the
-`mixed-assignments` rule as a warning) generates and builds, then stops with a
-segmentation fault at time 0 while the register model is configured. The
-industry-standard simulator runs it to the expected `UVM_HDL_READ` fatal error
-at 830 ns.
-
-**Cause.** Under investigation. A debugger shows the deferred change check
-that runs before a `$display` (T1-D11 coalescing) settling a record whose
-storage key no longer holds a value (a 32-bit signed variable's record now
-points into reused string memory), on the clocking-edge history path.
-
-**Intended direction.** Find which write leaves a pending change record for
-storage that is freed before the check (an automatic variable or a container
-element is the likely owner) and drop or settle the record when the storage
-goes away.
-
 
 ### The bus example's run diverges after its first transfer
 

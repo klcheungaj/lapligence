@@ -26,7 +26,7 @@ excludes the following retainers or supplies the indicated cleanup:
 | `activations.c`, `reference_writes.c`, queue refs, output/inout/ref and foreign call descriptors | All address actuals remain heap-backed; reference descriptors themselves retain their existing heap scopes. |
 | `storage.c` capture slots and `forks.c` joined/detached descendants | Captured forks and spawning callee effects fail the proof. |
 | Wait snapshots, R2 subscriptions, expression/iff contexts and `wait_order` delivery | Local wait dependencies and context-free evaluator reads remain heap-backed; captured evaluator/qualifier contexts are unproven. Existing wake/cancel paths remove subscriptions before scope unwind. |
-| R1 `dependencies.c` clock history | Every final scope release forgets the exact packed descriptor before reuse; publication without a waiter is still recorded. |
+| R1 `dependencies.c` clock history and change records | Every final scope release forgets the exact packed descriptor before reuse; publication without a waiter is still recorded. The container runtime forgets the packed and real leaves of a record or fixed-array items array before freeing it (`llg_value_handle_hooks_t` `forget`, `llg_value_leaf_forget`), since generated code writes them in place. |
 | Clocking sources, sampled histories, concurrent assertions, sequence clocks/local scopes | Clocking/sampled/assertion forms fail the proof; external owners retain their documented lifetime obligations. |
 | `nets.c` inertial handles/targets, `force.c` targets/evaluators | These registrations fail the proof; model-lifetime sources keep their existing path. |
 | `mailboxes.c` delayed delivery, pinned targets and reentrant publication snapshots | Mailbox/native service operations fail the proof. |
@@ -194,6 +194,17 @@ toggles at once reuses the row lookup that found it unwaited
 (`marker_toggle`), and on the compact backend a write of at most 64 bits
 keeps plain copies of its values instead of a registered snapshot scope
 (`sig_write_as`).
+
+A force part's target may be an array cell (a dense element, a lazily
+allocated cell of a sparse array, a record leaf or a column cell) that the
+generated code finds when the force or release executes; an invalid index
+gives a NULL target, which `llg_force_expr_parts` and `llg_release_parts`
+drop (`force_present_parts`). Writes that bypass `llg_ba` keep the forced
+bits of their cell: an NBA commit and `llg_store_unpublished` write only the
+unforced bits (`force_write_unforced`), and whole-array publication of a
+sparse array merges them back into the new value
+(`fixed_publication_keep_forced`). These helpers are `LLG_OUTLYING`; a write
+pays only the `g.force_count` test unless something is forced.
 
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.

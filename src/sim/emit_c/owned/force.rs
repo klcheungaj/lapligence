@@ -1,4 +1,5 @@
 //! Force descriptors borrow only persistent targets; evaluators publish owners.
+use super::stores::Selection;
 use super::*;
 
 impl Frame<'_, '_> {
@@ -133,7 +134,7 @@ impl Frame<'_, '_> {
                     left,
                     right,
                     width,
-                    signal.ty.two_state() || selected_two_state,
+                    u8::from(signal.ty.two_state() || selected_two_state).to_string(),
                 )
             }
             IrLhs::WholeRef {
@@ -152,16 +153,171 @@ impl Frame<'_, '_> {
                     (width - 1).to_string(),
                     "0".to_owned(),
                     *width,
-                    *two_state,
+                    u8::from(*two_state).to_string(),
                 )
             }
+            // The cell the indices select when the statement executes, or
+            // NULL for an invalid index (the runtime skips that part).
+            IrLhs::ArrayElem {
+                arr,
+                indices,
+                elem_sel,
+            } => {
+                match elem_sel {
+                    IrElemSel::Whole => {
+                        let (binding, _) = self.array_cell(*arr, indices, true)?;
+                        if binding.width == 0 {
+                            return Err("real force cannot be part of a packed force".to_owned());
+                        }
+                        (
+                            binding.address,
+                            "NULL".to_owned(),
+                            format!("{}LL", binding.width - 1),
+                            "0LL".to_owned(),
+                            binding.width,
+                            u8::from(binding.two_state).to_string(),
+                        )
+                    }
+                    // A member of an element held as one packed image.
+                    IrElemSel::PackedChain(steps) => {
+                        let element = IrLhs::ArrayElem {
+                            arr: *arr,
+                            indices: indices.clone(),
+                            elem_sel: IrElemSel::Whole,
+                        };
+                        self.force_selected_part(&element, steps, false)?
+                    }
+                    _ => return Err(pending("this array element force target descriptor")),
+                }
+            }
+            // A member of an element held as one packed image, or an element
+            // of a member array of a record held as one signal per leaf
+            // (below `LLG_RECORD_COLUMN_MIN_CELLS` cells), found when the
+            // statement executes.
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                two_state,
+                ..
+            } => self.force_selected_part(target, steps, *two_state)?,
             _ => return Err(pending("this force target descriptor")),
         };
         parts.push(format!(
-            "{{ {address}, {net}, {left}, {right}, {width}u, {offset}u, {} }}",
-            u8::from(two_state)
+            "{{ {address}, {net}, {left}, {right}, {width}u, {offset}u, {two_state} }}"
         ));
         Ok(())
+    }
+
+    /// The force descriptor fields of a packed selection inside an array
+    /// element held as one packed image, or inside a record held as one
+    /// signal per leaf. The selection must lie wholly inside the element or
+    /// one leaf when the statement executes; otherwise (an invalid index, SV
+    /// 7.4.6) the target is NULL and the runtime skips the part.
+    fn force_selected_part(
+        &mut self,
+        target: &IrLhs,
+        steps: &[IrPackedSelect],
+        select_two_state: bool,
+    ) -> Result<(String, String, String, String, u32, String), String> {
+        // A member of an array element held as one packed image, at bits
+        // the selection chooses inside the element.
+        if let IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel: IrElemSel::Whole,
+        } = target
+        {
+            let (binding, _) = self.array_cell(*arr, indices, true)?;
+            if binding.width == 0 {
+                return Err("real force cannot be part of a packed force".to_owned());
+            }
+            let Some(Selection::PackedChain(plan, width)) =
+                self.selection(&IrElemSel::PackedChain(steps.to_vec()), binding.width)?
+            else {
+                return Err("element member selection lost its plan".to_owned());
+            };
+            let cell = self.scalar(
+                "sv4_t*",
+                format!("{plan}.count == {width}u ? {} : NULL", binding.address),
+            );
+            return Ok((
+                cell,
+                "NULL".to_owned(),
+                format!("(int64_t){plan}.storage_lsb + {}LL", width - 1),
+                format!("(int64_t){plan}.storage_lsb"),
+                width,
+                u8::from(binding.two_state || select_two_state).to_string(),
+            ));
+        }
+        let IrLhs::Stream {
+            parts: leaves,
+            width: stream_width,
+            ..
+        } = target
+        else {
+            return Err(pending("this selected force target descriptor"));
+        };
+        let mut segments = Vec::with_capacity(leaves.len());
+        let mut cursor = *stream_width;
+        for (leaf, leaf_width) in leaves {
+            cursor = cursor
+                .checked_sub(*leaf_width)
+                .ok_or_else(|| "force record leaf widths exceed the record".to_owned())?;
+            let (index, right, leaf_two_state) = match leaf {
+                IrLhs::Whole(index) => (*index, 0i64, false),
+                IrLhs::Part(index, left, right, two_state)
+                    if left >= right && left.abs_diff(*right) + 1 == u64::from(*leaf_width) =>
+                {
+                    (*index, *right, *two_state)
+                }
+                _ => return Err(pending("this record leaf force target descriptor")),
+            };
+            let signal = self.ctx.model.signal(index);
+            if signal.net_driver.is_some() || !signal.net_alias.is_empty() || signal.ty.width() == 0
+            {
+                return Err(pending("this record leaf force target descriptor"));
+            }
+            segments.push((
+                cursor,
+                *leaf_width,
+                format!("&{}", signal.c_name),
+                right,
+                signal.ty.two_state() || leaf_two_state,
+            ));
+        }
+        let Some(Selection::PackedChain(plan, width)) =
+            self.selection(&IrElemSel::PackedChain(steps.to_vec()), *stream_width)?
+        else {
+            return Err("record leaf selection lost its plan".to_owned());
+        };
+        let cell = self.declare("sv4_t*", "force_leaf", "NULL".to_owned());
+        let right = self.declare("int64_t", "force_right", "0".to_owned());
+        let state = self.declare("int", "force_state", "0".to_owned());
+        for (start, leaf_width, address, leaf_right, leaf_two_state) in segments {
+            self.line(format!(
+                "if ({plan}.count == {width}u && {plan}.storage_lsb >= {start}u && {plan}.storage_lsb - {start}u <= {}u) {{",
+                leaf_width.saturating_sub(width)
+            ));
+            self.line(format!("{cell} = {address};"));
+            self.line(format!(
+                "{right} = {leaf_right}LL + (int64_t)({plan}.storage_lsb - {start}u);"
+            ));
+            self.line(format!("{state} = {};", u8::from(leaf_two_state)));
+            self.line("}");
+        }
+        let two_state = if select_two_state {
+            "1".to_owned()
+        } else {
+            state
+        };
+        Ok((
+            cell,
+            "NULL".to_owned(),
+            format!("{right} + {}LL", width - 1),
+            right,
+            width,
+            two_state,
+        ))
     }
 
     pub(super) fn force_task(
@@ -217,6 +373,25 @@ impl Frame<'_, '_> {
                 &read_values.join(", "),
             )
         };
+        // A real array element: the cell the index selects at the statement,
+        // and no force or release for an invalid index (SV 7.4.6).
+        if let IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel: IrElemSel::Whole,
+        } = lhs
+        {
+            if self.ctx.model.array(*arr).real {
+                let (binding, _) = self.array_cell(*arr, indices, true)?;
+                let cell = binding.address;
+                self.line(if let Some(evaluator) = evaluator {
+                    format!("if ({cell}) llg_force_real({cell}, {evaluator}, {read_ptr}, {read_count});")
+                } else {
+                    format!("if ({cell}) llg_release_real({cell});")
+                });
+                return Ok(());
+            }
+        }
         if let IrLhs::Whole(index) = lhs {
             let signal = self.ctx.model.signal(*index);
             if signal.ty.width() == 0 {
