@@ -1711,6 +1711,16 @@ impl<'a> Codegen<'a> {
         parent_path: &str,
         child_inst: NodeId,
     ) -> Result<(), String> {
+        self.emit_links_unlocated(parent_path, child_inst)
+            .map_err(|error| self.locate_error(child_inst, error))
+    }
+
+    /// [`Self::emit_links`] before its failure is located.
+    fn emit_links_unlocated(
+        &mut self,
+        parent_path: &str,
+        child_inst: NodeId,
+    ) -> Result<(), String> {
         let child_path = self.instance_path_of(child_inst);
         self.inst = self.owning_inst(child_inst).unwrap_or(child_inst);
         for c in &self.node(child_inst).children {
@@ -1761,12 +1771,12 @@ impl<'a> Codegen<'a> {
             }
             let Some(actual) = high_expr.or(high) else {
                 if high_present && !high_open {
-                    return Err(format!(
-                        "port `{}` of `{child_path}` declares a connection but has no actual expression at {}:{}:{}",
-                        self.node(port).name,
-                        self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(port).line,
-                        self.node(port).col,
+                    return Err(self.locate_error(
+                        port,
+                        format!(
+                            "port `{}` of `{child_path}` declares a connection but has no actual expression",
+                            self.node(port).name
+                        ),
                     ));
                 }
                 if direction == DbDirection::Input {
@@ -1801,12 +1811,12 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             let Some(internal) = low else {
-                return Err(format!(
-                    "port `{}` of `{child_path}` has an actual connection but no child-side storage at {}:{}:{}",
-                    self.node(port).name,
-                    self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(port).line,
-                    self.node(port).col,
+                return Err(self.locate_error(
+                    port,
+                    format!(
+                        "port `{}` of `{child_path}` has an actual connection but no child-side storage",
+                        self.node(port).name
+                    ),
                 ));
             };
             if self.emit_array_port_link(
@@ -1871,26 +1881,26 @@ impl<'a> Codegen<'a> {
                 let reads = self.collect_read_signals(parent_path, actual)?;
                 let lhs = self.remap_structural_lhs(lhs, port);
                 if let Some(group) = self.unmapped_structural_group(&lhs, port) {
-                    return Err(format!(
-                        "input port `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
-                        self.display_name(port),
-                        group,
-                        self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(port).line,
-                        self.node(port).col,
+                    return Err(self.locate_error(
+                        port,
+                        format!(
+                            "input port `{}` has no structural driver mapping for resolved net group {}",
+                            self.display_name(port),
+                            group
+                        ),
                     ));
                 }
                 (lhs, rhs, reads)
             } else {
                 let lhs = self.lower_lhs(parent_path, actual)?;
                 if let Some(group) = self.unmapped_structural_group(&lhs, port) {
-                    return Err(format!(
-                        "output port `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
-                        self.display_name(port),
-                        group,
-                        self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(port).line,
-                        self.node(port).col,
+                    return Err(self.locate_error(
+                        port,
+                        format!(
+                            "output port `{}` has no structural driver mapping for resolved net group {}",
+                            self.display_name(port),
+                            group
+                        ),
                     ));
                 }
                 let lhs = self.remap_structural_lhs(lhs, port);
@@ -1958,26 +1968,26 @@ impl<'a> Codegen<'a> {
             };
             let lhs = self.remap_structural_lhs(lhs, port);
             if let Some(group) = self.unmapped_structural_group(&lhs, port) {
-                return Err(format!(
-                    "input port `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
-                    self.display_name(port),
-                    group,
-                    self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(port).line,
-                    self.node(port).col,
+                return Err(self.locate_error(
+                    port,
+                    format!(
+                        "input port `{}` has no structural driver mapping for resolved net group {}",
+                        self.display_name(port),
+                        group
+                    ),
                 ));
             }
             (lhs, rhs, reads)
         } else {
             let lhs = self.lower_lhs(parent_path, actual)?;
             if let Some(group) = self.unmapped_structural_group(&lhs, port) {
-                return Err(format!(
-                    "output port `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
-                    self.display_name(port),
-                    group,
-                    self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(port).line,
-                    self.node(port).col,
+                return Err(self.locate_error(
+                    port,
+                    format!(
+                        "output port `{}` has no structural driver mapping for resolved net group {}",
+                        self.display_name(port),
+                        group
+                    ),
                 ));
             }
             self.inst = child_inst;

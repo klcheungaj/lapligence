@@ -736,6 +736,19 @@ impl Codegen<'_> {
         formals: &[(NodeId, bool)],
         formals_ir: &[IrFormal],
     ) -> Result<IrDpiExport, String> {
+        self.validate_dpi_export_unlocated(ft, inst, c_name, formals, formals_ir)
+            .map_err(|error| self.locate_error(ft, error))
+    }
+
+    /// [`Self::validate_dpi_export`] before its failure is located.
+    fn validate_dpi_export_unlocated(
+        &mut self,
+        ft: NodeId,
+        inst: NodeId,
+        c_name: &str,
+        formals: &[(NodeId, bool)],
+        formals_ir: &[IrFormal],
+    ) -> Result<IrDpiExport, String> {
         let name = self.node(ft).name.clone();
         if !valid_c_identifier(c_name) {
             return Err(format!(

@@ -352,6 +352,31 @@ impl<'a> Codegen<'a> {
         copies: &mut CallElementCopies,
         element_copies: bool,
     ) -> Result<Vec<IrCallArg>, String> {
+        self.lower_call_arguments_unlocated(
+            scope_path,
+            h,
+            name,
+            callee_inst,
+            formals,
+            bound,
+            copies,
+            element_copies,
+        )
+        .map_err(|error| self.locate_error(h, error))
+    }
+
+    /// [`Self::lower_call_arguments`] before its failure is located.
+    fn lower_call_arguments_unlocated(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+        name: &str,
+        callee_inst: NodeId,
+        formals: &[(NodeId, bool)],
+        bound: &[BoundArg],
+        copies: &mut CallElementCopies,
+        element_copies: bool,
+    ) -> Result<Vec<IrCallArg>, String> {
         let mut out_args: Vec<IrCallArg> = Vec::new();
         // Inputs are gathered by two passes below; the formal index keeps
         // them in the callee's declaration order (the C parameter order).

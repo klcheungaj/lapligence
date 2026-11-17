@@ -410,8 +410,8 @@ impl Codegen<'_> {
         let result = self.lower_property_node(path, root, true, &mut builder);
         self.sampled_clock = previous_clock;
         self.assertion_leading_clock = previous_leading;
-        let root_index = result
-            .map_err(|error| format!("{error} (assertion at {})", self.source_location(origin)))?;
+        let root_index =
+            result.map_err(|error| self.locate_error(origin, format!("{error} (assertion)")))?;
         if root_index as usize + 1 != builder.nodes.len() {
             return Err("property program root is not its last node".to_owned());
         }
@@ -430,9 +430,9 @@ impl Codegen<'_> {
             })
             .collect::<Vec<_>>();
         for (signal, posedge) in sequence_clocks {
-            builder.edge_clock(signal, posedge).map_err(|error| {
-                format!("{error} (assertion at {})", self.source_location(origin))
-            })?;
+            builder
+                .edge_clock(signal, posedge)
+                .map_err(|error| self.locate_error(origin, format!("{error} (assertion)")))?;
         }
         // A program on its leading clock alone keeps the singly clocked form.
         let (clocks, node_clocks) = if builder.clocks.len() == 1 {
@@ -485,9 +485,9 @@ impl Codegen<'_> {
             NodeKind::AssertionExpr(AssertionExprKind::DisableIff { condition, expr }) => {
                 let (condition, expr) = (*condition, *expr);
                 if !top {
-                    return Err(format!(
-                        "disable iff is only legal at the top level of an assertion's property, not nested inside a property operator at {} (SV 16.12: nesting of disable iff clauses is not allowed)",
-                        self.assertion_location(node, builder.origin)
+                    return Err(crate::sim::codegen::error::located(
+                        &self.assertion_location(node, builder.origin),
+                        "disable iff is only legal at the top level of an assertion's property, not nested inside a property operator (SV 16.12: nesting of disable iff clauses is not allowed)",
                     ));
                 }
                 let condition = match self.inferred_disable(condition) {
@@ -498,9 +498,9 @@ impl Codegen<'_> {
                 };
                 let signal = self.lower_disable_condition(path, condition)?;
                 if builder.disable.is_some_and(|existing| existing != signal) {
-                    return Err(format!(
-                        "multiple disable iff conditions in concurrent assertion at {}",
-                        self.assertion_location(node, builder.origin)
+                    return Err(crate::sim::codegen::error::located(
+                        &self.assertion_location(node, builder.origin),
+                        "multiple disable iff conditions in concurrent assertion",
                     ));
                 }
                 builder.disable = Some(signal);
@@ -555,9 +555,11 @@ impl Codegen<'_> {
                     if builder.instances.iter().any(|frame| frame.body == body)
                         || builder.instances.len() >= PROPERTY_INSTANCE_DEPTH_LIMIT
                     {
-                        return Err(format!(
-                            "property instances nest deeper than {PROPERTY_INSTANCE_DEPTH_LIMIT} at {} (SV 16.13.17)",
-                            self.assertion_location(node, builder.origin)
+                        return Err(crate::sim::codegen::error::located(
+                            &self.assertion_location(node, builder.origin),
+                            format!(
+                                "property instances nest deeper than {PROPERTY_INSTANCE_DEPTH_LIMIT} (SV 16.13.17)"
+                            ),
                         ));
                     }
                     let frame = builder.instances.len();
@@ -616,8 +618,9 @@ impl Codegen<'_> {
         let kind = match self.kind(node) {
             NodeKind::AssertionExpr(kind) => kind,
             _ => {
-                return Err(format!(
-                    "unsupported concurrent assertion property at {location}"
+                return Err(crate::sim::codegen::error::located(
+                    &location,
+                    "unsupported concurrent assertion property",
                 ))
             }
         };
@@ -625,8 +628,9 @@ impl Codegen<'_> {
             AssertionExprKind::StrongWeak { expr, strong } => {
                 let (expr, strong) = (*expr, *strong);
                 if !self.property_sequence_form(expr) {
-                    return Err(format!(
-                        "strong/weak take a sequence operand at {location} (SV 16.13.1)"
+                    return Err(crate::sim::codegen::error::located(
+                        &location,
+                        "strong/weak take a sequence operand (SV 16.13.1)",
                     ));
                 }
                 self.lower_property_leaf(path, expr, strong, builder)
@@ -669,8 +673,9 @@ impl Codegen<'_> {
                         let strong = op == AssertionUnaryOp::SAlways;
                         let (min, max) = range.map_or((0, None), |range| (range.min, range.max));
                         if strong && max.is_none() {
-                            return Err(format!(
-                                "s_always requires a bounded range at {location} (SV 16.13.11)"
+                            return Err(crate::sim::codegen::error::located(
+                                &location,
+                                "s_always requires a bounded range (SV 16.13.11)",
                             ));
                         }
                         IrPropertyNode::Always {
@@ -684,8 +689,9 @@ impl Codegen<'_> {
                         let strong = op == AssertionUnaryOp::SEventually;
                         let (min, max) = range.map_or((0, None), |range| (range.min, range.max));
                         if !strong && max.is_none() {
-                            return Err(format!(
-                                "weak eventually requires a bounded range at {location} (SV 16.13.13)"
+                            return Err(crate::sim::codegen::error::located(
+                                &location,
+                                "weak eventually requires a bounded range (SV 16.13.13)",
                             ));
                         }
                         IrPropertyNode::Eventually {
@@ -706,8 +712,9 @@ impl Codegen<'_> {
                     | AssertionBinaryOp::OverlappedFollowedBy
                     | AssertionBinaryOp::NonOverlappedFollowedBy => {
                         if !self.property_sequence_form(left) {
-                            return Err(format!(
-                                "the antecedent of an implication or followed-by must be a sequence at {location} (SV 16.13.6, 16.13.9)"
+                            return Err(crate::sim::codegen::error::located(
+                                &location,
+                                "the antecedent of an implication or followed-by must be a sequence (SV 16.13.6, 16.13.9)",
                             ));
                         }
                         // An antecedent with locals of its own passes on
@@ -1039,13 +1046,15 @@ impl Codegen<'_> {
             _ => None,
         };
         let Some(index) = index else {
-            return Err(format!(
-                "recursive property instance at {location} does not repeat an enclosing expansion with the same actual arguments, which llg does not support (SV 16.13.17)"
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                "recursive property instance does not repeat an enclosing expansion with the same actual arguments, which llg does not support (SV 16.13.17)",
             ));
         };
         if !builder.instances[index].inits.is_empty() {
-            return Err(format!(
-                "recursive property instance at {location} re-enters a property with local variables after its other actual arguments changed; this is not supported (SV 16.13.17)"
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                "recursive property instance re-enters a property with local variables after its other actual arguments changed; this is not supported (SV 16.13.17)",
             ));
         }
         let clock = self.flowing_clock()?;
@@ -1053,8 +1062,9 @@ impl Codegen<'_> {
             .clock
             .is_some_and(|entry| clocks::same_clock(&entry, &clock))
         {
-            return Err(format!(
-                "recursive property instance at {location} is reached under a different clock than its expansion, which llg does not support (SV 16.13.17)"
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                "recursive property instance is reached under a different clock than its expansion, which llg does not support (SV 16.13.17)",
             ));
         }
         let call = builder.push(IrPropertyNode::Call { target: u32::MAX }, clock)?;
@@ -1176,8 +1186,9 @@ impl Codegen<'_> {
                 let operand = self.lower_property_node(path, expr, false, builder)?;
                 builder.push(IrPropertyNode::Not { operand }, flowing)
             }
-            _ => Err(format!(
-                "the local variables of the property instance at {location} would be initialized at more than one semantic leading clock below an operator other than `and`, `or` or `not`; this is not supported (SV 16.14.7)"
+            _ => Err(crate::sim::codegen::error::located(
+                &location,
+                "the local variables of the property instance would be initialized at more than one semantic leading clock below an operator other than `and`, `or` or `not`; this is not supported (SV 16.14.7)",
             )),
         }
     }
@@ -1201,19 +1212,22 @@ impl Codegen<'_> {
             .clock
             .is_some_and(|entry| clocks::same_clock(&entry, &clock))
         {
-            return Err(format!(
-                "recursive property instance at {location} is reached under a different clock than its expansion, which llg does not support (SV 16.13.17)"
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                "recursive property instance is reached under a different clock than its expansion, which llg does not support (SV 16.13.17)",
             ));
         }
         let Some(init_clock) = frame.init_clock else {
-            return Err(format!(
-                "recursive property instance at {location} re-enters a property whose local variables are initialized at more than one semantic leading clock; this is not supported (SV 16.13.17, 16.14.7)"
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                "recursive property instance re-enters a property whose local variables are initialized at more than one semantic leading clock; this is not supported (SV 16.13.17, 16.14.7)",
             ));
         };
         let NodeKind::Expr(ExprKind::AssertionInstance { bindings, .. }) = self.kind(instance)
         else {
-            return Err(format!(
-                "recursive property instance at {location} has no actuals"
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                "recursive property instance has no actuals",
             ));
         };
         let inits = frame
@@ -1230,8 +1244,11 @@ impl Codegen<'_> {
                             ..*init
                         })
                         .ok_or_else(|| {
-                            format!(
-                                "recursive property instance at {location} binds no actual to local formal `{name}`"
+                            crate::sim::codegen::error::located(
+                                &location,
+                                format!(
+                                    "recursive property instance binds no actual to local formal `{name}`"
+                                ),
                             )
                         })
                 }
@@ -1384,10 +1401,12 @@ impl Codegen<'_> {
             let mut targets = Vec::with_capacity(inits.len());
             for init in inits {
                 let binding = this.assertion_local_binding(init.local)?.ok_or_else(|| {
-                    format!(
-                        "local variable `{}` at {} has no local slot",
-                        this.node(init.local).name,
-                        this.source_location(init.local)
+                    this.locate_error(
+                        init.local,
+                        format!(
+                            "local variable `{}` has no local slot",
+                            this.node(init.local).name
+                        ),
                     )
                 })?;
                 targets.push(binding);
@@ -1403,10 +1422,12 @@ impl Codegen<'_> {
                 }
                 let value = this.lower_expr(path, init.source)?;
                 if value.is_real() || !this.sampled_compatible(&value) {
-                    return Err(format!(
-                        "local variable `{}` declared at {} needs one packed sampled initial value",
-                        this.node(init.local).name,
-                        this.source_location(init.local)
+                    return Err(this.locate_error(
+                        init.local,
+                        format!(
+                            "local variable `{}` needs one packed sampled initial value",
+                            this.node(init.local).name
+                        ),
                     ));
                 }
                 if staged && init.port.is_some() {
@@ -1464,9 +1485,9 @@ impl Codegen<'_> {
     ) -> Result<u32, String> {
         let sequence = self.lower_property_sequence(path, node, builder)?;
         if sequence.admits_empty {
-            return Err(format!(
-                "a sequence used as a property must not admit an empty match at {} (SV 16.13.1, 16.13.22)",
-                self.assertion_location(node, builder.origin)
+            return Err(crate::sim::codegen::error::located(
+                &self.assertion_location(node, builder.origin),
+                "a sequence used as a property must not admit an empty match (SV 16.13.1, 16.13.22)",
             ));
         }
         let flowing = self.flowing_clock()?;
@@ -1508,8 +1529,9 @@ impl Codegen<'_> {
         if !sequence.initializers.is_empty() {
             // A local input formal is sampled when the instance starts; a
             // sequence operand of a property operator can start later.
-            return Err(format!(
-                "local input formal arguments of a sequence inside a property operator are not supported at {location}"
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                "local input formal arguments of a sequence inside a property operator are not supported",
             ));
         }
         Ok(sequence)

@@ -23,6 +23,16 @@ impl Codegen<'_> {
         path: &str,
         process: NodeId,
     ) -> Result<(), String> {
+        self.collect_block_records_unlocated(path, process)
+            .map_err(|error| self.locate_error(process, error))
+    }
+
+    /// [`Self::collect_block_records`] before its failure is located.
+    fn collect_block_records_unlocated(
+        &mut self,
+        path: &str,
+        process: NodeId,
+    ) -> Result<(), String> {
         let mut found = BlockDeclarations::default();
         self.block_record_declarations(process, &mut found);
         for declaration in found.records {

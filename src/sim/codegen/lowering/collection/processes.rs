@@ -394,6 +394,17 @@ impl<'a> Codegen<'a> {
         path: &str,
         ca: NodeId,
     ) -> Result<(), String> {
+        self.emit_cont_assign_driver_unlocated(inst, path, ca)
+            .map_err(|error| self.locate_error(ca, error))
+    }
+
+    /// [`Self::emit_cont_assign_driver`] before its failure is located.
+    fn emit_cont_assign_driver_unlocated(
+        &mut self,
+        inst: NodeId,
+        path: &str,
+        ca: NodeId,
+    ) -> Result<(), String> {
         let node = self.node(ca);
         if let NodeKind::ContAssign { net_decl: true, .. } = self.kind(ca) {
             // Array and variable declaration initializers are applied in
@@ -450,9 +461,9 @@ impl<'a> Codegen<'a> {
             NodeKind::ContAssign {
                 delay: Some(de), ..
             } => Some(self.driver_delay(path, ca, *de).map_err(|error| {
-                format!(
-                    "continuous assignment delay in `{path}` at {}: {error}",
-                    self.source_location(ca)
+                self.locate_error(
+                    ca,
+                    format!("continuous assignment delay in `{path}`: {error}"),
                 )
             })?),
             _ => None,
@@ -564,13 +575,13 @@ impl<'a> Codegen<'a> {
         let mut lh = self.lower_lhs(path, lhs)?;
         if has_structural_driver {
             if let Some(group) = self.unmapped_structural_group(&lh, ca) {
-                return Err(format!(
-                    "continuous assignment `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
-                    self.display_name(ca),
-                    group,
-                    self.node(ca).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(ca).line,
-                    self.node(ca).col,
+                return Err(self.locate_error(
+                    ca,
+                    format!(
+                        "continuous assignment `{}` has no structural driver mapping for resolved net group {}",
+                        self.display_name(ca),
+                        group
+                    ),
                 ));
             }
             lh = self.remap_continuous_targets(lh, ca)?;
@@ -897,11 +908,9 @@ impl<'a> Codegen<'a> {
                     return Ok(());
                 }
                 if self.lhs_selects_net_alias_signal(lhs) {
-                    return Err(format!(
-                        "continuous assignment-pattern target within a resolved net alias at {}:{}:{} has no electrical bit mapping",
-                        self.node(source).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(source).line,
-                        self.node(source).col,
+                    return Err(self.locate_error(
+                        source,
+                        "continuous assignment-pattern target within a resolved net alias has no electrical bit mapping",
                     ));
                 }
                 let groups = self.structural_groups_for_lhs(lhs);
@@ -914,13 +923,13 @@ impl<'a> Codegen<'a> {
                 if let Some(group) =
                     self.unmapped_structural_group_for_terminals(lhs, source, &selected_terminals)
                 {
-                    return Err(format!(
-                        "continuous assignment `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
-                        self.display_name(source),
-                        group,
-                        self.node(source).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(source).line,
-                        self.node(source).col,
+                    return Err(self.locate_error(
+                        source,
+                        format!(
+                            "continuous assignment `{}` has no structural driver mapping for resolved net group {}",
+                            self.display_name(source),
+                            group
+                        ),
                     ));
                 }
                 *lhs = self.remap_structural_lhs_for_terminals(
@@ -1179,10 +1188,8 @@ impl<'a> Codegen<'a> {
                     _ => None,
                 };
                 if let Some(member) = member {
-                    return Err(format!(
-                        "program `{path}` cannot contain {member} at {}",
-                        self.source_location(child)
-                    ));
+                    return Err(self
+                        .locate_error(child, format!("program `{path}` cannot contain {member}")));
                 }
             }
         }
@@ -1829,7 +1836,8 @@ impl<'a> Codegen<'a> {
     /// locates it. The statement and expression lowerings wrap every failure
     /// in this, so a site without a node of its own reports at the innermost
     /// expression or statement that contains it.
-    pub(in super::super) fn locate_error(&self, node: NodeId, error: String) -> String {
+    pub(in super::super) fn locate_error(&self, node: NodeId, error: impl Into<String>) -> String {
+        let error = error.into();
         if crate::sim::codegen::error::is_located(&error) || self.node(node).file.is_none() {
             error
         } else {

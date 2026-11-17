@@ -375,10 +375,12 @@ impl Codegen<'_> {
                 return Ok(None);
             };
             if element.select.is_some() {
-                return Err(format!(
-                    "{}: a select of a select of an element of an unpacked array member \
-                     through a virtual interface is not supported in `{path}`",
-                    self.source_location(node)
+                return Err(self.locate_error(
+                    node,
+                    format!(
+                        "a select of a select of an element of an unpacked array member \
+                     through a virtual interface is not supported in `{path}`"
+                    ),
                 ));
             }
             element.select = Some(node);
@@ -443,27 +445,36 @@ impl Codegen<'_> {
                 || array.real != first.real
                 || array.dims.len() != first.dims.len()
         }) {
-            return Err(format!(
-                "{location}: unpacked array member `{member}` has different element types or \
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                format!(
+                    "unpacked array member `{member}` has different element types or \
                  dimensions in the instances virtual interface `{}` can bind, in `{path}`",
-                target.spelling
+                    target.spelling
+                ),
             ));
         }
         if first.real || first.shortreal {
-            return Err(format!(
-                "{location}: an element of real unpacked array member `{member}` through \
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                format!(
+                    "an element of real unpacked array member `{member}` through \
                  virtual interface `{}` is not supported in `{path}`",
-                target.spelling
+                    target.spelling
+                ),
             ));
         }
         let select = (indices.len() == first.dims.len() + 1)
             .then(|| indices.pop())
             .flatten();
         if indices.len() != first.dims.len() {
-            return Err(format!(
-                "{location}: a slice of unpacked array member `{member}` through virtual \
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                format!(
+                    "a slice of unpacked array member `{member}` through virtual \
                  interface `{}` is not supported in `{path}`; select one element",
-                target.spelling
+                    target.spelling
+                ),
             ));
         }
         let handle = self.virtual_interface_handle(path, base, &target)?;

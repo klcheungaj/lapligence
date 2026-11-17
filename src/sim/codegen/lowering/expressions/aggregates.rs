@@ -224,6 +224,19 @@ impl<'a> Codegen<'a> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        self.lower_unpacked_aggregate_assignment_unlocated(path, lhs, rhs, nba, op)
+            .map_err(|error| self.locate_error(lhs, error))
+    }
+
+    /// [`Self::lower_unpacked_aggregate_assignment`] before its failure is located.
+    fn lower_unpacked_aggregate_assignment_unlocated(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
         let rhs = self.identity_unpacked_cast_operand(rhs);
         if matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Cast { .. }))
             && self.is_dynamic_member_record(lhs)

@@ -476,13 +476,12 @@ impl EmitCtx<'_, '_> {
         if !chandle {
             return Ok(());
         }
-        let node = self.cg.node(expression);
-        Err(format!(
-            "a chandle cannot be used in an event expression (IEEE 1800-2009 6.14) at {}:{}:{} in `{}`",
-            node.file.as_deref().unwrap_or("<unknown>"),
-            node.line,
-            node.col,
-            self.cg.source_path(&self.path)
+        Err(self.cg.locate_error(
+            expression,
+            format!(
+                "a chandle cannot be used in an event expression (IEEE 1800-2009 6.14) in `{}`",
+                self.cg.source_path(&self.path)
+            ),
         ))
     }
 

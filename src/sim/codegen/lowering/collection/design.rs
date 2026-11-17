@@ -398,13 +398,13 @@ impl<'a> Codegen<'a> {
                 && !child_names.insert(self.child_instance_name(inst, *c))
             {
                 let node = self.node(*c);
-                return Err(format!(
-                    "duplicate instance name `{}` in `{}` at {}:{}:{}; bound and declared instances share the target scope's name space (SV 23.11)",
-                    node.name,
-                    self.display_path(path),
-                    node.file.as_deref().unwrap_or("<unknown>"),
-                    node.line,
-                    node.col
+                return Err(self.locate_error(
+                    *c,
+                    format!(
+                        "duplicate instance name `{}` in `{}`; bound and declared instances share the target scope's name space (SV 23.11)",
+                        node.name,
+                        self.display_path(path)
+                    ),
                 ));
             }
         }

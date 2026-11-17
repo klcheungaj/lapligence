@@ -299,22 +299,13 @@ impl<'a> Codegen<'a> {
         let source = match source {
             ConstantSource::Exact(source) => source,
             ConstantSource::NotCaptured | ConstantSource::Unavailable => {
-                return Err(format!(
-                    "time literal at {}:{}:{} has no admitted source provenance",
-                    self.node(node).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(node).line,
-                    self.node(node).col
-                ));
+                return Err(
+                    self.locate_error(node, "time literal has no admitted source provenance")
+                );
             }
         };
-        let scale = scale.ok_or_else(|| {
-            format!(
-                "time literal at {}:{}:{} has no resolved unit scale",
-                self.node(node).file.as_deref().unwrap_or("<unknown>"),
-                self.node(node).line,
-                self.node(node).col
-            )
-        })?;
+        let scale = scale
+            .ok_or_else(|| self.locate_error(node, "time literal has no resolved unit scale"))?;
         round_time_literal(value, source, scale, self.timescale_of_node(node))
     }
 

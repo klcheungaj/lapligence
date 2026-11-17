@@ -452,6 +452,17 @@ impl Codegen<'_> {
         path: &str,
         assertion: NodeId,
     ) -> Result<(), String> {
+        self.emit_concurrent_assertion_unlocated(inst, path, assertion)
+            .map_err(|error| self.locate_error(assertion, error))
+    }
+
+    /// [`Self::emit_concurrent_assertion`] before its failure is located.
+    fn emit_concurrent_assertion_unlocated(
+        &mut self,
+        inst: NodeId,
+        path: &str,
+        assertion: NodeId,
+    ) -> Result<(), String> {
         // `restrict property` "is not verified in simulation" (IEEE
         // 1800-2009 16.15.4): it creates no assertion.
         if matches!(
@@ -578,8 +589,9 @@ impl Codegen<'_> {
             ConcurrentAssertionKind::CoverSequence => IrConcurrentAssertionKind::CoverSequence,
             ConcurrentAssertionKind::Expect => IrConcurrentAssertionKind::Expect,
             ConcurrentAssertionKind::Restrict => {
-                return Err(format!(
-                    "`restrict property` at {location} is not simulated (IEEE 1800-2009 16.15.4)"
+                return Err(crate::sim::codegen::error::located(
+                    &location,
+                    "`restrict property` is not simulated (IEEE 1800-2009 16.15.4)",
                 ))
             }
         };
@@ -812,9 +824,9 @@ impl Codegen<'_> {
                         None => disable = Some(signal),
                         Some(existing) if existing == signal => {}
                         Some(_) => {
-                            return Err(format!(
-                                "multiple disable iff conditions in concurrent assertion at {}",
-                                self.assertion_location(current, origin)
+                            return Err(crate::sim::codegen::error::located(
+                                &self.assertion_location(current, origin),
+                                "multiple disable iff conditions in concurrent assertion",
                             ));
                         }
                     }
@@ -827,9 +839,9 @@ impl Codegen<'_> {
                     sync,
                 }) => {
                     if abort.is_some() {
-                        return Err(format!(
-                            "nested accept_on/reject_on controls are not supported in concurrent assertion at {}",
-                            self.assertion_location(current, origin)
+                        return Err(crate::sim::codegen::error::located(
+                            &self.assertion_location(current, origin),
+                            "nested accept_on/reject_on controls are not supported in concurrent assertion",
                         ));
                     }
                     abort = Some((*condition, *reject, *sync));
@@ -869,9 +881,9 @@ impl Codegen<'_> {
                 parts?.ok_or_else(|| "assertion instance body is missing".to_owned())?;
             if let Some((condition_node, reject, sync)) = abort {
                 if parts.abort_condition.is_some() {
-                    return Err(format!(
-                        "nested accept_on/reject_on controls are not supported in concurrent assertion at {}",
-                        self.assertion_location(current, origin)
+                    return Err(crate::sim::codegen::error::located(
+                        &self.assertion_location(current, origin),
+                        "nested accept_on/reject_on controls are not supported in concurrent assertion",
                     ));
                 }
                 let condition = self.lower_abort_condition(
@@ -923,9 +935,9 @@ impl Codegen<'_> {
             NodeKind::AssertionExpr(AssertionExprKind::Conditional { .. }) => (None, current, true),
             NodeKind::AssertionExpr(_) => (None, current, true),
             _ => {
-                return Err(format!(
-                    "unsupported concurrent assertion property at {}",
-                    self.assertion_location(current, origin)
+                return Err(crate::sim::codegen::error::located(
+                    &self.assertion_location(current, origin),
+                    "unsupported concurrent assertion property",
                 ))
             }
         };
@@ -1547,6 +1559,17 @@ impl Codegen<'_> {
         node: NodeId,
         role: &str,
     ) -> Result<IrSequence, String> {
+        self.lower_sequence_unlocated(path, node, role)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::lower_sequence`] before its failure is located.
+    fn lower_sequence_unlocated(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        role: &str,
+    ) -> Result<IrSequence, String> {
         let previous_locals = self.assertion_local_bindings.take();
         let previous_initializers = self.assertion_local_initializers.take();
         self.assertion_local_bindings = Some(HashMap::new());
@@ -1974,9 +1997,11 @@ impl Codegen<'_> {
                             trailing_clock: clock,
                         })
                     }
-                    unsupported => Err(format!(
-                        "assertion binary operator {unsupported:?} is not supported in concurrent assertion {role} at {} ({path})",
-                        self.source_location(node)
+                    unsupported => Err(self.locate_error(
+                        node,
+                        format!(
+                            "assertion binary operator {unsupported:?} is not supported in concurrent assertion {role} ({path})"
+                        ),
                     )),
                 }
             }
@@ -1988,9 +2013,11 @@ impl Codegen<'_> {
                 self.sampled_clock = previous_clock;
                 result
             }
-            NodeKind::AssertionExpr(AssertionExprKind::DisableIff { .. }) => Err(format!(
-                "nested disable iff is not supported in concurrent assertion {role} at {} ({path})",
-                self.source_location(node)
+            NodeKind::AssertionExpr(AssertionExprKind::DisableIff { .. }) => Err(self.locate_error(
+                node,
+                format!(
+                    "nested disable iff is not supported in concurrent assertion {role} ({path})"
+                ),
             )),
             NodeKind::AssertionExpr(kind) => Err(format!(
                 "assertion sequence form {kind:?} is not supported in concurrent assertion {role} at {path}"
@@ -2037,9 +2064,9 @@ impl Codegen<'_> {
         if fragment.empty {
             // 16.11: "It shall be an error to attach a subroutine call or any
             // sequence_match_item to a sequence that admits an empty match."
-            return Err(format!(
-                "sequence match items at {} are attached to a sequence that admits an empty match (SV 16.11)",
-                self.source_location(match_items[0])
+            return Err(self.locate_error(
+                match_items[0],
+                "sequence match items are attached to a sequence that admits an empty match (SV 16.11)",
             ));
         }
         let previous_clock = self.sampled_clock;
@@ -2171,7 +2198,10 @@ impl Codegen<'_> {
             IrSequenceJoinKind::Intersect
         };
         builder.join(kind, left, right).map_err(|error| {
-            format!("{error} in concurrent assertion {role} at {location} ({path})")
+            crate::sim::codegen::error::located(
+                &location,
+                format!("{error} in concurrent assertion {role} ({path})"),
+            )
         })
     }
 
@@ -2304,9 +2334,11 @@ impl Codegen<'_> {
                 self.sampled_clock = previous_clock;
                 result
             }
-            NodeKind::AssertionExpr(AssertionExprKind::DisableIff { .. }) => Err(format!(
-                "nested disable iff is not supported in concurrent assertion {role} at {} ({path})",
-                self.source_location(node)
+            NodeKind::AssertionExpr(AssertionExprKind::DisableIff { .. }) => Err(self.locate_error(
+                node,
+                format!(
+                    "nested disable iff is not supported in concurrent assertion {role} ({path})"
+                ),
             )),
             NodeKind::AssertionExpr(AssertionExprKind::Unary {
                 op: AssertionUnaryOp::Not,
@@ -2342,9 +2374,11 @@ impl Codegen<'_> {
                     AssertionBinaryOp::Iff => IrBinOp::LogEquiv,
                     AssertionBinaryOp::Implies => IrBinOp::LogImpl,
                     _ => {
-                        return Err(format!(
-                            "property expression operator {op:?} is not a one-cycle boolean form in {role} at {} ({path})",
-                            self.source_location(node)
+                        return Err(self.locate_error(
+                            node,
+                            format!(
+                                "property expression operator {op:?} is not a one-cycle boolean form in {role} ({path})"
+                            ),
                         ));
                     }
                 };
@@ -2398,9 +2432,11 @@ impl Codegen<'_> {
                     None,
                 ))
             }
-            other => Err(format!(
-                "property expression {other:?} is not a one-cycle boolean form in {role} at {} ({path})",
-                self.source_location(node)
+            other => Err(self.locate_error(
+                node,
+                format!(
+                    "property expression {other:?} is not a one-cycle boolean form in {role} ({path})"
+                ),
             )),
         }
     }

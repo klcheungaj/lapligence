@@ -382,9 +382,12 @@ impl Codegen<'_> {
         for (node, style, terminals) in styles {
             let location = self.specify_location(*node);
             for terminal in *terminals {
-                let terminal = self
-                    .path_terminal(*terminal)
-                    .map_err(|message| format!("pulse style at {location}: {message}"))?;
+                let terminal = self.path_terminal(*terminal).map_err(|message| {
+                    crate::sim::codegen::error::located(
+                        &location,
+                        format!("pulse style: {message}"),
+                    )
+                })?;
                 let Some(&slot) = self
                     .model
                     .signal(terminal.info.ir)

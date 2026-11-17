@@ -1225,11 +1225,13 @@ impl<'a> Codegen<'a> {
                     .ok_or_else(|| {
                         self.nested_associative_select_error(*base, scope_path)
                             .unwrap_or_else(|| {
-                                format!(
-                                    "{}: cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
-                                    self.source_location(h),
-                                    self.node(*base).name,
-                                    self.kind(*base)
+                                self.locate_error(
+                                    h,
+                                    format!(
+                                        "cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
+                                        self.node(*base).name,
+                                        self.kind(*base)
+                                    ),
                                 )
                             })
                     })?;
@@ -2202,14 +2204,9 @@ impl<'a> Codegen<'a> {
                     read_const_from(value, *size)?
                 };
                 if *const_type == ConstantType::Time && self.round_time_literals {
-                    let raw = c.real_value().ok_or_else(|| {
-                        format!(
-                            "time literal at {}:{}:{} has no real value",
-                            self.node(node).file.as_deref().unwrap_or("<unknown>"),
-                            self.node(node).line,
-                            self.node(node).col
-                        )
-                    })?;
+                    let raw = c
+                        .real_value()
+                        .ok_or_else(|| self.locate_error(node, "time literal has no real value"))?;
                     c = IrConst::real(self.rounded_time_literal(node, raw, source, *time_scale)?);
                 }
                 let (signed, literal_width) = self.signed_based_literal_info(node);

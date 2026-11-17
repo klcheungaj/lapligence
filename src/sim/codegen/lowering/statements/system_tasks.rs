@@ -753,10 +753,12 @@ impl EmitCtx<'_, '_> {
             "$sdf_annotate" => match self.cg.sdf_call_annotation(h) {
                 Some(Some(annotation)) => Ok(vec![IrStmt::SdfAnnotate { annotation }]),
                 Some(None) => Ok(Vec::new()),
-                None => Err(format!(
-                    "{}: $sdf_annotate was not read when the model was generated in `{}`",
-                    self.cg.source_location(h),
-                    self.path
+                None => Err(self.cg.locate_error(
+                    h,
+                    format!(
+                        "$sdf_annotate was not read when the model was generated in `{}`",
+                        self.path
+                    ),
                 )),
             },
             "$displayon" | "$displayoff" => {
@@ -776,10 +778,12 @@ impl EmitCtx<'_, '_> {
                     .query_descriptor(h)
                     .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::String))
                 {
-                    return Err(format!(
-                        "{}: the discarded string result of `{name}` in statement position is not supported in `{}`",
-                        self.cg.source_location(h),
-                        self.path
+                    return Err(self.cg.locate_error(
+                        h,
+                        format!(
+                            "the discarded string result of `{name}` in statement position is not supported in `{}`",
+                            self.path
+                        ),
                     ));
                 }
                 Ok(vec![IrStmt::PlusArg(self.cg.lower_expr(&self.path, h)?)])

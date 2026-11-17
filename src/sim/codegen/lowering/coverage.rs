@@ -2650,6 +2650,17 @@ impl<'a> Codegen<'a> {
         timing: NodeId,
         specs: &[EventSpec],
     ) -> Result<(), String> {
+        self.emit_covergroup_waiter_unlocated(group, timing, specs)
+            .map_err(|error| self.locate_error(timing, error))
+    }
+
+    /// [`Self::emit_covergroup_waiter`] before its failure is located.
+    fn emit_covergroup_waiter_unlocated(
+        &mut self,
+        group: NodeId,
+        timing: NodeId,
+        specs: &[EventSpec],
+    ) -> Result<(), String> {
         let lowering = self.covergroups[&group].clone();
         let name = self.covergroup_name(group);
         let path = self.covergroup_path(group);

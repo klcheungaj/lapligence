@@ -142,10 +142,12 @@ impl<'a> Codegen<'a> {
         let value = self.lower_sampled_func_expr(scope_path, "$sampled", &[node]);
         self.checker_sampling = true;
         value.map(Some).map_err(|error| {
-            format!(
-                "checker formal at {} stands for the sampled value of its actual argument \
-                 (IEEE 1800-2009 17.3), which llg cannot sample: {error}",
-                self.source_location(node)
+            self.locate_error(
+                node,
+                format!(
+                    "checker formal stands for the sampled value of its actual argument \
+                     (IEEE 1800-2009 17.3), which llg cannot sample: {error}"
+                ),
             )
         })
     }
@@ -254,14 +256,16 @@ impl<'a> Codegen<'a> {
                 .into_iter()
                 .find(|signal| self.model.reads_current_value(*signal))
             {
-                return Err(format!(
-                    "{}: {name} of active free checker variable `{}` is not supported: llg reads \
-                     active free variables with their current value (IEEE 1800-2009 17.7.2) and \
-                     keeps no sampled history of them",
-                    self.source_location(args[0]),
-                    self.free_variable_names
-                        .get(&signal)
-                        .map_or("", String::as_str)
+                return Err(crate::sim::codegen::error::located(
+                    &self.source_location(args[0]),
+                    format!(
+                        "{name} of active free checker variable `{}` is not supported: llg reads \
+                         active free variables with their current value (IEEE 1800-2009 17.7.2) \
+                         and keeps no sampled history of them",
+                        self.free_variable_names
+                            .get(&signal)
+                            .map_or("", String::as_str)
+                    ),
                 ));
             }
         }
@@ -1367,14 +1371,16 @@ impl<'a> Codegen<'a> {
         name: &str,
     ) -> Option<String> {
         let reference = clock_resolution_reference(name)?;
-        Some(format!(
-            "{}: `{name}` ({reference}) is supported only as a concurrent assertion or sampled-value clocking event{}, not in this position",
-            self.source_location(call),
-            if name == "$inferred_disable" {
-                " or `disable iff` condition"
-            } else {
-                ""
-            }
+        Some(crate::sim::codegen::error::located(
+            &self.source_location(call),
+            format!(
+                "`{name}` ({reference}) is supported only as a concurrent assertion or sampled-value clocking event{}, not in this position",
+                if name == "$inferred_disable" {
+                    " or `disable iff` condition"
+                } else {
+                    ""
+                }
+            ),
         ))
     }
 

@@ -90,11 +90,13 @@ impl Codegen<'_> {
         assigned: &mut BTreeMap<u32, Vec<AssignedBits>>,
     ) -> Result<(), String> {
         let illegal = |what: &str| {
-            Err(format!(
-                "{}: {what} is not allowed in a checker always procedure: it may contain only \
+            Err(self.locate_error(
+                statement,
+                format!(
+                    "{what} is not allowed in a checker always procedure: it may contain only \
                  event controls, nonblocking assignments to checker variables and assertions \
-                 (IEEE 1800-2009 17.5)",
-                self.source_location(statement)
+                 (IEEE 1800-2009 17.5)"
+                ),
             ))
         };
         match self.kind(statement) {
@@ -216,10 +218,13 @@ impl Codegen<'_> {
             },
         };
         if self.owning_checker(variable) != Some(checker) {
-            return Err(format!(
-                "{location}: a checker procedure may assign only variables of its own checker, \
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                format!(
+                    "a checker procedure may assign only variables of its own checker, \
                  not `{}` (IEEE 1800-2009 17.7.1)",
-                self.node(variable).name
+                    self.node(variable).name
+                ),
             ));
         }
         let (low, high) = bits.unwrap_or((i128::MIN, i128::MAX));
@@ -228,12 +233,15 @@ impl Codegen<'_> {
             .iter()
             .find(|interval| interval.low <= high && low <= interval.high)
         {
-            return Err(format!(
-                "{location}: checker variable `{}` is already assigned at {}; a bit of a checker \
-                 variable may be assigned only once (Single Assignment Rule, IEEE 1800-2009 \
-                 17.7.1)",
-                self.node(variable).name,
-                self.source_location(previous.assignment)
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                format!(
+                    "checker variable `{}` is already assigned at {}; a bit of a checker \
+                     variable may be assigned only once (Single Assignment Rule, IEEE 1800-2009 \
+                     17.7.1)",
+                    self.node(variable).name,
+                    self.source_location(previous.assignment)
+                ),
             ));
         }
         intervals.push(AssignedBits {
@@ -248,10 +256,11 @@ impl Codegen<'_> {
     /// constant: the target is its longest static prefix (17.7.1).
     fn checker_static_index(&self, index: NodeId, location: &str) -> Result<i128, String> {
         self.eval_bound_i128(index).map_err(|_| {
-            format!(
-                "{location}: the target of a checker variable assignment must be its longest \
+            crate::sim::codegen::error::located(
+                &location,
+                "the target of a checker variable assignment must be its longest \
                  static prefix; its select must be a constant expression (IEEE 1800-2009 \
-                 17.7.1, 11.5.3)"
+                 17.7.1, 11.5.3)",
             )
         })
     }

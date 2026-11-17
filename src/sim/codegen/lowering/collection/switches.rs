@@ -82,6 +82,12 @@ impl Codegen<'_> {
         path: &str,
         g: NodeId,
     ) -> Result<(), String> {
+        self.emit_switch_unlocated(inst, path, g)
+            .map_err(|error| self.locate_error(g, error))
+    }
+
+    /// [`Self::emit_switch`] before its failure is located.
+    fn emit_switch_unlocated(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
         let NodeKind::Gate {
             prim_type,
             delay,

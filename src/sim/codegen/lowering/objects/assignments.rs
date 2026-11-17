@@ -11,6 +11,19 @@ impl Codegen<'_> {
         blocking: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        self.lower_object_assignment_unlocated(path, lhs, rhs, blocking, op)
+            .map_err(|error| self.locate_error(lhs, error))
+    }
+
+    /// [`Self::lower_object_assignment`] before its failure is located.
+    fn lower_object_assignment_unlocated(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
         // A whole unpack into one string assigns the string its bytes.
         let unpack = self.string_unpack_target(path, lhs)?;
         let lhs = unpack.map_or(lhs, |(string, _, _)| string);
@@ -319,11 +332,13 @@ impl Codegen<'_> {
             ));
         }
         if let Some(field) = self.class_native_field_target(lhs) {
-            return Err(format!(
-                "nonblocking assignment to class property `{}` at {} in `{path}` is illegal \
+            return Err(self.locate_error(
+                lhs,
+                format!(
+                    "nonblocking assignment to class property `{}` in `{path}` is illegal \
                  (IEEE 1800-2009 6.21: class properties shall not be written with nonblocking assignments)",
-                self.node(field).name,
-                self.source_location(lhs)
+                    self.node(field).name
+                ),
             ));
         }
         if self.is_mailbox_expr(path, lhs)

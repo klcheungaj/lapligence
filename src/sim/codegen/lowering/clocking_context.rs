@@ -492,11 +492,13 @@ impl<'a> Codegen<'a> {
             match block {
                 Some(info) => current = Some(info.event_specs.clone()),
                 None => {
-                    return Err(format!(
-                        "$inferred_clock at {} has no clock at the instantiation of checker \
+                    return Err(self.locate_error(
+                        *event,
+                        format!(
+                            "$inferred_clock has no clock at the instantiation of checker \
                          `{}`: no default clocking applies there (IEEE 1800-2009 16.15.7, 17.4)",
-                        self.source_location(*event),
-                        self.node(actual.instance).name
+                            self.node(actual.instance).name
+                        ),
                     ))
                 }
             }

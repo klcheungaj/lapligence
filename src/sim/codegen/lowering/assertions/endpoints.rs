@@ -45,9 +45,9 @@ impl Codegen<'_> {
                     self.sequence_endpoint(path, *node, None)?;
                 }
                 EventSpec::Edge { sig, .. } if self.is_sequence_endpoint_operand(*sig) => {
-                    return Err(format!(
-                        "an edge event control on a sequence is illegal at {} (SV 9.4.2.4)",
-                        self.source_location(*sig)
+                    return Err(self.locate_error(
+                        *sig,
+                        "an edge event control on a sequence is illegal (SV 9.4.2.4)",
                     ));
                 }
                 _ => {}
@@ -84,9 +84,9 @@ impl Codegen<'_> {
                 })
                 .unwrap_or((assertion.clock_signal(), assertion.posedge()));
             if ending != (context.signal, context.posedge) {
-                return Err(format!(
-                    "`.triggered` at {} needs its sequence to end on the clock of its context (SV 16.9.11); use `.matched` across clocks",
-                    self.source_location(receiver)
+                return Err(self.locate_error(
+                    receiver,
+                    "`.triggered` needs its sequence to end on the clock of its context (SV 16.9.11); use `.matched` across clocks",
                 ));
             }
             return Ok(IrExpr::new(
@@ -113,15 +113,15 @@ impl Codegen<'_> {
         receiver: NodeId,
     ) -> Result<IrExpr, String> {
         let Some(context) = self.assertion_leading_clock.and(self.sampled_clock) else {
-            return Err(format!(
-                "sequence `.matched` at {} can only be used in a sequence expression (SV 16.14.6)",
-                self.source_location(receiver)
+            return Err(self.locate_error(
+                receiver,
+                "sequence `.matched` can only be used in a sequence expression (SV 16.14.6)",
             ));
         };
         if context.gate.is_some() {
-            return Err(format!(
-                "sequence `.matched` under an `iff`-qualified clock is not supported at {}",
-                self.source_location(receiver)
+            return Err(self.locate_error(
+                receiver,
+                "sequence `.matched` under an `iff`-qualified clock is not supported",
             ));
         }
         let index = self.sequence_endpoint(path, receiver, Some(context))?;
@@ -155,9 +155,9 @@ impl Codegen<'_> {
             bindings,
         }) = self.kind(receiver)
         else {
-            return Err(format!(
-                "sequence method receiver at {} is not a sequence instance",
-                self.source_location(receiver)
+            return Err(self.locate_error(
+                receiver,
+                "sequence method receiver is not a sequence instance",
             ));
         };
         let (target, body) = (*target, *body);
@@ -223,21 +223,14 @@ impl Codegen<'_> {
         self.assertion_local_bindings = saved_locals;
         self.assertion_local_initializers = saved_initializers;
         self.assertion_clock_changes = saved_changes;
-        let parts = parts.map_err(|error| {
-            format!(
-                "{error} (sequence endpoint at {})",
-                self.source_location(receiver)
-            )
-        })?;
+        let parts = parts
+            .map_err(|error| self.locate_error(receiver, format!("{error} (sequence endpoint)")))?;
         if parts.antecedent.is_some()
             || parts.antecedent_sequence.is_some()
             || parts.abort_condition.is_some()
             || parts.disable_signal.is_some()
         {
-            return Err(format!(
-                "sequence endpoint at {} is not a sequence",
-                self.source_location(receiver)
-            ));
+            return Err(self.locate_error(receiver, "sequence endpoint is not a sequence"));
         }
         let label = self.node(target).name.clone();
         let event = self
@@ -270,7 +263,10 @@ impl Codegen<'_> {
             )
         } else {
             let consequent = parts.consequent.ok_or_else(|| {
-                format!("sequence endpoint at {location} has no lowered sequence")
+                crate::sim::codegen::error::located(
+                    &location,
+                    "sequence endpoint has no lowered sequence",
+                )
             })?;
             IrAssertion::new(
                 identity,

@@ -16,12 +16,12 @@ impl Codegen<'_> {
         kind.and_then(canonical_net_type)
             .filter(|kind| Self::ir_net_kind(*kind).is_some())
             .ok_or_else(|| {
-                format!(
-                    "inout endpoint `{}` is not a supported net at {}:{}:{}",
-                    self.display_name(owner),
-                    self.node(owner).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(owner).line,
-                    self.node(owner).col,
+                self.locate_error(
+                    owner,
+                    format!(
+                        "inout endpoint `{}` is not a supported net",
+                        self.display_name(owner)
+                    ),
                 )
             })
     }

@@ -136,23 +136,32 @@ impl<'a> Codegen<'a> {
                 // inherits its value at the antecedent's match.
                 PropertyLocalInit::Inherited => return Ok(()),
                 PropertyLocalInit::Unsupported => {
-                    return Err(format!(
-                        "local variable `{name}` of the property declared at {location} is initialized at the property attempt's start, which this property form does not support"
+                    return Err(crate::sim::codegen::error::located(
+                        &location,
+                        format!(
+                            "local variable `{name}` of the property is initialized at the property attempt's start, which this property form does not support"
+                        ),
                     ));
                 }
             }
         }
         if self.assertion_instance_depth != 1 || !self.assertion_local_capture_at_attempt_entry {
-            return Err(format!(
-                "local variable `{name}` declared at {location} is initialized by an instance that is not supported here (`{path}`)"
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                format!(
+                    "local variable `{name}` is initialized by an instance that is not supported here (`{path}`)"
+                ),
             ));
         }
         if formal_actual.is_some() {
             match self.db.assertion_formal_direction(target) {
                 Some(DbDirection::Input) => {}
                 Some(direction) => {
-                    return Err(format!(
-                        "assertion formal `{name}` declared at {location} uses unsupported {direction:?} direction in `{path}`"
+                    return Err(crate::sim::codegen::error::located(
+                        &location,
+                        format!(
+                            "assertion formal `{name}` uses unsupported {direction:?} direction in `{path}`"
+                        ),
                     ));
                 }
                 None => return Ok(()),
@@ -168,8 +177,9 @@ impl<'a> Codegen<'a> {
         let source = formal_actual.or(declared).expect("one initializer source");
         let value = self.lower_expr(path, source)?;
         if value.is_real() || !self.sampled_compatible(&value) {
-            return Err(format!(
-                "local variable `{name}` declared at {location} needs one packed sampled initial value"
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                format!("local variable `{name}` needs one packed sampled initial value"),
             ));
         }
         let initializer = assertions::local_assignment(binding, value);

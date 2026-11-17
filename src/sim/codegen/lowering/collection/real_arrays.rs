@@ -179,6 +179,17 @@ impl Codegen<'_> {
         formal: NodeId,
         actual: NodeId,
     ) -> Result<IrCallArg, String> {
+        self.real_array_argument_unlocated(path, formal, actual)
+            .map_err(|error| self.locate_error(actual, error))
+    }
+
+    /// [`Self::real_array_argument`] before its failure is located.
+    fn real_array_argument_unlocated(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        actual: NodeId,
+    ) -> Result<IrCallArg, String> {
         let shape = self
             .real_formal_array(formal)
             .ok_or("real-array formal has no storage")?;

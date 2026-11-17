@@ -357,6 +357,18 @@ impl<'a> Codegen<'a> {
         dst: usize,
         rhs: NodeId,
     ) -> Result<IrStmt, String> {
+        self.lower_container_into_unlocated(path, type_node, dst, rhs)
+            .map_err(|error| self.locate_error(rhs, error))
+    }
+
+    /// [`Self::lower_container_into`] before its failure is located.
+    fn lower_container_into_unlocated(
+        &mut self,
+        path: &str,
+        type_node: NodeId,
+        dst: usize,
+        rhs: NodeId,
+    ) -> Result<IrStmt, String> {
         let dst = ContainerInfo { ir: dst };
         if let Some(statement) = self.lower_container_result_into(path, rhs, dst.ir)? {
             return Ok(statement);

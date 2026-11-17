@@ -245,11 +245,13 @@ impl Codegen<'_> {
                         .iter()
                         .any(|child| cg.dynamic_reads.contains_key(child));
                 if named && !watched {
-                    return Err(format!(
-                        "{}: `$monitor` of class storage `{}` in `{}` has no dependency that sees it change",
-                        cg.source_location(*node),
-                        cg.node(*node).name,
-                        cg.source_path(path)
+                    return Err(crate::sim::codegen::error::located(
+                        &cg.source_location(*node),
+                        format!(
+                            "`$monitor` of class storage `{}` in `{}` has no dependency that sees it change",
+                            cg.node(*node).name,
+                            cg.source_path(path)
+                        ),
                     ));
                 }
             }
