@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 72;
+const ABI_VERSION: u32 = 73;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -665,6 +665,8 @@ pub struct TypeRange {
     pub kind: TypeRangeKind,
 }
 
+/// A field of a structure or union type; an enum type has one unnamed
+/// member instead, its base type with the typedef the declared base names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeMember {
     pub name: String,

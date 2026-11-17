@@ -39,7 +39,8 @@ fn typespec_trees_name_typedefs_ranges_members_and_enum_constants() {
 
 /// FIN-001 V3 family (d): `vpiPacked` of packed and unpacked tagged
 /// unions; chandle typespecs of typedefs, members, variables, properties,
-/// formals and calls; void typespecs of tagged union members.
+/// formals and calls; void typespecs of tagged union members; the typedef
+/// names of enum base types.
 #[test]
 fn typespec_kinds_print_their_trees() {
     let directory = sim_harness::TempDir::new("adv019-kinds").expect("temporary directory");

@@ -1,7 +1,8 @@
 // ADV-019 typespec kinds (FIN-001 V3 family (d), 37.23): vpiPacked of
 // packed and unpacked tagged unions (7.3.2); chandle typespecs (6.14):
 // typedefs of chandle, chandle members, variables, class properties,
-// formals and calls; void typespecs of tagged union members (6.13). typespec_kinds.c prints the typespec tree of each
+// formals and calls; void typespecs of tagged union members (6.13); the
+// typedef name of an enum's base type (6.19). typespec_kinds.c prints the typespec tree of each
 // object it names and the typedefs of tb.
 module tb;
   typedef union tagged packed { bit [3:0] a; bit [3:0] b; } tp_t;
@@ -13,6 +14,13 @@ module tb;
   typedef union tagged { chandle h; int n; } th_t;
   typedef union tagged packed { void Invalid; bit [7:0] Valid; } vp_t;
   typedef union tagged { void Invalid; int Valid; } vu_t;
+  typedef bit [3:0] nib_t;
+  typedef nib_t nib2_t;
+  typedef int myint_t;
+  typedef enum nib_t {A, B} en_t;
+  typedef enum nib2_t {A2, B2} en2_t;
+  typedef enum myint_t {M0, M1} em_t;
+  typedef enum int {I0, I1} ei_t;
 
   class C;
     chandle h;
@@ -29,6 +37,11 @@ module tb;
   th_t th;
   vp_t vp;
   vu_t vu;
+  en_t en;
+  en2_t en2;
+  em_t em;
+  ei_t ei;
+  enum nib_t {Q0, Q1} eq;
   C c;
   ch_t hq[$];
 

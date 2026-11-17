@@ -1427,6 +1427,13 @@ impl Db {
         self.typedefs.builtin.contains(&id)
     }
 
+    /// The typedef the declared base type of enum type `id` names
+    /// (`enum nib_t {...}`, 37.23), with the dimensions declared above it.
+    pub fn enum_base_typedef(&self, id: TypeId) -> Option<TypedefRef> {
+        // The bridge exports an enum's base as its one member.
+        self.member_typedef(id, 0)
+    }
+
     /// Whether tagged union type `id` is declared `packed` (7.3.2); false
     /// for an unpacked tagged union and for any other type.
     pub fn is_packed_tagged_union(&self, id: TypeId) -> bool {

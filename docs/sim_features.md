@@ -2965,7 +2965,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   struct, union, packed array and array typespecs (fixed, dynamic, queue and associative, with
   `vpiArrayType` and `vpiIndexTypespec`, A19-D60) with `vpiName` (the
   typedef name), `vpiTypedefAlias`,
-  `vpiElemTypespec` (one dimension at a time), `vpiBaseTypespec`, `vpiRange`
+  `vpiElemTypespec` (one dimension at a time), `vpiBaseTypespec` (named by
+  the base type's typedef), `vpiRange`
   with `vpiLeftRange`/`vpiRightRange`, `vpiTypespecMember`, `vpiEnumConst`
   (name and value), `vpiPacked` (of tagged unions too), `vpiTagged` and
   `vpiVector`; structure and

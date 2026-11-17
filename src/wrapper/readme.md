@@ -81,7 +81,8 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   separately: an `LLG_SLANG_EDGE_TYPEDEF` edge from each value declaration,
   typedef and explicit cast to the typedef declaration (index: dimensions
   declared above it), the
-  `typedef_id`/`typedef_depth` of each aggregate member and the
+  `typedef_id`/`typedef_depth` of each aggregate member and of the one
+  unnamed member of an enum type (its base type), and the
   `LLG_SLANG_TYPEDEF_BUILTIN` auxiliary bit of a typedef renaming a built-in
   type.
 - Simulation capture exports which package items name references reached

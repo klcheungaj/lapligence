@@ -92,6 +92,10 @@ module tb;
   // typespecs with a name and an alias, and as a typespec member (37.23).
   typedef chandle ch_t;
   typedef struct { ch_t mh; int mi; } chrec_t;
+  // An enum whose base type is a typedef: its base typespec is named
+  // (37.23 detail 1).
+  typedef bit [1:0] two_t;
+  typedef enum two_t {t0, t1} tenum_t;
   class Packet;
     int id;
     // An event property: a named event of each object (37.25, 37.29).
@@ -171,6 +175,7 @@ module tb;
   chandle ch = null;
   ch_t chn = null;
   chrec_t chr;
+  tenum_t te = t1;
   Packet p;
   Square sq;
   int da[];

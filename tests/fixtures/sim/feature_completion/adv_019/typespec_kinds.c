@@ -19,6 +19,16 @@ static void typespec(const char* label, vpiHandle t, int depth) {
     }
     int type = vpi_get(vpiType, t);
     vpi_printf("%*s%s: %s name=%s", 2 * depth, "", label, text(vpiType, t), text(vpiName, t));
+    if (type == vpiLogicTypespec || type == vpiBitTypespec || type == vpiPackedArrayTypespec) {
+        vpiHandle ranges = vpi_iterate(vpiRange, t), range;
+        while ((range = vpi_scan(ranges))) {
+            s_vpi_value left, right;
+            left.format = right.format = vpiIntVal;
+            vpi_get_value(vpi_handle(vpiLeftRange, range), &left);
+            vpi_get_value(vpi_handle(vpiRightRange, range), &right);
+            vpi_printf(" [%d:%d]", left.value.integer, right.value.integer);
+        }
+    }
     if (type == vpiStructTypespec || type == vpiUnionTypespec)
         vpi_printf(" packed=%d", vpi_get(vpiPacked, t));
     if (type == vpiUnionTypespec) vpi_printf(" tagged=%d", vpi_get(vpiTagged, t));
@@ -26,7 +36,9 @@ static void typespec(const char* label, vpiHandle t, int depth) {
     vpiHandle alias = vpi_handle(vpiTypedefAlias, t);
     if (alias) typespec("alias", alias, depth + 1);
     if (type == vpiEnumTypespec) typespec("base", vpi_handle(vpiBaseTypespec, t), depth + 1);
-    if (type == vpiArrayTypespec) typespec("elem", vpi_handle(vpiElemTypespec, t), depth + 1);
+    if (type == vpiArrayTypespec || type == vpiPackedArrayTypespec ||
+        ((type == vpiLogicTypespec || type == vpiBitTypespec) && vpi_get(vpiVector, t)))
+        typespec("elem", vpi_handle(vpiElemTypespec, t), depth + 1);
     if (type == vpiStructTypespec || type == vpiUnionTypespec) {
         vpiHandle members = vpi_iterate(vpiTypespecMember, t), member;
         while ((member = vpi_scan(members))) {
@@ -90,7 +102,8 @@ static PLI_INT32 walk(PLI_BYTE8* data) {
     (void)data;
     static const char* names[] = {"tb.tp", "tb.tu", "tb.up", "tb.h", "tb.hn", "tb.hn2",
                                   "tb.sh", "tb.sh.h", "tb.th", "tb.vp", "tb.vu", "tb.hq",
-                                  "tb.hq[0]", NULL};
+                                  "tb.hq[0]", "tb.en", "tb.en2", "tb.em", "tb.ei",
+                                  "tb.eq", NULL};
     vpiHandle top = vpi_handle_by_name("tb", NULL);
     typedefs(top);
     for (int i = 0; names[i]; ++i) variable(names[i]);

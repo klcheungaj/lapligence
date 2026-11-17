@@ -137,6 +137,18 @@ typespecs, `vpiTypedefAlias`, the enum base and the typespec members, as
   (L7914-L7917), print an unnamed `vpiVoidTypespec`. A void function has no
   result variable (decision A19-D53), so a tagged union member is the only
   object with a void typespec.
+- Enum base types. Syntax 6-4 (L6093, L6097-L6098) lets a typedef name the base
+  type: "type_identifier [ packed_dimension ]", legal "if it denotes an
+  integer_atom_type ... or an integer_vector_type". The `vpiBaseTypespec`
+  of an enum is a typespec of that type, so detail 1 (L59170-L59172) names
+  it after the typedef and detail 6 gives a typedef of a built-in type its
+  alias: `en_t` (`enum nib_t`) has the base `nib_t`, `en2_t` (`enum
+  nib2_t`) the base `nib2_t` with the alias `nib_t`, `em_t` (`enum
+  myint_t`) the base `myint_t` with an unnamed `int` alias, and the
+  anonymous `enum nib_t` of `eq` the base `nib_t`; a built-in base (`ei_t`,
+  `enum int`) has no name. Slang rejects a typedef base with a further
+  packed dimension (`enum nib_t [1:0]`, footnote 14 allows one only on a
+  vector), so none is tested.
 
 ## members (37.17, 37.24)
 

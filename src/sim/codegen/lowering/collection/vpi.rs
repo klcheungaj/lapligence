@@ -640,16 +640,46 @@ impl Codegen<'_> {
         width: u32,
     ) -> Option<IrVpiTypespec> {
         let metadata = self.db.enum_type_metadata(descriptor.id)?;
-        let base = self.vpi_integral_typespec(
-            table,
-            ranges,
-            width,
-            metadata.signed,
-            metadata.two_state,
-            None,
-            0,
-        )?;
-        let base = table.intern(base);
+        // 37.23 detail 1: a base type declared through a typedef
+        // (`enum nib_t {...}`) is that typedef's typespec, with its name
+        // and alias; a built-in base type has no name.
+        let base = match self.db.enum_base_typedef(descriptor.id) {
+            Some(naming) => {
+                let base = TypeDescriptor {
+                    id: TypeId(u64::MAX),
+                    two_state: metadata.two_state,
+                    name: String::new(),
+                    info: crate::core::model::TypeInfo {
+                        kind: if metadata.two_state { "bit" } else { "logic" }.to_owned(),
+                        width: Some(width),
+                        signed: metadata.signed,
+                        type_name: None,
+                    },
+                    shape: TypeShape::PackedAtom {
+                        ranges: ranges
+                            .iter()
+                            .map(|(left, right)| crate::core::db::PackedRange {
+                                left: i128::from(*left),
+                                right: i128::from(*right),
+                            })
+                            .collect(),
+                    },
+                };
+                self.vpi_typespec(table, &base, Some(naming), 1)?
+            }
+            None => {
+                let base = self.vpi_integral_typespec(
+                    table,
+                    ranges,
+                    width,
+                    metadata.signed,
+                    metadata.two_state,
+                    None,
+                    0,
+                )?;
+                table.intern(base)
+            }
+        };
         let enum_consts = metadata
             .members
             .iter()

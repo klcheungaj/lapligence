@@ -1172,6 +1172,20 @@ struct Capture {
                          field->bitOffset, field->getType().getBitWidth(), initializerId,
                          typedefId, typedefDepth});
     }
+    // IEEE 1800-2009 37.23: an enum type has one unnamed member, its base
+    // type with the typedef the base names (`enum nib_t {...}`), so the
+    // base typespec keeps the name the canonical base record drops.
+    if (canonical.kind == SymbolKind::EnumType) {
+      if (members.size() >= maxTypeMembers() -
+                                std::min<uint64_t>(output.type_members.size(),
+                                                   maxTypeMembers()))
+        throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                            "type member limit exceeded");
+      const Type& base = canonical.as<EnumType>().baseType;
+      const auto [typedefId, typedefDepth] = declaredTypedef(base);
+      members.push_back({storeString(output, ""), elementType, 0, base.getBitWidth(),
+                         LLG_SLANG_INVALID_ID, typedefId, typedefDepth});
+    }
     const uint64_t memberStart = output.type_members.size();
     chargeRecord(output, members.size() * sizeof(LlgSlangTypeMember));
     output.type_members.insert(output.type_members.end(), members.begin(), members.end());
