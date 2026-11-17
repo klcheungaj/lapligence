@@ -2260,6 +2260,9 @@ struct Codegen<'a> {
     /// Released variable signal -> hidden marker toggled by its `release`
     /// statements, so its continuous drivers re-evaluate (SV 10.6.2).
     release_markers: HashMap<usize, usize>,
+    /// The same for an array variable an element `release` names: every
+    /// continuous driver of an element of the array re-evaluates.
+    release_array_markers: HashMap<usize, usize>,
     /// Hidden nets that carry a `disable iff` condition, keyed by instance
     /// and condition node.
     disable_conditions: HashMap<(NodeId, NodeId), usize>,
@@ -2736,6 +2739,7 @@ impl<'a> Codegen<'a> {
             clocking_net_drivers: HashMap::new(),
             feedback_storage: None,
             release_markers: HashMap::new(),
+            release_array_markers: HashMap::new(),
             disable_conditions: HashMap::new(),
             disable_signal_conditions: HashMap::new(),
             structural_driver_sites: HashMap::new(),

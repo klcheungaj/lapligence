@@ -566,6 +566,41 @@ fn s23_d5_force_native_variable() {
 }
 
 #[test]
+fn s23_d6_array_element_force() {
+    run_decision(
+        "S23-D6_array_element_force",
+        include_str!("fixtures/sim/lrm_decisions/S23-D6_array_element_force.out"),
+    );
+}
+
+#[test]
+fn s23_d7_element_select_force() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S23-D7_element_select_force.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S23-D7_element_select_force",
+        "S23-D7_element_select_force.sv:19:11 lvalue of force/release must be a net, a variable",
+    );
+}
+
+#[test]
+fn s23_d8_unknown_index_force() {
+    run_decision(
+        "S23-D8_unknown_index_force",
+        include_str!("fixtures/sim/lrm_decisions/S23-D8_unknown_index_force.out"),
+    );
+}
+
+#[test]
+fn s23_d9_sort_forced_element() {
+    run_decision(
+        "S23-D9_sort_forced_element",
+        include_str!("fixtures/sim/lrm_decisions/S23-D9_sort_forced_element.out"),
+    );
+}
+
+#[test]
 fn s23_d3_net_member_select() {
     run_decision(
         "S23-D3_net_member_select",

@@ -177,3 +177,50 @@ fn unsupported_deferred_forms_are_located() {
         "neg_endpoint.sv:14:11 is not supported (IEEE 1800-2009 16.9.4)",
     );
 }
+
+/// FIN-001 A3: operand and expression forms the deferred evaluation does not
+/// capture are located limits.
+#[test]
+fn unsupported_operand_forms_are_located() {
+    const TAIL: &str = "in an assertion with global clocking future sampled value functions at";
+    const END: &str = "is not supported (IEEE 1800-2009 16.9.4)";
+    sim_cli::reject_case(SUITE, "neg_real_operand", &format!("a real operand {TAIL}"));
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_operand",
+        &format!("neg_real_operand.sv:9:3 {END}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_system_function",
+        &format!("this system function {TAIL}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_system_function",
+        &format!("neg_system_function.sv:9:3 {END}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_sampled_function",
+        &format!("this sampled value function {TAIL}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_sampled_function",
+        &format!("neg_sampled_function.sv:7:3 {END}"),
+    );
+    sim_cli::reject_case(SUITE, "neg_inside", &format!("this expression form {TAIL}"));
+    sim_cli::reject_case(SUITE, "neg_inside", &format!("neg_inside.sv:9:3 {END}"));
+    sim_cli::reject_case(
+        SUITE,
+        "neg_procedural_automatic",
+        "a procedural assertion reading an automatic variable or a const cast with global \
+         clocking future sampled value functions at",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_procedural_automatic",
+        &format!("neg_procedural_automatic.sv:13:5 {END}"),
+    );
+}

@@ -1009,7 +1009,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   variables, every resolved net kind (`wire`, `wand`, `wor`, `tri`,
   multi-driven), constant bit-, part- and indexed part-selects of nets, constant
   member and element selects of packed-structure and packed-array nets, net-array
-  elements, whole unpacked net arrays (every cell, in declared order), true-net aliases and concatenations of these, local or through
+  elements, whole unpacked net arrays (every cell, in declared order), true-net
+  aliases, in SV2009 elements of static unpacked array variables (dense,
+  lazily allocated and record member-array cells in both record storage
+  forms, reals) and members of their unpacked-structure elements, and
+  concatenations of these, local or through
   hierarchical, generate, instance-array, interface, `$root` and upward paths,
   from processes, tasks, functions, class methods and fork branches. The RHS is
   live: a change of any operand, including another forced signal, re-evaluates
@@ -1023,17 +1027,24 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   outlives the process that applied it (kill, `disable`, task return), and the
   model closes cleanly with forces active
   ([sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md),
-  decisions S23-D1–D4 in [lrm_decisions](lrm_decisions.md)). Live RHS sources
+  decisions S23-D1–D4 in [lrm_decisions](lrm_decisions.md)). An element
+  target's index, constant or run-time, is evaluated when the force or release
+  executes and the force stays on that element; an invalid index (out of
+  range, X or Z) forces or releases nothing, and a forced element keeps its
+  value through element, whole-array, nonblocking and `$readmem` writes and
+  the ordering methods (decisions S23-D6, S23-D8, S23-D9). Live RHS sources
   include fixed-array elements and whole arrays (through their change markers).
   A helper with visible writes, persistent state or descriptor formals is
   evaluated by the force statement and then, while the force is in effect, by a
   per-site guard process into a hidden source the read-only evaluator reads;
   release or replacement stops it (§9). Variable selects, memory words (V
   §9.3.2), dynamic net selects, automatic targets or RHS references, class
-  properties, dynamic elements (SV §§6.21, 13.3.2) and unpacked aggregates (not
-  singular, SV §6.4) are located errors; string, class-handle, chandle and
-  event variables are rejected as industry-standard behaviour does (decision
-  S23-D5). Missing: SV2009 static unpacked-array elements
+  properties, dynamic elements (SV §§6.21, 13.3.2), bit- and part-selects of
+  array elements (decision S23-D7) and unpacked aggregates (not singular, SV
+  §6.4) are located errors; string, class-handle, chandle and event variables
+  are rejected as industry-standard behaviour does (decision S23-D5). Missing:
+  members of elements of arrays of records with a real, string, handle,
+  event or container member
   ([known issue](known_issues.md#unsupported-force-and-release-targets)).
   V §9.3.2 **[1995]**.
 
@@ -2738,7 +2749,8 @@ value function's argument, a `disable iff` condition, a clock's `iff`, an
 assertion with global clocking future functions or a procedural checker's
 assertion) and invalid scopes/arguments
 remain rejected by the
-[assertion lowerer](../src/sim/codegen/lowering/assertions.rs).
+[assertion lowerer](../src/sim/codegen/lowering/assertions.rs)
+([known issue](known_issues.md#assertion-locals-in-join-operands-and-end-points)).
 
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
 2009 global-clock history/status forms support explicit, inferred, default and
@@ -2759,8 +2771,9 @@ it reads, registered without per-slot history. Real, shortreal and realtime
 operands of `$past`, `$rose`, `$fell`, `$stable`, `$changed` and the global
 clocking functions, string, event, chandle, class, dynamic and associative
 array arguments are diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
-queues and unpacked element selections are explicit unsupported rejections
-([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
+queues and unpacked element selections (also element operands of concurrent
+assertions, for arrays below the descriptor size) are located unsupported
+rejections ([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
 [SIM-035 fixtures](../tests/fixtures/sim/feature_completion/sim_035/readme.md)).
 The future global functions `$future_gclk`, `$rising_gclk`, `$falling_gclk`,
 `$steady_gclk` and `$changing_gclk` (§16.9.4) read the sampled value at the
@@ -2774,8 +2787,10 @@ interval; ticks after the last global clock tick are never evaluated
 [decisions A14-D1-D4](lrm_decisions.md#global-clocking-future-sampled-value-functions-adv-014)).
 Pending evaluations count against `LLG_SEQUENCE_THREAD_LIMIT`. Nesting, match
 items, action blocks, procedural code and missing global clocking are
-frontend errors; `expect`, asynchronous `accept_on`/`reject_on` and sequence
-end points with these functions are located rejections
+frontend errors; `expect`, asynchronous `accept_on`/`reject_on`, sequence
+end points, real operands, system and sampled value functions of future
+values, `inside` and procedural assertions with saved automatic values with
+these functions are located rejections
 ([known issue](known_issues.md#global-clocking-future-sampled-value-function-limits)).
 `$global_clock` is a clocking event wherever one may appear (§14.14), and `$inferred_clock`/
 `$inferred_disable` formal defaults resolve at the instance (§16.15.7)
@@ -3149,8 +3164,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   step and queues its static assertions, and those of its nested static
   checkers, on its procedure's procedural assertion queue whenever the
   instantiation executes; `$inferred_clock` takes the procedure's inferred
-  clock (17.4). Sampled value functions of active free variables, unpacked
-  free variables and automatic or `const'` actuals of procedural checkers
+  clock (17.4). Sampled value functions of active free variables, unpacked,
+  real and enum free variables and automatic or `const'` actuals of procedural checkers
   are located limits
   ([known issue](known_issues.md#checker-limits-after-adv-015);
   [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md)).

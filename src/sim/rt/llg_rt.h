@@ -3571,6 +3571,10 @@ int llg_clocking_sample_history_real(sv4_t* source, double* sample,
 // not unregister waits, sampling or assertions: their borrowed sources must
 // still outlive their consumers. NULL and already-forgotten signals are harmless.
 void llg_clocking_forget_signal(sv4_t* signal);
+// The same for a packed or real leaf of a native value (the container
+// runtime's `forget` hook): change records and clocking history are keyed by
+// address only, so one lookup serves both kinds without reading the leaf.
+void llg_value_leaf_forget(void* leaf);
 // A model with no clocking drive, `##` cycle wait or assertion clock pulse
 // calls this after init: nothing then asks whether a signal changed earlier in
 // the current slot, so publication stops recording edge history except for
@@ -3776,6 +3780,12 @@ typedef struct {
 typedef void (*llg_force_eval_fn)(sv4_t* out);
 typedef void (*llg_force_real_eval_fn)(double* out);
 
+// A part may name an array cell (an element of a static unpacked array, or a
+// member of one, selected when the statement executes). A NULL target is an
+// element the statement's index selected none of (SV 7.4.6): the part is
+// skipped, and a statement left without parts does nothing. A part may cover
+// only some bits of a variable (a member of an element held as one packed
+// image); writes then change only the uncovered bits.
 void llg_force_expr_parts(const llg_force_part_t* parts, int n_parts,
                           uint32_t stream_slice, int stream_right_to_left,
                           llg_force_eval_fn eval,

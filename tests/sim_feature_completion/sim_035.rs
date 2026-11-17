@@ -256,3 +256,36 @@ fn neg_queue_arg() {
         "is not supported: sampled histories hold packed integral and real values, not queues",
     );
 }
+
+// FIN-001 A3: element selections of fixed unpacked arrays are legal sampled
+// operands (SV 16.6.1) that llg rejects at the selection.
+
+#[test]
+fn neg_element_past() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_element_past",
+        "neg_element_past.sv:11:64 $past argument selecting an unpacked array element in `tb` \
+         is not supported: llg keeps no sampled value of the array's cells",
+    );
+}
+
+#[test]
+fn neg_element_assertion() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_element_assertion",
+        "neg_element_assertion.sv:9:47 $stable argument selecting an unpacked array element in \
+         `tb` is not supported",
+    );
+}
+
+#[test]
+fn neg_element_operand() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_element_operand",
+        "neg_element_operand.sv:10:39 unsupported sampled consequent expression in concurrent \
+         assertion (tb): llg keeps no sampled value of unpacked array cells it selects",
+    );
+}

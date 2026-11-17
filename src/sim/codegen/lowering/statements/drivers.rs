@@ -117,14 +117,17 @@ impl EmitCtx<'_, '_> {
             .lower_expr(&self.path, rhs)
             .map_err(|error| self.force_error(diagnostic_path, error))?;
         Ok(if target_real {
-            let IrLhs::Whole(index) = lh else {
-                return Err(format!(
-                    "real force target in `{diagnostic_path}` must be a whole variable"
-                ));
-            };
-            let shortreal = match self.cg.model.signal(*index).ty {
-                IrType::Real { shortreal } => shortreal,
-                _ => false,
+            let shortreal = match lh {
+                IrLhs::Whole(index) => matches!(
+                    self.cg.model.signal(*index).ty,
+                    IrType::Real { shortreal: true }
+                ),
+                IrLhs::ArrayElem { arr, .. } => self.cg.model.array(*arr).shortreal,
+                _ => {
+                    return Err(format!(
+                        "real force target in `{diagnostic_path}` must be a whole variable or array element"
+                    ))
+                }
             };
             IrExpr::new(
                 IrExprKind::CastToReal {
@@ -281,8 +284,10 @@ impl EmitCtx<'_, '_> {
         validate_force_lhs(&self.cg.model, &lh, &diagnostic_path)?;
         let mut released = Vec::new();
         released_variables(&self.cg.model, &lh, &mut released);
+        let mut released_arrays = Vec::new();
+        released_array_variables(&lh, &mut released_arrays);
         let release = IrStmt::Release { lhs: lh };
-        if released.is_empty() {
+        if released.is_empty() && released_arrays.is_empty() {
             return Ok(release);
         }
         // IEEE 1800-2009 10.6.2: releasing a variable driven by a continuous
@@ -292,8 +297,14 @@ impl EmitCtx<'_, '_> {
         // drivers sensitive to it, so they rerun as ordinary Active-region
         // wakeups after the force is gone.
         let mut statements = vec![release];
+        let mut markers = Vec::with_capacity(released.len() + released_arrays.len());
         for signal in released {
-            let marker = self.cg.release_marker(signal);
+            markers.push(self.cg.release_marker(signal));
+        }
+        for array in released_arrays {
+            markers.push(self.cg.release_array_marker(array));
+        }
+        for marker in markers {
             let read = IrExpr::new(IrExprKind::SigRead(marker), 1, false, None);
             statements.push(IrStmt::Assign {
                 lhs: IrLhs::Whole(marker),
@@ -443,7 +454,9 @@ impl EmitCtx<'_, '_> {
 /// Persistent variables (not nets) released by `lhs`, in target order.
 fn released_variables(model: &IrModel, lhs: &IrLhs, out: &mut Vec<usize>) {
     match lhs {
-        IrLhs::Whole(index) => {
+        // A record leaf, whole or a member inside it, selected by an element
+        // release; with a run-time index every leaf may be the one released.
+        IrLhs::Whole(index) | IrLhs::Part(index, ..) => {
             let index = model.signal(*index).alias.unwrap_or(*index);
             let signal = model.signal(index);
             if signal.net_driver.is_none() && signal.net_alias.is_empty() && !out.contains(&index) {
@@ -453,6 +466,24 @@ fn released_variables(model: &IrModel, lhs: &IrLhs, out: &mut Vec<usize>) {
         IrLhs::Stream { parts, .. } => {
             for (part, _) in parts {
                 released_variables(model, part, out);
+            }
+        }
+        IrLhs::PackedSelect { target, .. } => released_variables(model, target, out),
+        _ => {}
+    }
+}
+
+/// Array variables whose element a `release` names.
+fn released_array_variables(lhs: &IrLhs, out: &mut Vec<usize>) {
+    match lhs {
+        IrLhs::ArrayElem { arr, .. } => {
+            if !out.contains(arr) {
+                out.push(*arr);
+            }
+        }
+        IrLhs::Stream { parts, .. } => {
+            for (part, _) in parts {
+                released_array_variables(part, out);
             }
         }
         _ => {}
@@ -485,6 +516,30 @@ impl Codegen<'_> {
         marker
     }
 
+    /// The hidden one-bit marker an element release of `array` toggles.
+    fn release_array_marker(&mut self, array: usize) -> usize {
+        if let Some(marker) = self.release_array_markers.get(&array) {
+            return *marker;
+        }
+        let marker = self.model.signals.len();
+        self.model.signals.push(IrSignal {
+            fixed_default: None,
+            c_name: format!("llg_release_array_mark_{array}"),
+            hdl_name: None,
+            ty: IrType::Packed {
+                width: 1,
+                signed: false,
+                two_state: true,
+            },
+            net_driver: None,
+            net_alias: Vec::new(),
+            alias: None,
+            omit: false,
+        });
+        self.release_array_markers.insert(array, marker);
+        marker
+    }
+
     /// Make every continuous driver of a released variable sensitive to the
     /// variable's release marker (IEEE 1800-2009 10.6.2). Continuous
     /// assignments and port links are the synthetic evaluate-then-wait
@@ -493,7 +548,7 @@ impl Codegen<'_> {
     /// after every process and subroutine body is lowered; designs without a
     /// released variable are unchanged.
     pub(in super::super) fn attach_release_reevaluation(&mut self) {
-        if self.release_markers.is_empty() {
+        if self.release_markers.is_empty() && self.release_array_markers.is_empty() {
             return;
         }
         for process in &mut self.model.processes {
@@ -503,17 +558,25 @@ impl Codegen<'_> {
                 continue;
             }
             let mut written = Vec::new();
+            let mut written_arrays = Vec::new();
             for statement in &process.body {
-                continuous_writes(statement, &mut written);
+                continuous_writes(statement, &mut written, &mut written_arrays);
             }
             for signal in &mut written {
                 *signal = self.model.signals[*signal].alias.unwrap_or(*signal);
             }
             written.sort_unstable();
             written.dedup();
+            written_arrays.sort_unstable();
+            written_arrays.dedup();
             let markers = written
                 .iter()
                 .filter_map(|signal| self.release_markers.get(signal))
+                .chain(
+                    written_arrays
+                        .iter()
+                        .filter_map(|array| self.release_array_markers.get(array)),
+                )
                 .map(|marker| IrDependency::Scalar(self.model.signals[*marker].c_name.clone()))
                 .collect::<Vec<_>>();
             if markers.is_empty() {
@@ -527,46 +590,47 @@ impl Codegen<'_> {
     }
 }
 
-/// Whole persistent signals a continuous driver body assigns.
-fn continuous_writes(statement: &IrStmt, out: &mut Vec<usize>) {
+/// Whole persistent signals, and arrays, a continuous driver body assigns.
+fn continuous_writes(statement: &IrStmt, out: &mut Vec<usize>, arrays: &mut Vec<usize>) {
     match statement {
         IrStmt::Assign { lhs, .. } | IrStmt::InertialAssign { lhs, .. } => {
-            lhs_signals(lhs, out);
+            lhs_signals(lhs, out, arrays);
         }
         IrStmt::InertialEnable(enable) => {
-            lhs_signals(&enable.zero_lhs, out);
-            lhs_signals(&enable.one_lhs, out);
+            lhs_signals(&enable.zero_lhs, out, arrays);
+            lhs_signals(&enable.one_lhs, out, arrays);
         }
-        IrStmt::Located { statement, .. } => continuous_writes(statement, out),
+        IrStmt::Located { statement, .. } => continuous_writes(statement, out, arrays),
         IrStmt::Block(statements)
         | IrStmt::While {
             body: statements, ..
         } => {
             for statement in statements {
-                continuous_writes(statement, out);
+                continuous_writes(statement, out, arrays);
             }
         }
         IrStmt::If { then_, els, .. } => {
             for statement in then_.iter().chain(els.iter().flatten()) {
-                continuous_writes(statement, out);
+                continuous_writes(statement, out, arrays);
             }
         }
         _ => {}
     }
 }
 
-fn lhs_signals(lhs: &IrLhs, out: &mut Vec<usize>) {
+fn lhs_signals(lhs: &IrLhs, out: &mut Vec<usize>, arrays: &mut Vec<usize>) {
     match lhs {
         IrLhs::Whole(index)
         | IrLhs::Bit(index, ..)
         | IrLhs::Part(index, ..)
         | IrLhs::IdxPart(index, ..) => out.push(*index),
+        IrLhs::ArrayElem { arr, .. } => arrays.push(*arr),
         IrLhs::PackedSelect { target, .. } | IrLhs::TaggedSelect { target, .. } => {
-            lhs_signals(target, out);
+            lhs_signals(target, out, arrays);
         }
         IrLhs::Stream { parts, .. } => {
             for (part, _) in parts {
-                lhs_signals(part, out);
+                lhs_signals(part, out, arrays);
             }
         }
         _ => {}
@@ -759,9 +823,11 @@ mod tests {
             }],
         }];
         let mut written = Vec::new();
+        let mut arrays = Vec::new();
         for statement in &body {
-            continuous_writes(statement, &mut written);
+            continuous_writes(statement, &mut written, &mut arrays);
         }
         assert_eq!(written, vec![3, 5]);
+        assert!(arrays.is_empty());
     }
 }

@@ -1,0 +1,145 @@
+diff --git a/source/ast/statements/MiscStatements.cpp b/source/ast/statements/MiscStatements.cpp
+index a53c6c258..0d86143e9 100644
+--- a/source/ast/statements/MiscStatements.cpp
++++ b/source/ast/statements/MiscStatements.cpp
+@@ -576,7 +576,54 @@ static bool isValidAssignLVal(const Expression& expr) {
+     }
+ }
+ 
++// Whether SystemVerilog force and release admit an element of a static
++// unpacked array variable as a target. 1800-2009 10.6.2 admits "a singular
++// variable"; such an element is one (6.4), and so is a member of an unpacked
++// structure reached from it. IEEE 1364-2001 9.3.2 excludes every memory word.
++static bool forceAdmitsArrayElements(const ASTContext& context) {
++    return context.getCompilation().languageVersion() >= LanguageVersion::v1800_2017;
++}
++
++// A chain of element selects of fixed-size unpacked arrays and member
++// accesses of unpacked structures, with at least one element select, rooted
++// at a variable: `mem[i]`, `mem2[i][j]`, `s[i].f`. Elements of dynamic arrays,
++// queues and associative arrays, class properties, and bit- or part-selects
++// of an element (selects of a variable) are not such chains.
++static bool isStaticArrayElementLVal(const Expression& expr) {
++    bool element = false;
++    const Expression* current = &expr;
++    while (true) {
++        switch (current->kind) {
++            case ExpressionKind::ElementSelect: {
++                auto& value = current->as<ElementSelectExpression>().value();
++                if (value.type->getCanonicalType().kind != SymbolKind::FixedSizeUnpackedArrayType)
++                    return false;
++                element = true;
++                current = &value;
++                break;
++            }
++            case ExpressionKind::MemberAccess: {
++                auto& value = current->as<MemberAccessExpression>().value();
++                if (!value.type->isUnpackedStruct())
++                    return false;
++                current = &value;
++                break;
++            }
++            case ExpressionKind::NamedValue:
++            case ExpressionKind::HierarchicalValue: {
++                auto sym = current->getSymbolReference();
++                return element && sym && sym->kind == SymbolKind::Variable;
++            }
++            default:
++                return false;
++        }
++    }
++}
++
+ static bool isValidForceLVal(const Expression& expr, const ASTContext& context, bool inSelect) {
++    if (!inSelect && forceAdmitsArrayElements(context) && isStaticArrayElementLVal(expr))
++        return true;
++
+     switch (expr.kind) {
+         case ExpressionKind::NamedValue:
+         case ExpressionKind::HierarchicalValue:
+@@ -615,8 +662,10 @@ Statement& ProceduralAssignStatement::fromSyntax(Compilation& compilation,
+                                                  const ProceduralAssignStatementSyntax& syntax,
+                                                  const ASTContext& context) {
+     bool isForce = syntax.keyword.kind == TokenKind::ForceKeyword;
+-    auto& assign = Expression::bind(*syntax.expr, context,
+-                                    ASTFlags::NonProcedural | ASTFlags::AssignmentAllowed);
++    bitmask<ASTFlags> flags = ASTFlags::NonProcedural | ASTFlags::AssignmentAllowed;
++    if (isForce && forceAdmitsArrayElements(context))
++        flags |= ASTFlags::ForceTarget;
++    auto& assign = Expression::bind(*syntax.expr, context, flags);
+     auto result = compilation.emplace<ProceduralAssignStatement>(assign, isForce,
+                                                                  syntax.sourceRange());
+     if (assign.bad())
+@@ -654,10 +703,13 @@ void ProceduralAssignStatement::serializeTo(ASTSerializer& serializer) const {
+ Statement& ProceduralDeassignStatement::fromSyntax(Compilation& compilation,
+                                                    const ProceduralDeassignStatementSyntax& syntax,
+                                                    const ASTContext& context) {
+-    auto ctx = context.resetFlags(ASTFlags::NonProcedural);
++    bool isRelease = syntax.keyword.kind == TokenKind::ReleaseKeyword;
++    bitmask<ASTFlags> flags = ASTFlags::NonProcedural;
++    if (isRelease && forceAdmitsArrayElements(context))
++        flags |= ASTFlags::ForceTarget;
++    auto ctx = context.resetFlags(flags);
+     auto& lvalue = Expression::bind(*syntax.variable, ctx);
+ 
+-    bool isRelease = syntax.keyword.kind == TokenKind::ReleaseKeyword;
+     auto result = compilation.emplace<ProceduralDeassignStatement>(lvalue, isRelease,
+                                                                    syntax.sourceRange());
+     if (lvalue.bad() || !lvalue.requireLValue(ctx))
+diff --git a/tests/unittests/ast/StatementTests.cpp b/tests/unittests/ast/StatementTests.cpp
+index b9a69de60..8741f5246 100644
+--- a/tests/unittests/ast/StatementTests.cpp
++++ b/tests/unittests/ast/StatementTests.cpp
+@@ -1181,6 +1181,52 @@ endmodule
+     CHECK(diags[5].code == diag::AutoFromNonProcedural);
+ }
+ 
++TEST_CASE("Force and release of static unpacked array elements") {
++    // An element of a static unpacked array variable, or a member of an
++    // unpacked structure element, is a singular variable (IEEE 1800-2009 6.4,
++    // 10.6.2); its index may be a runtime expression. Selects of an element,
++    // dynamic array and queue elements, and runtime net selects stay illegal.
++    auto tree = SyntaxTree::fromText(R"(
++typedef struct { int f; int g; } s_t;
++module m;
++    int mem[4];
++    int mem2[2][3];
++    s_t s[2];
++    logic [7:0] bytes[2];
++    int dq[];
++    int q[$];
++    wire [3:0] nets[2];
++    int i;
++
++    initial begin
++        force mem[1] = 7;
++        force mem[i] = i;
++        release mem[i];
++        force mem2[i][1] = 1;
++        force s[i].f = 2;
++        release s[1].f;
++        force {mem[0], i} = 0;
++        force bytes[1][3:0] = 4'hf;
++        force dq[1] = 1;
++        release q[1];
++        force nets[i] = 0;
++    end
++endmodule
++)");
++
++    Compilation compilation;
++    compilation.addSyntaxTree(tree);
++
++    auto& diags = compilation.getAllDiagnostics();
++    REQUIRE(diags.size() == 6);
++    CHECK(diags[0].code == diag::BadProceduralForce);
++    CHECK(diags[1].code == diag::DynamicNotProcedural);
++    CHECK(diags[2].code == diag::BadProceduralForce);
++    CHECK(diags[3].code == diag::DynamicNotProcedural);
++    CHECK(diags[4].code == diag::BadProceduralForce);
++    CHECK(diags[5].code == diag::ConstEvalNonConstVariable);
++}
++
+ TEST_CASE("Unexpected port decls") {
+     auto tree = SyntaxTree::fromText(R"(
+ module m;

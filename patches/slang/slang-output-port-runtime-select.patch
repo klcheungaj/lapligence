@@ -1,8 +1,8 @@
 diff --git a/include/slang/ast/ASTContext.h b/include/slang/ast/ASTContext.h
-index b00c007df..b64acd47a 100644
+index b00c007df..965a0a0cc 100644
 --- a/include/slang/ast/ASTContext.h
 +++ b/include/slang/ast/ASTContext.h
-@@ -184,8 +184,12 @@ enum class SLANG_EXPORT ASTFlags : uint64_t {
+@@ -184,8 +184,17 @@ enum class SLANG_EXPORT ASTFlags : uint64_t {
  
      /// AST binding is for a wildcard port connection.
      WildcardPortConn = 1ull << 42,
@@ -10,14 +10,19 @@ index b00c007df..b64acd47a 100644
 +    /// AST binding is for a continuous assignment statement, whose variable
 +    /// targets admit runtime selects (IEEE 1800-2009 10.3, A.8.5).
 +    ContinuousAssign = 1ull << 43,
++
++    /// AST binding is for a SystemVerilog force or release target, which may
++    /// select an element of a static unpacked array variable with a runtime
++    /// index (IEEE 1800-2009 10.6.2, 6.4).
++    ForceTarget = 1ull << 44,
  };
 -SLANG_BITMASK(ASTFlags, WildcardPortConn)
-+SLANG_BITMASK(ASTFlags, ContinuousAssign)
++SLANG_BITMASK(ASTFlags, ForceTarget)
  
  /// Various flags that can be applied to a constant expression evaluation.
  enum class SLANG_EXPORT EvalFlags : uint8_t {
 diff --git a/source/ast/expressions/SelectExpressions.cpp b/source/ast/expressions/SelectExpressions.cpp
-index 412ab537a..9632bc146 100644
+index 412ab537a..252f9da51 100644
 --- a/source/ast/expressions/SelectExpressions.cpp
 +++ b/source/ast/expressions/SelectExpressions.cpp
 @@ -80,6 +80,33 @@ static void checkForVectoredSelect(const Expression& value, SourceRange range,
@@ -54,7 +59,7 @@ index 412ab537a..9632bc146 100644
  template<typename T>
  bool requireLValueHelper(const T& expr, const ASTContext& context, SourceLocation location,
                           bitmask<AssignFlags> flags) {
-@@ -111,7 +138,20 @@ bool requireLValueHelper(const T& expr, const ASTContext& context, SourceLocatio
+@@ -111,7 +138,30 @@ bool requireLValueHelper(const T& expr, const ASTContext& context, SourceLocatio
          }
      }
  
@@ -65,18 +70,28 @@ index 412ab537a..9632bc146 100644
 +    // take a variable_lvalue whose select admits runtime expressions; the
 +    // longest static prefix is the driven variable for the 6.5 single-writer
 +    // rule (11.5.3). Net lvalues, primitive terminals and inout connections
-+    // keep their constant_select rule, as do procedural assign and force.
++    // keep their constant_select rule, as does procedural assign. A force or
++    // release target may select an element of a static unpacked array
++    // variable with a runtime index: the element is a singular variable
++    // (1800-2009 10.6.2, 6.4) and the index is evaluated when the statement
++    // executes. Packed selects of a force target stay constant.
 +    auto root = selectRootSymbol(expr);
 +    const bool variableAssignment = context.flags.has(ASTFlags::OutputArg) ||
 +                                    context.flags.has(ASTFlags::ContinuousAssign);
-+    const bool runtimeVariableSelect = variableAssignment &&
-+                                       !flags.has(AssignFlags::InOutPort) && root &&
-+                                       root->kind == SymbolKind::Variable;
++    bool runtimeVariableSelect = variableAssignment && !flags.has(AssignFlags::InOutPort) &&
++                                 root && root->kind == SymbolKind::Variable;
++    if constexpr (std::is_same_v<T, ElementSelectExpression>) {
++        if (context.flags.has(ASTFlags::ForceTarget) && root &&
++            root->kind == SymbolKind::Variable &&
++            val.type->getCanonicalType().kind == SymbolKind::FixedSizeUnpackedArrayType) {
++            runtimeVariableSelect = true;
++        }
++    }
 +    if (context.flags.has(ASTFlags::NonProcedural) && !runtimeVariableSelect) {
          if constexpr (std::is_same_v<T, RangeSelectExpression>) {
              if (!context.eval(expr.left()) || !context.eval(expr.right()))
                  return false;
-@@ -926,6 +966,19 @@ Expression& MemberAccessExpression::fromSelector(
+@@ -926,6 +976,19 @@ Expression& MemberAccessExpression::fromSelector(
              if (auto base = ct.getBaseClass(); base && base->isError())
                  return badExpr(comp, &expr);
  

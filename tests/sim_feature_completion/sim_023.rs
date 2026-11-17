@@ -253,15 +253,143 @@ fn neg_array_element_in_verilog_2001() {
     );
 }
 
+// ── K3: elements of static unpacked arrays ─────────────────────────────────
+
 #[test]
-fn static_memory_element_force_is_a_known_limitation() {
+fn static_memory_element_force_witness() {
     // FND-002 L-F05-13-02 reads an element of a static unpacked array as a
-    // singular variable (SV 6.4, 10.6.2). The frontend rejects every select
-    // of a variable; see docs/known_issues.md.
-    sim_cli::reject_case(
+    // singular variable (SV 6.4, 10.6.2).
+    sim_cli::run_case_backend_parity(
         SUITE,
         "static_memory_force_witness",
-        "static_memory_force_witness.sv:6:15 lvalue of force/release must be a net, a variable",
+        include_str!("../fixtures/sim/feature_completion/sim_023/static_memory_force_witness.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn element_index_is_evaluated_at_the_statement() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "element_runtime_index",
+        include_str!("../fixtures/sim/feature_completion/sim_023/element_runtime_index.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn forced_element_survives_every_array_write() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "element_writes",
+        include_str!("../fixtures/sim/feature_completion/sim_023/element_writes.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn concatenations_of_elements_skip_invalid_indices() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "element_concat",
+        include_str!("../fixtures/sim/feature_completion/sim_023/element_concat.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn readmem_leaves_forced_elements() {
+    sim_cli::run_case_backend_parity_with_files(
+        SUITE,
+        "element_readmem",
+        include_str!("../fixtures/sim/feature_completion/sim_023/element_readmem.out"),
+        &[],
+        &[],
+        &[("element_readmem.hex", "11\n22\n33\n44\n")],
+    );
+}
+
+#[test]
+fn members_of_record_elements_are_forced() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "element_member",
+        include_str!("../fixtures/sim/feature_completion/sim_023/element_member.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn lazily_allocated_cells_are_forced() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "element_sparse",
+        include_str!("../fixtures/sim/feature_completion/sim_023/element_sparse.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn record_member_arrays_force_in_both_storage_forms() {
+    // One storage cell per record leaf below 16 cells, member-array columns
+    // at 16 (LLG_RECORD_COLUMN_MIN_CELLS); the output is the same.
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_023/element_record_shapes.out");
+    for cells in ["N=3", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "element_record_shapes",
+            expected,
+            &["-D", cells],
+            &[],
+        );
+    }
+}
+
+#[test]
+fn neg_dynamic_array_element() {
+    // SV 6.21, reported by the frontend.
+    sim_cli::reject_case(
+        SUITE,
+        "neg_dynamic_array_element",
+        "neg_dynamic_array_element.sv:8:11 lvalue of force/release must be a net, a variable",
+    );
+}
+
+#[test]
+fn neg_queue_element_release() {
+    // SV 6.21, reported by the frontend.
+    sim_cli::reject_case(
+        SUITE,
+        "neg_queue_element_release",
+        "neg_queue_element_release.sv:6:13 lvalue of force/release must be a net, a variable",
+    );
+}
+
+#[test]
+fn neg_element_part_select() {
+    // SV 10.6.2: a part-select of an element is a part-select of a variable
+    // (decision S23-D7).
+    sim_cli::reject_case(
+        SUITE,
+        "neg_element_part_select",
+        "neg_element_part_select.sv:7:11 lvalue of force/release must be a net, a variable",
+    );
+}
+
+#[test]
+fn native_record_member_is_a_known_limitation() {
+    // Legal (SV 6.4, 10.6.2) but not supported; see docs/known_issues.md.
+    sim_cli::reject_case(
+        SUITE,
+        "neg_native_record_member",
+        "force/release of a member of an element of an array of records",
     );
 }
 
