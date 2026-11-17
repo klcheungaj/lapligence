@@ -2875,8 +2875,9 @@ None: the decision is to reject. Reproduce with the files in
 
 **Status:** open. The object model catalog
 [`src/sim/rt/vpi_catalog.txt`](../src/sim/rt/vpi_catalog.txt) is the single
-source of truth for which object types, properties, one-to-one relations and
-iterations the runtime serves: every row it marks `unsupported` is a gap of
+source of truth for which object types, properties, one-to-one relations,
+iterations, callback reasons and `vpi_control` operations the runtime
+serves: every row it marks `unsupported` is a gap of
 this section, with its reason, and a query no row lists is an error
 (decision A19-D26). This section lists the limits the catalog does not
 express: objects outside the generated catalog, values, callbacks, routines
@@ -2927,9 +2928,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   gives a non-static class member no full name; industry-standard
   behaviour names it by the path that reached it, `tb.p.da[1]`, and
   answers NULL when the object was reached by iteration; pending a
-  decision); `cbValueChange` on chandle variables, class
-  properties, strings and arrays (the last three excluded by 38.36.1) and
-  `cbSizeChange`; `vpi_put_value` with a
+  decision); `cbValueChange` on class properties, on elements of
+  fixed-size chandle arrays (industry-standard behaviour serves these),
+  strings and arrays (the last two excluded by 38.36.1); `vpi_put_value` with a
   delay, force or release on a string, property or element (decisions
   A19-D21, A19-D23);
 - structure objects (ADV-019 family 2; their relations are in the
@@ -2940,7 +2941,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   (its frame stack starts empty);
   `cbValueChange` on a continuous assignment or primitive (38.36.1 lists
   variables, expressions, terminals and events; industry-standard tools
-  refuse both too); a delayed
+  refuse both too, decision A19-D91), and on an operation or a primitive
+  terminal (industry-standard behaviour serves both; watch the variables
+  and nets they read or drive); a delayed
   `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
   A19-D8). A `cbValueChange` on a named event watches the synchronization
   object the event names at registration;
@@ -3018,8 +3021,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - callback reasons refused with an error naming the reason: `cbStmt` (a
   statement has no execution hook; adding one would cost every model
   statement a check, or a second statement-hooked code path per process),
-  `cbSizeChange` (dynamic arrays, queues and associative arrays have no
-  resize notification; it would add a check to every resize),
+  `cbSizeChange` (no resize of a dynamic array, queue, associative array
+  or string reaches VPI; industry-standard behaviour never calls it either,
+  decision A19-D91),
   `cbAssign`/`cbDeassign` (procedural `assign`/`deassign` is rejected,
   decision A20-D9), `cbUnresolvedSystf` (every system call is resolved when
   the model is generated) and the save, restart, reset and interactive

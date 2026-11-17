@@ -385,6 +385,7 @@ static vpiHandle dyn_handle_by_index(llg_vpi_slot_t* slot, PLI_INT32 index);
 static vpiHandle dyn_by_suffix(uint32_t row, const char* suffix);
 static vpiHandle dyn_static_by_name(const char* name);
 static int dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot);
+static void dyn_handle_cb_value(const struct llg_vpi_cb* cb, p_vpi_value output);
 static int dyn_bind_object_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
 static void dyn_object_cb_added(void);
 static void dyn_object_cb_removed(void);
@@ -12579,11 +12580,13 @@ typedef struct llg_vpi_cb {
 static void assertion_cb_release(llg_vpi_cb_t* cb);
 
 /* What a watch key is: published storage whose value the callback reports,
- * a named event's llg_event_object_t, or the change marker of a value VPI
- * cannot read (a class variable): both of the latter report a NULL value. */
+ * a named event's llg_event_object_t, the change marker of a value VPI
+ * cannot read (a class variable): both of these report a NULL value; or the
+ * change marker of a chandle variable, whose callback reads the variable. */
 #define LLG_VPI_WATCH_VALUE 0
 #define LLG_VPI_WATCH_EVENT 1
 #define LLG_VPI_WATCH_OPAQUE 2
+#define LLG_VPI_WATCH_HANDLE 3
 
 /* One watched storage address of a cbValueChange record. */
 typedef struct llg_vpi_watch {
@@ -12985,12 +12988,20 @@ static void vpi_value_changed(const void* key) {
         llg_vpi_cb_t* cb = watch->cb;
         if (cb->removed) continue;
         if (watch->event) {
-            /* 38.36.1: an event has no value; the callback's value is NULL. */
+            /* 38.36.1: an event has no value and a class variable's value is
+             * opaque; the callback's value is NULL. */
             s_cb_data data;
             s_vpi_time time;
+            s_vpi_value value;
             base_data(cb, &data);
             data.time = callback_time(cb->time.type, cb->scope, llg_time(), &time);
             data.value = NULL;
+            if (watch->event == LLG_VPI_WATCH_HANDLE && cb->value.format != vpiSuppressVal) {
+                memset(&value, 0, sizeof(value));
+                value.format = cb->value.format;
+                dyn_handle_cb_value(cb, &value);
+                data.value = &value;
+            }
             invoke_cb(cb, &data);
             continue;
         }
@@ -13614,6 +13625,19 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
         cb->value_type = vpiNamedEvent;
         return 1;
     }
+    if (slot->kind == SLOT_OBJECT) {
+        int type = g_vpi.objects[slot->object].type;
+        if (type == vpiContAssign || type == vpiContAssignBit || type == vpiGate ||
+            type == vpiSwitch || type == vpiUdp) {
+            /* 38.36.1 lists variables, expressions, terminals and events;
+             * industry-standard behaviour refuses these too (A19-D91). */
+            vpi_error("LLG_VPI_CALLBACK",
+                      "cbValueChange applies to variables, nets, expressions, terminals and "
+                      "events, not to a continuous assignment or primitive; watch the net it "
+                      "drives (38.36.1, decision A19-D91)");
+            return 0;
+        }
+    }
     llg_vpi_target_t target;
     int whole_array = 0;
     if (!handle_target(slot, &target)) {
@@ -13684,7 +13708,10 @@ static void vpi_refuse_reason(int reason) {
         case cbStmt:
             why = "cbStmt is not supported by llg: statements have no execution hook";
             break;
-        case cbSizeChange: why = "cbSizeChange is not supported by llg"; break;
+        case cbSizeChange:
+            why = "cbSizeChange is not supported by llg: dynamic arrays, queues, associative "
+                  "arrays and strings report no resize to VPI (decision A19-D91)";
+            break;
         case cbUnresolvedSystf:
             why = "cbUnresolvedSystf never occurs in llg: every system task and function call "
                   "is resolved when the model is generated";

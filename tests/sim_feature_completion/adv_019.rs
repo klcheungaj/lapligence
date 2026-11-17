@@ -59,6 +59,27 @@ fn typespec_kinds_print_their_trees() {
     );
 }
 
+/// FIN-001 V3 family (e): `cbValueChange` on chandle variables reports
+/// each new pointer once per check in every value format, through a VPI
+/// put too; the callback kinds llg refuses are refused with an error.
+#[test]
+fn callback_kinds_watch_chandles_and_refuse_the_rest() {
+    let directory = sim_harness::TempDir::new("adv019-cbk").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "callback_kinds", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "callback_kinds",
+        include_str!("../fixtures/sim/feature_completion/adv_019/callback_kinds.out"),
+        &[
+            "--define-system-task",
+            "task $cbk(input int)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 #[test]
 fn structure_and_union_members_read_watch_and_write_their_fields() {
     let directory = sim_harness::TempDir::new("adv019-members").expect("temporary directory");
