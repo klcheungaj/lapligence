@@ -269,11 +269,14 @@ fn unregistered_call_stops_at_startup() {
             assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
             assert!(output.stdout.is_empty(), "{label}: {output:?}");
             assert!(
-                stderr
-                    .contains("[SIM-016] VPI error: no VPI registration for `$absent` (called at "),
+                super::sim_harness::has_message(
+                    &stderr,
+                    "SIM-016",
+                    "missing.sv:6",
+                    "VPI error: no VPI registration for `$absent`"
+                ),
                 "{label}: {stderr}"
             );
-            assert!(stderr.contains("missing.sv:6)"), "{label}: {stderr}");
         },
     );
 }

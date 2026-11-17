@@ -32,13 +32,13 @@ fn source_path(fixture: &str) -> String {
     )
 }
 
-/// The timing violation reports of a run (`SIM-015`) after
-/// `timing violation at `, sorted.
+/// The timing violation reports of a run (`SIM-015`), sorted, as
+/// `file:line:col in <rest of the text after "timing violation in ">`.
 fn violations(output: &Output) -> Vec<String> {
     let mut lines = super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
         .iter()
-        .filter_map(|text| text.strip_prefix("timing violation at "))
-        .map(str::to_owned)
+        .filter_map(|text| text.split_once(" timing violation in "))
+        .map(|(location, rest)| format!("{location} in {rest}"))
         .collect::<Vec<_>>();
     lines.sort();
     lines
@@ -48,7 +48,7 @@ fn violations(output: &Output) -> Vec<String> {
 fn generation_warnings(output: &Output) -> Vec<String> {
     super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
         .into_iter()
-        .filter(|text| !text.starts_with("timing violation at "))
+        .filter(|text| !text.contains(" timing violation in "))
         .collect()
 }
 
@@ -220,9 +220,7 @@ fn inconsistent_negative_limits_are_zeroed_with_a_warning() {
         );
         assert_eq!(
             violations(output),
-            vec![format!(
-                "{path}:14:5 in tb.u at time 106 (1ns): $hold(posedge A:100, B:106, 10)"
-            )],
+            vec!["inconsistent.v:14:5 in tb.u at time 106 (1ns): $hold(posedge A:100, B:106, 10)"],
             "{label}"
         );
     });
@@ -233,7 +231,7 @@ fn inconsistent_negative_limits_are_zeroed_with_a_warning() {
 /// undelayed event times; timer-based skew reports give the expiry time.
 #[test]
 fn violation_reports_name_the_check_and_undelayed_times() {
-    let path = source_path("combined.v");
+    let path = "combined.v";
     sim_cli::run_case_checked_matrix(SUITE, "combined.v", &[], &|label, output| {
         let reports = violations(output);
         for expected in [
@@ -250,7 +248,7 @@ fn violation_reports_name_the_check_and_undelayed_times() {
         }
         assert_eq!(reports.len(), 18, "{label}: {reports:?}");
     });
-    let path = source_path("negative.v");
+    let path = "negative.v";
     sim_cli::run_case_checked_matrix(SUITE, "negative.v", &[NEGATIVE], &|label, output| {
         let reports = violations(output);
         for expected in [
@@ -266,7 +264,7 @@ fn violation_reports_name_the_check_and_undelayed_times() {
             );
         }
     });
-    let path = source_path("skew.v");
+    let path = "skew.v";
     sim_cli::run_case_checked_matrix(SUITE, "skew.v", &[], &|label, output| {
         let reports = violations(output);
         for expected in [
@@ -284,7 +282,7 @@ fn violation_reports_name_the_check_and_undelayed_times() {
             );
         }
     });
-    let path = source_path("nochange.v");
+    let path = "nochange.v";
     sim_cli::run_case_checked_matrix(SUITE, "nochange.v", &[NEGATIVE], &|label, output| {
         let reports = violations(output);
         for expected in [

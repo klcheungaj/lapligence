@@ -4,7 +4,7 @@
 static void sequence_thread_acquire(void) {
     if (++g.sequence_threads == g.sequence_thread_limit + 1u) {
         const llg_concurrent_assertion_t* assertion = g.sequence_current;
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "sequence thread budget exhausted: more than %llu live sequence threads at time %llu (concurrent assertion %s at %s); raise LLG_SEQUENCE_THREAD_LIMIT", (unsigned long long)g.sequence_thread_limit, (unsigned long long)g.now, assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>", assertion && assertion->location ? assertion->location : "<unknown>");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, assertion ? assertion->location : NULL, "sequence thread budget exhausted: more than %llu live sequence threads at time %llu (concurrent assertion %s); raise LLG_SEQUENCE_THREAD_LIMIT", (unsigned long long)g.sequence_thread_limit, (unsigned long long)g.now, assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>");
         llg_last_failure = 1;
         g.finish = 1;
     }
@@ -20,7 +20,7 @@ static void sequence_thread_release(void) {
 static void sequence_mult_overflow(void) {
     const llg_concurrent_assertion_t* assertion = g.sequence_current;
     if (g.finish) return;
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "sequence match multiplicity overflow at time %llu (concurrent assertion %s at %s)", (unsigned long long)g.now, assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>", assertion && assertion->location ? assertion->location : "<unknown>");
+    llg_msg(LLG_MSG_RUNTIME_ERROR, assertion ? assertion->location : NULL, "sequence match multiplicity overflow at time %llu (concurrent assertion %s)", (unsigned long long)g.now, assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>");
     llg_last_failure = 1;
     g.finish = 1;
 }
@@ -47,7 +47,7 @@ static int sequence_mult_enumerable(uint64_t mult) {
     if (mult <= g.sequence_thread_limit) return 1;
     const llg_concurrent_assertion_t* assertion = g.sequence_current;
     if (!g.finish) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "sequence thread budget exhausted: %llu matches must each run match items or a pass statement at time %llu (concurrent assertion %s at %s); raise LLG_SEQUENCE_THREAD_LIMIT", (unsigned long long)mult, (unsigned long long)g.now, assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>", assertion && assertion->location ? assertion->location : "<unknown>");
+        llg_msg(LLG_MSG_RUNTIME_ERROR, assertion ? assertion->location : NULL, "sequence thread budget exhausted: %llu matches must each run match items or a pass statement at time %llu (concurrent assertion %s); raise LLG_SEQUENCE_THREAD_LIMIT", (unsigned long long)mult, (unsigned long long)g.now, assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>");
         llg_last_failure = 1;
         g.finish = 1;
     }

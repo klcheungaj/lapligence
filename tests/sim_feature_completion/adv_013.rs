@@ -191,9 +191,12 @@ fn unbounded_recursion_with_local_variables_reports_the_thread_budget() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(!output.status.success(), "{label}: {stderr}");
             assert!(
-                stderr.contains(
-                    "ERROR: [SIM-010] sequence thread budget exhausted: more than 200 live \
-                     sequence threads at time 75 (concurrent assertion g at "
+                super::sim_harness::has_message(
+                    &stderr,
+                    "SIM-010",
+                    "rec_budget.sv:12:3",
+                    "sequence thread budget exhausted: more than 200 live sequence threads at \
+                     time 75 (concurrent assertion g); raise"
                 ),
                 "{label}: {stderr}"
             );

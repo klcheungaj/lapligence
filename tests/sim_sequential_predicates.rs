@@ -1,6 +1,5 @@
 //! R06: source-ordered predicates in independent optimized and unoptimized CLI runs.
 use crate::sim_cli;
-use crate::sim_harness;
 
 #[test]
 fn sequential_predicate_truth_table() {
@@ -160,18 +159,13 @@ fn syn_024_tagged_patterns_guard_tags_and_bind_payloads() {
 
 #[test]
 fn syn_025_pattern_case_items_filters_and_qualifiers() {
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim/sequential_predicates/syn_025_pattern_case.sv");
-    let warning = format!(
-        "unique violation at {}:111:9: multiple matching items",
-        sim_harness::source_display(&source)
-    );
+    let warning = "syn_025_pattern_case.sv:111:9 unique violation: multiple matching items";
     sim_cli::run_case_with_args(
         "sequential_predicates",
         "syn_025_pattern_case",
         "pattern_case=pass result=5a calls=1\n",
         "INFO: [SIM-000] 0 error(s), 1 warning(s)\n",
-        &[warning.as_str()],
+        &[warning],
         &["--edition", "sv2009"],
     );
 }

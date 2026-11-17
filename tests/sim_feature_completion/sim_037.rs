@@ -545,9 +545,12 @@ fn sequence_thread_budget_reports_exhaustion() {
         let stderr = String::from_utf8_lossy(&limited.stderr);
         assert!(!limited.status.success(), "optimized={optimized}: {stderr}");
         assert!(
-            stderr.contains(
-                "ERROR: [SIM-010] sequence thread budget exhausted: more than 50 live sequence threads at time "
-            ) && stderr.contains("(concurrent assertion p at "),
+            super::sim_harness::has_message(
+                &stderr,
+                "SIM-010",
+                "budget.sv:11:3",
+                "sequence thread budget exhausted: more than 50 live sequence threads at time "
+            ) && stderr.contains("(concurrent assertion p); raise"),
             "optimized={optimized}: {stderr}"
         );
         assert!(
@@ -599,9 +602,12 @@ fn match_multiplicity_limits_are_reported_errors() {
         let stderr = String::from_utf8_lossy(&limited.stderr);
         assert!(!limited.status.success(), "optimized={optimized}: {stderr}");
         assert!(
-            stderr.contains(
-                "ERROR: [SIM-010] sequence thread budget exhausted: 4096 matches must each run match items or a pass statement at time "
-            ) && stderr.contains("(concurrent assertion p at "),
+            super::sim_harness::has_message(
+                &stderr,
+                "SIM-010",
+                "multiplicity_budget.sv:16:3",
+                "sequence thread budget exhausted: 4096 matches must each run match items or a pass statement at time "
+            ) && stderr.contains("(concurrent assertion p); raise"),
             "optimized={optimized}: {stderr}"
         );
         assert!(
@@ -613,8 +619,11 @@ fn match_multiplicity_limits_are_reported_errors() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success(), "{label}: {stderr}");
         assert!(
-            stderr.contains(
-                "ERROR: [SIM-010] sequence match multiplicity overflow at time 635000 (concurrent assertion p at "
+            super::sim_harness::has_message(
+                &stderr,
+                "SIM-010",
+                "multiplicity_overflow.sv:11:3",
+                "sequence match multiplicity overflow at time 635000 (concurrent assertion p)"
             ),
             "{label}: {stderr}"
         );

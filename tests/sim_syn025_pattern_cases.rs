@@ -1,17 +1,10 @@
 //! IEEE 1800-2009 12.6.1 pattern cases and 12.5.3 qualifier diagnostics.
 use crate::sim_cli;
-use crate::sim_harness;
 
 #[test]
 fn qualifier_counts_filtered_items_and_preserves_first_body() {
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim/syn025_pattern_cases/qualifiers.sv");
-    let warning = |line, qualifier, reason| {
-        format!(
-            "{qualifier} violation at {}:{line}:9: {reason}",
-            sim_harness::source_display(&source)
-        )
-    };
+    let warning =
+        |line, qualifier, reason| format!("qualifiers.sv:{line}:9 {qualifier} violation: {reason}");
     let warnings = [
         warning(16, "unique", "multiple matching items"),
         warning(23, "unique", "multiple matching items"),

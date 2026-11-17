@@ -40,7 +40,7 @@ fn warnings(output: &Output) -> Vec<String> {
 
 /// The check of one run of `fixture`: success, `expected` standard output
 /// and exactly the `expected_warnings` (`{path}` stands for the fixture's
-/// absolute path, `{any}` for text that differs between platforms, such as
+/// absolute path, `{file}` for its file name, `{any}` for text that differs between platforms, such as
 /// an operating system error).
 fn warnings_check(
     fixture: &str,
@@ -50,7 +50,7 @@ fn warnings_check(
     let path = source_path(fixture);
     let mut expected_warnings = expected_warnings
         .iter()
-        .map(|line| line.replace("{path}", &path))
+        .map(|line| line.replace("{path}", &path).replace("{file}", fixture))
         .collect::<Vec<_>>();
     expected_warnings.sort();
     move |label: &str, output: &Output| {
@@ -111,29 +111,29 @@ fn timing_check_limits() {
         "checks.v",
         fixture!("checks.out"),
         &[
-            "timing violation at {path}:12:5 in tb.su at time 103000 (1ps): \
+            "{file}:12:5 timing violation in tb.su at time 103000 (1ps): \
              $setup(d:100000, posedge clk:103000, 6000)",
-            "timing violation at {path}:19:5 in tb.ho at time 204000 (1ps): \
+            "{file}:19:5 timing violation in tb.ho at time 204000 (1ps): \
              $hold(posedge clk:200000, d:204000, 6000)",
-            "timing violation at {path}:26:5 in tb.sh at time 303000 (1ps): \
+            "{file}:26:5 timing violation in tb.sh at time 303000 (1ps): \
              $setup(d:300000, posedge clk:303000, 6000)",
-            "timing violation at {path}:26:5 in tb.sh at time 307000 (1ps): \
+            "{file}:26:5 timing violation in tb.sh at time 307000 (1ps): \
              $hold(posedge clk:303000, d:307000, 6000)",
-            "timing violation at {path}:33:5 in tb.rc at time 405000 (1ps): \
+            "{file}:33:5 timing violation in tb.rc at time 405000 (1ps): \
              $recovery(posedge rst:400000, posedge clk:405000, 7000)",
-            "timing violation at {path}:40:5 in tb.rm at time 505000 (1ps): \
+            "{file}:40:5 timing violation in tb.rm at time 505000 (1ps): \
              $removal(posedge rst:505000, posedge clk:500000, 8000)",
-            "timing violation at {path}:47:5 in tb.rr at time 605000 (1ps): \
+            "{file}:47:5 timing violation in tb.rr at time 605000 (1ps): \
              $recovery(posedge rst:600000, posedge clk:605000, 7000)",
-            "timing violation at {path}:47:5 in tb.rr at time 645000 (1ps): \
+            "{file}:47:5 timing violation in tb.rr at time 645000 (1ps): \
              $removal(posedge rst:645000, posedge clk:640000, 8000)",
-            "timing violation at {path}:54:5 in tb.sk at time 724000 (1ps): \
+            "{file}:54:5 timing violation in tb.sk at time 724000 (1ps): \
              $skew(posedge clk:720000, posedge d:724000, 3000)",
-            "timing violation at {path}:61:5 in tb.wi at time 807000 (1ps): \
+            "{file}:61:5 timing violation in tb.wi at time 807000 (1ps): \
              $width(posedge clk:800000, negedge clk:807000, 12000, 0)",
-            "timing violation at {path}:68:5 in tb.pe at time 930000 (1ps): \
+            "{file}:68:5 timing violation in tb.pe at time 930000 (1ps): \
              $period(posedge clk:900000, posedge clk:930000, 40000)",
-            "timing violation at {path}:75:5 in tb.nc at time 1012000 (1ps): \
+            "{file}:75:5 timing violation in tb.nc at time 1012000 (1ps): \
              $nochange(posedge clk:1000000, d:1012000, 2000, 3000)",
         ],
     );
@@ -151,9 +151,9 @@ fn negative_setuphold_limits() {
         "negative.v",
         fixture!("negative.out"),
         &[
-            "timing violation at {path}:14:5 in tb.h at time 104000 (1ps): \
+            "{file}:14:5 timing violation in tb.h at time 104000 (1ps): \
              $setuphold(posedge clk:100000, d:104000, -2000, 5000)",
-            "timing violation at {path}:23:5 in tb.a at time 104000 (1ps): \
+            "{file}:23:5 timing violation in tb.a at time 104000 (1ps): \
              $setuphold(posedge clk:100000, d:104000, -2000, 5000)",
         ],
     );
@@ -325,7 +325,7 @@ fn diagnostics() {
                  `PULSE_DELAY`; llg reads MTM, SCALE_FACTORS, SCALE_TYPE, INTERCONNECT_MIPD and \
                  TURNOFF_DELAY; the call annotates nothing"
             ),
-            "timing violation at {path}:18:5 in tb.f0 at time 60000 (1ps): $setup(d:57000, \
+            "{file}:18:5 timing violation in tb.f0 at time 60000 (1ps): $setup(d:57000, \
              posedge clk:60000, 4000)",
         ],
     );
