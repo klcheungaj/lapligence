@@ -416,7 +416,7 @@ typedef struct {
     int8_t shortreal;
     uint32_t class_index;     /* class layout + 1 of a class handle; 0: built-in */
     uint32_t element;         /* container element shape */
-    uint32_t typespec;        /* typespec index + 1 of a packed value; 0: none */
+    uint32_t typespec;        /* typespec index + 1 of a packed value or a chandle; 0: none */
     uint8_t builtin;          /* LLG_VPI_BUILTIN_* of a built-in class handle */
     /* The declared [left:right] of a named event array class property (type
      * vpiNamedEventArray, a fixed-size container of events); 0 otherwise. */

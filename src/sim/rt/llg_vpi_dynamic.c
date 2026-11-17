@@ -2285,6 +2285,11 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                 return shape->class_index ? class_typespec_handle(shape->class_index - 1u) : NULL;
             if (type == vpiTypespec && shape->shape == LLG_VPI_SHAPE_PACKED && shape->typespec)
                 return typespec_handle(typespec_ref(shape->typespec));
+            /* A chandle property's typespec (37.23); a catalog row's comes
+             * from its row, which names its declaration. */
+            if (type == vpiTypespec && slot->kind == SLOT_PROPERTY &&
+                shape->shape == LLG_VPI_SHAPE_CHANDLE && shape->typespec)
+                return typespec_handle(typespec_ref(shape->typespec));
             if (slot->kind == SLOT_PROPERTY && type == vpiParent &&
                 shape->shape != LLG_VPI_SHAPE_VIF) {
                 /* 37.17 detail 26: a property reached by iteration has no

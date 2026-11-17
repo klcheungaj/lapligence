@@ -78,7 +78,11 @@ pub enum IrVpiShape {
     Builtin {
         kind: IrVpiBuiltin,
     },
-    Chandle,
+    /// A chandle; `typespec` indexes [`IrModel::vpi_typespecs`] (its
+    /// `vpiChandleTypespec`, named by the declaration's typedef).
+    Chandle {
+        typespec: Option<usize>,
+    },
     Container {
         array_type: IrVpiArrayType,
         /// Elements are descriptor-backed values (`llg_value_t`) rather than
@@ -135,7 +139,7 @@ impl IrVpiShape {
             Self::Real { shortreal: false } => "vpiRealVar",
             Self::String => "vpiStringVar",
             Self::Class { .. } | Self::Builtin { .. } => "vpiClassVar",
-            Self::Chandle => "vpiChandleVar",
+            Self::Chandle { .. } => "vpiChandleVar",
             Self::Container { .. } | Self::FixedArray { .. } => "vpiArrayVar",
             Self::Event => "vpiNamedEvent",
             Self::EventArray { .. } => "vpiNamedEventArray",
@@ -152,7 +156,7 @@ impl IrVpiShape {
             Self::Real { .. } => "LLG_VPI_SHAPE_REAL",
             Self::String => "LLG_VPI_SHAPE_STRING",
             Self::Class { .. } | Self::Builtin { .. } => "LLG_VPI_SHAPE_CLASS",
-            Self::Chandle => "LLG_VPI_SHAPE_CHANDLE",
+            Self::Chandle { .. } => "LLG_VPI_SHAPE_CHANDLE",
             Self::Container { .. } | Self::FixedArray { .. } => "LLG_VPI_SHAPE_CONTAINER",
             Self::Event => "LLG_VPI_SHAPE_EVENT",
             // Elements are reached as those of any fixed-size container.
@@ -508,7 +512,9 @@ mod tests {
             element: 0,
         });
         assert!(dynamic.validate(&model).is_err());
-        dynamic.shapes.insert(0, IrVpiShape::Chandle);
+        dynamic
+            .shapes
+            .insert(0, IrVpiShape::Chandle { typespec: None });
         dynamic.shapes[1] = IrVpiShape::Container {
             array_type: IrVpiArrayType::Dynamic,
             values: true,

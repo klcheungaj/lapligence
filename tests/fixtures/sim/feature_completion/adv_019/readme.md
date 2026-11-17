@@ -95,6 +95,61 @@ and constants, the typespec members and `vpiElemTypespec`, recursively.
   only on associative array typespecs"); asking an enum typespec for it
   returns NULL with `vpiError`.
 
+## typespec_kinds (37.23, 7.3.2, decision A19-D90; FIN-001 V3 family (d))
+
+`typespec_kinds.c` prints, for each variable, `vpiType` and its typespec
+tree: type, `vpiName`, `vpiPacked` and `vpiTagged` of structure and union
+typespecs, `vpiTypedefAlias`, the enum base and the typespec members, as
+`typespecs.c` does.
+
+- Tagged unions. The 37.23 diagram (L59124-L59130) gives a union typespec
+  the properties `bool: vpiPacked` and `bool: vpiTagged`, and 7.3.2
+  (L7943-L7944) makes packing a qualifier of a tagged union: "When the
+  packed qualifier is used on a tagged union, all the members shall have
+  packed types, but they do not have to be of the same size." `tp_t`
+  (`union tagged packed`) prints `packed=1 tagged=1`, `tu_t` (`union
+  tagged`, with a `real` member) `packed=0 tagged=1`, and the untagged
+  `up_t` `packed=1 tagged=0`. An unpacked tagged union variable is a
+  `vpiUnionVar` (37.17 diagram, "union var").
+- Chandle typespecs. The 37.23 diagram lists `chandle typespec`
+  (`vpiChandleTypespec`, Annex M L76287). Detail 1 (L59170-L59172) names
+  a typespec after its typedef and gives a built-in type no name, and
+  detail 6 (L59200, L59204-L59206) makes a typedef of a built-in type an
+  alias of it: "The vpiTypedefAlias applied to handle h1 shall return a
+  typespec handle h2 to the predefined type". `vpi_iterate(vpiTypedef, tb)`
+  lists every typedef of `tb` with its line (37.10 detail 1), `ch_t`
+  (`typedef chandle ch_t`) with an unnamed chandle alias and `ch2_t` with
+  the alias `ch_t`. The same typespecs come from the variables `h`, `hn`,
+  `hn2`, from the members of the unpacked structure `sh_t` and of the
+  tagged union `th_t` (7.3.2, L7903: "Dynamic types and chandle types shall
+  not be used in untagged unions, but may be used in tagged unions."), from
+  the member variable `tb.sh.h`, from the element type of the queue `hq`
+  and its element `hq[0]` (detail 8), from the class properties `h` and `k`
+  of `c`, from the io declarations of `take`, and from the call `get()`
+  (37.55 detail 5, L60901-L60904, and decision A19-D32: a call has the
+  typespec of its value).
+- Void typespecs. The 37.23 diagram lists `void typespec`
+  (`vpiVoidTypespec`, Annex M L76298), and 6.13 (L5543-L5544) gives the
+  type two uses: "This type can be specified as the return type of
+  functions to indicate no return value. This type can also be used for
+  members of tagged unions (see 7.3.2)." The `Invalid` members of `vp_t`
+  (packed) and `vu_t` (unpacked), the text's `VInt` example of 7.3.2
+  (L7914-L7917), print an unnamed `vpiVoidTypespec`. A void function has no
+  result variable (decision A19-D53), so a tagged union member is the only
+  object with a void typespec.
+- Enum base types. Syntax 6-4 (L6093, L6097-L6098) lets a typedef name the base
+  type: "type_identifier [ packed_dimension ]", legal "if it denotes an
+  integer_atom_type ... or an integer_vector_type". The `vpiBaseTypespec`
+  of an enum is a typespec of that type, so detail 1 (L59170-L59172) names
+  it after the typedef and detail 6 gives a typedef of a built-in type its
+  alias: `en_t` (`enum nib_t`) has the base `nib_t`, `en2_t` (`enum
+  nib2_t`) the base `nib2_t` with the alias `nib_t`, `em_t` (`enum
+  myint_t`) the base `myint_t` with an unnamed `int` alias, and the
+  anonymous `enum nib_t` of `eq` the base `nib_t`; a built-in base (`ei_t`,
+  `enum int`) has no name. Slang rejects a typedef base with a further
+  packed dimension (`enum nib_t [1:0]`, footnote 14 allows one only on a
+  vector), so none is tested.
+
 ## members (37.17, 37.24)
 
 `members.c` prints each structure or union, then iterates `vpiMember` (37.24)

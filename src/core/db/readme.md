@@ -49,7 +49,8 @@ destruction. Each `std::mailbox #(T)` specialization retains the descriptor of
 its `T`, resolved in the specializing scope, keyed by the class type identity.
 Type records are canonical and carry no typedef names; `Db::declared_typedef`
 (variables, nets, parameters and typedefs, from `LLG_SLANG_EDGE_TYPEDEF`),
-`Db::member_typedef` (aggregate members) and `Db::typedef_renames_builtin`
+`Db::member_typedef` (aggregate members), `Db::enum_base_typedef` (an
+enum's base type) and `Db::typedef_renames_builtin`
 keep the typedef each declared type names, with the number of dimensions
 declared above it, for VPI typespec names (IEEE 1800-2009 37.23).
 `Db::imported_items` keeps, per import declaration (semantic detail

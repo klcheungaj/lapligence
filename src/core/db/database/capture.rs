@@ -63,7 +63,11 @@ impl Db {
                 }
             }
         }
+        let mut packed_tagged_unions = HashSet::new();
         for ty in &snapshot.types {
+            if ty.is_tagged && ty.kind == crate::ffi::slang::TypeKind::PackedUnion {
+                packed_tagged_unions.insert(TypeId(ty.id));
+            }
             let members = usize::try_from(ty.member_start)
                 .ok()
                 .zip(usize::try_from(ty.member_count).ok())
@@ -1670,6 +1674,7 @@ impl Db {
             mailbox_elements,
             enum_types,
             typedefs,
+            packed_tagged_unions,
             packed_array_elements,
             packed_dimensions,
             two_state_types,

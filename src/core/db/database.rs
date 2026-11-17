@@ -405,6 +405,10 @@ pub struct Db {
     enum_types: HashMap<TypeId, EnumTypeMetadata>,
     /// Typedef names of declared types and aggregate members (37.23).
     typedefs: TypedefNames,
+    /// Tagged unions declared `packed` (7.3.2), keyed by Slang's canonical
+    /// type identity: `AggregateKind::TaggedUnion` covers both forms, and
+    /// VPI reports the difference as `vpiPacked` (37.23).
+    packed_tagged_unions: HashSet<TypeId>,
     /// Immediate elements of packed arrays of structures, unions and enums,
     /// keyed by the array type identity.
     packed_array_elements: HashMap<TypeId, TypeDescriptor>,
@@ -559,6 +563,7 @@ impl Db {
             mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
             typedefs: TypedefNames::default(),
+            packed_tagged_unions: HashSet::new(),
             packed_array_elements: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
@@ -663,6 +668,7 @@ impl Db {
             mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
             typedefs: TypedefNames::default(),
+            packed_tagged_unions: HashSet::new(),
             packed_array_elements: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
@@ -1419,6 +1425,19 @@ impl Db {
     /// as `time` (37.23 detail 6); its typedef alias is then that type.
     pub fn typedef_renames_builtin(&self, id: NodeId) -> bool {
         self.typedefs.builtin.contains(&id)
+    }
+
+    /// The typedef the declared base type of enum type `id` names
+    /// (`enum nib_t {...}`, 37.23), with the dimensions declared above it.
+    pub fn enum_base_typedef(&self, id: TypeId) -> Option<TypedefRef> {
+        // The bridge exports an enum's base as its one member.
+        self.member_typedef(id, 0)
+    }
+
+    /// Whether tagged union type `id` is declared `packed` (7.3.2); false
+    /// for an unpacked tagged union and for any other type.
+    pub fn is_packed_tagged_union(&self, id: TypeId) -> bool {
+        self.packed_tagged_unions.contains(&id)
     }
 
     /// The typedef the declared type of member `member` (declaration order)

@@ -184,7 +184,7 @@ impl Codegen<'_> {
                 match object.ty {
                     IrObjectType::String => IrVpiShape::String,
                     IrObjectType::Chandle | IrObjectType::Semaphore => {
-                        self.vpi_handle_shape(descriptor)?
+                        self.vpi_handle_shape(typespecs, descriptor, naming)?
                     }
                     _ => return None,
                 }
@@ -217,10 +217,7 @@ impl Codegen<'_> {
             {
                 self.vpi_typespec(typespecs, descriptor, naming, 0)
             }
-            IrVpiShape::Chandle => Some(typespecs.intern(IrVpiTypespec {
-                kind: IrVpiTypespecKind::Chandle,
-                ..IrVpiTypespec::default()
-            })),
+            IrVpiShape::Chandle { typespec } => typespec,
             _ => None,
         };
         Some(DynamicValue {
@@ -258,7 +255,7 @@ impl Codegen<'_> {
             self.vpi_element_shape(dynamic, typespecs, element_type, &container.element, 0);
         let served = match element {
             IrVpiShape::String
-            | IrVpiShape::Chandle
+            | IrVpiShape::Chandle { .. }
             | IrVpiShape::Class { .. }
             | IrVpiShape::Builtin { .. }
             | IrVpiShape::Record { .. } => true,
@@ -278,8 +275,14 @@ impl Codegen<'_> {
         })
     }
 
-    /// Class, chandle or other handle storage, by the declared type.
-    fn vpi_handle_shape(&self, descriptor: &TypeDescriptor) -> Option<IrVpiShape> {
+    /// Class, chandle or other handle storage, by the declared type; a
+    /// chandle carries its typespec, named by `naming`.
+    fn vpi_handle_shape(
+        &self,
+        typespecs: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        naming: Option<TypedefRef>,
+    ) -> Option<IrVpiShape> {
         match &descriptor.shape {
             // The built-in mailbox and semaphore classes (15.3, 15.4).
             TypeShape::Opaque { kind } if kind == "Class" && descriptor.name == "semaphore" => {
@@ -300,7 +303,9 @@ impl Codegen<'_> {
             TypeShape::Opaque { kind } if kind == "Class" => Some(IrVpiShape::Class {
                 class: self.vpi_class_index(descriptor),
             }),
-            TypeShape::Opaque { kind } if kind == "Chandle" => Some(IrVpiShape::Chandle),
+            TypeShape::Opaque { kind } if kind == "Chandle" => Some(IrVpiShape::Chandle {
+                typespec: self.vpi_typespec(typespecs, descriptor, naming, 0),
+            }),
             // Virtual interfaces and events have no variable form here.
             _ => None,
         }
@@ -496,7 +501,7 @@ impl Codegen<'_> {
             IrVpiShape::Packed { .. }
                 | IrVpiShape::Real { .. }
                 | IrVpiShape::String
-                | IrVpiShape::Chandle
+                | IrVpiShape::Chandle { .. }
                 | IrVpiShape::Class { .. }
                 | IrVpiShape::Builtin { .. }
                 | IrVpiShape::Record { .. }
@@ -567,11 +572,15 @@ impl Codegen<'_> {
                 shortreal: *shortreal,
             },
             IrContainerElement::String => IrVpiShape::String,
+            // A chandle element takes the element typespec of its
+            // array's typespec, which keeps the element's typedef name.
             IrContainerElement::Chandle | IrContainerElement::Opaque { .. }
                 if !element.is_process() =>
             {
-                self.vpi_handle_shape(descriptor)
-                    .unwrap_or(IrVpiShape::Other)
+                match self.vpi_handle_shape(typespecs, descriptor, None) {
+                    Some(IrVpiShape::Chandle { .. }) => IrVpiShape::Chandle { typespec: None },
+                    shape => shape.unwrap_or(IrVpiShape::Other),
+                }
             }
             _ => IrVpiShape::Other,
         }
@@ -703,14 +712,7 @@ impl Codegen<'_> {
             TypeShape::Real { shortreal } => Some(IrVpiShape::Real {
                 shortreal: *shortreal,
             }),
-            TypeShape::Opaque { kind } if kind == "Chandle" => {
-                automatic.typespec = Some(typespecs.intern(IrVpiTypespec {
-                    kind: IrVpiTypespecKind::Chandle,
-                    ..IrVpiTypespec::default()
-                }));
-                Some(IrVpiShape::Chandle)
-            }
-            TypeShape::Opaque { .. } => self.vpi_handle_shape(descriptor),
+            TypeShape::Opaque { .. } => self.vpi_handle_shape(typespecs, descriptor, typedef),
             // An unpacked or tagged aggregate is a record value, not a
             // packed cell: an unpacked structure kept as an activation
             // record value gives its members (decision A19-D88), any other
@@ -877,7 +879,11 @@ impl Codegen<'_> {
                             IrVpiShape::VirtualInterface
                         }
                         IrClassFieldType::Chandle => self
-                            .vpi_handle_shape(descriptor)
+                            .vpi_handle_shape(
+                                typespecs,
+                                descriptor,
+                                self.db.declared_typedef(*child),
+                            )
                             .unwrap_or(IrVpiShape::Other),
                     }
                 };
@@ -976,7 +982,7 @@ impl Codegen<'_> {
             let shape = match model.objects.get(*index)?.ty {
                 IrObjectType::String => IrVpiShape::String,
                 IrObjectType::Chandle | IrObjectType::Semaphore => {
-                    self.vpi_handle_shape(descriptor)?
+                    self.vpi_handle_shape(typespecs, descriptor, self.db.declared_typedef(child))?
                 }
                 _ => return None,
             };

@@ -1,0 +1,183 @@
+typedef line=8
+  typespec: vpiUnionTypespec name=tp_t packed=1 tagged=1
+    member a
+      typespec: vpiBitTypespec name=(null) [3:0]
+        elem: vpiBitTypespec name=(null)
+    member b
+      typespec: vpiBitTypespec name=(null) [3:0]
+        elem: vpiBitTypespec name=(null)
+typedef line=9
+  typespec: vpiUnionTypespec name=tu_t packed=0 tagged=1
+    member i
+      typespec: vpiIntTypespec name=(null)
+    member r
+      typespec: vpiRealTypespec name=(null)
+typedef line=10
+  typespec: vpiUnionTypespec name=up_t packed=1 tagged=0
+    member a
+      typespec: vpiBitTypespec name=(null) [3:0]
+        elem: vpiBitTypespec name=(null)
+    member b
+      typespec: vpiBitTypespec name=(null) [3:0]
+        elem: vpiBitTypespec name=(null)
+typedef line=11
+  typespec: vpiChandleTypespec name=ch_t
+    alias: vpiChandleTypespec name=(null)
+typedef line=12
+  typespec: vpiChandleTypespec name=ch2_t
+    alias: vpiChandleTypespec name=ch_t
+      alias: vpiChandleTypespec name=(null)
+typedef line=13
+  typespec: vpiStructTypespec name=sh_t packed=0
+    member h
+      typespec: vpiChandleTypespec name=(null)
+    member k
+      typespec: vpiChandleTypespec name=ch_t
+        alias: vpiChandleTypespec name=(null)
+typedef line=14
+  typespec: vpiUnionTypespec name=th_t packed=0 tagged=1
+    member h
+      typespec: vpiChandleTypespec name=(null)
+    member n
+      typespec: vpiIntTypespec name=(null)
+typedef line=15
+  typespec: vpiUnionTypespec name=vp_t packed=1 tagged=1
+    member Invalid
+      typespec: vpiVoidTypespec name=(null)
+    member Valid
+      typespec: vpiBitTypespec name=(null) [7:0]
+        elem: vpiBitTypespec name=(null)
+typedef line=16
+  typespec: vpiUnionTypespec name=vu_t packed=0 tagged=1
+    member Invalid
+      typespec: vpiVoidTypespec name=(null)
+    member Valid
+      typespec: vpiIntTypespec name=(null)
+typedef line=17
+  typespec: vpiBitTypespec name=nib_t [3:0]
+    elem: vpiBitTypespec name=(null)
+typedef line=18
+  typespec: vpiBitTypespec name=nib2_t [3:0]
+    alias: vpiBitTypespec name=nib_t [3:0]
+      elem: vpiBitTypespec name=(null)
+    elem: vpiBitTypespec name=(null)
+typedef line=19
+  typespec: vpiIntTypespec name=myint_t
+    alias: vpiIntTypespec name=(null)
+typedef line=20
+  typespec: vpiEnumTypespec name=en_t
+    base: vpiBitTypespec name=nib_t [3:0]
+      elem: vpiBitTypespec name=(null)
+typedef line=21
+  typespec: vpiEnumTypespec name=en2_t
+    base: vpiBitTypespec name=nib2_t [3:0]
+      alias: vpiBitTypespec name=nib_t [3:0]
+        elem: vpiBitTypespec name=(null)
+      elem: vpiBitTypespec name=(null)
+typedef line=22
+  typespec: vpiEnumTypespec name=em_t
+    base: vpiIntTypespec name=myint_t
+      alias: vpiIntTypespec name=(null)
+typedef line=23
+  typespec: vpiEnumTypespec name=ei_t
+    base: vpiIntTypespec name=(null)
+tb.tp vpiUnionVar
+  typespec: vpiUnionTypespec name=tp_t packed=1 tagged=1
+    member a
+      typespec: vpiBitTypespec name=(null) [3:0]
+        elem: vpiBitTypespec name=(null)
+    member b
+      typespec: vpiBitTypespec name=(null) [3:0]
+        elem: vpiBitTypespec name=(null)
+tb.tu vpiUnionVar
+  typespec: vpiUnionTypespec name=tu_t packed=0 tagged=1
+    member i
+      typespec: vpiIntTypespec name=(null)
+    member r
+      typespec: vpiRealTypespec name=(null)
+tb.up vpiUnionVar
+  typespec: vpiUnionTypespec name=up_t packed=1 tagged=0
+    member a
+      typespec: vpiBitTypespec name=(null) [3:0]
+        elem: vpiBitTypespec name=(null)
+    member b
+      typespec: vpiBitTypespec name=(null) [3:0]
+        elem: vpiBitTypespec name=(null)
+tb.h vpiChandleVar
+  typespec: vpiChandleTypespec name=(null)
+tb.hn vpiChandleVar
+  typespec: vpiChandleTypespec name=ch_t
+    alias: vpiChandleTypespec name=(null)
+tb.hn2 vpiChandleVar
+  typespec: vpiChandleTypespec name=ch2_t
+    alias: vpiChandleTypespec name=ch_t
+      alias: vpiChandleTypespec name=(null)
+tb.sh vpiStructVar
+  typespec: vpiStructTypespec name=sh_t packed=0
+    member h
+      typespec: vpiChandleTypespec name=(null)
+    member k
+      typespec: vpiChandleTypespec name=ch_t
+        alias: vpiChandleTypespec name=(null)
+tb.sh.h vpiChandleVar
+  typespec: vpiChandleTypespec name=(null)
+tb.th vpiUnionVar
+  typespec: vpiUnionTypespec name=th_t packed=0 tagged=1
+    member h
+      typespec: vpiChandleTypespec name=(null)
+    member n
+      typespec: vpiIntTypespec name=(null)
+tb.vp vpiUnionVar
+  typespec: vpiUnionTypespec name=vp_t packed=1 tagged=1
+    member Invalid
+      typespec: vpiVoidTypespec name=(null)
+    member Valid
+      typespec: vpiBitTypespec name=(null) [7:0]
+        elem: vpiBitTypespec name=(null)
+tb.vu vpiUnionVar
+  typespec: vpiUnionTypespec name=vu_t packed=0 tagged=1
+    member Invalid
+      typespec: vpiVoidTypespec name=(null)
+    member Valid
+      typespec: vpiIntTypespec name=(null)
+tb.hq vpiArrayVar
+  typespec: vpiArrayTypespec name=(null)
+    elem: vpiChandleTypespec name=ch_t
+      alias: vpiChandleTypespec name=(null)
+tb.hq[0] vpiChandleVar
+  typespec: vpiChandleTypespec name=ch_t
+    alias: vpiChandleTypespec name=(null)
+tb.en vpiEnumVar
+  typespec: vpiEnumTypespec name=en_t
+    base: vpiBitTypespec name=nib_t [3:0]
+      elem: vpiBitTypespec name=(null)
+tb.en2 vpiEnumVar
+  typespec: vpiEnumTypespec name=en2_t
+    base: vpiBitTypespec name=nib2_t [3:0]
+      alias: vpiBitTypespec name=nib_t [3:0]
+        elem: vpiBitTypespec name=(null)
+      elem: vpiBitTypespec name=(null)
+tb.em vpiEnumVar
+  typespec: vpiEnumTypespec name=em_t
+    base: vpiIntTypespec name=myint_t
+      alias: vpiIntTypespec name=(null)
+tb.ei vpiEnumVar
+  typespec: vpiEnumTypespec name=ei_t
+    base: vpiIntTypespec name=(null)
+tb.eq vpiEnumVar
+  typespec: vpiEnumTypespec name=(null)
+    base: vpiBitTypespec name=nib_t [3:0]
+      elem: vpiBitTypespec name=(null)
+property h vpiChandleVar
+  typespec: vpiChandleTypespec name=(null)
+property k vpiChandleVar
+  typespec: vpiChandleTypespec name=ch2_t
+    alias: vpiChandleTypespec name=ch_t
+      alias: vpiChandleTypespec name=(null)
+io a
+  typespec: vpiChandleTypespec name=(null)
+io b
+  typespec: vpiChandleTypespec name=ch_t
+    alias: vpiChandleTypespec name=(null)
+call get
+  typespec: vpiChandleTypespec name=(null)
