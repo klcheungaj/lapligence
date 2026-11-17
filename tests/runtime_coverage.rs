@@ -79,9 +79,9 @@ static llg_cov_group_t group_empty = {.name = "empty", .n_points = 1u, .points =
  * `bins lim = {[0:arg]}; bins high = {[arg:$]};`. */
 static const llg_cov_item_t slot_items[] = {
     {.lo = 0u, .hi = 0u, .lo_kind = LLG_COV_BOUND_KEY, .hi_kind = LLG_COV_BOUND_SLOT,
-     .site = "probe:1:1"},
+     .site = "probe\037probe.sv:1:1"},
     {.lo = 0u, .hi = 0u, .lo_kind = LLG_COV_BOUND_SLOT, .hi_kind = LLG_COV_BOUND_MAX,
-     .site = "probe:2:1"},
+     .site = "probe\037probe.sv:2:1"},
 };
 static const llg_cov_bin_t slot_bins[] = {
     {.name = "lim", .site = "probe", .guard = -1, .first_item = 0u, .n_items = 1u},

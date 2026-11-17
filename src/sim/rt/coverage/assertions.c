@@ -558,8 +558,9 @@ static int32_t llg_acov_count(size_t count) {
     return count > (size_t)INT32_MAX ? LLG_SV_COV_OVERFLOW : (int32_t)count;
 }
 
-// `what` names the call in messages ("$coverage_merge at <site>").
-static int32_t llg_coverage_merge(uint64_t type, const char* name, const char* what) {
+// `what` names the call in messages and `site` frames them.
+static int32_t llg_coverage_merge(uint64_t type, const char* name, const char* what,
+                                  const char* site) {
     llg_cov_db_file_t db;
     int missing;
     const char* error = llg_cov_db_read(name, &db, &missing);
@@ -582,7 +583,7 @@ static int32_t llg_coverage_merge(uint64_t type, const char* name, const char* w
         if (!error) status = LLG_SV_COV_OK;
     }
     if (error) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage database `%s` was not merged: %s; no coverage changed", what, name, error);
+        llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "%s: coverage database `%s` was not merged: %s; no coverage changed", what, name, error);
         llg_rt_mark_failed();
         llg_rt_note_error(0, "coverage database was not merged", NULL);
         status = LLG_SV_COV_ERROR;
@@ -591,9 +592,9 @@ static int32_t llg_coverage_merge(uint64_t type, const char* name, const char* w
     return status;
 }
 
-// `what` names the call in run-time errors.
+// `what` names the call in run-time errors and `site` frames them.
 static int32_t llg_coverage_dispatch(int function, const uint64_t* v, int32_t scope,
-                                     const char* text, const char* what) {
+                                     const char* text, const char* what, const char* site) {
     uint64_t control = 0, type, scope_def = LLG_SV_COV_MODULE;
     switch (function) {
     case LLG_COVERAGE_CONTROL:
@@ -615,7 +616,7 @@ static int32_t llg_coverage_dispatch(int function, const uint64_t* v, int32_t sc
         return LLG_SV_COV_ERROR;
     }
     if (type < LLG_SV_COV_ASSERTION || type > LLG_SV_COV_TOGGLE) return LLG_SV_COV_ERROR;
-    if (function == LLG_COVERAGE_MERGE) return llg_coverage_merge(type, text, what);
+    if (function == LLG_COVERAGE_MERGE) return llg_coverage_merge(type, text, what, site);
     if (function == LLG_COVERAGE_SAVE) {
         uint32_t section = type == LLG_SV_COV_ASSERTION && llg_acov_available() ? LLG_COV_DB_ASSERTION
                            : type == LLG_SV_COV_FSM_STATE && llg_fcov_available() ? LLG_COV_DB_FSM
@@ -624,7 +625,7 @@ static int32_t llg_coverage_dispatch(int function, const uint64_t* v, int32_t sc
                            : type == LLG_SV_COV_TOGGLE && llg_tcov_available() ? LLG_COV_DB_TOGGLE
                                                                                : 0u;
         if (!section) return LLG_SV_COV_NOCOV;
-        return llg_cov_db_save(text, section, what) ? LLG_SV_COV_OK : LLG_SV_COV_ERROR;
+        return llg_cov_db_save(text, section, what, site) ? LLG_SV_COV_OK : LLG_SV_COV_ERROR;
     }
     // A bad scope is an error for every kind (Table 40-1 "Bad args").
     if (scope_def != LLG_SV_COV_MODULE && scope_def != LLG_SV_COV_HIER) return LLG_SV_COV_ERROR;
@@ -699,11 +700,9 @@ int32_t llg_coverage_call(int function, const sv4_t* args, int n_args, int32_t i
     if (known) {
         static const char* const names[] = {"$coverage_control", "$coverage_get_max",
                                             "$coverage_get", "$coverage_merge", "$coverage_save"};
-        char what[512];
-        snprintf(what, sizeof what, "%s at %s",
-                 function >= 0 && function <= LLG_COVERAGE_SAVE ? names[function] : "?",
-                 site ? site : "");
-        status = llg_coverage_dispatch(function, values, instance, name, what);
+        const char* what =
+            function >= 0 && function <= LLG_COVERAGE_SAVE ? names[function] : "?";
+        status = llg_coverage_dispatch(function, values, instance, name, what, site);
     }
     free(name);
     return status;
@@ -740,7 +739,7 @@ int32_t llg_coverage_control_vpi(int control, int type, int32_t instance, int64_
         uint64_t values[3] = {(uint64_t)control, (uint64_t)type, LLG_SV_COV_MODULE};
         if (instance < 0) return LLG_SV_COV_ERROR;
         return llg_coverage_dispatch(LLG_COVERAGE_CONTROL, values, instance, NULL,
-                                     "vpi_control");
+                                     "vpi_control", NULL);
     }
     if ((size_t)item >= llg_acov_n_items || type < (int)LLG_SV_COV_ASSERTION ||
         type > (int)LLG_SV_COV_TOGGLE)
@@ -762,5 +761,6 @@ int32_t llg_coverage_file_vpi(int merge, int type, const char* name) {
     if (!name || type < 0) return LLG_SV_COV_ERROR;
     return llg_coverage_dispatch(merge ? LLG_COVERAGE_MERGE : LLG_COVERAGE_SAVE, values, -1, name,
                                  merge ? "vpi_control(vpiCoverageMerge)"
-                                       : "vpi_control(vpiCoverageSave)");
+                                       : "vpi_control(vpiCoverageSave)",
+                                 NULL);
 }
