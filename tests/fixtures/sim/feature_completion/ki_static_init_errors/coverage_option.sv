@@ -1,6 +1,7 @@
 // A negative option.weight passed to a covergroup constructed by a module
 // variable's declaration initializer: the run-time error of the same write in
-// a process, and the run goes on. Expected values are derived in readme.md.
+// a process, which ends the run at once. Expected values are derived in
+// readme.md.
 module tb;
   bit [1:0] x;
   function automatic int note(string s);

@@ -316,28 +316,55 @@ fn merged_crosses_need_the_same_cross_bins() {
     });
 }
 
-/// A negative weight is a run-time error at the option's own line, in the
-/// declaration and in procedural writes; the option keeps its value and the
-/// run goes on (Table 19-1, Table 19-3).
+/// A negative weight set at construction is a run-time error at the
+/// option's own line that ends the run; the final procedure runs (Table 19-1).
 #[test]
-fn out_of_range_option_values_are_located_run_time_errors() {
+fn out_of_range_option_values_end_the_run() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_045/option_errors.out");
-    let text = "value -1 is out of range; the option keeps its value";
-    let messages = [
-        format!(
-            "ERROR: option_errors.sv:11:5: [SIM-010] (tb @ 0 ps) coverage option.weight {text}"
-        ),
-        format!(
-            "ERROR: option_errors.sv:21:5: [SIM-010] (tb @ 1 ns) coverage option.weight {text}"
-        ),
-        format!(
-            "ERROR: option_errors.sv:22:5: [SIM-010] (tb @ 1 ns) coverage type_option.weight {text}"
-        ),
-    ];
-    let messages: Vec<&str> = messages.iter().map(String::as_str).collect();
     sim_cli::run_case_checked_matrix(SUITE, "option_errors", &[], &|label, output| {
-        ends_run(label, output, expected, &messages);
+        ends_run(
+            label,
+            output,
+            expected,
+            &[
+                "ERROR: option_errors.sv:11:5: [SIM-010] (tb @ 0 ps) coverage option.weight value -1 is out of range",
+                "FATAL: option_errors.sv:11:5: [SIM-009] (tb @ 0 ps) coverage option value out of range",
+            ],
+        );
     });
+}
+
+/// Option values at the ends of their ranges are accepted; each procedural
+/// write out of range (weight below 0, goal outside 0 to 100, at_least below
+/// 0, for instances and types) ends the run at the write. The error forms run
+/// in both optimizer modes on the default value backend.
+#[test]
+fn procedural_option_writes_out_of_range_end_the_run() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/option_ranges.out");
+    sim_cli::run_case_checked_matrix(SUITE, "option_ranges", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+    });
+    for (define, line, option, value) in [
+        ("WEIGHT", 33, "option.weight", -1),
+        ("GOAL_HIGH", 35, "option.goal", 101),
+        ("GOAL_NEG", 37, "option.goal", -1),
+        ("AT_LEAST", 39, "option.at_least", -1),
+        ("TYPE_WEIGHT", 41, "type_option.weight", -1),
+        ("TYPE_GOAL", 43, "type_option.goal", -1),
+    ] {
+        sim_cli::run_case_with_args(
+            SUITE,
+            "option_ranges",
+            "before write\nfinal\n",
+            &format!(
+                "ERROR: option_ranges.sv:{line}:5: [SIM-010] (tb @ 1 ns) coverage {option} value {value} is out of range\n\
+                 FATAL: option_ranges.sv:{line}:5: [SIM-009] (tb @ 1 ns) coverage option value out of range\n\
+                 INFO: [SIM-000] 1 fatal, 1 error(s), 0 warning(s)\n"
+            ),
+            &[],
+            &["-D", define],
+        );
+    }
 }
 
 #[test]
@@ -346,6 +373,11 @@ fn invalid_options_are_located_errors() {
         SUITE,
         "neg_type_weight",
         "neg_type_weight.sv:6:24: type_option.weight in covergroup `g` must be a non-negative integral value (IEEE 1800-2009 Table 19-3)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_type_goal",
+        "neg_type_goal.sv:6:5: type_option.goal in covergroup `g` must be an integral value from 0 to 100",
     );
     sim_cli::reject_case(
         SUITE,

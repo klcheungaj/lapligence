@@ -531,13 +531,15 @@ fn invoke_with_runtime_args(
 
 /// The exit status a run must have, from the diagnostics it must print: 1
 /// after a `$fatal` report, which ends the run "with an error code"
-/// (IEEE 1800-2009 20.9, L34909 of the text extraction), else 0.
+/// (IEEE 1800-2009 20.9, L34909 of the text extraction), and after the fatal
+/// end of a run-time error (ES-D1), else 0.
 fn status_after(expected_stderr: &str) -> i32 {
     let fatal_task = format!("[{}]", llg::core::report::id("SIM", 6));
+    let runtime_fatal = format!("[{}]", llg::core::report::id("SIM", 9));
     i32::from(
         expected_stderr
             .lines()
-            .any(|line| line.contains(&fatal_task)),
+            .any(|line| line.contains(&fatal_task) || line.contains(&runtime_fatal)),
     )
 }
 

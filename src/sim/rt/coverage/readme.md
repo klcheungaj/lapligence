@@ -43,8 +43,11 @@ values, database failures) go through `llg_cov_report` at a site the
 lowering frames like a status line's: the scope, the unit separator, then
 `file:line:col` of the bins, option or call. The position prints in the
 location field and the scope with the time in the context. The fatal end of
-an illegal hit (`llg_cov_fatal`) reports at the same site through
-`llg_rt_fatal_typed`, as `$fatal` does.
+an illegal hit, a bins count that is not positive or an option value out of
+range (`llg_cov_fatal`) reports at the same site through
+`llg_rt_fatal_typed`, as `$fatal` does; the lowering gives the statements
+that can reach it (`Ready`, sampling, bounded `Option` and `TypeOption`
+writes) the Terminate effect, so the caller takes its exit check.
 A coverpoint of 65 to 128 bits has 64-bit unsigned keys: generated code
 calls `llg_cov_hit_wide` (out of line), which maps the value through the
 group's `llg_cov_wide_t` class table (one key per class, or per value in an

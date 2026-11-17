@@ -168,6 +168,11 @@ instance-specific information, and some simulators then return 0 from
 - 19.7, Table 19-1, L33259-33260: weight "The specified weight shall be a
   non-negative integral value."
 - 19.7, Table 19-1, L33254: weight's default is 1.
+- 19.7, Table 19-1, L33262-33263: "goal=number 100 Specifies the target goal
+  for a covergroup instance or for a coverpoint or a cross of an instance."
+- 19.7.1, Table 19-3, L33416-33417: "goal=constant_number 100 Specifies the
+  target goal for a covergroup type or for a coverpoint or cross of a
+  covergroup type."
 - 19.7, Table 19-1, L33273-33277: "at_least=number 1 Minimum number of hits
   for each bin." "detect_overlap=boolean 0 When true, a warning is issued if
   there is an overlap between the range list (or transition list) of two
@@ -437,12 +442,28 @@ warning names the pair where it stopped. The run reports no overlap; samples
 0 and 2 complete neither bin: 0.00.
 
 `option_errors.sv`: the construction passes `w` = -1 to the declaration's
-`option.weight = w` (line 11), and at 1 ns the procedural writes set the
-coverpoint's `option.weight` (line 21) and `type_option.weight` (line 22) to
--1. Each value breaks the non-negative weight rule of Table 19-1 or 19-3, so
-each write is a run-time error located at its own line with the scope `tb`
-and the time in the context, and leaves the option at its default of 1:
-`weight 1 cp 1 type 1`. Exit status 1.
+`option.weight = w` (line 11). The value breaks the non-negative weight rule
+of Table 19-1, so the write is a run-time error located at its own line with
+the scope `tb` and the time in the context, and it ends the run like the
+bins-count error (S45-D5, industry-standard behaviour; the text does not say
+whether the error stops the simulation): `before new`, then the error and its
+fatal end; `after new` does not print, the final procedure does: `final`.
+Exit status 1.
+
+`option_ranges.sv`: without a define, the procedural writes put each bounded
+option at the end of its range: group `option.goal` 0, coverpoint
+`option.goal` 100, group `option.at_least` 0, cross `option.weight` 2^31-1,
+`type_option.goal` 100 and `type_option.weight` 0. Each is accepted and reads
+back: `after write goal 0 100 at_least 0 weight 2147483647 type 100 0`, then
+`final`; exit status 0. Each define instead writes one value out of range at
+1 ns: `WEIGHT` coverpoint weight -1 (Table 19-1), `TYPE_WEIGHT` coverpoint
+`type_option.weight` -1 (Table 19-3), `GOAL_HIGH` group goal 101,
+`GOAL_NEG` cross goal -1, `TYPE_GOAL` `type_option.goal` -1 and `AT_LEAST`
+coverpoint `at_least` -1. The text gives no range for goal and at_least
+(Table 19-1 L33262-33263, L33273-33274; Table 19-3 L33416-33417); llg
+follows the industry-standard ranges, goal 0 to 100 and at_least of at least
+0. Each write is a run-time error at its line that ends the run: `before
+write`, `final`; exit status 1.
 
 ## Negative cases
 
@@ -476,4 +497,5 @@ and the time in the context, and leaves the option at its default of 1:
 | `neg_cross_select_union` | a select `\|\|` that expands to 1024 + 1 terms, more than 1024 (llg limitation) |
 | `neg_cross_set` | a cross bin `with` filter, 1800-2012 syntax |
 | `neg_type_weight` | `type_option.weight = -2` (Table 19-3) |
+| `neg_type_goal` | a constant `type_option.goal = 101`: outside 0 to 100, the industry-standard range (Table 19-3 L33416-33417 gives none); a constant type option is checked when compiling, like `neg_type_weight` |
 | `neg_merge_argument` | type_option.merge_instances from an argument (Slang: not a constant, 19.7.1) |

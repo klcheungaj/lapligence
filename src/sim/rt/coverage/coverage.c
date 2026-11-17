@@ -1394,6 +1394,18 @@ void* llg_cov_new(llg_cov_group_t* group) {
     return inst;
 }
 
+// An option value out of its range (Table 19-1, Table 19-3) ends the run like
+// a fatal error, final procedures included, in every context: construction,
+// a procedural write and a static initializer (industry-standard behaviour,
+// as S45-D5). The option keeps its value; the statement that wrote it takes
+// its exit check. A process that is already exiting stays quiet.
+static void llg_cov_option_range_error(const char* scope, const char* option, int64_t number,
+                                       const char* site) {
+    if (llg_rt_exiting()) return;
+    llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "coverage %s.%s value %lld is out of range", scope, option, (long long)number);
+    llg_cov_fatal("coverage option value out of range", site);
+}
+
 // `scope` is "option" or "type_option", `option` the member name.
 static int llg_cov_option_value(sv4_t value, int64_t* out, const char* scope, const char* option,
                                 const char* site) {
@@ -1426,10 +1438,13 @@ void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, c
     if (!llg_cov_option_value(value, &number, "option", llg_cov_option_names[option], site))
         return;
     // Table 19-1: weight is non-negative; a bin count needs at least one bin.
+    // goal is a percentage and at_least a hit count (industry-standard
+    // ranges; the text is silent).
     if ((option == LLG_COV_OPTION_WEIGHT && number < 0) ||
+        (option == LLG_COV_OPTION_GOAL && (number < 0 || number > 100)) ||
+        (option == LLG_COV_OPTION_AT_LEAST && number < 0) ||
         (option == LLG_COV_OPTION_AUTO_BIN_MAX && number < 1)) {
-        llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "coverage option.%s value %lld is out of range; the option keeps its value", llg_cov_option_names[option], (long long)number);
-        llg_rt_mark_failed();
+        llg_cov_option_range_error("option", llg_cov_option_names[option], number, site);
         return;
     }
     uint32_t items = inst->group->n_points + inst->group->n_crosses;
@@ -1596,9 +1611,9 @@ void llg_cov_type_option(llg_cov_type_t* type, int32_t point, uint32_t option, s
     if (!type || option > LLG_COV_TYPE_OPTION_MERGE_INSTANCES) return;
     int64_t number = 0;
     if (!llg_cov_option_value(value, &number, "type_option", names[option], site)) return;
-    if (option == LLG_COV_TYPE_OPTION_WEIGHT && number < 0) {
-        llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "coverage type_option.%s value %lld is out of range; the option keeps its value", names[option], (long long)number);
-        llg_rt_mark_failed();
+    if ((option == LLG_COV_TYPE_OPTION_WEIGHT && number < 0) ||
+        (option == LLG_COV_TYPE_OPTION_GOAL && (number < 0 || number > 100))) {
+        llg_cov_option_range_error("type_option", names[option], number, site);
         return;
     }
     if (point < 0) {

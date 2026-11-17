@@ -3220,7 +3220,12 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   and `$get_coverage()` follow 19.11; the two-argument forms of 19.8 assign
   the covered and total bins (S46-D7). Options are read through an
   instance, coverpoint, cross or type name and written procedurally where
-  19.7 allows it (writes of definition-only options are compile errors);
+  19.7 allows it (writes of definition-only options are compile errors).
+  An option value out of range (weight below 0, goal outside 0 to 100,
+  at_least below 0, auto_bin_max below 1) is a located run-time error that
+  ends the run, final procedures included, at construction, at a procedural
+  write and under a static initializer; a constant `type_option` out of
+  range is a compile error; an X or Z option value is 0 (S45-D20).
   `option.name` defaults to a unique `<scope>.<group>#<k>` (S46-D1).
   `$set_coverage_db_name` saves every covergroup's coverage at the end of the
   run, after `final` procedures, to a versioned, checksummed, host-independent
