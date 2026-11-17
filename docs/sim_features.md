@@ -1915,7 +1915,19 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Members of subroutine records with container members pass the record's own
   companions, or mirrors of nested slots at 16 or more cells
   ([record_ref_subroutine_container_member](../tests/fixtures/sim/feature_completion/sim_008/readme.md));
-  a task waiting on such a formal rejects.
+  a task waiting on such a formal rejects. A task waiting on a formal bound
+  to an element or member of an element of a subroutine record, or of a
+  queue element, wakes at every store into what it binds: the owner's,
+  a sibling branch's and those through other `ref` formals (decision S09-D4,
+  `record_ref_subroutine_element_wake`, `record_ref_container_member_wake`);
+  a run-time index of a subroutine record that selects no element stops at
+  the actual (S07-D15, `record_ref_subroutine_unselected`). A run-time record
+  element (`o.m[1].a[k]`, `t.e[k]`) compares with `==`, `!=` and `===`, and a
+  subroutine record's `t.m[1].a[k]` is an assignment source and target
+  (`record_element_select_equality`). At 16 or more cells a subroutine
+  record's queue or dynamic-array member below an element is reached only
+  through a `ref` formal bound to the element
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)).
   Run-time elements of module records below 16 cells in calls inside
   conditions and loop headers, and reference-formal NBAs remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be

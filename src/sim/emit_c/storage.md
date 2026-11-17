@@ -145,7 +145,14 @@ of a leaf or the root; reads opt out through `read_lookup`, `native_read` and
 pending publications go out where the statement ends, and at once after a
 `Mutation` or a call, whose enclosing statement may loop or suspend first. A
 binding of a member through `ElementRef` publishes through the retained
-reference instead, at each store of the callee.
+reference instead, at each store of the callee. A subroutine record whose
+members a call binds through retained references, directly or after the
+record passes whole to a `ref` formal (`IrNativeValue::ref_rooted`), notes
+the same publication with its own address for every store into it, so the
+references inside it see the owner's stores. With index checks on, an
+`ElementRef` whose element, or any run-time position below its root, selects
+nothing stops at the call (`IrElementRef::stop_unselected`, tested on the
+bound reference).
 Only open-array DPI imports and tasks waiting on a native record `ref` formal
 are templates that are never emitted (`IrFunc::inline_expanded`); a task whose
 event control reads a `ref` formal also emits per-signal specializations
