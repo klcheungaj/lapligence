@@ -2880,9 +2880,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
   and bits are reached by index or name, decision A19-D67);
 - typespecs (the served properties and relations are in the catalog):
   interface, void and chandle typespecs (class typespecs are reached from
-  class variables and objects, VPI-O4), the name of a typedef used as an
-  enum's base type (the base typespec is unnamed), and `vpiPacked` of a
-  tagged union;
+  class variables and objects, VPI-O4) and the name of a typedef used as an
+  enum's base type (the base typespec is unnamed);
 - subarray handles: `vpi_handle_by_index`, `vpi_handle_by_multi_index` and
   `vpi_handle_by_name` with fewer indices than the array has unpacked
   dimensions return NULL with an error (decision A20-D23: the 2009 object

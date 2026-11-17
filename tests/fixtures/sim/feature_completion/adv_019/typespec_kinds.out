@@ -1,0 +1,18 @@
+tb.tp vpiUnionVar
+  typespec: vpiUnionTypespec name=tp_t packed=1 tagged=1
+    member a
+      typespec: vpiBitTypespec name=(null)
+    member b
+      typespec: vpiBitTypespec name=(null)
+tb.tu vpiUnionVar
+  typespec: vpiUnionTypespec name=tu_t packed=0 tagged=1
+    member i
+      typespec: vpiIntTypespec name=(null)
+    member r
+      typespec: vpiRealTypespec name=(null)
+tb.up vpiUnionVar
+  typespec: vpiUnionTypespec name=up_t packed=1 tagged=0
+    member a
+      typespec: vpiBitTypespec name=(null)
+    member b
+      typespec: vpiBitTypespec name=(null)

@@ -428,7 +428,11 @@ impl Codegen<'_> {
                     packed: match layout.kind {
                         AggregateKind::PackedStruct | AggregateKind::PackedUnion => Some(true),
                         AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion => Some(false),
-                        AggregateKind::TaggedUnion => None,
+                        // 7.3.2: a tagged union is packed only when declared
+                        // so.
+                        AggregateKind::TaggedUnion => {
+                            layout.type_id.map(|id| self.db.is_packed_tagged_union(id))
+                        }
                     },
                     tagged: layout.kind == AggregateKind::TaggedUnion,
                     members,
@@ -695,7 +699,8 @@ impl Codegen<'_> {
         let union = layout.kind == AggregateKind::UnpackedUnion;
         rows.push(IrVpiObject {
             kind: IrVpiObjectKind::Record,
-            var_kind: if union {
+            // An unpacked tagged union is a union var too (37.17, 37.24).
+            var_kind: if union || layout.kind == AggregateKind::TaggedUnion {
                 IrVpiVarKind::Union
             } else {
                 IrVpiVarKind::Struct

@@ -95,6 +95,23 @@ and constants, the typespec members and `vpiElemTypespec`, recursively.
   only on associative array typespecs"); asking an enum typespec for it
   returns NULL with `vpiError`.
 
+## typespec_kinds (37.23, 7.3.2; FIN-001 V3 family (d))
+
+`typespec_kinds.c` prints, for each variable, `vpiType` and its typespec
+tree: type, `vpiName`, `vpiPacked` and `vpiTagged` of structure and union
+typespecs, `vpiTypedefAlias`, the enum base and the typespec members, as
+`typespecs.c` does.
+
+- Tagged unions. The 37.23 diagram (L59124-L59130) gives a union typespec
+  the properties `bool: vpiPacked` and `bool: vpiTagged`, and 7.3.2
+  (L7943-L7944) makes packing a qualifier of a tagged union: "When the
+  packed qualifier is used on a tagged union, all the members shall have
+  packed types, but they do not have to be of the same size." `tp_t`
+  (`union tagged packed`) prints `packed=1 tagged=1`, `tu_t` (`union
+  tagged`, with a `real` member) `packed=0 tagged=1`, and the untagged
+  `up_t` `packed=1 tagged=0`. An unpacked tagged union variable is a
+  `vpiUnionVar` (37.17 diagram, "union var").
+
 ## members (37.17, 37.24)
 
 `members.c` prints each structure or union, then iterates `vpiMember` (37.24)

@@ -2966,7 +2966,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   typedef name), `vpiTypedefAlias`,
   `vpiElemTypespec` (one dimension at a time), `vpiBaseTypespec`, `vpiRange`
   with `vpiLeftRange`/`vpiRightRange`, `vpiTypespecMember`, `vpiEnumConst`
-  (name and value), `vpiPacked`, `vpiTagged` and `vpiVector`; structure and
+  (name and value), `vpiPacked` (of tagged unions too), `vpiTagged` and
+  `vpiVector`; structure and
   union members (37.24) are `vpiMember` objects with `vpiStructUnionMember`,
   `vpiParent`, `vpi_handle_by_name` paths (`tb.s.f`, `tb.arr[1].f`) and
   member values, writes and `cbValueChange`, packed or unpacked, nested and

@@ -748,7 +748,7 @@ pub struct IrVpiTypespec {
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) two_state: bool,
     /// `vpiPacked` of a structure or union; `None` when unknown (a tagged
-    /// union).
+    /// union of a type the frontend did not identify).
     pub(in crate::sim) packed: Option<bool>,
     pub(in crate::sim) tagged: bool,
     /// `(left, right)` of each dimension at this level, leftmost first:

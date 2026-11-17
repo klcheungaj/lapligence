@@ -37,6 +37,26 @@ fn typespec_trees_name_typedefs_ranges_members_and_enum_constants() {
     );
 }
 
+/// FIN-001 V3 family (d): `vpiPacked` of packed and unpacked tagged
+/// unions.
+#[test]
+fn typespec_kinds_report_tagged_union_packing() {
+    let directory = sim_harness::TempDir::new("adv019-kinds").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "typespec_kinds", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "typespec_kinds",
+        include_str!("../fixtures/sim/feature_completion/adv_019/typespec_kinds.out"),
+        &[
+            "--define-system-task",
+            "task $typespec_kinds()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 #[test]
 fn structure_and_union_members_read_watch_and_write_their_fields() {
     let directory = sim_harness::TempDir::new("adv019-members").expect("temporary directory");

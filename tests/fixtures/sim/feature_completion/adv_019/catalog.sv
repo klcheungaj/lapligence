@@ -84,6 +84,10 @@ module tb;
   typedef struct { int k; int fa [0:1]; string ms; int mq[$]; } mrec_t;
   typedef pk_t [1:0] pka_t;
   typedef enum logic [1:0] {lo_e, mid_e, hi_e} level_t;
+  // Packed and unpacked tagged unions (7.3.2): vpiPacked follows the
+  // declaration (37.23).
+  typedef union tagged packed { bit [3:0] ta; bit [3:0] tb; } tg_t;
+  typedef union tagged { int ti; real tr; } tgu_t;
   class Packet;
     int id;
     // An event property: a named event of each object (37.25, 37.29).
@@ -153,6 +157,8 @@ module tb;
   color_t c = green;
   pk_t pk = 8'h12;
   pu_t pu = 8'h34;
+  tg_t tg = tagged tb 4'h2;
+  tgu_t tgu;
   rec_t rec;
   logic [1:0][3:0] pa = 8'h56;
   pka_t pka = 16'h789a;
