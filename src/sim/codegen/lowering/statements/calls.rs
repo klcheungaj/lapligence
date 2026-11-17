@@ -610,7 +610,9 @@ impl EmitCtx<'_, '_> {
             };
             let stop = IrStmt::Severity {
                 level: crate::sim::ir::IrSeverityLevel::Fatal,
-                fmt: format!("\"{message}{}\"", crate::sim::ir::INDEX_CHECK_HINT),
+                // `\036` is the runtime's hint separator
+                // (`crate::sim::ir::HINT_SEPARATOR`).
+                fmt: format!("\"{message}\\036{}\"", crate::sim::ir::INDEX_CHECK_HINT),
                 args: Vec::new(),
                 scope: self.path.clone(),
                 location: self.cg.source_location(site),

@@ -575,7 +575,7 @@ fn assert_case_output(
     for line in stderr.lines() {
         match llg::core::report::parse(line) {
             Some(message) if sim_harness::is_listed_warning(&message) => {
-                warnings.push(sim_harness::located_text(&message))
+                warnings.push(sim_harness::listed_text(&message))
             }
             _ if crate::sim_harness::is_compile_report_line(line) => {
                 // Legal conformance probes intentionally provoke frontend

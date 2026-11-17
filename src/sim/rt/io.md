@@ -482,7 +482,13 @@ in `llg_msg.h`, which renders the layout of `llg_msg_layout.def` (shared with
 the host, `src/core/report.rs`) with an id from `llg_msg_ids.def`
 ([catalog](../../../docs/messages.md)); status lines, severity tasks and
 assertion failures add the design scope and time from the compile-time site
-string (scope, U+001F, `file:line:col`). Container warnings and internal aborts
+string (scope, U+001F, `file:line:col`). A message whose check can be turned
+off or whose limit raised says how in the layout's hint field
+(`llg_msg_hint`, `llg_msg_append`): index-check stops, timing violations, a
+refused `$system`, sequence and solver budgets and a VPI plugin without the
+object catalog. A simulator-generated severity failure (empty `%m` scope)
+carries its hint after U+001E in the text; the runtime splits it there, and
+never splits user severity-task text. Container warnings and internal aborts
 carry no location: passing one would cost every operation. Each unit counts its
 messages and `llg_rt_cleanup` prints the `SIM-000` summary when a warning or
 worse occurred. Error paths only; `$display` output is untouched.

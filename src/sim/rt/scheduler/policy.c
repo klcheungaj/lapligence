@@ -187,6 +187,12 @@ int llg_rt_index_checks(void) { return g.index_checks; }
 
 static void llg_rt_report_summary(void); // simulation_control.c
 
+/* The hint of every index-check stop; the emitter appends the same text
+ * (`INDEX_CHECK_HINT` in src/sim/ir/calls.rs) to the stops it generates. */
+#define LLG_RT_INDEX_CHECK_HINT                                                    \
+    "run with --no-index-checks or set simulator.index_checks = false to apply " \
+    "the result IEEE 1800 gives instead"
+
 /* The container code that calls this has no exit check after it, and the
  * process must not run on past the access, so the run ends here with status
  * 1 after the end-of-run summary: buffered output is flushed, but final
@@ -195,12 +201,9 @@ void llg_rt_index_stop(const char* operation, const char* detail) {
     const char* process = g.current && g.current->name ? g.current->name : NULL;
     /* An invalid access the design made: the design failure id (SIM-009),
      * as the `$cast` and `ref` index-check stops report. */
-    llg_msg(LLG_MSG_RUNTIME_FAILURE, NULL,
-            "%s%s%s%s: %s; run with --no-index-checks or set "
-            "simulator.index_checks = false to apply the result IEEE 1800 "
-            "gives instead",
-            operation, process ? " in process '" : "", process ? process : "",
-            process ? "'" : "", detail);
+    llg_msg_hint(LLG_MSG_RUNTIME_FAILURE, NULL, LLG_RT_INDEX_CHECK_HINT, "%s%s%s%s: %s",
+                 operation, process ? " in process '" : "", process ? process : "",
+                 process ? "'" : "", detail);
     llg_rt_report_summary();
     fflush(NULL);
     exit(1);

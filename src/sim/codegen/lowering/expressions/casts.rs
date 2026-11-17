@@ -1369,10 +1369,9 @@ impl<'a> Codegen<'a> {
                     init: Some(Box::new(self.lower_failing_cast_status(
                         format!("{}_stop", check.bad),
                         Some(format!(
-                            "{}: {}{}",
+                            "{}: {}",
                             check.location,
-                            stop_detail,
-                            crate::sim::ir::INDEX_CHECK_HINT
+                            crate::sim::ir::with_index_check_hint(stop_detail)
                         )),
                     ))),
                 }],

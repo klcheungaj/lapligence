@@ -1090,11 +1090,13 @@ impl Frame<'_, '_> {
         };
         self.line(format!("if (({condition}) && llg_rt_index_checks()) {{"));
         self.line("llg_rt_mark_failed();");
+        // A simulator-generated failure (SIM-009): no `%m` scope, the
+        // site frames the scope and the location, and the runtime moves the
+        // index-check advice into the hint field.
         self.line(format!(
-            "llg_rt_fatal_typed(0, {}, NULL, 0, {}, {});",
-            super::c_string_literal(&format!("{message}{}", crate::sim::ir::INDEX_CHECK_HINT)),
-            super::c_string_literal(&stop.scope),
-            super::c_string_literal(&stop.location),
+            "llg_rt_fatal_typed(0, {}, NULL, 0, \"\", {});",
+            super::c_string_literal(&crate::sim::ir::with_index_check_hint(message)),
+            super::c_string_literal(&format!("{}\u{1f}{}", stop.scope, stop.location)),
         ));
         self.exit_after_call(0, true);
         self.line("}");

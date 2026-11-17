@@ -36,9 +36,18 @@ static void llg_report_severity_typed(int severity, const char* fmt,
     static const llg_msg_id_t task_ids[] = {LLG_MSG_TASK_INFO, LLG_MSG_TASK_WARNING,
                                             LLG_MSG_TASK_ERROR, LLG_MSG_TASK_FATAL};
     llg_msg_id_t id = scope && scope[0] ? task_ids[severity] : LLG_MSG_RUNTIME_FAILURE;
+    const char* hint = NULL;
+    if (id == LLG_MSG_RUNTIME_FAILURE) {
+        char* separator = (char*)memchr(out, LLG_RT_HINT_SEPARATOR, len);
+        if (separator) {
+            *separator = '\0';
+            hint = separator + 1;
+            len = (size_t)(separator - out);
+        }
+    }
     llg_report_t report;
     llg_report_init(&report);
-    llg_rt_framed(&report, id, severity, location, scope, out, len);
+    llg_rt_framed(&report, id, severity, location, scope, out, len, hint);
     llg_report_emit(&report, stderr);
     if (severity >= LLG_SEVERITY_ERROR && llg_error_hook) {
         char message[512];
@@ -105,7 +114,7 @@ static void assertion_report_failure(int kind, const char* label,
     llg_report_printf(&text, "%s failed", llg_assertion_name(kind));
     if (label && label[0]) llg_report_printf(&text, " (%s)", label);
     llg_rt_framed(&report, LLG_MSG_ASSERTION_FAILED, LLG_SEVERITY_ERROR, location, NULL,
-                  text.data, text.len);
+                  text.data, text.len, NULL);
     llg_report_free(&text);
     llg_report_emit(&report, stderr);
     if (llg_error_hook) {

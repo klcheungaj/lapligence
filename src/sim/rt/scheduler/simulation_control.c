@@ -10,6 +10,13 @@
 
 #define LLG_RT_SITE_SEPARATOR '\037'
 
+// A simulator-generated failure text (a severity statement with no `%m`
+// scope) may end in the record separator and a hint: how to turn the check
+// that raised it off (`INDEX_CHECK_HINT` in the IR). The text before it is the
+// message; the rest goes to the layout's {hint} field. User severity tasks
+// are never split, so their text is printed unchanged.
+#define LLG_RT_HINT_SEPARATOR '\036'
+
 static int llg_rt_site_is_location(const char* text, size_t len) {
     const char* suffix = NULL;
     size_t i;
@@ -64,10 +71,10 @@ static void llg_rt_time_text(char* out, size_t cap) {
 }
 
 // Append message `id` framed by `site` and the current time. `scope` names
-// the context when the site carries none.
+// the context when the site carries none; `hint` may be NULL.
 static void llg_rt_framed(llg_report_t* out, llg_msg_id_t id, int severity,
                           const char* site, const char* scope, const char* text,
-                          size_t text_len) {
+                          size_t text_len, const char* hint) {
     char scope_inline[256];
     char* site_scope = NULL;
     const char* location = NULL;
@@ -90,14 +97,14 @@ static void llg_rt_framed(llg_report_t* out, llg_msg_id_t id, int severity,
     }
     llg_rt_time_text(time_text, sizeof time_text);
     llg_msg_append(out, id, severity, location, site_scope ? site_scope : scope, time_text,
-                   text, text_len);
+                   text, text_len, hint);
     if (site_scope && site_scope != scope_inline) free(site_scope);
 }
 
 static void llg_rt_framed_line(llg_msg_id_t id, const char* site, const char* text) {
     llg_report_t report;
     llg_report_init(&report);
-    llg_rt_framed(&report, id, llg_msg_default_severity(id), site, NULL, text, strlen(text));
+    llg_rt_framed(&report, id, llg_msg_default_severity(id), site, NULL, text, strlen(text), NULL);
     llg_report_emit(&report, stderr);
 }
 
@@ -120,7 +127,7 @@ static void llg_rt_report_summary(void) {
     llg_report_init(&report);
     llg_msg_summary_text(&text, counts);
     llg_msg_append(&report, LLG_MSG_SUMMARY, LLG_SEVERITY_INFO, NULL, NULL, NULL, text.data,
-                   text.len);
+                   text.len, NULL);
     llg_report_free(&text);
     llg_report_emit(&report, stderr);
 }

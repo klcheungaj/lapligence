@@ -550,7 +550,7 @@ fn sequence_thread_budget_reports_exhaustion() {
                 "SIM-010",
                 "budget.sv:11:3",
                 "sequence thread budget exhausted: more than 50 live sequence threads at time "
-            ) && stderr.contains("(concurrent assertion p); raise"),
+            ) && stderr.contains("(concurrent assertion p) (raise LLG_SEQUENCE_THREAD_LIMIT)"),
             "optimized={optimized}: {stderr}"
         );
         assert!(
@@ -607,7 +607,7 @@ fn match_multiplicity_limits_are_reported_errors() {
                 "SIM-010",
                 "multiplicity_budget.sv:16:3",
                 "sequence thread budget exhausted: 4096 matches must each run match items or a pass statement at time "
-            ) && stderr.contains("(concurrent assertion p); raise"),
+            ) && stderr.contains("(concurrent assertion p) (raise LLG_SEQUENCE_THREAD_LIMIT)"),
             "optimized={optimized}: {stderr}"
         );
         assert!(

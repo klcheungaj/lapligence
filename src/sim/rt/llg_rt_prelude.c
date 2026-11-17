@@ -109,7 +109,7 @@ _Noreturn void llg_rt_co_bad_state(const llg_co_frame_t* co, const char* fn) {
                       fn ? fn : "<unknown>", (const void*)co,
                       co ? (unsigned long)co->state : 0ul);
     llg_msg_append(&report, LLG_MSG_INTERNAL, LLG_SEVERITY_FATAL, NULL, NULL, NULL, text.data,
-                   text.len);
+                   text.len, NULL);
     llg_report_free(&text);
     llg_co_chain_t* chain = llg_rt_current_chain();
     if (chain) {

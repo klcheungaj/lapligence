@@ -414,16 +414,39 @@ pub(crate) fn is_listed_warning(message: &llg::core::report::ParsedMessage) -> b
         || (id == "SIM-011" && !message.text.starts_with("waveform: "))
 }
 
+/// The hint every timing violation (`SIM-015`) carries.
+#[allow(dead_code)]
+pub(crate) const TIMING_CHECK_HINT: &str = "run with --no-timing-check-messages or set \
+     simulator.timing_check_messages = false to stop these reports";
+
 /// The [`is_listed_warning`] messages of `stderr`, in order, as
-/// [`located_text`] shows them (`file.sv:l:c text`, or the text alone).
+/// [`listed_text`] shows them.
 #[allow(dead_code)]
 pub(crate) fn listed_warnings(stderr: &str) -> Vec<String> {
     stderr
         .lines()
         .filter_map(llg::core::report::parse)
         .filter(is_listed_warning)
-        .map(|message| located_text(&message))
+        .map(|message| listed_text(&message))
         .collect()
+}
+
+/// A listed warning as [`located_text`] shows it; a timing violation must
+/// carry [`TIMING_CHECK_HINT`], which is left out.
+#[allow(dead_code)]
+pub(crate) fn listed_text(message: &llg::core::report::ParsedMessage) -> String {
+    if message.id != "SIM-015" {
+        return located_text(message);
+    }
+    let hint = format!(" ({TIMING_CHECK_HINT})");
+    let text = message
+        .text
+        .strip_suffix(&hint)
+        .unwrap_or_else(|| panic!("timing violation without its hint: {}", message.text));
+    located_text(&llg::core::report::ParsedMessage {
+        text: text.to_owned(),
+        ..message.clone()
+    })
 }
 
 /// The file name of `path`, as [`canonical_message`] shows a location.

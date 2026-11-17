@@ -107,9 +107,9 @@ pub use lvalues::{
 mod calls;
 pub(in crate::sim) use calls::call_argument_name;
 pub use calls::{
-    IrCall, IrCallArg, IrCallExpr, IrDepth, IrElementRef, IrElementRefKind, IrElementRoot,
-    IrElementStep, IrLeafTarget, IrRefCompanion, IrRefStop, IrVirtualCall, INDEX_CHECK_HINT,
-    UNSELECTED_REF_BIND_MESSAGE, UNSELECTED_REF_MESSAGE,
+    with_index_check_hint, IrCall, IrCallArg, IrCallExpr, IrDepth, IrElementRef, IrElementRefKind,
+    IrElementRoot, IrElementStep, IrLeafTarget, IrRefCompanion, IrRefStop, IrVirtualCall,
+    HINT_SEPARATOR, INDEX_CHECK_HINT, UNSELECTED_REF_BIND_MESSAGE, UNSELECTED_REF_MESSAGE,
 };
 mod coverage;
 pub(in crate::sim) use coverage::FSM_MAX_STATE_BITS;

@@ -330,7 +330,7 @@ fn run_time_record_elements_bind_ref_formals_of_calls_in_expressions() {
                 assert_eq!(String::from_utf8_lossy(&output.stdout), before, "{label}");
                 assert!(
                     stderr.contains("record_ref_element_select_expression.sv:57:11")
-                        && stderr.contains("index of a `ref` actual selects no element;"),
+                        && stderr.contains("index of a `ref` actual selects no element (run with --no-index-checks"),
                     "{label}: {stderr}"
                 );
             },

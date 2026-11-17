@@ -562,7 +562,9 @@ static void timing_report(llg_timing_check_set_t* set, const llg_timing_check_t*
             llg_report_bytes(&report, text, 1);
     }
     llg_msg_append(&message, LLG_MSG_TIMING_VIOLATION, LLG_SEVERITY_WARNING, check->origin,
-                   NULL, NULL, report.data, report.len);
+                   NULL, NULL, report.data, report.len,
+                   "run with --no-timing-check-messages or set "
+                   "simulator.timing_check_messages = false to stop these reports");
     llg_report_free(&report);
     llg_report_emit(&message, stderr);
 }

@@ -5827,7 +5827,7 @@ fn s07_d15_index_checks_stop() {
         "S07-D15_index_checks",
         &["+case=1"],
         "",
-        "; run with --no-index-checks or set simulator.index_checks = false",
+        " (run with --no-index-checks or set simulator.index_checks = false to apply the result IEEE 1800 gives instead)",
     );
 }
 

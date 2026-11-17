@@ -93,7 +93,9 @@ fn system_is_denied_without_explicit_child_permission() {
             "{label}: {stdout:?}"
         );
         assert!(
-            normalized(&output.stderr).contains("$system is disabled"),
+            normalized(&output.stderr).contains(
+                "$system is disabled (set LLG_ALLOW_SYSTEM=1 for the generated simulator process)"
+            ),
             "{label}: {}",
             normalized(&output.stderr)
         );

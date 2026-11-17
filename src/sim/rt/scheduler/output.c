@@ -125,7 +125,7 @@ sv4_t llg_system(llg_string_t command, int has_command) {
         }
     }
     if (!llg_system_allowed()) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "$system is disabled; set LLG_ALLOW_SYSTEM=1 for the generated simulator process");
+        llg_msg_hint(LLG_MSG_RUNTIME_ERROR, NULL, "set LLG_ALLOW_SYSTEM=1 for the generated simulator process", "$system is disabled");
         llg_last_failure = 1;
         g.finish = 1;
         llg_string_destroy(&command);

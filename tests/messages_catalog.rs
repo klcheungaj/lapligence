@@ -80,3 +80,59 @@ fn every_runtime_id_is_used() {
         assert!(used, "{name} ({}) is never reported", entry.def.id());
     }
 }
+
+/// The index-check hint the runtime prints at its own stops
+/// (`LLG_RT_INDEX_CHECK_HINT`, a concatenated C literal) is the hint the
+/// emitter attaches to the stops it generates.
+#[test]
+fn runtime_index_check_hint_matches_the_emitter() {
+    let source = repo_file("src/sim/rt/scheduler/policy.c");
+    let start = source
+        .find("#define LLG_RT_INDEX_CHECK_HINT")
+        .expect("LLG_RT_INDEX_CHECK_HINT is defined");
+    let mut definition = String::new();
+    for line in source[start..].lines() {
+        definition.push_str(line.trim_end().trim_end_matches('\\'));
+        if !line.trim_end().ends_with('\\') {
+            break;
+        }
+    }
+    let text: String = definition
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .collect::<Vec<_>>()
+        .concat();
+    assert_eq!(text, llg::sim::ir::INDEX_CHECK_HINT);
+}
+
+/// Every option and setting the model hints name exists: `--` options in
+/// the CLI parser and `simulator.` keys in the configuration reference.
+#[test]
+fn runtime_hints_name_existing_switches() {
+    let doc = catalog::markdown();
+    let section = doc
+        .split("\n## SIM\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .expect("SIM section");
+    let cli = repo_file("src/bin/llg/cli.rs");
+    let config = repo_file("docs/config.md");
+    let mut named = 0;
+    for token in section.split('`') {
+        if token.starts_with("--") {
+            assert!(
+                cli.contains(&format!("\"{token}\"")),
+                "{token} is not an llg option"
+            );
+            named += 1;
+        } else if let Some(key) = token.strip_prefix("simulator.") {
+            assert!(
+                config.contains(&format!("`{key}`")),
+                "{token} is not a setting"
+            );
+            named += 1;
+        }
+    }
+    assert!(named >= 5, "the SIM section names the hint switches");
+}

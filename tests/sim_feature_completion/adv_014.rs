@@ -110,7 +110,7 @@ fn pending_evaluations_are_bounded() {
                 "SIM-010",
                 "budget.sv:23:3",
                 "sequence thread budget exhausted: more than 50 live sequence threads at time 2091 \
-                 (concurrent assertion bud); raise"
+                 (concurrent assertion bud) (raise LLG_SEQUENCE_THREAD_LIMIT)"
             ),
             "optimized={optimized}: {stderr}"
         );

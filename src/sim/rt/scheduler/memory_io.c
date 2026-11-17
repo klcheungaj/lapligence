@@ -87,7 +87,7 @@ static void llg_memory_report(llg_msg_id_t id, const char* path, const char* for
     llg_report_printf(&text, "%s `%s`: ", llg_memory_noun(), path ? path : "");
     llg_report_vprintf(&text, format, args);
     llg_msg_append(&report, id, llg_msg_default_severity(id), NULL, NULL, NULL, text.data,
-                   text.len);
+                   text.len, NULL);
     llg_report_free(&text);
     llg_report_emit(&report, stderr);
 }

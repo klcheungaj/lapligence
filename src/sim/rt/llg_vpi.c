@@ -3880,7 +3880,8 @@ static int load_one_plugin(const char* path) {
     }
     g_vpi.plugin_handles[g_vpi.plugin_count++] = module;
     if (!g_vpi.object_count && g_vpi.plugin_count == 1)
-        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "the model was built without the VPI object catalog; rebuild it with --vpi to reach design objects from `%s`", path);
+        llg_msg_hint(LLG_MSG_RUNTIME_WARNING, NULL, "rebuild the model with --vpi",
+                     "the model was built without the VPI object catalog, so `%s` cannot reach design objects", path);
     if (!run_startup_table((void (*const*)(void))startup, path)) return 0;
     return !g_vpi.failed;
 }
