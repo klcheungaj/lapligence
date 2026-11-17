@@ -3571,6 +3571,10 @@ int llg_clocking_sample_history_real(sv4_t* source, double* sample,
 // not unregister waits, sampling or assertions: their borrowed sources must
 // still outlive their consumers. NULL and already-forgotten signals are harmless.
 void llg_clocking_forget_signal(sv4_t* signal);
+// The same for externally owned real storage: a change record of the current
+// turn keyed by it is dropped (real storage keeps no clocking history). NULL
+// and unknown storage are harmless.
+void llg_change_forget_real(double* target);
 // A model with no clocking drive, `##` cycle wait or assertion clock pulse
 // calls this after init: nothing then asks whether a signal changed earlier in
 // the current slot, so publication stops recording edge history except for

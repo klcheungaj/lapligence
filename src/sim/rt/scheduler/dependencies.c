@@ -1176,6 +1176,11 @@ static void change_forget(const void* key) {
     change_close(change);
 }
 
+void llg_change_forget_real(double* target) {
+    if (LLG_CO_UNLIKELY((g.change_rows | g.change_unrowed) != 0) && target)
+        change_forget(target);
+}
+
 static void changes_release(void) {
     for (size_t i = 0; i < g.change_count; i++)
         if (g.changes[i]) change_close(g.changes[i]);

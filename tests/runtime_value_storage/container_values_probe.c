@@ -26,7 +26,8 @@ static void* fresh_event(void) {
     CHECK(created_events < 8);
     return &event_objects[created_events++];
 }
-static const llg_value_handle_hooks_t hooks = {fresh_event, count_retain, count_release, NULL, NULL};
+static const llg_value_handle_hooks_t hooks = {
+    fresh_event, count_retain, count_release, NULL, NULL, NULL, NULL};
 
 static void fill_record(llg_value_t* record, const char* text, uint64_t number, double real) {
     llg_native_value_init(record, &record_desc);
@@ -183,6 +184,64 @@ static void check_identity_handles(void) {
     sv4_destroy(&zero);
     sv4_destroy(&one);
     sv4_destroy(&two);
+    CHECK(value_test_live() == 0);
+}
+
+/* Released record leaves leave the scheduler's address-keyed state (change
+ * records, clocking history) through the forget hooks before their items
+ * array is freed: popped, deleted and overwritten records. */
+static const void* forgotten[16];
+static int forgotten_count;
+static void note_forgotten(const void* leaf) {
+    CHECK(forgotten_count < 16);
+    forgotten[forgotten_count++] = leaf;
+}
+static void forget_packed(sv4_t* leaf) { note_forgotten(leaf); }
+static void forget_real(double* leaf) { note_forgotten(leaf); }
+static int was_forgotten(const void* leaf) {
+    for (int i = 0; i < forgotten_count; ++i)
+        if (forgotten[i] == leaf) return 1;
+    return 0;
+}
+
+static void check_released_leaves(void) {
+    const llg_value_handle_hooks_t forgetting = {
+        fresh_event, count_retain, count_release, NULL, NULL, forget_packed, forget_real};
+    llg_value_set_handle_hooks(&forgetting);
+    llg_queue_value_array_t queue;
+    llg_queue_value_init(&queue, &record_desc, UINT64_MAX);
+    llg_value_t record = {0}, read = {0};
+    fill_record(&record, "kept", 3, 0.5);
+    llg_native_value_init(&read, &record_desc);
+    llg_queue_value_push_value(&queue, 1, &record);
+    llg_queue_value_push_value(&queue, 1, &record);
+    sv4_t zero = sv4_zero(32, 0);
+    llg_value_t* element = llg_queue_value_element(&queue, &zero, 1);
+    CHECK(element);
+    const void* packed = &element->value.items[1].value.packed;
+    const void* real = &element->value.items[2].value.real;
+    const void* text = &element->value.items[0].value.string;
+    forgotten_count = 0;
+    llg_queue_value_pop_value(&queue, 0, &read);
+    CHECK(was_forgotten(packed) && was_forgotten(real) && !was_forgotten(text));
+    CHECK(forgotten_count % 2 == 0); /* two leaves per freed record */
+    element = llg_queue_value_element(&queue, &zero, 1);
+    packed = &element->value.items[1].value.packed;
+    forgotten_count = 0;
+    llg_queue_value_delete(&queue);
+    CHECK(forgotten_count == 2 && was_forgotten(packed));
+    packed = &record.value.items[1].value.packed;
+    llg_value_t other = {0};
+    fill_record(&other, "new", 4, 1.0);
+    forgotten_count = 0;
+    llg_native_value_copy(&record, &other);
+    CHECK(forgotten_count == 2 && was_forgotten(packed));
+    llg_queue_value_destroy(&queue);
+    llg_native_value_destroy(&other);
+    llg_native_value_destroy(&record);
+    llg_native_value_destroy(&read);
+    sv4_destroy(&zero);
+    llg_value_set_handle_hooks(&hooks);
     CHECK(value_test_live() == 0);
 }
 
@@ -494,6 +553,7 @@ int main(void) {
     check_identity_handles();
     check_record_container_members();
     check_nested_sequences();
+    check_released_leaves();
     puts("container value probe passed");
     return 0;
 }

@@ -26,7 +26,7 @@ excludes the following retainers or supplies the indicated cleanup:
 | `activations.c`, `reference_writes.c`, queue refs, output/inout/ref and foreign call descriptors | All address actuals remain heap-backed; reference descriptors themselves retain their existing heap scopes. |
 | `storage.c` capture slots and `forks.c` joined/detached descendants | Captured forks and spawning callee effects fail the proof. |
 | Wait snapshots, R2 subscriptions, expression/iff contexts and `wait_order` delivery | Local wait dependencies and context-free evaluator reads remain heap-backed; captured evaluator/qualifier contexts are unproven. Existing wake/cancel paths remove subscriptions before scope unwind. |
-| R1 `dependencies.c` clock history | Every final scope release forgets the exact packed descriptor before reuse; publication without a waiter is still recorded. |
+| R1 `dependencies.c` clock history and change records | Every final scope release forgets the exact packed descriptor before reuse; publication without a waiter is still recorded. The container runtime forgets the packed and real leaves of a record or fixed-array items array before freeing it (`llg_value_handle_hooks_t` `forget_packed`/`forget_real`), since generated code writes them in place. |
 | Clocking sources, sampled histories, concurrent assertions, sequence clocks/local scopes | Clocking/sampled/assertion forms fail the proof; external owners retain their documented lifetime obligations. |
 | `nets.c` inertial handles/targets, `force.c` targets/evaluators | These registrations fail the proof; model-lifetime sources keep their existing path. |
 | `mailboxes.c` delayed delivery, pinned targets and reentrant publication snapshots | Mailbox/native service operations fail the proof. |
