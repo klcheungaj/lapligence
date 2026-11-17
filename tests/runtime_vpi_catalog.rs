@@ -9,10 +9,12 @@
 //!   parameter types, and define none of the Annex L compatibility renames.
 //! - Catalog gate: every row of `src/sim/rt/vpi_catalog.txt` has a status, a
 //!   test that exists for implemented, extension and error rows and a reason
-//!   for the others; the catalog names every property, relation and
-//!   iteration the runtime dispatch (`llg_vpi.c`, `llg_vpi_dynamic.c`)
-//!   handles, and every row the runtime answers is in that dispatch; the
-//!   ADV-019 walker probes every one of those names. The walk itself is
+//!   for the others; the catalog names every property, relation,
+//!   iteration, callback reason and `vpi_control` operation the runtime
+//!   dispatch (`llg_vpi.c`, `llg_vpi_dynamic.c`, `llg_vpi_runtime.c`,
+//!   `llg_vpi_services.c`) handles, and every row the runtime answers is in
+//!   that dispatch; the ADV-019 walker probes every property, relation and
+//!   iteration name. The walk itself is
 //!   `adv_019::catalog_walk_matches_the_vpi_catalog`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -467,9 +469,11 @@ enum Match {
     Compare,
 }
 
-/// The dispatch of each row kind: the functions of `llg_vpi.c` and
-/// `llg_vpi_dynamic.c` that decide which properties, relations and
-/// iterations an object answers, and the variable holding the query.
+/// The dispatch of each row kind: the functions of the VPI runtime that
+/// decide which properties, relations and iterations an object answers,
+/// which callback reasons `vpi_register_cb` takes or refuses and which
+/// operations `vpi_control` performs or refuses, and the variable holding
+/// the query.
 /// One dispatch rule: a function, how it names values, and its query variable.
 type Rule = (&'static str, Match, &'static str);
 
@@ -543,6 +547,24 @@ const DISPATCH: &[(&str, &[Rule])] = &[
             ("rts_iterate", Match::Compare, "type"),
         ],
     ),
+    (
+        "cb",
+        &[
+            ("vpi_register_cb", Match::Compare, "reason"),
+            ("vpi_refuse_reason", Match::Switch, "reason"),
+            ("time_reason", Match::Compare, "reason"),
+            ("svc_reason", Match::Compare, "reason"),
+            ("rts_cb_reason", Match::Compare, "reason"),
+            ("assertion_system_reason", Match::Compare, "reason"),
+        ],
+    ),
+    (
+        "control",
+        &[
+            ("vpi_control", Match::Compare, "operation"),
+            ("is_assertion_control", Match::Compare, "operation"),
+        ],
+    ),
 ];
 
 fn is_ident(c: char) -> bool {
@@ -594,12 +616,13 @@ fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
     panic!("no definition of {name} in the VPI runtime");
 }
 
-/// The `vpi...` identifier that starts `text` after any whitespace.
+/// The `vpi...` or `cb...` (callback reason) identifier that starts `text`
+/// after any whitespace.
 fn vpi_name_after(text: &str) -> Option<&str> {
     let text = text.trim_start();
     let end = text.find(|c: char| !is_ident(c)).unwrap_or(text.len());
     let name = &text[..end];
-    name.starts_with("vpi").then_some(name)
+    (name.starts_with("vpi") || name.starts_with("cb")).then_some(name)
 }
 
 /// The names `body` compares `var` with or switches on into `out`, and each
@@ -680,10 +703,11 @@ type Dispatch = BTreeMap<&'static str, (BTreeSet<String>, Vec<(String, String)>)
 
 fn runtime_dispatch() -> Dispatch {
     let source = strip_c_comments(&format!(
-        "{}\n{}\n{}",
+        "{}\n{}\n{}\n{}",
         read_source("src/sim/rt/llg_vpi.c"),
         read_source("src/sim/rt/llg_vpi_dynamic.c"),
-        read_source("src/sim/rt/llg_vpi_runtime.c")
+        read_source("src/sim/rt/llg_vpi_runtime.c"),
+        read_source("src/sim/rt/llg_vpi_services.c")
     ));
     DISPATCH
         .iter()

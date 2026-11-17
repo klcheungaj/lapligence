@@ -2791,8 +2791,9 @@ None: the decision is to reject. Reproduce with the files in
 
 **Status:** open. The object model catalog
 [`src/sim/rt/vpi_catalog.txt`](../src/sim/rt/vpi_catalog.txt) is the single
-source of truth for which object types, properties, one-to-one relations and
-iterations the runtime serves: every row it marks `unsupported` is a gap of
+source of truth for which object types, properties, one-to-one relations,
+iterations, callback reasons and `vpi_control` operations the runtime
+serves: every row it marks `unsupported` is a gap of
 this section, with its reason, and a query no row lists is an error
 (decision A19-D26). This section lists the limits the catalog does not
 express: objects outside the generated catalog, values, callbacks, routines
