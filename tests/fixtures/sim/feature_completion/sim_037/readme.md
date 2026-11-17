@@ -168,7 +168,7 @@ dropped silently. An invalid limit (`0`) is rejected at startup.
   each run match items or a pass statement at time ...` naming `p`.
 - `multiplicity_overflow`: `(a or a)[*70]` would reach 2^64 matches on tick
   64 (time 635000); the run stops with `llg: sequence match multiplicity
-  overflow at time 635000 (concurrent assertion p at ...)` instead of a wrong
+  overflow at time 635000 (concurrent assertion p)` (located at the assertion) instead of a wrong
   count.
 
 ## Negatives

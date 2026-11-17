@@ -295,3 +295,27 @@ fn property_local_initialized_per_attempt_reaches_later_operands() {
         assert_sorted_stdout(label, output, expected)
     });
 }
+
+/// FIN-001 A3: limits of match-item calls, join operands and end points that
+/// llg reports itself (the frontend accepts these forms).
+#[test]
+fn match_item_join_and_endpoint_local_limits_are_located() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_match_call_queue",
+        "neg_match_call_queue.sv:10:34 unpacked aggregate, container and event arguments of \
+         sequence match-item calls are not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_join_local",
+        "neg_join_local.sv:11:28 local variable assignments inside `and` operands are not \
+         supported in concurrent assertion consequent (tb)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_endpoint_local_output",
+        "neg_endpoint_local_output.sv:13:20 a local variable passed to a sequence endpoint is not \
+         supported",
+    );
+}

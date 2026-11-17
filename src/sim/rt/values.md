@@ -123,8 +123,9 @@ in `item_count`: 0 integral, 1 string, 2 class.
 A record element's queue or dynamic-array member is a nested slot, not the
 formal's companion container, so `llg_native_ref_mirror`
 keeps the two equal: the companion's `notify` assigns the slot and touches the
-element's container, whose interposed notify recopies every other mirror. Each
-change costs the member's size. Every store through a record `ref` formal is followed by
+element's container, whose interposed notify recopies every other mirror; a
+subroutine record's slot has no container, so the mirror recopies the others
+itself. Each change costs the member's size. Every store through a record `ref` formal is followed by
 `llg_native_ref_value_stored`, which tells the element's container; it costs one
 load when no reference is live and a walk of the live references otherwise.
 

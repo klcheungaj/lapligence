@@ -1183,7 +1183,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Output and inout event formals bound to class event properties copy the
   property's handle in at the call and back at return
   (`class_event_formals`), and a `ref` event formal rebinds the property's
-  slot at once (`class_event_ref_formal`). Function calls in expressions take
+  slot at once (`class_event_ref_formal`), also from a fork-join branch or
+  through an output event formal it is forwarded to, at that formal's return
+  (`class_event_ref_held`). Function calls in expressions take
   output, inout and `ref` event formals for any result type
   (`event_formals_value_calls`, decision S13-D3).
   Event handles other than declared named events in process-evaluated lists
@@ -1892,10 +1894,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   through the formal reaches the element's readers at that store, whatever its
   form ([record_ref_write_paths](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   A run-time record element of a module record binds through one
-  specialization per element under a decision tree in statement calls; a task
+  specialization per element under a decision tree in statement calls, and a
+  function call in an assignment, `return` or system-task statement lowers the
+  statement once per element (`record_ref_element_select_expression`); a task
   that waits on the formal stops the run when the index selects no element,
   at any array size
-  ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)),
+  also below a constant element select (`o.m[1].a[k]`, `record_ref_element_select_nested`).
   So does a task that waits on a `ref` formal bound to an index-selected element
   of a fixed array, queue or dynamic array of records, packed structures,
   integers, reals or strings (`ref_wait_unselected_*`, decision S13-D6); a
@@ -1907,9 +1912,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Record elements with queue or dynamic-array members bind through companion
   containers the runtime mirrors, at the member's size per change
   ([record_ref_container_member](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
-  Run-time elements of module records in calls inside expressions, members of
-  subroutine records with container members and reference-formal NBAs remain
-  restricted. Fixed packed scanner destinations retain checked selected
+  Members of subroutine records with container members pass the record's own
+  companions, or mirrors of nested slots at 16 or more cells
+  ([record_ref_subroutine_container_member](../tests/fixtures/sim/feature_completion/sim_008/readme.md));
+  a task waiting on such a formal rejects.
+  Run-time elements of module records below 16 cells in calls inside
+  conditions and loop headers, and reference-formal NBAs remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;
   packed bit/part actuals rejected by the frontend are not legalized by internal
@@ -2359,8 +2367,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   evidence. A call reaches generic VPI dispatch, so a registered VPI
   application provides it (SV §36.3.2); without one the
   [runtime bridge](../src/sim/rt/llg_vpi.c) stops the run at startup with
-  `llg: VPI error: no VPI registration for `$reset_count` (called at
-  <file>:<line>)`, never a no-op. A `string`-typed formal (such as `$input`'s
+  `VPI error: no VPI registration for `$reset_count``, located at the call
+  (`<file>:<line>`), never a no-op. A `string`-typed formal (such as `$input`'s
   file name) is rejected at compile time instead, naming the argument's
   position. Pinned, with
   [`builtin_inventory.tsv`](../tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv)
@@ -2749,7 +2757,8 @@ value function's argument, a `disable iff` condition, a clock's `iff`, an
 assertion with global clocking future functions or a procedural checker's
 assertion) and invalid scopes/arguments
 remain rejected by the
-[assertion lowerer](../src/sim/codegen/lowering/assertions.rs).
+[assertion lowerer](../src/sim/codegen/lowering/assertions.rs)
+([known issue](known_issues.md#assertion-locals-in-join-operands-and-end-points)).
 
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
 2009 global-clock history/status forms support explicit, inferred, default and
@@ -2770,8 +2779,9 @@ it reads, registered without per-slot history. Real, shortreal and realtime
 operands of `$past`, `$rose`, `$fell`, `$stable`, `$changed` and the global
 clocking functions, string, event, chandle, class, dynamic and associative
 array arguments are diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
-queues and unpacked element selections are explicit unsupported rejections
-([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
+queues and unpacked element selections (also element operands of concurrent
+assertions, for arrays below the descriptor size) are located unsupported
+rejections ([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
 [SIM-035 fixtures](../tests/fixtures/sim/feature_completion/sim_035/readme.md)).
 The future global functions `$future_gclk`, `$rising_gclk`, `$falling_gclk`,
 `$steady_gclk` and `$changing_gclk` (§16.9.4) read the sampled value at the
@@ -2785,8 +2795,10 @@ interval; ticks after the last global clock tick are never evaluated
 [decisions A14-D1-D4](lrm_decisions.md#global-clocking-future-sampled-value-functions-adv-014)).
 Pending evaluations count against `LLG_SEQUENCE_THREAD_LIMIT`. Nesting, match
 items, action blocks, procedural code and missing global clocking are
-frontend errors; `expect`, asynchronous `accept_on`/`reject_on` and sequence
-end points with these functions are located rejections
+frontend errors; `expect`, asynchronous `accept_on`/`reject_on`, sequence
+end points, real operands, system and sampled value functions of future
+values, `inside` and procedural assertions with saved automatic values with
+these functions are located rejections
 ([known issue](known_issues.md#global-clocking-future-sampled-value-function-limits)).
 `$global_clock` is a clocking event wherever one may appear (§14.14), and `$inferred_clock`/
 `$inferred_disable` formal defaults resolve at the instance (§16.15.7)
@@ -3054,7 +3066,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject` follow construction,
   shallow copies and collection; handles track objects without pinning
   them and are released when the collector reclaims the object;
-  `cbValueChange` watches class variables (decisions A19-D21..D23). Models
+  `cbValueChange` watches class variables (decisions A19-D21..D23) and
+  chandle variables, reporting the new pointer image once per check. Models
   without a VPI catalog emit no tables and no creation calls.
   `vpi_get_value` serves every Table
   38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs
@@ -3159,8 +3172,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   step and queues its static assertions, and those of its nested static
   checkers, on its procedure's procedural assertion queue whenever the
   instantiation executes; `$inferred_clock` takes the procedure's inferred
-  clock (17.4). Sampled value functions of active free variables, unpacked
-  free variables and automatic or `const'` actuals of procedural checkers
+  clock (17.4). Sampled value functions of active free variables, unpacked,
+  real and enum free variables and automatic or `const'` actuals of procedural checkers
   are located limits
   ([known issue](known_issues.md#checker-limits-after-adv-015);
   [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md)).

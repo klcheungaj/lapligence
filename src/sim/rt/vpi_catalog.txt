@@ -16,7 +16,12 @@
 #     every class that contains it, the nearest declaration of a row winning.
 #   <kind> <name> [<status> <detail>]
 #     kind: get (vpi_get/vpi_get64), str (vpi_get_str), handle (vpi_handle),
-#     iterate (vpi_iterate), func (the routine given as name applies).
+#     iterate (vpi_iterate), func (the routine given as name applies),
+#     cb (vpi_register_cb with the reason given as name and an object of the
+#     node's type as obj; on the null node a NULL obj), control (vpi_control
+#     with the operation given as name, whatever object it takes; listed on
+#     the null node). Every reason vpi_register_cb and every operation
+#     vpi_control dispatch on is listed on at least one node.
 #     status (a row without one takes the node default):
 #       implemented <test alias>    answers; the test exercises it
 #       extension <test alias> <reason>   answers although the diagram does
@@ -87,6 +92,20 @@ test a19d88 sim_lrm_decisions::a19_d88_catalog_gaps
 test a19rmembers adv_019::structure_members_of_every_storage_form_are_listed_read_and_written
 test a19emembers adv_019::array_members_of_structure_values_and_fixed_class_properties_are_served
 test a19d89 sim_lrm_decisions::a19_d89_structure_members
+test s43regions sim_043::callbacks_trace_every_region_of_a_time_slot
+test s43control sim_043::control_from_callbacks_follows_the_stop_and_finish_lifecycle
+test s43vc sim_043::value_change_callbacks_see_one_change_per_check
+test a20actions adv_020::action_callbacks_report_errors_and_signals
+test a20force adv_020::force_and_release_statements_run_their_callbacks
+test a20disable adv_020::disable_runs_cb_disable_of_blocks_tasks_and_enclosed_calls
+test a20strengths adv_020::net_strengths_read_and_report_strength_only_changes
+test a20d11 sim_lrm_decisions::a20_d11_control_reset_interactive
+test a19gc adv_019::class_object_callbacks_follow_creation_and_reclamation_under_collection_stress
+test a19d8 sim_lrm_decisions::a19_d8_named_event_callback
+test a17control adv_017::vpi_control_drives_assertions_and_raises_their_callbacks
+test a17fsm adv_017::fsm_objects_report_states_counters_and_controls
+test a19cbk adv_019::callback_kinds_watch_chandles_and_refuse_the_rest
+test a19d91 sim_lrm_decisions::a19_d91_callback_kinds
 
 node null 37.5 type=NULL
   iterate vpiModule implemented walk
@@ -108,6 +127,84 @@ node null 37.5 type=NULL
   get vpiTimePrecision implemented walk
   handle vpiSysFuncCall extension walk vpiSysTfCall under its call-type names
   handle vpiSysTaskCall extension walk vpiSysTfCall under its call-type names
+  cb cbEndOfCompile implemented s43regions
+  cb cbStartOfSimulation implemented s43regions
+  cb cbEndOfSimulation implemented s43regions
+  cb cbAtStartOfSimTime implemented s43regions
+  cb cbReadWriteSynch implemented s43regions
+  cb cbReadOnlySynch implemented s43regions
+  cb cbNextSimTime implemented s43regions
+  cb cbAfterDelay implemented s43regions
+  cb cbNBASynch implemented s43regions
+  cb cbAtEndOfSimTime implemented s43regions
+  cb cbError implemented a20actions
+  cb cbPLIError implemented a20actions
+  cb cbSignal implemented a20actions
+  cb cbForce implemented a20force
+  cb cbRelease implemented a20force
+  cb cbStartOfThread implemented a19thr
+  cb cbStartOfFrame implemented a19thr
+  cb cbEndOfFrame implemented a19thr
+  cb cbEndOfThread implemented a19thr
+  cb cbAssertionSysInitialized implemented a17control
+  cb cbAssertionSysOn implemented a17control
+  cb cbAssertionSysOff implemented a17control
+  cb cbAssertionSysKill implemented a17control
+  cb cbAssertionSysEnd implemented a17control
+  cb cbAssertionSysReset implemented a17control
+  cb cbAssertionSysEnablePassAction implemented a17control
+  cb cbAssertionSysEnableFailAction implemented a17control
+  cb cbAssertionSysDisablePassAction implemented a17control
+  cb cbAssertionSysDisableFailAction implemented a17control
+  cb cbAssertionSysEnableNonvacuousAction implemented a17control
+  cb cbAssertionSysDisableVacuousAction implemented a17control
+  cb cbStmt error a20actions statements have no execution hook: one would cost every statement of the model a check
+  cb cbSizeChange error a20actions dynamic arrays, queues, associative arrays and strings report no resize to VPI (decision A19-D91)
+  cb cbAssign error a20actions procedural assign and deassign are rejected by llg (decision A20-D9)
+  cb cbDeassign error a20actions procedural assign and deassign are rejected by llg (decision A20-D9)
+  cb cbUnresolvedSystf error a20actions every system task and function call is resolved when the model is generated
+  cb cbStartOfSave error a20actions llg has no save and restart
+  cb cbEndOfSave error a20actions llg has no save and restart
+  cb cbStartOfRestart error a20actions llg has no save and restart
+  cb cbEndOfRestart error a20actions llg has no save and restart
+  cb cbStartOfReset error a20actions llg has no $reset (decision A20-D11)
+  cb cbEndOfReset error a20actions llg has no $reset (decision A20-D11)
+  cb cbEnterInteractive error a20actions llg has no interactive mode (decision A20-D11)
+  cb cbExitInteractive error a20actions llg has no interactive mode (decision A20-D11)
+  cb cbInteractiveScopeChange error a20actions llg has no interactive mode (decision A20-D11)
+  control vpiStop implemented s43control
+  control vpiFinish implemented s43control
+  control vpiReset error a20d11 vpiReset executes $reset, an optional Annex D task llg does not provide (decision A20-D11)
+  control vpiSetInteractiveScope error a20d11 llg has no interactive mode (decision A20-D11)
+  control vpiCoverageStart implemented a17fsm
+  control vpiCoverageStop implemented a17fsm
+  control vpiCoverageReset implemented a17fsm
+  control vpiCoverageCheck implemented a17fsm
+  control vpiCoverageMerge implemented a17fsm
+  control vpiCoverageSave implemented a17fsm
+  control vpiAssertionDisable implemented a17control
+  control vpiAssertionEnable implemented a17control
+  control vpiAssertionReset implemented a17control
+  control vpiAssertionKill implemented a17control
+  control vpiAssertionEnableStep implemented a17control
+  control vpiAssertionDisableStep implemented a17control
+  control vpiAssertionSysOn implemented a17control
+  control vpiAssertionSysOff implemented a17control
+  control vpiAssertionSysKill implemented a17control
+  control vpiAssertionSysEnd implemented a17control
+  control vpiAssertionSysReset implemented a17control
+  control vpiAssertionDisablePassAction implemented a17control
+  control vpiAssertionEnablePassAction implemented a17control
+  control vpiAssertionDisableFailAction implemented a17control
+  control vpiAssertionEnableFailAction implemented a17control
+  control vpiAssertionDisableVacuousAction implemented a17control
+  control vpiAssertionEnableNonvacuousAction implemented a17control
+  control vpiAssertionSysEnablePassAction implemented a17control
+  control vpiAssertionSysEnableFailAction implemented a17control
+  control vpiAssertionSysDisablePassAction implemented a17control
+  control vpiAssertionSysDisableFailAction implemented a17control
+  control vpiAssertionSysEnableNonvacuousAction implemented a17control
+  control vpiAssertionSysDisableVacuousAction implemented a17control
 
 # IEEE 1800-2009 VPI has no checker object: a checker instance is a
 # vpiModule scope (sim_vpi::vpi_checker_instances_are_hierarchy_scopes,
@@ -727,6 +824,7 @@ node nets 37.16 members=net,net_bit,array_net
   handle vpiSimNet implemented a19d34
   handle vpiTypespec implemented walk
   handle vpiParent implemented walk
+  cb cbValueChange implemented a20strengths
 
 node net_bit 37.16 type=vpiNetBit
   handle vpiParent implemented walk
@@ -825,6 +923,7 @@ node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
   iterate vpiIndex implemented a19d28
+  cb cbValueChange implemented s43vc
 
 node short_real_var 37.17 type=vpiShortRealVar
   get vpiAllocScheme implemented walk
@@ -900,6 +999,7 @@ node array_var 37.17 type=vpiRegArray
   str vpiDecompile implemented walk
   iterate vpiIntVar extension walk a variable array iterates its elements by their own type
   iterate vpiStructVar extension walk a variable array iterates its elements by their own type
+  cb cbSizeChange error a19d91 no resize reaches VPI; industry-standard behaviour never calls it either (decision A19-D91)
 
 node packed_array_var 37.17 type=vpiPackedArrayVar
   get vpiPacked implemented walk
@@ -975,6 +1075,7 @@ node string_var 37.17 type=vpiStringVar
   handle vpiIndex implemented a19d73
   iterate vpiIndex implemented a19d73
   str vpiDecompile implemented walk
+  cb cbSizeChange error a19d91 no resize reaches VPI; industry-standard behaviour never calls it either (decision A19-D91)
 
 node chandle_var 37.17 type=vpiChandleVar
   get vpiArray implemented walk
@@ -985,6 +1086,7 @@ node chandle_var 37.17 type=vpiChandleVar
   handle vpiIndex implemented a19d73
   iterate vpiIndex implemented a19d73
   str vpiDecompile implemented walk
+  cb cbValueChange implemented a19cbk
 
 node class_var 37.17 type=vpiClassVar
   get vpiObjId implemented walk
@@ -999,6 +1101,7 @@ node class_var 37.17 type=vpiClassVar
   handle vpiIndex implemented a19d73
   iterate vpiIndex implemented a19d73
   str vpiDecompile implemented walk
+  cb cbValueChange implemented a19gc
 
 node var_bit 37.17 type=vpiRegBit
   get vpiConstantSelect implemented walk
@@ -1150,6 +1253,7 @@ node named_event 37.25 type=vpiNamedEvent
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
   iterate vpiIndex implemented walk
+  cb cbValueChange implemented a19d8
 
 node named_event_array 37.25 type=vpiNamedEventArray
   str vpiName implemented walk
@@ -1274,6 +1378,8 @@ node class_typespec 37.28 type=vpiClassTypespec
   iterate vpiRegArray implemented walk
   handle vpiScope implemented walk
   handle vpiTypedefAlias error a19d65 class typedef aliases are not exposed; industry-standard behaviour refuses it (decision A19-D65)
+  cb cbCreateObj implemented a19gc
+  cb cbReclaimObj implemented a19gc
 
 node class_obj 37.29 type=vpiClassObj
   iterate vpiMemory error a19d65 class properties are listed by vpiVariables, vpiReg and vpiRegArray; industry-standard behaviour refuses it (decision A19-D65)
@@ -1300,6 +1406,8 @@ node class_obj 37.29 type=vpiClassObj
   iterate vpiReg implemented walk
   iterate vpiRegArray implemented walk
   handle vpiScope error a19d65 a class object is in no scope; industry-standard behaviour refuses it (decision A19-D65)
+  cb cbReclaimObj implemented a19gc
+  cb cbEndOfObject implemented a19gc
 
 node constraint 37.30 type=vpiConstraint
   get vpiVirtual implemented walk
@@ -1344,6 +1452,7 @@ node primitive 37.31 members=gate,switch,udp
   handle vpiDelay implemented a20d16
   handle vpiIndex implemented walk
   iterate vpiPrimTerm implemented walk
+  cb cbValueChange error a19d91 38.36.1 lists variables, expressions, terminals and events; industry-standard behaviour refuses it too (decision A19-D91)
 
 node gate 37.31 type=vpiGate
   get vpiSigned extension walk the sign and width of the object's value
@@ -1379,6 +1488,7 @@ node prim_term 37.31 type=vpiPrimTerm
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
+  cb cbValueChange unsupported only variables, nets, their selects and named events are watched; industry-standard behaviour serves primitive terminals
 
 node udp_defn 37.32 type=vpiUdpDefn
   str vpiDefName implemented walk
@@ -1454,6 +1564,7 @@ node tchk 37.36 type=vpiTchk
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
+  cb cbTchkViolation implemented a20delays
 
 node tchk_term 37.36 type=vpiTchkTerm
   get vpiEdge implemented walk
@@ -1559,6 +1670,7 @@ node task 37.37 type=vpiTask
   iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
   iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
   iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
+  cb cbStartOfFrame implemented a19thr
 
 node tf_call 37.38 members=task_call,func_call,method_func_call,method_task_call,sys_func_call,sys_task_call
   str vpiName implemented walk
@@ -1617,6 +1729,7 @@ node sys_func_call 37.38 type=vpiSysFuncCall
 node sys_task_call 37.38 type=vpiSysTaskCall
   handle vpiUserSystf implemented walk
   handle vpiModule extension walk the enclosing scope, instance, module or parent
+  cb cbDisable implemented a20disable
 
 node user_systf 37.38 type=vpiUserSystf
   func vpi_get_systf_info implemented s42systf
@@ -1636,6 +1749,7 @@ node frame 37.39 type=vpiFrame
   handle vpiThread implemented a19thr
   iterate vpiAutomatics implemented a19locals
   str vpiFullName extension a19thr the full name of the task or function the frame activates, as other tools report it
+  cb cbEndOfFrame implemented a19thr
 
 node thread 37.40 type=vpiThread
   get vpiActive implemented a19d44
@@ -1644,6 +1758,9 @@ node thread 37.40 type=vpiThread
   iterate vpiThread implemented a19thr
   handle vpiFrame implemented a19thr
   iterate vpiAssertion error a19thr the 37.40 diagram has no assertion relation; its circle is the NULL reference of vpi_iterate(vpiThread, NULL)
+  cb cbStartOfThread implemented a19thr
+  cb cbEndOfThread implemented a19thr
+  cb cbEnterThread implemented a19thr
 
 node delay_device 37.41 type=vpiDelayDevice default=n/a llg has no delay device objects: module input port and intermodule path delays are reached through their ports and vpiInterModPath (37.3.4: they "do not appear within the SystemVerilog source code"), and net, primitive, path and assignment delays through their objects
   get vpiDelayType
@@ -1677,6 +1794,7 @@ node cont_assign 37.43 type=vpiContAssign
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
+  cb cbValueChange error a19d91 38.36.1 lists variables, expressions, terminals and events; industry-standard behaviour refuses it too (decision A19-D91)
 
 node cont_assign_bit 37.43 type=vpiContAssignBit
   get vpiOffset implemented a19d34
@@ -1941,6 +2059,7 @@ node operation 37.55 type=vpiOperation
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
   handle vpiScope extension walk the enclosing scope, instance, module or parent
+  cb cbValueChange unsupported only variables, nets, their selects and named events are watched; industry-standard behaviour serves operations
 
 node constant 37.55 type=vpiConstant
   get vpiConstType implemented walk

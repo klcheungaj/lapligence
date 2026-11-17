@@ -62,9 +62,9 @@ pub(crate) fn run_compile_opts_after_db_drop(
     );
 }
 
-/// [`run_compile_opts_after_db_drop`] for a model that prints run-time
-/// `llg: warning:` lines (`expected_warnings`, without the prefix, in any
-/// order).
+/// [`run_compile_opts_after_db_drop`] for a model that prints listed
+/// run-time warnings (`expected_warnings`, as
+/// [`sim_harness::listed_warnings`] shows them, in any order).
 pub(crate) fn run_compile_opts_after_db_drop_with_warnings(
     suite: &str,
     fixture: &str,
@@ -575,7 +575,7 @@ fn assert_case_output(
     for line in stderr.lines() {
         match llg::core::report::parse(line) {
             Some(message) if sim_harness::is_listed_warning(&message) => {
-                warnings.push(message.text)
+                warnings.push(sim_harness::located_text(&message))
             }
             _ if crate::sim_harness::is_compile_report_line(line) => {
                 // Legal conformance probes intentionally provoke frontend

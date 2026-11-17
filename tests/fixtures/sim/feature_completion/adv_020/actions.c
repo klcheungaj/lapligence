@@ -78,13 +78,18 @@ static PLI_INT32 act_register(PLI_BYTE8* data) {
         PLI_INT32 reason;
     } refused[] = {
         {"cbStmt", cbStmt},
+        {"cbSizeChange", cbSizeChange},
         {"cbAssign", cbAssign},
         {"cbDeassign", cbDeassign},
         {"cbUnresolvedSystf", cbUnresolvedSystf},
         {"cbStartOfSave", cbStartOfSave},
+        {"cbEndOfSave", cbEndOfSave},
+        {"cbStartOfRestart", cbStartOfRestart},
         {"cbEndOfRestart", cbEndOfRestart},
         {"cbStartOfReset", cbStartOfReset},
+        {"cbEndOfReset", cbEndOfReset},
         {"cbEnterInteractive", cbEnterInteractive},
+        {"cbExitInteractive", cbExitInteractive},
         {"cbInteractiveScopeChange", cbInteractiveScopeChange},
         {"reason 999", 999},
     };

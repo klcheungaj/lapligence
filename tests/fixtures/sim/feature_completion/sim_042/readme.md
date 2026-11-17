@@ -211,5 +211,5 @@ handle afterwards (the sanitizer lane runs it under ASan/UBSan).
 
 `missing.sv` calls `$absent`, which the compiler knows but `errors.c` never
 registers: the model stops before time 0 with
-`llg: VPI error: no VPI registration for `$absent` (called at <path>/missing.sv:6)`
+`ERROR: <path>/missing.sv:6: [SIM-016] VPI error: no VPI registration for `$absent``
 and exit status 1.

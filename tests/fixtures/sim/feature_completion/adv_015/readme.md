@@ -147,8 +147,11 @@ solves `p == s + 1` once `s` is known.
 
 llg leaves the variables unchanged after an unsuccessful attempt (one of
 the "any values"). `neg_free_history` (a sampled value function of an active
-free variable) and `neg_free_unpacked` (an unpacked free variable) are
-located limits; see the
+free variable), `neg_free_unpacked` (an unpacked free variable),
+`neg_free_real` and `neg_free_enum` (FIN-001 A3: a real and an enum free
+variable; 17.7, `SystemVerilog-1800-2009.txt` L28629: "Checker
+variables may have an optional rand qualifier. In this case, they are called
+free variables") are located limits; see the
 [known issue](../../../../../docs/known_issues.md#checker-limits-after-adv-015).
 
 Procedural checker instances (17.3.1 L28345-28351, L28398-28399; 17.4

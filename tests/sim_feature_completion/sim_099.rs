@@ -782,11 +782,7 @@ fn builtins_without_lowering_dispatch_to_vpi() {
         },
     );
     let unregistered = |fixture: &str, name: &str| {
-        let source = fixture_path(&format!("{fixture}.sv"));
-        format!(
-            "ERROR: [SIM-016] VPI error: no VPI registration for `{name}` (called at {}:7)",
-            source.display()
-        )
+        format!("ERROR: {fixture}.sv:7: [SIM-016] VPI error: no VPI registration for `{name}`")
     };
     sim_cli::reject_case(
         SUITE,
@@ -822,17 +818,14 @@ fn vpi_registrations_of_called_builtins_stop_at_startup() {
             )
         },
     );
-    let source = fixture_path("neg_builtin_override.sv");
-    let diagnostic = format!(
-        "ERROR: [SIM-016] VPI error: a VPI application registers `$random`, which llg implements as a \
-         built-in (called at {}:6); llg does not support overriding built-in system tasks and \
-         functions (IEEE 1800-2009 36.3.2)",
-        source.display()
-    );
+    let diagnostic = "ERROR: neg_builtin_override.sv:6: [SIM-016] VPI error: a VPI application \
+                      registers `$random`, which llg implements as a built-in; llg does not \
+                      support overriding built-in system tasks and functions (IEEE 1800-2009 \
+                      36.3.2)";
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_builtin_override",
-        &diagnostic,
+        diagnostic,
         &["--dpi-lib", &vpi],
     );
     let Some(plugin) = super::sim_040::plugin_library(SUITE, &directory, "builtin_override", &[])
@@ -852,7 +845,7 @@ fn vpi_registrations_of_called_builtins_stop_at_startup() {
         assert_eq!(output.status.code(), Some(1), "plugin: {seen}");
         assert!(output.stdout.is_empty(), "plugin: {seen}");
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains(&diagnostic),
+            sim_harness::mentions(&String::from_utf8_lossy(&output.stderr), diagnostic),
             "plugin: {seen}"
         );
     }

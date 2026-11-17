@@ -20,8 +20,9 @@ macro_rules! fixture {
     };
 }
 
-/// The absolute fixture path, as violation reports name the source: the resolved
-/// native spelling, since a joined path keeps `SUITE`'s `/` on Windows.
+/// The absolute fixture path, as lowering warnings name the source: the
+/// resolved native spelling, since a joined path keeps `SUITE`'s `/` on
+/// Windows.
 fn source_path(fixture: &str) -> String {
     sim_harness::source_display(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -31,13 +32,13 @@ fn source_path(fixture: &str) -> String {
     )
 }
 
-/// The timing violation reports of a run (`SIM-015`), in order, after
-/// `timing violation at `.
+/// The timing violation reports of a run (`SIM-015`), in order, as
+/// `file:line:col in <rest of the text after "timing violation in ">`.
 fn violations(output: &Output) -> Vec<String> {
     super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
         .iter()
-        .filter_map(|text| text.strip_prefix("timing violation at "))
-        .map(str::to_owned)
+        .filter_map(|text| text.split_once(" timing violation in "))
+        .map(|(location, rest)| format!("{location} in {rest}"))
         .collect()
 }
 
@@ -152,7 +153,7 @@ fn notifiers_toggle_and_feed_sequential_udps() {
 /// event times on stderr, in the time step of the violation.
 #[test]
 fn violation_reports_name_source_scope_and_times() {
-    let path = source_path("windows.v");
+    let path = "windows.v";
     sim_cli::run_case_checked_matrix(SUITE, "windows.v", &[], &|label, output| {
         assert!(
             output.status.success(),
@@ -215,7 +216,7 @@ fn violation_reports_name_source_scope_and_times() {
         expected.sort();
         assert_eq!(reports, expected, "{label}");
     });
-    let path = source_path("skew_period_width.v");
+    let path = "skew_period_width.v";
     sim_cli::run_case_checked_matrix(SUITE, "skew_period_width.v", &[], &|label, output| {
         let reports = violations(output);
         assert!(
@@ -334,18 +335,12 @@ fn duplicate_checks_keep_the_larger_limit_with_a_warning() {
 #[test]
 fn nochange_runs_after_the_database_is_dropped() {
     let path = source_path("nochange.v");
-    let first = format!(
-        "timing violation at {path}:6:45 in tb.x1 at time 100 (1ns): \
-         $nochange(posedge c:100, d:99, 2, 3)"
-    );
-    let second = format!(
-        "timing violation at {path}:5:45 in tb.q2 at time 101 (1ns): \
-         $nochange(posedge c:100, d:101, 0, 0)"
-    );
-    let third = format!(
-        "timing violation at {path}:6:45 in tb.x2 at time 121 (1ns): \
-         $nochange(posedge c:100, d:121, 2, 3)"
-    );
+    let first = "nochange.v:6:45 timing violation in tb.x1 at time 100 (1ns): \
+                 $nochange(posedge c:100, d:99, 2, 3)";
+    let second = "nochange.v:5:45 timing violation in tb.q2 at time 101 (1ns): \
+                  $nochange(posedge c:100, d:101, 0, 0)";
+    let third = "nochange.v:6:45 timing violation in tb.x2 at time 121 (1ns): \
+                 $nochange(posedge c:100, d:121, 2, 3)";
     sim_cli::run_compile_opts_after_db_drop_with_warnings(
         SUITE,
         "nochange.v",
@@ -356,7 +351,7 @@ fn nochange_runs_after_the_database_is_dropped() {
         },
         fixture!("nochange.out"),
         "INFO: nochange.v:27:9: [SIM-001] (tb @ 132 ns) $finish called\nINFO: [SIM-000] 0 error(s), 3 warning(s), 1 info(s)\n",
-        &[&first, &second, &third],
+        &[first, second, third],
     );
 }
 

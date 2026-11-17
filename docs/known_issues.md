@@ -552,11 +552,17 @@ properties, SIM-011, and static record properties are one shared record); equali
 with an ambiguous predicate on such records);
 a run-time selection among more than 4,096 leaves of a module record
 (`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
-record (`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a member of a subroutine
-record whose type has container members, and a run-time-indexed record element
-of a module, static or block record bound by a call in an expression, below a
-constant index (`o.m[1].a[k]`), or among more than 256 elements or combinations
-(a statement call lowers once per element, `tr(o.e[i])`; a task that waits on
+record (`NATIVE_RECORD_SELECT_LIMIT`); a task waiting on a `ref` formal bound
+to a member of a subroutine record whose type has container members (the
+formal takes the record's companions, whose changes publish nothing it
+follows); as a `ref` actual, a run-time-indexed record element
+of a module, static or block record of fewer than 16 cells bound by a function
+called in a condition, a loop header or another statement that is not an
+assignment without timing control, a `return` or a system-task statement, or
+after an operand of the same statement that may write the index, or
+among more than 256 elements or combinations
+(a call statement, or such a statement around a function call, lowers once per
+element, `tr(o.e[i])`, `x = f(o.e[i])`; a task that waits on
 the formal stops the run if the index selects no element); an event control on
 a member of a native record `ref` formal when the actual is a subroutine record
 (a generic lowering
@@ -610,10 +616,15 @@ record; a module-like record has no such value, so a call binding one runs a
 specialization of the subroutine that names the record's leaves directly,
 which needs the record statically: a run-time record element lowers the call
 once per element under a decision tree, and only a statement can branch that
-way (a scalar leaf is chosen among stable addresses at the call). An element
+way, so a function call in an expression lowers its whole statement per element
+with the index taken when the statement starts, before its other operands,
+and only for a statement that evaluates its expressions once (a scalar leaf is
+chosen among stable addresses at the call). An element
 reference shares the element's item array; a queue or dynamic-array member is
 a nested slot of another representation, so the call mirrors it in a companion
-container, at the member's size per change in either direction.
+container, at the member's size per change in either direction. A member of a
+subroutine record passes the record's own companions, or mirrors the nested
+slots of a member array the record holds in its own slot (16 or more cells).
 
 ### Intended direction
 
@@ -1634,55 +1645,6 @@ Pass a native record's leaf markers with the record value.
 `neg_ref_wait_record_property_real.sv`;
 `sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
 
-## Rebinding a class event property through an output formal publishes at the return
-
-### Symptom
-
-A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
-on a rebinding through a `ref` event formal at the rebinding, also in a
-fork-join branch of the callee, except when the callee forwards the formal to
-an output event formal: it then wakes when the outermost call returns. Waits
-on the event itself are not affected: they follow the object named when armed.
-
-### Cause
-
-An output event formal works on its own handle and assigns it back at the
-return, and it has no marker parameter.
-
-### Intended direction
-
-Publish at the copy-out of each call level, if a design needs it. Estimate: a
-quarter of a day.
-
-### Reproduce
-
-A task with `output event e` assigning `e = g`, called with a `ref` event
-formal of the enclosing task bound to `c.ev`, while `wait (c.ev == g)` waits.
-
-## Symptom
-
-A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
-on a rebinding through a `ref` event formal at the rebinding, except when the
-rebinding runs in a fork-join branch of the callee (or through an output event
-formal the callee forwards it to): it then wakes when the outermost call
-returns. Waits on the event itself are not affected: they follow the object
-named when armed.
-
-### Cause
-
-A branch receives the formal's address, not its marker parameter, which exists
-only in models that need it and is decided after the branch is lowered.
-
-### Intended direction
-
-Capture the marker in a second slot, as handle formals do, if a design needs
-it. Estimate: a quarter of a day.
-
-### Reproduce
-
-`tests/fixtures/sim/feature_completion/sim_014/class_event_ref_held.sv`
-(`in_branch`).
-
 ## Level waits on the identity of an event variable hang
 
 ### Symptom
@@ -2077,7 +2039,9 @@ with `--edition v2001`.
 
 ## Deferred assertion actions with container, event or virtual-interface arguments
 
-**Status:** open (SIM-036 deferral).
+**Status:** open (SIM-036 deferral; kept by FIN-001 A3: uncommon forms).
+
+### Symptom
 
 A deferred assertion action (SV 16.4) whose call passes a queue, dynamic or
 associative array, or named event by value, or that calls a task or function
@@ -2091,16 +2055,37 @@ captures packed, real, string and opaque (chandle/class handle) values
 like a method receiver. Fork-branch outermost blocks are also not treated as
 outermost procedure scopes for the 16.4.4 flush.
 
-Reproduce with `int q[$]; task show(input int x[$]); ... endtask` and
-`assert #0 (0) else show(q);`.
-
 Subroutine calls attached to a sequence match (SV 16.11, SIM-039) use the
 same captured frame and share these limits, reported as "sequence match-item
 call" diagnostics; a match-item task with a timing control is also rejected.
 
+### Cause
+
+The action frame holds fixed-size captured values; it has no owned copy of a
+container, no captured event identity and no virtual-interface receiver.
+Industry-standard behaviour accepts these forms; it was seen reading a
+queue or dynamic array argument when the action runs rather than when the
+assertion is evaluated, which 16.4 (L21223-21225) does not allow.
+
+### Intended direction
+
+Copy a container argument into an owned frame object at issue time
+(`llg_frame_capture_object`), capture an event's identity and a virtual
+interface handle like a method receiver.
+
+### Reproduce
+
+[`sim_036/neg_queue_action.sv`](../tests/fixtures/sim/feature_completion/sim_036/neg_queue_action.sv),
+[`sim_036/neg_vif_action.sv`](../tests/fixtures/sim/feature_completion/sim_036/neg_vif_action.sv)
+and
+[`sim_039/neg_match_call_queue.sv`](../tests/fixtures/sim/feature_completion/sim_039/neg_match_call_queue.sv);
+the timing-control form is `sim_039/neg_match_call_timing.sv`.
+
 ## Assertion locals in join operands and end points
 
-**Status:** open (SIM-039 deferral).
+**Status:** open (SIM-039 deferral; kept by FIN-001 A3).
+
+### Symptom
 
 Property locals (local input formals and declared locals with a declaration
 assignment) are initialized in every property form since FIN-001 A2: the
@@ -2111,10 +2096,28 @@ assignments inside `and`/`intersect`/`throughout`/`within` operands and
 local variables passed to sequence end points (`s(v).triggered`, `@(s(v))`)
 are still rejected; the runtime keeps one local array per thread and a join
 keeps the locals of the operand that matched last. A local read by an
-`accept_on`/`reject_on` condition is rejected as well.
+`accept_on`/`reject_on` condition is rejected as well (a frontend error).
+The join message is located at the composite's first operand.
 
-Reproduce with `(a, v = d) and (b, v = e)` in a sequence, or `s(v).triggered`
-for a local `v`.
+### Cause
+
+The runtime keeps one local array per sequence thread, and a join keeps the
+array of the operand that matched last instead of merging the variables that
+flow out of each operand (16.10 d). An end point is evaluated in an attempt
+of its own, so no local can flow back from it to the reading attempt.
+
+### Intended direction
+
+Merge the operand threads' locals at join completion by flow (assigned in
+one operand: that value; in both: blocked). Industry-standard behaviour
+serves the one-operand join form; it does not implement `local output`
+sequence formals, so the end-point form has no reference behaviour.
+
+### Reproduce
+
+[`sim_039/neg_join_local.sv`](../tests/fixtures/sim/feature_completion/sim_039/neg_join_local.sv)
+and
+[`sim_039/neg_endpoint_local_output.sv`](../tests/fixtures/sim/feature_completion/sim_039/neg_endpoint_local_output.sv).
 
 ## Implicit sensitivity through handles a process cannot evaluate
 
@@ -2247,7 +2250,10 @@ Reproduce with
 
 ## Sampled-value arguments without sampled storage
 
-**Status:** open (SIM-035 boundary).
+**Status:** open (SIM-035 boundary; kept by FIN-001 A3, see Intended
+direction).
+
+### Symptom
 
 Sampled-value functions keep a history of packed integral values. Fixed
 unpacked arrays, unpacked structures and unions, queues and unpacked array
@@ -2257,13 +2263,41 @@ real, and realtime)", then string, event, chandle, class, associative and
 dynamic arrays; "Fixed-size arrays, packed or unpacked, can be used as a
 whole") but reject explicitly ("sampled histories hold packed integral and
 real values" or "must be a static packed or real expression") instead of being
-flattened. Sampling them needs Preponed snapshots of unpacked storage, which
-assertions also lack.
+flattened. An element selection of a fixed unpacked array below the
+descriptor size (`LLG_DENSE_FIXED_ARRAY_CELLS`, 4096 cells), such as
+`$past(arr[i])` or `$stable(arr[1])`, and a concurrent assertion operand that
+reads such an element (`arr[i] == 2`) are rejected at the selection ("...
+selecting an unpacked array element ... is not supported" and "unsupported
+sampled ... expression ...: llg keeps no sampled value of unpacked array
+cells it selects"). Larger (descriptor) arrays keep their cells' Preponed
+values and are accepted.
+
+### Cause
+
+Sampling them needs Preponed snapshots of unpacked storage. Dense arrays are
+plain C cell arrays with no write hook, and the sampled-value registry is a
+per-signal list searched by address, so registering every cell would slow
+each sampled read of the design.
+
+### Intended direction
+
+Industry-standard behaviour serves `$past(arr[i])`, `$stable(arr[i])` and
+element operands (the selected cell's value at each clock tick, index
+included), so this is a common form left rejected: give arrays read in
+sampled expressions a sampled image, either by choosing the descriptor form
+for them before lowering or by a per-array saved-cell table like the
+descriptor one, and sample whole unpacked values the same way.
+
+### Reproduce
 
 Reproduce with
 [`neg_unpacked_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_arg.sv),
 [`neg_unpacked_struct_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_struct_arg.sv) and
-[`neg_queue_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_arg.sv).
+[`neg_queue_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_arg.sv),
+and the element forms
+[`neg_element_past.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_past.sv),
+[`neg_element_assertion.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_assertion.sv) and
+[`neg_element_operand.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_operand.sv).
 
 ## Concurrent property limits after SIM-038
 
@@ -2421,7 +2455,15 @@ the global clock tick.
 ### Reproduce
 
 `neg_expect.sv`, `neg_async_abort.sv` and `neg_endpoint.sv` in
-[adv_014](../tests/fixtures/sim/feature_completion/adv_014/readme.md).
+[adv_014](../tests/fixtures/sim/feature_completion/adv_014/readme.md); the
+operand forms (FIN-001 A3) with `neg_real_operand.sv` (a real operand),
+`neg_system_function.sv` (`$countones` of a future value),
+`neg_sampled_function.sv` (`$rose` of a future value), `neg_inside.sv`
+(`inside` around a future call) and `neg_procedural_automatic.sv` (a
+procedural assertion with a saved automatic value). A future value of a
+local variable is rejected by the frontend first (16.9.3: no local
+variables in sampled value functions). Industry-standard behaviour rejects
+the `$rose`, `inside` and automatic forms and serves the real operand.
 
 ## Checker limits after ADV-015
 
@@ -2435,7 +2477,8 @@ these limits:
 - A sampled value function (`$past`, `$rose`, ...) of an active free
   variable is rejected ("$rose of active free checker variable `f` is not
   supported").
-- An unpacked, real or enum free variable is rejected at its declaration.
+- An unpacked, real or enum free variable is rejected at its declaration
+  (industry-standard behaviour has no free checker variables at all).
 - Only predicate assumptions (`C`, `A |-> C`, `A |=> C` with Boolean `A`
   and `C`, no abort) constrain the solve; other assume forms in an assume
   set trigger solving at their clock events but are only checked.
@@ -2465,8 +2508,8 @@ procedure that queues its assertions, so they can be saved per instance.
 
 ### Reproduce
 
-`neg_free_history.sv`, `neg_free_unpacked.sv` and
-`neg_procedural_automatic.sv` in
+`neg_free_history.sv`, `neg_free_unpacked.sv`, `neg_free_real.sv`,
+`neg_free_enum.sv` and `neg_procedural_automatic.sv` in
 [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md).
 
 ## DPI-C import limits (SIM-040)
@@ -2794,8 +2837,9 @@ None: the decision is to reject. Reproduce with the files in
 
 **Status:** open. The object model catalog
 [`src/sim/rt/vpi_catalog.txt`](../src/sim/rt/vpi_catalog.txt) is the single
-source of truth for which object types, properties, one-to-one relations and
-iterations the runtime serves: every row it marks `unsupported` is a gap of
+source of truth for which object types, properties, one-to-one relations,
+iterations, callback reasons and `vpi_control` operations the runtime
+serves: every row it marks `unsupported` is a gap of
 this section, with its reason, and a query no row lists is an error
 (decision A19-D26). This section lists the limits the catalog does not
 express: objects outside the generated catalog, values, callbacks, routines
@@ -2846,9 +2890,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   gives a non-static class member no full name; industry-standard
   behaviour names it by the path that reached it, `tb.p.da[1]`, and
   answers NULL when the object was reached by iteration; pending a
-  decision); `cbValueChange` on chandle variables, class
-  properties, strings and arrays (the last three excluded by 38.36.1) and
-  `cbSizeChange`; `vpi_put_value` with a
+  decision); `cbValueChange` on class properties, on elements of
+  fixed-size chandle arrays (industry-standard behaviour serves these),
+  strings and arrays (the last two excluded by 38.36.1); `vpi_put_value` with a
   delay, force or release on a string, property or element (decisions
   A19-D21, A19-D23);
 - structure objects (ADV-019 family 2; their relations are in the
@@ -2859,7 +2903,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   (its frame stack starts empty);
   `cbValueChange` on a continuous assignment or primitive (38.36.1 lists
   variables, expressions, terminals and events; industry-standard tools
-  refuse both too); a delayed
+  refuse both too, decision A19-D91), and on an operation or a primitive
+  terminal (industry-standard behaviour serves both; watch the variables
+  and nets they read or drive); a delayed
   `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
   A19-D8). A `cbValueChange` on a named event watches the synchronization
   object the event names at registration;
@@ -2937,8 +2983,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - callback reasons refused with an error naming the reason: `cbStmt` (a
   statement has no execution hook; adding one would cost every model
   statement a check, or a second statement-hooked code path per process),
-  `cbSizeChange` (dynamic arrays, queues and associative arrays have no
-  resize notification; it would add a check to every resize),
+  `cbSizeChange` (no resize of a dynamic array, queue, associative array
+  or string reaches VPI; industry-standard behaviour never calls it either,
+  decision A19-D91),
   `cbAssign`/`cbDeassign` (procedural `assign`/`deassign` is rejected,
   decision A20-D9), `cbUnresolvedSystf` (every system call is resolved when
   the model is generated) and the save, restart, reset and interactive

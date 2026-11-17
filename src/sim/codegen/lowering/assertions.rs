@@ -726,6 +726,37 @@ impl Codegen<'_> {
         self.lower_property_inner(path, root, None, None, origin)
     }
 
+    /// Source position of a sequence node. Composite sequence nodes carry
+    /// none, so this descends to the leftmost operand that does, which is
+    /// where the composite starts.
+    fn leading_location(&self, node: NodeId) -> String {
+        let mut current = node;
+        loop {
+            if self.node(current).file.is_some() {
+                return self.source_location(current);
+            }
+            let next = match self.kind(current) {
+                NodeKind::AssertionExpr(
+                    AssertionExprKind::Simple { expr, .. }
+                    | AssertionExprKind::SequenceWithMatch { expr, .. }
+                    | AssertionExprKind::StrongWeak { expr, .. },
+                ) => Some(*expr),
+                NodeKind::AssertionExpr(AssertionExprKind::Binary { left, .. }) => Some(*left),
+                NodeKind::AssertionExpr(AssertionExprKind::FirstMatch { sequence, .. }) => {
+                    Some(*sequence)
+                }
+                NodeKind::AssertionExpr(AssertionExprKind::SequenceConcat { elements, .. }) => {
+                    elements.first().copied()
+                }
+                _ => None,
+            };
+            match next {
+                Some(next) => current = next,
+                None => return self.source_location(node),
+            }
+        }
+    }
+
     fn assertion_location(&self, node: NodeId, origin: NodeId) -> String {
         let location = self.source_location(node);
         if location == "<unknown>:0:0" {
@@ -1474,9 +1505,7 @@ impl Codegen<'_> {
         }
         let expression = self.lower_boolean_expr(path, *expr)?;
         if expression.is_real() || !self.sampled_compatible(&expression) {
-            return Err(format!(
-                "unsupported sampled {role} expression in concurrent assertion at {path}"
-            ));
+            return Err(self.unsupported_sampled_expression(path, *expr, role, &expression));
         }
         Ok(expression)
     }
@@ -2101,6 +2130,7 @@ impl Codegen<'_> {
     ) -> Result<SequenceFragment, String> {
         let items_before = builder.match_items.len();
         let clock = self.sampled_clock;
+        let location = self.leading_location(node);
         let left = match op {
             AssertionBinaryOp::Throughout => {
                 let atom = self.lower_one_cycle_assertion(path, left, role)?;
@@ -2127,9 +2157,12 @@ impl Codegen<'_> {
                 AssertionBinaryOp::Throughout => "throughout",
                 _ => "within",
             };
-            return Err(format!(
-                "local variable assignments inside `{name}` operands are not supported in concurrent assertion {role} at {} ({path})",
-                self.source_location(node)
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                format!(
+                    "local variable assignments inside `{name}` operands are not supported in \
+                     concurrent assertion {role} ({path})"
+                ),
             ));
         }
         let kind = if op == AssertionBinaryOp::And {
@@ -2138,10 +2171,7 @@ impl Codegen<'_> {
             IrSequenceJoinKind::Intersect
         };
         builder.join(kind, left, right).map_err(|error| {
-            format!(
-                "{error} in concurrent assertion {role} at {} ({path})",
-                self.source_location(node)
-            )
+            format!("{error} in concurrent assertion {role} at {location} ({path})")
         })
     }
 
@@ -2242,9 +2272,7 @@ impl Codegen<'_> {
         }
         let expression = self.lower_boolean_expr(path, node)?;
         if expression.is_real() || !self.sampled_compatible(&expression) {
-            return Err(format!(
-                "unsupported sampled {role} expression in concurrent assertion at {path}"
-            ));
+            return Err(self.unsupported_sampled_expression(path, node, role, &expression));
         }
         Ok(expression)
     }
@@ -2607,6 +2635,42 @@ fn is_sequence_local_lhs(lhs: &IrLhs) -> bool {
 }
 
 impl Codegen<'_> {
+    /// Whether `expression` selects a cell of an unpacked array that keeps
+    /// no Preponed image (only descriptor arrays do; see `sampled_compatible`).
+    pub(super) fn selects_unsampled_array_cell(&self, expression: &IrExpr) -> bool {
+        let mut found = false;
+        crate::sim::opt::walk_expr_mut(&mut expression.clone(), &mut |part| {
+            if let IrExprKind::ArrayRead { arr, .. } = part.kind() {
+                found |= !self.model.arrays[*arr].sparse();
+            }
+        });
+        found
+    }
+
+    /// The located rejection of an assertion operand with no sampled value.
+    /// Element selections of unpacked arrays below the descriptor size are
+    /// named: those arrays keep no Preponed image of their cells.
+    fn unsupported_sampled_expression(
+        &self,
+        path: &str,
+        node: NodeId,
+        role: &str,
+        expression: &IrExpr,
+    ) -> String {
+        let detail = if self.selects_unsampled_array_cell(expression) {
+            ": llg keeps no sampled value of unpacked array cells it selects"
+        } else {
+            ""
+        };
+        let location = self.source_location(node);
+        crate::sim::codegen::error::located(
+            &location,
+            format!(
+                "unsupported sampled {role} expression in concurrent assertion ({path}){detail}"
+            ),
+        )
+    }
+
     pub(super) fn sampled_compatible(&self, expression: &IrExpr) -> bool {
         match expression.kind() {
             IrExprKind::Const(_) | IrExprKind::SigRead(_) | IrExprKind::Fill(_) => true,

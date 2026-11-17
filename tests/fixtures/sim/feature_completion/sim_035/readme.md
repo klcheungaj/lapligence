@@ -134,3 +134,4 @@ waiting process can run.
 | `neg_past_zero`, `neg_past_negative`, `neg_past_nonconst`, `neg_past_unknown_ticks` | §16.9.3: `number_of_ticks` is a constant of at least 1 | frontend |
 | `neg_no_clock` | §16.9.3: a clock must be explicit or inferred | frontend |
 | `neg_unpacked_arg`, `neg_unpacked_struct_arg`, `neg_queue_arg` | legal or non-excluded types without sampled storage | llg: explicit unsupported |
+| `neg_element_past`, `neg_element_assertion`, `neg_element_operand` | §16.6.1 (`SystemVerilog-1800-2009.txt` L21595-21596): "Fixed-size arrays, packed or unpacked, can be used as a whole or as part-selects or as indexed bit-selects or part-selects. The indices can be constants, parameters, or variables." Element selections of arrays below the descriptor size have no sampled image (FIN-001 A3) | llg: located unsupported, at the selection |

@@ -429,7 +429,7 @@ static int randcase_negative_weight(const sv4_t* const* weights, size_t count,
                                     const char* location) {
     for (size_t index = 0; index < count; ++index) {
         if (!random_weight_negative(weights[index])) continue;
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "randcase at %s: weight %zu is negative", randcase_where(location), index);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, location, "randcase: weight %zu is negative", index);
         random_weight_fatal("randcase weight is negative", location);
         return 1;
     }
@@ -437,7 +437,7 @@ static int randcase_negative_weight(const sv4_t* const* weights, size_t count,
 }
 
 static void randcase_warn_zero(const char* location) {
-    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "randcase at %s: all weights are zero; no branch is taken", randcase_where(location));
+    llg_msg(LLG_MSG_RUNTIME_WARNING, location, "randcase: all weights are zero; no branch is taken");
 }
 
 static uint64_t randcase_weight_u64(const sv4_t* weight) {
@@ -560,7 +560,7 @@ int32_t llg_randsequence_select(const sv4_t* const* weights, size_t count,
                                 uint32_t sum_width, const char* location) {
     for (size_t index = 0; index < count; ++index) {
         if (!random_weight_negative(weights[index])) continue;
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "randsequence production at %s: the weight of rule %zu is negative", randcase_where(location), index + 1u);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, location, "randsequence production: the weight of rule %zu is negative", index + 1u);
         random_weight_fatal("randsequence weight is negative", location);
         return -1;
     }
@@ -572,7 +572,7 @@ int32_t llg_randsequence_select(const sv4_t* const* weights, size_t count,
         sv4_destroy(&known);
     }
     if (!any) {
-        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "randsequence production at %s: all rule weights are zero; nothing is generated", randcase_where(location));
+        llg_msg(LLG_MSG_RUNTIME_WARNING, location, "randsequence production: all rule weights are zero; nothing is generated");
         return -1;
     }
     return llg_randcase_select(weights, count, sum_width, location);
