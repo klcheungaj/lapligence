@@ -3059,6 +3059,17 @@ impl Codegen<'_> {
                 Ok(IrCallArg::ElementRef(reference))
             }
             Some(argument) => Ok(argument),
+            None if self.leaf_record_element_at_run_time(path, actual) => {
+                let node = self.node(actual);
+                Err(format!(
+                    "run-time selected record element as the `ref` actual of native record formal `{}` of a function called outside an assignment without timing control, a `return` or a system-task statement (a condition or a loop header) is not supported; assign the call's result in a statement first (SIM-008) at {}:{}:{} in `{}`",
+                    self.node(formal).name,
+                    node.file.as_deref().unwrap_or("<unknown>"),
+                    node.line,
+                    node.col,
+                    self.source_path(path)
+                ))
+            }
             None => Err(self.native_ref_actual_error(path, formal)),
         }
     }

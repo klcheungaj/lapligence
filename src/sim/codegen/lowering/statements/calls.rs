@@ -185,7 +185,9 @@ impl EmitCtx<'_, '_> {
                 }
                 _ => self.cg.waits_on_record_ref(ft, callee_inst),
             };
-            return self.lower_record_ref_select(h, name, is_task, callee, select, waits);
+            return self.lower_per_record_element(h, select, waits, &mut |ctx| {
+                ctx.lower_task_call(h, name, is_task, callee)
+            });
         }
         let mut specialized = None;
         if !shape.static_refs.is_empty()
@@ -330,19 +332,88 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    /// Lower call `h` once per element of a run-time selected record `ref`
-    /// actual, under a decision tree over the index taken at the call. An
-    /// index selecting no element reaches the callee with a private default
-    /// value (SV 7.4.6). A task waiting on the formal has no body without a
-    /// binding, so that index stops the run there instead.
-    fn lower_record_ref_select(
-        &mut self,
+    /// The first run-time selected record element bound to a native record
+    /// `ref` formal by a function called inside an expression of statement
+    /// `h`. Only statements that evaluate their expressions once, at their
+    /// start, are lowered once per element (`lower_per_record_element`), so
+    /// the index is taken when the statement starts; a loop header, a
+    /// condition and a timed assignment keep the located rejection.
+    pub(super) fn statement_record_ref_select(
+        &self,
         h: NodeId,
-        name: &str,
-        is_task: bool,
-        callee: Option<NodeId>,
+    ) -> Result<Option<RecordRefSelect>, String> {
+        if !matches!(
+            self.cg.kind(h),
+            NodeKind::Stmt(StmtKind::Assign { delay: None, .. })
+                | NodeKind::Stmt(StmtKind::Return { .. })
+                | NodeKind::SysCall { .. }
+        ) {
+            return Ok(None);
+        }
+        let mut pending = self.cg.node(h).children.clone();
+        pending.reverse();
+        while let Some(node) = pending.pop() {
+            let call = match self.cg.kind(node) {
+                NodeKind::FuncCall {
+                    name,
+                    is_task: false,
+                    callee,
+                    ..
+                }
+                | NodeKind::MethodCall { name, callee, .. } => Some((name, *callee)),
+                _ => None,
+            };
+            if let Some((name, callee)) = call {
+                let args = self.cg.call_argument_nodes(node);
+                // Only a select can be a run-time record element.
+                let selects = args.iter().any(|arg| {
+                    matches!(
+                        self.cg.kind(self.cg.p30_unwrap_cast(*arg)),
+                        NodeKind::Expr(
+                            ExprKind::ArraySelect { .. }
+                                | ExprKind::BitSelect { .. }
+                                | ExprKind::HierPath { .. }
+                        )
+                    )
+                });
+                let formals = selects
+                    .then(|| {
+                        self.cg
+                            .resolve_callee_env(self.inst, name, false, callee)
+                            .ok()
+                    })
+                    .flatten()
+                    .and_then(|(function, _)| self.cg.func_meta.get(&function))
+                    .map(|meta| meta.formals.clone());
+                if let Some(formals) = formals {
+                    if let Ok(bound) = self.cg.bind_call_args(self.inst, &formals, &args) {
+                        if let Some(select) =
+                            self.cg.record_ref_select(&self.path, &formals, &bound)?
+                        {
+                            return Ok(Some(select));
+                        }
+                    }
+                }
+            }
+            let children = &self.cg.node(node).children;
+            pending.extend(children.iter().rev().copied());
+        }
+        Ok(None)
+    }
+
+    /// Lower a call, or a statement holding one in an expression (`lower`),
+    /// once per element of a run-time selected record `ref` actual, under a
+    /// decision tree over the index taken at the call, or when the statement
+    /// starts. An index selecting no element reaches the callee with a
+    /// private default value (SV 7.4.6), or with index checks on stops the
+    /// run at `site`. A task waiting on the formal has no body without a
+    /// binding, so that index stops the run there either way.
+    pub(super) fn lower_per_record_element(
+        &mut self,
+        site: NodeId,
         select: RecordRefSelect,
         waits: bool,
+        lower: &mut dyn FnMut(&mut Self) -> Result<IrStmt, String>,
     ) -> Result<IrStmt, String> {
         let mut statements = Vec::new();
         let (index, width) =
@@ -351,9 +422,9 @@ impl EmitCtx<'_, '_> {
         let span = self.cg.record_ref_pin_span;
         self.cg.record_ref_pin_span = span * select.pins.len();
         let source = select.source;
-        let pinned = |ctx: &mut Self, pin: RecordRefPin| {
+        let mut pinned = |ctx: &mut Self, pin: RecordRefPin| {
             ctx.cg.record_ref_pins.insert(source, pin);
-            let call = ctx.lower_task_call(h, name, is_task, callee);
+            let call = lower(ctx);
             ctx.cg.record_ref_pins.remove(&source);
             call
         };
@@ -383,7 +454,7 @@ impl EmitCtx<'_, '_> {
                 fmt: format!("\"{message}{}\"", crate::sim::ir::INDEX_CHECK_HINT),
                 args: Vec::new(),
                 scope: self.path.clone(),
-                location: self.cg.source_location(h),
+                location: self.cg.source_location(site),
                 fatal_finish_number: Some(0),
                 runtime_failure: true,
                 skip_finals: false,

@@ -54,7 +54,7 @@ pub(in crate::sim::codegen) struct NativeRecordSelect {
 }
 
 /// How a run-time selected record `ref` actual binds while a call is lowered
-/// once per element (`EmitCtx::lower_record_ref_select`).
+/// once per element (`EmitCtx::lower_per_record_element`).
 #[derive(Clone)]
 pub(in crate::sim::codegen) enum RecordRefPin {
     /// The element a branch of the call binds: the prefix below a root.
@@ -910,6 +910,22 @@ impl Codegen<'_> {
             }));
         }
         Ok(None)
+    }
+
+    /// Whether `node` is a record element of a module, static or block
+    /// record of the leaf form selected at run time, which a call binds only
+    /// by lowering once per element (`record_ref_select`).
+    pub(in crate::sim::codegen) fn leaf_record_element_at_run_time(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> bool {
+        self.native_record_select_shape(path, self.p30_unwrap_cast(node))
+            .ok()
+            .flatten()
+            .and_then(|shape| shape.module_root)
+            .and_then(|root| self.unpacked_aggregates.get(&root))
+            .is_some_and(|storage| !storage.columns)
     }
 
     /// The index of `select`, evaluated once.

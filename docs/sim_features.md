@@ -1894,7 +1894,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   through the formal reaches the element's readers at that store, whatever its
   form ([record_ref_write_paths](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
   A run-time record element of a module record binds through one
-  specialization per element under a decision tree in statement calls; a task
+  specialization per element under a decision tree in statement calls, and a
+  function call in an assignment, `return` or system-task statement lowers the
+  statement once per element (`record_ref_element_select_expression`); a task
   that waits on the formal stops the run when the index selects no element,
   at any array size
   ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)),
@@ -1914,8 +1916,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   companions, or mirrors of nested slots at 16 or more cells
   ([record_ref_subroutine_container_member](../tests/fixtures/sim/feature_completion/sim_008/readme.md));
   a task waiting on such a formal rejects.
-  Run-time elements of module records in calls inside expressions and
-  reference-formal NBAs remain restricted. Fixed packed scanner destinations retain checked selected
+  Run-time elements of module records below 16 cells in calls inside
+  conditions and loop headers, and reference-formal NBAs remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;
   packed bit/part actuals rejected by the frontend are not legalized by internal

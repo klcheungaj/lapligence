@@ -556,9 +556,12 @@ record (`NATIVE_RECORD_SELECT_LIMIT`); a task waiting on a `ref` formal bound
 to a member of a subroutine record whose type has container members (the
 formal takes the record's companions, whose changes publish nothing it
 follows); as a `ref` actual, a run-time-indexed record element
-of a module, static or block record bound by a call in an expression, or
+of a module, static or block record of fewer than 16 cells bound by a function
+called in a condition, a loop header or another statement that is not an
+assignment without timing control, a `return` or a system-task statement, or
 among more than 256 elements or combinations
-(a statement call lowers once per element, `tr(o.e[i])`; a task that waits on
+(a call statement, or such a statement around a function call, lowers once per
+element, `tr(o.e[i])`, `x = f(o.e[i])`; a task that waits on
 the formal stops the run if the index selects no element); an event control on
 a member of a native record `ref` formal when the actual is a subroutine record
 (a generic lowering
@@ -612,7 +615,10 @@ record; a module-like record has no such value, so a call binding one runs a
 specialization of the subroutine that names the record's leaves directly,
 which needs the record statically: a run-time record element lowers the call
 once per element under a decision tree, and only a statement can branch that
-way (a scalar leaf is chosen among stable addresses at the call). An element
+way, so a function call in an expression lowers its whole statement per element
+with the index taken when the statement starts, before its other operands,
+and only for a statement that evaluates its expressions once (a scalar leaf is
+chosen among stable addresses at the call). An element
 reference shares the element's item array; a queue or dynamic-array member is
 a nested slot of another representation, so the call mirrors it in a companion
 container, at the member's size per change in either direction. A member of a

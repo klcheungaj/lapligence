@@ -131,7 +131,7 @@ container when none matches (`IrRefCompanion::Root`); below a member array the
 record holds in its own slot it is mirrored like an element's. A
 run-time index into a module-like record picks among the leaves' stable
 addresses instead (`IrElementRoot::Leaves`); for a whole record element, a
-statement call lowers once per element (`lower_record_ref_select`). A `ref` event
+statement call lowers once per element (`lower_per_record_element`). A `ref` event
 formal bound to a class event property takes the address of its object's slot
 (`IrCallArg::EventSlot`), which holds the one `void*` an `llg_event_t` holds; the
 same type on both sides keeps this within ISO C aliasing. The callee's frame is

@@ -20,8 +20,13 @@
 //! A record element selected at run time (`t(m.e[i])`) has no single binding:
 //! the call lowers once per element, under a decision tree over the index
 //! taken at the call, each branch reaching that element's specialization
-//! (`EmitCtx::lower_record_ref_select`). Specializations are shared, so code
-//! grows with the elements and calls of each site, bounded by
+//! (`EmitCtx::lower_per_record_element`). A function called inside an
+//! expression has no statement of its own: an assignment without timing
+//! control, a `return` or a system-task statement around it lowers once per
+//! element instead, with the index taken when the statement starts, before
+//! its other operands; such a statement evaluates its expressions once
+//! (`EmitCtx::statement_record_ref_select`). Specializations are shared, so
+//! code grows with the elements and calls of each site, bounded by
 //! `NATIVE_RECORD_SELECT_LIMIT`.
 //!
 //! A task waiting on a formal bound to such an element that no index selects
@@ -349,7 +354,7 @@ impl Codegen<'_> {
         }
         // A record element that no index selects (of a member array, a fixed
         // array, a queue or a dynamic array) has no leaf form to stop at
-        // (`lower_record_ref_select`); with index checks on, the call stops
+        // (`lower_per_record_element`); with index checks on, the call stops
         // at the reference instead, as at fewer cells.
         let stop_unselected = (kind == IrElementRefKind::Record
             && matches!(place.root, IrElementRoot::Element { .. }))
