@@ -241,12 +241,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn alias_error(&self, alias: NodeId, message: &str) -> String {
-        format!(
-            "net alias `{}` {message} at {}:{}:{}",
-            self.display_name(alias),
-            self.node(alias).file.as_deref().unwrap_or("<unknown>"),
-            self.node(alias).line,
-            self.node(alias).col,
+        self.locate_error(
+            alias,
+            format!("net alias `{}` {message}", self.display_name(alias)),
         )
     }
 
@@ -1798,15 +1795,12 @@ impl<'a> Codegen<'a> {
             let kind = Self::ir_net_kind(resolved_type.kind)
                 .ok_or("selected net group has an unsupported effective net type")?;
             if members.len() > LLG_MAX_NET_DRIVERS {
-                return Err(format!(
-                    "{shown}: {} members exceed the runtime driver-count range at {}:{}:{}",
-                    members.len(),
-                    self.node(first_owner)
-                        .file
-                        .as_deref()
-                        .unwrap_or("<unknown>"),
-                    self.node(first_owner).line,
-                    self.node(first_owner).col,
+                return Err(self.locate_error(
+                    first_owner,
+                    format!(
+                        "{shown}: {} members exceed the runtime driver-count range",
+                        members.len()
+                    ),
                 ));
             }
             let name = match first_bit {
@@ -2195,10 +2189,15 @@ impl<'a> Codegen<'a> {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        Err(format!(
+        // Located at the first driver; the text lists every driver.
+        let message = format!(
             "a collapsed uwire net has {} drivers; uwire allows one (IEEE 1800-2009 6.6.2): {names}",
             sources.len()
-        ))
+        );
+        Err(match sources.values().next() {
+            Some(first) => self.locate_error(*first, message),
+            None => message,
+        })
     }
 
     /// LHS/terminal expressions through which a structural source drives.
@@ -2491,7 +2490,8 @@ impl<'a> Codegen<'a> {
                             *strength1,
                             &self.display_name(id),
                             width,
-                        )?;
+                        )
+                        .map_err(|error| self.locate_error(id, error))?;
                         sources.insert(id, strengths);
                     }
                 }
@@ -2693,7 +2693,8 @@ impl<'a> Codegen<'a> {
                                     .unwrap_or(1);
                                 let strengths = continuous_assignment_strengths_for_width(
                                     *strength0, *strength1, &shown, width,
-                                )?;
+                                )
+                                .map_err(|error| self.locate_error(*id, error))?;
                                 sites.insert(*id, strengths);
                             } else if self.nested_member_target(lhs, &member_set).is_some() {
                                 let width = self
@@ -2703,7 +2704,8 @@ impl<'a> Codegen<'a> {
                                     .unwrap_or(1);
                                 let strengths = continuous_assignment_strengths_for_width(
                                     *strength0, *strength1, &shown, width,
-                                )?;
+                                )
+                                .map_err(|error| self.locate_error(*id, error))?;
                                 sites.insert(*id, strengths);
                             }
                         }
@@ -2717,7 +2719,8 @@ impl<'a> Codegen<'a> {
                                 *id,
                                 continuous_assignment_strengths_for_width(
                                     *strength0, *strength1, &shown, width,
-                                )?,
+                                )
+                                .map_err(|error| self.locate_error(*id, error))?,
                             );
                         }
                         MemberWrite::Select => {
@@ -2728,7 +2731,8 @@ impl<'a> Codegen<'a> {
                                 .unwrap_or(1);
                             let strengths = continuous_assignment_strengths_for_width(
                                 *strength0, *strength1, &shown, width,
-                            )?;
+                            )
+                            .map_err(|error| self.locate_error(*id, error))?;
                             sites.insert(*id, strengths);
                         }
                     }

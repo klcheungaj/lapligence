@@ -56,12 +56,14 @@ impl Codegen<'_> {
     }
 
     pub(super) fn specify_unsupported(&self, node: NodeId, what: &str) -> String {
-        format!(
-            "unsupported {what} at {} in `{}`",
-            self.specify_location(node),
-            self.owning_inst(node)
-                .map(|instance| self.source_path(&self.instance_path_of(instance)))
-                .unwrap_or_default(),
+        crate::sim::codegen::error::located(
+            &self.specify_location(node),
+            format!(
+                "unsupported {what} in `{}`",
+                self.owning_inst(node)
+                    .map(|instance| self.source_path(&self.instance_path_of(instance)))
+                    .unwrap_or_default(),
+            ),
         )
     }
 
@@ -173,7 +175,9 @@ impl Codegen<'_> {
         let mut conditions = Vec::new();
         for path in paths {
             let location = self.specify_location(path.node);
-            let error = |message: String| format!("module path at {location}: {message}");
+            let error = |message: String| {
+                crate::sim::codegen::error::located(&location, format!("module path: {message}"))
+            };
             let values = path
                 .delays
                 .iter()
@@ -544,7 +548,10 @@ impl Codegen<'_> {
         let name = self.display_name(terminal.node);
         let shown = self.source_path(&self.instance_path_of(instance));
         let unsupported = |message: &str| {
-            format!("unsupported module path destination `{name}` at {location} in `{shown}`: {message}")
+            crate::sim::codegen::error::located(
+                location,
+                format!("unsupported module path destination `{name}` in `{shown}`: {message}"),
+            )
         };
         let Some((group, _)) = signal.net_driver else {
             if matches!(self.kind(terminal.node), NodeKind::Net { .. }) {

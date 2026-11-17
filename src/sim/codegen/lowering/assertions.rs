@@ -1022,10 +1022,7 @@ impl Codegen<'_> {
                 } else {
                     format!(" `{name}`")
                 };
-                format!(
-                    "{error} (assertion{name} at {})",
-                    self.source_location(origin)
-                )
+                self.locate_error(origin, format!("{error} (assertion{name})"))
             })?;
         let (abort_condition, abort_reject, abort_sync) = match abort {
             Some((condition_node, reject, sync)) => (

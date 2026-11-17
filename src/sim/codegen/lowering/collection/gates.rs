@@ -28,6 +28,12 @@ impl<'a> Codegen<'a> {
     /// lower through [`Self::emit_switch`]; MOS switches never get here
     /// (`legacy_unsupported`).
     pub(super) fn emit_gate(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
+        self.emit_gate_unlocated(inst, path, g)
+            .map_err(|error| self.locate_error(g, error))
+    }
+
+    /// [`Self::emit_gate`] before its failure is located.
+    fn emit_gate_unlocated(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
         let (class, prim_type, strength0, strength1, delay, terms, udp_table) = match self.kind(g) {
             NodeKind::Gate {
                 class,
@@ -216,11 +222,11 @@ impl<'a> Codegen<'a> {
                 ));
             }
             if is_udp && expr.width() != 1 {
-                return Err(format!(
-                    "input terminal {} of {udp_kind} UDP `{shown}` in `{path}` must be scalar \
-                     (at {})",
-                    i,
-                    self.source_location(g)
+                return Err(self.locate_error(
+                    g,
+                    format!(
+                        "input terminal {i} of {udp_kind} UDP `{shown}` in `{path}` must be scalar"
+                    ),
                 ));
             }
             widths[*i] = expr.width();
@@ -253,11 +259,9 @@ impl<'a> Codegen<'a> {
                 ));
             }
             if is_udp && width != 1 {
-                return Err(format!(
-                    "output terminal {} of {udp_kind} UDP `{shown}` in `{path}` must be scalar \
-                     (at {})",
-                    i,
-                    self.source_location(g)
+                return Err(self.locate_error(
+                    g,
+                    format!("output terminal {i} of {udp_kind} UDP `{shown}` in `{path}` must be scalar"),
                 ));
             }
             widths[*i] = width;

@@ -58,10 +58,10 @@ impl<'a> Codegen<'a> {
                 .map(|instance| self.instance_path_of(instance))
                 .unwrap_or_default();
             if !self.net_lvalue_selects_are_constant(actual) {
-                return Err(format!(
+                return Err(self.locate_error(port, format!(
                     "reference port `{}` requires constant actual selectors; runtime reference rewiring is not supported",
                     self.display_name(port)
-                ));
+                )));
             }
             if let Some(child) = self.signal_of(internal).cloned() {
                 let target = self.lower_lhs(&path, actual).map_err(|error| {
@@ -154,9 +154,12 @@ impl<'a> Codegen<'a> {
             }
 
             if self.container_of(internal).is_some() {
-                return Err(format!(
-                    "reference port `{}` cannot bind resizable container storage",
-                    self.display_name(port)
+                return Err(self.locate_error(
+                    port,
+                    format!(
+                        "reference port `{}` cannot bind resizable container storage",
+                        self.display_name(port)
+                    ),
                 ));
             }
             return Err(format!(
@@ -803,12 +806,12 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         };
         let error = |reason: &str| {
-            format!(
-                "inout net-array port `{}` {reason} at {}:{}:{}",
-                self.display_name(port),
-                self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                self.node(port).line,
-                self.node(port).col,
+            self.locate_error(
+                port,
+                format!(
+                    "inout net-array port `{}` {reason}",
+                    self.display_name(port)
+                ),
             )
         };
         let actual_array = self

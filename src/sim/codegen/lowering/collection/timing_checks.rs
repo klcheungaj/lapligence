@@ -533,9 +533,9 @@ impl Codegen<'_> {
                     check.data.terminal
                 };
                 let error = |message: String| {
-                    format!(
-                        "timing check `{}` at {} in `{label}`: {message}",
-                        check.name, check.origin
+                    crate::sim::codegen::error::located(
+                        &check.origin,
+                        format!("timing check `{}` in `{label}`: {message}", check.name),
                     )
                 };
                 let name = self.display_name(target.node);
@@ -689,7 +689,12 @@ impl Codegen<'_> {
     ) -> Result<(), String> {
         let location = self.specify_location(check.node);
         let name = check.kind.name();
-        let error = |message: String| format!("timing check `{name}` at {location}: {message}");
+        let error = |message: String| {
+            crate::sim::codegen::error::located(
+                &location,
+                format!("timing check `{name}`: {message}"),
+            )
+        };
         let kind = match check.kind {
             TimingCheckKind::Setup => IrTimingCheckKind::Setup,
             TimingCheckKind::Hold | TimingCheckKind::SetupHold => IrTimingCheckKind::Hold,

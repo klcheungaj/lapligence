@@ -27,8 +27,10 @@ pub(in super::super) struct PendingSwitch {
     /// A direct control: the signal and bit the switch follows, and whether
     /// 0 conducts.
     control: Option<(usize, u32, bool)>,
-    /// The switch's name, scope and location, for network diagnostics.
+    /// The switch's name and scope, for network diagnostics.
     origin: String,
+    /// The switch instance, the location of those diagnostics.
+    node: NodeId,
 }
 
 /// Whether a primitive is a bidirectional pass switch.
@@ -109,8 +111,9 @@ impl Codegen<'_> {
         let location = self.source_location(g);
         let scope = self.source_path(path);
         let unsupported = |message: String| {
-            format!(
-                "unsupported bidirectional switch `{shown}` in `{scope}` at {location}: {message}"
+            crate::sim::codegen::error::located(
+                &location,
+                format!("unsupported bidirectional switch `{shown}` in `{scope}`: {message}"),
             )
         };
         let controlled = !matches!(prim_type, PrimitiveType::Tran | PrimitiveType::Rtran);
@@ -156,7 +159,8 @@ impl Codegen<'_> {
             resistive,
             controlled,
             control: None,
-            origin: format!("bidirectional switch `{shown}` in `{scope}` at {location}"),
+            origin: format!("bidirectional switch `{shown}` in `{scope}`"),
+            node: g,
         });
         if !controlled {
             return Ok(());
@@ -364,8 +368,16 @@ impl Codegen<'_> {
             first_switch[network_of_root[&root]].get_or_insert(position);
         }
         for (network, nodes) in members.iter().enumerate() {
-            let origin =
-                first_switch[network].map_or("", |position| pending[position].origin.as_str());
+            let (origin, node) = first_switch[network].map_or(("", None), |position| {
+                (
+                    pending[position].origin.as_str(),
+                    Some(pending[position].node),
+                )
+            });
+            let locate = |message: String| match node {
+                Some(node) => self.locate_error(node, message),
+                None => message,
+            };
             let kinds = nodes
                 .iter()
                 .map(|node| self.model.net_groups[keys[*node].group()].kind)
@@ -373,10 +385,10 @@ impl Codegen<'_> {
             let wand = kinds.contains(&IrNetKind::Wand);
             let wor = kinds.contains(&IrNetKind::Wor);
             if wand && wor {
-                return Err(format!(
-                    "unsupported {origin}: its switch network joins wired-AND (wand, triand) and \
-                     wired-OR (wor, trior) nets; such a mixed network is not simulated"
-                ));
+                return Err(locate(format!(
+                    "unsupported {origin}: its switch network joins wired-AND (wand, triand) \
+                         and wired-OR (wor, trior) nets; such a mixed network is not simulated"
+                )));
             }
             if (wand || wor)
                 && kinds.iter().any(|kind| {
@@ -386,11 +398,11 @@ impl Codegen<'_> {
                     )
                 })
             {
-                return Err(format!(
-                    "unsupported {origin}: its switch network joins a wired-logic (wand, wor, \
-                     triand or trior) net and a tri0, tri1, supply0 or supply1 net; such a mixed \
-                     network is not simulated"
-                ));
+                return Err(locate(format!(
+                    "unsupported {origin}: its switch network joins a wired-logic (wand, \
+                         wor, triand or trior) net and a tri0, tri1, supply0 or supply1 net; such \
+                         a mixed network is not simulated"
+                )));
             }
         }
         let mut number = vec![0u32; keys.len()];

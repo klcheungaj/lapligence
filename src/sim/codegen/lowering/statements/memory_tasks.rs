@@ -565,10 +565,12 @@ impl EmitCtx<'_, '_> {
             IrAssocKey::Class => "a class index",
             IrAssocKey::Integral { .. } => unreachable!("integral indices are accepted"),
         };
-        format!(
-            "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), at {} in `{}`",
-            self.cg.source_location(args[1]),
-            self.path
+        self.cg.locate_error(
+            args[1],
+            format!(
+                "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), in `{}`",
+                self.path
+            ),
         )
     }
 

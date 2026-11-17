@@ -437,16 +437,16 @@ impl Codegen<'_> {
         if !reads {
             return Ok(());
         }
-        let location = self
-            .assertion_inferred_origin
-            .map(|origin| self.source_location(origin))
-            .unwrap_or_default();
-        Err(format!(
-            "{location}: {what} of this procedural concurrent assertion reads an automatic \
-             variable or a const cast, whose value the instance saves when it is queued (IEEE \
-             1800-2009 16.15.6.1); llg evaluates it outside the instance's attempts and does \
-             not support this"
-        ))
+        let message = format!(
+            "{what} of this procedural concurrent assertion reads an automatic variable or a \
+             const cast, whose value the instance saves when it is queued (IEEE 1800-2009 \
+             16.15.6.1); llg evaluates it outside the instance's attempts and does not support \
+             this"
+        );
+        Err(match self.assertion_inferred_origin {
+            Some(origin) => self.locate_error(origin, message),
+            None => message,
+        })
     }
 
     /// Reject queued values in an assertion lowered outside the procedure

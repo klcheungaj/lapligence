@@ -842,9 +842,11 @@ impl Codegen<'_> {
             .into_iter()
             .any(|operand| self.changes_clock_within(operand))
         {
-            return Err(format!(
-                "sequence operator {operator}{} combines differently clocked or multiclocked sequence operands; only ##1 and ##0 may (IEEE 1800-2009 16.14.1)",
-                self.known_location_suffix(node)
+            return Err(self.locate_error(
+                node,
+                format!(
+                    "sequence operator {operator} combines differently clocked or multiclocked sequence operands; only ##1 and ##0 may (IEEE 1800-2009 16.14.1)"
+                ),
             ));
         }
         Ok(())
@@ -865,29 +867,19 @@ impl Codegen<'_> {
         if !self.changes_clock_within(left) && !self.changes_clock_within(right) {
             return Ok(());
         }
-        let location = self.known_location_suffix(node);
         if delay.max != Some(delay.min) || delay.min > 1 {
-            return Err(format!(
-                "differently clocked or multiclocked sequences{location} may be concatenated only with ##1 or ##0 (IEEE 1800-2009 16.14.1)"
+            return Err(self.locate_error(
+                node,
+                "differently clocked or multiclocked sequences may be concatenated only with ##1 or ##0 (IEEE 1800-2009 16.14.1)",
             ));
         }
         if empty_side {
-            return Err(format!(
-                "a maximal singly clocked subsequence of the multiclocked sequence{location} admits an empty match (IEEE 1800-2009 16.14.1)"
+            return Err(self.locate_error(
+                node,
+                "a maximal singly clocked subsequence of the multiclocked sequence admits an empty match (IEEE 1800-2009 16.14.1)",
             ));
         }
         Ok(())
-    }
-
-    /// ` at file:line:col` when the node has a source location; the caller
-    /// appends the assertion's own location otherwise.
-    fn known_location_suffix(&self, node: NodeId) -> String {
-        let location = self.source_location(node);
-        if location == "<unknown>:0:0" {
-            String::new()
-        } else {
-            format!(" at {location}")
-        }
     }
 
     /// Whether some clocking event inside `node` changes the clock of the

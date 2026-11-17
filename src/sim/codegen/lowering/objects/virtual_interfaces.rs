@@ -147,13 +147,15 @@ impl Codegen<'_> {
                     .virtual_interface_array_members(descriptor, &member)
                     .is_some()
                 {
-                    format!(
-                        "{}: unpacked array member `{member}` of virtual interface `{spelling}` \
-                         is supported only through element selects (`{member}[i]`, \
-                         `{member}[i][b]`) that are read or assigned with `=` or `<=`; a \
-                         whole-array or slice use, or a use in an event control or wait, is \
-                         not supported in `{path}`",
-                        self.source_location(node)
+                    self.locate_error(
+                        node,
+                        format!(
+                            "unpacked array member `{member}` of virtual interface `{spelling}` \
+                             is supported only through element selects (`{member}[i]`, \
+                             `{member}[i][b]`) that are read or assigned with `=` or `<=`; a \
+                             whole-array or slice use, or a use in an event control or wait, \
+                             is not supported in `{path}`"
+                        ),
                     )
                 } else if view_port {
                     // A view port without interface storage of its own is a

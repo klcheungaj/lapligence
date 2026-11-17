@@ -444,7 +444,8 @@ impl Codegen<'_> {
                         *strength1,
                         &self.model.arrays[array].hdl_name,
                         self.model.arrays[array].elem_width,
-                    )?,
+                    )
+                    .map_err(|error| self.locate_error(*source, error))?,
                     NodeKind::Port {
                         strength0,
                         strength1,

@@ -9,13 +9,12 @@ use super::*;
 impl EmitCtx<'_, '_> {
     /// A waited record `ref` actual with neither a binding nor a marker.
     fn record_wait_error(&self, call: NodeId, name: &str) -> String {
-        let node = self.cg.node(call);
-        format!(
-            "task `{name}` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record or an element of an array or container (SIM-009) at {}:{}:{} in `{}`",
-            node.file.as_deref().unwrap_or("<unknown>"),
-            node.line,
-            node.col,
-            self.cg.source_path(&self.path)
+        self.cg.locate_error(
+            call,
+            format!(
+                "task `{name}` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record or an element of an array or container (SIM-009) in `{}`",
+                self.cg.source_path(&self.path)
+            ),
         )
     }
 
