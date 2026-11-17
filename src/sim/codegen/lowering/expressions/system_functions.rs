@@ -5,9 +5,17 @@ use crate::sim::legacy_unsupported::{self, LegacyFamily};
 
 /// Explain why a lowered sampled-value argument has no sampled storage. A
 /// read of automatic storage (a procedural local or formal) is illegal (SV
-/// 16.9.3: argument variables shall be static); other forms, such as unpacked
-/// element selections, are legal but unsupported.
-fn sampled_argument_error(name: &str, scope_path: &str, argument: &IrExpr) -> String {
+/// 16.9.3: argument variables shall be static); other forms, such as element
+/// selections of unpacked arrays below the descriptor size, are legal but
+/// unsupported. `location` is the argument's source position; `element` says
+/// whether it selects a cell of an unpacked array without a sampled image.
+fn sampled_argument_error(
+    name: &str,
+    scope_path: &str,
+    location: &str,
+    argument: &IrExpr,
+    element: bool,
+) -> String {
     let mut automatic = false;
     let mut probe = argument.clone();
     crate::sim::opt::walk_expr_mut(&mut probe, &mut |expression| {
@@ -20,8 +28,22 @@ fn sampled_argument_error(name: &str, scope_path: &str, argument: &IrExpr) -> St
             "{name} argument reads an automatic variable in `{scope_path}`: variables in \
              sampled-value arguments shall be static (SV 16.9.3)"
         )
+    } else if element {
+        crate::sim::codegen::error::located(
+            location,
+            format!(
+                "{name} argument selecting an unpacked array element in `{scope_path}` is not \
+                 supported: llg keeps no sampled value of the array's cells"
+            ),
+        )
     } else {
-        format!("{name} argument must be a static packed or real expression in `{scope_path}`")
+        crate::sim::codegen::error::located(
+            location,
+            format!(
+                "{name} argument in `{scope_path}` is not supported: it must be a static packed \
+                 or real expression"
+            ),
+        )
     }
 }
 
@@ -143,9 +165,16 @@ impl<'a> Codegen<'a> {
                 ));
             };
             self.check_sampled_argument_type(scope_path, name, *argument)?;
+            let location = self.source_location(*argument);
             let argument = self.lower_expr(scope_path, *argument)?;
             if !self.sampled_compatible(&argument) {
-                return Err(sampled_argument_error(name, scope_path, &argument));
+                return Err(sampled_argument_error(
+                    name,
+                    scope_path,
+                    &location,
+                    &argument,
+                    self.selects_unsampled_array_cell(&argument),
+                ));
             }
             // Outside an assertion `$sampled` still returns the Preponed
             // value (SV 16.9.3): register every signal it reads. A real keeps
@@ -206,7 +235,14 @@ impl<'a> Codegen<'a> {
         self.check_sampled_argument_type(scope_path, name, args[0])?;
         let argument = self.lower_expr(scope_path, args[0])?;
         if !self.sampled_compatible(&argument) {
-            return Err(sampled_argument_error(name, scope_path, &argument));
+            let location = self.source_location(args[0]);
+            return Err(sampled_argument_error(
+                name,
+                scope_path,
+                &location,
+                &argument,
+                self.selects_unsampled_array_cell(&argument),
+            ));
         }
         // An active free checker variable is read with its current value,
         // not sampled (17.7.2); a history of its sampled values would

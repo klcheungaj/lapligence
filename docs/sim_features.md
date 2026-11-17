@@ -2738,7 +2738,8 @@ value function's argument, a `disable iff` condition, a clock's `iff`, an
 assertion with global clocking future functions or a procedural checker's
 assertion) and invalid scopes/arguments
 remain rejected by the
-[assertion lowerer](../src/sim/codegen/lowering/assertions.rs).
+[assertion lowerer](../src/sim/codegen/lowering/assertions.rs)
+([known issue](known_issues.md#assertion-locals-in-join-operands-and-end-points)).
 
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
 2009 global-clock history/status forms support explicit, inferred, default and
@@ -2759,8 +2760,9 @@ it reads, registered without per-slot history. Real, shortreal and realtime
 operands of `$past`, `$rose`, `$fell`, `$stable`, `$changed` and the global
 clocking functions, string, event, chandle, class, dynamic and associative
 array arguments are diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
-queues and unpacked element selections are explicit unsupported rejections
-([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
+queues and unpacked element selections (also element operands of concurrent
+assertions, for arrays below the descriptor size) are located unsupported
+rejections ([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
 [SIM-035 fixtures](../tests/fixtures/sim/feature_completion/sim_035/readme.md)).
 The future global functions `$future_gclk`, `$rising_gclk`, `$falling_gclk`,
 `$steady_gclk` and `$changing_gclk` (§16.9.4) read the sampled value at the
@@ -2774,8 +2776,10 @@ interval; ticks after the last global clock tick are never evaluated
 [decisions A14-D1-D4](lrm_decisions.md#global-clocking-future-sampled-value-functions-adv-014)).
 Pending evaluations count against `LLG_SEQUENCE_THREAD_LIMIT`. Nesting, match
 items, action blocks, procedural code and missing global clocking are
-frontend errors; `expect`, asynchronous `accept_on`/`reject_on` and sequence
-end points with these functions are located rejections
+frontend errors; `expect`, asynchronous `accept_on`/`reject_on`, sequence
+end points, real operands, system and sampled value functions of future
+values, `inside` and procedural assertions with saved automatic values with
+these functions are located rejections
 ([known issue](known_issues.md#global-clocking-future-sampled-value-function-limits)).
 `$global_clock` is a clocking event wherever one may appear (§14.14), and `$inferred_clock`/
 `$inferred_disable` formal defaults resolve at the instance (§16.15.7)
@@ -3148,8 +3152,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   step and queues its static assertions, and those of its nested static
   checkers, on its procedure's procedural assertion queue whenever the
   instantiation executes; `$inferred_clock` takes the procedure's inferred
-  clock (17.4). Sampled value functions of active free variables, unpacked
-  free variables and automatic or `const'` actuals of procedural checkers
+  clock (17.4). Sampled value functions of active free variables, unpacked,
+  real and enum free variables and automatic or `const'` actuals of procedural checkers
   are located limits
   ([known issue](known_issues.md#checker-limits-after-adv-015);
   [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md)).

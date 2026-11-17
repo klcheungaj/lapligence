@@ -311,3 +311,6 @@ current `d` (2 at 25, 4 at 35).
 | `neg_match_call_output` | Slang | a match-item call with an output argument (16.11) |
 | `neg_match_call_timing` | llg | a match-item task with a timing control: it would not run within the Reactive region; the message names the assertion (`tb.c1`, `c1`) and its location, never the hidden host |
 | `neg_deferred_named_action` | Slang | a named block as a deferred assertion's action (16.4, see `named_action_blocks`) |
+| `neg_match_call_queue` | llg | a match-item call passing a queue by value: the action frame copies no containers (FIN-001 A3) |
+| `neg_join_local` | llg | a local assigned in one `and` operand flows out of the composite (16.10, `SystemVerilog-1800-2009.txt` L24120-24121: "In the case of and and intersect, a local variable that flows out of at least one operand shall flow out of the composite sequence unless it is blocked"); llg does not merge operand locals, located at the composite's first operand (FIN-001 A3) |
+| `neg_endpoint_local_output` | llg | a local passed to a `local output` formal of a sequence whose `.triggered` is read: the end point runs in its own attempt and returns no locals; this is the llg message the Slang-rejected `neg_endpoint_local` cannot reach (FIN-001 A3) |
