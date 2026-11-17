@@ -87,13 +87,15 @@ realtime is fractional. The runtime consumes integer design-precision ticks;
 codegen owns scaling.
 
 The VPI object model the runtime serves (every object type with its
-properties, relations and iterations, and the status of each) is recorded in
+properties, relations and iterations, the callback reasons it takes and the
+`vpi_control` operations, and the status of each) is recorded in
 [vpi_catalog.txt](vpi_catalog.txt), which `tests/runtime_vpi_catalog.rs`
-keeps in step with the dispatch of `llg_vpi.c`, `llg_vpi_dynamic.c` and
-`llg_vpi_runtime.c` and the
+keeps in step with the dispatch of `llg_vpi.c`, `llg_vpi_dynamic.c`,
+`llg_vpi_runtime.c` and `llg_vpi_services.c` and the
 ADV-019 catalog walk checks against a run. A dispatch case added for a
-property, relation or iteration needs its catalog row; a query outside the
-catalog fails with an error (decision A19-D26). `tests/fixtures/runtime/vpi_annex_kml.tsv`
+property, relation, iteration, callback reason or control operation needs
+its catalog row; a query outside the catalog fails with an error (decision
+A19-D26). `tests/fixtures/runtime/vpi_annex_kml.tsv`
 holds the Annex K, L and M listings the headers are checked against.
 
 VPI handle encoding and lazy catalog indexing: `llg_vpi.c` header and catalog

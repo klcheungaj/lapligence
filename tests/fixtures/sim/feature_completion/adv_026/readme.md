@@ -304,7 +304,8 @@ the test compares sets.
 
 `sreadmem_override.c` registers `$sreadmemh` as a VPI task. A design that calls
 it (`neg_sreadmem_override.sv`) stops at startup with "a VPI application
-registers `$sreadmemh`, which llg implements as a built-in (called at <path>:7)",
+registers `$sreadmemh`, which llg implements as a built-in", located at the
+call (`<path>:7`),
 as for every other built-in (36.3.2 L56427-56429 requires the override; llg
 refuses it). A design that calls only `$sreadmemb`
 (`sreadmem_unused_registration.sv`, printing `11 22`) is unaffected. Every other

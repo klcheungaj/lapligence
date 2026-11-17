@@ -1192,6 +1192,47 @@ property (`tb.c.fa[1]`), where llg gives no full name to a property
 element; it gives an empty string `vpiSize` 1; and it serves `pe`'s
 members and the member select.
 
+## callback_kinds (38.36.1, decisions A19-D21, A19-D91, T1-D11; FIN-001 V3 family (e))
+
+`callback_kinds.c` places `cbValueChange` records on the chandle variables
+`h` and `h2` of `callback_kinds.sv`, whose DPI import `cbk_make(n)` returns
+the pointer `0x1000 + n`. Every call prints the time, label, `vpiType` of
+the obj, the index and the value; `adv_019::callback_kinds_watch_chandles_and_refuse_the_rest`
+runs it in both optimizer modes.
+
+- 38.36.1 (SystemVerilog-1800-2009.txt L64642-L64644): cbValueChange
+  occurs "After value change on some variables, any expression, or terminal
+  or after execution of an event statement. Specifically excluded are class
+  objects, dynamic arrays, strings, queues, and associative arrays." A
+  chandle variable is none of the excluded kinds: the registrations return
+  handles. Its value is the 64-bit pointer image (decision A19-D21):
+  `vpiObjTypeVal` gives `vpiVectorVal`, `vpiHexStrVal` 16 digits, `vpiIntVal`
+  the low 32 bits, `vpiDecStrVal` the 64-bit decimal, and a `vpiSuppressVal`
+  record gets a NULL value, as for every other value-change callback.
+- Table 38-5 (L64735): `vpiStrengthVal` is "Value plus strength information
+  of a scalar object only": the strength record is NULL with level 3.
+- One change per check (decision T1-D11): the same pointer stored again at
+  2 calls nothing, the pointer stored and set back to null in one turn at 4
+  calls nothing, two pointers stored in one turn at 5 call each record once
+  with the last one, and `h2 = h` at 6 calls the record on `h2` only. The
+  newest record runs first (decision S43-D6).
+- 38.36.1 makes no exception for VPI writes: the `vpi_put_value` of `0x2222`
+  at 7 runs the records before the put returns, and the record removed after
+  it (`h dec`) no longer runs at 8.
+- `cbSizeChange` (38.36.1 L64657: "After a dynamic array, associative
+  array, queue, or string has been resized"; 37.17 detail 14 L58772-L58774)
+  is refused on `da`, `q`, `aa` and `s`: NULL with level 3 (decision
+  A19-D91), and the resizes at 1 call nothing.
+- A continuous assignment and a primitive are not among the objects of
+  38.36.1 (L64642-L64644, above): `cbValueChange` on the assignment of `w`
+  and on the gate `g1` is NULL with level 3 (decision A19-D91).
+
+Industry-standard behaviour gives the same calls and values (it passes a
+`vpiSuppressVal` record a value structure of that format instead of NULL).
+It accepts the `vpiStrengthVal` record on `h` and a `vpiSuppressVal`
+`cbSizeChange` record on `q` but never calls the latter, and returns NULL
+for the continuous assignment without an error (decision A19-D91).
+
 ## catalog (A01, A03; 37.3, 38.3, 38.6, 38.18, 38.23, 38.40, 40.5.3)
 
 `catalog.sv` holds an object of most kinds the VPI catalog

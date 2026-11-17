@@ -4295,17 +4295,28 @@ static LLG_OUTLYING vpiHandle dyn_auto_suffix(const dyn_place_t* place, uint32_t
 
 /* cbValueChange on a class variable: its value is opaque, so the callback
  * runs with a NULL value when the variable refers to another object or to
- * none (38.36.1). Strings and arrays are excluded by the clause. Returns
- * -1 when `slot` is not a dynamic object. */
+ * none (38.36.1). On a chandle variable it reports the new pointer as
+ * vpi_get_value reads it (decision A19-D21). Both watch the variable's
+ * change marker, which a handle store toggles once per check when the
+ * value differs (T1-D11). Strings and arrays are excluded by the clause.
+ * Returns -1 when `slot` is not a dynamic object. */
 static int dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot) {
     if (!dyn_slot(slot)) return -1;
     llg_vpi_model_object_t* object =
         slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
     const llg_vpi_shape_t* shape = object ? dyn_shape(object->shape - 1u) : NULL;
-    if (!shape || shape->shape != LLG_VPI_SHAPE_CLASS || !object->dependency) {
+    int handle = shape && shape->shape == LLG_VPI_SHAPE_CHANDLE;
+    if (!shape || (shape->shape != LLG_VPI_SHAPE_CLASS && !handle) || !object->dependency) {
         vpi_error("LLG_VPI_CALLBACK",
-                  "cbValueChange applies to class variables of a scope, not to strings, arrays, "
-                  "class objects or their properties (38.36.1)");
+                  "cbValueChange applies to class and chandle variables of a scope, not to "
+                  "strings, arrays, class objects or their properties (38.36.1)");
+        return 0;
+    }
+    int format = cb->value.format;
+    if (handle && format != vpiSuppressVal &&
+        (format < vpiBinStrVal || format > vpiObjTypeVal || format == vpiStrengthVal)) {
+        /* Table 38-5: vpiStrengthVal is for scalar objects only. */
+        vpi_error("LLG_VPI_CALLBACK", "unsupported cbValueChange value format for a chandle");
         return 0;
     }
     llg_vpi_watch_t* watch = (llg_vpi_watch_t*)calloc(1, sizeof(*watch));
@@ -4316,14 +4327,21 @@ static int dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot) {
     watch->key = object->dependency;
     watch->cb = cb;
     watch->element = LLG_VPI_NO_ELEMENT;
-    watch->event = LLG_VPI_WATCH_OPAQUE;
+    watch->event = handle ? LLG_VPI_WATCH_HANDLE : LLG_VPI_WATCH_OPAQUE;
     cb->watches = watch;
     cb->watch_total = 1;
     cb->target.object = slot->object;
     cb->target.element = LLG_VPI_NO_ELEMENT;
     cb->scope = object;
-    cb->value_type = vpiClassVar;
+    cb->value_type = handle ? vpiChandleVar : vpiClassVar;
     return 1;
+}
+
+/* The value of a cbValueChange record on a chandle variable: the variable
+ * as it holds now, in the record's format. */
+static LLG_OUTLYING void dyn_handle_cb_value(const struct llg_vpi_cb* cb, p_vpi_value output) {
+    const llg_vpi_model_object_t* object = row_object(cb->target.object);
+    dyn_read(dyn_shape(object->shape - 1u), object->storage, output);
 }
 
 /* cbCreateObj on a class typespec; cbReclaimObj on a class typespec or a

@@ -212,7 +212,7 @@ fn invalid_counts_and_ratios_are_located_runtime_errors() {
             expected,
             &[
                 (
-                    "invalid_runtime.sv:15:7: all rule weights are zero; nothing is generated",
+                    "invalid_runtime.sv:15:7 randsequence production: all rule weights are zero; nothing is generated",
                     2,
                 ),
                 (
@@ -241,7 +241,7 @@ fn a_negative_weight_ends_the_run() {
             expected,
             &[
                 (
-                    "invalid_weight.sv:13:7: the weight of rule 1 is negative",
+                    "invalid_weight.sv:13:7 randsequence production: the weight of rule 1 is negative",
                     1,
                 ),
                 ("randsequence weight is negative", 1),

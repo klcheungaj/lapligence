@@ -552,11 +552,17 @@ properties, SIM-011, and static record properties are one shared record); equali
 with an ambiguous predicate on such records);
 a run-time selection among more than 4,096 leaves of a module record
 (`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
-record (`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a member of a subroutine
-record whose type has container members, and a run-time-indexed record element
-of a module, static or block record bound by a call in an expression, below a
-constant index (`o.m[1].a[k]`), or among more than 256 elements or combinations
-(a statement call lowers once per element, `tr(o.e[i])`; a task that waits on
+record (`NATIVE_RECORD_SELECT_LIMIT`); a task waiting on a `ref` formal bound
+to a member of a subroutine record whose type has container members (the
+formal takes the record's companions, whose changes publish nothing it
+follows); as a `ref` actual, a run-time-indexed record element
+of a module, static or block record of fewer than 16 cells bound by a function
+called in a condition, a loop header or another statement that is not an
+assignment without timing control, a `return` or a system-task statement, or
+after an operand of the same statement that may write the index, or
+among more than 256 elements or combinations
+(a call statement, or such a statement around a function call, lowers once per
+element, `tr(o.e[i])`, `x = f(o.e[i])`; a task that waits on
 the formal stops the run if the index selects no element); an event control on
 a member of a native record `ref` formal when the actual is a subroutine record
 (a generic lowering
@@ -610,10 +616,15 @@ record; a module-like record has no such value, so a call binding one runs a
 specialization of the subroutine that names the record's leaves directly,
 which needs the record statically: a run-time record element lowers the call
 once per element under a decision tree, and only a statement can branch that
-way (a scalar leaf is chosen among stable addresses at the call). An element
+way, so a function call in an expression lowers its whole statement per element
+with the index taken when the statement starts, before its other operands,
+and only for a statement that evaluates its expressions once (a scalar leaf is
+chosen among stable addresses at the call). An element
 reference shares the element's item array; a queue or dynamic-array member is
 a nested slot of another representation, so the call mirrors it in a companion
-container, at the member's size per change in either direction.
+container, at the member's size per change in either direction. A member of a
+subroutine record passes the record's own companions, or mirrors the nested
+slots of a member array the record holds in its own slot (16 or more cells).
 
 ### Intended direction
 
@@ -1633,55 +1644,6 @@ Pass a native record's leaf markers with the record value.
 `sim_014/neg_ref_wait_record_property_whole.sv` and
 `neg_ref_wait_record_property_real.sv`;
 `sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
-
-## Rebinding a class event property through an output formal publishes at the return
-
-### Symptom
-
-A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
-on a rebinding through a `ref` event formal at the rebinding, also in a
-fork-join branch of the callee, except when the callee forwards the formal to
-an output event formal: it then wakes when the outermost call returns. Waits
-on the event itself are not affected: they follow the object named when armed.
-
-### Cause
-
-An output event formal works on its own handle and assigns it back at the
-return, and it has no marker parameter.
-
-### Intended direction
-
-Publish at the copy-out of each call level, if a design needs it. Estimate: a
-quarter of a day.
-
-### Reproduce
-
-A task with `output event e` assigning `e = g`, called with a `ref` event
-formal of the enclosing task bound to `c.ev`, while `wait (c.ev == g)` waits.
-
-## Symptom
-
-A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
-on a rebinding through a `ref` event formal at the rebinding, except when the
-rebinding runs in a fork-join branch of the callee (or through an output event
-formal the callee forwards it to): it then wakes when the outermost call
-returns. Waits on the event itself are not affected: they follow the object
-named when armed.
-
-### Cause
-
-A branch receives the formal's address, not its marker parameter, which exists
-only in models that need it and is decided after the branch is lowered.
-
-### Intended direction
-
-Capture the marker in a second slot, as handle formals do, if a design needs
-it. Estimate: a quarter of a day.
-
-### Reproduce
-
-`tests/fixtures/sim/feature_completion/sim_014/class_event_ref_held.sv`
-(`in_branch`).
 
 ## Level waits on the identity of an event variable hang
 
@@ -2875,8 +2837,9 @@ None: the decision is to reject. Reproduce with the files in
 
 **Status:** open. The object model catalog
 [`src/sim/rt/vpi_catalog.txt`](../src/sim/rt/vpi_catalog.txt) is the single
-source of truth for which object types, properties, one-to-one relations and
-iterations the runtime serves: every row it marks `unsupported` is a gap of
+source of truth for which object types, properties, one-to-one relations,
+iterations, callback reasons and `vpi_control` operations the runtime
+serves: every row it marks `unsupported` is a gap of
 this section, with its reason, and a query no row lists is an error
 (decision A19-D26). This section lists the limits the catalog does not
 express: objects outside the generated catalog, values, callbacks, routines
@@ -2927,9 +2890,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   gives a non-static class member no full name; industry-standard
   behaviour names it by the path that reached it, `tb.p.da[1]`, and
   answers NULL when the object was reached by iteration; pending a
-  decision); `cbValueChange` on chandle variables, class
-  properties, strings and arrays (the last three excluded by 38.36.1) and
-  `cbSizeChange`; `vpi_put_value` with a
+  decision); `cbValueChange` on class properties, on elements of
+  fixed-size chandle arrays (industry-standard behaviour serves these),
+  strings and arrays (the last two excluded by 38.36.1); `vpi_put_value` with a
   delay, force or release on a string, property or element (decisions
   A19-D21, A19-D23);
 - structure objects (ADV-019 family 2; their relations are in the
@@ -2940,7 +2903,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   (its frame stack starts empty);
   `cbValueChange` on a continuous assignment or primitive (38.36.1 lists
   variables, expressions, terminals and events; industry-standard tools
-  refuse both too); a delayed
+  refuse both too, decision A19-D91), and on an operation or a primitive
+  terminal (industry-standard behaviour serves both; watch the variables
+  and nets they read or drive); a delayed
   `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
   A19-D8). A `cbValueChange` on a named event watches the synchronization
   object the event names at registration;
@@ -3018,8 +2983,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - callback reasons refused with an error naming the reason: `cbStmt` (a
   statement has no execution hook; adding one would cost every model
   statement a check, or a second statement-hooked code path per process),
-  `cbSizeChange` (dynamic arrays, queues and associative arrays have no
-  resize notification; it would add a check to every resize),
+  `cbSizeChange` (no resize of a dynamic array, queue, associative array
+  or string reaches VPI; industry-standard behaviour never calls it either,
+  decision A19-D91),
   `cbAssign`/`cbDeassign` (procedural `assign`/`deassign` is rejected,
   decision A20-D9), `cbUnresolvedSystf` (every system call is resolved when
   the model is generated) and the save, restart, reset and interactive

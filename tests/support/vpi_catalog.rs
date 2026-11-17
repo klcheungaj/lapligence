@@ -19,7 +19,7 @@ pub(crate) const IMPLICIT: &[(&str, &str)] = &[
 ];
 
 /// The row kinds: the routine family a row is queried with.
-pub(crate) const KINDS: &[&str] = &["get", "str", "handle", "iterate", "func"];
+pub(crate) const KINDS: &[&str] = &["get", "str", "handle", "iterate", "func", "cb", "control"];
 
 /// The row statuses.
 pub(crate) const STATUSES: &[&str] = &["implemented", "extension", "error", "unsupported", "n/a"];

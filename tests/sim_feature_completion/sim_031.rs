@@ -10,17 +10,27 @@ use super::sim_cli;
 
 const SUITE: &str = "feature_completion/sim_031";
 
-/// Warnings the runtime issues for a randcase, one per execution.
-fn randcase_warnings<'a>(stderr: &'a str, fixture: &str, what: &str) -> Vec<&'a str> {
+/// Warnings the runtime issues for a randcase, one per execution, each
+/// located in `fixture`.
+fn randcase_warnings(stderr: &str, fixture: &str, what: &str) -> Vec<String> {
     stderr
         .lines()
-        .filter(|line| line.starts_with("WARNING: [SIM-011] randcase at ") && line.contains(what))
-        .inspect(|line| {
+        .filter_map(llg::core::report::parse)
+        .filter(|message| {
+            message.id == "SIM-011"
+                && message.text.starts_with("randcase: ")
+                && message.text.contains(what)
+        })
+        .inspect(|message| {
             assert!(
-                line.contains(&format!("{fixture}.sv:")),
-                "warning must name its source: {line}"
+                message
+                    .location
+                    .as_deref()
+                    .is_some_and(|location| location.contains(&format!("{fixture}.sv:"))),
+                "warning must name its source: {message:?}"
             );
         })
+        .map(|message| message.text)
         .collect()
 }
 

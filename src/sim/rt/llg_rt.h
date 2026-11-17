@@ -2845,7 +2845,8 @@ int llg_budget_point(const char* location);
 // Report a SystemVerilog unique/unique0/priority branch check. `check` is
 // 1=unique, 2=unique0, 3=priority; `matched` counts matching case groups (or
 // is zero/one for a conditional); `has_default` suppresses no-match reports.
-// Diagnostics are warnings and do not stop simulation.
+// Diagnostics are warnings and do not stop simulation; `location`
+// (`file:line:col`, or NULL) is their location field.
 void llg_unique_priority_check(int check, int matched, int has_default,
                                const char* location);
 
