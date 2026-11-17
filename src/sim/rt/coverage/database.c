@@ -660,9 +660,11 @@ static void llg_cov_db_image(llg_cov_buf_t* buf, uint32_t sections) {
 }
 
 // Write the database `name` (a path the simulation writes, so relative to
-// LLG_SIM_OUT_DIR). Returns 1 on success; on failure reports why and removes
-// both the temporary file and `name` (40.3.2.5).
-static int llg_cov_db_save(const char* name, uint32_t sections, const char* site) {
+// LLG_SIM_OUT_DIR). Returns 1 on success; on failure reports why at `site`
+// (a framed site, or NULL) with `what` naming the call, and removes both the
+// temporary file and `name` (40.3.2.5).
+static int llg_cov_db_save(const char* name, uint32_t sections, const char* what,
+                           const char* site) {
     char* path = llg_output_path(name);
     size_t len = strlen(path);
     char* temporary = (char*)llg_checked_malloc(len + 32u, 1, "coverage database");
@@ -680,9 +682,9 @@ static int llg_cov_db_save(const char* name, uint32_t sections, const char* site
         if (!error && llg_replace_file(temporary, path) != 0) error = strerror(errno);
     }
     if (error) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage database `%s` was not saved: %s", site ? site : "end of simulation", name, error);
+        llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "%s: coverage database `%s` was not saved: %s", what, name, error);
         llg_rt_mark_failed();
-        llg_rt_note_error(0, "coverage database was not saved", site);
+        llg_rt_note_error(0, "coverage database was not saved", llg_cov_site_location(site));
         (void)llg_remove_file(temporary);
         (void)llg_remove_file(path);
     }
@@ -1090,9 +1092,9 @@ void llg_cov_load_db(llg_string_t name, const char* site) {
             error = "the functional section has trailing data";
     }
     if (error) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage database `%s` was not loaded: %s; no coverage changed", site, path, error);
+        llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "$load_coverage_db: coverage database `%s` was not loaded: %s; no coverage changed", path, error);
         llg_rt_mark_failed();
-        llg_rt_note_error(0, "coverage database was not loaded", site);
+        llg_rt_note_error(0, "coverage database was not loaded", llg_cov_site_location(site));
         for (size_t i = 0; i < n_staged; ++i) llg_cov_free_record(staged[i]);
     } else {
         // Everything validated: publish. Records merge by name and layout.
@@ -1126,7 +1128,7 @@ void llg_cov_end_of_run(void) {
     if (llg_fcov_available()) sections |= LLG_COV_DB_FSM;
     if (llg_scov_available()) sections |= LLG_COV_DB_STATEMENT;
     if (llg_tcov_available()) sections |= LLG_COV_DB_TOGGLE;
-    (void)llg_cov_db_save(llg_cov_db_name, sections, NULL);
+    (void)llg_cov_db_save(llg_cov_db_name, sections, "end of simulation", NULL);
     free(llg_cov_db_name);
     llg_cov_db_name = NULL;
 }

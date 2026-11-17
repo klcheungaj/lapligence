@@ -247,11 +247,7 @@ impl Codegen<'_> {
             _ => (Some(self.coverage_scope_argument(path, name, last)?), None),
         };
         self.coverage_api_used = true;
-        let site = self.source_site(name, path, call);
-        let site = site
-            .strip_prefix(&format!("{name} at "))
-            .unwrap_or(&site)
-            .to_owned();
+        let site = self.coverage_site(path, call);
         Ok(IrExpr::new(
             IrExprKind::SysFunc(Box::new(IrSysFunc::CoverageApi(Box::new(
                 IrCoverageApiCall {

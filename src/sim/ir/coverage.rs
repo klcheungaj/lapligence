@@ -312,7 +312,8 @@ pub enum IrCoverCount {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCoverBin {
     pub(in crate::sim) name: String,
-    /// Declaration location for run-time messages.
+    /// Declaration site for run-time messages: scope, unit separator,
+    /// `file:line:col`.
     pub(in crate::sim) site: String,
     pub(in crate::sim) kind: IrCoverBinKind,
     pub(in crate::sim) shape: IrCoverBinShape,
@@ -339,7 +340,8 @@ pub enum IrCoverBound {
 pub struct IrCoverItem {
     pub(in crate::sim) lo: IrCoverBound,
     pub(in crate::sim) hi: IrCoverBound,
-    /// Location of an item that reads a slot, for run-time warnings.
+    /// Site of an item that reads a slot, for run-time warnings (framed
+    /// like [`IrCoverBin::site`]).
     pub(in crate::sim) site: Option<String>,
 }
 
@@ -1366,7 +1368,8 @@ pub struct IrCoverageApiCall {
     pub(in crate::sim) scope: Option<IrCoverageScope>,
     /// The database name of merge and save.
     pub(in crate::sim) name: Option<IrStringExpr>,
-    /// `file:line:column` of the call, for run-time errors.
+    /// Site of the call for run-time errors (framed like
+    /// [`IrCoverBin::site`]).
     pub(in crate::sim) site: String,
 }
 

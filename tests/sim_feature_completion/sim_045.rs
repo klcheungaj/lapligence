@@ -46,8 +46,8 @@ fn value_bins_follow_19_5_and_19_11_1() {
         assert_eq!(
             llg_messages(output),
             [
-                format!("WARNING: [SIM-011] tb:59:20: bins `good` {limited}"),
-                format!("WARNING: [SIM-011] tb:60:24: bins `split` {limited}"),
+                format!("WARNING: bins.sv:59:20: [SIM-011] (tb @ 0 ps) bins `good` {limited}"),
+                format!("WARNING: bins.sv:60:24: [SIM-011] (tb @ 0 ps) bins `split` {limited}"),
             ],
             "{label}"
         );
@@ -72,8 +72,8 @@ fn illegal_values_end_the_run() {
             output,
             expected,
             &[
-                "ERROR: [SIM-010] covergroup `g` coverpoint `cp` sampled 5, a value of illegal_bins `bad` at tb:12:20 (IEEE 1800-2009 19.5.5)",
-                "FATAL: [SIM-009] (tb:12:20 @ 0 ps) illegal_bins value sampled",
+                "ERROR: illegal.sv:12:20: [SIM-010] (tb @ 0 ps) covergroup `g` coverpoint `cp` sampled 5, a value of illegal_bins `bad` (IEEE 1800-2009 19.5.5)",
+                "FATAL: illegal.sv:12:20: [SIM-009] (tb @ 0 ps) illegal_bins value sampled",
             ],
         );
     });
@@ -89,8 +89,8 @@ fn illegal_default_values_end_the_run() {
             output,
             expected,
             &[
-                "ERROR: [SIM-010] covergroup `g` coverpoint `cp` sampled 12, a value of illegal_bins `rest` at tb:10:20 (IEEE 1800-2009 19.5.5)",
-                "FATAL: [SIM-009] (tb:10:20 @ 0 ps) illegal_bins value sampled",
+                "ERROR: illegal_default.sv:10:20: [SIM-010] (tb @ 0 ps) covergroup `g` coverpoint `cp` sampled 12, a value of illegal_bins `rest` (IEEE 1800-2009 19.5.5)",
+                "FATAL: illegal_default.sv:10:20: [SIM-009] (tb @ 0 ps) illegal_bins value sampled",
             ],
         );
     });
@@ -108,8 +108,8 @@ fn bins_counts_that_are_not_positive_end_the_run() {
             output,
             expected,
             &[
-                "ERROR: [SIM-010] bins `b` at tb:9:29: the number of bins is not a positive value",
-                "FATAL: [SIM-009] (tb:9:29 @ 0 ps) the number of bins is not a positive value",
+                "ERROR: bins_count_runtime.sv:9:29: [SIM-010] (tb @ 0 ps) bins `b`: the number of bins is not a positive value",
+                "FATAL: bins_count_runtime.sv:9:29: [SIM-009] (tb @ 0 ps) the number of bins is not a positive value",
             ],
         );
     });
@@ -157,7 +157,7 @@ fn transition_bins_follow_19_5_1() {
 fn illegal_transitions_are_run_time_errors() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_045/transition_illegal.out");
-    let nine = "ERROR: [SIM-010] covergroup `g` coverpoint `cp` sampled 9, ending a transition no other bin holds, which is in illegal_bins `rest` at tb:15:20 (IEEE 1800-2009 19.5.5)";
+    let nine = "ERROR: transition_illegal.sv:15:20: [SIM-010] (tb @ 0 ps) covergroup `g` coverpoint `cp` sampled 9, ending a transition no other bin holds, which is in illegal_bins `rest` (IEEE 1800-2009 19.5.5)";
     let one = nine.replace("sampled 9", "sampled 1");
     sim_cli::run_case_checked_matrix(SUITE, "transition_illegal", &[], &|label, output| {
         assert_eq!(output.status.code(), Some(1), "{label}");
@@ -168,8 +168,8 @@ fn illegal_transitions_are_run_time_errors() {
                 nine,
                 nine,
                 one.as_str(),
-                "ERROR: [SIM-010] covergroup `g` coverpoint `cp` sampled 3, completing a transition of illegal_bins `bad` at tb:14:20 (IEEE 1800-2009 19.5.5)",
-                "FATAL: [SIM-009] (tb:14:20 @ 0 ps) illegal_bins transition sampled",
+                "ERROR: transition_illegal.sv:14:20: [SIM-010] (tb @ 0 ps) covergroup `g` coverpoint `cp` sampled 3, completing a transition of illegal_bins `bad` (IEEE 1800-2009 19.5.5)",
+                "FATAL: transition_illegal.sv:14:20: [SIM-009] (tb @ 0 ps) illegal_bins transition sampled",
             ],
             "{label}"
         );
@@ -208,11 +208,11 @@ fn transition_values_read_covergroup_arguments() {
         assert_eq!(
             llg_messages(output),
             [
-                format!("WARNING: [SIM-011] tb:13:39: bins `out` {ignored}"),
-                format!("WARNING: [SIM-011] tb:14:41: bins `part` {limited}"),
-                format!("WARNING: [SIM-011] tb:13:39: bins `out` {ignored}"),
-                format!("WARNING: [SIM-011] tb:14:41: bins `part` {limited}"),
-                format!("WARNING: [SIM-011] tb:21:53: bins `o` {ignored}"),
+                format!("WARNING: transition_arguments.sv:13:39: [SIM-011] (tb @ 0 ps) bins `out` {ignored}"),
+                format!("WARNING: transition_arguments.sv:14:41: [SIM-011] (tb @ 0 ps) bins `part` {limited}"),
+                format!("WARNING: transition_arguments.sv:13:39: [SIM-011] (tb @ 0 ps) bins `out` {ignored}"),
+                format!("WARNING: transition_arguments.sv:14:41: [SIM-011] (tb @ 0 ps) bins `part` {limited}"),
+                format!("WARNING: transition_arguments.sv:21:53: [SIM-011] (tb @ 0 ps) bins `o` {ignored}"),
             ],
             "{label}"
         );
@@ -259,8 +259,8 @@ fn illegal_cross_products_are_run_time_errors() {
         assert_eq!(
             llg_messages(output),
             [
-                "ERROR: [SIM-010] covergroup `zz` cross `xy` sampled a product of illegal_bins `illegal` at tb:14:20 (IEEE 1800-2009 19.6.3)",
-                "FATAL: [SIM-009] (tb:14:20 @ 0 ps) illegal_bins product sampled",
+                "ERROR: cross_illegal.sv:14:20: [SIM-010] (tb @ 0 ps) covergroup `zz` cross `xy` sampled a product of illegal_bins `illegal` (IEEE 1800-2009 19.6.3)",
+                "FATAL: cross_illegal.sv:14:20: [SIM-009] (tb @ 0 ps) illegal_bins product sampled",
             ],
             "{label}"
         );
@@ -313,6 +313,30 @@ fn merged_crosses_need_the_same_cross_bins() {
             ["ERROR: [SIM-010] covergroup `g` cross `ab`: merged type coverage needs every instance to have the same cross bins (llg limitation)"],
             "{label}"
         );
+    });
+}
+
+/// A negative weight is a run-time error at the option's own line, in the
+/// declaration and in procedural writes; the option keeps its value and the
+/// run goes on (Table 19-1, Table 19-3).
+#[test]
+fn out_of_range_option_values_are_located_run_time_errors() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/option_errors.out");
+    let text = "value -1 is out of range; the option keeps its value";
+    let messages = [
+        format!(
+            "ERROR: option_errors.sv:11:5: [SIM-010] (tb @ 0 ps) coverage option.weight {text}"
+        ),
+        format!(
+            "ERROR: option_errors.sv:21:5: [SIM-010] (tb @ 1 ns) coverage option.weight {text}"
+        ),
+        format!(
+            "ERROR: option_errors.sv:22:5: [SIM-010] (tb @ 1 ns) coverage type_option.weight {text}"
+        ),
+    ];
+    let messages: Vec<&str> = messages.iter().map(String::as_str).collect();
+    sim_cli::run_case_checked_matrix(SUITE, "option_errors", &[], &|label, output| {
+        ends_run(label, output, expected, &messages);
     });
 }
 
@@ -401,7 +425,7 @@ fn cross_value_class_budget_is_a_run_time_error() {
             label,
             output,
             expected,
-            &["ERROR: [SIM-010] tb:16:12: covergroup `g` cross `abcd` has select expressions that split its coverpoints into more than 2^20 value class combinations; its bins are not counted (llg limitation)"],
+            &["ERROR: cross_classes.sv:16:12: [SIM-010] (tb @ 0 ps) covergroup `g` cross `abcd` has select expressions that split its coverpoints into more than 2^20 value class combinations; its bins are not counted (llg limitation)"],
         );
     });
 }
@@ -449,8 +473,8 @@ fn wide_illegal_values_end_the_run() {
             output,
             expected,
             &[
-                "ERROR: [SIM-010] covergroup `cg` coverpoint `cp` sampled -170141183460469231731687303715884105728, a value of illegal_bins `bad` at tb:8:56 (IEEE 1800-2009 19.5.5)",
-                "FATAL: [SIM-009] (tb:8:56 @ 0 ps) illegal_bins value sampled",
+                "ERROR: wide_illegal.sv:8:56: [SIM-010] (tb @ 0 ps) covergroup `cg` coverpoint `cp` sampled -170141183460469231731687303715884105728, a value of illegal_bins `bad` (IEEE 1800-2009 19.5.5)",
+                "FATAL: wide_illegal.sv:8:56: [SIM-009] (tb @ 0 ps) illegal_bins value sampled",
             ],
         );
     });

@@ -659,7 +659,7 @@ impl<'a> Codegen<'a> {
             ));
         }
         let point = self.coverage_item_position(lhs, access.owner.group, access.owner.point)?;
-        let site = self.source_site(&format!("{scope}.{member}"), path, lhs);
+        let site = self.coverage_site(path, lhs);
         let text = matches!(member, "name" | "comment");
         let statement = match (access.owner.type_option, text) {
             (true, true) => IrCoverageStmt::TypeText {
@@ -752,7 +752,7 @@ impl<'a> Codegen<'a> {
         } else {
             IrCoverageStmt::LoadDb {
                 name: file_name,
-                site: self.source_site(name, path, node),
+                site: self.coverage_site(path, node),
             }
         };
         Ok(IrStmt::Coverage(Box::new(statement)))
@@ -1507,7 +1507,7 @@ impl<'a> Codegen<'a> {
             });
             table.bins.push(IrCoverCrossBin {
                 name: bin_name,
-                site: Self::coverage_site(&build.path, self.node(bin)),
+                site: self.coverage_site(&build.path, bin),
                 kind,
                 guard,
                 boxes,
@@ -1892,7 +1892,7 @@ impl<'a> Codegen<'a> {
         }
         Ok(transitions::BinSpec {
             name: bin_name,
-            site: Self::coverage_site(&build.path, self.node(bin)),
+            site: self.coverage_site(&build.path, bin),
             kind,
             array,
             guard,
@@ -1993,7 +1993,7 @@ impl<'a> Codegen<'a> {
         let n_items = coverpoint.items.len() as u32 - first_item;
         coverpoint.bins.push(IrCoverBin {
             name: bin_name,
-            site: Self::coverage_site(&build.path, self.node(bin)),
+            site: self.coverage_site(&build.path, bin),
             kind,
             shape,
             guard,
@@ -2003,12 +2003,16 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// `path:line:col` of a declaration, for run-time messages.
-    fn coverage_site(path: &str, node: &crate::core::db::Node) -> String {
-        if node.line == 0 {
+    /// The run-time message site of `node` in scope `path`, framed as
+    /// `finish_location` frames a status line: the scope, the unit
+    /// separator, then `file:line:col`, so the runtime prints the position
+    /// in the location field and the scope in the context. A node without a
+    /// position gives the scope alone.
+    fn coverage_site(&self, path: &str, node: NodeId) -> String {
+        if self.node(node).line == 0 {
             path.to_owned()
         } else {
-            format!("{path}:{}:{}", node.line, node.col)
+            format!("{path}\u{1f}{}", self.source_location(node))
         }
     }
 
@@ -2140,7 +2144,7 @@ impl<'a> Codegen<'a> {
         coverpoint.items.push(IrCoverItem {
             lo,
             hi,
-            site: Some(Self::coverage_site(&build.path, self.node(item))),
+            site: Some(self.coverage_site(&build.path, item)),
         });
         Ok(())
     }
@@ -3523,7 +3527,7 @@ impl<'a> Codegen<'a> {
                         point,
                         option,
                         value: lowered,
-                        site: self.source_site(&format!("option.{member}"), path, setter),
+                        site: self.coverage_site(path, setter),
                     })));
                 }
             }
