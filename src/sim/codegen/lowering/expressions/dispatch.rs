@@ -755,6 +755,12 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        self.lower_expr_node(scope_path, h)
+            .map_err(|error| self.locate_error(h, error))
+    }
+
+    /// [`Self::lower_expr`] before its failure is located at `h`.
+    fn lower_expr_node(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
         if !self.queued_values.is_empty() {
             if let Some(value) = self.queued_value_read(h) {
                 return Ok(value);

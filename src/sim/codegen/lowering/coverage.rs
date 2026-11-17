@@ -223,7 +223,7 @@ fn coverage_type_option(member: &str) -> Option<IrCoverageTypeOption> {
 
 impl<'a> Codegen<'a> {
     fn coverage_error(&self, node: NodeId, message: impl std::fmt::Display) -> String {
-        format!("{}: {message}", self.source_location(node))
+        crate::sim::codegen::error::located(&self.source_location(node), message)
     }
 
     /// The name a diagnostic uses for a covergroup: its declared name, or
@@ -2378,8 +2378,10 @@ impl<'a> Codegen<'a> {
         Ok(Some(keys))
     }
 
+    /// Lowering warnings are plain text (`GeneratedModel::warnings`), so the
+    /// node's location stays a prefix of the text.
     fn coverage_warning(&mut self, node: NodeId, message: String) {
-        let warning = self.coverage_error(node, message);
+        let warning = format!("{}: {message}", self.source_location(node));
         self.warnings.push(warning);
     }
 

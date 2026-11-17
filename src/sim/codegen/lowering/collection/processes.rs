@@ -1823,6 +1823,20 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// `error` located at `node` (`source_location`), unless it already
+    /// carries a location from a narrower construct or the node has no
+    /// source file (a synthesized node), when an enclosing construct
+    /// locates it. The statement and expression lowerings wrap every failure
+    /// in this, so a site without a node of its own reports at the innermost
+    /// expression or statement that contains it.
+    pub(in super::super) fn locate_error(&self, node: NodeId, error: String) -> String {
+        if crate::sim::codegen::error::is_located(&error) || self.node(node).file.is_none() {
+            error
+        } else {
+            located(&self.source_location(node), error)
+        }
+    }
+
     fn scan_process_contract(
         &self,
         node: NodeId,

@@ -1117,18 +1117,6 @@ impl Codegen<'_> {
             .as_ref()
     }
 
-    /// A failed lowering in a design with column records names its source:
-    /// the column form is never retried in another form, so this error is
-    /// what the user sees.
-    pub(in super::super) fn record_located_error(&self, node: NodeId, error: String) -> String {
-        match self.node(node).file.as_deref() {
-            Some(file) if self.record_columns && !error.contains(file) => {
-                format!("{}: {error}", self.source_location(node))
-            }
-            _ => error,
-        }
-    }
-
     /// Whether a member path is rooted at a subroutine record value or at a
     /// formal holding a record image. Neither has a signal to wait on.
     pub(in super::super) fn subroutine_record_member(&self, node: NodeId) -> bool {
