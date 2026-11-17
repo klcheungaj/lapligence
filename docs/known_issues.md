@@ -3413,9 +3413,10 @@ generation with "concurrent assertions require one explicit signal clock".
 The UVM APB agent (`integrated/apb/apb_master.sv`) uses it only inside a
 branch selected by a tool's predefined macro; without that macro the agent
 waits for an extra clock edge before each transfer, so the register examples
-built on it (`integration/10direct`, `integration/20layered`) reach their
-final checks later than with the industry-standard simulator, which takes its
-own branch. Their verdicts and counts match.
+built on it (`integration/10direct`, `integration/20layered`,
+`models/broadcast`) reach their final checks later than with the
+industry-standard simulator, which takes its own branch. Their verdicts and
+counts match.
 
 **Cause.** Sequence and property declarations within a clocking block take
 the block's clocking event (16.17); codegen requires an explicit signal clock
@@ -3423,25 +3424,6 @@ on the sequence itself.
 
 **Intended direction.** Infer a sequence's clock from its enclosing clocking
 block.
-
-### Run-time crash in the deferred change check (register broadcast)
-
-**Symptom.** The UVM 1.2 `registers/models/broadcast` example (run with the
-`mixed-assignments` rule as a warning) generates and builds, then stops with a
-segmentation fault at time 0 while the register model is configured. The
-industry-standard simulator runs it to the expected `UVM_HDL_READ` fatal error
-at 830 ns.
-
-**Cause.** Under investigation. A debugger shows the deferred change check
-that runs before a `$display` (T1-D11 coalescing) settling a record whose
-storage key no longer holds a value (a 32-bit signed variable's record now
-points into reused string memory), on the clocking-edge history path.
-
-**Intended direction.** Find which write leaves a pending change record for
-storage that is freed before the check (an automatic variable or a container
-element is the likely owner) and drop or settle the record when the storage
-goes away.
-
 
 ### The bus example's run diverges after its first transfer
 
