@@ -566,10 +566,9 @@ processes or clock edges, at the cost of a few bytes per object.
   1.076, array cells 1.059, clock 1.029): that is what the records cost, and
   the snapshot change pays it back on narrow writes. In a model with a
   clocking drive, `##` wait or assertion clock pulse, every published
-  signal keeps clocking history, so every written signal gets a record;
-  limiting history to the signals those readers name would remove about 45%
-  of the clocking-block row's time, with or without T1-D11, but needs
-  generated registrations and is not done. Peak RSS is unchanged; a
+  signal then kept clocking history, so every written signal got a record;
+  history is now limited to the signals those readers name ("Clocking
+  history only for the signals its readers name" below). Peak RSS is unchanged; a
   wait-source row grows from 80 to 88 B, a clocking history entry from 56 to
   64 B, and the process record and the wait record keep their sizes.
   Executable size +1.3–1.8%.
@@ -643,6 +642,56 @@ processes or clock edges, at the cost of a few bytes per object.
   rows) are within 0.966–1.003. Peak RSS is unchanged; the wait-source row
   stays 88 B and a value watch subscription grows from 32 to 40 B (one
   48-byte allocation either way).
+
+### Clocking history only for the signals its readers name
+
+- **Trade-off:** a clocking drive or `##0` may ask whether its clocking
+  event's signal changed earlier in the time slot, after the change. Keeping
+  that edge history for every published signal needs no knowledge of the
+  readers, but every changed signal then pays a history entry, its index
+  growth and a free at time advance, and under T1-D11 a change record per
+  turn. Naming the readers' signals at compile time costs one startup call
+  per signal.
+- **Decision:** lowering collects the storage that readers name
+  (`IrModel::clocking_history`): the signal events of clocking drives and
+  cycle waits, and the signals of assertion clock pulses. `##` waits name
+  the clocking block's event, which answers from its triggered state, so
+  they add nothing. Startup registers each one
+  (`llg_rt_clocking_history_signal`); publication records history only for
+  registered storage and the sequence, sampled-value and assertion clocks
+  that register themselves. Registrations persist across time steps (their
+  occurrence flags are time-stamped), so time advance no longer walks the
+  entries. Recording every signal is gone: validation rejects a reader
+  whose signal is not registered, and the emitter rejects a clocking source
+  that is not model storage. Generated C loses the former skip call in every
+  model and gains one registration per named signal in models with a drive
+  or pulse; nothing else changes.
+- **Evidence:** 100 alternating pairs per row from one fixed path
+  (`pairs_fixed.py`), each pinned to one CPU, CPU seconds of the model
+  process, medians, in both orders (base first, then the executables
+  swapped); instruction counts from callgrind without cache simulation.
+  Outputs are identical. The host carried two other agents' test suites
+  (load 25–60), so absolute times are about twice those on a quiet host and
+  the spread (IQR 2–17%) hides changes below about 1.5%.
+
+  | Workload | Base s | Tip s | Tip vs base (both orders) | Instructions |
+  | --- | ---: | ---: | ---: | ---: |
+  | Clocking block present, 500 unwaited array cells written per cycle | 0.960 | 0.487 | −49.3% / −49.6% (100/100) | −45.0% |
+  | The same with `--wave` | 3.955 | 2.717 | −31.3% / −30.2% (100/100) | |
+  | Three clocking drives per cycle, 64 registers written per cycle | 8.783 | 5.531 | −37.0% / −37.0% (100/100) | −34.5% |
+  | 2,000 waiters on one clock | 2.533 | 2.527 | −0.2% / −1.1% | −0.4% |
+  | Every write changes a waited variable once per turn | 0.514 | 0.519 | +1.0% / +1.2% | −0.3% |
+  | Clocking input `#1step`, read every cycle | 1.746 | 1.763 | +1.0% / +0.8% | −0.2% |
+  | Clocking input `#3`, read every cycle | 1.760 | 1.769 | +0.5% / +1.4% | −0.2% |
+  | many-masked-20k, many-registers-10k, tasks, wide-values, zero-delay | | | −2.5% to +0.3% | 0.0% and −0.1% (first and last) |
+
+  The three rows that read slower execute fewer instructions and use no
+  clocking history in either version. The change shrinks the scheduler's
+  code, which moves the hot runtime functions by 64–512 bytes (their 64-byte
+  alignment is kept). Inserting one unused 64-byte function into the base
+  runtime alone moved the same rows by +0.6% / +0.4%, +1.9% / +0.9% and
+  +0.8% / +1.5%, so their difference is code placement, not work; it needs a
+  quiet host to settle.
 
 ### Bounded retention of finished work
 

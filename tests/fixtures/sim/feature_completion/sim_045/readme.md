@@ -165,6 +165,9 @@ instance-specific information, and some simulators then return 0 from
   coverpoint (or cross) syntactic level, it specifies the weight of a
   coverpoint (or cross) for computing the instance coverage of the enclosing
   covergroup."
+- 19.7, Table 19-1, L33259-33260: weight "The specified weight shall be a
+  non-negative integral value."
+- 19.7, Table 19-1, L33254: weight's default is 1.
 - 19.7, Table 19-1, L33273-33277: "at_least=number 1 Minimum number of hits
   for each bin." "detect_overlap=boolean 0 When true, a warning is issued if
   there is an overlap between the range list (or transition list) of two
@@ -432,6 +435,14 @@ lockstep search of option.detect_overlap explores every pair of goto counts,
 about 10^6 pairs, past its budget of 2^20 steps: a located compile-time
 warning names the pair where it stopped. The run reports no overlap; samples
 0 and 2 complete neither bin: 0.00.
+
+`option_errors.sv`: the construction passes `w` = -1 to the declaration's
+`option.weight = w` (line 11), and at 1 ns the procedural writes set the
+coverpoint's `option.weight` (line 21) and `type_option.weight` (line 22) to
+-1. Each value breaks the non-negative weight rule of Table 19-1 or 19-3, so
+each write is a run-time error located at its own line with the scope `tb`
+and the time in the context, and leaves the option at its default of 1:
+`weight 1 cp 1 type 1`. Exit status 1.
 
 ## Negative cases
 

@@ -21,6 +21,7 @@ impl Validator<'_> {
         }
 
         self.validate_free_variables()?;
+        self.validate_clocking_history()?;
 
         for (idx, group) in self.model.covergroups.iter().enumerate() {
             if let Err(detail) = group.validate(self.model.coverage_types.len()) {
@@ -1730,6 +1731,20 @@ impl Validator<'_> {
             match &signal.ty {
                 IrType::Packed { width, .. } if control.bit < *width => {}
                 _ => return self.fail(at, "control bit outside a packed signal"),
+            }
+        }
+        Ok(())
+    }
+
+    /// Startup registers each clocking history source by address, so each
+    /// must name active packed storage.
+    fn validate_clocking_history(&self) -> ValidationResult {
+        for name in &self.model.clocking_history {
+            if !self.valid_dependency(&IrDependency::scalar(name)) {
+                return self.fail(
+                    format!("clocking_history[{name}]"),
+                    "a clocking history source must name active packed storage",
+                );
             }
         }
         Ok(())

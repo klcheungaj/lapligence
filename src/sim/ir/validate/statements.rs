@@ -891,9 +891,6 @@ impl Validator<'_> {
                 cycles,
                 ..
             } => {
-                if !self.model.clocking_history {
-                    return self.fail(path, "clocking drive requires the model's clocking history");
-                }
                 if let Some(cycles) = cycles {
                     if cycles.is_real() {
                         return self.fail(path, "clocking drive cycle count must be integral");
@@ -910,6 +907,12 @@ impl Validator<'_> {
                                 return self.fail(
                                     format!("{path}.specs[{index}]"),
                                     "clocking drive event must name active packed storage",
+                                );
+                            }
+                            if !self.model.clocking_history.contains(name) {
+                                return self.fail(
+                                    format!("{path}.specs[{index}]"),
+                                    "clocking drive event requires the model's clocking history of its signal",
                                 );
                             }
                         }
@@ -1192,12 +1195,6 @@ impl Validator<'_> {
                 }
             }
             IrStmt::ClockingCycleWait { count, specs } => {
-                if !self.model.clocking_history {
-                    return self.fail(
-                        path,
-                        "clocking cycle wait requires the model's clocking history",
-                    );
-                }
                 if specs.is_empty() {
                     return self.fail(path, "clocking cycle wait requires at least one event");
                 }
@@ -1212,6 +1209,12 @@ impl Validator<'_> {
                                 return self.fail(
                                     format!("{path}.specs[{index}]"),
                                     "clocking cycle signal must name active packed storage",
+                                );
+                            }
+                            if !self.model.clocking_history.contains(name) {
+                                return self.fail(
+                                    format!("{path}.specs[{index}]"),
+                                    "clocking cycle signal requires the model's clocking history of its signal",
                                 );
                             }
                         }
@@ -1244,12 +1247,6 @@ impl Validator<'_> {
                 }
             }
             IrStmt::AssertionClockPulse { signal } => {
-                if !self.model.clocking_history {
-                    return self.fail(
-                        path,
-                        "assertion clock pulse requires the model's clocking history",
-                    );
-                }
                 if !matches!(
                     self.model.signals.get(*signal),
                     Some(crate::sim::ir::IrSignal {
@@ -1262,6 +1259,16 @@ impl Validator<'_> {
                     return self.fail(
                         path,
                         "assertion clock pulse must name an active one-bit packed signal",
+                    );
+                }
+                if !self
+                    .model
+                    .clocking_history
+                    .contains(&self.model.signals[*signal].c_name)
+                {
+                    return self.fail(
+                        path,
+                        "assertion clock pulse requires the model's clocking history of its signal",
                     );
                 }
             }

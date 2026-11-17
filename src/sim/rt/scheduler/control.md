@@ -30,16 +30,18 @@ Clocking input samples complete before the Observed block event. Output captures
 publish Re-NBA with constant skew; off-event drives wait for the next event and
 `##N` counts events. `scheduler/dependencies.c` owns exact-descriptor edge history:
 clocking synchronous drives and `##0` can query after publication, including after
-registration in the same slot. Therefore publication records even automatic
-locals without an existing waiter; subscriber absence does not prove an entry
-unusable. Generated clocking-source emission currently rejects automatic bindings,
-but native runtime callers can pass any live packed owner to the borrowed-source
-APIs. Globally filtering that storage class would change accepted runtime behavior.
-Recording is the default. A generated model whose IR has no clocking drive, `##`
-cycle wait or assertion clock pulse (`IrModel::clocking_history`, set by lowering
-and checked by validation) calls `llg_rt_skip_clocking_history`; publication then
-updates only the registered sequence clocks' tick entries, so ordinary designs
-pay no per-change entry allocation or time-advance free.
+registration in the same slot, so the history must exist before the reader
+arms. Publication records it only for registered descriptors: those a reader
+names, registered at startup with `llg_rt_clocking_history_signal`, and the
+sequence, sampled-value and assertion clocks that register themselves. Lowering
+collects the named storage in `IrModel::clocking_history`: the signal events of
+clocking drives and cycle waits (named events answer from their own triggered
+state) and the signals of assertion clock pulses; validation rejects a reader
+whose signal is missing, and the emitter rejects a clocking source that is not
+model storage. A change of any other storage costs one index probe and no
+entry, record or time-advance work. Native runtime callers must register every
+descriptor they pass to the clocking drive and cycle APIs before its first
+change they may ask about.
 Wait/sampling split and clockvar publication: `dependencies.c` and
 `sampling.c` comments. A real or shortreal input bound to an expression samples its 64-bit
 `$realtobits` image signal; the `_real` variants decode it into the `double`

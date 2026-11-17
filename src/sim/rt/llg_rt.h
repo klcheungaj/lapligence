@@ -3576,13 +3576,15 @@ void llg_clocking_forget_signal(sv4_t* signal);
 // runtime's `forget` hook): change records and clocking history are keyed by
 // address only, so one lookup serves both kinds without reading the leaf.
 void llg_value_leaf_forget(void* leaf);
-// A model with no clocking drive, `##` cycle wait or assertion clock pulse
-// calls this after init: nothing then asks whether a signal changed earlier in
-// the current slot, so publication stops recording edge history except for
-// the sequence clocks that assertions register. Recording is the default, so
-// a model that never calls this keeps every history query exact. Reset by
-// llg_rt_cleanup.
-void llg_rt_skip_clocking_history(void);
+// Records current-slot edge history for `signal` from now until it is
+// forgotten: a clocking drive or `##` cycle wait whose clocking event names
+// `signal`, and an assertion clock pulse on it, ask whether it changed
+// earlier in the slot. Publication records history only for storage
+// registered here or as a sequence, sampled-value or assertion clock, so a
+// caller registers every signal those readers name before the first change
+// they may ask about; generated models do so after init. NULL is ignored.
+// Entries are released by llg_clocking_forget_signal or llg_rt_cleanup.
+void llg_rt_clocking_history_signal(sv4_t* signal);
 
 // Assignments.  llg_nba records on the current process's list and commits in
 // the NBA region; llg_ba writes immediately and notifies waiters.
