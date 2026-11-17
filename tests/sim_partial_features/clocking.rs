@@ -145,3 +145,15 @@ fn clocking_history_keeps_both_edges_then_expires_at_time_advance() {
         "",
     );
 }
+
+/// Each interface instance's clock keeps the edge history its drives read:
+/// a drive issued on its instance's clocking event takes effect on that
+/// event, one issued between events waits for the next.
+#[test]
+fn clocking_drives_through_virtual_interfaces_take_effect_on_their_instance_event() {
+    run_case_with_stderr(
+        "clocking_history_vif_drives",
+        "6 i1.x=11\n8 i2.x=21\n16 i1.x=12\n22 i2.x=22\n36 i2.x=99\n44 edges=4\n",
+        "INFO: clocking_history_vif_drives.sv:74:5: [SIM-001] (tb @ 44 ns) $finish called\n",
+    );
+}

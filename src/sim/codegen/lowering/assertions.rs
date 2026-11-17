@@ -1332,7 +1332,8 @@ impl Codegen<'_> {
         for pending in std::mem::take(&mut self.sampled_event_clocks) {
             let (stem, tick, reason) = if pending.pulse {
                 // The pulse skips a clock that already rose in this slot.
-                self.model.clocking_history = true;
+                let name = self.model.signals[pending.clock].c_name.clone();
+                self.model.clocking_history.insert(name);
                 (
                     format!("assertion_clock_{}", pending.clock),
                     IrStmt::AssertionClockPulse {

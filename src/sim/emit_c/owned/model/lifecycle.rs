@@ -346,6 +346,26 @@ fn merge_class_spawns(calls: Vec<StartupCall>) -> Vec<StartupCall> {
     merged
 }
 
+/// One registration per clocking history source, at the address its
+/// readers' wait sources take (`Frame::clocking_source_entries`).
+fn clocking_history_startup(model: &IrModel) -> Result<String, String> {
+    let mut out = String::new();
+    if model.clocking_history.is_empty() {
+        return Ok(out);
+    }
+    let names = StorageNames::new(model);
+    for name in &model.clocking_history {
+        let storage = names
+            .find_checked(name)
+            .ok_or_else(|| format!("clocking history source `{name}` is not model storage"))?;
+        out.push_str(&format!(
+            "    llg_rt_clocking_history_signal({});\n",
+            storage.binding(model, name).address
+        ));
+    }
+    Ok(out)
+}
+
 pub(in crate::sim::emit_c) fn main(
     execution: &ExecutionModel,
     sharing: &SharedSpawns,
@@ -363,12 +383,11 @@ pub(in crate::sim::emit_c) fn main(
         out.push_str("static int llg_model_wave_live;\n");
     }
     out.push_str(&format!("int llg_model_start(int argc, char** argv) {{\n    llg_value_require_abi();\n    if (llg_model_live) return 1;\n    llg_model_live = 1;\n    llg_model_done = llg_model_status = 0;\n    llg_rt_init_with_args_and_precision(argc, argv, {}ULL);\n    if (llg_rt_failed()) goto start_failed;\n", model.precision_fs));
-    // Without a clocking drive, `##` wait or assertion clock pulse nothing
-    // reads the runtime's current-slot edge history, so signal publication
-    // skips recording it.
-    if !model.clocking_history {
-        out.push_str("    llg_rt_skip_clocking_history();\n");
-    }
+    // The runtime records current-slot edge history only for the storage a
+    // clocking drive, cycle wait or assertion clock pulse names. Each is
+    // registered before any process runs, so a reader that arms after its
+    // clock changed in the same slot still sees that change.
+    out.push_str(&clocking_history_startup(model)?);
     out.push_str(&crate::sim::emit_c::owned::coverage::startup(model));
     if !model.classes.is_empty() {
         // Collector roots precede storage initializers, which may allocate.

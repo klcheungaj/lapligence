@@ -11,8 +11,9 @@ fn render(statements: Vec<IrStmt>) -> String {
     model.events.push(IrEvent::new("E_first".to_owned()));
     model.events.push(IrEvent::new("E_second".to_owned()));
     model.processes[0].body = statements;
-    // Some cases arm clocking cycle waits, which read the edge history.
-    model.clocking_history = true;
+    // Some cases arm clocking cycle waits on `G_value`, which read its edge
+    // history.
+    model.clocking_history.insert("G_value".to_owned());
     let execution = ExecutionModel::lower(model).expect("validate arm model");
     super::super::super::model::render(&execution).expect("emit arm model")
 }
