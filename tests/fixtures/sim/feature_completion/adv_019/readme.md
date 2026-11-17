@@ -1192,7 +1192,7 @@ property (`tb.c.fa[1]`), where llg gives no full name to a property
 element; it gives an empty string `vpiSize` 1; and it serves `pe`'s
 members and the member select.
 
-## callback_kinds (38.36.1, decisions A19-D21, T1-D11; FIN-001 V3 family (e))
+## callback_kinds (38.36.1, decisions A19-D21, A19-D91, T1-D11; FIN-001 V3 family (e))
 
 `callback_kinds.c` places `cbValueChange` records on the chandle variables
 `h` and `h2` of `callback_kinds.sv`, whose DPI import `cbk_make(n)` returns
@@ -1219,6 +1219,10 @@ runs it in both optimizer modes.
 - 38.36.1 makes no exception for VPI writes: the `vpi_put_value` of `0x2222`
   at 7 runs the records before the put returns, and the record removed after
   it (`h dec`) no longer runs at 8.
+- `cbSizeChange` (38.36.1 L64657: "After a dynamic array, associative
+  array, queue, or string has been resized"; 37.17 detail 14 L58772-L58774)
+  is refused on `da`, `q`, `aa` and `s`: NULL with level 3 (decision
+  A19-D91), and the resizes at 1 call nothing.
 
 Industry-standard behaviour gives the same calls and values (it passes a
 `vpiSuppressVal` record a value structure of that format instead of NULL).

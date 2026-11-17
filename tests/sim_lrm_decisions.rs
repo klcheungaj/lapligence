@@ -2836,6 +2836,15 @@ fn a19_d90_typespec_kinds() {
 }
 
 #[test]
+fn a19_d91_callback_kinds() {
+    run_vpi_decision(
+        "A19-D91_callback_kinds",
+        &["task $d91(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D91_callback_kinds.out"),
+    );
+}
+
+#[test]
 fn a19_d75_frame_origins() {
     run_vpi_decision(
         "A19-D75_frame_origins",

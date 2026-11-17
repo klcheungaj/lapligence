@@ -2846,8 +2846,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   answers NULL when the object was reached by iteration; pending a
   decision); `cbValueChange` on class properties, on elements of
   fixed-size chandle arrays (industry-standard behaviour serves these),
-  strings and arrays (the last two excluded by 38.36.1) and
-  `cbSizeChange`; `vpi_put_value` with a
+  strings and arrays (the last two excluded by 38.36.1); `vpi_put_value` with a
   delay, force or release on a string, property or element (decisions
   A19-D21, A19-D23);
 - structure objects (ADV-019 family 2; their relations are in the
@@ -2936,8 +2935,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - callback reasons refused with an error naming the reason: `cbStmt` (a
   statement has no execution hook; adding one would cost every model
   statement a check, or a second statement-hooked code path per process),
-  `cbSizeChange` (dynamic arrays, queues and associative arrays have no
-  resize notification; it would add a check to every resize),
+  `cbSizeChange` (no resize of a dynamic array, queue, associative array
+  or string reaches VPI; industry-standard behaviour never calls it either,
+  decision A19-D91),
   `cbAssign`/`cbDeassign` (procedural `assign`/`deassign` is rejected,
   decision A20-D9), `cbUnresolvedSystf` (every system call is resolved when
   the model is generated) and the save, restart, reset and interactive

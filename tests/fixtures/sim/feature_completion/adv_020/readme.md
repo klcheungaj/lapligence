@@ -356,7 +356,7 @@ obj, index and the `vpi_chk_error` status it sees.
   next VPI call (`vpi_printf("after raise")`, the safe point), with index
   `SIGTERM`, a NULL obj and no error status (decision A20-D20).
 - **Refused reasons.** `cbStmt` (no statement hook), `cbSizeChange` (no
-  resize notification), `cbAssign`/`cbDeassign`
+  resize notification, decision A19-D91), `cbAssign`/`cbDeassign`
   (no procedural assign, decision A20-D9), `cbUnresolvedSystf` (every call is
   resolved when the model is generated), the save and restart reasons, the
   reset and interactive reasons (decision A20-D11) return NULL with level 3

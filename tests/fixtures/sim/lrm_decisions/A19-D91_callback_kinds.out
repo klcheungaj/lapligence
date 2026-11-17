@@ -1,0 +1,9 @@
+size tb.da int: NULL level=3
+size tb.da suppress: NULL level=3
+size tb.q int: NULL level=3
+size tb.q suppress: NULL level=3
+size tb.aa int: NULL level=3
+size tb.aa suppress: NULL level=3
+size tb.s int: NULL level=3
+size tb.s suppress: NULL level=3
+done 3 1 1 3

@@ -13695,7 +13695,10 @@ static void vpi_refuse_reason(int reason) {
         case cbStmt:
             why = "cbStmt is not supported by llg: statements have no execution hook";
             break;
-        case cbSizeChange: why = "cbSizeChange is not supported by llg"; break;
+        case cbSizeChange:
+            why = "cbSizeChange is not supported by llg: dynamic arrays, queues, associative "
+                  "arrays and strings report no resize to VPI (decision A19-D91)";
+            break;
         case cbUnresolvedSystf:
             why = "cbUnresolvedSystf never occurs in llg: every system task and function call "
                   "is resolved when the model is generated";

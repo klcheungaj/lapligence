@@ -1,6 +1,7 @@
 /* ADV-019 callback kinds (FIN-001 V3 family (e), IEEE 1800-2009 38.36.1):
  * $cbk(0) places cbValueChange records on the chandle variables of
- * callback_kinds.sv in several value formats; $cbk(1) reads h, writes it
+ * callback_kinds.sv in several value formats and tries the callbacks llg
+ * refuses (decision A19-D91); $cbk(1) reads h, writes it
  * through vpi_put_value and removes one record; $cbk(2) only marks the
  * end. Every callback prints its time, label, obj type, index and value. */
 #include "sv_vpi_user.h"
@@ -87,6 +88,11 @@ static PLI_INT32 cbk(PLI_BYTE8* user) {
         place(cbValueChange, named("tb.h2"), vpiHexStrVal, "h2 hex");
         /* Table 38-5: vpiStrengthVal is for scalar objects only. */
         place(cbValueChange, h, vpiStrengthVal, "h strength");
+        /* Decision A19-D91: no resize reaches VPI. */
+        place(cbSizeChange, named("tb.da"), vpiIntVal, "da size");
+        place(cbSizeChange, named("tb.q"), vpiSuppressVal, "q size");
+        place(cbSizeChange, named("tb.aa"), vpiIntVal, "aa size");
+        place(cbSizeChange, named("tb.s"), vpiIntVal, "s size");
     } else if (step.value.integer == 1) {
         s_vpi_value value;
         value.format = vpiHexStrVal;

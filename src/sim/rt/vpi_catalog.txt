@@ -105,6 +105,7 @@ test a19d8 sim_lrm_decisions::a19_d8_named_event_callback
 test a17control adv_017::vpi_control_drives_assertions_and_raises_their_callbacks
 test a17fsm adv_017::fsm_objects_report_states_counters_and_controls
 test a19cbk adv_019::callback_kinds_watch_chandles_and_refuse_the_rest
+test a19d91 sim_lrm_decisions::a19_d91_callback_kinds
 
 node null 37.5 type=NULL
   iterate vpiModule implemented walk
@@ -158,7 +159,7 @@ node null 37.5 type=NULL
   cb cbAssertionSysEnableNonvacuousAction implemented a17control
   cb cbAssertionSysDisableVacuousAction implemented a17control
   cb cbStmt error a20actions statements have no execution hook: one would cost every statement of the model a check
-  cb cbSizeChange error a20actions dynamic arrays, queues, associative arrays and strings report no resize to VPI
+  cb cbSizeChange error a20actions dynamic arrays, queues, associative arrays and strings report no resize to VPI (decision A19-D91)
   cb cbAssign error a20actions procedural assign and deassign are rejected by llg (decision A20-D9)
   cb cbDeassign error a20actions procedural assign and deassign are rejected by llg (decision A20-D9)
   cb cbUnresolvedSystf error a20actions every system task and function call is resolved when the model is generated
@@ -998,6 +999,7 @@ node array_var 37.17 type=vpiRegArray
   str vpiDecompile implemented walk
   iterate vpiIntVar extension walk a variable array iterates its elements by their own type
   iterate vpiStructVar extension walk a variable array iterates its elements by their own type
+  cb cbSizeChange error a19d91 no resize reaches VPI; industry-standard behaviour never calls it either (decision A19-D91)
 
 node packed_array_var 37.17 type=vpiPackedArrayVar
   get vpiPacked implemented walk
@@ -1073,6 +1075,7 @@ node string_var 37.17 type=vpiStringVar
   handle vpiIndex implemented a19d73
   iterate vpiIndex implemented a19d73
   str vpiDecompile implemented walk
+  cb cbSizeChange error a19d91 no resize reaches VPI; industry-standard behaviour never calls it either (decision A19-D91)
 
 node chandle_var 37.17 type=vpiChandleVar
   get vpiArray implemented walk
