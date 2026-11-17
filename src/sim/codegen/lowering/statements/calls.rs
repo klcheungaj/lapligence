@@ -147,6 +147,37 @@ impl EmitCtx<'_, '_> {
                 self.cg.source_path(&self.path)
             ));
         }
+        // A member of a subroutine record with container members takes the
+        // record's companions, whose changes publish nothing a waiter on the
+        // formal follows (SIM-009).
+        let waited = match dispatch {
+            RecordRefDispatch::Virtual
+                if self.cg.any_override_waits_on_record_ref(ft, callee_inst) =>
+            {
+                self.cg.native_record_formals(&formals)
+            }
+            RecordRefDispatch::Virtual => Vec::new(),
+            _ => shape.static_refs.clone(),
+        };
+        for index in waited {
+            let (Some((formal, _)), Some(actual)) = (formals.get(index), bound.get(index)) else {
+                continue;
+            };
+            if self
+                .cg
+                .subroutine_record_container_member(&self.path, *formal, actual.expr)?
+            {
+                let node = self.cg.node(actual.expr);
+                return Err(format!(
+                    "task `{name}` waits on record `ref` formal `{}`, whose actual is a member of a subroutine record with queue or dynamic-array members; changes to the record publish no change the wait could follow (SIM-009) at {}:{}:{} in `{}`",
+                    self.cg.node(*formal).name,
+                    node.file.as_deref().unwrap_or("<unknown>"),
+                    node.line,
+                    node.col,
+                    self.cg.source_path(&self.path)
+                ));
+            }
+        }
         if let Some(select) = self.cg.record_ref_select(&self.path, &formals, &bound)? {
             let waits = match dispatch {
                 RecordRefDispatch::Virtual => {

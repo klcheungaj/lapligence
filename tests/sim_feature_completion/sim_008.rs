@@ -329,6 +329,31 @@ fn record_elements_with_container_members_bind_ref_formals() {
     );
 }
 
+/// FIN-001 R3: an element or member of a subroutine record whose type has
+/// container members takes the record's companion containers, or mirrors of
+/// the nested slots of a member array of 16 elements. A task waiting on such
+/// a formal rejects.
+#[test]
+fn subroutine_record_elements_with_container_members_bind_ref_formals() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_subroutine_container_member.out"
+    );
+    for size in ["N=2", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_ref_subroutine_container_member",
+            expected,
+            &["-D", size],
+            &[],
+        );
+    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_record_ref_subroutine_container_wait",
+        "task `waiter` waits on record `ref` formal `r`, whose actual is a member of a subroutine record with queue or dynamic-array members",
+    );
+}
+
 #[test]
 fn module_records_bind_ref_formals_of_virtual_interface_methods() {
     let expected =

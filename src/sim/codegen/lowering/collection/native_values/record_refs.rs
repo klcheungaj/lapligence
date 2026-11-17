@@ -290,6 +290,30 @@ impl Codegen<'_> {
         Ok(Some(place))
     }
 
+    /// Whether `actual` of native record `ref` formal `formal` is a member or
+    /// element of a subroutine record and the formal's type has queue or
+    /// dynamic-array members. The formal then takes the record's companion
+    /// containers, whose changes no marker of the reference follows.
+    pub(in crate::sim::codegen::lowering) fn subroutine_record_container_member(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        actual: NodeId,
+    ) -> Result<bool, String> {
+        if !self.is_ref_formal(formal)
+            || self
+                .native_layouts
+                .get(&formal)
+                .is_none_or(|layout| layout.containers.is_empty())
+            || self.record_ref_binding(formal, actual).is_some()
+        {
+            return Ok(false);
+        }
+        Ok(self.native_place(path, actual)?.is_some_and(|place| {
+            matches!(place.root, IrElementRoot::Value(_)) && !place.steps.is_empty()
+        }))
+    }
+
     /// The call operand binding `node`, a native record element or a member
     /// or member-array element of a native record, to a `ref` formal of
     /// `kind`. A whole value root has an address of its own.

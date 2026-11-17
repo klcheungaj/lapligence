@@ -4,7 +4,9 @@
 use super::native::{NativeKind, NativeValue};
 use super::streaming::CapturedAssignment;
 use super::*;
-use crate::sim::ir::{IrContainerKind, IrElementRefKind, IrElementRoot, IrElementStep};
+use crate::sim::ir::{
+    IrContainerKind, IrElementRefKind, IrElementRoot, IrElementStep, IrRefCompanion,
+};
 
 /// An output/inout copy-out target, bound at the call or resolved at copy-out.
 enum CopyOutTarget<'l> {
@@ -1124,6 +1126,8 @@ impl Frame<'_, '_> {
             } => self.element_reference_root(*container, index.as_ref(), key.as_ref())?,
         };
         let root = acquire.clone();
+        // The run-time positions, which also choose root companions.
+        let mut positions = Vec::new();
         for step in &reference.steps {
             let position = match step {
                 IrElementStep::Item(position) => position.to_string(),
@@ -1134,6 +1138,7 @@ impl Frame<'_, '_> {
                         format!("llg_native_ref_position({})", position.code),
                     );
                     self.discard(position);
+                    positions.push(code.clone());
                     code
                 }
             };
@@ -1183,7 +1188,15 @@ impl Frame<'_, '_> {
                 let value = format!("llg_native_ref_value({acquire})");
                 let mut parameters = vec![value.clone()];
                 for companion in &reference.companions {
-                    parameters.push(self.companion_mirror(&acquire, &value, companion)?);
+                    parameters.push(match companion {
+                        IrRefCompanion::Mirror { container, items } => {
+                            self.companion_mirror(&acquire, &value, *container, items)?
+                        }
+                        IrRefCompanion::Root {
+                            choices,
+                            unselected,
+                        } => self.root_companion(choices, *unselected, &positions)?,
+                    });
                 }
                 if watched {
                     parameters.push(format!("llg_native_ref_watch({acquire})"));
@@ -1215,11 +1228,12 @@ impl Frame<'_, '_> {
         &mut self,
         reference: &str,
         value: &str,
-        companion: &crate::sim::ir::IrRefCompanion,
+        companion: usize,
+        items: &[u32],
     ) -> Result<String, String> {
-        let storage = self.new_container(companion.container)?;
-        self.containers.insert(companion.container, storage.clone());
-        let container = &self.ctx.model.containers[companion.container];
+        let storage = self.new_container(companion)?;
+        self.containers.insert(companion, storage.clone());
+        let container = &self.ctx.model.containers[companion];
         let kind = match (&container.kind, container.element.is_packed()) {
             (IrContainerKind::Dynamic, true) => "LLG_NATIVE_MIRROR_DYN",
             (IrContainerKind::Queue { .. }, true) => "LLG_NATIVE_MIRROR_QUEUE",
@@ -1229,7 +1243,7 @@ impl Frame<'_, '_> {
                 return Err("an associative record member has no nested value form".into())
             }
         };
-        let item = self.value_item(value, &companion.items)?;
+        let item = self.value_item(value, items)?;
         let scope = self.scalar(
             "llg_value_scope_t*",
             "llg_value_scope_begin_object(sizeof(void*), llg_native_ref_mirror_scope_release)"
@@ -1239,6 +1253,43 @@ impl Frame<'_, '_> {
             "*(void**)llg_value_scope_object({scope}) = llg_native_ref_mirror({reference}, {item}, &{storage}, {kind});"
         ));
         Ok(format!("(void*)&{storage}"))
+    }
+
+    /// The companion parameter of a subroutine record's container member:
+    /// the record's own companion that the reference's run-time `positions`
+    /// select, else the call's empty `unselected` container.
+    fn root_companion(
+        &mut self,
+        choices: &[(Vec<u32>, usize)],
+        unselected: Option<usize>,
+        positions: &[String],
+    ) -> Result<String, String> {
+        let mut parameter = match unselected {
+            Some(container) => {
+                let storage = self.new_container(container)?;
+                self.containers.insert(container, storage.clone());
+                format!("(void*)&{storage}")
+            }
+            None => {
+                let [(_, container)] = choices else {
+                    return Err("a constant root companion has one candidate".to_owned());
+                };
+                return Ok(format!("(void*)&{}", self.container_name(*container)?));
+            }
+        };
+        for (selected, container) in choices.iter().rev() {
+            let test = positions
+                .iter()
+                .zip(selected)
+                .map(|(position, item)| format!("{position} == {item}"))
+                .collect::<Vec<_>>()
+                .join(" && ");
+            parameter = format!(
+                "({test}) ? (void*)&{} : {parameter}",
+                self.container_name(*container)?
+            );
+        }
+        Ok(self.scalar("void*", parameter))
     }
 
     /// The formal's parameters for one of the stable leaves a run-time index

@@ -552,8 +552,10 @@ properties, SIM-011, and static record properties are one shared record); equali
 with an ambiguous predicate on such records);
 a run-time selection among more than 4,096 leaves of a module record
 (`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
-record (`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a member of a subroutine
-record whose type has container members, and a run-time-indexed record element
+record (`NATIVE_RECORD_SELECT_LIMIT`); a task waiting on a `ref` formal bound
+to a member of a subroutine record whose type has container members (the
+formal takes the record's companions, whose changes publish nothing it
+follows); as a `ref` actual, a run-time-indexed record element
 of a module, static or block record bound by a call in an expression, or
 among more than 256 elements or combinations
 (a statement call lowers once per element, `tr(o.e[i])`; a task that waits on
@@ -613,7 +615,9 @@ once per element under a decision tree, and only a statement can branch that
 way (a scalar leaf is chosen among stable addresses at the call). An element
 reference shares the element's item array; a queue or dynamic-array member is
 a nested slot of another representation, so the call mirrors it in a companion
-container, at the member's size per change in either direction.
+container, at the member's size per change in either direction. A member of a
+subroutine record passes the record's own companions, or mirrors the nested
+slots of a member array the record holds in its own slot (16 or more cells).
 
 ### Intended direction
 
