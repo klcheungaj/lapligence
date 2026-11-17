@@ -12,7 +12,7 @@ tb.ea[1].k[0]: NULL (error)
 tb.c.pe.k: NULL (error)
 == d89 2
 tb.r.arr[1]: found
-callback tb.r.arr[1]=9
 tb.c.pr.k: found
+callback tb.r.arr[1]=9
 1: woke on r.arr[1]=9
 r.arr[1]=9 c.pr.k=7 c.pe.k=4 ea[1].k=5
