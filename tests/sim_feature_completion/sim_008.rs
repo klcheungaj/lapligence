@@ -482,3 +482,34 @@ fn ref_formals_mix_with_inputs_and_recursive_forwarding() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_008/mixed_ref_formals.out");
     sim_cli::run_case_backend_parity(SUITE, "mixed_ref_formals", expected, &[], &[]);
 }
+
+/// Waits on `ref` formals bound to elements and members of elements of
+/// subroutine records and of queue elements wake at each store into what they
+/// bind (S09-D4): the owner's own member, element and whole-record stores, a
+/// sibling branch's, and stores through other `ref` formals; stores into
+/// other elements and members wake nothing. Both record storage forms.
+#[test]
+fn ref_waits_on_record_elements_wake_at_every_store() {
+    let subroutine = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_subroutine_element_wake.out"
+    );
+    let container = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_container_member_wake.out"
+    );
+    for size in ["N=2", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_ref_subroutine_element_wake",
+            subroutine,
+            &["-D", size],
+            &[],
+        );
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_ref_container_member_wake",
+            container,
+            &["-D", size],
+            &[],
+        );
+    }
+}

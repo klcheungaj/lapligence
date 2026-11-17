@@ -1004,6 +1004,7 @@ fn lower_model_with(
     model.final_spawns = final_names;
     // Every read walk has run: the records they named get their markers.
     cg.mark_observed_records(&mut model);
+    cg.mark_ref_rooted_records(&mut model);
     model.validate().map_err(|error| error.to_string())?;
     let design_name = std::mem::take(&mut cg.design_name);
     let warnings = std::mem::take(&mut cg.warnings);
@@ -1958,6 +1959,12 @@ struct Codegen<'a> {
     native_tagged_bypass: HashSet<NodeId>,
     /// Native value → declaration whose layout describes it.
     native_value_layouts: HashMap<usize, NodeId>,
+    /// Native values whose members some call binds to `ref` formals through
+    /// retained references ([`crate::sim::ir::IrNativeValue::ref_rooted`]).
+    ref_rooted_values: HashSet<usize>,
+    /// Native values passed whole to a `ref` formal, with the formal: they
+    /// are `ref_rooted` when that formal's values are.
+    whole_ref_actuals: Vec<(usize, NodeId)>,
     /// Native declarations of the subroutine instance being lowered.
     native_roots: HashMap<NodeId, usize>,
     /// Native record `ref` formals of the specialization being lowered, each
@@ -2636,6 +2643,8 @@ impl<'a> Codegen<'a> {
             container_types_like: HashMap::new(),
             native_tagged_bypass: HashSet::new(),
             native_value_layouts: HashMap::new(),
+            ref_rooted_values: HashSet::new(),
+            whole_ref_actuals: Vec::new(),
             native_roots: HashMap::new(),
             record_ref_aliases: HashMap::new(),
             record_ref_cells: HashMap::new(),

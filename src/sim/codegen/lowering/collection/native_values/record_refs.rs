@@ -336,6 +336,9 @@ impl Codegen<'_> {
         if matches!(place.root, IrElementRoot::Value(_)) && place.steps.is_empty() {
             return Ok(None);
         }
+        if let IrElementRoot::Value(value) = place.root {
+            self.ref_rooted_values.insert(value);
+        }
         let selects_kind = matches!(
             (&place.descriptor.shape, kind),
             (TypeShape::Aggregate(_), IrElementRefKind::Record)

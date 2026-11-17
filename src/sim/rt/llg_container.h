@@ -749,9 +749,11 @@ static inline uint32_t llg_native_item_step(int64_t position) {
 }
 
 int llg_native_ref_selects(sv4_t index, int64_t declared);
-/* A store through a record `ref` formal finished; `value` is the formal.
-   Tells a container element's readers and a watched record's marker, and
-   does nothing for other actuals. */
+/* A store through a record `ref` formal, or into a subroutine record that
+   roots member references, finished; `value` is the formal or the record.
+   Tells a container element's readers, the record holding a member a formal
+   binds, the member references inside the record and a watched record's
+   marker, and does nothing for other actuals. */
 void llg_native_ref_value_stored(llg_value_t* value);
 /* A record some wait observes, while a call binds it, or one of its members,
  * to a `ref` formal: a store through the formal reaches

@@ -540,6 +540,7 @@ impl Codegen<'_> {
             class_field: None,
             receiver: None,
             marker: false,
+            ref_rooted: false,
         });
         self.native_storage.insert((inst, node), index);
         Ok(Some(index))
@@ -640,6 +641,7 @@ impl Codegen<'_> {
             class_field: None,
             receiver: None,
             marker: false,
+            ref_rooted: false,
         });
         self.native_value_layouts.insert(index, node);
         Ok(index)
@@ -830,6 +832,36 @@ impl Codegen<'_> {
                     break;
                 }
                 current = model.classes.get(ancestor).and_then(|class| class.base);
+            }
+        }
+    }
+
+    /// Give [`crate::sim::ir::IrNativeValue::ref_rooted`] to every
+    /// activation record whose members a call binds to `ref` formals, and to
+    /// every record passed whole to a `ref` formal whose values are such
+    /// records, until no more change. A formal's values are matched by its
+    /// declaration, across instances.
+    pub(in super::super) fn mark_ref_rooted_records(&self, model: &mut crate::sim::ir::IrModel) {
+        let mut rooted = self.ref_rooted_values.clone();
+        let mut nodes = rooted
+            .iter()
+            .filter_map(|value| self.native_value_layouts.get(value).copied())
+            .collect::<HashSet<_>>();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (value, formal) in &self.whole_ref_actuals {
+                if nodes.contains(formal) && rooted.insert(*value) {
+                    if let Some(node) = self.native_value_layouts.get(value) {
+                        nodes.insert(*node);
+                    }
+                    changed = true;
+                }
+            }
+        }
+        for value in rooted {
+            if let Some(value) = model.native_values.get_mut(value) {
+                value.ref_rooted = true;
             }
         }
     }
@@ -3184,6 +3216,9 @@ impl Codegen<'_> {
         }
         if let Ok(Some((value, prefix))) = rooted {
             if prefix.is_empty() && self.model.native_values[value].ty == layout.ty {
+                if direction == DbDirection::Ref {
+                    self.whole_ref_actuals.push((value, formal));
+                }
                 return Ok(IrCallArg::NativeValue(value));
             }
         }

@@ -64,6 +64,8 @@ struct llg_native_ref {
     uint8_t real_counted;
     /* A record a wait follows: `marker` toggles when a container changes. */
     uint8_t watched;
+    /* A handle or real member: `value` keeps what it last published. */
+    uint8_t leaf;
     uint64_t watch_pass;
     /* The record a borrowed root stands for. */
     llg_value_t* origin;
@@ -80,6 +82,8 @@ enum {
 
 static struct llg_native_ref* llg_native_refs_all;
 static size_t llg_native_refs_watched;
+/* Handle and real member references (`leaf`). */
+static size_t llg_native_refs_leaves;
 size_t llg_native_real_refs_live;
 /* The one notify function containers use; references forward to it. */
 static llg_container_notify_fn llg_native_refs_forward;
@@ -341,19 +345,68 @@ static void llg_native_refs_mirrors_load(void) {
             if (!mirror->syncing) llg_native_ref_mirror_load(mirror);
 }
 
+/* One pass number for every rescanning publication walk, so that two kinds
+ * of walk never mistake each other's marks. */
+static uint64_t llg_native_refs_pass;
+
+/* What a reference publishes after a store that carried no position. */
+enum {
+    LLG_NATIVE_REF_QUIET = 0,
+    LLG_NATIVE_REF_MARKER = 1,
+    /* Write the real cell again from the value it last published. */
+    LLG_NATIVE_REF_CELL = 2,
+};
+
+/* A handle or real member reference keeps the value it last published in its
+ * own `value`, which holds nothing else (llg_native_ref_bind). A handle's
+ * readers wake on each publication, so it publishes only a changed handle; a
+ * real's readers follow its cell, which a store in place (a whole-record
+ * copy) did not write through the scheduler. */
+static int llg_native_ref_leaf_pending(const llg_native_ref_t* ref) {
+    if (!ref->leaf || !ref->member) return LLG_NATIVE_REF_QUIET;
+    if (ref->value.desc->kind == LLG_VALUE_REAL)
+        return ref->real_counted && llg_value_hooks.store_real &&
+                       memcmp(&ref->member->value.real, &ref->value.value.real,
+                              sizeof(double)) != 0
+                   ? LLG_NATIVE_REF_CELL
+                   : LLG_NATIVE_REF_QUIET;
+    return ref->member->value.handle != ref->value.value.handle
+               ? LLG_NATIVE_REF_MARKER
+               : LLG_NATIVE_REF_QUIET;
+}
+
+static void llg_native_ref_publish_pending(llg_native_ref_t* ref, int pending) {
+    ref->syncing = 1;
+    if (pending == LLG_NATIVE_REF_CELL) {
+        double* cell = &ref->member->value.real;
+        double now = *cell;
+        *cell = ref->value.value.real;
+        ref->value.value.real = now;
+        llg_value_hooks.store_real(cell, now);
+    } else {
+        if (ref->leaf) ref->value.value.handle = ref->member->value.handle;
+        llg_native_ref_publish(ref);
+    }
+    ref->syncing = 0;
+}
+
 /* A notify carries no position and a record has no copy to compare with, so a
- * watched record's wait re-reads it, for a change of any element. A subscriber
- * may end the process holding any reference, so each publication rescans; the
- * pass keeps that from publishing a reference twice. */
+ * watched record's wait re-reads it, for a change of any element; a handle or
+ * real leaf of an element publishes when it changed. A subscriber may end the
+ * process holding any reference, so each publication rescans; the pass keeps
+ * that from publishing a reference twice. */
 static void llg_native_refs_publish_watched(void) {
-    static uint64_t pass;
-    uint64_t current = ++pass;
+    uint64_t current = ++llg_native_refs_pass;
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;) {
-        if (ref->watched && ref->watch_pass != current) {
+        int pending = LLG_NATIVE_REF_QUIET;
+        if (ref->watch_pass != current) {
+            if (ref->watched) pending = LLG_NATIVE_REF_MARKER;
+            else if (ref->parent && ref->parent->owner)
+                pending = llg_native_ref_leaf_pending(ref);
+        }
+        if (pending) {
             ref->watch_pass = current;
-            ref->syncing = 1;
-            llg_native_ref_publish(ref);
-            ref->syncing = 0;
+            llg_native_ref_publish_pending(ref, pending);
             ref = llg_native_refs_all;
         } else {
             ref = ref->all_next;
@@ -365,7 +418,8 @@ static void llg_native_refs_notify(sv4_t* contents, sv4_t* shape, int change) {
     llg_native_refs_mirrors_load();
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;)
         ref = llg_native_ref_refresh(ref) ? llg_native_refs_all : ref->all_next;
-    if (llg_native_refs_watched) llg_native_refs_publish_watched();
+    if (llg_native_refs_watched || llg_native_refs_leaves)
+        llg_native_refs_publish_watched();
     if (llg_native_refs_forward) llg_native_refs_forward(contents, shape, change);
 }
 
@@ -532,14 +586,71 @@ static LLG_OUTLYING void llg_record_watch_stored(const llg_value_t* value) {
     }
 }
 
+/* Whether member reference `ref` addresses storage inside record `value`:
+ * its root stands for `value`, or for the member that another such reference
+ * binds (a `ref` formal passed on by member). */
+static int llg_native_ref_inside(const llg_native_ref_t* ref,
+                                 const llg_value_t* value) {
+    while (ref->parent && ref->parent->origin) {
+        const llg_value_t* origin = ref->parent->origin;
+        if (origin == value) return 1;
+        const llg_native_ref_t* holder = llg_native_refs_all;
+        while (holder && holder->member != origin) holder = holder->all_next;
+        if (!holder) return 0;
+        ref = holder;
+    }
+    return 0;
+}
+
+/* A store into a record that roots member references (a subroutine record
+ * whose members are bound to `ref` formals): nothing else follows it, so the
+ * references inside it publish, and their readers re-read what they bound.
+ * Rescans after each publication, as llg_native_refs_publish_watched does. */
+static void llg_native_refs_publish_inside(const llg_value_t* value) {
+    uint64_t current = ++llg_native_refs_pass;
+    for (llg_native_ref_t* ref = llg_native_refs_all; ref;) {
+        int pending = LLG_NATIVE_REF_QUIET;
+        if (ref->watch_pass != current && llg_native_ref_inside(ref, value)) {
+            /* A packed reader compares values; a string publishes itself. */
+            switch (ref->value.desc->kind) {
+            case LLG_VALUE_PACKED:
+                pending = LLG_NATIVE_REF_MARKER;
+                break;
+            case LLG_VALUE_AGGREGATE:
+            case LLG_VALUE_FIXED_ARRAY:
+                pending = ref->watched ? LLG_NATIVE_REF_MARKER : LLG_NATIVE_REF_QUIET;
+                break;
+            default:
+                pending = llg_native_ref_leaf_pending(ref);
+                break;
+            }
+        }
+        if (pending) {
+            ref->watch_pass = current;
+            llg_native_ref_publish_pending(ref, pending);
+            ref = llg_native_refs_all;
+        } else {
+            ref = ref->all_next;
+        }
+    }
+}
+
 void llg_native_ref_value_stored(llg_value_t* value) {
     if (!llg_native_refs_live) return;
+    llg_native_ref_t* holder = NULL;
+    int rooted = 0;
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;
          ref = ref->all_next) {
-        if (&ref->value != value) continue;
-        llg_native_ref_touch(ref);
-        return;
+        if (&ref->value == value) {
+            llg_native_ref_touch(ref);
+            return;
+        }
+        if (ref->origin == value) rooted = 1;
+        else if (ref->member == value) holder = ref;
     }
+    /* A formal bound to a member: the record holding the member changed. */
+    if (holder) llg_native_ref_touch(holder->parent);
+    if (rooted) llg_native_refs_publish_inside(value);
     /* A watched record is no element: a store that reached none of them
      * looks for a watch. Watches count as live, so no other store gets here. */
     llg_record_watch_stored(value);
@@ -550,6 +661,7 @@ void llg_native_ref_real_stored(double* cell) {
          ref = ref->all_next) {
         if (!ref->real_counted || &llg_native_ref_value(ref)->value.real != cell)
             continue;
+        if (ref->leaf) ref->value.value.real = *cell;
         llg_native_ref_publish(ref);
         return;
     }
@@ -557,11 +669,13 @@ void llg_native_ref_real_stored(double* cell) {
 
 void llg_native_ref_stored(sv4_t* marker) {
     llg_native_ref_t* ref = (llg_native_ref_t*)marker;
+    /* A publication of the reference itself, which a change of what it
+     * binds caused: telling the holder again would publish it again. */
+    if (ref->syncing) return;
     if (ref->member) {
         llg_native_ref_touch(ref->parent);
         return;
     }
-    if (ref->syncing) return;
     if (!ref->valid) {
         ref->syncing = 1;
         if (ref->value.desc->kind == LLG_VALUE_STRING) {
@@ -681,6 +795,7 @@ void llg_native_ref_release(void* reference) {
     --llg_native_refs_live;
     if (ref->real_counted) --llg_native_real_refs_live;
     if (ref->watched) --llg_native_refs_watched;
+    if (ref->leaf) --llg_native_refs_leaves;
     llg_value_drop(&ref->value);
     sv4_destroy(&ref->marker);
     sv4_destroy(&ref->key);
@@ -785,6 +900,24 @@ void* llg_native_ref_bind(void* reference) {
         ref->member->value.string.notify = llg_value_hooks.publish;
         ref->member->value.string.dependency = &ref->marker;
     }
+    /* A member reference's `value` holds no value of its own: a handle or
+     * real keeps the one it last published there, and is never released. */
+    switch (ref->value.desc->kind) {
+    case LLG_VALUE_REAL:
+        ref->value.value.real = ref->member->value.real;
+        ref->leaf = 1;
+        break;
+    case LLG_VALUE_CHANDLE:
+    case LLG_VALUE_EVENT:
+    case LLG_VALUE_OPAQUE:
+    case LLG_VALUE_PROCESS:
+        ref->value.value.handle = ref->member->value.handle;
+        ref->leaf = 1;
+        break;
+    default:
+        break;
+    }
+    if (ref->leaf) ++llg_native_refs_leaves;
     return ref;
 }
 
