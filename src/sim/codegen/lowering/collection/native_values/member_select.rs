@@ -54,7 +54,7 @@ pub(in crate::sim::codegen) struct NativeRecordSelect {
 }
 
 /// How a run-time selected record `ref` actual binds while a call is lowered
-/// once per element (`EmitCtx::lower_record_ref_select`).
+/// once per element (`EmitCtx::lower_per_record_element`).
 #[derive(Clone)]
 pub(in crate::sim::codegen) enum RecordRefPin {
     /// The element a branch of the call binds: the prefix below a root.
@@ -74,7 +74,8 @@ pub(in crate::sim::codegen) struct RecordRefSelect {
     pub(in crate::sim::codegen) formal: NodeId,
     /// One pin per element, with its declared index.
     pub(in crate::sim::codegen) pins: Vec<(i32, RecordRefPin)>,
-    index: NodeId,
+    /// The run-time index expression.
+    pub(in crate::sim::codegen) index: NodeId,
     hoist: bool,
 }
 
@@ -243,14 +244,17 @@ impl Codegen<'_> {
                 _ => return Ok(None),
             },
             // `r.e[k].a[1]`: a constant element of a member array below the
-            // selected record element.
+            // selected record element. A run-time index below a constant
+            // one (`r.m[1].a[k]`) is itself the select.
             NodeKind::Expr(ExprKind::ArraySelect { indices, .. })
                 if self.db.array_select_path(node).is_some_and(|(owner, _)| {
                     matches!(
                         self.kind(owner),
                         NodeKind::Expr(ExprKind::ArraySelect { .. })
                     )
-                }) =>
+                }) && indices
+                    .iter()
+                    .all(|index| self.eval_bound_i128(*index).is_ok()) =>
             {
                 let Some((owner, members)) = self.db.array_select_path(node) else {
                     return Ok(None);
@@ -732,6 +736,19 @@ impl Codegen<'_> {
                         .collect::<Vec<_>>(),
                 ))
             }
+            // A member array of a constant element (`o.m[1].a[k]`): the
+            // array node alone names no element of `m`.
+            (None, Some((owner, members)))
+                if matches!(
+                    self.kind(owner),
+                    NodeKind::Expr(ExprKind::ArraySelect { .. })
+                ) =>
+            {
+                self.unpacked_path_for_expr(owner).map(|(root, mut path)| {
+                    path.extend(members.iter().cloned().map(AggregatePathPart::Member));
+                    (root, path)
+                })
+            }
             (None, _) => self.unpacked_path_for_expr(base),
         };
         // An element of a member container is selected in place.
@@ -894,6 +911,22 @@ impl Codegen<'_> {
             }));
         }
         Ok(None)
+    }
+
+    /// Whether `node` is a record element of a module, static or block
+    /// record of the leaf form selected at run time, which a call binds only
+    /// by lowering once per element (`record_ref_select`).
+    pub(in crate::sim::codegen) fn leaf_record_element_at_run_time(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> bool {
+        self.native_record_select_shape(path, self.p30_unwrap_cast(node))
+            .ok()
+            .flatten()
+            .and_then(|shape| shape.module_root)
+            .and_then(|root| self.unpacked_aggregates.get(&root))
+            .is_some_and(|storage| !storage.columns)
     }
 
     /// The index of `select`, evaluated once.

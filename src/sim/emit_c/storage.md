@@ -125,9 +125,13 @@ on what it is bound to. A record element with queue or dynamic-array members als
 gets call-owned companion containers, one per member, each mirrored to the
 member's nested slot by `llg_native_ref_mirror` from its own scope object, so
 unwinding detaches it before the container goes (`IrElementRef::companions`). A
+member of a subroutine record instead passes the record's own companion, chosen
+among the candidates by the run-time positions, or an empty call-owned
+container when none matches (`IrRefCompanion::Root`); below a member array the
+record holds in its own slot it is mirrored like an element's. A
 run-time index into a module-like record picks among the leaves' stable
 addresses instead (`IrElementRoot::Leaves`); for a whole record element, a
-statement call lowers once per element (`lower_record_ref_select`). A `ref` event
+statement call lowers once per element (`lower_per_record_element`). A `ref` event
 formal bound to a class event property takes the address of its object's slot
 (`IrCallArg::EventSlot`), which holds the one `void*` an `llg_event_t` holds; the
 same type on both sides keeps this within ISO C aliasing. The callee's frame is
@@ -299,5 +303,7 @@ Then every writable `ref` event formal also takes `d<idx>`
 (`IrFormal::event_marker`, model-wide so overrides and forwarding agree): the
 object's `llg_class_handle_dependency` for a property, its own `d<idx>` when
 forwarded, else NULL, and `IrStmt::EventAssign` publishes it when the object
-changes. The call site also compares the slot at the return, which covers
-stores that have no marker parameter (an output formal).
+changes. An output or inout event formal the formal is forwarded to assigns
+its own handle back at its return, and that call site publishes `d<idx>` when
+the object changed. The call binding the property also compares the slot at the
+return, which only rechecks a wait the earlier publication already ended.
