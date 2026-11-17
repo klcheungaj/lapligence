@@ -28,5 +28,6 @@ LLG_MSG_ID(STALL, SIM, 19, LLG_SEVERITY_WARNING, "the run ended in a deadlock: p
 LLG_MSG_ID(ENVIRONMENT, SIM, 20, LLG_SEVERITY_WARNING, "a model environment setting (LLG_SIM_LOG_FILE, LLG_STOP_POLICY, plusargs) is unusable", "-")
 LLG_MSG_ID(RUNTIME_NOTE, SIM, 21, LLG_SEVERITY_INFO, "runtime information (randomize statistics, stack limit notes)", "-")
 LLG_MSG_ID(QUIESCENT, SIM, 22, LLG_SEVERITY_INFO, "the run ended without $finish because no process remains", "-")
+LLG_MSG_ID(RUNTIME_DESIGN_WARNING, SIM, 23, LLG_SEVERITY_WARNING, "a run-time warning the simulator detects in the design; the run continues (a $cast destination element that does not exist while index checks are off)", "-")
 LLG_MSG_ID(INTERNAL, SIM, 30, LLG_SEVERITY_FATAL, "an internal runtime invariant failed; the model aborts", "-")
 LLG_MSG_ID(ALLOCATION, SIM, 31, LLG_SEVERITY_FATAL, "the model could not allocate memory; it aborts", "-")

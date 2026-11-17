@@ -22,6 +22,32 @@ impl IrSeverityLevel {
     }
 }
 
+/// Who reports an [`IrStmt::Severity`](crate::sim::ir::IrStmt::Severity).
+///
+/// A user task names its `%m` scope in the runtime report and is reported
+/// under the task's message id. A simulator-generated report is scope-less
+/// at run time (the emitter passes an empty scope; the site still frames the
+/// scope as context), which is how the runtime gives it a simulator id.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrSeverityOrigin {
+    /// `$info`, `$warning`, `$error` or `$fatal` written in the design.
+    Task,
+    /// A run-time failure the simulator detects in the design (SIM-009). It
+    /// sets the process exit status and uses `Error` (the run continues) or
+    /// `Fatal` severity.
+    RuntimeFailure,
+    /// A run-time warning the simulator detects in the design (SIM-023); the
+    /// run continues and the exit status is unchanged. `Warning` only.
+    RuntimeWarning,
+}
+
+impl IrSeverityOrigin {
+    /// Whether the runtime reports this origin without a `%m` scope.
+    pub const fn is_simulator(self) -> bool {
+        !matches!(self, Self::Task)
+    }
+}
+
 /// Bounded assertion-control task family. The runtime accepts the standard
 /// on/off/kill directives, the corresponding full `$assertcontrol` directive
 /// and the six 2009 action controls (IEEE 1800-2009 20.12), which change only

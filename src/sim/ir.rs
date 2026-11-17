@@ -153,7 +153,7 @@ pub use assertions::{
     IrAssertion, IrAssertionControlKind, IrAssertionEndpoint, IrAssertionFuture,
     IrConcurrentAssertionKind, IrImmediateAssertionKind, IrProperty, IrPropertyBinaryOp,
     IrPropertyClock, IrPropertyNode, IrSequence, IrSequenceJoin, IrSequenceJoinKind,
-    IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrSeverityLevel,
+    IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrSeverityLevel, IrSeverityOrigin,
 };
 mod processes;
 pub use processes::{IrPreFn, IrProcess, IrProcessKind, IrShape};

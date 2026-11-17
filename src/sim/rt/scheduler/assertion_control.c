@@ -31,11 +31,14 @@ static void llg_report_severity_typed(int severity, const char* fmt,
     size_t len = 0;
     char* out = llg_typed_line_alloc(fmt, args, n, scope, &len);
     llg_severity_counts[severity]++;
-    // An empty scope marks a simulator-generated failure (the emitter
-    // passes no `%m` scope for it); user tasks always name their scope.
+    // An empty scope marks a simulator-generated report (the emitter passes
+    // no `%m` scope for it): a warning the run continues past, or a run-time
+    // failure. User tasks always name their scope.
     static const llg_msg_id_t task_ids[] = {LLG_MSG_TASK_INFO, LLG_MSG_TASK_WARNING,
                                             LLG_MSG_TASK_ERROR, LLG_MSG_TASK_FATAL};
-    llg_msg_id_t id = scope && scope[0] ? task_ids[severity] : LLG_MSG_RUNTIME_FAILURE;
+    llg_msg_id_t id = scope && scope[0]                 ? task_ids[severity]
+                      : severity == LLG_SEVERITY_WARNING ? LLG_MSG_RUNTIME_DESIGN_WARNING
+                                                         : LLG_MSG_RUNTIME_FAILURE;
     llg_report_t report;
     llg_report_init(&report);
     llg_rt_framed(&report, id, severity, location, scope, out, len);
