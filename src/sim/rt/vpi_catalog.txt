@@ -1113,6 +1113,9 @@ node array_typespec 37.23 type=vpiArrayTypespec
   handle vpiRightRange implemented walk
 
 node void_typespec 37.23 type=vpiVoidTypespec
+  handle vpiInstance error walk a void typespec is the type of a tagged union member (6.13, 7.3.2), which no declaration owns; industry-standard behaviour reaches no typespec member
+  handle vpiModule error walk a void typespec is the type of a tagged union member (6.13, 7.3.2), which no declaration owns; industry-standard behaviour reaches no typespec member
+  handle vpiScope error walk a void typespec is the type of a tagged union member (6.13, 7.3.2), which no declaration owns; industry-standard behaviour reaches no typespec member
 
 node sequence_typespec 37.23 type=vpiSequenceTypespec
 

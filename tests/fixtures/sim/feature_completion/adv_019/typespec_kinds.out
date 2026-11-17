@@ -36,6 +36,18 @@ typedef line=13
       typespec: vpiChandleTypespec name=(null)
     member n
       typespec: vpiIntTypespec name=(null)
+typedef line=14
+  typespec: vpiUnionTypespec name=vp_t packed=1 tagged=1
+    member Invalid
+      typespec: vpiVoidTypespec name=(null)
+    member Valid
+      typespec: vpiBitTypespec name=(null)
+typedef line=15
+  typespec: vpiUnionTypespec name=vu_t packed=0 tagged=1
+    member Invalid
+      typespec: vpiVoidTypespec name=(null)
+    member Valid
+      typespec: vpiIntTypespec name=(null)
 tb.tp vpiUnionVar
   typespec: vpiUnionTypespec name=tp_t packed=1 tagged=1
     member a
@@ -77,6 +89,18 @@ tb.th vpiUnionVar
     member h
       typespec: vpiChandleTypespec name=(null)
     member n
+      typespec: vpiIntTypespec name=(null)
+tb.vp vpiUnionVar
+  typespec: vpiUnionTypespec name=vp_t packed=1 tagged=1
+    member Invalid
+      typespec: vpiVoidTypespec name=(null)
+    member Valid
+      typespec: vpiBitTypespec name=(null)
+tb.vu vpiUnionVar
+  typespec: vpiUnionTypespec name=vu_t packed=0 tagged=1
+    member Invalid
+      typespec: vpiVoidTypespec name=(null)
+    member Valid
       typespec: vpiIntTypespec name=(null)
 tb.hq vpiArrayVar
   typespec: vpiArrayTypespec name=(null)

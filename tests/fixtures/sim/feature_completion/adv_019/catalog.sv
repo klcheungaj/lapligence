@@ -85,8 +85,8 @@ module tb;
   typedef pk_t [1:0] pka_t;
   typedef enum logic [1:0] {lo_e, mid_e, hi_e} level_t;
   // Packed and unpacked tagged unions (7.3.2): vpiPacked follows the
-  // declaration (37.23).
-  typedef union tagged packed { bit [3:0] ta; bit [3:0] tb; } tg_t;
+  // declaration, and a void member has a void typespec (37.23).
+  typedef union tagged packed { void tv; bit [3:0] ta; bit [3:0] tb; } tg_t;
   typedef union tagged { int ti; real tr; } tgu_t;
   // A typedef of chandle and a structure with a chandle member: chandle
   // typespecs with a name and an alias, and as a typespec member (37.23).

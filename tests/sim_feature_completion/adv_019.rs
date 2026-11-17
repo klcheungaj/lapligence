@@ -39,7 +39,7 @@ fn typespec_trees_name_typedefs_ranges_members_and_enum_constants() {
 
 /// FIN-001 V3 family (d): `vpiPacked` of packed and unpacked tagged
 /// unions; chandle typespecs of typedefs, members, variables, properties,
-/// formals and calls.
+/// formals and calls; void typespecs of tagged union members.
 #[test]
 fn typespec_kinds_print_their_trees() {
     let directory = sim_harness::TempDir::new("adv019-kinds").expect("temporary directory");
@@ -566,6 +566,7 @@ const NO_LINE: &[(&str, Option<&[&str]>, &str)] = &[
     ("vpiBitTypespec", None, "a type without a typedef"),
     ("vpiLogicTypespec", None, "a type without a typedef"),
     ("vpiArrayTypespec", None, "a type without a typedef"),
+    ("vpiVoidTypespec", None, "a type without a typedef"),
 ];
 
 /// The typespecs whose ranges may lack a line: an enum's base type or a

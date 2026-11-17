@@ -89,7 +89,8 @@ static void call_typespecs(vpiHandle top) {
 static PLI_INT32 walk(PLI_BYTE8* data) {
     (void)data;
     static const char* names[] = {"tb.tp", "tb.tu", "tb.up", "tb.h", "tb.hn", "tb.hn2",
-                                  "tb.sh", "tb.sh.h", "tb.th", "tb.hq", "tb.hq[0]", NULL};
+                                  "tb.sh", "tb.sh.h", "tb.th", "tb.vp", "tb.vu", "tb.hq",
+                                  "tb.hq[0]", NULL};
     vpiHandle top = vpi_handle_by_name("tb", NULL);
     typedefs(top);
     for (int i = 0; names[i]; ++i) variable(names[i]);

@@ -144,9 +144,10 @@ fn typespec_var_kind(kind: IrVpiTypespecKind, ranges: usize) -> IrVpiVarKind {
         IrVpiTypespecKind::LongInt => IrVpiVarKind::LongInt,
         IrVpiTypespecKind::Byte => IrVpiVarKind::Byte,
         IrVpiTypespecKind::Time => IrVpiVarKind::Time,
-        IrVpiTypespecKind::Real | IrVpiTypespecKind::String | IrVpiTypespecKind::Chandle => {
-            IrVpiVarKind::Real
-        }
+        IrVpiTypespecKind::Real
+        | IrVpiTypespecKind::String
+        | IrVpiTypespecKind::Chandle
+        | IrVpiTypespecKind::Void => IrVpiVarKind::Real,
         IrVpiTypespecKind::ShortReal => IrVpiVarKind::ShortReal,
         IrVpiTypespecKind::Enum => IrVpiVarKind::Enum,
         IrVpiTypespecKind::Struct => IrVpiVarKind::Struct,
@@ -495,6 +496,12 @@ impl Codegen<'_> {
             // it renames the built-in type (detail 6).
             TypeShape::Opaque { kind } if kind == "Chandle" => Some(IrVpiTypespec {
                 kind: IrVpiTypespecKind::Chandle,
+                ..IrVpiTypespec::default()
+            }),
+            // A void member of a tagged union (7.3.2), or the type of a
+            // void function's value.
+            TypeShape::Opaque { kind } if kind == "Void" => Some(IrVpiTypespec {
+                kind: IrVpiTypespecKind::Void,
                 ..IrVpiTypespec::default()
             }),
             TypeShape::Opaque { .. } => None,

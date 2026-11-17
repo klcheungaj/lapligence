@@ -670,6 +670,8 @@ pub enum IrVpiTypespecKind {
     PackedArray,
     /// An unpacked array (`vpiArrayTypespec`).
     Array,
+    /// The `void` type of a tagged union member or a function (37.23).
+    Void,
 }
 
 impl IrVpiTypespecKind {
@@ -692,6 +694,7 @@ impl IrVpiTypespecKind {
             Self::Union => "vpiUnionTypespec",
             Self::PackedArray => "vpiPackedArrayTypespec",
             Self::Array => "vpiArrayTypespec",
+            Self::Void => "vpiVoidTypespec",
         }
     }
 
@@ -715,6 +718,8 @@ impl IrVpiTypespecKind {
             Self::Union => "vpiUnionVar",
             Self::PackedArray => "vpiPackedArrayVar",
             Self::Array => "vpiRegArray",
+            // No variable has the void type (6.13).
+            Self::Void => "vpiUndefined",
         }
     }
 }

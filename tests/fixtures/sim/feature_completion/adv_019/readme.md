@@ -128,6 +128,15 @@ typespecs, `vpiTypedefAlias`, the enum base and the typespec members, as
   of `c`, from the io declarations of `take`, and from the call `get()`
   (37.55 detail 5, L60901-L60904, and decision A19-D32: a call has the
   typespec of its value).
+- Void typespecs. The 37.23 diagram lists `void typespec`
+  (`vpiVoidTypespec`, Annex M L76298), and 6.13 (L5543-L5544) gives the
+  type two uses: "This type can be specified as the return type of
+  functions to indicate no return value. This type can also be used for
+  members of tagged unions (see 7.3.2)." The `Invalid` members of `vp_t`
+  (packed) and `vu_t` (unpacked), the text's `VInt` example of 7.3.2
+  (L7914-L7917), print an unnamed `vpiVoidTypespec`. A void function has no
+  result variable (decision A19-D53), so a tagged union member is the only
+  object with a void typespec.
 
 ## members (37.17, 37.24)
 
