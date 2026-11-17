@@ -105,8 +105,7 @@ static void install_value_handle_hooks(void) {
         value_process_release,
         llg_dependency_changed,
         llg_ba_d,
-        llg_clocking_forget_signal,
-        llg_change_forget_real,
+        llg_value_leaf_forget,
     };
     llg_value_set_handle_hooks(&hooks);
 }

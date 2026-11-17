@@ -3571,10 +3571,10 @@ int llg_clocking_sample_history_real(sv4_t* source, double* sample,
 // not unregister waits, sampling or assertions: their borrowed sources must
 // still outlive their consumers. NULL and already-forgotten signals are harmless.
 void llg_clocking_forget_signal(sv4_t* signal);
-// The same for externally owned real storage: a change record of the current
-// turn keyed by it is dropped (real storage keeps no clocking history). NULL
-// and unknown storage are harmless.
-void llg_change_forget_real(double* target);
+// The same for a packed or real leaf of a native value (the container
+// runtime's `forget` hook): change records and clocking history are keyed by
+// address only, so one lookup serves both kinds without reading the leaf.
+void llg_value_leaf_forget(void* leaf);
 // A model with no clocking drive, `##` cycle wait or assertion clock pulse
 // calls this after init: nothing then asks whether a signal changed earlier in
 // the current slot, so publication stops recording edge history except for

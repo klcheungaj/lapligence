@@ -292,6 +292,13 @@ void llg_clocking_forget_signal(sv4_t* signal) {
     free(edge);
 }
 
+// Only designs with native records or fixed arrays release such leaves, so
+// the hook stays out of the laid-out code (LLG_OUTLYING, LLG_COLD) and calls
+// the packed path for a real leaf as well: neither lookup reads the storage.
+LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_value_leaf_forget(void* leaf) {
+    llg_clocking_forget_signal((sv4_t*)leaf);
+}
+
 static void clocking_advance_time(void) {
     llg_clocking_edge_t* edge = g.clocking_edges;
     while (edge) {
@@ -1174,11 +1181,6 @@ static void change_forget(const void* key) {
     if (!change) return;
     g.changes[change->index] = NULL;
     change_close(change);
-}
-
-void llg_change_forget_real(double* target) {
-    if (LLG_CO_UNLIKELY((g.change_rows | g.change_unrowed) != 0) && target)
-        change_forget(target);
 }
 
 static void changes_release(void) {

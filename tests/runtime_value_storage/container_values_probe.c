@@ -27,7 +27,7 @@ static void* fresh_event(void) {
     return &event_objects[created_events++];
 }
 static const llg_value_handle_hooks_t hooks = {
-    fresh_event, count_retain, count_release, NULL, NULL, NULL, NULL};
+    fresh_event, count_retain, count_release, NULL, NULL, NULL};
 
 static void fill_record(llg_value_t* record, const char* text, uint64_t number, double real) {
     llg_native_value_init(record, &record_desc);
@@ -192,12 +192,10 @@ static void check_identity_handles(void) {
  * array is freed: popped, deleted and overwritten records. */
 static const void* forgotten[16];
 static int forgotten_count;
-static void note_forgotten(const void* leaf) {
+static void note_forgotten(void* leaf) {
     CHECK(forgotten_count < 16);
     forgotten[forgotten_count++] = leaf;
 }
-static void forget_packed(sv4_t* leaf) { note_forgotten(leaf); }
-static void forget_real(double* leaf) { note_forgotten(leaf); }
 static int was_forgotten(const void* leaf) {
     for (int i = 0; i < forgotten_count; ++i)
         if (forgotten[i] == leaf) return 1;
@@ -206,7 +204,7 @@ static int was_forgotten(const void* leaf) {
 
 static void check_released_leaves(void) {
     const llg_value_handle_hooks_t forgetting = {
-        fresh_event, count_retain, count_release, NULL, NULL, forget_packed, forget_real};
+        fresh_event, count_retain, count_release, NULL, NULL, note_forgotten};
     llg_value_set_handle_hooks(&forgetting);
     llg_queue_value_array_t queue;
     llg_queue_value_init(&queue, &record_desc, UINT64_MAX);

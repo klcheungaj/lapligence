@@ -41,13 +41,9 @@ static const llg_value_desc_t* llg_value_item_desc(
  * the array is freed. Dropping a single leaf keeps its address (an in-place
  * replacement), so nothing is forgotten there. */
 static void llg_value_item_forget(llg_value_t* item) {
-    if (!item->desc) return;
-    if (item->desc->kind == LLG_VALUE_PACKED) {
-        if (llg_value_hooks.forget_packed)
-            llg_value_hooks.forget_packed(&item->value.packed);
-    } else if (item->desc->kind == LLG_VALUE_REAL) {
-        if (llg_value_hooks.forget_real) llg_value_hooks.forget_real(&item->value.real);
-    }
+    if (!item->desc || !llg_value_hooks.forget) return;
+    if (item->desc->kind == LLG_VALUE_PACKED) llg_value_hooks.forget(&item->value.packed);
+    else if (item->desc->kind == LLG_VALUE_REAL) llg_value_hooks.forget(&item->value.real);
 }
 
 static void llg_value_drop(llg_value_t* value) {
