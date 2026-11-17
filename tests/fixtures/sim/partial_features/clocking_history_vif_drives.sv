@@ -38,13 +38,13 @@ endinterface
 
 class driver;
   virtual ifc v;
-  int id;
-  function new(virtual ifc v, int id);
-    this.v = v;
-    this.id = id;
+  int unsigned id;
+  function new(virtual ifc port, int unsigned lane);
+    v = port;
+    id = lane;
   endfunction
-  task run(int n);
-    for (int k = 1; k <= n; k++) begin
+  task run(int unsigned n);
+    for (int unsigned k = 1; k <= n; k++) begin
       @(v.cb);
       v.cb.x <= 8'(id * 10 + k);
     end
