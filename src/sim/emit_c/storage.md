@@ -299,5 +299,7 @@ Then every writable `ref` event formal also takes `d<idx>`
 (`IrFormal::event_marker`, model-wide so overrides and forwarding agree): the
 object's `llg_class_handle_dependency` for a property, its own `d<idx>` when
 forwarded, else NULL, and `IrStmt::EventAssign` publishes it when the object
-changes. The call site also compares the slot at the return, which covers
-stores that have no marker parameter (an output formal).
+changes. An output or inout event formal the formal is forwarded to assigns
+its own handle back at its return, and that call site publishes `d<idx>` when
+the object changed. The call binding the property also compares the slot at the
+return, which only rechecks a wait the earlier publication already ended.

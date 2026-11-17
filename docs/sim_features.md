@@ -1183,7 +1183,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Output and inout event formals bound to class event properties copy the
   property's handle in at the call and back at return
   (`class_event_formals`), and a `ref` event formal rebinds the property's
-  slot at once (`class_event_ref_formal`). Function calls in expressions take
+  slot at once (`class_event_ref_formal`), also from a fork-join branch or
+  through an output event formal it is forwarded to, at that formal's return
+  (`class_event_ref_held`). Function calls in expressions take
   output, inout and `ref` event formals for any result type
   (`event_formals_value_calls`, decision S13-D3).
   Event handles other than declared named events in process-evaluated lists

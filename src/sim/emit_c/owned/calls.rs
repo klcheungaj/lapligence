@@ -365,6 +365,10 @@ impl Frame<'_, '_> {
         let mut handle_publishes = Vec::new();
         let mut property_publishes = Vec::new();
         let mut event_copyouts = Vec::new();
+        // Output and inout event formals bound to a `ref` event formal with
+        // a marker parameter: the handle, its marker and its object before
+        // the call.
+        let mut event_formal_publishes = Vec::new();
         let mut container_copyouts = Vec::new();
         let mut string_copyouts = Vec::new();
         let mut real_copyouts = Vec::new();
@@ -695,9 +699,23 @@ impl Frame<'_, '_> {
                     ));
                 }
                 IrCallArg::EventAddr(event) => {
-                    parameters.push(self.event_address(event)?);
+                    let address = self.event_address(event)?;
                     if formal.event_marker {
+                        parameters.push(address);
                         parameters.push(self.event_marker(event));
+                    } else {
+                        // An output or inout formal assigns the handle back
+                        // when the callee returns. A `ref` formal it forwards
+                        // to publishes at that copy-out, as the rebinding of
+                        // its object (SV 13.5.2), not when its own call
+                        // returns.
+                        if let Some(marker) =
+                            self.event_formal_marker(event).filter(|_| !formal.is_ref())
+                        {
+                            let previous = self.scalar("void*", format!("({address})->object"));
+                            event_formal_publishes.push((address.clone(), marker, previous));
+                        }
+                        parameters.push(address);
                     }
                 }
                 IrCallArg::EventSlot(address) if !formal.is_ref() => {
@@ -716,9 +734,10 @@ impl Frame<'_, '_> {
                     let slot = self.native_address(address, NativeKind::Chandle)?.address;
                     // `llg_event_assign` cannot reach the object's marker.
                     // The marker parameter, when the model has one, publishes
-                    // at the rebinding. Stores that reach the slot without
-                    // it (a fork branch, an output formal) publish when the
-                    // call returns; the second toggle only rechecks a wait.
+                    // at the rebinding, and an output formal it forwards to
+                    // at that formal's copy-out. The compare at the return
+                    // covers models without it; in others the second toggle
+                    // only rechecks a wait.
                     if let Some(publish) = self.handle_store_publish(address, &slot)? {
                         property_publishes.push(publish);
                     }
@@ -1007,6 +1026,11 @@ impl Frame<'_, '_> {
         }
         for publish in property_publishes {
             self.finish_handle_store_publish(Some(publish));
+        }
+        for (address, marker, previous) in event_formal_publishes {
+            self.line(format!(
+                "if (({address})->object != {previous}) llg_handle_changed({marker}, (void* const*)&({address})->object, {previous});"
+            ));
         }
         for (address, copy) in event_copyouts {
             let slot = self.native_address(&address, NativeKind::Chandle)?.address;

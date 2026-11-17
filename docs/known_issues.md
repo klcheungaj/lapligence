@@ -1634,55 +1634,6 @@ Pass a native record's leaf markers with the record value.
 `neg_ref_wait_record_property_real.sv`;
 `sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
 
-## Rebinding a class event property through an output formal publishes at the return
-
-### Symptom
-
-A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
-on a rebinding through a `ref` event formal at the rebinding, also in a
-fork-join branch of the callee, except when the callee forwards the formal to
-an output event formal: it then wakes when the outermost call returns. Waits
-on the event itself are not affected: they follow the object named when armed.
-
-### Cause
-
-An output event formal works on its own handle and assigns it back at the
-return, and it has no marker parameter.
-
-### Intended direction
-
-Publish at the copy-out of each call level, if a design needs it. Estimate: a
-quarter of a day.
-
-### Reproduce
-
-A task with `output event e` assigning `e = g`, called with a `ref` event
-formal of the enclosing task bound to `c.ev`, while `wait (c.ev == g)` waits.
-
-## Symptom
-
-A level wait on a class event property's identity (`wait (c.ev == g)`) wakes
-on a rebinding through a `ref` event formal at the rebinding, except when the
-rebinding runs in a fork-join branch of the callee (or through an output event
-formal the callee forwards it to): it then wakes when the outermost call
-returns. Waits on the event itself are not affected: they follow the object
-named when armed.
-
-### Cause
-
-A branch receives the formal's address, not its marker parameter, which exists
-only in models that need it and is decided after the branch is lowered.
-
-### Intended direction
-
-Capture the marker in a second slot, as handle formals do, if a design needs
-it. Estimate: a quarter of a day.
-
-### Reproduce
-
-`tests/fixtures/sim/feature_completion/sim_014/class_event_ref_held.sv`
-(`in_branch`).
-
 ## Level waits on the identity of an event variable hang
 
 ### Symptom
