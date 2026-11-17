@@ -9,10 +9,19 @@
 // execution of other active events." The text leaves open whether a pulse
 // of a control within one process is seen; llg follows industry-standard
 // behaviour.
+//
+// The overridden nonblocking update of en2 takes its value from `counted`,
+// a function with a side effect, so lowering cannot drop it and the NBA
+// batch commits both writes.
 `timescale 1ns / 1ns
 module tb;
   reg d, en1, en2, en3;
   wire a, b1, b2, b3;
+  integer calls = 0;
+  function automatic reg counted(reg value);
+    calls = calls + 1;
+    counted = value;
+  endfunction
   assign a = d;
   tranif1 t1(a, b1, en1);
   tranif1 t2(a, b2, en2);
@@ -22,7 +31,7 @@ module tb;
   always @(b3) if ($time > 0) $display("%0t b3=%b", $time, b3);
   initial begin
     en2 <= 1'b0;
-    #2 en2 <= 1'b1;
+    #2 en2 <= counted(1'b1);
     en2 <= 1'b0;
   end
   initial begin

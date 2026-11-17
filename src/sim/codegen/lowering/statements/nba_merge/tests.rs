@@ -235,3 +235,70 @@ fn a_branch_value_reading_a_local_does_not_move() {
     );
     assert_eq!(count, 0);
 }
+
+/// Fixtures that check the NBA batch at run time keep both updates of a
+/// turn: their overridden update has an impure value or a run-time-indexed
+/// target. The same sources with plain values and constant targets merge,
+/// so a widened rule that dropped these updates fails here.
+#[test]
+fn run_time_batch_fixtures_keep_each_update() {
+    let cases: [(&str, &str, &[(&str, &str)], usize); 5] = [
+        (
+            "g1_19/nba_ordered_updates",
+            include_str!(
+                "../../../../../../tests/fixtures/sim/feature_completion/g1_19/nba_ordered_updates.sv"
+            ),
+            &[
+                ("x[lo+:4]", "x[3:0]"),
+                ("counted(8'h1)", "8'h1"),
+                ("counted(8'h2)", "8'h2"),
+            ],
+            3,
+        ),
+        (
+            "sim_043/value_changes",
+            include_str!(
+                "../../../../../../tests/fixtures/sim/feature_completion/sim_043/value_changes.sv"
+            ),
+            &[("counted(1'b1)", "1'b1")],
+            1,
+        ),
+        (
+            "T1-D11_changes_at_check",
+            include_str!(
+                "../../../../../../tests/fixtures/sim/lrm_decisions/T1-D11_changes_at_check.sv"
+            ),
+            &[("counted(0)", "0")],
+            2,
+        ),
+        (
+            "T1-D11_disable_iff_at_check",
+            include_str!(
+                "../../../../../../tests/fixtures/sim/lrm_decisions/T1-D11_disable_iff_at_check.sv"
+            ),
+            &[("counted(1'b1)", "1'b1")],
+            1,
+        ),
+        (
+            "T1-D11_switch_control_at_check",
+            include_str!(
+                "../../../../../../tests/fixtures/sim/lrm_decisions/T1-D11_switch_control_at_check.sv"
+            ),
+            &[("counted(1'b1)", "1'b1")],
+            1,
+        ),
+    ];
+    for (name, source, plain, plain_count) in cases {
+        assert_eq!(merged(source).1, 0, "{name}");
+        let mut plain_source = source.to_owned();
+        for (from, to) in plain {
+            assert!(plain_source.contains(from), "{name}: {from}");
+            plain_source = plain_source.replace(from, to);
+        }
+        assert_eq!(
+            merged(&plain_source).1,
+            plain_count,
+            "{name} with plain values"
+        );
+    }
+}

@@ -33,6 +33,9 @@
 // - 100: delayed updates maturing together are one batch.
 // - 110: a matured update and an update of this slot are two batches.
 // - 120: an assertion clock sees no glitch.
+// The overridden nonblocking updates take their value from `counted`, a
+// function with a side effect, so lowering cannot drop them and each NBA
+// batch commits both writes.
 `timescale 1ns / 1ns
 module tb;
   // Two-state storage starts at its default, so no time-0 change is seen
@@ -45,6 +48,12 @@ module tb;
   real r;
   int comb_runs;
   int seed;
+  int calls;
+
+  function automatic bit counted(bit value);
+    calls++;
+    return value;
+  endfunction
 
   always @(a) $display("%0t any a=%b", $time, a);
   always @(posedge x) $display("%0t posedge x=%b", $time, x);
@@ -66,7 +75,7 @@ module tb;
   assert property (@(posedge s) 0) else $display("%0t clock s", $time);
 
   always @(posedge clk) begin
-    q <= 0;
+    q <= counted(0);
     if (sel) q <= 1;
   end
   always @(clk or sel) begin
@@ -94,7 +103,7 @@ module tb;
   // Nonblocking steps, kept apart from the blocking ones above.
   initial begin
     #30 q <= 1;
-    #1 q <= 0; q <= 1;
+    #1 q <= counted(0); q <= 1;
     #69 d <= #5 1; d <= #5 0;
     #10 e <= #5 1;
     #5 e <= 0;

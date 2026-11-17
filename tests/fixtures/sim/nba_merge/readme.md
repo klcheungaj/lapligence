@@ -40,3 +40,10 @@ marked at each write); the others merge. `q` and `k` return to their values
 within each batch, so their event controls wake only at time 0 and no report
 shows the dropped values. Under T1-D11 (`docs/lrm_decisions.md`) the waiters
 see the value at the check either way.
+
+The fixtures that check the NBA batch at run time (`T1-D11_*_at_check` in
+`lrm_decisions`, `feature_completion/sim_043/value_changes` and
+`feature_completion/g1_19/nba_ordered_updates`) give their overridden updates
+a value from a function with a side effect or a run-time-indexed target, so
+the merge leaves them alone; the unit test
+`run_time_batch_fixtures_keep_each_update` checks that it does.
