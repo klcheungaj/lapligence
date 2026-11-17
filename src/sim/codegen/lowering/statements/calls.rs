@@ -147,6 +147,37 @@ impl EmitCtx<'_, '_> {
                 self.cg.source_path(&self.path)
             ));
         }
+        // A member of a subroutine record with container members takes the
+        // record's companions, whose changes publish nothing a waiter on the
+        // formal follows (SIM-009).
+        let waited = match dispatch {
+            RecordRefDispatch::Virtual
+                if self.cg.any_override_waits_on_record_ref(ft, callee_inst) =>
+            {
+                self.cg.native_record_formals(&formals)
+            }
+            RecordRefDispatch::Virtual => Vec::new(),
+            _ => shape.static_refs.clone(),
+        };
+        for index in waited {
+            let (Some((formal, _)), Some(actual)) = (formals.get(index), bound.get(index)) else {
+                continue;
+            };
+            if self
+                .cg
+                .subroutine_record_container_member(&self.path, *formal, actual.expr)?
+            {
+                let node = self.cg.node(actual.expr);
+                return Err(format!(
+                    "task `{name}` waits on record `ref` formal `{}`, whose actual is a member of a subroutine record with queue or dynamic-array members; changes to the record publish no change the wait could follow (SIM-009) at {}:{}:{} in `{}`",
+                    self.cg.node(*formal).name,
+                    node.file.as_deref().unwrap_or("<unknown>"),
+                    node.line,
+                    node.col,
+                    self.cg.source_path(&self.path)
+                ));
+            }
+        }
         if let Some(select) = self.cg.record_ref_select(&self.path, &formals, &bound)? {
             let waits = match dispatch {
                 RecordRefDispatch::Virtual => {
@@ -154,7 +185,9 @@ impl EmitCtx<'_, '_> {
                 }
                 _ => self.cg.waits_on_record_ref(ft, callee_inst),
             };
-            return self.lower_record_ref_select(h, name, is_task, callee, select, waits);
+            return self.lower_per_record_element(h, select, waits, &mut |ctx| {
+                ctx.lower_task_call(h, name, is_task, callee)
+            });
         }
         let mut specialized = None;
         if !shape.static_refs.is_empty()
@@ -299,19 +332,247 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    /// Lower call `h` once per element of a run-time selected record `ref`
-    /// actual, under a decision tree over the index taken at the call. An
-    /// index selecting no element reaches the callee with a private default
-    /// value (SV 7.4.6). A task waiting on the formal has no body without a
-    /// binding, so that index stops the run there instead.
-    fn lower_record_ref_select(
-        &mut self,
+    /// The first run-time selected record element bound to a native record
+    /// `ref` formal by a function called inside an expression of statement
+    /// `h`. Only statements that evaluate their expressions once, at their
+    /// start, are lowered once per element (`lower_per_record_element`), so
+    /// the index is taken when the statement starts; a loop header, a
+    /// condition and a timed assignment keep the located rejection.
+    pub(super) fn statement_record_ref_select(
+        &self,
         h: NodeId,
-        name: &str,
-        is_task: bool,
-        callee: Option<NodeId>,
+    ) -> Result<Option<RecordRefSelect>, String> {
+        if !matches!(
+            self.cg.kind(h),
+            NodeKind::Stmt(StmtKind::Assign { delay: None, .. })
+                | NodeKind::Stmt(StmtKind::Return { .. })
+                | NodeKind::SysCall { .. }
+        ) {
+            return Ok(None);
+        }
+        let mut pending = self.cg.node(h).children.clone();
+        pending.reverse();
+        while let Some(node) = pending.pop() {
+            let call = match self.cg.kind(node) {
+                NodeKind::FuncCall {
+                    name,
+                    is_task: false,
+                    callee,
+                    ..
+                }
+                | NodeKind::MethodCall { name, callee, .. } => Some((name, *callee)),
+                _ => None,
+            };
+            if let Some((name, callee)) = call {
+                let args = self.cg.call_argument_nodes(node);
+                // Only a select can be a run-time record element.
+                let selects = args.iter().any(|arg| {
+                    matches!(
+                        self.cg.kind(self.cg.p30_unwrap_cast(*arg)),
+                        NodeKind::Expr(
+                            ExprKind::ArraySelect { .. }
+                                | ExprKind::BitSelect { .. }
+                                | ExprKind::HierPath { .. }
+                        )
+                    )
+                });
+                let formals = selects
+                    .then(|| {
+                        self.cg
+                            .resolve_callee_env(self.inst, name, false, callee)
+                            .ok()
+                    })
+                    .flatten()
+                    .and_then(|(function, _)| self.cg.func_meta.get(&function))
+                    .map(|meta| meta.formals.clone());
+                if let Some(formals) = formals {
+                    if let Ok(bound) = self.cg.bind_call_args(self.inst, &formals, &args) {
+                        if let Some(select) =
+                            self.cg.record_ref_select(&self.path, &formals, &bound)?
+                        {
+                            if let Some(before) = self.effect_before(h, select.source, select.index)
+                            {
+                                let node = self.cg.node(before);
+                                return Err(format!(
+                                    "run-time selected record element as a `ref` actual of function `{name}` after a call or an assignment operator at {}:{}:{} in the same statement in `{}` is not supported: the element is chosen when the statement starts; move the earlier operand to a statement of its own (SIM-008)",
+                                    node.file.as_deref().unwrap_or("<unknown>"),
+                                    node.line,
+                                    node.col,
+                                    self.cg.source_path(&self.path)
+                                ));
+                            }
+                            return Ok(Some(select));
+                        }
+                    }
+                }
+            }
+            let children = &self.cg.node(node).children;
+            pending.extend(children.iter().rev().copied());
+        }
+        Ok(None)
+    }
+
+    /// A call or an assignment operator of statement `h` that starts before
+    /// `actual` in the source, does not enclose it and may write a variable
+    /// its `index` reads: left-to-right evaluation runs it before the index,
+    /// which the statement takes at its start.
+    fn effect_before(&self, h: NodeId, actual: NodeId, index: NodeId) -> Option<NodeId> {
+        let target = self.cg.node(actual);
+        let at = (target.line, target.col);
+        let encloses = |node: NodeId| self.subtree(node).contains(&actual);
+        // An index that has effects of its own reads what they write.
+        let read = self.cg.side_effect_free(index).then(|| {
+            self.subtree(index)
+                .into_iter()
+                .filter_map(|node| match self.cg.kind(node) {
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) => Some(*target),
+                    NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                        refs.first().copied().flatten()
+                    }
+                    _ => None,
+                })
+                .collect::<HashSet<_>>()
+        });
+        let mut pending = self.cg.node(h).children.clone();
+        while let Some(node) = pending.pop() {
+            let start = self.cg.node(node);
+            if Self::is_effect(self.cg.kind(node))
+                && (start.line, start.col) < at
+                && !encloses(node)
+                && read
+                    .as_ref()
+                    .is_none_or(|read| self.may_write(node, read, &mut HashSet::new()))
+            {
+                return Some(node);
+            }
+            pending.extend(self.cg.node(node).children.iter().copied());
+        }
+        None
+    }
+
+    fn is_effect(kind: &NodeKind) -> bool {
+        matches!(
+            kind,
+            NodeKind::FuncCall { .. }
+                | NodeKind::MethodCall { .. }
+                | NodeKind::SysCall { .. }
+                | NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::Assignment
+                        | Operation::PostIncrement
+                        | Operation::PreIncrement
+                        | Operation::PostDecrement
+                        | Operation::PreDecrement,
+                    ..
+                })
+        )
+    }
+
+    /// Every node of the subtree at `node`.
+    fn subtree(&self, node: NodeId) -> Vec<NodeId> {
+        let mut nodes = Vec::new();
+        let mut pending = vec![node];
+        while let Some(next) = pending.pop() {
+            nodes.push(next);
+            pending.extend(self.cg.node(next).children.iter().copied());
+        }
+        nodes
+    }
+
+    /// The variable a selection, member path or reference `node` names.
+    fn storage_root(&self, node: NodeId) -> Option<NodeId> {
+        match self.cg.kind(self.cg.p30_unwrap_cast(node)) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                let first = refs.first().copied().flatten()?;
+                match self.cg.kind(first) {
+                    NodeKind::Expr(_) => self.storage_root(first),
+                    _ => Some(first),
+                }
+            }
+            NodeKind::Expr(
+                ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. },
+            ) => self.storage_root(*base),
+            NodeKind::Expr(_) => {
+                let first = self.cg.node(node).children.first().copied()?;
+                self.storage_root(first)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether effect `node` may write a variable of `read`: an operand that
+    /// names one (an output or `ref` actual, an assignment target, a
+    /// built-in method's receiver), or a subroutine whose body may, through
+    /// the calls it makes. An unresolved callee, one with no body the
+    /// lowering can see, or a virtual method may write anything.
+    fn may_write(&self, node: NodeId, read: &HashSet<NodeId>, seen: &mut HashSet<NodeId>) -> bool {
+        let names = |operand: NodeId| {
+            self.storage_root(operand)
+                .is_some_and(|root| read.contains(&root))
+        };
+        if self
+            .cg
+            .node(node)
+            .children
+            .iter()
+            .any(|child| names(*child))
+        {
+            return true;
+        }
+        let callee = match self.cg.kind(node) {
+            NodeKind::FuncCall { callee: None, .. } => return true,
+            NodeKind::FuncCall {
+                callee: Some(callee),
+                ..
+            } => *callee,
+            // A built-in method writes its receiver, an operand above.
+            NodeKind::MethodCall { callee: None, .. } => return false,
+            NodeKind::MethodCall {
+                callee: Some(callee),
+                ..
+            } => {
+                if self.cg.class_method_virtual_dispatch(node) {
+                    return true;
+                }
+                *callee
+            }
+            _ => return false,
+        };
+        if !seen.insert(callee) {
+            return false;
+        }
+        let Some(body) = self.cg.func_body(callee) else {
+            return true;
+        };
+        self.subtree(body)
+            .into_iter()
+            .any(|inner| match self.cg.kind(inner) {
+                NodeKind::Stmt(StmtKind::Assign { .. }) => self
+                    .cg
+                    .node(inner)
+                    .children
+                    .first()
+                    .is_some_and(|target| names(*target)),
+                kind if Self::is_effect(kind) => self.may_write(inner, read, seen),
+                _ => false,
+            })
+    }
+
+    /// Lower a call, or a statement holding one in an expression (`lower`),
+    /// once per element of a run-time selected record `ref` actual, under a
+    /// decision tree over the index taken at the call, or when the statement
+    /// starts. An index selecting no element reaches the callee with a
+    /// private default value (SV 7.4.6), or with index checks on stops the
+    /// run at `site`. A task waiting on the formal has no body without a
+    /// binding, so that index stops the run there either way.
+    pub(super) fn lower_per_record_element(
+        &mut self,
+        site: NodeId,
         select: RecordRefSelect,
         waits: bool,
+        lower: &mut dyn FnMut(&mut Self) -> Result<IrStmt, String>,
     ) -> Result<IrStmt, String> {
         let mut statements = Vec::new();
         let (index, width) =
@@ -320,9 +581,9 @@ impl EmitCtx<'_, '_> {
         let span = self.cg.record_ref_pin_span;
         self.cg.record_ref_pin_span = span * select.pins.len();
         let source = select.source;
-        let pinned = |ctx: &mut Self, pin: RecordRefPin| {
+        let mut pinned = |ctx: &mut Self, pin: RecordRefPin| {
             ctx.cg.record_ref_pins.insert(source, pin);
-            let call = ctx.lower_task_call(h, name, is_task, callee);
+            let call = lower(ctx);
             ctx.cg.record_ref_pins.remove(&source);
             call
         };
@@ -352,7 +613,7 @@ impl EmitCtx<'_, '_> {
                 fmt: format!("\"{message}{}\"", crate::sim::ir::INDEX_CHECK_HINT),
                 args: Vec::new(),
                 scope: self.path.clone(),
-                location: self.cg.source_location(h),
+                location: self.cg.source_location(site),
                 fatal_finish_number: Some(0),
                 origin: crate::sim::ir::IrSeverityOrigin::RuntimeFailure,
                 skip_finals: false,

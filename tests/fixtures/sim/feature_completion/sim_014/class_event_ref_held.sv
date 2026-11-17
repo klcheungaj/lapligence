@@ -28,6 +28,8 @@ module tb;
   C f = new;
   C v = new;
   C b2 = new;
+  C o2 = new;
+  C o3 = new;
   B b;
   event g;
   M m;
@@ -70,6 +72,23 @@ module tb;
     #1 $display("%0t in_branch returns", $time);
   endtask
 
+  // An output formal assigns its handle back at its own return, which is
+  // where a `ref` formal forwarding to it rebinds the property.
+  task automatic out_set(output event e, input event to);
+    #1 e = to;
+    #2 $display("%0t out_set returns", $time);
+  endtask
+  task automatic via_output(ref event e, input event to);
+    out_set(e, to);
+    #2 $display("%0t via_output returns", $time);
+  endtask
+  task automatic via_branch_output(ref event e, input event to);
+    fork
+      out_set(e, to);
+    join
+    #2 $display("%0t via_branch_output returns", $time);
+  endtask
+
   initial begin
     N n = new;
     m = n;
@@ -98,6 +117,14 @@ module tb;
     fork
       begin wait (b2.ev == g) $display("%0t b2 is g", $time); end
       in_branch(b2.ev, g);
+    join
+    fork
+      begin wait (o2.ev == g) $display("%0t o2 is g", $time); end
+      via_output(o2.ev, g);
+    join
+    fork
+      begin wait (o3.ev == g) $display("%0t o3 is g", $time); end
+      via_branch_output(o3.ev, g);
     join
     reader(f.ev);
     $finish;

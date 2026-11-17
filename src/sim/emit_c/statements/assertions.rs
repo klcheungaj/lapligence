@@ -2,17 +2,6 @@
 
 use super::*;
 
-fn diagnostic_location(origin: &crate::sim::semantic::Origin) -> String {
-    match origin {
-        crate::sim::semantic::Origin::Source {
-            path, line, column, ..
-        } => format!("{path}:{line}:{column}"),
-        crate::sim::semantic::Origin::Synthetic { reason } => {
-            format!("<synthetic: {reason}>")
-        }
-    }
-}
-
 pub(super) fn unique_priority_call(
     check: &IrUniquePriorityCheck,
     matched: &str,
@@ -22,13 +11,11 @@ pub(super) fn unique_priority_call(
         return String::new();
     };
     let location = check
-        .origin()
-        .map(diagnostic_location)
-        .unwrap_or_else(|| "<unknown>".to_owned());
+        .source_location()
+        .map_or_else(|| "NULL".to_owned(), |location| c_string_literal(&location));
     format!(
-        "    llg_unique_priority_check({kind}, {matched}, {}, {});\n",
+        "    llg_unique_priority_check({kind}, {matched}, {}, {location});\n",
         has_default as u8,
-        c_string_literal(&location)
     )
 }
 

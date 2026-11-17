@@ -490,7 +490,8 @@ impl Validator<'_> {
                 }
                 IrCallArg::ElementRef(reference) => {
                     use crate::sim::ir::{
-                        IrAssocKey, IrContainerKind, IrElementRefKind, IrElementRoot, IrLeafTarget,
+                        IrAssocKey, IrContainerKind, IrElementRefKind, IrElementRoot,
+                        IrElementStep, IrLeafTarget, IrRefCompanion,
                     };
                     let matches_formal = match reference.kind {
                         IrElementRefKind::String => formal.string,
@@ -502,18 +503,41 @@ impl Validator<'_> {
                             formal.native_value.is_some()
                                 && formal.native_companions.len() == reference.companions.len()
                                 && reference.companions.iter().all(|companion| {
-                                    !companion.items.is_empty()
-                                        && self
-                                            .model
-                                            .containers
-                                            .get(companion.container)
-                                            .is_some_and(|container| {
-                                                container.activation
-                                                    && !matches!(
-                                                        container.kind,
-                                                        IrContainerKind::Associative { .. }
-                                                    )
-                                            })
+                                    let created = |index: usize| {
+                                        self.model.containers.get(index).is_some_and(|container| {
+                                            container.activation
+                                                && !matches!(
+                                                    container.kind,
+                                                    IrContainerKind::Associative { .. }
+                                                )
+                                        })
+                                    };
+                                    match companion {
+                                        IrRefCompanion::Mirror { container, items } => {
+                                            !items.is_empty() && created(*container)
+                                        }
+                                        IrRefCompanion::Root {
+                                            choices,
+                                            unselected,
+                                        } => {
+                                            let runs = reference
+                                                .steps
+                                                .iter()
+                                                .filter(|step| {
+                                                    matches!(step, IrElementStep::Position(_))
+                                                })
+                                                .count();
+                                            matches!(reference.root, IrElementRoot::Value(_))
+                                                && !choices.is_empty()
+                                                && (runs == 0) == unselected.is_none()
+                                                && (runs > 0 || choices.len() == 1)
+                                                && unselected.is_none_or(created)
+                                                && choices.iter().all(|(positions, container)| {
+                                                    positions.len() == runs
+                                                        && *container < self.model.containers.len()
+                                                })
+                                        }
+                                    }
                                 })
                         }
                         IrElementRefKind::Packed {

@@ -20,7 +20,7 @@ ERROR: [CLI-003] --top requires a module name
 INFO: f.sv:3:35: [SIM-001] (tb @ 5 ns) $finish called
 ```
 
-Severity words: `FATAL`, `ERROR`, `WARNING`, `INFO`. The id is the tool name, `-` and a three-digit index; index 000 of a tool is its summary. The location is the physical `file:line:col`, followed by `` (`line file:line)`` when a `` `line`` directive maps it, and is left out (with its separator) when a message has none. Design context is the hierarchical scope and the simulation time, joined by ` @ `; the time is in the largest unit that shows it exactly. The hint, when present, names the lint rule or frontend warning option that selects the message.
+Severity words: `FATAL`, `ERROR`, `WARNING`, `INFO`. The id is the tool name, `-` and a three-digit index; index 000 of a tool is its summary. The location is the physical `file:line:col` (`file:line` where the column is not known), followed by `` (`line file:line)`` when a `` `line`` directive maps it, and is left out (with its separator) when a message has none. Design context is the hierarchical scope and the simulation time, joined by ` @ `; the time is in the largest unit that shows it exactly. The hint, when present, names the lint rule or frontend warning option that selects the message.
 
 Each phase that reported a warning or worse ends with a summary message, `LINT-000` for lint, with the text `<{fatal} fatal, >{error} error(s), {warning} warning(s)<, {info} info(s)>`.
 

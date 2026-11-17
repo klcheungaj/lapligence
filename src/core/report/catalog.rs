@@ -742,8 +742,9 @@ pub fn markdown() -> String {
     out.push_str(&format!(
         "Severity words: `{}`, `{}`, `{}`, `{}`. The id is the tool name, `{}` and a \
          three-digit index; index 000 of a tool is its summary. The location is the \
-         physical `file:line:col`, followed by `` (`line file:line)`` when a `` `line`` \
-         directive maps it, and is left out (with its separator) when a message has none. \
+         physical `file:line:col` (`file:line` where the column is not known), followed by \
+         `` (`line file:line)`` when a `` `line`` directive maps it, and is left out (with \
+         its separator) when a message has none. \
          Design context is the hierarchical scope and the simulation time, joined by `{}`; \
          the time is in the largest unit that shows it exactly. The hint, when present, \
          names the lint rule or frontend warning option that selects the message.\n\n",

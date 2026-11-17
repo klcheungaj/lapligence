@@ -261,12 +261,11 @@ int llg_budget_point(const char* location) {
 void llg_unique_priority_check(int check, int matched, int has_default,
                                const char* location) {
     if (check < 1 || check > 3) return;
-    const char* where = location && location[0] != '\0' ? location : "<unknown>";
     const char* qualifier = check == 1 ? "unique" : check == 2 ? "unique0" : "priority";
     if (matched == 0 && !has_default && check != 2) {
-        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%s violation at %s: no matching item", qualifier, where);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, location, "%s violation: no matching item", qualifier);
     }
     if (matched > 1 && check != 3) {
-        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%s violation at %s: multiple matching items", qualifier, where);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, location, "%s violation: multiple matching items", qualifier);
     }
 }

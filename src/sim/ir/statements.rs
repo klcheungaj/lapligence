@@ -53,6 +53,18 @@ impl IrUniquePriorityCheck {
             Self::Unique(origin) | Self::Unique0(origin) | Self::Priority(origin) => Some(origin),
         }
     }
+
+    /// `file:line:col` of the checked statement: the location field of its
+    /// run-time warnings. `None` for a synthetic origin, which has no source
+    /// position; its warnings then carry no location.
+    pub fn source_location(&self) -> Option<String> {
+        match self.origin()? {
+            crate::sim::semantic::Origin::Source {
+                path, line, column, ..
+            } => Some(format!("{path}:{line}:{column}")),
+            crate::sim::semantic::Origin::Synthetic { .. } => None,
+        }
+    }
 }
 
 impl IrCaseKind {

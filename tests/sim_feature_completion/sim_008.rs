@@ -281,6 +281,63 @@ fn run_time_record_elements_bind_ref_formals() {
     sim_cli::run_case_backend_parity(SUITE, "record_ref_element_large", expected, &[], &[]);
 }
 
+/// FIN-001 R3: a run-time index below a constant one (`o.m[1].a[k]`) binds
+/// a record `ref` formal and selects an operand, in both storage forms.
+#[test]
+fn run_time_elements_below_a_constant_element_bind_ref_formals() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_element_select_nested.out"
+    );
+    for size in ["N=2", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_ref_element_select_nested",
+            expected,
+            &["-D", size],
+            &[],
+        );
+    }
+}
+
+/// FIN-001 R3: a function called inside an expression of an assignment, a
+/// `return` or a system-task statement binds a run-time selected record
+/// element; below 16 cells the statement lowers once per element.
+#[test]
+fn run_time_record_elements_bind_ref_formals_of_calls_in_expressions() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_element_select_expression.out"
+    );
+    for size in ["N=3", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_ref_element_select_expression",
+            expected,
+            &["--no-index-checks", "-D", size],
+            &[],
+        );
+        // With index checks on, the index selecting no element stops the
+        // run at the actual (S07-D15).
+        let before = expected
+            .rsplit_once("none")
+            .map_or(expected, |(before, _)| before);
+        sim_cli::run_case_checked_matrix(
+            SUITE,
+            "record_ref_element_select_expression",
+            &["-D", size],
+            &|label, output| {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
+                assert_eq!(String::from_utf8_lossy(&output.stdout), before, "{label}");
+                assert!(
+                    stderr.contains("record_ref_element_select_expression.sv:57:11")
+                        && stderr.contains("index of a `ref` actual selects no element;"),
+                    "{label}: {stderr}"
+                );
+            },
+        );
+    }
+}
+
 /// Limits of the leaf form, which lowers a call once per element: a record
 /// with a member array of 16 cells or more selects a cell instead and has
 /// neither limit.
@@ -294,7 +351,12 @@ fn leaf_form_run_time_selections_beyond_the_branch_limit_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_record_ref_element_select_value",
-        "ref actual of native record formal `r` in `tb` must be a whole subroutine record",
+        "run-time selected record element as the `ref` actual of native record formal `r` of a function called outside an assignment without timing control, a `return` or a system-task statement",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_record_ref_element_select_effect",
+        "run-time selected record element as a `ref` actual of function `f` after a call or an assignment operator at",
     );
 }
 
@@ -308,6 +370,31 @@ fn record_elements_with_container_members_bind_ref_formals() {
         expected,
         &["--no-index-checks"],
         &[],
+    );
+}
+
+/// FIN-001 R3: an element or member of a subroutine record whose type has
+/// container members takes the record's companion containers, or mirrors of
+/// the nested slots of a member array of 16 elements. A task waiting on such
+/// a formal rejects.
+#[test]
+fn subroutine_record_elements_with_container_members_bind_ref_formals() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_subroutine_container_member.out"
+    );
+    for size in ["N=2", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_ref_subroutine_container_member",
+            expected,
+            &["-D", size],
+            &[],
+        );
+    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_record_ref_subroutine_container_wait",
+        "task `waiter` waits on record `ref` formal `r`, whose actual is a member of a subroutine record with queue or dynamic-array members",
     );
 }
 

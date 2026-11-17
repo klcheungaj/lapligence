@@ -105,9 +105,12 @@ fn pending_evaluations_are_bounded() {
         let stderr = String::from_utf8_lossy(&limited.stderr);
         assert!(!limited.status.success(), "optimized={optimized}: {stderr}");
         assert!(
-            stderr.contains(
-                "ERROR: [SIM-010] sequence thread budget exhausted: more than 50 live sequence threads at \
-                 time 2091 (concurrent assertion bud at "
+            super::sim_harness::has_message(
+                &stderr,
+                "SIM-010",
+                "budget.sv:23:3",
+                "sequence thread budget exhausted: more than 50 live sequence threads at time 2091 \
+                 (concurrent assertion bud); raise"
             ),
             "optimized={optimized}: {stderr}"
         );

@@ -4,20 +4,14 @@ use super::*;
 
 impl Frame<'_, '_> {
     fn qualifier_diagnostic(&mut self, check: &IrUniquePriorityCheck, count: &str, fallback: bool) {
-        let location = match check.origin() {
-            Some(crate::sim::semantic::Origin::Source {
-                path, line, column, ..
-            }) => format!("{path}:{line}:{column}"),
-            Some(crate::sim::semantic::Origin::Synthetic { reason }) => {
-                format!("<synthetic: {reason}>")
-            }
-            None => "<unknown>".to_owned(),
-        };
+        let location = check
+            .source_location()
+            .map_or_else(|| "NULL".to_owned(), |location| c_string_literal(&location));
         if let Some(kind) = check.kind_code() {
             self.line(format!(
                 "llg_unique_priority_check({kind}, {count}, {}, {});",
                 u8::from(fallback),
-                c_string_literal(&location)
+                location
             ));
         }
     }
