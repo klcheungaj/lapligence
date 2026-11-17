@@ -1,3 +1,41 @@
+typedef line=7
+  typespec: vpiUnionTypespec name=tp_t packed=1 tagged=1
+    member a
+      typespec: vpiBitTypespec name=(null)
+    member b
+      typespec: vpiBitTypespec name=(null)
+typedef line=8
+  typespec: vpiUnionTypespec name=tu_t packed=0 tagged=1
+    member i
+      typespec: vpiIntTypespec name=(null)
+    member r
+      typespec: vpiRealTypespec name=(null)
+typedef line=9
+  typespec: vpiUnionTypespec name=up_t packed=1 tagged=0
+    member a
+      typespec: vpiBitTypespec name=(null)
+    member b
+      typespec: vpiBitTypespec name=(null)
+typedef line=10
+  typespec: vpiChandleTypespec name=ch_t
+    alias: vpiChandleTypespec name=(null)
+typedef line=11
+  typespec: vpiChandleTypespec name=ch2_t
+    alias: vpiChandleTypespec name=ch_t
+      alias: vpiChandleTypespec name=(null)
+typedef line=12
+  typespec: vpiStructTypespec name=sh_t packed=0
+    member h
+      typespec: vpiChandleTypespec name=(null)
+    member k
+      typespec: vpiChandleTypespec name=ch_t
+        alias: vpiChandleTypespec name=(null)
+typedef line=13
+  typespec: vpiUnionTypespec name=th_t packed=0 tagged=1
+    member h
+      typespec: vpiChandleTypespec name=(null)
+    member n
+      typespec: vpiIntTypespec name=(null)
 tb.tp vpiUnionVar
   typespec: vpiUnionTypespec name=tp_t packed=1 tagged=1
     member a
@@ -16,3 +54,47 @@ tb.up vpiUnionVar
       typespec: vpiBitTypespec name=(null)
     member b
       typespec: vpiBitTypespec name=(null)
+tb.h vpiChandleVar
+  typespec: vpiChandleTypespec name=(null)
+tb.hn vpiChandleVar
+  typespec: vpiChandleTypespec name=ch_t
+    alias: vpiChandleTypespec name=(null)
+tb.hn2 vpiChandleVar
+  typespec: vpiChandleTypespec name=ch2_t
+    alias: vpiChandleTypespec name=ch_t
+      alias: vpiChandleTypespec name=(null)
+tb.sh vpiStructVar
+  typespec: vpiStructTypespec name=sh_t packed=0
+    member h
+      typespec: vpiChandleTypespec name=(null)
+    member k
+      typespec: vpiChandleTypespec name=ch_t
+        alias: vpiChandleTypespec name=(null)
+tb.sh.h vpiChandleVar
+  typespec: vpiChandleTypespec name=(null)
+tb.th vpiUnionVar
+  typespec: vpiUnionTypespec name=th_t packed=0 tagged=1
+    member h
+      typespec: vpiChandleTypespec name=(null)
+    member n
+      typespec: vpiIntTypespec name=(null)
+tb.hq vpiArrayVar
+  typespec: vpiArrayTypespec name=(null)
+    elem: vpiChandleTypespec name=ch_t
+      alias: vpiChandleTypespec name=(null)
+tb.hq[0] vpiChandleVar
+  typespec: vpiChandleTypespec name=ch_t
+    alias: vpiChandleTypespec name=(null)
+property h vpiChandleVar
+  typespec: vpiChandleTypespec name=(null)
+property k vpiChandleVar
+  typespec: vpiChandleTypespec name=ch2_t
+    alias: vpiChandleTypespec name=ch_t
+      alias: vpiChandleTypespec name=(null)
+io a
+  typespec: vpiChandleTypespec name=(null)
+io b
+  typespec: vpiChandleTypespec name=ch_t
+    alias: vpiChandleTypespec name=(null)
+call get
+  typespec: vpiChandleTypespec name=(null)

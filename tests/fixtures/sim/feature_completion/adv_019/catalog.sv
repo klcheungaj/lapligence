@@ -88,6 +88,10 @@ module tb;
   // declaration (37.23).
   typedef union tagged packed { bit [3:0] ta; bit [3:0] tb; } tg_t;
   typedef union tagged { int ti; real tr; } tgu_t;
+  // A typedef of chandle and a structure with a chandle member: chandle
+  // typespecs with a name and an alias, and as a typespec member (37.23).
+  typedef chandle ch_t;
+  typedef struct { ch_t mh; int mi; } chrec_t;
   class Packet;
     int id;
     // An event property: a named event of each object (37.25, 37.29).
@@ -165,6 +169,8 @@ module tb;
   logic [3:0] mem [0:3];
   string s = "hi";
   chandle ch = null;
+  ch_t chn = null;
+  chrec_t chr;
   Packet p;
   Square sq;
   int da[];

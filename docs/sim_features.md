@@ -2960,7 +2960,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiBitVar`, `vpiByteVar`, `vpiTimeVar`, ...), unpacked arrays and their
   elements, bit-selects and part-selects. Typespecs (ADV-019, 37.23):
   `vpiTypespec` of variables, nets, parameters and members gives logic, bit,
-  integer-atom, time, real, string, enum, struct, union, packed array and
+  integer-atom, time, real, string, chandle (also of class properties,
+  structure members and typedefs), enum, struct, union, packed array and
   array typespecs (fixed, dynamic, queue and associative, with
   `vpiArrayType` and `vpiIndexTypespec`, A19-D60) with `vpiName` (the
   typedef name), `vpiTypedefAlias`,

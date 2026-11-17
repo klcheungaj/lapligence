@@ -491,6 +491,12 @@ impl Codegen<'_> {
                     ..IrVpiTypespec::default()
                 })
             }
+            // 37.23: a chandle (6.14) has its own typespec; a typedef of
+            // it renames the built-in type (detail 6).
+            TypeShape::Opaque { kind } if kind == "Chandle" => Some(IrVpiTypespec {
+                kind: IrVpiTypespecKind::Chandle,
+                ..IrVpiTypespec::default()
+            }),
             TypeShape::Opaque { .. } => None,
         }
     }

@@ -10983,6 +10983,7 @@ static const char* type_name(int type) {
         case vpiShortIntTypespec: return "vpiShortIntTypespec";
         case vpiIntTypespec: return "vpiIntTypespec";
         case vpiStringTypespec: return "vpiStringTypespec";
+        case vpiChandleTypespec: return "vpiChandleTypespec";
         case vpiEnumTypespec: return "vpiEnumTypespec";
         case vpiEnumConst: return "vpiEnumConst";
         case vpiIntegerTypespec: return "vpiIntegerTypespec";

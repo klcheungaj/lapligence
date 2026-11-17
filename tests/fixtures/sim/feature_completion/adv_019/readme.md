@@ -111,6 +111,23 @@ typespecs, `vpiTypedefAlias`, the enum base and the typespec members, as
   tagged`, with a `real` member) `packed=0 tagged=1`, and the untagged
   `up_t` `packed=1 tagged=0`. An unpacked tagged union variable is a
   `vpiUnionVar` (37.17 diagram, "union var").
+- Chandle typespecs. The 37.23 diagram lists `chandle typespec`
+  (`vpiChandleTypespec`, Annex M L76287). Detail 1 (L59170-L59172) names
+  a typespec after its typedef and gives a built-in type no name, and
+  detail 6 (L59200, L59204-L59206) makes a typedef of a built-in type an
+  alias of it: "The vpiTypedefAlias applied to handle h1 shall return a
+  typespec handle h2 to the predefined type". `vpi_iterate(vpiTypedef, tb)`
+  lists every typedef of `tb` with its line (37.10 detail 1), `ch_t`
+  (`typedef chandle ch_t`) with an unnamed chandle alias and `ch2_t` with
+  the alias `ch_t`. The same typespecs come from the variables `h`, `hn`,
+  `hn2`, from the members of the unpacked structure `sh_t` and of the
+  tagged union `th_t` (7.3.2, L7903: "Dynamic types and chandle types shall
+  not be used in untagged unions, but may be used in tagged unions."), from
+  the member variable `tb.sh.h`, from the element type of the queue `hq`
+  and its element `hq[0]` (detail 8), from the class properties `h` and `k`
+  of `c`, from the io declarations of `take`, and from the call `get()`
+  (37.55 detail 5, L60901-L60904, and decision A19-D32: a call has the
+  typespec of its value).
 
 ## members (37.17, 37.24)
 

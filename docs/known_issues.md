@@ -2879,7 +2879,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   unpacked unions); `vpiElement` of a `vpiPackedArrayVar` (its elements
   and bits are reached by index or name, decision A19-D67);
 - typespecs (the served properties and relations are in the catalog):
-  interface, void and chandle typespecs (class typespecs are reached from
+  interface and void typespecs (class typespecs are reached from
   class variables and objects, VPI-O4) and the name of a typedef used as an
   enum's base type (the base typespec is unnamed);
 - subarray handles: `vpi_handle_by_index`, `vpi_handle_by_multi_index` and
