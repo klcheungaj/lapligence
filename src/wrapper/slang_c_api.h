@@ -316,6 +316,10 @@ typedef struct {
   uint32_t reserved;
 } LlgSlangTypeRange;
 
+/* A field of a structure or union type, in declaration order. An enum
+   type has one unnamed member instead: its base type, whose typedef
+   fields name the typedef the declared base names (IEEE 1800-2009
+   37.23). */
 typedef struct {
   LlgSlangString name;
   uint64_t type_id;

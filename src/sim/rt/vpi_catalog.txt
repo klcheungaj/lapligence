@@ -58,6 +58,7 @@ test a19d64 sim_lrm_decisions::a19_d64_switch_values_and_class_object_names
 test a19d65 sim_lrm_decisions::a19_d65_refused_relations
 test a19d66 sim_lrm_decisions::a19_d66_specparam_expressions
 test a19d67 sim_lrm_decisions::a19_d67_packed_array_elements
+test a19d90 sim_lrm_decisions::a19_d90_typespec_kinds
 test a19d68 sim_lrm_decisions::a19_d68_udp_initial_statement
 test a19d69 sim_lrm_decisions::a19_d69_named_event_arrays
 test a19d71 sim_lrm_decisions::a19_d71_mailbox_semaphore_waiters
@@ -673,7 +674,7 @@ node ref_obj 37.15 type=vpiRefObj
   handle vpiInstance implemented walk
   handle vpiTaskFunc error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
   handle vpiParent error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
-  handle vpiTypespec n/a llg's reference objects stand for interface and modport port connections, which have no data type
+  handle vpiTypespec error a19d90 a reference object stands for an interface or modport port connection or a virtual interface, and IEEE 1800-2009 37.23 defines no interface typespec; industry-standard behaviour serves a typespec of a type outside the standard (decision A19-D90)
   handle vpiActual implemented walk
   str vpiDecompile implemented walk
   get vpiSize n/a llg reference objects stand only for interface and modport ports, which have no size
@@ -1113,6 +1114,9 @@ node array_typespec 37.23 type=vpiArrayTypespec
   handle vpiRightRange implemented walk
 
 node void_typespec 37.23 type=vpiVoidTypespec
+  handle vpiInstance error walk a void typespec is the type of a tagged union member (6.13, 7.3.2), which no declaration owns; industry-standard behaviour reaches no typespec member
+  handle vpiModule error walk a void typespec is the type of a tagged union member (6.13, 7.3.2), which no declaration owns; industry-standard behaviour reaches no typespec member
+  handle vpiScope error walk a void typespec is the type of a tagged union member (6.13, 7.3.2), which no declaration owns; industry-standard behaviour reaches no typespec member
 
 node sequence_typespec 37.23 type=vpiSequenceTypespec
 

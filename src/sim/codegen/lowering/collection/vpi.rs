@@ -144,9 +144,10 @@ fn typespec_var_kind(kind: IrVpiTypespecKind, ranges: usize) -> IrVpiVarKind {
         IrVpiTypespecKind::LongInt => IrVpiVarKind::LongInt,
         IrVpiTypespecKind::Byte => IrVpiVarKind::Byte,
         IrVpiTypespecKind::Time => IrVpiVarKind::Time,
-        IrVpiTypespecKind::Real | IrVpiTypespecKind::String | IrVpiTypespecKind::Chandle => {
-            IrVpiVarKind::Real
-        }
+        IrVpiTypespecKind::Real
+        | IrVpiTypespecKind::String
+        | IrVpiTypespecKind::Chandle
+        | IrVpiTypespecKind::Void => IrVpiVarKind::Real,
         IrVpiTypespecKind::ShortReal => IrVpiVarKind::ShortReal,
         IrVpiTypespecKind::Enum => IrVpiVarKind::Enum,
         IrVpiTypespecKind::Struct => IrVpiVarKind::Struct,
@@ -428,7 +429,11 @@ impl Codegen<'_> {
                     packed: match layout.kind {
                         AggregateKind::PackedStruct | AggregateKind::PackedUnion => Some(true),
                         AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion => Some(false),
-                        AggregateKind::TaggedUnion => None,
+                        // 7.3.2: a tagged union is packed only when declared
+                        // so.
+                        AggregateKind::TaggedUnion => {
+                            layout.type_id.map(|id| self.db.is_packed_tagged_union(id))
+                        }
                     },
                     tagged: layout.kind == AggregateKind::TaggedUnion,
                     members,
@@ -487,6 +492,18 @@ impl Codegen<'_> {
                     ..IrVpiTypespec::default()
                 })
             }
+            // 37.23: a chandle (6.14) has its own typespec; a typedef of
+            // it renames the built-in type (detail 6).
+            TypeShape::Opaque { kind } if kind == "Chandle" => Some(IrVpiTypespec {
+                kind: IrVpiTypespecKind::Chandle,
+                ..IrVpiTypespec::default()
+            }),
+            // A void member of a tagged union (7.3.2), or the type of a
+            // void function's value.
+            TypeShape::Opaque { kind } if kind == "Void" => Some(IrVpiTypespec {
+                kind: IrVpiTypespecKind::Void,
+                ..IrVpiTypespec::default()
+            }),
             TypeShape::Opaque { .. } => None,
         }
     }
@@ -623,16 +640,46 @@ impl Codegen<'_> {
         width: u32,
     ) -> Option<IrVpiTypespec> {
         let metadata = self.db.enum_type_metadata(descriptor.id)?;
-        let base = self.vpi_integral_typespec(
-            table,
-            ranges,
-            width,
-            metadata.signed,
-            metadata.two_state,
-            None,
-            0,
-        )?;
-        let base = table.intern(base);
+        // 37.23 detail 1: a base type declared through a typedef
+        // (`enum nib_t {...}`) is that typedef's typespec, with its name
+        // and alias; a built-in base type has no name.
+        let base = match self.db.enum_base_typedef(descriptor.id) {
+            Some(naming) => {
+                let base = TypeDescriptor {
+                    id: TypeId(u64::MAX),
+                    two_state: metadata.two_state,
+                    name: String::new(),
+                    info: crate::core::model::TypeInfo {
+                        kind: if metadata.two_state { "bit" } else { "logic" }.to_owned(),
+                        width: Some(width),
+                        signed: metadata.signed,
+                        type_name: None,
+                    },
+                    shape: TypeShape::PackedAtom {
+                        ranges: ranges
+                            .iter()
+                            .map(|(left, right)| crate::core::db::PackedRange {
+                                left: i128::from(*left),
+                                right: i128::from(*right),
+                            })
+                            .collect(),
+                    },
+                };
+                self.vpi_typespec(table, &base, Some(naming), 1)?
+            }
+            None => {
+                let base = self.vpi_integral_typespec(
+                    table,
+                    ranges,
+                    width,
+                    metadata.signed,
+                    metadata.two_state,
+                    None,
+                    0,
+                )?;
+                table.intern(base)
+            }
+        };
         let enum_consts = metadata
             .members
             .iter()
@@ -695,7 +742,8 @@ impl Codegen<'_> {
         let union = layout.kind == AggregateKind::UnpackedUnion;
         rows.push(IrVpiObject {
             kind: IrVpiObjectKind::Record,
-            var_kind: if union {
+            // An unpacked tagged union is a union var too (37.17, 37.24).
+            var_kind: if union || layout.kind == AggregateKind::TaggedUnion {
                 IrVpiVarKind::Union
             } else {
                 IrVpiVarKind::Struct

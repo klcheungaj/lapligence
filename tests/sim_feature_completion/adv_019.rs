@@ -37,6 +37,28 @@ fn typespec_trees_name_typedefs_ranges_members_and_enum_constants() {
     );
 }
 
+/// FIN-001 V3 family (d): `vpiPacked` of packed and unpacked tagged
+/// unions; chandle typespecs of typedefs, members, variables, properties,
+/// formals and calls; void typespecs of tagged union members; the typedef
+/// names of enum base types.
+#[test]
+fn typespec_kinds_print_their_trees() {
+    let directory = sim_harness::TempDir::new("adv019-kinds").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "typespec_kinds", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "typespec_kinds",
+        include_str!("../fixtures/sim/feature_completion/adv_019/typespec_kinds.out"),
+        &[
+            "--define-system-task",
+            "task $typespec_kinds()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 #[test]
 fn structure_and_union_members_read_watch_and_write_their_fields() {
     let directory = sim_harness::TempDir::new("adv019-members").expect("temporary directory");
@@ -545,6 +567,7 @@ const NO_LINE: &[(&str, Option<&[&str]>, &str)] = &[
     ("vpiBitTypespec", None, "a type without a typedef"),
     ("vpiLogicTypespec", None, "a type without a typedef"),
     ("vpiArrayTypespec", None, "a type without a typedef"),
+    ("vpiVoidTypespec", None, "a type without a typedef"),
 ];
 
 /// The typespecs whose ranges may lack a line: an enum's base type or a

@@ -1,0 +1,20 @@
+tb.h
+  typespec: vpiChandleTypespec name=(null)
+tb.hn
+  typespec: vpiChandleTypespec name=ch_t
+    alias: vpiChandleTypespec name=(null)
+tb.en
+  typespec: vpiEnumTypespec name=en_t
+    base: vpiBitTypespec name=nib_t
+tb.ei
+  typespec: vpiEnumTypespec name=ei_t
+    base: vpiIntTypespec name=(null)
+tb.vp
+  typespec: vpiUnionTypespec name=vp_t packed=1 tagged=1
+    member Invalid
+      typespec: vpiVoidTypespec name=(null)
+    member Valid
+      typespec: vpiBitTypespec name=(null)
+property vif virtual=1
+  typespec: NULL level=3
+done 5

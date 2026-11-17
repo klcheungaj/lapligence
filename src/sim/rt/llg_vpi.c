@@ -10281,7 +10281,8 @@ static int static_variable_slot(const llg_vpi_slot_t* slot,
     }
 }
 
-/* vpiPacked of a struct/union typespec; unknown for a tagged union. */
+/* vpiPacked of a struct/union typespec; unknown only when the model
+ * recorded neither flag. */
 static PLI_INT32 packed_property(const llg_vpi_typespec_t* typespec) {
     if (!is_aggregate_typespec(typespec) ||
         !(typespec->flags & (LLG_VPI_TS_PACKED | LLG_VPI_TS_UNPACKED)))
@@ -10982,6 +10983,8 @@ static const char* type_name(int type) {
         case vpiShortIntTypespec: return "vpiShortIntTypespec";
         case vpiIntTypespec: return "vpiIntTypespec";
         case vpiStringTypespec: return "vpiStringTypespec";
+        case vpiChandleTypespec: return "vpiChandleTypespec";
+        case vpiVoidTypespec: return "vpiVoidTypespec";
         case vpiEnumTypespec: return "vpiEnumTypespec";
         case vpiEnumConst: return "vpiEnumConst";
         case vpiIntegerTypespec: return "vpiIntegerTypespec";

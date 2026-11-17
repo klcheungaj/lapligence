@@ -84,6 +84,7 @@ pub(super) fn render_vpi_dynamic(
                     typespec = ts.map_or(0, |ts| ts + 1);
                 }
                 IrVpiShape::Real { shortreal: short } => shortreal = *short,
+                IrVpiShape::Chandle { typespec: ts } => typespec = ts.map_or(0, |ts| ts + 1),
                 IrVpiShape::Class { class: layout } => class = layout.map_or(0, |layout| layout + 1),
                 IrVpiShape::Builtin { kind } => builtin = kind.c_code(),
                 IrVpiShape::Container {
@@ -117,7 +118,6 @@ pub(super) fn render_vpi_dynamic(
                     element = *shape;
                 }
                 IrVpiShape::String
-                | IrVpiShape::Chandle
                 | IrVpiShape::Event
                 | IrVpiShape::VirtualInterface
                 | IrVpiShape::Record { .. }

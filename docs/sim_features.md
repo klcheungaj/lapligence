@@ -2971,13 +2971,17 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiBitVar`, `vpiByteVar`, `vpiTimeVar`, ...), unpacked arrays and their
   elements, bit-selects and part-selects. Typespecs (ADV-019, 37.23):
   `vpiTypespec` of variables, nets, parameters and members gives logic, bit,
-  integer-atom, time, real, string, enum, struct, union, packed array and
-  array typespecs (fixed, dynamic, queue and associative, with
+  integer-atom, time, real, string, chandle (also of class properties,
+  structure members and typedefs), void (tagged union members), enum,
+  struct, union, packed array and array typespecs (A19-D90; a reference
+  object has none, as 1800-2009 defines no interface typespec) (fixed, dynamic, queue and associative, with
   `vpiArrayType` and `vpiIndexTypespec`, A19-D60) with `vpiName` (the
   typedef name), `vpiTypedefAlias`,
-  `vpiElemTypespec` (one dimension at a time), `vpiBaseTypespec`, `vpiRange`
+  `vpiElemTypespec` (one dimension at a time), `vpiBaseTypespec` (named by
+  the base type's typedef), `vpiRange`
   with `vpiLeftRange`/`vpiRightRange`, `vpiTypespecMember`, `vpiEnumConst`
-  (name and value), `vpiPacked`, `vpiTagged` and `vpiVector`; structure and
+  (name and value), `vpiPacked` (of tagged unions too), `vpiTagged` and
+  `vpiVector`; structure and
   union members (37.24) are `vpiMember` objects with `vpiStructUnionMember`,
   `vpiParent`, `vpi_handle_by_name` paths (`tb.s.f`, `tb.arr[1].f`) and
   member values, writes and `cbValueChange`, packed or unpacked, nested and

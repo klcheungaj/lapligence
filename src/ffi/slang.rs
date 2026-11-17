@@ -665,6 +665,8 @@ pub struct TypeRange {
     pub kind: TypeRangeKind,
 }
 
+/// A field of a structure or union type; an enum type has one unnamed
+/// member instead, its base type with the typedef the declared base names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeMember {
     pub name: String,

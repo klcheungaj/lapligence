@@ -84,6 +84,18 @@ module tb;
   typedef struct { int k; int fa [0:1]; string ms; int mq[$]; } mrec_t;
   typedef pk_t [1:0] pka_t;
   typedef enum logic [1:0] {lo_e, mid_e, hi_e} level_t;
+  // Packed and unpacked tagged unions (7.3.2): vpiPacked follows the
+  // declaration, and a void member has a void typespec (37.23).
+  typedef union tagged packed { void tv; bit [3:0] ta; bit [3:0] tb; } tg_t;
+  typedef union tagged { int ti; real tr; } tgu_t;
+  // A typedef of chandle and a structure with a chandle member: chandle
+  // typespecs with a name and an alias, and as a typespec member (37.23).
+  typedef chandle ch_t;
+  typedef struct { ch_t mh; int mi; } chrec_t;
+  // An enum whose base type is a typedef: its base typespec is named
+  // (37.23 detail 1).
+  typedef bit [1:0] two_t;
+  typedef enum two_t {t0, t1} tenum_t;
   class Packet;
     int id;
     // An event property: a named event of each object (37.25, 37.29).
@@ -153,12 +165,17 @@ module tb;
   color_t c = green;
   pk_t pk = 8'h12;
   pu_t pu = 8'h34;
+  tg_t tg = tagged tb 4'h2;
+  tgu_t tgu;
   rec_t rec;
   logic [1:0][3:0] pa = 8'h56;
   pka_t pka = 16'h789a;
   logic [3:0] mem [0:3];
   string s = "hi";
   chandle ch = null;
+  ch_t chn = null;
+  chrec_t chr;
+  tenum_t te = t1;
   Packet p;
   Square sq;
   int da[];
