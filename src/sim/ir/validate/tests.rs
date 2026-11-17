@@ -2123,7 +2123,7 @@ fn sequence_joins_need_one_fork_an_exit_and_one_action_per_edge() {
 #[test]
 fn clocking_drive_cycle_counts_and_instance_dispatch_are_checked() {
     let mut model = valid_model();
-    model.clocking_history = true;
+    model.clocking_history.insert("sig".to_owned());
     let drive = |cycles: IrExpr| IrStmt::ClockingDrive {
         lhs: IrLhs::Whole(0),
         rhs: packed_const(1, 1),
@@ -2159,10 +2159,11 @@ fn clocking_drive_cycle_counts_and_instance_dispatch_are_checked() {
     );
 }
 
-/// The runtime records current-slot edge history only for models that
-/// declare a reader, so every reader requires the declaration.
+/// The runtime records current-slot edge history only for the storage the
+/// model registers, so every reader requires its signal's registration, and
+/// every registration names active packed storage.
 #[test]
-fn clocking_history_readers_require_the_model_flag() {
+fn clocking_history_readers_require_their_signals_registered() {
     let mut model = valid_model();
     let drive = IrStmt::ClockingDrive {
         lhs: IrLhs::Whole(0),
@@ -2181,14 +2182,22 @@ fn clocking_history_readers_require_the_model_flag() {
         assert!(
             error
                 .detail()
-                .contains("requires the model's clocking history"),
+                .contains("requires the model's clocking history of its signal"),
             "{error:?}"
         );
     }
-    model.clocking_history = true;
+    model.clocking_history.insert("sig".to_owned());
     for statement in [&drive, &wait, &pulse] {
         model.validate_stmt(statement, None).unwrap();
     }
+    model.clocking_history.insert("missing".to_owned());
+    let error = model.validate().unwrap_err();
+    assert!(
+        error
+            .detail()
+            .contains("a clocking history source must name active packed storage"),
+        "{error:?}"
+    );
 }
 
 #[test]

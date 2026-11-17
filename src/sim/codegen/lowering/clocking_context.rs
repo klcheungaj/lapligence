@@ -60,6 +60,20 @@ fn constant_select_base(base: &IrExpr) -> Option<i128> {
 }
 
 impl<'a> Codegen<'a> {
+    /// Registers the signal events of a clocking drive or cycle wait as edge
+    /// history the runtime keeps: the reader may ask, after its clocking
+    /// event's signal changed, whether that change happened in this slot.
+    /// Named events answer from their own triggered state and need none.
+    pub(super) fn read_clocking_history(&mut self, specs: &[(IrWaitSrc, IrEdge)]) {
+        for (source, _) in specs {
+            if let IrWaitSrc::Sig(name) = source {
+                if !self.model.clocking_history.contains(name) {
+                    self.model.clocking_history.insert(name.clone());
+                }
+            }
+        }
+    }
+
     pub(super) fn sampled_signal_of(&self, id: NodeId) -> Option<&SignalInfo> {
         let id = self.db.resolve_clocking_member(id).unwrap_or(id);
         self.clocking_samples.get(&id).map(|sample| &sample.sample)

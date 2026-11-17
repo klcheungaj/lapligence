@@ -184,19 +184,21 @@ static int ev_matches_changed(sv4_t old, sv4_t new, int kind) {
 }
 
 /* Publication precedes callbacks and wait registration. Clocking drives and
- * ##0 may first query a descriptor AFTER its edge, so even automatic locals
- * must be recorded without a current subscriber. Ordinary waits use snapshots,
- * sampled inputs use sampling.c, and named-event .triggered uses event objects;
- * none of those reads this table. Entries with no sequence consumer die at time
- * advance. Registered sequence clocks keep cumulative directional ticks because
- * same-clock delays subtract ticks across slots; their occurrence flags expire.
- * Scoped descriptors are forgotten at final owner release (not lexical exit:
- * an NBA may still retain them). External owners must forget before freeing or
- * reusing a descriptor. Equality is exact pointer identity, never payload or
- * ordering of unrelated pointers. The list owns entries; the index borrows them.
- * Occurrence readers are clocking drives, ##0 cycle waits and assertion clock
- * pulses; a model without them calls llg_rt_skip_clocking_history and then only
- * the registered sequence clocks are recorded, for their tick counts.
+ * ##0 may first query a descriptor AFTER its edge, so a descriptor they name
+ * is registered before any process runs (llg_rt_clocking_history_signal) and
+ * recorded without a current subscriber. Only registered descriptors are
+ * recorded: those occurrence readers name, and the sequence, sampled-value
+ * and assertion clocks that register themselves. Ordinary waits use
+ * snapshots, sampled inputs use sampling.c, and named-event .triggered uses
+ * event objects; none of those reads this table. Entries persist until their
+ * owner forgets them; occurrence flags are stamped with their time step, so
+ * they expire without a pass at time advance. Registered sequence clocks keep
+ * cumulative directional ticks because same-clock delays subtract ticks
+ * across slots. Scoped descriptors are forgotten at final owner release (not
+ * lexical exit: an NBA may still retain them). External owners must forget
+ * before freeing or reusing a descriptor. Equality is exact pointer identity,
+ * never payload or ordering of unrelated pointers. The list owns entries; the
+ * index borrows them.
  */
 enum {
     CLOCKING_ANY = 1u,
@@ -299,14 +301,9 @@ LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_value_leaf_forget(void* leaf) {
     llg_clocking_forget_signal((sv4_t*)leaf);
 }
 
+// Every entry is registered and outlives the time step; only the index is
+// compacted here, after forgotten scoped descriptors left tombstones.
 static void clocking_advance_time(void) {
-    llg_clocking_edge_t* edge = g.clocking_edges;
-    while (edge) {
-        llg_clocking_edge_t* next = edge->next;
-        if (edge->keep_ticks) edge->occurred = 0;
-        else llg_clocking_forget_signal(edge->signal);
-        edge = next;
-    }
     if (!g.clocking_count) {
         free(g.clocking_index);
         g.clocking_index = NULL;
@@ -315,18 +312,18 @@ static void clocking_advance_time(void) {
     } else {
         size_t capacity = CLOCKING_INDEX_INITIAL_CAPACITY;
         while (g.clocking_count > capacity - capacity / 4) capacity *= 2;
-        /* Bound retained index storage to surviving sequence-clock identities. */
+        /* Bound retained index storage to the surviving registrations. */
         if (capacity != g.clocking_capacity || g.clocking_used != g.clocking_count)
             clocking_index_rebuild(capacity);
     }
 }
 
-void llg_rt_skip_clocking_history(void) {
-    g.clocking_history_skipped = 1;
+void llg_rt_clocking_history_signal(sv4_t* signal) {
+    if (signal) (void)clocking_edge_get(signal);
 }
 
-/* Without history consumers this is one empty-table test per publication
- * instead of an entry allocation, index growth and a time-advance free. */
+/* A publication of unregistered storage is one empty-table test or one
+ * index probe. */
 static void clocking_edge_note(llg_clocking_edge_t* edge, sv4_t old, sv4_t value) {
     if (edge->time != g.now) edge->occurred = 0;
     edge->time = g.now;
@@ -344,10 +341,7 @@ static void clocking_edge_note(llg_clocking_edge_t* edge, sv4_t old, sv4_t value
 }
 
 static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
-    if (!signal) return;
-    llg_clocking_edge_t* edge = g.clocking_history_skipped
-        ? find_clocking_edge(signal)
-        : clocking_edge_get(signal);
+    llg_clocking_edge_t* edge = find_clocking_edge(signal);
     if (edge) clocking_edge_note(edge, old, value);
 }
 
@@ -1033,8 +1027,7 @@ static llg_wait_source_t* change_begin(sv4_t* target, const sv4_t* before, int e
         (eager && (dependency_bindings_waited(target, LLG_DEPENDENCY_BINDING_PACKED) ||
                    fixed_array_contents_waited(target))))
         return change_open_packed(source, target, before);
-    llg_clocking_edge_t* edge = g.clocking_history_skipped ? find_clocking_edge(target)
-                                                           : clocking_edge_get(target);
+    llg_clocking_edge_t* edge = find_clocking_edge(target);
     if (edge && !edge->change) {
         llg_change_t* change = change_take(LLG_CHANGE_ROWLESS);
         change->key = target;

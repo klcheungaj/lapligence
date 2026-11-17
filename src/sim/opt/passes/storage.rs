@@ -178,7 +178,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         vpi_delays_writable: _,
         vpi_delay_select: _,
         random: _,
-        clocking_history: _,
+        clocking_history,
         rand_problems: _,
         // Free variables are signals the solve callbacks write and the
         // assertions read; both are walked with their owners.
@@ -195,6 +195,10 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         access
             .receiver
             .expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
+    }
+    // Startup registers each clocking history source by address.
+    for name in clocking_history {
+        mark_dependency_read(&IrDependency::scalar(name), model, &mut rw);
     }
     // A class-member container or native value is reached through its
     // receiver handle expression.
