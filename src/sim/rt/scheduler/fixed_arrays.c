@@ -546,6 +546,13 @@ void llg_fixed_array_destroy(void* object) {
 struct fixed_publication { sv4_t* target; sv4_t old, value, replacement; };
 struct fixed_transaction { size_t count; struct fixed_publication* cells; llg_fixed_range_t* ranges; sv4_t initial; };
 
+/* A whole-array write leaves the forced bits of a forced cell (an element
+ * force, SV 10.6.2); a forced cell is always materialized. */
+static inline void fixed_publication_keep_forced(struct fixed_publication* entry) {
+    if (g.force_count && llg_is_forced(entry->target))
+        force_keep_forced_bits(entry->target, &entry->value);
+}
+
 static void fixed_transaction_destroy(void* object) {
     struct fixed_transaction* transaction = object;
     for (size_t i = 0; i < transaction->count; ++i) {
@@ -590,6 +597,7 @@ static int fixed_array_copy_in_place(llg_fixed_array_t* dst, const llg_fixed_arr
         entry->old = sv4_clone(cell.value);
         entry->value = sv4_cast(*value, width, sign);
         if (two_state) sv4_replace(&entry->value, sv4_to_two_state(entry->value));
+        fixed_publication_keep_forced(entry);
         entry->replacement = sv4_clone(&entry->value);
         ++changed;
     }
@@ -1013,6 +1021,7 @@ static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_ar
         entry->target = cell.value;
         entry->old = sv4_clone(cell.value);
         entry->value = fixed_read(snapshot, cell.index - origin);
+        fixed_publication_keep_forced(entry);
         entry->replacement = sv4_clone(&entry->value);
     }
     int default_changed = !sv4_same(dst->initial, prepared->initial) || dst->ranges || prepared->ranges;

@@ -1482,15 +1482,19 @@ impl Validator<'_> {
                 self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
                 self.validate_expr(value, formals, &format!("{path}.value"))?;
                 let target_width = self.lhs_packed_width(lhs);
-                let target_real = matches!(
-                    lhs,
-                    IrLhs::Whole(index)
-                        if self
-                            .model
-                            .signals
-                            .get(*index)
-                            .is_some_and(|signal| matches!(signal.ty, IrType::Real { .. }))
-                );
+                let target_real = match lhs {
+                    IrLhs::Whole(index) => self
+                        .model
+                        .signals
+                        .get(*index)
+                        .is_some_and(|signal| matches!(signal.ty, IrType::Real { .. })),
+                    IrLhs::ArrayElem {
+                        arr,
+                        elem_sel: IrElemSel::Whole,
+                        ..
+                    } => self.model.arrays.get(*arr).is_some_and(|array| array.real),
+                    _ => false,
+                };
                 if target_real != value.is_real()
                     || (!value.is_real() && target_width != Some(value.width))
                 {

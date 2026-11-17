@@ -3776,6 +3776,12 @@ typedef struct {
 typedef void (*llg_force_eval_fn)(sv4_t* out);
 typedef void (*llg_force_real_eval_fn)(double* out);
 
+// A part may name an array cell (an element of a static unpacked array, or a
+// member of one, selected when the statement executes). A NULL target is an
+// element the statement's index selected none of (SV 7.4.6): the part is
+// skipped, and a statement left without parts does nothing. A part may cover
+// only some bits of a variable (a member of an element held as one packed
+// image); writes then change only the uncovered bits.
 void llg_force_expr_parts(const llg_force_part_t* parts, int n_parts,
                           uint32_t stream_slice, int stream_right_to_left,
                           llg_force_eval_fn eval,

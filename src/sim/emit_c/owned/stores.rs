@@ -114,7 +114,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         Ok(result)
     }
 
-    fn array_cell(
+    pub(super) fn array_cell(
         &mut self,
         array: usize,
         indices: &[IrExpr],

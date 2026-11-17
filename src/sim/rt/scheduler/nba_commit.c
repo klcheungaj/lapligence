@@ -67,11 +67,14 @@ static void apply_nba_target(llg_nba_t* next) {
             real_write(next->real_target, next->real_value);
     } else {
         sv4_t* target = next->target;
+        int forced = 0;
         if (next->net_target) {
             if (next->net_slot < 0 || next->net_slot >= next->net_target->n_drivers)
                 return;
             target = next->net_target->drivers[next->net_slot];
-        } else if (llg_is_forced(target)) return;
+        } else if (llg_is_forced(target)) {
+            forced = 1;
+        }
         if (!target) return;
         if (next->tag_view && !nba_tag_commit_valid(next->tag_view, target)) return;
         sv4_t value = (next->has_mask || next->has_range)
@@ -88,7 +91,9 @@ static void apply_nba_target(llg_nba_t* next) {
                 sv4_select_plan_set(&value, &plan, next->value);
             }
         }
+        // Bits a force leaves uncovered still take the update (10.6.2).
         if (next->net_target) llg_net_write(next->net_target, next->net_slot, value);
+        else if (forced) force_write_unforced(target, value);
         else sig_write(target, value);
         sv4_destroy(&value);
     }

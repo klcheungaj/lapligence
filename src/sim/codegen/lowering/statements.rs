@@ -489,6 +489,24 @@ fn normalize_force_lhs(model: &IrModel, lhs: IrLhs) -> IrLhs {
     }
 }
 
+/// A record variable held as one variable signal per leaf, concatenated.
+fn record_leaves(model: &IrModel, lhs: &IrLhs) -> bool {
+    let IrLhs::Stream { parts, .. } = lhs else {
+        return false;
+    };
+    !parts.is_empty()
+        && parts.iter().all(|(part, _)| match part {
+            IrLhs::Whole(index) | IrLhs::Part(index, ..) => {
+                model.signals.get(*index).is_some_and(|signal| {
+                    signal.net_driver.is_none()
+                        && signal.net_alias.is_empty()
+                        && !matches!(signal.ty, IrType::Real { .. })
+                })
+            }
+            _ => false,
+        })
+}
+
 /// The electrical signal of the net-array cell at constant `indices`.
 fn net_array_cell(model: &IrModel, array: usize, indices: &[IrExpr]) -> Option<usize> {
     let array = model.arrays.get(array)?;
@@ -528,6 +546,35 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
             })?;
             Ok(matches!(signal.ty, IrType::Real { .. }))
         }
+        // An element of a member array of a record held as one signal per
+        // leaf, selected by a run-time index: the emitter finds the leaf.
+        IrLhs::PackedSelect { target, .. } if record_leaves(model, target) => Ok(false),
+        // A member of an element held as one packed image.
+        IrLhs::PackedSelect { target, .. }
+            if matches!(
+                target.as_ref(),
+                IrLhs::ArrayElem {
+                    elem_sel: IrElemSel::Whole,
+                    ..
+                }
+            ) =>
+        {
+            validate_force_lhs(model, target, path).and_then(|real| {
+                if real {
+                    Err(format!(
+                        "force/release target in `{path}` selects inside a real element"
+                    ))
+                } else {
+                    Ok(false)
+                }
+            })
+        }
+        // A member reached through a native value access: an element of an
+        // array of records with a real, string, handle, event or container
+        // member, whose members have no fixed address.
+        IrLhs::WholeRef { addr, .. } if addr.starts_with("&_llg_access_") => Err(format!(
+            "force/release of a member of an element of an array of records in `{path}` is not supported: a record with a real, string, class-handle, chandle, event or container member is a native value whose members are not force targets yet; records of integral members are"
+        )),
         IrLhs::PackedSelect { .. } | IrLhs::TaggedSelect { .. } | IrLhs::WholeRef { .. } => Err(
             format!("force/release target in `{path}` does not have persistent canonical storage"),
         ),
@@ -564,9 +611,30 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
         IrLhs::IdxPart(..) => Err(format!(
             "force/release indexed part-select in `{path}` requires a constant net part-select"
         )),
-        IrLhs::ArrayElem { .. } => Err(format!(
-            "force/release of an unpacked-array element in `{path}` is not supported"
-        )),
+        // An element of a static unpacked array variable is a singular
+        // variable (SV 6.4, 10.6.2): its cell, or a member of it at constant
+        // bits, is the force target, found when the statement executes.
+        IrLhs::ArrayElem { arr, elem_sel, .. } => {
+            let array = model.arrays.get(*arr).ok_or_else(|| {
+                format!("force target array {arr} is out of bounds in `{path}`")
+            })?;
+            if array.is_net() || array.activation {
+                return Err(format!(
+                    "force/release of an element of `{}` in `{path}` is not supported: only elements of static unpacked array variables are force targets",
+                    array.hdl_name
+                ));
+            }
+            match elem_sel {
+                IrElemSel::Whole => Ok(array.real),
+                // A member of an element held as one packed image (an
+                // unpacked structure of integral members).
+                IrElemSel::PackedChain(_) if !array.real => Ok(false),
+                _ => Err(format!(
+                    "force/release of a bit- or part-select of an element of `{}` in `{path}` is not supported: it is a select of a variable (IEEE 1800-2009 10.6.2)",
+                    array.hdl_name
+                )),
+            }
+        }
         IrLhs::Stream {
             parts,
             slice,
@@ -606,6 +674,11 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
 fn force_lhs_signed(model: &IrModel, lhs: &IrLhs) -> bool {
     match lhs {
         IrLhs::Whole(index) => model.signal(*index).ty.signed(),
+        IrLhs::ArrayElem {
+            arr,
+            elem_sel: IrElemSel::Whole,
+            ..
+        } => model.array(*arr).signed,
         IrLhs::WholeRef { signed, .. } => *signed,
         IrLhs::Ref { signed, .. } => *signed,
         _ => false,

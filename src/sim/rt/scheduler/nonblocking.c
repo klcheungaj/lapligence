@@ -729,8 +729,12 @@ void llg_dyn_value_nba_after(llg_dyn_value_array_t* target, sv4_t dst_start,
 
 void llg_ba(sv4_t* target, sv4_t value) {
     // Procedural writes cannot override either a force or a procedural
-    // continuous assignment (LRM 10.6.1/10.6.2).
-    if (llg_is_forced(target)) return;
+    // continuous assignment (LRM 10.6.1/10.6.2); bits a force leaves
+    // uncovered still take the write.
+    if (llg_is_forced(target)) {
+        force_write_unforced(target, value);
+        return;
+    }
     sig_write(target, value);
 }
 

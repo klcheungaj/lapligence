@@ -1,0 +1,8 @@
+t1 forced mem[1]: 0 99 20 30
+t2 after i=2: 0 99 20 30
+t3 after writes 5,6: 0 99 6 30
+t4 after release mem[i] i=2: 0 99 6 30
+t5 after write mem[1]=7: 0 99 6 30
+t6 after release mem[1], write 8: 0 8 6 30
+t7 index out of range: 0 8 6 30
+done
