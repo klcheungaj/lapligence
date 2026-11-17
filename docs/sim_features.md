@@ -2367,8 +2367,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   evidence. A call reaches generic VPI dispatch, so a registered VPI
   application provides it (SV §36.3.2); without one the
   [runtime bridge](../src/sim/rt/llg_vpi.c) stops the run at startup with
-  `llg: VPI error: no VPI registration for `$reset_count` (called at
-  <file>:<line>)`, never a no-op. A `string`-typed formal (such as `$input`'s
+  `VPI error: no VPI registration for `$reset_count``, located at the call
+  (`<file>:<line>`), never a no-op. A `string`-typed formal (such as `$input`'s
   file name) is rejected at compile time instead, naming the argument's
   position. Pinned, with
   [`builtin_inventory.tsv`](../tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv)

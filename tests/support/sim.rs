@@ -293,22 +293,26 @@ pub(crate) fn canonical_message(line: &str) -> String {
     out
 }
 
-/// `file:line:col` with the file reduced to its name; a `` (`line ...)``
-/// suffix is kept.
+/// `file:line:col` or `file:line` with the file reduced to its name; a
+/// `` (`line ...)`` suffix is kept.
 #[allow(dead_code)]
 pub(crate) fn short_location(location: &str) -> String {
     let (physical, logical) = match location.find(" (`line ") {
         Some(at) => location.split_at(at),
         None => (location, ""),
     };
-    let mut parts = physical.rsplitn(3, ':');
-    let (Some(col), Some(line), Some(file)) = (parts.next(), parts.next(), parts.next()) else {
+    let numeric = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    let Some((rest, last)) = physical.rsplit_once(':').filter(|(_, last)| numeric(last)) else {
         return location.to_owned();
+    };
+    let (file, position) = match rest.rsplit_once(':') {
+        Some((file, line)) if numeric(line) => (file, format!("{line}:{last}")),
+        _ => (rest, last.to_owned()),
     };
     let name = Path::new(file)
         .file_name()
         .map_or(file.to_owned(), |name| name.to_string_lossy().into_owned());
-    format!("{name}:{line}:{col}{logical}")
+    format!("{name}:{position}{logical}")
 }
 
 /// Whether `stderr` has a message with id `id` (`SIM-009`) whose location
@@ -410,14 +414,15 @@ pub(crate) fn is_listed_warning(message: &llg::core::report::ParsedMessage) -> b
         || (id == "SIM-011" && !message.text.starts_with("waveform: "))
 }
 
-/// The texts of the [`is_listed_warning`] messages of `stderr`, in order.
+/// The [`is_listed_warning`] messages of `stderr`, in order, as
+/// [`located_text`] shows them (`file.sv:l:c text`, or the text alone).
 #[allow(dead_code)]
 pub(crate) fn listed_warnings(stderr: &str) -> Vec<String> {
     stderr
         .lines()
         .filter_map(llg::core::report::parse)
         .filter(is_listed_warning)
-        .map(|message| message.text)
+        .map(|message| located_text(&message))
         .collect()
 }
 

@@ -7,7 +7,6 @@
 //! backends; `.v` fixtures also run in both editions.
 use super::{sim_cli, sim_harness};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 use std::process::Output;
 
 const SUITE: &str = "feature_completion/adv_026";
@@ -584,25 +583,14 @@ fn registrations_of_sreadmem_follow_the_builtin_override_policy() {
             );
         },
     );
-    // The resolved native spelling llg reports: on Windows `SUITE`'s `/`
-    // would stay in a joined path.
-    let source = llg::ffi::platform::canonicalize(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/sim")
-            .join(SUITE)
-            .join("neg_sreadmem_override.sv"),
-    )
-    .expect("resolve the fixture");
-    let diagnostic = format!(
-        "ERROR: [SIM-016] VPI error: a VPI application registers `$sreadmemh`, which llg implements as a \
-         built-in (called at {}:7); llg does not support overriding built-in system tasks and \
-         functions (IEEE 1800-2009 36.3.2)",
-        source.display()
-    );
+    let diagnostic = "ERROR: neg_sreadmem_override.sv:7: [SIM-016] VPI error: a VPI application \
+                      registers `$sreadmemh`, which llg implements as a built-in; llg does not \
+                      support overriding built-in system tasks and functions (IEEE 1800-2009 \
+                      36.3.2)";
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_sreadmem_override",
-        &diagnostic,
+        diagnostic,
         &["--dpi-lib", &vpi],
     );
     let Some(plugin) = super::sim_040::plugin_library(SUITE, &directory, "sreadmem_override", &[])
@@ -622,7 +610,7 @@ fn registrations_of_sreadmem_follow_the_builtin_override_policy() {
         assert_eq!(output.status.code(), Some(1), "plugin: {seen}");
         assert!(output.stdout.is_empty(), "plugin: {seen}");
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains(&diagnostic),
+            sim_harness::mentions(&String::from_utf8_lossy(&output.stderr), diagnostic),
             "plugin: {seen}"
         );
     }

@@ -206,7 +206,7 @@ fn static_initializer_stop_messages(
 ) -> [String; 2] {
     [
         format!(
-            "{fixture}.sv:{location}: {what} in function '{subroutine}' schedules work after the call returns, during the static initializer of '{variable}' at "
+            "{fixture}.sv:{location} {what} in function '{subroutine}' schedules work after the call returns, during the static initializer of '{variable}' at "
         ),
         format!(
             "{fixture}.sv:{declared}; a function may do this only when its calling thread was created by an initial or always procedure or a fork of one (SV 13.4.4)"

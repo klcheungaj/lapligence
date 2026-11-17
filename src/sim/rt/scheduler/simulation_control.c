@@ -208,7 +208,7 @@ void llg_rt_static_init_leave(void) {
 void llg_rt_static_effect(const char* what, const char* location,
                           const char* subroutine) {
     llg_rt_mark_failed();
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: %s in function '%s' schedules work after the call returns, during the static initializer of '%s' at %s; a function may do this only when its calling thread was created by an initial or always procedure or a fork of one (SV 13.4.4)", location, what, subroutine, llg_static_init_variable, llg_static_init_location);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, location, "%s in function '%s' schedules work after the call returns, during the static initializer of '%s' at %s; a function may do this only when its calling thread was created by an initial or always procedure or a fork of one (SV 13.4.4)", what, subroutine, llg_static_init_variable, llg_static_init_location);
     fflush(stderr);
     llg_rt_skip_finals();
     llg_rt_fatal_typed(0, "deferred statement during static initialization",
