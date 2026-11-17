@@ -243,14 +243,17 @@ impl Codegen<'_> {
                 _ => return Ok(None),
             },
             // `r.e[k].a[1]`: a constant element of a member array below the
-            // selected record element.
+            // selected record element. A run-time index below a constant
+            // one (`r.m[1].a[k]`) is itself the select.
             NodeKind::Expr(ExprKind::ArraySelect { indices, .. })
                 if self.db.array_select_path(node).is_some_and(|(owner, _)| {
                     matches!(
                         self.kind(owner),
                         NodeKind::Expr(ExprKind::ArraySelect { .. })
                     )
-                }) =>
+                }) && indices
+                    .iter()
+                    .all(|index| self.eval_bound_i128(*index).is_ok()) =>
             {
                 let Some((owner, members)) = self.db.array_select_path(node) else {
                     return Ok(None);
@@ -731,6 +734,19 @@ impl Codegen<'_> {
                         .map(AggregatePathPart::Member)
                         .collect::<Vec<_>>(),
                 ))
+            }
+            // A member array of a constant element (`o.m[1].a[k]`): the
+            // array node alone names no element of `m`.
+            (None, Some((owner, members)))
+                if matches!(
+                    self.kind(owner),
+                    NodeKind::Expr(ExprKind::ArraySelect { .. })
+                ) =>
+            {
+                self.unpacked_path_for_expr(owner).map(|(root, mut path)| {
+                    path.extend(members.iter().cloned().map(AggregatePathPart::Member));
+                    (root, path)
+                })
             }
             (None, _) => self.unpacked_path_for_expr(base),
         };

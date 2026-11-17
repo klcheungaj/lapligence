@@ -281,6 +281,24 @@ fn run_time_record_elements_bind_ref_formals() {
     sim_cli::run_case_backend_parity(SUITE, "record_ref_element_large", expected, &[], &[]);
 }
 
+/// FIN-001 R3: a run-time index below a constant one (`o.m[1].a[k]`) binds
+/// a record `ref` formal and selects an operand, in both storage forms.
+#[test]
+fn run_time_elements_below_a_constant_element_bind_ref_formals() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_element_select_nested.out"
+    );
+    for size in ["N=2", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_ref_element_select_nested",
+            expected,
+            &["-D", size],
+            &[],
+        );
+    }
+}
+
 /// Limits of the leaf form, which lowers a call once per element: a record
 /// with a member array of 16 cells or more selects a cell instead and has
 /// neither limit.

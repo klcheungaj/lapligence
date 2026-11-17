@@ -1895,7 +1895,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   specialization per element under a decision tree in statement calls; a task
   that waits on the formal stops the run when the index selects no element,
   at any array size
-  ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  ([record_ref_element_select](../tests/fixtures/sim/feature_completion/sim_008/readme.md)),
+  also below a constant element select (`o.m[1].a[k]`, `record_ref_element_select_nested`).
   So does a task that waits on a `ref` formal bound to an index-selected element
   of a fixed array, queue or dynamic array of records, packed structures,
   integers, reals or strings (`ref_wait_unselected_*`, decision S13-D6); a

@@ -554,8 +554,8 @@ a run-time selection among more than 4,096 leaves of a module record
 (`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
 record (`NATIVE_RECORD_SELECT_LIMIT`); as a `ref` actual, a member of a subroutine
 record whose type has container members, and a run-time-indexed record element
-of a module, static or block record bound by a call in an expression, below a
-constant index (`o.m[1].a[k]`), or among more than 256 elements or combinations
+of a module, static or block record bound by a call in an expression, or
+among more than 256 elements or combinations
 (a statement call lowers once per element, `tr(o.e[i])`; a task that waits on
 the formal stops the run if the index selects no element); an event control on
 a member of a native record `ref` formal when the actual is a subroutine record
