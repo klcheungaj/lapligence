@@ -74,7 +74,8 @@ pub(in crate::sim::codegen) struct RecordRefSelect {
     pub(in crate::sim::codegen) formal: NodeId,
     /// One pin per element, with its declared index.
     pub(in crate::sim::codegen) pins: Vec<(i32, RecordRefPin)>,
-    index: NodeId,
+    /// The run-time index expression.
+    pub(in crate::sim::codegen) index: NodeId,
     hoist: bool,
 }
 

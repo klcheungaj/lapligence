@@ -23,8 +23,9 @@
 //! (`EmitCtx::lower_per_record_element`). A function called inside an
 //! expression has no statement of its own: an assignment without timing
 //! control, a `return` or a system-task statement around it lowers once per
-//! element instead, with the index taken when the statement starts, before
-//! its other operands; such a statement evaluates its expressions once
+//! element instead, with the index taken when the statement starts; such a
+//! statement evaluates its expressions once, and one with an operand to the
+//! left of the actual that may write the index rejects
 //! (`EmitCtx::statement_record_ref_select`). Specializations are shared, so
 //! code grows with the elements and calls of each site, bounded by
 //! `NATIVE_RECORD_SELECT_LIMIT`.

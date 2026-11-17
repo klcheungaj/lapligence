@@ -390,6 +390,17 @@ impl EmitCtx<'_, '_> {
                         if let Some(select) =
                             self.cg.record_ref_select(&self.path, &formals, &bound)?
                         {
+                            if let Some(before) = self.effect_before(h, select.source, select.index)
+                            {
+                                let node = self.cg.node(before);
+                                return Err(format!(
+                                    "run-time selected record element as a `ref` actual of function `{name}` after a call or an assignment operator at {}:{}:{} in the same statement in `{}` is not supported: the element is chosen when the statement starts; move the earlier operand to a statement of its own (SIM-008)",
+                                    node.file.as_deref().unwrap_or("<unknown>"),
+                                    node.line,
+                                    node.col,
+                                    self.cg.source_path(&self.path)
+                                ));
+                            }
                             return Ok(Some(select));
                         }
                     }
@@ -399,6 +410,154 @@ impl EmitCtx<'_, '_> {
             pending.extend(children.iter().rev().copied());
         }
         Ok(None)
+    }
+
+    /// A call or an assignment operator of statement `h` that starts before
+    /// `actual` in the source, does not enclose it and may write a variable
+    /// its `index` reads: left-to-right evaluation runs it before the index,
+    /// which the statement takes at its start.
+    fn effect_before(&self, h: NodeId, actual: NodeId, index: NodeId) -> Option<NodeId> {
+        let target = self.cg.node(actual);
+        let at = (target.line, target.col);
+        let encloses = |node: NodeId| self.subtree(node).contains(&actual);
+        // An index that has effects of its own reads what they write.
+        let read = self.cg.side_effect_free(index).then(|| {
+            self.subtree(index)
+                .into_iter()
+                .filter_map(|node| match self.cg.kind(node) {
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) => Some(*target),
+                    NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                        refs.first().copied().flatten()
+                    }
+                    _ => None,
+                })
+                .collect::<HashSet<_>>()
+        });
+        let mut pending = self.cg.node(h).children.clone();
+        while let Some(node) = pending.pop() {
+            let start = self.cg.node(node);
+            if Self::is_effect(self.cg.kind(node))
+                && (start.line, start.col) < at
+                && !encloses(node)
+                && read
+                    .as_ref()
+                    .is_none_or(|read| self.may_write(node, read, &mut HashSet::new()))
+            {
+                return Some(node);
+            }
+            pending.extend(self.cg.node(node).children.iter().copied());
+        }
+        None
+    }
+
+    fn is_effect(kind: &NodeKind) -> bool {
+        matches!(
+            kind,
+            NodeKind::FuncCall { .. }
+                | NodeKind::MethodCall { .. }
+                | NodeKind::SysCall { .. }
+                | NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::Assignment
+                        | Operation::PostIncrement
+                        | Operation::PreIncrement
+                        | Operation::PostDecrement
+                        | Operation::PreDecrement,
+                    ..
+                })
+        )
+    }
+
+    /// Every node of the subtree at `node`.
+    fn subtree(&self, node: NodeId) -> Vec<NodeId> {
+        let mut nodes = Vec::new();
+        let mut pending = vec![node];
+        while let Some(next) = pending.pop() {
+            nodes.push(next);
+            pending.extend(self.cg.node(next).children.iter().copied());
+        }
+        nodes
+    }
+
+    /// The variable a selection, member path or reference `node` names.
+    fn storage_root(&self, node: NodeId) -> Option<NodeId> {
+        match self.cg.kind(self.cg.p30_unwrap_cast(node)) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                let first = refs.first().copied().flatten()?;
+                match self.cg.kind(first) {
+                    NodeKind::Expr(_) => self.storage_root(first),
+                    _ => Some(first),
+                }
+            }
+            NodeKind::Expr(
+                ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. },
+            ) => self.storage_root(*base),
+            NodeKind::Expr(_) => {
+                let first = self.cg.node(node).children.first().copied()?;
+                self.storage_root(first)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether effect `node` may write a variable of `read`: an operand that
+    /// names one (an output or `ref` actual, an assignment target, a
+    /// built-in method's receiver), or a subroutine whose body may, through
+    /// the calls it makes. An unresolved callee, one with no body the
+    /// lowering can see, or a virtual method may write anything.
+    fn may_write(&self, node: NodeId, read: &HashSet<NodeId>, seen: &mut HashSet<NodeId>) -> bool {
+        let names = |operand: NodeId| {
+            self.storage_root(operand)
+                .is_some_and(|root| read.contains(&root))
+        };
+        if self
+            .cg
+            .node(node)
+            .children
+            .iter()
+            .any(|child| names(*child))
+        {
+            return true;
+        }
+        let callee = match self.cg.kind(node) {
+            NodeKind::FuncCall { callee: None, .. } => return true,
+            NodeKind::FuncCall {
+                callee: Some(callee),
+                ..
+            } => *callee,
+            // A built-in method writes its receiver, an operand above.
+            NodeKind::MethodCall { callee: None, .. } => return false,
+            NodeKind::MethodCall {
+                callee: Some(callee),
+                ..
+            } => {
+                if self.cg.class_method_virtual_dispatch(node) {
+                    return true;
+                }
+                *callee
+            }
+            _ => return false,
+        };
+        if !seen.insert(callee) {
+            return false;
+        }
+        let Some(body) = self.cg.func_body(callee) else {
+            return true;
+        };
+        self.subtree(body)
+            .into_iter()
+            .any(|inner| match self.cg.kind(inner) {
+                NodeKind::Stmt(StmtKind::Assign { .. }) => self
+                    .cg
+                    .node(inner)
+                    .children
+                    .first()
+                    .is_some_and(|target| names(*target)),
+                kind if Self::is_effect(kind) => self.may_write(inner, read, seen),
+                _ => false,
+            })
     }
 
     /// Lower a call, or a statement holding one in an expression (`lower`),

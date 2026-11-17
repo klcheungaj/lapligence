@@ -559,6 +559,7 @@ follows); as a `ref` actual, a run-time-indexed record element
 of a module, static or block record of fewer than 16 cells bound by a function
 called in a condition, a loop header or another statement that is not an
 assignment without timing control, a `return` or a system-task statement, or
+after an operand of the same statement that may write the index, or
 among more than 256 elements or combinations
 (a call statement, or such a statement around a function call, lowers once per
 element, `tr(o.e[i])`, `x = f(o.e[i])`; a task that waits on
