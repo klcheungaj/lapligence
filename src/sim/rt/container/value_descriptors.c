@@ -36,6 +36,16 @@ static const llg_value_desc_t* llg_value_item_desc(
     return desc->element;
 }
 
+/* An items array is storage generated code writes in place through the
+ * scheduler, so its leaves leave the scheduler's address-keyed state before
+ * the array is freed. Dropping a single leaf keeps its address (an in-place
+ * replacement), so nothing is forgotten there. */
+static void llg_value_item_forget(llg_value_t* item) {
+    if (!item->desc || !llg_value_hooks.forget) return;
+    if (item->desc->kind == LLG_VALUE_PACKED) llg_value_hooks.forget(&item->value.packed);
+    else if (item->desc->kind == LLG_VALUE_REAL) llg_value_hooks.forget(&item->value.real);
+}
+
 static void llg_value_drop(llg_value_t* value) {
     if (!value || !value->desc) return;
     const llg_value_desc_t* desc = value->desc;
@@ -49,8 +59,10 @@ static void llg_value_drop(llg_value_t* value) {
         case LLG_VALUE_AGGREGATE:
         case LLG_VALUE_FIXED_ARRAY:
             if (value->value.items) {
-                for (size_t i = 0; i < desc->item_count; ++i)
+                for (size_t i = 0; i < desc->item_count; ++i) {
+                    llg_value_item_forget(&value->value.items[i]);
                     llg_value_drop(&value->value.items[i]);
+                }
                 free(value->value.items);
             }
             break;

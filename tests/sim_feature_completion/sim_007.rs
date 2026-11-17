@@ -735,3 +735,22 @@ fn a_condition_changes_a_record_element_member() {
         include_str!("../fixtures/sim/feature_completion/sim_007/record_element_member_change.out");
     sim_cli::run_case_backend_parity(SUITE, "record_element_member_change", expected, &[], &[]);
 }
+
+/// Record leaves written through the scheduler and released in the same turn
+/// (an automatic record, a converted temporary, deleted queue and associative
+/// elements) leave the turn's change check before their storage is freed.
+/// The generated-model sanitizer lane (`LLG_CFLAGS='-fsanitize=address,...'`,
+/// gcc and clang) caught each check reading freed memory before.
+#[test]
+fn record_leaves_released_in_a_turn_leave_its_check() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_007/native_leaves_released_in_a_turn.out"
+    );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "native_leaves_released_in_a_turn",
+        expected,
+        &[],
+        &[],
+    );
+}
