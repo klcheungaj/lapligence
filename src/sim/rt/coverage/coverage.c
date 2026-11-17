@@ -214,6 +214,32 @@ static void llg_cov_fatal(const char* message, const char* site) {
     llg_rt_fatal_typed(0, message, NULL, 0, "", site ? site : "");
 }
 
+// Report coverage message `id` at `site`: the lowering's framed site (the
+// scope, the unit separator, then `file:line:col`), a bare scope, or NULL.
+// The position goes in the location field and the scope with the current
+// time in the context, as for a severity task.
+LLG_MSG_PRINTF(3, 4)
+static void llg_cov_report(llg_msg_id_t id, const char* site, const char* fmt, ...) {
+    va_list args;
+    llg_report_t text;
+    llg_report_t out;
+    llg_report_init(&text);
+    llg_report_init(&out);
+    va_start(args, fmt);
+    llg_report_vprintf(&text, fmt, args);
+    va_end(args);
+    llg_rt_framed(&out, id, llg_msg_default_severity(id), site, NULL, text.data, text.len);
+    llg_report_free(&text);
+    llg_report_emit(&out, stderr);
+}
+
+// The `file:line:col` part of a framed site, for the error hook (cbError),
+// which takes a location; a site without the separator is returned whole.
+static const char* llg_cov_site_location(const char* site) {
+    const char* separator = site ? strchr(site, LLG_RT_SITE_SEPARATOR) : NULL;
+    return separator ? separator + 1 : site;
+}
+
 static void* llg_cov_grow(void* data, size_t count, size_t size, const char* what) {
     if (size != 0 && count > SIZE_MAX / size) llg_fatal_allocation(what, count, size);
     size_t bytes = count * size;
@@ -312,7 +338,7 @@ static llg_cov_num_t llg_cov_slot_num(const llg_cov_slot_value_t* slot) {
 static void llg_cov_value_warning(const llg_cov_item_t* item, const llg_cov_bin_t* bin,
                                   const char* what) {
     if (llg_cov_quiet) return;
-    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%s: bins `%s` %s (IEEE 1800-2009 19.5.6)", item->site ? item->site : bin->site, bin->name, what);
+    llg_cov_report(LLG_MSG_RUNTIME_WARNING, item->site ? item->site : bin->site, "bins `%s` %s (IEEE 1800-2009 19.5.6)", bin->name, what);
 }
 
 // The key range of one item, resolved by 19.5.6 against the coverpoint
@@ -433,7 +459,7 @@ static uint64_t llg_cov_bin_count(const llg_cov_inst_t* inst, const llg_cov_bin_
     llg_cov_num_t value = llg_cov_slot_num(slot);
     if (slot->unknown || value.neg || value.mag == 0) {
         if (llg_cov_quiet || llg_rt_exiting()) return 0;
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "bins `%s` at %s: the number of bins is not a positive value", bin->name, bin->site);
+        llg_cov_report(LLG_MSG_RUNTIME_ERROR, bin->site, "bins `%s`: the number of bins is not a positive value", bin->name);
         llg_cov_fatal("the number of bins is not a positive value", bin->site);
         return 0;
     }
@@ -932,7 +958,7 @@ static void llg_cov_xlayout_error(const llg_cov_inst_t* inst, const llg_cov_cros
                                   const char* what) {
     if (llg_cov_quiet) return;
     const char* site = cross->n_bins ? cross->bins[0].site : NULL;
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s%scovergroup `%s` cross `%s` %s; its bins are not counted (llg limitation)", site ? site : "", site ? ": " : "", inst->group->name, cross->name, what);
+    llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "covergroup `%s` cross `%s` %s; its bins are not counted (llg limitation)", inst->group->name, cross->name, what);
     llg_rt_mark_failed();
     llg_rt_note_error(0, "cross bins are not counted", NULL);
 }
@@ -1281,7 +1307,7 @@ void llg_cov_cross_hit(void* record, uint32_t index, const uint8_t* guards) {
                 state->cross->stamp[b] = inst->serial;
                 if (bin->kind == LLG_COV_BIN_ILLEGAL) {
                     if (llg_rt_exiting()) continue;
-                    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` cross `%s` sampled a product of illegal_bins `%s` at %s (IEEE 1800-2009 19.6.3)", inst->group->name, cross->name, bin->name, bin->site);
+                    llg_cov_report(LLG_MSG_RUNTIME_ERROR, bin->site, "covergroup `%s` cross `%s` sampled a product of illegal_bins `%s` (IEEE 1800-2009 19.6.3)", inst->group->name, cross->name, bin->name);
                     llg_cov_fatal("illegal_bins product sampled", bin->site);
                     continue;
                 }
@@ -1368,9 +1394,11 @@ void* llg_cov_new(llg_cov_group_t* group) {
     return inst;
 }
 
-static int llg_cov_option_value(sv4_t value, int64_t* out, const char* option, const char* site) {
+// `scope` is "option" or "type_option", `option` the member name.
+static int llg_cov_option_value(sv4_t value, int64_t* out, const char* scope, const char* option,
+                                const char* site) {
     if (sv4_is_unknown(value)) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage option %s is X or Z; the option keeps its value", site, option);
+        llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "coverage %s.%s is X or Z; the option keeps its value", scope, option);
         llg_rt_mark_failed();
         return 0;
     }
@@ -1395,11 +1423,12 @@ void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, c
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || option > LLG_COV_OPTION_CROSS_NUM_PRINT_MISSING) return;
     int64_t number = 0;
-    if (!llg_cov_option_value(value, &number, llg_cov_option_names[option], site)) return;
+    if (!llg_cov_option_value(value, &number, "option", llg_cov_option_names[option], site))
+        return;
     // Table 19-1: weight is non-negative; a bin count needs at least one bin.
     if ((option == LLG_COV_OPTION_WEIGHT && number < 0) ||
         (option == LLG_COV_OPTION_AUTO_BIN_MAX && number < 1)) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage option %s value %lld is out of range; the option keeps its value", site, llg_cov_option_names[option], (long long)number);
+        llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "coverage option.%s value %lld is out of range; the option keeps its value", llg_cov_option_names[option], (long long)number);
         llg_rt_mark_failed();
         return;
     }
@@ -1566,9 +1595,9 @@ void llg_cov_type_option(llg_cov_type_t* type, int32_t point, uint32_t option, s
     static const char* const names[] = {"weight", "goal", "strobe", "merge_instances"};
     if (!type || option > LLG_COV_TYPE_OPTION_MERGE_INSTANCES) return;
     int64_t number = 0;
-    if (!llg_cov_option_value(value, &number, names[option], site)) return;
+    if (!llg_cov_option_value(value, &number, "type_option", names[option], site)) return;
     if (option == LLG_COV_TYPE_OPTION_WEIGHT && number < 0) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: coverage option %s value %lld is out of range; the option keeps its value", site, names[option], (long long)number);
+        llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "coverage type_option.%s value %lld is out of range; the option keeps its value", names[option], (long long)number);
         llg_rt_mark_failed();
         return;
     }
@@ -1760,7 +1789,7 @@ LLG_NOINLINE static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_c
     const llg_cov_bin_t* bin = &point->bins[decl];
     char value[48];  // a value of up to 128 bits in decimal
     llg_cov_format_key(point, key, value, sizeof value);
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` coverpoint `%s` sampled %s, a value of illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)", inst->group->name, point->name, value, bin->name, bin->site);
+    llg_cov_report(LLG_MSG_RUNTIME_ERROR, bin->site, "covergroup `%s` coverpoint `%s` sampled %s, a value of illegal_bins `%s` (IEEE 1800-2009 19.5.5)", inst->group->name, point->name, value, bin->name);
     llg_cov_fatal("illegal_bins value sampled", bin->site);
 }
 
@@ -2127,12 +2156,12 @@ static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov
     const char* what = bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT
                            ? "ending a transition no other bin holds, which is in"
                            : "completing a transition of";
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` coverpoint `%s` sampled %s, %s illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)", inst->group->name, point->name, value, what, bin->name, bin->site);
+    llg_cov_report(LLG_MSG_RUNTIME_ERROR, bin->site, "covergroup `%s` coverpoint `%s` sampled %s, %s illegal_bins `%s` (IEEE 1800-2009 19.5.5)", inst->group->name, point->name, value, what, bin->name);
     // An illegal `default sequence` count reports and the run continues
     // (S45-D10); an explicit illegal transition ends it (S45-D3).
     if (bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) {
         llg_rt_mark_failed();
-        llg_rt_note_error(0, "illegal_bins transition sampled", bin->site);
+        llg_rt_note_error(0, "illegal_bins transition sampled", llg_cov_site_location(bin->site));
     }
     else llg_cov_fatal("illegal_bins transition sampled", bin->site);
 }

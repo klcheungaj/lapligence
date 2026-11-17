@@ -363,7 +363,7 @@ impl EmitCtx<'_, '_> {
                 }
             }
             // A drive asks whether its clocking event occurred in this slot.
-            self.cg.model.clocking_history = true;
+            self.cg.read_clocking_history(&drive_specs);
             return Ok(IrStmt::ClockingDrive {
                 lhs: lh,
                 rhs: rhs_ir,

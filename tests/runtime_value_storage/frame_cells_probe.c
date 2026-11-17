@@ -28,6 +28,9 @@ LLG_PROBE_PROCESS(cells, cell_frame_t, 1) {
     CHECK(value_scope_index_find(&F->packed[0]) == &F->packed_scope);
     CHECK(value_scope_index_find(&F->packed[1]) == &F->packed_scope);
     sv4_replace(&F->packed[0], sv4_from_u64(19, 65, 0));
+    /* A native caller registers the cell for edge history, as a model does
+     * for a clock its readers name; final release forgets it below. */
+    llg_rt_clocking_history_signal(&F->packed[1]);
     llg_ba(&F->packed[1], F->packed[0]);
     CHECK(PROBE_BITS(F->packed[1], 0) == 19);
     /* The edge reaches clocking history at this turn's check (T1-D11); until
