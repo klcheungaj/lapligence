@@ -182,3 +182,21 @@ fn assert_final_is_not_a_2009_form() {
         "`assert final` is not available in IEEE 2009",
     );
 }
+
+/// FIN-001 A3: a container argument and a virtual-interface method call in a
+/// deferred action are located limits (SV 16.4 allows both).
+#[test]
+fn container_and_virtual_interface_actions_are_located_limits() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_queue_action",
+        "neg_queue_action.sv:13:24 unpacked aggregate, container and event arguments of deferred \
+         immediate assertion actions are not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_action",
+        "neg_vif_action.sv:14:24 virtual-interface method calls are not supported as deferred \
+         immediate assertion actions",
+    );
+}

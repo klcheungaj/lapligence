@@ -137,7 +137,12 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             Ok(body) => body,
             Err(error) => {
                 self.pre_fns.truncate(pre_fn_start);
-                return Err(format!("{error} at {}", self.text_location(statement)));
+                let error = format!("{error} at {}", self.text_location(statement));
+                return Err(if crate::sim::codegen::error::is_located(&error) {
+                    error
+                } else {
+                    crate::sim::codegen::error::located(&self.cg.source_location(statement), error)
+                });
             }
         };
         let action = IrDeferredAction::new(

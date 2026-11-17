@@ -178,9 +178,10 @@ impl Codegen<'_> {
         // flow is not represented by an independent endpoint.
         for binding in bindings {
             if self.references_assertion_local(binding.actual) {
-                return Err(format!(
-                    "a local variable passed to a sequence endpoint at {} is not supported",
-                    self.source_location(receiver)
+                let location = self.source_location(receiver);
+                return Err(crate::sim::codegen::error::located(
+                    &location,
+                    "a local variable passed to a sequence endpoint is not supported",
                 ));
             }
         }

@@ -2077,7 +2077,9 @@ with `--edition v2001`.
 
 ## Deferred assertion actions with container, event or virtual-interface arguments
 
-**Status:** open (SIM-036 deferral).
+**Status:** open (SIM-036 deferral; kept by FIN-001 A3: uncommon forms).
+
+### Symptom
 
 A deferred assertion action (SV 16.4) whose call passes a queue, dynamic or
 associative array, or named event by value, or that calls a task or function
@@ -2091,16 +2093,37 @@ captures packed, real, string and opaque (chandle/class handle) values
 like a method receiver. Fork-branch outermost blocks are also not treated as
 outermost procedure scopes for the 16.4.4 flush.
 
-Reproduce with `int q[$]; task show(input int x[$]); ... endtask` and
-`assert #0 (0) else show(q);`.
-
 Subroutine calls attached to a sequence match (SV 16.11, SIM-039) use the
 same captured frame and share these limits, reported as "sequence match-item
 call" diagnostics; a match-item task with a timing control is also rejected.
 
+### Cause
+
+The action frame holds fixed-size captured values; it has no owned copy of a
+container, no captured event identity and no virtual-interface receiver.
+Industry-standard behaviour accepts these forms; it was seen reading a
+queue or dynamic array argument when the action runs rather than when the
+assertion is evaluated, which 16.4 (L21223-21225) does not allow.
+
+### Intended direction
+
+Copy a container argument into an owned frame object at issue time
+(`llg_frame_capture_object`), capture an event's identity and a virtual
+interface handle like a method receiver.
+
+### Reproduce
+
+[`sim_036/neg_queue_action.sv`](../tests/fixtures/sim/feature_completion/sim_036/neg_queue_action.sv),
+[`sim_036/neg_vif_action.sv`](../tests/fixtures/sim/feature_completion/sim_036/neg_vif_action.sv)
+and
+[`sim_039/neg_match_call_queue.sv`](../tests/fixtures/sim/feature_completion/sim_039/neg_match_call_queue.sv);
+the timing-control form is `sim_039/neg_match_call_timing.sv`.
+
 ## Assertion locals in join operands and end points
 
-**Status:** open (SIM-039 deferral).
+**Status:** open (SIM-039 deferral; kept by FIN-001 A3).
+
+### Symptom
 
 Property locals (local input formals and declared locals with a declaration
 assignment) are initialized in every property form since FIN-001 A2: the
@@ -2111,10 +2134,28 @@ assignments inside `and`/`intersect`/`throughout`/`within` operands and
 local variables passed to sequence end points (`s(v).triggered`, `@(s(v))`)
 are still rejected; the runtime keeps one local array per thread and a join
 keeps the locals of the operand that matched last. A local read by an
-`accept_on`/`reject_on` condition is rejected as well.
+`accept_on`/`reject_on` condition is rejected as well (a frontend error).
+The join message is located at the composite's first operand.
 
-Reproduce with `(a, v = d) and (b, v = e)` in a sequence, or `s(v).triggered`
-for a local `v`.
+### Cause
+
+The runtime keeps one local array per sequence thread, and a join keeps the
+array of the operand that matched last instead of merging the variables that
+flow out of each operand (16.10 d). An end point is evaluated in an attempt
+of its own, so no local can flow back from it to the reading attempt.
+
+### Intended direction
+
+Merge the operand threads' locals at join completion by flow (assigned in
+one operand: that value; in both: blocked). Industry-standard behaviour
+serves the one-operand join form; it does not implement `local output`
+sequence formals, so the end-point form has no reference behaviour.
+
+### Reproduce
+
+[`sim_039/neg_join_local.sv`](../tests/fixtures/sim/feature_completion/sim_039/neg_join_local.sv)
+and
+[`sim_039/neg_endpoint_local_output.sv`](../tests/fixtures/sim/feature_completion/sim_039/neg_endpoint_local_output.sv).
 
 ## Implicit sensitivity through handles a process cannot evaluate
 
@@ -2247,7 +2288,10 @@ Reproduce with
 
 ## Sampled-value arguments without sampled storage
 
-**Status:** open (SIM-035 boundary).
+**Status:** open (SIM-035 boundary; kept by FIN-001 A3, see Intended
+direction).
+
+### Symptom
 
 Sampled-value functions keep a history of packed integral values. Fixed
 unpacked arrays, unpacked structures and unions, queues and unpacked array
@@ -2257,13 +2301,41 @@ real, and realtime)", then string, event, chandle, class, associative and
 dynamic arrays; "Fixed-size arrays, packed or unpacked, can be used as a
 whole") but reject explicitly ("sampled histories hold packed integral and
 real values" or "must be a static packed or real expression") instead of being
-flattened. Sampling them needs Preponed snapshots of unpacked storage, which
-assertions also lack.
+flattened. An element selection of a fixed unpacked array below the
+descriptor size (`LLG_DENSE_FIXED_ARRAY_CELLS`, 4096 cells), such as
+`$past(arr[i])` or `$stable(arr[1])`, and a concurrent assertion operand that
+reads such an element (`arr[i] == 2`) are rejected at the selection ("...
+selecting an unpacked array element ... is not supported" and "unsupported
+sampled ... expression ...: llg keeps no sampled value of unpacked array
+cells it selects"). Larger (descriptor) arrays keep their cells' Preponed
+values and are accepted.
+
+### Cause
+
+Sampling them needs Preponed snapshots of unpacked storage. Dense arrays are
+plain C cell arrays with no write hook, and the sampled-value registry is a
+per-signal list searched by address, so registering every cell would slow
+each sampled read of the design.
+
+### Intended direction
+
+Industry-standard behaviour serves `$past(arr[i])`, `$stable(arr[i])` and
+element operands (the selected cell's value at each clock tick, index
+included), so this is a common form left rejected: give arrays read in
+sampled expressions a sampled image, either by choosing the descriptor form
+for them before lowering or by a per-array saved-cell table like the
+descriptor one, and sample whole unpacked values the same way.
+
+### Reproduce
 
 Reproduce with
 [`neg_unpacked_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_arg.sv),
 [`neg_unpacked_struct_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_struct_arg.sv) and
-[`neg_queue_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_arg.sv).
+[`neg_queue_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_arg.sv),
+and the element forms
+[`neg_element_past.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_past.sv),
+[`neg_element_assertion.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_assertion.sv) and
+[`neg_element_operand.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_operand.sv).
 
 ## Concurrent property limits after SIM-038
 
@@ -2421,7 +2493,15 @@ the global clock tick.
 ### Reproduce
 
 `neg_expect.sv`, `neg_async_abort.sv` and `neg_endpoint.sv` in
-[adv_014](../tests/fixtures/sim/feature_completion/adv_014/readme.md).
+[adv_014](../tests/fixtures/sim/feature_completion/adv_014/readme.md); the
+operand forms (FIN-001 A3) with `neg_real_operand.sv` (a real operand),
+`neg_system_function.sv` (`$countones` of a future value),
+`neg_sampled_function.sv` (`$rose` of a future value), `neg_inside.sv`
+(`inside` around a future call) and `neg_procedural_automatic.sv` (a
+procedural assertion with a saved automatic value). A future value of a
+local variable is rejected by the frontend first (16.9.3: no local
+variables in sampled value functions). Industry-standard behaviour rejects
+the `$rose`, `inside` and automatic forms and serves the real operand.
 
 ## Checker limits after ADV-015
 
@@ -2435,7 +2515,8 @@ these limits:
 - A sampled value function (`$past`, `$rose`, ...) of an active free
   variable is rejected ("$rose of active free checker variable `f` is not
   supported").
-- An unpacked, real or enum free variable is rejected at its declaration.
+- An unpacked, real or enum free variable is rejected at its declaration
+  (industry-standard behaviour has no free checker variables at all).
 - Only predicate assumptions (`C`, `A |-> C`, `A |=> C` with Boolean `A`
   and `C`, no abort) constrain the solve; other assume forms in an assume
   set trigger solving at their clock events but are only checked.
@@ -2465,8 +2546,8 @@ procedure that queues its assertions, so they can be saved per instance.
 
 ### Reproduce
 
-`neg_free_history.sv`, `neg_free_unpacked.sv` and
-`neg_procedural_automatic.sv` in
+`neg_free_history.sv`, `neg_free_unpacked.sv`, `neg_free_real.sv`,
+`neg_free_enum.sv` and `neg_procedural_automatic.sv` in
 [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md).
 
 ## DPI-C import limits (SIM-040)

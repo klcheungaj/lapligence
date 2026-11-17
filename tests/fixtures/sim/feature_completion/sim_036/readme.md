@@ -96,6 +96,7 @@ source delays. Line numbers refer to `SystemVerilog-1800-2009.txt`, the
 | `neg_automatic_ref`, `neg_class_property_ref` | A03 | automatic local and class property to `ref`: located frontend error. |
 | `neg_dynamic_array_ref` | A03 | dynamic array element to `ref` (S36-D8): located llg error. |
 | `neg_assert_final` | A03 | `assert final` is post-2009: edition error. |
+| `neg_queue_action`, `neg_vif_action` | FIN-001 A3 | 16.4 (`SystemVerilog-1800-2009.txt` L21220-21225): "The subroutine can be a task, task method, void function, void function method, or system task. [...] Actual argument expressions that are passed by value use the values of the underlying variables at the instant the deferred assertion expression was evaluated." A queue passed by value and a call through a virtual interface handle are legal; llg rejects them at the action (located llg limit). |
 
 ## Other implementations
 

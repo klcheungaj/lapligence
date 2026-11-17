@@ -229,3 +229,18 @@ fn unsupported_checker_forms_are_located() {
          assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1)",
     );
 }
+
+/// FIN-001 A3: real and enum free checker variables are located limits.
+#[test]
+fn real_and_enum_free_variables_are_located_limits() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_free_real",
+        "neg_free_real.sv:5:13: free checker variable `f` of a real type is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_free_enum",
+        "neg_free_enum.sv:6:12: free checker variable `f` of an enum type is not supported",
+    );
+}
