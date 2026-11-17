@@ -93,6 +93,12 @@ static PLI_INT32 cbk(PLI_BYTE8* user) {
         place(cbSizeChange, named("tb.q"), vpiSuppressVal, "q size");
         place(cbSizeChange, named("tb.aa"), vpiIntVal, "aa size");
         place(cbSizeChange, named("tb.s"), vpiIntVal, "s size");
+        /* 38.36.1 names no continuous assignment or primitive. */
+        vpiHandle tb = named("tb");
+        vpiHandle it = vpi_iterate(vpiContAssign, tb), object;
+        while ((object = vpi_scan(it))) place(cbValueChange, object, vpiHexStrVal, "cont assign");
+        it = vpi_iterate(vpiPrimitive, tb);
+        while ((object = vpi_scan(it))) place(cbValueChange, object, vpiScalarVal, "gate");
     } else if (step.value.integer == 1) {
         s_vpi_value value;
         value.format = vpiHexStrVal;

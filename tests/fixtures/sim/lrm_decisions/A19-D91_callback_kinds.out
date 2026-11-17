@@ -6,4 +6,8 @@ size tb.aa int: NULL level=3
 size tb.aa suppress: NULL level=3
 size tb.s int: NULL level=3
 size tb.s suppress: NULL level=3
-done 3 1 1 3
+value chandle hex: handle level=0
+value chandle strength: NULL level=3
+value cont assign: NULL level=3
+value gate: NULL level=3
+done 3 1 1 3 1 1 1

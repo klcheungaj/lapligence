@@ -9,7 +9,7 @@ static PLI_INT32 called(p_cb_data data) {
     return 0;
 }
 
-static void place(PLI_INT32 reason, const char* name, PLI_INT32 format, const char* label) {
+static void place_on(PLI_INT32 reason, vpiHandle obj, PLI_INT32 format, const char* label) {
     s_vpi_time time;
     time.type = vpiSuppressTime;
     s_vpi_value value;
@@ -19,13 +19,17 @@ static void place(PLI_INT32 reason, const char* name, PLI_INT32 format, const ch
     memset(&data, 0, sizeof(data));
     data.reason = reason;
     data.cb_rtn = called;
-    data.obj = vpi_handle_by_name((PLI_BYTE8*)name, NULL);
+    data.obj = obj;
     data.time = &time;
     data.value = &value;
     data.user_data = (PLI_BYTE8*)label;
     vpiHandle cb = vpi_register_cb(&data);
     int level = vpi_chk_error(NULL);
     vpi_printf("%s: %s level=%d\n", label, cb ? "handle" : "NULL", level);
+}
+
+static void place(PLI_INT32 reason, const char* name, PLI_INT32 format, const char* label) {
+    place_on(reason, vpi_handle_by_name((PLI_BYTE8*)name, NULL), format, label);
 }
 
 static PLI_INT32 d91(PLI_BYTE8* user) {
@@ -38,6 +42,13 @@ static PLI_INT32 d91(PLI_BYTE8* user) {
         place(cbSizeChange, containers[i], vpiIntVal, labels[2 * i]);
         place(cbSizeChange, containers[i], vpiSuppressVal, labels[2 * i + 1]);
     }
+    place(cbValueChange, "tb.h", vpiHexStrVal, "value chandle hex");
+    place(cbValueChange, "tb.h", vpiStrengthVal, "value chandle strength");
+    vpiHandle tb = vpi_handle_by_name("tb", NULL);
+    vpiHandle it = vpi_iterate(vpiContAssign, tb), object;
+    while ((object = vpi_scan(it))) place_on(cbValueChange, object, vpiBinStrVal, "value cont assign");
+    it = vpi_iterate(vpiPrimitive, tb);
+    while ((object = vpi_scan(it))) place_on(cbValueChange, object, vpiScalarVal, "value gate");
     return 0;
 }
 

@@ -1223,9 +1223,15 @@ runs it in both optimizer modes.
   array, queue, or string has been resized"; 37.17 detail 14 L58772-L58774)
   is refused on `da`, `q`, `aa` and `s`: NULL with level 3 (decision
   A19-D91), and the resizes at 1 call nothing.
+- A continuous assignment and a primitive are not among the objects of
+  38.36.1 (L64642-L64644, above): `cbValueChange` on the assignment of `w`
+  and on the gate `g1` is NULL with level 3 (decision A19-D91).
 
 Industry-standard behaviour gives the same calls and values (it passes a
 `vpiSuppressVal` record a value structure of that format instead of NULL).
+It accepts the `vpiStrengthVal` record on `h` and a `vpiSuppressVal`
+`cbSizeChange` record on `q` but never calls the latter, and returns NULL
+for the continuous assignment without an error (decision A19-D91).
 
 ## catalog (A01, A03; 37.3, 38.3, 38.6, 38.18, 38.23, 38.40, 40.5.3)
 

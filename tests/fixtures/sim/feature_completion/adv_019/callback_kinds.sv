@@ -9,13 +9,22 @@ module tb;
   int q[$];
   int aa[int];
   string s;
+  logic [3:0] a, b;
+  wire [3:0] w;
+  wire y;
+  assign w = a & b;
+  and g1(y, a[0], b[0]);
   initial begin
+    a = 4'h0;
+    b = 4'h0;
     $cbk(0);
     #1 h = cbk_make(5);
     da = new[2];
     q.push_back(1);
     aa[3] = 1;
     s = "ab";
+    a = 4'h3;
+    b = 4'h1;
     #1 h = cbk_make(5);
     #1 h = null;
     #1 begin
@@ -30,7 +39,7 @@ module tb;
     #1 $cbk(1);
     #1 h = cbk_make(10);
     #1 $cbk(2);
-    $display("done %0d %0d %0d %0d %0d", h == h2, da.size(), q.size(), aa.num(), s.len());
+    $display("done %0d %0d %0d %0d %0d %h %b", h == h2, da.size(), q.size(), aa.num(), s.len(), w, y);
     $finish;
   end
 endmodule

@@ -2857,7 +2857,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   (its frame stack starts empty);
   `cbValueChange` on a continuous assignment or primitive (38.36.1 lists
   variables, expressions, terminals and events; industry-standard tools
-  refuse both too); a delayed
+  refuse both too, decision A19-D91), and on an operation or a primitive
+  terminal (industry-standard behaviour serves both; watch the variables
+  and nets they read or drive); a delayed
   `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
   A19-D8). A `cbValueChange` on a named event watches the synchronization
   object the event names at registration;

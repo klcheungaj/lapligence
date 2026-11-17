@@ -1452,6 +1452,7 @@ node primitive 37.31 members=gate,switch,udp
   handle vpiDelay implemented a20d16
   handle vpiIndex implemented walk
   iterate vpiPrimTerm implemented walk
+  cb cbValueChange error a19d91 38.36.1 lists variables, expressions, terminals and events; industry-standard behaviour refuses it too (decision A19-D91)
 
 node gate 37.31 type=vpiGate
   get vpiSigned extension walk the sign and width of the object's value
@@ -1487,6 +1488,7 @@ node prim_term 37.31 type=vpiPrimTerm
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
+  cb cbValueChange unsupported only variables, nets, their selects and named events are watched; industry-standard behaviour serves primitive terminals
 
 node udp_defn 37.32 type=vpiUdpDefn
   str vpiDefName implemented walk
@@ -1792,6 +1794,7 @@ node cont_assign 37.43 type=vpiContAssign
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
+  cb cbValueChange error a19d91 38.36.1 lists variables, expressions, terminals and events; industry-standard behaviour refuses it too (decision A19-D91)
 
 node cont_assign_bit 37.43 type=vpiContAssignBit
   get vpiOffset implemented a19d34
@@ -2056,6 +2059,7 @@ node operation 37.55 type=vpiOperation
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
   handle vpiScope extension walk the enclosing scope, instance, module or parent
+  cb cbValueChange unsupported only variables, nets, their selects and named events are watched; industry-standard behaviour serves operations
 
 node constant 37.55 type=vpiConstant
   get vpiConstType implemented walk

@@ -13625,6 +13625,19 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
         cb->value_type = vpiNamedEvent;
         return 1;
     }
+    if (slot->kind == SLOT_OBJECT) {
+        int type = g_vpi.objects[slot->object].type;
+        if (type == vpiContAssign || type == vpiContAssignBit || type == vpiGate ||
+            type == vpiSwitch || type == vpiUdp) {
+            /* 38.36.1 lists variables, expressions, terminals and events;
+             * industry-standard behaviour refuses these too (A19-D91). */
+            vpi_error("LLG_VPI_CALLBACK",
+                      "cbValueChange applies to variables, nets, expressions, terminals and "
+                      "events, not to a continuous assignment or primitive; watch the net it "
+                      "drives (38.36.1, decision A19-D91)");
+            return 0;
+        }
+    }
     llg_vpi_target_t target;
     int whole_array = 0;
     if (!handle_target(slot, &target)) {
