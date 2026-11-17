@@ -212,7 +212,8 @@ pub(super) struct Frame<'a, 'm> {
     /// because arming a wait on an unbound handle is not an access.
     quiet_receivers: bool,
     /// Rendering `llg_model_initializers`: no process waits yet, so stores
-    /// need not publish change markers.
+    /// need not publish change markers, and the frame's `_llg_return` is an
+    /// exit path for its initializer expressions.
     pub(super) static_initialization: bool,
     /// Nesting depth of statements being rendered. Expression code outside
     /// any statement (read-only callbacks, evaluators) has no exit path.
@@ -435,7 +436,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             self.line(format!("if (LLG_CO_UNLIKELY({failed})) goto _llg_return;"));
             return;
         }
-        if self.statement_depth == 0 || self.read_only_callback || self.quiet_receivers {
+        if !self.has_exit_path() || self.read_only_callback || self.quiet_receivers {
             return;
         }
         if self.plain_exits() {
@@ -455,7 +456,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     /// returns early, and the caller must not run on with its result
     /// (`llg_rt.h`: callers check immediately).
     fn exit_after_call(&mut self, function: usize, dynamic: bool) {
-        if self.statement_depth == 0 || self.read_only_callback || self.quiet_receivers {
+        if !self.has_exit_path() || self.read_only_callback || self.quiet_receivers {
             return;
         }
         let may_terminate = dynamic
@@ -471,6 +472,14 @@ impl<'a, 'm> Frame<'a, 'm> {
         } else {
             self.line("LLG_CO_EXIT_CHECK(ch);");
         }
+    }
+
+    /// Whether code rendered now can leave the frame: inside a statement, or
+    /// anywhere in the static initialization frame, whose declaration
+    /// initializer expressions run outside any statement but still stop at
+    /// a `$finish`, `$fatal` or run-ending error inside them.
+    fn has_exit_path(&self) -> bool {
+        self.statement_depth > 0 || self.static_initialization
     }
 
     /// Whether this frame exits like a plain function (`goto _llg_return`

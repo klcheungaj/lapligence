@@ -189,7 +189,11 @@ void llg_rt_request_finish(void) {
 }
 
 int llg_rt_exiting(void) {
-    return g.current && g.current->chain.exiting != LLG_EXIT_NONE;
+    if (g.current) return g.current->chain.exiting != LLG_EXIT_NONE;
+    // Static initialization runs outside every process: a `$finish`, a
+    // `$fatal` or a run-ending error there leaves the initializer at once
+    // and no later initializer runs ($finish exits the simulator, SV 20.2).
+    return g.static_init_phase && g.finish;
 }
 
 const char* llg_static_init_variable = NULL;

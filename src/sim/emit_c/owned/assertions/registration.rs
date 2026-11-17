@@ -11,7 +11,12 @@ pub(super) fn signal_name(model: &IrModel, index: usize) -> String {
 }
 
 pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> {
-    let mut out = String::from("static int llg_model_assertions_init(void) {\n");
+    // A run-time error a static initializer reported earlier is not a
+    // registration failure: the run goes on as after the same error in a
+    // process. Registration failures that only mark the run also end it.
+    let mut out = String::from(
+        "static int llg_model_assertions_init(void) {\n    const int llg_reported = llg_rt_failed();\n",
+    );
     if !model.assertions.is_empty() || !model.sampled_domains.is_empty() {
         // Assertions read only Preponed snapshots. Per-slot history belongs to
         // clocking skews, which register their sources separately; keeping it
@@ -297,6 +302,6 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
             c_string_literal(set.label()),
         ));
     }
-    out.push_str("    return !llg_rt_failed();\n}\n\n");
+    out.push_str("    return llg_reported || !llg_rt_failed();\n}\n\n");
     Ok(out)
 }
