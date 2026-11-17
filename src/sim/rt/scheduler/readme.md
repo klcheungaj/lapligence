@@ -176,7 +176,11 @@ waveforms, monitors, abort conditions, coverage watches and timing checks,
 and the AA-D6 gate, which a gate-at-write wait
 latches at each write (`llg_wait_gate_at_write`, `payload.expression.gate_open`,
 walked through `write_walkers`); moving one to the check means calling it
-from `sig_settle` and counting what it observes in `wait_source_observed`. Ordered change logs (`llg_wait_changes`) also log per write.
+from `sig_settle` and counting what it observes in `wait_source_observed`.
+Lowering drops a nonblocking update that a later one in the same process
+turn overrides only where none of these per-write consumers can see it
+(`codegen/lowering/statements/nba_merge.rs`), so a new per-write consumer
+must be added to its exclusions. Ordered change logs (`llg_wait_changes`) also log per write.
 Strings, container cells and reference markers publish per write, and so do
 markers bound to an unwaited marker. The contents marker of a native record
 (`llg_record_changed`, called after each statement that stores into a record a

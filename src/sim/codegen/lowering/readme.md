@@ -6,7 +6,7 @@ semantic nodes into typed IR. C generation belongs to `emit_c`, not these module
 | Domain | Responsibility |
 | --- | --- |
 | `collection/` | Instance/storage discovery, fixed layouts/defaults, initialization, ports, canonical nets and selected projections. |
-| `statements/` | Assignments, source-loop control, process bodies, subroutine calls and procedural drivers. |
+| `statements/` | Assignments, source-loop control, process bodies, subroutine calls and procedural drivers. `statements/nba_merge.rs` drops, on the finished model, a nonblocking update that a later one to the same constant target overrides in the same process turn, where no per-write consumer can see it (FIN-001 O2). |
 | `expressions/` | Typed values/conversions, conditionals, ordered predicates, patterns, `inside` and fixed reductions. |
 | `containers/`, `objects/` | Admitted container/object operations and typed native boundaries. |
 | `randomization/` | `randomize()`/`std::randomize()` sites, constraint problems for the C11 solver and `rand_mode`/`constraint_mode` state. |
