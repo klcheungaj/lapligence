@@ -612,8 +612,8 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
             "force/release indexed part-select in `{path}` requires a constant net part-select"
         )),
         // An element of a static unpacked array variable is a singular
-        // variable (SV 6.4, 10.6.2): its cell, or a member of it at constant
-        // bits, is the force target, found when the statement executes.
+        // variable (SV 6.4, 10.6.2): its cell, or a member of a packed-image
+        // element, is the force target, found when the statement executes.
         IrLhs::ArrayElem { arr, elem_sel, .. } => {
             let array = model.arrays.get(*arr).ok_or_else(|| {
                 format!("force target array {arr} is out of bounds in `{path}`")
