@@ -2962,7 +2962,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiTypespec` of variables, nets, parameters and members gives logic, bit,
   integer-atom, time, real, string, chandle (also of class properties,
   structure members and typedefs), void (tagged union members), enum,
-  struct, union, packed array and array typespecs (fixed, dynamic, queue and associative, with
+  struct, union, packed array and array typespecs (A19-D90; a reference
+  object has none, as 1800-2009 defines no interface typespec) (fixed, dynamic, queue and associative, with
   `vpiArrayType` and `vpiIndexTypespec`, A19-D60) with `vpiName` (the
   typedef name), `vpiTypedefAlias`,
   `vpiElemTypespec` (one dimension at a time), `vpiBaseTypespec` (named by

@@ -95,7 +95,7 @@ and constants, the typespec members and `vpiElemTypespec`, recursively.
   only on associative array typespecs"); asking an enum typespec for it
   returns NULL with `vpiError`.
 
-## typespec_kinds (37.23, 7.3.2; FIN-001 V3 family (d))
+## typespec_kinds (37.23, 7.3.2, decision A19-D90; FIN-001 V3 family (d))
 
 `typespec_kinds.c` prints, for each variable, `vpiType` and its typespec
 tree: type, `vpiName`, `vpiPacked` and `vpiTagged` of structure and union
