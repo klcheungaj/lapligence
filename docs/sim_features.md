@@ -1009,7 +1009,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   variables, every resolved net kind (`wire`, `wand`, `wor`, `tri`,
   multi-driven), constant bit-, part- and indexed part-selects of nets, constant
   member and element selects of packed-structure and packed-array nets, net-array
-  elements, whole unpacked net arrays (every cell, in declared order), true-net aliases and concatenations of these, local or through
+  elements, whole unpacked net arrays (every cell, in declared order), true-net
+  aliases, in SV2009 elements of static unpacked array variables (dense,
+  lazily allocated and record member-array cells in both record storage
+  forms, reals) and members of their unpacked-structure elements, and
+  concatenations of these, local or through
   hierarchical, generate, instance-array, interface, `$root` and upward paths,
   from processes, tasks, functions, class methods and fork branches. The RHS is
   live: a change of any operand, including another forced signal, re-evaluates
@@ -1023,17 +1027,24 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   outlives the process that applied it (kill, `disable`, task return), and the
   model closes cleanly with forces active
   ([sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md),
-  decisions S23-D1–D4 in [lrm_decisions](lrm_decisions.md)). Live RHS sources
+  decisions S23-D1–D4 in [lrm_decisions](lrm_decisions.md)). An element
+  target's index, constant or run-time, is evaluated when the force or release
+  executes and the force stays on that element; an invalid index (out of
+  range, X or Z) forces or releases nothing, and a forced element keeps its
+  value through element, whole-array, nonblocking and `$readmem` writes and
+  the ordering methods (decisions S23-D6, S23-D8, S23-D9). Live RHS sources
   include fixed-array elements and whole arrays (through their change markers).
   A helper with visible writes, persistent state or descriptor formals is
   evaluated by the force statement and then, while the force is in effect, by a
   per-site guard process into a hidden source the read-only evaluator reads;
   release or replacement stops it (§9). Variable selects, memory words (V
   §9.3.2), dynamic net selects, automatic targets or RHS references, class
-  properties, dynamic elements (SV §§6.21, 13.3.2) and unpacked aggregates (not
-  singular, SV §6.4) are located errors; string, class-handle, chandle and
-  event variables are rejected as industry-standard behaviour does (decision
-  S23-D5). Missing: SV2009 static unpacked-array elements
+  properties, dynamic elements (SV §§6.21, 13.3.2), bit- and part-selects of
+  array elements (decision S23-D7) and unpacked aggregates (not singular, SV
+  §6.4) are located errors; string, class-handle, chandle and event variables
+  are rejected as industry-standard behaviour does (decision S23-D5). Missing:
+  members of elements of arrays of records with a real, string, handle,
+  event or container member
   ([known issue](known_issues.md#unsupported-force-and-release-targets)).
   V §9.3.2 **[1995]**.
 

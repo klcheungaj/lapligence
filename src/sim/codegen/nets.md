@@ -237,13 +237,20 @@ Specify-block specparams are collected with the instance's
 parameters. A design without specify blocks costs one emptiness test.
 Force overlays visible storage while ordinary writes/driver slots remain live;
 release retains variable value or recomputes current net resolution. Releasing a
-variable toggles its hidden release marker; `attach_release_reevaluation` makes
-the variable's synthetic continuous drivers (assignments, port links) sensitive
-to it after all lowering, so they rerun (SV 10.6.2). Re-force replaces a matching
-entry per bit. Keep typed constant-selected/concat targets; constant indexed,
-member and element selects of nets become fixed parts (`normalize_force_lhs`).
-Reject unsupported variable selects, automatic/local captures, arrays, and
-string/handle/event or whole net-array targets with located errors.
+variable toggles its hidden release marker, and releasing an element of a
+variable array toggles the array's (`release_array_marker`);
+`attach_release_reevaluation` makes the synthetic continuous drivers
+(assignments, port links) of the variable or array sensitive to it after all
+lowering, so they rerun (SV 10.6.2). Re-force replaces a matching entry per
+bit. Keep typed constant-selected/concat targets; constant indexed, member and
+element selects of nets become fixed parts (`normalize_force_lhs`). An element
+of a static variable array (`ArrayElem`), a member of a packed-image element
+(`PackedSelect` over it) and a cell of a record leaf (`PackedSelect` over a
+leaf `Stream`) are located by the emitter when the statement executes, an
+invalid index giving a NULL part (`validate_force_lhs`). Reject unsupported
+variable selects, automatic/local captures, whole arrays, members of native
+record elements and string/handle/event or whole net-array targets with
+located errors.
 Procedural `assign`/`deassign`: rejected by design (`statements/drivers.rs`
 docs).
 No subroutine/captured RHS admission without an owned activation environment.

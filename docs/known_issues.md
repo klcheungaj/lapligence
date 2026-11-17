@@ -1993,24 +1993,27 @@ net-contribution batches.
 
 ## Unsupported force and release targets
 
-**Status:** narrowed (fin-gaps-e). Whole unpacked net arrays are forced and
+**Status:** narrowed (K3). Whole unpacked net arrays are forced and
 released (`sim_023/whole_net_arrays`); string, class-handle and event
-variables are rejected by decision S23-D5 (industry-standard behaviour).
+variables are rejected by decision S23-D5 (industry-standard behaviour). In
+SystemVerilog, elements of static unpacked array variables and members of
+their unpacked-structure elements are forced and released (decision S23-D6),
+including lazily allocated cells and the member arrays of records in both
+record storage forms.
 
 This legal target stops the run with a located error instead of being
-forced: an element of a static unpacked array variable in SV2009 (for
-example `force mem[1] = 7;` on `int mem[2]`), which reads as a "reference to
-a singular variable" under 10.6.2. The frontend rejects every select of a
-variable as a force or release target (its `BadProceduralForce` check, which
-llg promotes to an error), as IEEE 1364-2001 9.3.2 requires ("It cannot be a
-memory word"). Industry-standard behaviour forces such elements, also with a
-non-constant index evaluated when the force executes. Admitting it needs a
-tracked frontend patch (SV2009 only) and a force target for array cells,
-including lazily allocated sparse cells, in the force runtime (which today
-overlays packed and real signal storage only). Estimate: 1.5-2 days, plus a
-full suite and the language-server tests for the frontend patch.
+forced: a member of an element of an array of records that have a real,
+string, class-handle, chandle, event or container member (for example
+`force x[1].a = 1;` on `struct { int a; real r; } x[2]`). Such a record is a
+native value: a whole-element or whole-array write rebuilds its members, so a
+member has no fixed address the force runtime can overlay, and its waiters
+watch the array's change marker rather than the member. Supporting it needs a
+force target that names the array, the element and the member path, re-found
+after every write of the element, and those native write paths (element and
+whole-array copies, located nonblocking writes, member setters) keeping the
+forced member and publishing the array's marker after a force or release.
 
-Pinned by `static_memory_force_witness` in
+Reproduce: `native_record_member_is_a_known_limitation` in
 [sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md).
 
 ## Operator-overload update values on oversized or native targets

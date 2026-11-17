@@ -195,6 +195,17 @@ toggles at once reuses the row lookup that found it unwaited
 keeps plain copies of its values instead of a registered snapshot scope
 (`sig_write_as`).
 
+A force part's target may be an array cell (a dense element, a lazily
+allocated cell of a sparse array, a record leaf or a column cell) that the
+generated code finds when the force or release executes; an invalid index
+gives a NULL target, which `llg_force_expr_parts` and `llg_release_parts`
+drop (`force_present_parts`). Writes that bypass `llg_ba` keep the forced
+bits of their cell: an NBA commit and `llg_store_unpublished` write only the
+unforced bits (`force_write_unforced`), and whole-array publication of a
+sparse array merges them back into the new value
+(`fixed_publication_keep_forced`). These helpers are `LLG_OUTLYING`; a write
+pays only the `g.force_count` test unless something is forced.
+
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.
 Tagged-member NBAs own a copy of their tag checks and re-check the target's tags

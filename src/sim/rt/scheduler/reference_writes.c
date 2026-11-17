@@ -252,9 +252,19 @@ void llg_ba_d(double* target, double value) {
 }
 
 void llg_store_unpublished(sv4_t* target, sv4_t value) {
-    if (!target || llg_is_forced(target)) {
+    if (!target) {
         sv4_destroy(&value);
         return;
+    }
+    if (llg_is_forced(target)) {
+        if (force_covers_all(target)) {
+            sv4_destroy(&value);
+            return;
+        }
+        sv4_t sized = sv4_cast(value, llg_sv4_width(*target), llg_sv4_signed(*target));
+        sv4_destroy(&value);
+        value = sized;
+        force_keep_forced_bits(target, &value);
     }
     sv4_replace(target, value);
 }

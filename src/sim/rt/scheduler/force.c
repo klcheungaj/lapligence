@@ -26,9 +26,9 @@ static void force_table_reserve(int needed) {
     g.force_capacity = capacity;
 }
 
-// Is `sig` currently covered by a packed force part? Procedural writes are
-// dropped while a signal is forced; net driver slots remain writable so their
-// current resolved value can be exposed on release.
+// Is `sig` currently covered by a packed force part? Procedural writes keep
+// the forced bits of such a signal (`force_write_unforced`); net driver slots
+// remain writable so their current resolved value can be exposed on release.
 static int llg_is_forced(sv4_t* sig) {
     for (int i = 0; i < g.force_count; i++) {
         llg_force_entry_t* entry = &g.force_table[i];
@@ -37,6 +37,48 @@ static int llg_is_forced(sv4_t* sig) {
             if (entry->parts[j].target == sig && sv4_to_bool(entry->masks[j])) return 1;
     }
     return 0;
+}
+
+static uint64_t force_mask_word(sv4_t* target, size_t word);
+
+// Do forces cover every bit of `target`?
+static int force_covers_all(sv4_t* target) {
+    uint32_t width = llg_sv4_width(*target);
+    size_t words = ((size_t)width + 63u) / 64u;
+    for (size_t word = 0; word < words; word++) {
+        uint64_t all = word + 1u == words && width % 64u
+            ? UINT64_MAX >> (64u - width % 64u) : UINT64_MAX;
+        if ((force_mask_word(target, word) & all) != all) return 0;
+    }
+    return 1;
+}
+
+// Give `*value`, a new value of `target` at its width, the target's current
+// bits wherever a force covers them.
+static LLG_OUTLYING void force_keep_forced_bits(sv4_t* target, sv4_t* value) {
+    for (int i = 0; i < g.force_count; i++) {
+        llg_force_entry_t* entry = &g.force_table[i];
+        if (!entry->active || entry->is_real) continue;
+        for (int j = 0; j < entry->n_parts; j++)
+            if (entry->parts[j].target == target)
+                llg_sv4_masked_merge(value, *target, entry->masks[j]);
+    }
+}
+
+// A write of `value` to `target` while forces cover some of its bits (a
+// member of an array element held as one packed image, or a cell of a record
+// leaf, is forced in part): a forced bit keeps its forced value (SV 10.6.2)
+// and the others take the write. A target whose every bit is forced keeps its
+// value. Called only for a target `llg_is_forced` reports; `value` is
+// borrowed.
+static LLG_OUTLYING void force_write_unforced(sv4_t* target, sv4_t value) {
+    if (force_covers_all(target)) return;
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* merged = llg_value_scope_values(scope);
+    sv4_replace(merged, sv4_cast(value, llg_sv4_width(*target), llg_sv4_signed(*target)));
+    force_keep_forced_bits(target, merged);
+    sig_write(target, *merged);
+    llg_value_scope_end(scope);
 }
 
 static int llg_is_real_forced(double* target) {
@@ -326,16 +368,41 @@ static LLG_OUTLYING void force_dependency_changed(sv4_t* sig, double* real, int 
     }
 }
 
+// A part with a NULL target is an array element that the statement's index
+// selected none of (SV 7.4.6: an invalid index writes nothing). Returns the
+// parts that name storage: `parts` itself when all do, else a compacted copy
+// in `*owned` that the caller frees; `*n_present` may become 0.
+static LLG_OUTLYING const llg_force_part_t* force_present_parts(
+    const llg_force_part_t* parts, int n_parts, int* n_present, llg_force_part_t** owned) {
+    *owned = NULL;
+    *n_present = n_parts;
+    if (!parts || n_parts <= 0) return parts;
+    int present = 0;
+    for (int i = 0; i < n_parts; i++) present += parts[i].target != NULL;
+    if (present == n_parts) return parts;
+    *n_present = present;
+    if (!present) return parts;
+    *owned = (llg_force_part_t*)llg_checked_malloc(
+        (size_t)present, sizeof(**owned), "selected force parts");
+    for (int i = 0, j = 0; i < n_parts; i++)
+        if (parts[i].target) (*owned)[j++] = parts[i];
+    return *owned;
+}
+
 void llg_force_expr_parts(const llg_force_part_t* parts, int n_parts,
                           uint32_t stream_slice, int stream_right_to_left,
                           llg_force_eval_fn eval,
                           const llg_force_read_t* reads, int n_reads) {
     if (!region_can_mutate("force scheduling")) return;
+    llg_force_part_t* owned;
+    parts = force_present_parts(parts, n_parts, &n_parts, &owned);
+    if (n_parts == 0) return;
     llg_force_entry_t* entry = force_prepare_packed(
         parts, n_parts, stream_slice, stream_right_to_left, eval, reads, n_reads);
     force_evaluate_entry(entry);
     change_check();
     if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(0, parts, n_parts, NULL);
+    free(owned);
 }
 
 void llg_force_real(double* target, llg_force_real_eval_fn eval,
@@ -381,6 +448,8 @@ void llg_force_real(double* target, llg_force_real_eval_fn eval,
 void llg_release_parts(const llg_force_part_t* parts, int n_parts,
                        uint32_t stream_slice, int stream_right_to_left) {
     if (!region_can_mutate("force scheduling")) return;
+    llg_force_part_t* owned;
+    parts = force_present_parts(parts, n_parts, &n_parts, &owned);
     if (!parts || n_parts <= 0) return;
     (void)stream_slice;
     (void)stream_right_to_left;
@@ -402,6 +471,7 @@ void llg_release_parts(const llg_force_part_t* parts, int n_parts,
     free(nets);
     change_check();
     if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(1, parts, n_parts, NULL);
+    free(owned);
 }
 
 void llg_release_real(double* target) {
