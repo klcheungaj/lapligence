@@ -26,6 +26,15 @@ numbers refer to `SystemVerilog-1800-2009.txt` (SV) and
 | `hier_live_v2001` (A02, both editions) | V2001 9.3.2, 12.4 | The 1364-2001 subset of `hier_live` (down, generate, instance array, upward task): `2 3 2 3 e 1 2 6 1`, then `5 6 5 6 e 1 5 9 1`, `5 c 5 c e 7 5 9 7`, and after release `5 7 8 c 7 7 5 9 7` twice. `o0`/`o1` are `la[0].o`/`la[1].o` through the instance-array port connection. |
 | `lifetime` (A03) | SV 10.6.2, 4.9.2, 9.6, 13.3.2 | A force is not owned by the process that executes it. A named fork forces `v = d` and `n = d + 1` (1: `v = 1`, `n = 2`) and is disabled at 1 before its `release v`; both forces stay live: `d = 3` gives `v = 3`, `n = 4`. A detached branch forces `w2 = bump(d)` (a function with a side effect, so a guard process re-evaluates it) at 2 (`4`); `d = 4` at 3 gives `5`; the branch is killed by `disable fork` at 4 and `d = 5` still gives `6`. `release w2` keeps 6; `d = 6`: `v = 6`, `n = 7`. An automatic task forces the static `h = d` at 6 and is killed at 7; `d = 7` gives `h = 7`, `v = 7`, `n = 8`. `$finish` ends the run with `v`, `n` and `h` forced. The number of `bump` calls is not observed (it is unspecified). |
 
+| `static_memory_force_witness` (K3) | SV 10.6.2, 6.4 | FND-002 L-F05-13-02: `a[1] = 0`, `force a[1] = 7`, one time unit later `7` (an element of a static unpacked array is a singular variable). |
+| `element_runtime_index` (K3) | SV 10.6.2, 6.4, 7.4.6 | `mem = 0 10 20 30`, `i = 1`. `force mem[i] = 99` forces `mem[1]` (t1). `i = 2` moves nothing (t2); the writes `mem[1] = 5`, `mem[2] = 6` change only `mem[2]` (t3). `release mem[i]` with `i = 2` releases nothing, and `mem[1] = 7` is still overridden (t4, t5). `i = 1; release mem[i]; mem[1] = 8` gives 8 (t6). `force mem[7]` (out of range) does nothing (t7, 7.4.6 "Writing to an array with an invalid index shall perform no operation"). Decision S23-D6; industry-standard behaviour gives the same lines. |
+| `element_writes` (K3) | SV 10.6.2, 10.6, 7.12.2 | `mem = 0 1 2 3`. `force mem[1] = a + 2` with `a = 1`: 3 (w1); `a = 10`: 12 (w2, the RHS is live). `mem = src` (`100 101 102 103`) leaves the forced element: `100 12 102 103` (w3). At 3 another process issues `mem[1] <= 55` and `mem[3] <= 33`: only `mem[3]` changes (w4). `release mem[1]` keeps 12, also after `a = 20` (w5, w6). `force mem[2] = mem[3] + 1` with `mem[3] = 40`: `41 40` (w7). `reverse` gives `40 41 12 100` with `mem[2]` forced to `mem[3] + 1 = 101`: `40 41 101 100` (w8). The real element `r[2]` forced to 2.5 ignores `r[2] = 1.0` (w10) and takes 3.0 after the release (w11). `m2[i][2]` with `i = 1` forced to 12 ignores `m2[1][2] = 0` while `m2[1][1] = 11` takes effect (w12). `cm[1]`, driven by `assign cm[1] = c`, forced to 5 (w13); the release reestablishes the continuous assignment, 1 (w14), and it follows `c = 2` (w15). Industry-standard behaviour gives the same lines. |
+| `element_member` (K3) | SV 10.6.2, 6.4 | `s[1] = '{2, 3}`. `force s[1].f = 77`: `77 3` (m1). `s[1].f = 5`, `s[1].g = 4`: `77 4` (m2). `s[1] = '{8, 9}` writes `g` only: `77 9` (m3). The release keeps 77 (m4); `s[1].f = 6` takes effect (m5). `e[1].arr[j]` with `j = 2` forced to 33; `j = 0` moves nothing; `e[1].arr[2] = 1` is overridden while `e[1].arr[0] = 2` and `e[1].tag = 22` take effect: `22 2 0 33` (m6). `release e[1].arr[j]` with `j = 2`, then `e[1].arr[2] = 3`: 3 (m7). Industry-standard behaviour gives the same lines. |
+| `element_sparse` (K3) | SV 10.6.2, 7.4.6 | `big` (100000 cells, allocated when written). `force big[i]` (`i = 7`) to 70 ignores `big[7] = 1`: `0 70 0` (s1). `big = src` (`src[7] = 1`, `src[8] = 2`): `0 70 2` (s2). `big = '{default: 5}`: `5 70 5` (s3). `reverse` moves the forced value 70 to `big[99992]` and `big[6] = 5` to `big[99993]` while `big[7]` stays 70: `70 70 5` (s4). The release keeps 70 (s5); `big[7] = 3` takes effect (s6). `force big[99999] = 9`: `5 9` (s7); at 7 another process issues `big <= src`, which leaves the forced cell: `0 9` (s8). Industry-standard behaviour gives the same lines. |
+| `element_concat` (K3) | SV 10.6.2, 7.4.6 | `mem = 10 11 12 13`, `x = 00`. `force {mem[i], x} = abcd` with `i = 1`: `mem[1] = ab`, `x = cd`, `mem[2] = 12` (c1). Writes of both are overridden (c2); the release keeps the forced values (c3). `force {x, mem[j]} = 1234` with `j = 9` (out of range) forces `x` to 12 and no element: `12 10 ab 12 13` (c4); `x = 77` is overridden (c5). After the release `x = 88` takes effect (c6). Industry-standard behaviour gives the same lines. |
+| `element_readmem` (K3) | SV 10.6.2, 21.4 | `mem[1]` forced to `ee` and `big[2]` to `dd`; `$readmemh` of `11 22 33 44` loads every other element: `11 ee 33 44` (r1), `11 22 dd 44` (r2). After the releases a second load writes them: `22 33` (r3). Oracle: the clause text (the reference probe could not run the file read). |
+| `element_record_shapes` (K3, `-D N=3` and `-D N=16`) | SV 10.6.2, 6.4 | With `N = 3` each cell of `mod` is a record leaf; with `N = 16` its member arrays are columns; the elements of `fa` are packed images. `force mod.arr[2] = 5` ignores `mod.arr[2] = 6` while `mod.arr[1] = 1` lands: `5 1` (q1). `force fa[1].arr[i]` (`i = 2`) to 7, then `i = 0`: `fa[1].arr[2] = 8` is overridden, `fa[1].arr[0] = 3` lands: `7 3` (q2). `force mod.u[j].g = 11` (`j = 1`): `11 13` (q3). `force fa[j].u[j].f = 21`, then `fa[1].u[1] = '{1, 2}`: `21 2` (q4). `force mod.arr[i] = 4` (`i = 0`), then `mod = fa[1]` leaves `mod.arr[0]`, `mod.arr[2]` and `mod.u[1].g`: `4 5 21 11` (q5). `i = 99` forces nothing: `3 4` (q6). After the releases every write lands: `1 1 1 1 1` (q7). Industry-standard behaviour gives the same lines at both sizes. |
+
 Adopted FND-002 witnesses (source unchanged): `selected_net_force_witness.v`
 (L-F05-13-01; `01` then `00`), `hierarchical_force_witness.v`
 (L-F05-13-02/03; a child net forced to the parent's `a = 1`, then released to
@@ -41,7 +50,12 @@ Language rules, rejected with a located error in both optimizer modes:
 - `neg_automatic_rhs`: an automatic block variable in a force RHS (SV 13.3.2).
 - `neg_ref_formal`: a `ref` formal of an automatic task as a target (SV 13.3.2).
 - `neg_class_property`: a class property as a target (SV 6.21).
-- `neg_dynamic_element`: a queue element as a target (SV 6.21).
+- `neg_dynamic_element`, `neg_queue_element_release`,
+  `neg_dynamic_array_element`: a queue or dynamic-array element as a force or
+  release target (SV 6.21); industry-standard behaviour rejects them too.
+- `neg_element_part_select`: a part-select of an array element, a
+  part-select of a variable (SV 10.6.2). Industry-standard behaviour forces
+  the selected bits; portable decision `S23-D7` (class c).
 - `neg_variable_select` (both editions), `neg_force_variable_select_witness`
   and `neg_struct_member_variable`: a bit-select, or a member of a packed
   structure variable (a part-select of a variable), as a target.
@@ -60,10 +74,9 @@ Language rules, rejected with a located error in both optimizer modes:
 
 Legal but not supported by llg (located errors; see `docs/known_issues.md`):
 
-- `static_memory_force_witness` (FND-002 L-F05-13-02): an element of a static
-  unpacked array read as a singular variable under SV 10.6.2. The frontend
-  rejects every select of a variable, as V2001 9.3.2 requires ("It cannot be
-  a memory word"); this test pins the current rejection.
+- `neg_native_record_member`: a member of an element of an array of records
+  with a real member (a native value; also string, handle, event and
+  container members). Industry-standard behaviour forces it.
 
 ## Clause text
 
@@ -117,6 +130,22 @@ SV §4.9.2 (L3515-3519):
 > it causes an active update event to be added to the event region, using current values to determine the target.
 >
 > A deassign or a release statement deactivates any corresponding assign or force statement(s).
+
+SV §7.4.6 (L8234-8237):
+
+> If an index expression is out of the address bounds or if any bit in the address is X or Z, then the index shall
+> be invalid. The result of reading from an array with an invalid index shall return the default uninitialized
+> value for the array element type. Writing to an array with an invalid index shall perform no operation.
+
+SV §7.12.2 (L9348-9349):
+
+> Array ordering methods reorder the elements of any unpacked array (fixed or dynamically sized) except for
+> associative arrays.
+
+SV §21.4 (L37237-37238):
+
+> Two system tasks—$readmemb and $readmemh—read and load data from a specified text file into a speci-
+> fied memory array (see 7.4.4).
 
 SV §6.4 (L4606-4607):
 
