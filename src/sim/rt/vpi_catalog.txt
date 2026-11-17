@@ -104,6 +104,7 @@ test a19gc adv_019::class_object_callbacks_follow_creation_and_reclamation_under
 test a19d8 sim_lrm_decisions::a19_d8_named_event_callback
 test a17control adv_017::vpi_control_drives_assertions_and_raises_their_callbacks
 test a17fsm adv_017::fsm_objects_report_states_counters_and_controls
+test a19cbk adv_019::callback_kinds_watch_chandles_and_refuse_the_rest
 
 node null 37.5 type=NULL
   iterate vpiModule implemented walk
@@ -1082,6 +1083,7 @@ node chandle_var 37.17 type=vpiChandleVar
   handle vpiIndex implemented a19d73
   iterate vpiIndex implemented a19d73
   str vpiDecompile implemented walk
+  cb cbValueChange implemented a19cbk
 
 node class_var 37.17 type=vpiClassVar
   get vpiObjId implemented walk

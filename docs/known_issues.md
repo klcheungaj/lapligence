@@ -2844,8 +2844,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   gives a non-static class member no full name; industry-standard
   behaviour names it by the path that reached it, `tb.p.da[1]`, and
   answers NULL when the object was reached by iteration; pending a
-  decision); `cbValueChange` on chandle variables, class
-  properties, strings and arrays (the last three excluded by 38.36.1) and
+  decision); `cbValueChange` on class properties, on elements of
+  fixed-size chandle arrays (industry-standard behaviour serves these),
+  strings and arrays (the last two excluded by 38.36.1) and
   `cbSizeChange`; `vpi_put_value` with a
   delay, force or release on a string, property or element (decisions
   A19-D21, A19-D23);

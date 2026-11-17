@@ -3043,7 +3043,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject` follow construction,
   shallow copies and collection; handles track objects without pinning
   them and are released when the collector reclaims the object;
-  `cbValueChange` watches class variables (decisions A19-D21..D23). Models
+  `cbValueChange` watches class variables (decisions A19-D21..D23) and
+  chandle variables, reporting the new pointer image once per check. Models
   without a VPI catalog emit no tables and no creation calls.
   `vpi_get_value` serves every Table
   38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs
