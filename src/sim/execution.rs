@@ -3218,6 +3218,7 @@ mod tests {
         use crate::sim::ir::{
             IrActivationTarget, IrAssertionControlKind, IrChandleExpr, IrConst, IrExpr, IrExprKind,
             IrMailboxTarget, IrMailboxValue, IrProcessControl, IrProcessExpr, IrSeverityLevel,
+            IrSeverityOrigin,
         };
 
         let value = IrExpr::new(
@@ -3250,7 +3251,7 @@ mod tests {
                 scope: "top".into(),
                 location: "test.sv:1".into(),
                 fatal_finish_number: Some(0),
-                runtime_failure: false,
+                origin: IrSeverityOrigin::Task,
                 skip_finals: false,
             },
             IrStmt::Object(Box::new(IrObjectStmt::ProcessControl {

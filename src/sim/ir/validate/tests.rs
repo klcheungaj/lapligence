@@ -766,6 +766,52 @@ fn statement_initialization_validates_its_body() {
 }
 
 #[test]
+fn severity_origin_limits_the_level() {
+    let model = |level, origin| {
+        let mut model = valid_model();
+        model.processes.push(IrProcess {
+            c_name: "proc".to_string(),
+            label: "top.initial".to_string(),
+            kind: IrProcessKind::Synthetic,
+            shape: IrShape::RunOnce,
+            writes: Vec::new(),
+            pre_fns: Vec::new(),
+            body: vec![IrStmt::Severity {
+                level,
+                fmt: "\"text\"".to_string(),
+                args: Vec::new(),
+                scope: "top".to_string(),
+                location: "top\u{1f}t.sv:1:1".to_string(),
+                fatal_finish_number: None,
+                origin,
+                skip_finals: false,
+            }],
+            program: None,
+            checker: false,
+            origin: crate::sim::semantic::Origin::Synthetic {
+                reason: "validation fixture".to_owned(),
+            },
+            callback_host: false,
+            port_link: false,
+        });
+        model.spawns.push("proc".to_string());
+        model.validate()
+    };
+    model(IrSeverityLevel::Warning, IrSeverityOrigin::RuntimeWarning)
+        .expect("a simulator-generated warning is valid");
+    model(IrSeverityLevel::Warning, IrSeverityOrigin::Task).expect("a $warning is valid");
+    model(IrSeverityLevel::Error, IrSeverityOrigin::RuntimeFailure)
+        .expect("a run-time failure is valid");
+    for (level, origin) in [
+        (IrSeverityLevel::Error, IrSeverityOrigin::RuntimeWarning),
+        (IrSeverityLevel::Info, IrSeverityOrigin::RuntimeWarning),
+        (IrSeverityLevel::Warning, IrSeverityOrigin::RuntimeFailure),
+    ] {
+        model(level, origin).expect_err("the origin does not admit this level");
+    }
+}
+
+#[test]
 fn indexed_lhs_selected_width_contributes_to_capacity() {
     let statement = IrStmt::Assign {
         lhs: IrLhs::IdxPart(

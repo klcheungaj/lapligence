@@ -13,6 +13,9 @@ A `$fatal` also sets a flag outside `g` (`llg_rt_fatal_severity_ran`), apart
 from `llg_rt_failed`: the generated model's exit status is 1 when either holds
 (SV 20.9, "with an error code"), while only a failure skips the end-of-run
 assertion settling a `$finish` still does.
+A severity report with an empty `%m` scope is simulator-generated: a warning
+is SIM-023, an error or fatal SIM-009; a design task names its scope and is
+SIM-003..006 (`llg_report_severity_typed`).
 
 Semaphore service order (AB-N4) and suspended waiters (AB-N1):
 `scheduler/wait_queues.c` and `process_control.c` comments.

@@ -1075,21 +1075,22 @@ fn render_stmt_scoped(
             scope,
             location,
             fatal_finish_number,
-            runtime_failure,
+            origin,
             skip_finals,
         } => render_severity(
             ctx,
             *level,
             fmt,
             args,
-            // A simulator-generated failure has no `%m` and is reported as a
-            // run-time failure: the runtime tells it by the empty scope.
-            if *runtime_failure { "" } else { scope },
+            // A simulator-generated failure or warning has no `%m` and is
+            // reported under a simulator id: the runtime tells it by the
+            // empty scope.
+            if origin.is_simulator() { "" } else { scope },
             location,
             *fatal_finish_number,
         )
         .map(|source| if *skip_finals { format!("    llg_rt_skip_finals();\n{source}") } else { source })
-        .map(|source| if *runtime_failure { format!("    llg_rt_mark_failed();\n{source}") } else { source })?,
+        .map(|source| if *origin == crate::sim::ir::IrSeverityOrigin::RuntimeFailure { format!("    llg_rt_mark_failed();\n{source}") } else { source })?,
         IrStmt::AssertionControl {
             kind,
             args,

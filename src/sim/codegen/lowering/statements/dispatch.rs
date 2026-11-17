@@ -650,7 +650,7 @@ impl EmitCtx<'_, '_> {
                         scope: self.format_scope(h),
                         location: self.finish_location(h),
                         fatal_finish_number: Some(0),
-                        runtime_failure: true,
+                        origin: crate::sim::ir::IrSeverityOrigin::RuntimeFailure,
                         skip_finals: true,
                     }],
                 };

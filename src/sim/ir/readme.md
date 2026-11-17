@@ -55,6 +55,13 @@ statements request a Postponed sample instead (`IrCovergroup::strobe`); and `IrO
 returns a real percentage. Sample expressions are ordinary IR operands, so the
 optimizer and storage audit see every coverpoint read.
 
+`IrStmt::Severity` carries an `IrSeverityOrigin`: `Task` for a design's
+`$info`/`$warning`/`$error`/`$fatal`, `RuntimeFailure` (error or fatal; marks
+the run failed) and `RuntimeWarning` (warning only) for reports the simulator
+generates. The emitters pass an empty `%m` scope for the last two, so the
+runtime reports them under a simulator id (SIM-009, SIM-023) instead of a task
+id; their site still frames the scope ([messages](../../../docs/messages.md)).
+
 ## Ownership and source organization
 
 `ExecutionModel::lower` moves staging process bodies into executable blocks.

@@ -207,6 +207,7 @@ No messages.
 | `SIM-020` | warning | a model environment setting (LLG_SIM_LOG_FILE, LLG_STOP_POLICY, plusargs) is unusable | - |
 | `SIM-021` | info | runtime information (randomize statistics, stack limit notes) | - |
 | `SIM-022` | info | the run ended without $finish because no process remains | - |
+| `SIM-023` | warning | a run-time warning the simulator detects in the design; the run continues (a $cast destination element that does not exist while index checks are off) | - |
 | `SIM-030` | fatal | an internal runtime invariant failed; the model aborts | - |
 | `SIM-031` | fatal | the model could not allocate memory; it aborts | - |
 

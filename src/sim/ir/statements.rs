@@ -921,9 +921,9 @@ pub enum IrStmt {
         /// Source context shown in the runtime diagnostic prefix.
         location: String,
         fatal_finish_number: Option<u8>,
-        /// Simulator-generated failures set the process exit status; they
-        /// use `Error` (the run continues) or `Fatal` severity.
-        runtime_failure: bool,
+        /// A design task or a simulator-generated failure or warning; the
+        /// latter two are scope-less at run time and carry a simulator id.
+        origin: IrSeverityOrigin,
         /// `Fatal` only: the run ends without running its final procedures,
         /// for simulator-generated errors that stop a run at once.
         skip_finals: bool,

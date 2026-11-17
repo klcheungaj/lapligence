@@ -217,7 +217,7 @@ impl EmitCtx<'_, '_> {
                 scope: self.format_scope(h),
                 location: self.finish_location(h),
                 fatal_finish_number,
-                runtime_failure: false,
+                origin: crate::sim::ir::IrSeverityOrigin::Task,
                 skip_finals: false,
             }]);
         }
