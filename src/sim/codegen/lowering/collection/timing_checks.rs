@@ -687,6 +687,20 @@ impl Codegen<'_> {
         lowered: &mut Vec<LoweredCheck>,
         combined: &mut Vec<CombinedCheck>,
     ) -> Result<(), String> {
+        self.lower_timing_check_unlocated(scope, check, terminals, conditions, lowered, combined)
+            .map_err(|error| self.locate_error(check.node, error))
+    }
+
+    /// [`Self::lower_timing_check`] before its failure is located.
+    fn lower_timing_check_unlocated(
+        &mut self,
+        scope: &str,
+        check: &TimingCheck,
+        terminals: &mut Vec<IrTimingTerminal>,
+        conditions: &mut Vec<IrExpr>,
+        lowered: &mut Vec<LoweredCheck>,
+        combined: &mut Vec<CombinedCheck>,
+    ) -> Result<(), String> {
         let location = self.specify_location(check.node);
         let name = check.kind.name();
         let error = |message: String| {

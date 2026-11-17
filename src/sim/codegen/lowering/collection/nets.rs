@@ -2642,6 +2642,17 @@ impl<'a> Codegen<'a> {
         nodes: &[NodeId],
         writers: &NetWriterIndex,
     ) -> Result<DriverSites, String> {
+        self.standalone_net_sites_unlocated(net, nodes, writers)
+            .map_err(|error| self.locate_error(net, error))
+    }
+
+    /// [`Self::standalone_net_sites`] before its failure is located.
+    fn standalone_net_sites_unlocated(
+        &self,
+        net: NodeId,
+        nodes: &[NodeId],
+        writers: &NetWriterIndex,
+    ) -> Result<DriverSites, String> {
         let shown = self.display_name(net);
         let member_set = HashSet::from([net]);
         let mut sites: HashMap<NodeId, (u8, u8)> = HashMap::new();

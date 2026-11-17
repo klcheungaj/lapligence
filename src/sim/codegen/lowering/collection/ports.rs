@@ -204,6 +204,18 @@ impl<'a> Codegen<'a> {
         actual: NodeId,
         child: UnpackedAggregateInfo,
     ) -> Result<(), String> {
+        self.bind_reference_aggregate_unlocated(port, _path, actual, child)
+            .map_err(|error| self.locate_error(port, error))
+    }
+
+    /// [`Self::bind_reference_aggregate`] before its failure is located.
+    fn bind_reference_aggregate_unlocated(
+        &mut self,
+        port: NodeId,
+        _path: &str,
+        actual: NodeId,
+        child: UnpackedAggregateInfo,
+    ) -> Result<(), String> {
         if self.unpacked_aggregate_info(actual).is_none()
             && self.unpacked_path_for_expr(actual).is_none()
             && child

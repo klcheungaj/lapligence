@@ -435,6 +435,12 @@ impl Codegen<'_> {
     /// constant bit, part or indexed part select of a one-dimensional packed
     /// signal.
     pub(super) fn path_terminal(&self, expression: NodeId) -> Result<PathTerminal, String> {
+        self.path_terminal_unlocated(expression)
+            .map_err(|error| self.locate_error(expression, error))
+    }
+
+    /// [`Self::path_terminal`] before its failure is located.
+    fn path_terminal_unlocated(&self, expression: NodeId) -> Result<PathTerminal, String> {
         let target = |base: NodeId| -> Result<NodeId, String> {
             match self.kind(base) {
                 NodeKind::Net { .. } | NodeKind::Var { .. } => Ok(base),
