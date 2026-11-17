@@ -340,7 +340,7 @@ Statement coverage (S46-D13) is collected: the design names
 `SV_COV_STATEMENT`.
 
 - `unique if`: both conditions are 1, so the first branch runs (`first 20`)
-  and the run reports one `unique violation ... multiple matching items` at
+  and the run reports one `unique violation: multiple matching items` at
   25:5 (12.4.2). The `else if` is part of that conditional statement (A.6.6).
 - `whole_blk` is the whole branch of the `join_none`; `disable whole_blk` at
   time 1 ends the branch KILLED (9.6.2, 9.7).

@@ -424,7 +424,11 @@ static void llg_native_ref_mirror_changed(sv4_t* contents, sv4_t* shape,
         break;
     }
     llg_native_ref_t* ref = mirror->ref;
-    llg_native_ref_touch(ref->member ? ref->parent : ref);
+    llg_native_ref_t* holder = ref->member ? ref->parent : ref;
+    llg_native_ref_touch(holder);
+    /* A subroutine record's slot has no container whose notify reloads the
+     * other mirrors of it (llg_native_refs_notify), so reload them here. */
+    if (holder->origin) llg_native_refs_mirrors_load();
     mirror->syncing = 0;
 }
 

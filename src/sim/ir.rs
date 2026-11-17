@@ -725,13 +725,14 @@ pub struct IrModel {
     pub(in crate::sim) vpi_delay_select: u8,
     /// Random streams the model observes; set by lowering.
     pub(in crate::sim) random: IrRandomUse,
-    /// Whether some statement reads the runtime's current-slot edge history:
-    /// a clocking drive or clocking cycle wait (`##N`, IEEE 1800-2009 14.11,
-    /// 14.16) or an assertion clock pulse. Only then must the runtime record
-    /// every published signal change; other models skip that per-change
-    /// bookkeeping. Set by lowering; validation rejects those statements
-    /// without it.
-    pub(in crate::sim) clocking_history: bool,
+    /// The storage whose current-slot edge history some statement reads, by
+    /// the C name its wait sources use: the signal events of clocking drives
+    /// and clocking cycle waits (`##N`, IEEE 1800-2009 14.11, 14.16) and the
+    /// signals of assertion clock pulses. Startup registers each one with the
+    /// runtime, which records edge history only for registered storage, so a
+    /// change of any other storage costs no history entry or record. Set by
+    /// lowering; validation rejects a reader whose storage is missing here.
+    pub(in crate::sim) clocking_history: std::collections::BTreeSet<String>,
     /// Constraint problems of randomize calls (IEEE 1800-2009 18), one per
     /// call site and dynamic class; each owns one runtime solver session.
     pub(in crate::sim) rand_problems: Vec<IrRandProblem>,
@@ -849,7 +850,7 @@ pub struct IrModelParts {
     pub spawns: Vec<String>,
     pub final_spawns: Vec<String>,
     /// See [`IrModel`]'s `clocking_history`.
-    pub clocking_history: bool,
+    pub clocking_history: std::collections::BTreeSet<String>,
 }
 
 impl IrModel {

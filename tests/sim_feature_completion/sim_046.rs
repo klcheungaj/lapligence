@@ -997,8 +997,7 @@ fn statement_counters_keep_the_shape_of_the_counted_code() {
         let messages = llg_messages(output);
         assert_eq!(messages.len(), 1, "{label}: {messages:?}");
         assert!(
-            messages[0].starts_with("WARNING: [SIM-011] unique violation at ")
-                && messages[0].ends_with("statement_shapes.sv:25:5: multiple matching items"),
+            messages[0] == "WARNING: statement_shapes.sv:25:5: [SIM-011] unique violation: multiple matching items",
             "{label}: {messages:?}"
         );
     });

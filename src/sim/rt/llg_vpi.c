@@ -14102,6 +14102,13 @@ static void reset_return(llg_vpi_call_t* call, const llg_vpi_callsite_t* site) {
                 sv4_zero(site->result_width ? site->result_width : 1u, site->result_signed));
 }
 
+/* `file:line` of a system task or function call, the location field of a
+ * VPI error about it; empty when the call has no file. */
+static void vpi_call_location(llg_report_t* out, const char* file, int line) {
+    llg_report_init(out);
+    if (file) llg_report_printf(out, "%s:%d", file, line);
+}
+
 static int compile_site(llg_vpi_callsite_t* site) {
     site->registration = find_registration(site->name);
     if (!site->registration) {
@@ -14109,10 +14116,10 @@ static int compile_site(llg_vpi_callsite_t* site) {
                        "no VPI registration for `%s`", site->name);
         /* Name the call site: the model stops before time 0, so nothing
          * else points at the source line. */
-        if (site->file)
-            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: no VPI registration for `%s` (called at %s:%d)", site->name, site->file, site->line);
-        else
-            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: no VPI registration for `%s`", site->name);
+        llg_report_t where;
+        vpi_call_location(&where, site->file, site->line);
+        llg_msg(LLG_MSG_VPI_ERROR, where.len ? where.data : NULL, "VPI error: no VPI registration for `%s`", site->name);
+        llg_report_free(&where);
         return 0;
     }
     llg_vpi_call_t call;
@@ -14392,10 +14399,10 @@ int llg_vpi_check_builtin_overrides(const llg_vpi_builtin_call_t* calls, uint32_
                        "VPI registration of built-in `%s` cannot override it", calls[i].name);
         /* The model stops before time 0; name the call that would have
          * reached the application. */
-        if (calls[i].file)
-            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: a VPI application registers `%s`, which llg implements as a built-in (called at %s:%d); llg does not support overriding built-in system tasks and functions (IEEE 1800-2009 36.3.2)", calls[i].name, calls[i].file, calls[i].line);
-        else
-            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: a VPI application registers `%s`, which llg implements as a built-in; llg does not support overriding built-in system tasks and functions (IEEE 1800-2009 36.3.2)", calls[i].name);
+        llg_report_t where;
+        vpi_call_location(&where, calls[i].file, calls[i].line);
+        llg_msg(LLG_MSG_VPI_ERROR, where.len ? where.data : NULL, "VPI error: a VPI application registers `%s`, which llg implements as a built-in; llg does not support overriding built-in system tasks and functions (IEEE 1800-2009 36.3.2)", calls[i].name);
+        llg_report_free(&where);
         return 0;
     }
     return 1;

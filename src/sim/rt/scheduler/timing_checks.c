@@ -548,8 +548,7 @@ static void timing_report(llg_timing_check_set_t* set, const llg_timing_check_t*
     llg_report_t message;
     llg_report_init(&report);
     llg_report_init(&message);
-    llg_report_printf(&report, "timing violation at %s in %s at time %llu (%s): ",
-                      check->origin && check->origin[0] ? check->origin : "<unknown>",
+    llg_report_printf(&report, "timing violation in %s at time %llu (%s): ",
                       set->scope ? set->scope : "<unknown>",
                       (unsigned long long)g.now, unit);
     for (const char* text = check->text ? check->text : ""; *text; text++) {
@@ -562,8 +561,8 @@ static void timing_report(llg_timing_check_set_t* set, const llg_timing_check_t*
         else
             llg_report_bytes(&report, text, 1);
     }
-    llg_msg_append(&message, LLG_MSG_TIMING_VIOLATION, LLG_SEVERITY_WARNING, NULL, NULL, NULL,
-                   report.data, report.len);
+    llg_msg_append(&message, LLG_MSG_TIMING_VIOLATION, LLG_SEVERITY_WARNING, check->origin,
+                   NULL, NULL, report.data, report.len);
     llg_report_free(&report);
     llg_report_emit(&message, stderr);
 }

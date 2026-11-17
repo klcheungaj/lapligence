@@ -15,6 +15,18 @@ impl EmitCtx<'_, '_> {
     }
 
     fn lower_checked_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        // A function called in an expression with a run-time selected record
+        // element as a `ref` actual: the statement lowers once per element.
+        if let Some(select) = self.statement_record_ref_select(h)? {
+            // An unselected index stops at the actual, as a column's cell
+            // reference does.
+            let site = select.source;
+            return self
+                .lower_per_record_element(site, select, false, &mut |ctx| {
+                    ctx.lower_checked_stmt(h).map(IrStmt::Block)
+                })
+                .map(|statement| vec![statement]);
+        }
         let outer_receivers = std::mem::take(&mut self.cg.receiver_prelude);
         let receiver_roots = self.cg.qualify_class_containers(&self.path, h);
         let receivers = std::mem::replace(&mut self.cg.receiver_prelude, outer_receivers);

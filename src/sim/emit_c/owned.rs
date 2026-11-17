@@ -1237,6 +1237,10 @@ impl<'a, 'm> Frame<'a, 'm> {
                 return Some(binding.clone());
             }
         }
+        self.model_binding(name)
+    }
+    /// The model storage `name` resolves to when no frame scope binds it.
+    fn model_binding(&self, name: &str) -> Option<Binding> {
         let model = self.ctx.model;
         match self.storage_names.filter(|names| names.indexes(model)) {
             Some(names) => names.find_checked(name),

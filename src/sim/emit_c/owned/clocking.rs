@@ -58,6 +58,14 @@ impl Frame<'_, '_> {
                     if binding.width == 0 || binding.automatic {
                         return Err("clocking source must be persistent packed storage".to_owned());
                     }
+                    // Startup registers the model storage of this name for
+                    // edge history; storage a frame scope binds instead
+                    // would never be registered.
+                    if self.model_binding(name).map(|model| model.address)
+                        != Some(binding.address.clone())
+                    {
+                        return Err(format!("clocking source `{name}` must be model storage"));
+                    }
                     format!(
                         "{{ .sig = {}, .kind = {edge}, .ev = NULL }}",
                         binding.address

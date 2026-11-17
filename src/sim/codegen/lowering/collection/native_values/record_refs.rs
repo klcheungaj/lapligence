@@ -20,8 +20,14 @@
 //! A record element selected at run time (`t(m.e[i])`) has no single binding:
 //! the call lowers once per element, under a decision tree over the index
 //! taken at the call, each branch reaching that element's specialization
-//! (`EmitCtx::lower_record_ref_select`). Specializations are shared, so code
-//! grows with the elements and calls of each site, bounded by
+//! (`EmitCtx::lower_per_record_element`). A function called inside an
+//! expression has no statement of its own: an assignment without timing
+//! control, a `return` or a system-task statement around it lowers once per
+//! element instead, with the index taken when the statement starts; such a
+//! statement evaluates its expressions once, and one with an operand to the
+//! left of the actual that may write the index rejects
+//! (`EmitCtx::statement_record_ref_select`). Specializations are shared, so
+//! code grows with the elements and calls of each site, bounded by
 //! `NATIVE_RECORD_SELECT_LIMIT`.
 //!
 //! A task waiting on a formal bound to such an element that no index selects
@@ -290,6 +296,30 @@ impl Codegen<'_> {
         Ok(Some(place))
     }
 
+    /// Whether `actual` of native record `ref` formal `formal` is a member or
+    /// element of a subroutine record and the formal's type has queue or
+    /// dynamic-array members. The formal then takes the record's companion
+    /// containers, whose changes no marker of the reference follows.
+    pub(in crate::sim::codegen::lowering) fn subroutine_record_container_member(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        actual: NodeId,
+    ) -> Result<bool, String> {
+        if !self.is_ref_formal(formal)
+            || self
+                .native_layouts
+                .get(&formal)
+                .is_none_or(|layout| layout.containers.is_empty())
+            || self.record_ref_binding(formal, actual).is_some()
+        {
+            return Ok(false);
+        }
+        Ok(self.native_place(path, actual)?.is_some_and(|place| {
+            matches!(place.root, IrElementRoot::Value(_)) && !place.steps.is_empty()
+        }))
+    }
+
     /// The call operand binding `node`, a native record element or a member
     /// or member-array element of a native record, to a `ref` formal of
     /// `kind`. A whole value root has an address of its own.
@@ -325,7 +355,7 @@ impl Codegen<'_> {
         }
         // A record element that no index selects (of a member array, a fixed
         // array, a queue or a dynamic array) has no leaf form to stop at
-        // (`lower_record_ref_select`); with index checks on, the call stops
+        // (`lower_per_record_element`); with index checks on, the call stops
         // at the reference instead, as at fewer cells.
         let stop_unselected = (kind == IrElementRefKind::Record
             && matches!(place.root, IrElementRoot::Element { .. }))

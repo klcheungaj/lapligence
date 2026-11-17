@@ -15,7 +15,7 @@ use crate::sim::ir::{
     IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue, IrObjectQuery,
 };
 use crate::sim::ir::{
-    IrElementRefKind, IrElementRoot, IrFixedValue, IrRefCompanion, IrValueItemRoot,
+    IrElementRefKind, IrElementRoot, IrElementStep, IrFixedValue, IrRefCompanion, IrValueItemRoot,
 };
 
 mod conditionals;
@@ -552,20 +552,27 @@ impl Codegen<'_> {
         layout
             .containers
             .iter()
-            .map(|leaf| {
-                let ir = self.model.containers.len();
-                self.model.containers.push(crate::sim::ir::IrContainer {
-                    c_name: format!("S_llg_container_{ir}"),
-                    element: leaf.element.clone(),
-                    kind: leaf.kind.clone(),
-                    initial_size: None,
-                    activation,
-                    class_field: None,
-                    receiver: None,
-                });
-                ir
-            })
+            .map(|leaf| self.native_companion_container(leaf, activation))
             .collect()
+    }
+
+    /// A container of the type of container member `leaf`.
+    fn native_companion_container(
+        &mut self,
+        leaf: &NativeContainerLeaf,
+        activation: bool,
+    ) -> usize {
+        let ir = self.model.containers.len();
+        self.model.containers.push(crate::sim::ir::IrContainer {
+            c_name: format!("S_llg_container_{ir}"),
+            element: leaf.element.clone(),
+            kind: leaf.kind.clone(),
+            initial_size: None,
+            activation,
+            class_field: None,
+            receiver: None,
+        });
+        ir
     }
 
     /// A lexical container holding the items of `leaf` for one transfer. The
@@ -3027,25 +3034,116 @@ impl Codegen<'_> {
         );
         match self.member_ref(path, actual, IrElementRefKind::Record, const_ref)? {
             Some(IrCallArg::ElementRef(mut reference)) if !layout.containers.is_empty() => {
-                // A subroutine record's members live in its companions, not
-                // in nested slots of an element.
-                if !matches!(reference.root, IrElementRoot::Element { .. }) {
-                    return Err(self.native_ref_actual_error(path, formal));
-                }
-                reference.companions = self
-                    .native_companions(layout, true)
-                    .into_iter()
-                    .zip(&layout.containers)
-                    .map(|(container, leaf)| IrRefCompanion {
-                        container,
-                        items: leaf.items.clone(),
-                    })
-                    .collect();
+                reference.companions = match reference.root {
+                    IrElementRoot::Element { .. } => self
+                        .native_companions(layout, true)
+                        .into_iter()
+                        .zip(&layout.containers)
+                        .map(|(container, leaf)| IrRefCompanion::Mirror {
+                            container,
+                            items: leaf.items.clone(),
+                        })
+                        .collect(),
+                    // A subroutine record's members live in its companions,
+                    // not in nested slots: the formal takes those.
+                    IrElementRoot::Value(value) => {
+                        match self.root_companions(value, &reference.steps, layout) {
+                            Some(companions) => companions,
+                            None => return Err(self.native_ref_actual_error(path, formal)),
+                        }
+                    }
+                    IrElementRoot::Leaves { .. } => {
+                        return Err(self.native_ref_actual_error(path, formal))
+                    }
+                };
                 Ok(IrCallArg::ElementRef(reference))
             }
             Some(argument) => Ok(argument),
+            None if self.leaf_record_element_at_run_time(path, actual) => {
+                let node = self.node(actual);
+                Err(format!(
+                    "run-time selected record element as the `ref` actual of native record formal `{}` of a function called outside an assignment without timing control, a `return` or a system-task statement (a condition or a loop header) is not supported; assign the call's result in a statement first (SIM-008) at {}:{}:{} in `{}`",
+                    self.node(formal).name,
+                    node.file.as_deref().unwrap_or("<unknown>"),
+                    node.line,
+                    node.col,
+                    self.source_path(path)
+                ))
+            }
             None => Err(self.native_ref_actual_error(path, formal)),
         }
+    }
+
+    /// The companions of `value`, a subroutine record, that a `ref` formal
+    /// of `layout` bound below it through `steps` takes, one per container
+    /// member of the formal: each candidate whose item path continues the
+    /// steps, keyed by its positions at the run-time steps. Below a member
+    /// array the value holds in its own slot (`NativeFixedLeaf`, at the
+    /// column size) the member is a nested slot, which a call-owned
+    /// container mirrors as for a container element. `None` when a member
+    /// is in neither.
+    fn root_companions(
+        &mut self,
+        value: usize,
+        steps: &[IrElementStep],
+        layout: &NativeLayout,
+    ) -> Option<Vec<IrRefCompanion>> {
+        let parent_layout = self.native_layout_of_value(value).ok()?;
+        let parent = parent_layout.containers.clone();
+        let nested = parent_layout.fixed.iter().any(|leaf| {
+            leaf.items.len() < steps.len()
+                && steps.iter().zip(&leaf.items).all(|(step, item)| {
+                    matches!(step, IrElementStep::Item(position) if position == item)
+                })
+        });
+        if nested {
+            return Some(
+                self.native_companions(layout, true)
+                    .into_iter()
+                    .zip(&layout.containers)
+                    .map(|(container, leaf)| IrRefCompanion::Mirror {
+                        container,
+                        items: leaf.items.clone(),
+                    })
+                    .collect(),
+            );
+        }
+        let companions = self.model.native_values[value].companions.clone();
+        let runs = steps
+            .iter()
+            .any(|step| matches!(step, IrElementStep::Position(_)));
+        let mut bound = Vec::with_capacity(layout.containers.len());
+        for leaf in &layout.containers {
+            let mut choices = Vec::new();
+            for (candidate, container) in parent.iter().zip(&companions) {
+                let Some((head, tail)) = candidate.items.split_at_checked(steps.len()) else {
+                    continue;
+                };
+                if tail != leaf.items.as_slice() {
+                    continue;
+                }
+                let mut positions = Vec::new();
+                let selected = steps.iter().zip(head).all(|(step, item)| match step {
+                    IrElementStep::Item(position) => position == item,
+                    IrElementStep::Position(_) => {
+                        positions.push(*item);
+                        true
+                    }
+                });
+                if selected {
+                    choices.push((positions, *container));
+                }
+            }
+            if choices.is_empty() || (!runs && choices.len() != 1) {
+                return None;
+            }
+            let unselected = runs.then(|| self.native_companion_container(leaf, true));
+            bound.push(IrRefCompanion::Root {
+                choices,
+                unselected,
+            });
+        }
+        Some(bound)
     }
 
     /// Caller operand of a native formal. A whole native value of the formal

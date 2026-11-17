@@ -4,7 +4,6 @@
 //! tagged pattern-case selection through the owned tag guard.
 
 use crate::sim_cli;
-use crate::sim_harness;
 
 #[test]
 fn control_nested_foreach_cleanup() {
@@ -30,18 +29,13 @@ fn case_four_state_checks() {
 
 #[test]
 fn qualified_string_case_inside_keeps_first_match_and_qualifiers() {
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim/feature_completion/g1_21/qualified_string_inside.sv");
-    let warning = format!(
-        "unique violation at {}:32:9: no matching item",
-        sim_harness::source_display(&source)
-    );
+    let warning = "qualified_string_inside.sv:32:9 unique violation: no matching item";
     sim_cli::run_case(
         "feature_completion/g1_21",
         "qualified_string_inside",
         "a o=1\nb o=2\nc o=2\nd o=2\n",
         "INFO: [SIM-000] 0 error(s), 1 warning(s)\n",
-        &[warning.as_str()],
+        &[warning],
     );
 }
 
