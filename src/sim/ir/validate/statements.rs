@@ -1571,7 +1571,7 @@ impl Validator<'_> {
                 scope,
                 location,
                 fatal_finish_number,
-                runtime_failure,
+                origin,
                 skip_finals,
                 ..
             } => {
@@ -1581,14 +1581,23 @@ impl Validator<'_> {
                 if location.is_empty() {
                     return self.fail(path, "severity source location must not be empty");
                 }
-                if *runtime_failure
-                    && !matches!(
-                        level,
-                        crate::sim::ir::IrSeverityLevel::Error
-                            | crate::sim::ir::IrSeverityLevel::Fatal
-                    )
-                {
-                    return self.fail(path, "runtime failure must use error or fatal severity");
+                match origin {
+                    crate::sim::ir::IrSeverityOrigin::RuntimeFailure
+                        if !matches!(
+                            level,
+                            crate::sim::ir::IrSeverityLevel::Error
+                                | crate::sim::ir::IrSeverityLevel::Fatal
+                        ) =>
+                    {
+                        return self
+                            .fail(path, "runtime failure must use error or fatal severity");
+                    }
+                    crate::sim::ir::IrSeverityOrigin::RuntimeWarning
+                        if *level != crate::sim::ir::IrSeverityLevel::Warning =>
+                    {
+                        return self.fail(path, "runtime warning must use warning severity");
+                    }
+                    _ => {}
                 }
                 if *skip_finals && !level.is_fatal() {
                     return self.fail(path, "only a fatal severity can skip final procedures");

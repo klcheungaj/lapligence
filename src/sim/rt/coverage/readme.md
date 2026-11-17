@@ -38,6 +38,13 @@ coverage is the union of instance bins by 19.11.3 name and a merged bin uses
 the largest `at_least` (S45-D18); merged crosses need equal layouts.
 Option values that 19.7 lets code write live in the mutable instance and
 type records, and queries read them at call time.
+Run-time messages (19.5.5 illegal values, 19.5.6 warnings, bad option
+values, database failures) go through `llg_cov_report` at a site the
+lowering frames like a status line's: the scope, the unit separator, then
+`file:line:col` of the bins, option or call. The position prints in the
+location field and the scope with the time in the context. The fatal end of
+an illegal hit (`llg_cov_fatal`) reports at the same site through
+`llg_rt_fatal_typed`, as `$fatal` does.
 A coverpoint of 65 to 128 bits has 64-bit unsigned keys: generated code
 calls `llg_cov_hit_wide` (out of line), which maps the value through the
 group's `llg_cov_wide_t` class table (one key per class, or per value in an

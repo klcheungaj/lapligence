@@ -3933,8 +3933,12 @@ fn s45_d3_illegal_bin_ends_run() {
                 "{label}"
             );
             assert!(
-                String::from_utf8_lossy(&output.stderr)
-                    .contains("[SIM-010] covergroup `g` coverpoint `cp` sampled 7"),
+                crate::sim_harness::has_message(
+                    &String::from_utf8_lossy(&output.stderr),
+                    "SIM-010",
+                    "",
+                    "covergroup `g` coverpoint `cp` sampled 7"
+                ),
                 "{label}: {output:?}"
             );
         },
@@ -3965,8 +3969,11 @@ fn s45_d5_bins_count_not_positive() {
                 "{label}"
             );
             assert!(
-                String::from_utf8_lossy(&output.stderr).contains(
-                    "ERROR: [SIM-010] bins `b` at tb:19:12: the number of bins is not a positive value"
+                crate::sim_harness::has_message(
+                    &String::from_utf8_lossy(&output.stderr),
+                    "SIM-010",
+                    "S45-D5_bins_count_not_positive.sv:19:12",
+                    "bins `b`: the number of bins is not a positive value"
                 ),
                 "{label}: {output:?}"
             );
@@ -4018,8 +4025,10 @@ fn s45_d10_default_sequence() {
         );
         let errors: Vec<String> = String::from_utf8_lossy(&output.stderr)
             .lines()
-            .filter(|line| line.starts_with("ERROR: [SIM-010]"))
-            .map(|line| {
+            .filter_map(llg::core::report::parse)
+            .filter(|message| message.id == "SIM-010")
+            .map(|message| {
+                let line = message.text;
                 let sampled = line.split(" sampled ").nth(1).unwrap_or_default();
                 let point = line.split(" coverpoint `").nth(1).unwrap_or_default();
                 format!(
@@ -4218,8 +4227,11 @@ fn s46_d3_failed_load_changes_nothing() {
             assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
-                stderr.contains(
-                    "ERROR: [SIM-010] $load_coverage_db at tb:21:5: coverage database `s46_d3_no_such_coverage_database` was not loaded: "
+                crate::sim_harness::has_message(
+                    &stderr,
+                    "SIM-010",
+                    "S46-D3_failed_load_changes_nothing.sv:21:5",
+                    "$load_coverage_db: coverage database `s46_d3_no_such_coverage_database` was not loaded: "
                 ),
                 "{label}: {stderr}"
             );
@@ -4284,8 +4296,11 @@ fn s46_d11_failed_merge() {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains(
-                "ERROR: [SIM-010] $coverage_merge at tb:18:27: coverage database `s46_d11_no_such_database` was not merged: "
+            crate::sim_harness::has_message(
+                &stderr,
+                "SIM-010",
+                "S46-D11_failed_merge.sv:18:27",
+                "$coverage_merge: coverage database `s46_d11_no_such_database` was not merged: "
             ),
             "{label}: {stderr}"
         );
@@ -5843,11 +5858,11 @@ fn s07_d15_index_checks_off() {
             "WARNING: [SIM-012] invalid associative-array key read\n",
             "WARNING: [SIM-012] invalid associative-array integral key write\n",
             "WARNING: [SIM-012] invalid associative-array key write\n",
-            "WARNING: S07-D15_index_checks.sv:60:33: [SIM-004] (tb @ 0 ps) the $cast destination element of `fa` does not exist: index 5 is outside the declared range 0 to 3; the cast writes nothing and returns 0\n",
-            "WARNING: S07-D15_index_checks.sv:61:33: [SIM-004] (tb @ 0 ps) the $cast destination element of `ef` does not exist: index -5 is outside the declared range 0 to 3; the cast writes nothing and returns 0\n",
-            "WARNING: S07-D15_index_checks.sv:62:33: [SIM-004] (tb @ 0 ps) the $cast destination element of `cq` does not exist: index X is outside the valid range 0 to 0; the cast writes nothing and returns 0\n",
-            "WARNING: S07-D15_index_checks.sv:63:34: [SIM-004] (tb @ 0 ps) the $cast destination element of `cd` does not exist: index Z is outside the valid range 0 to 1; the cast writes nothing and returns 0\n",
-            "WARNING: S07-D15_index_checks.sv:64:34: [SIM-004] (tb @ 0 ps) the $cast destination element of `ca` does not exist: the key has X or Z bits; the cast writes nothing and returns 0\n",
+            "WARNING: S07-D15_index_checks.sv:60:33: [SIM-023] (tb @ 0 ps) the $cast destination element of `fa` does not exist: index 5 is outside the declared range 0 to 3; the cast writes nothing and returns 0\n",
+            "WARNING: S07-D15_index_checks.sv:61:33: [SIM-023] (tb @ 0 ps) the $cast destination element of `ef` does not exist: index -5 is outside the declared range 0 to 3; the cast writes nothing and returns 0\n",
+            "WARNING: S07-D15_index_checks.sv:62:33: [SIM-023] (tb @ 0 ps) the $cast destination element of `cq` does not exist: index X is outside the valid range 0 to 0; the cast writes nothing and returns 0\n",
+            "WARNING: S07-D15_index_checks.sv:63:34: [SIM-023] (tb @ 0 ps) the $cast destination element of `cd` does not exist: index Z is outside the valid range 0 to 1; the cast writes nothing and returns 0\n",
+            "WARNING: S07-D15_index_checks.sv:64:34: [SIM-023] (tb @ 0 ps) the $cast destination element of `ca` does not exist: the key has X or Z bits; the cast writes nothing and returns 0\n",
             "WARNING: [SIM-012] invalid associative-array integral key write\n",
             "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 0\n",
             "INFO: [SIM-000] 0 error(s), 11 warning(s), 1 info(s)\n",

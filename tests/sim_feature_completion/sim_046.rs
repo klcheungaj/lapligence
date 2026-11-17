@@ -356,7 +356,7 @@ fn saved_type_options_round_trip_and_version_one_databases_still_load() {
             assert_eq!(
                 llg_messages(&outputs[0]),
                 [format!(
-                    "ERROR: [SIM-010] $load_coverage_db at tb:38:7: coverage database `bad.db` was not loaded: {reason}; no coverage changed"
+                    "ERROR: db_type_options.sv:38:7: [SIM-010] (tb @ 0 ps) $load_coverage_db: coverage database `bad.db` was not loaded: {reason}; no coverage changed"
                 )],
                 "{label}"
             );
@@ -368,7 +368,7 @@ fn saved_type_options_round_trip_and_version_one_databases_still_load() {
 fn corrupt_and_foreign_databases_change_nothing() {
     let error = |reason: &str| {
         format!(
-            "ERROR: [SIM-010] $load_coverage_db at tb:21:40: coverage database `bad.db` was not loaded: {reason}; no coverage changed"
+            "ERROR: db_errors.sv:21:40: [SIM-010] (tb @ 0 ps) $load_coverage_db: coverage database `bad.db` was not loaded: {reason}; no coverage changed"
         )
     };
     for optimized in [false, true] {
@@ -516,13 +516,13 @@ fn corrupt_and_foreign_databases_change_nothing() {
         assert_eq!(messages.len(), 2, "{label}: {messages:?}");
         assert!(
             messages[0].starts_with(
-                "ERROR: [SIM-010] $load_coverage_db at tb:21:40: coverage database `missing.db` was not loaded: "
+                "ERROR: db_errors.sv:21:40: [SIM-010] (tb @ 0 ps) $load_coverage_db: coverage database `missing.db` was not loaded: "
             ),
             "{label}: {messages:?}"
         );
         assert!(
             messages[1].starts_with(
-                "ERROR: [SIM-010] end of simulation: coverage database `nodir/x.db` was not saved: "
+                "ERROR: [SIM-010] (0 ps) end of simulation: coverage database `nodir/x.db` was not saved: "
             ),
             "{label}: {messages:?}"
         );
@@ -665,7 +665,7 @@ fn coverage_control_status_values_follow_table_40_1() {
 fn failed_assertion_merges_change_no_counter() {
     let error = |name: &str, reason: &str| {
         format!(
-            "ERROR: [SIM-010] $coverage_merge at tb:15:29: coverage database `{name}` was not merged: {reason}; no coverage changed"
+            "ERROR: merge_errors.sv:15:29: [SIM-010] (tb @ 0 ps) $coverage_merge: coverage database `{name}` was not merged: {reason}; no coverage changed"
         )
     };
     let one = vec![[1, 1, 0, 0, 0, 0]; 2];
@@ -803,10 +803,13 @@ fn failed_assertion_merges_change_no_counter() {
         );
         let messages = llg_messages(&outputs[1]);
         assert_eq!(messages.len(), 2, "{label}: {messages:?}");
-        for (message, site) in messages.iter().zip(["tb:15:29", "tb:17:30"]) {
+        for (message, site) in messages
+            .iter()
+            .zip(["merge_errors.sv:15:29", "merge_errors.sv:17:30"])
+        {
             assert!(
                 message.starts_with(&format!(
-                    "ERROR: [SIM-010] $coverage_merge at {site}: coverage database `missing.db` was not merged: "
+                    "ERROR: {site}: [SIM-010] (tb @ 0 ps) $coverage_merge: coverage database `missing.db` was not merged: "
                 )),
                 "{label}: {message}"
             );
@@ -1089,7 +1092,7 @@ fn statement_and_toggle_sections_save_and_merge_across_runs() {
         assert_eq!(outputs[2].status.code(), Some(1), "{label}");
         assert_eq!(
             llg_messages(&outputs[2]),
-            ["ERROR: [SIM-010] $coverage_merge at tb:17:16: coverage database `a.t.db` was not merged: it was saved by a model with different signals; no coverage changed"],
+            ["ERROR: code_database.sv:17:16: [SIM-010] (tb @ 0 ps) $coverage_merge: coverage database `a.t.db` was not merged: it was saved by a model with different signals; no coverage changed"],
             "{label}"
         );
         let read = |name: &str| std::fs::read(directory.path().join(name)).expect(name);
@@ -1141,8 +1144,8 @@ fn statement_and_fsm_sections_of_another_model_do_not_merge() {
         assert_eq!(
             llg_messages(&outputs[1]),
             [
-                "ERROR: [SIM-010] $coverage_merge at tb:26:33: coverage database `s.db` was not merged: it was saved by a model with different statements; no coverage changed",
-                "ERROR: [SIM-010] $coverage_merge at tb:27:16: coverage database `f.db` was not merged: it was saved by a model with different FSMs; no coverage changed",
+                "ERROR: merge_foreign.sv:26:33: [SIM-010] (tb @ 1 ns) $coverage_merge: coverage database `s.db` was not merged: it was saved by a model with different statements; no coverage changed",
+                "ERROR: merge_foreign.sv:27:16: [SIM-010] (tb @ 1 ns) $coverage_merge: coverage database `f.db` was not merged: it was saved by a model with different FSMs; no coverage changed",
             ],
             "{label}"
         );

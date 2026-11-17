@@ -617,7 +617,7 @@ impl EmitCtx<'_, '_> {
                 scope: self.path.clone(),
                 location: self.cg.source_location(site),
                 fatal_finish_number: Some(0),
-                runtime_failure: true,
+                origin: crate::sim::ir::IrSeverityOrigin::RuntimeFailure,
                 skip_finals: false,
             };
             if waits {

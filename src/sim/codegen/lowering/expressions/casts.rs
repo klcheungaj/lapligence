@@ -26,10 +26,9 @@ struct CastIndexCheck {
     bad: String,
     array: String,
     scope: String,
-    /// The run-time failure site ([`Codegen::cast_location`]).
+    /// The site of the run-time failure and of the warning when index
+    /// checks are off ([`Codegen::cast_location`]).
     location: String,
-    /// The source position of the warning when index checks are off.
-    source: String,
 }
 
 impl<'a> Codegen<'a> {
@@ -759,7 +758,6 @@ impl<'a> Codegen<'a> {
                     array: self.cast_array_name(destination),
                     scope: path.to_owned(),
                     location: self.cast_location(path, destination),
-                    source: self.source_location(destination),
                 };
                 statements.push(IrStmt::DeclLocal {
                     name: bad.clone(),
@@ -1336,14 +1334,16 @@ impl<'a> Codegen<'a> {
                 super::super::containers::pattern_key_expr(1, 1, false, false),
             ),
         );
-        let severity = |level, text: String, runtime_failure: bool| IrStmt::Severity {
-            level,
+        // A simulator-generated warning (SIM-023): scope-less at run time,
+        // framed by the site's scope and source position.
+        let warning = |text: String| IrStmt::Severity {
+            level: crate::sim::ir::IrSeverityLevel::Warning,
             fmt: format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\"")),
             args: args.iter().cloned().map(IrDisplayArg::Packed).collect(),
             scope: check.scope.clone(),
-            location: check.source.clone(),
-            fatal_finish_number: runtime_failure.then_some(0),
-            runtime_failure,
+            location: check.location.clone(),
+            fatal_finish_number: None,
+            origin: crate::sim::ir::IrSeverityOrigin::RuntimeWarning,
             skip_finals: false,
         };
         let element = format!(
@@ -1376,11 +1376,7 @@ impl<'a> Codegen<'a> {
                     ))),
                 }],
                 els: Some(vec![
-                    severity(
-                        crate::sim::ir::IrSeverityLevel::Warning,
-                        format!("{element}; the cast writes nothing and returns 0"),
-                        false,
-                    ),
+                    warning(format!("{element}; the cast writes nothing and returns 0")),
                     IrStmt::Assign {
                         lhs: IrLhs::WholeRef {
                             addr: format!("&{}", check.bad),
