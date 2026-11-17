@@ -7,7 +7,7 @@ static llg_proc_t* spawn_process(const llg_co_desc_t* desc,
     if (!callback_region_allowed(region, 0)) return NULL;
     if (desc->frame_size < sizeof(llg_co_frame_t) ||
         desc->frame_size > SIZE_MAX - sizeof(llg_proc_t)) {
-        llg_rt_co_oom(desc->frame_size);
+        llg_co_host_oom(desc->frame_size);
     }
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
         1, sizeof(*p) + desc->frame_size, "process and coroutine root frame");
@@ -129,7 +129,7 @@ static llg_proc_t* initialize_instance(llg_proc_t* p,
     if (!record || offset < sizeof(llg_co_frame_t) ||
         desc->frame_size < sizeof(record) ||
         offset > desc->frame_size - sizeof(record)) {
-        llg_rt_co_bad_state(LLG_CO_ROOT(&p->chain), "invalid root instance record offset");
+        llg_co_host_bad_state(LLG_CO_ROOT(&p->chain), "invalid root instance record offset");
     }
     memcpy((unsigned char*)LLG_CO_ROOT(&p->chain) + offset, &record, sizeof(record));
     return p;
@@ -247,7 +247,7 @@ int llg_schedule_delayed_call(const char* name, llg_region_callback_fn callback,
         llg_co_status_t status = llg_co_run(&p->chain);
         g.current = caller;
         if (status != LLG_CO_PENDING)
-            llg_rt_co_bad_state(LLG_CO_ROOT(&p->chain), "delayed call did not suspend");
+            llg_co_host_bad_state(LLG_CO_ROOT(&p->chain), "delayed call did not suspend");
     }
     if (id) {
         id->generation = llg_event_generation;

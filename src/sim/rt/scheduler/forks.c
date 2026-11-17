@@ -132,7 +132,7 @@ static llg_proc_t* llg_fork_impl(const llg_co_desc_t* desc,
     }
     if (desc->frame_size < sizeof(llg_co_frame_t) ||
         desc->frame_size > SIZE_MAX - sizeof(llg_proc_t))
-        llg_rt_co_oom(desc->frame_size);
+        llg_co_host_oom(desc->frame_size);
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
         1, sizeof(*p) + desc->frame_size,
         "forked process and coroutine root frame");
@@ -189,7 +189,7 @@ llg_proc_t* llg_spawn_detached_with_frame(const llg_co_desc_t* desc,
     }
     if (desc->frame_size < sizeof(llg_co_frame_t) ||
         desc->frame_size > SIZE_MAX - sizeof(llg_proc_t))
-        llg_rt_co_oom(desc->frame_size);
+        llg_co_host_oom(desc->frame_size);
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
         1, sizeof(*p) + desc->frame_size,
         "detached process and coroutine root frame");

@@ -209,4 +209,5 @@ No messages.
 | `SIM-022` | info | the run ended without $finish because no process remains | - |
 | `SIM-030` | fatal | an internal runtime invariant failed; the model aborts | - |
 | `SIM-031` | fatal | the model could not allocate memory; it aborts | - |
+| `SIM-032` | error | a runtime self-test result (a failed check is an error, a passed group an info); only the runtime C self-tests print it, never a model | - |
 

@@ -1,14 +1,19 @@
 /* llg_co.c - cold paths of the stackless coroutine library.
  *
  * Everything on the resume/suspend/call fast path is inline in llg_co.h.
- * This translation unit holds only arena chunk management and the
- * corrupted-state handler, so generated models do not duplicate them.
- * No function here touches global mutable state.
+ * This translation unit holds only arena chunk management and, in a
+ * standalone build, the corrupted-state handler, so generated models do not
+ * duplicate them. A host build (LLG_CO_HOST_ALLOC) leaves allocation and
+ * reports to the host's link-time hooks (llg_co.h), so the library never
+ * includes the runtime's reporter. No function here touches global mutable
+ * state.
  */
 #include "llg_co.h"
 
 #include <stdlib.h>
+#ifndef LLG_CO_HOST_ALLOC
 #include <stdio.h>
+#endif
 
 #ifdef LLG_CO_HOST_ALLOC
 #define LLG_CO_CHUNK_ALLOC(bytes) llg_co_host_chunk_alloc(bytes)
@@ -52,6 +57,9 @@ void llg_co_arena_release(llg_co_arena_t* arena) {
     arena->head = NULL;
 }
 
+#ifndef LLG_CO_HOST_ALLOC
+/* Standalone builds only: a host build reports through llg_co_host_bad_state
+ * (see LLG_CO_BAD_STATE), so a model never prints this line. */
 void llg_co_bad_state(const llg_co_frame_t* co, const char* fn) {
     fprintf(stderr,
             "llg: fatal: invalid coroutine state in %s: frame=%p state=%lu\n",
@@ -59,6 +67,7 @@ void llg_co_bad_state(const llg_co_frame_t* co, const char* fn) {
             co ? (unsigned long)co->state : 0ul);
     abort();
 }
+#endif
 
 /* Visit one anchor's static path: follow the site table of each frame's
  * current state to the callee frame embedded at the recorded offset. */

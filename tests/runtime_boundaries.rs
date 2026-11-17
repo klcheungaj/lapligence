@@ -244,3 +244,51 @@ fn low_posix_stack_limit_warns_before_simulation() {
         "default macOS stack limit warned: {stderr}"
     );
 }
+
+/// A report of the coroutine library itself (`llg_co.c`: a synchronous callee
+/// that suspends) reaches the model's reporter through the host hook and
+/// prints in the message layout as an internal abort, followed by no
+/// free-form line of the library's own.
+#[test]
+fn coroutine_library_reports_through_the_model_reporter() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    const PROBE: &str = r#"#include "llg_rt.h"
+
+static llg_co_status_t suspends(llg_co_frame_t* co, llg_co_chain_t* ch) {
+    (void)co;
+    (void)ch;
+    return LLG_CO_PENDING;
+}
+
+static const llg_co_desc_t suspends_desc = {suspends, "suspends", sizeof(llg_co_frame_t),
+                                            NULL, 0, 0};
+
+int main(void) {
+    static llg_co_sync_t sync;
+    (void)llg_co_sync_begin(&sync, &suspends_desc, NULL);
+    (void)llg_co_sync_run(&sync);
+    return 0;
+}
+"#;
+    let dir = sim_harness::TempDir::new("runtime-coroutine-report")
+        .expect("create coroutine report directory");
+    let executable = sim::build::build_model_cmake(dir.path(), &[("probe.c", PROBE)])
+        .expect("coroutine report probe should compile");
+    let output = sim_harness::run_command(&mut Command::new(&executable), Duration::from_secs(10))
+        .expect("coroutine report probe should start");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "probe unexpectedly succeeded");
+    assert!(
+        sim_harness::has_message(
+            &stderr,
+            "SIM-030",
+            "",
+            "invalid coroutine state in llg_co_sync_run: synchronous callee suspended"
+        ),
+        "missing internal-abort message: {stderr}"
+    );
+    assert!(!stderr.contains("llg: fatal:"), "{stderr}");
+}

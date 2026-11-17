@@ -71,9 +71,13 @@ contract; an arm that must retain an array or an output address (the
 `wait_order` result) must say so there and the emitter must then keep it in a
 frame field or registered cell.
 
-`llg_rt.h` defines the exported OOM and bad-state hooks before including
-`llg_co.h`; `llg_co.c` alone receives the matching `LLG_CO_HOST_ALLOC` compile
-definition because it includes the library header directly. The runtime owns one
+`llg_rt.h` defines `LLG_CO_HOST_ALLOC` before including `llg_co.h`, which then
+declares the host hooks this runtime defines (`llg_co_host_chunk_alloc/free`,
+`llg_co_host_oom`, `llg_co_host_bad_state`) and maps `LLG_CO_OOM` and
+`LLG_CO_BAD_STATE` to them; `llg_co.c` alone receives the matching compile
+definition because it includes the library header directly, so the library's
+own reports also print as SIM-031/SIM-030 in the message layout while `llg_co`
+includes no reporter header. The runtime owns one
 non-TLS chunk cache for the simulation thread, bounded by the named
 `LLG_CO_CHUNK_CACHE_MAX_BYTES` tunable. Segregated free lists make geometric
 arena reuse a constant-time head lookup while retaining exact-size matching.

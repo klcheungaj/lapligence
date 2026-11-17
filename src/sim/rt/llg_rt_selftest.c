@@ -8,6 +8,7 @@
 #include "selftest_co.h"
 
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,12 +28,34 @@ static int lifecycle_triggered_inside_run;
 
 static int deferred_termination_seen;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-            failures++;                                                    \
-        }                                                                  \
+// Self-test results use the model's message layout with id SIM-032: a failed
+// check is an ERROR on stderr located at its selftest line, a pass an INFO on
+// stdout, so the streams keep what they carried before.
+LLG_MSG_PRINTF(4, 5)
+static void selftest_report(FILE* stream, int severity, int line, const char* fmt, ...) {
+    char location[64];
+    llg_report_t text;
+    llg_report_t out;
+    va_list args;
+    if (line > 0) snprintf(location, sizeof location, "llg_rt_selftest.c:%d", line);
+    llg_report_init(&text);
+    llg_report_init(&out);
+    va_start(args, fmt);
+    llg_report_vprintf(&text, fmt, args);
+    va_end(args);
+    llg_msg_append(&out, LLG_MSG_SELFTEST, severity, line > 0 ? location : NULL, NULL, NULL,
+                   text.data, text.len);
+    llg_report_free(&text);
+    llg_report_emit(&out, stream);
+}
+
+#define CHECK(cond)                                                              \
+    do {                                                                         \
+        if (!(cond)) {                                                           \
+            selftest_report(stderr, LLG_SEVERITY_ERROR, __LINE__, "check failed: %s", \
+                            #cond);                                              \
+            failures++;                                                          \
+        }                                                                        \
     } while (0)
 
 // sv4 helpers mirroring the elab.rs test helpers.
@@ -81,7 +104,8 @@ static sv4_t test_temp(sv4_t owned) {
     test_temp_owner_t* node = (test_temp_owner_t*)malloc(sizeof(*node));
     if (!node) {
         sv4_destroy(&owned);
-        fputs("selftest temporary allocation failed\n", stderr);
+        selftest_report(stderr, LLG_SEVERITY_ERROR, __LINE__,
+                        "selftest temporary allocation failed");
         exit(2);
     }
     node->value = (sv4_t)SV4_EMPTY;
@@ -866,13 +890,13 @@ static void check_vector_table(void) {
             case V_CONCAT: got = test_temp(sv4_concat(a, b)); break;
             case V_CASEZ: got = test_temp(sv4_casez_eq(a, b)); break;
             case V_CASEX: got = test_temp(sv4_casex_eq(a, b)); break;
-            default: fprintf(stderr, "FAIL vector %d: unknown op %d\n", i, v->op); failures++; test_clear_temporaries(); continue;
+            default: selftest_report(stderr, LLG_SEVERITY_ERROR, __LINE__, "vector %d: unknown op %d", i, v->op); failures++; test_clear_temporaries(); continue;
         }
         sv4_t exp = test_temp(SV4_INIT(v->e_bits, v->e_x, v->e_z, v->e_w, v->e_s));
         if (!sv4_same(got, exp)) {
-            fprintf(stderr,
-                    "FAIL vector %d (op %d): got %016llx/%016llx/%016llx w=%u, "
-                    "expected %016llx/%016llx/%016llx w=%u\n",
+            selftest_report(stderr, LLG_SEVERITY_ERROR, __LINE__,
+                    "vector %d (op %d): got %016llx/%016llx/%016llx w=%u, "
+                    "expected %016llx/%016llx/%016llx w=%u",
                     i, v->op,
                     (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_BITS), (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_X),
                     (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_Z), (unsigned)llg_sv4_width(got),
@@ -883,7 +907,8 @@ static void check_vector_table(void) {
     }
     test_clear_temporaries();
     test_clear_temporaries();
-    if (failures == 0) printf("vector table (%d vectors): ok\n", N_VECTORS);
+    if (failures == 0)
+        selftest_report(stdout, LLG_SEVERITY_INFO, 0, "vector table (%d vectors): ok", N_VECTORS);
 }
 
 // ── Scheduler tests ───────────────────────────────────────────────────────────
@@ -1087,7 +1112,8 @@ static void test_retained_dependency_waits(void) {
     rw_log[rw_n] = 0;
     CHECK(strcmp(rw_log, "cbaabccbabdbacd") == 0);
     if (strcmp(rw_log, "cbaabccbabdbacd") != 0)
-        fprintf(stderr, "retained dependency wake order: %s\n", rw_log);
+        selftest_report(stderr, LLG_SEVERITY_INFO, __LINE__, "retained dependency wake order: %s",
+                        rw_log);
     llg_rt_cleanup();
     sv4_destroy(&rw_x);
     sv4_destroy(&rw_y);
@@ -1154,7 +1180,8 @@ static void test_ordered_dependency_waits(void) {
     ow_log[ow_n] = 0;
     CHECK(strcmp(ow_log, "|yx|v2v0x|v0v2|") == 0);
     if (strcmp(ow_log, "|yx|v2v0x|v0v2|") != 0)
-        fprintf(stderr, "ordered dependency changes: %s\n", ow_log);
+        selftest_report(stderr, LLG_SEVERITY_INFO, __LINE__, "ordered dependency changes: %s",
+                        ow_log);
     llg_rt_cleanup();
     sv4_destroy(&ow_x);
     sv4_destroy(&ow_y);
@@ -1599,7 +1626,7 @@ static void test_fork_join(void) {
     llg_rt_run();
     CHECK(fj9_ok);
 
-    if (failures == 0) printf("fork/join: ok\n");
+    if (failures == 0) selftest_report(stdout, LLG_SEVERITY_INFO, 0, "fork/join: ok");
 }
 
 // ── Collapsed inout-net tests ─────────────────────────────────────────────────
@@ -1938,7 +1965,7 @@ static void test_force_release(void) {
     llg_release(&f_sig);
     CHECK(u(f_sig) == 0x55);
 
-    if (failures == 0) printf("force/release: ok\n");
+    if (failures == 0) selftest_report(stdout, LLG_SEVERITY_INFO, 0, "force/release: ok");
 }
 
 // NBA to a forced target is dropped at commit: the writer forces x, records
@@ -2905,10 +2932,10 @@ static int run_selftests(int argc, char** argv) {
     test_deferred_assertion_termination();
     test_clear_temporaries();
     if (failures == 0) {
-        printf("llg_rt selftest: all ok\n");
+        selftest_report(stdout, LLG_SEVERITY_INFO, 0, "llg_rt selftest: all ok");
         return 0;
     }
-    fprintf(stderr, "llg_rt selftest: %d failure(s)\n", failures);
+    selftest_report(stderr, LLG_SEVERITY_ERROR, 0, "llg_rt selftest: %d failure(s)", failures);
     return 1;
 }
 
