@@ -1310,18 +1310,34 @@ impl Codegen<'_> {
             // struct or packed array member is one scalar leaf.
             let below =
                 |path: &[AggregatePathPart]| path.len() > prefix.len() && path.starts_with(&prefix);
-            let inside_fixed = |leaf: &NativeFixedLeaf| {
-                below(&leaf.path)
-                    || (prefix.len() > leaf.path.len() && prefix.starts_with(&leaf.path))
-            };
-            if !layout.leaves.iter().any(|leaf| below(&leaf.path))
-                && !layout.fixed.iter().any(inside_fixed)
-                && !layout.containers.iter().any(|leaf| below(&leaf.path))
-            {
+            let above = layout.leaves.iter().any(|leaf| below(&leaf.path))
+                || layout.fixed.iter().any(|leaf| below(&leaf.path))
+                || layout.containers.iter().any(|leaf| below(&leaf.path));
+            let inside_fixed = layout
+                .fixed
+                .iter()
+                .any(|leaf| prefix.len() > leaf.path.len() && prefix.starts_with(&leaf.path));
+            if !above && !inside_fixed {
                 return Ok(None);
             }
             let descriptor = Self::descriptor_at_path(&layout.descriptor, &prefix)
                 .ok_or("native record selection has no type")?;
+            // A scalar inside a member array the record holds in its own slot
+            // is one item leaf (`fixed_item_leaf`), not a record value.
+            let scalar = match &descriptor.shape {
+                TypeShape::Aggregate(aggregate) => matches!(
+                    aggregate.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ),
+                TypeShape::PackedAtom { .. }
+                | TypeShape::Real { .. }
+                | TypeShape::String
+                | TypeShape::Opaque { .. } => true,
+                TypeShape::FixedArray { .. } | TypeShape::Container { .. } => false,
+            };
+            if !above && scalar {
+                return Ok(None);
+            }
             return Ok(Some((NativeEndpoint::Value { value, prefix }, descriptor)));
         }
         Ok(self.resolve_unpacked_aggregate(node).map(|selection| {
@@ -3565,8 +3581,21 @@ impl Codegen<'_> {
         if let Some(reads) = self.container_record_leaf_reads(path, node)? {
             return Ok(Some(reads));
         }
-        let Some((endpoint, _)) = self.native_endpoint(node)? else {
-            return Ok(None);
+        // A record element selected at run time (`o.m[1].a[k]`) is copied
+        // into a temporary first, as an assignment from it is.
+        let selected = match setup.as_deref_mut() {
+            Some(setup) => match self.native_record_select(path, node)? {
+                Some(select) => Some(self.native_record_select_value(path, &select, node, setup)?),
+                None => None,
+            },
+            None => None,
+        };
+        let endpoint = match selected {
+            Some(endpoint) => endpoint,
+            None => match self.native_endpoint(node)? {
+                Some((endpoint, _)) => endpoint,
+                None => return Ok(None),
+            },
         };
         let mut reads = Vec::new();
         for (leaf_path, leaf) in self.endpoint_leaves(&endpoint)? {
@@ -3659,7 +3688,11 @@ impl Codegen<'_> {
         };
         let (left, right) = (self.p30_unwrap_cast(*left), self.p30_unwrap_cast(*right));
         let (left_node, right_node) = (left, right);
-        let element = self.is_container_record(left) || self.is_container_record(right);
+        // A record element selected at run time compares through a copy.
+        let element = self.is_container_record(left)
+            || self.is_container_record(right)
+            || self.native_record_select(path, left)?.is_some()
+            || self.native_record_select(path, right)?.is_some();
         if !element && !self.native_record_operand(left)? && !self.native_record_operand(right)? {
             return Ok(None);
         }

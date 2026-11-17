@@ -9,6 +9,7 @@ impl EmitCtx<'_, '_> {
     /// sensitivity sets and wait tracking.
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         let check = self.cg.static_effect_check(h);
+        self.cg.reject_slot_container_members(&self.path, h)?;
         let mut statements = self.lower_checked_stmt(h)?;
         statements.splice(0..0, check);
         Ok(statements)

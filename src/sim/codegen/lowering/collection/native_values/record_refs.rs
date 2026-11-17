@@ -296,6 +296,128 @@ impl Codegen<'_> {
         Ok(Some(place))
     }
 
+    /// A queue or dynamic-array member below a member array that a native
+    /// value holds in one slot of its own (at least
+    /// [`crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS`] cells) is a nested
+    /// slot, which only a `ref` formal bound to its element reaches
+    /// (`IrRefCompanion::Mirror`). Reject any other use of it in the
+    /// expressions of statement `statement`, and an element holding such a
+    /// member anywhere but as the actual of a `ref` formal, at the
+    /// selection, before lowerings that have no form for them.
+    pub(in crate::sim::codegen::lowering) fn reject_slot_container_members(
+        &self,
+        path: &str,
+        statement: NodeId,
+    ) -> Result<(), String> {
+        // Without native roots no expression selects a native value.
+        if self.native_roots.is_empty() && self.receiver_native_values.is_empty() {
+            return Ok(());
+        }
+        let mut pending = if matches!(self.kind(statement), NodeKind::Stmt(_)) {
+            self.node(statement)
+                .children
+                .iter()
+                .map(|child| (*child, statement))
+                .collect::<Vec<_>>()
+        } else {
+            vec![(statement, statement)]
+        };
+        while let Some((node, parent)) = pending.pop() {
+            // Nested statements check their own expressions.
+            if matches!(self.kind(node), NodeKind::Stmt(_)) {
+                continue;
+            }
+            // A selection is checked whole: its base is no use of its own.
+            let Ok(Some((value, selection))) = self.native_path_of(node) else {
+                pending.extend(self.node(node).children.iter().map(|child| (*child, node)));
+                continue;
+            };
+            if let Some(slot) = self.slot_container_select(value, &selection) {
+                if slot == SlotSelect::Container || !self.ref_actual_of(parent, node) {
+                    return Err(crate::sim::codegen::error::located(
+                        &self.source_location(node),
+                        format!(
+                            "a queue or dynamic-array member below an element of a record member array of {} or more cells in `{}` is supported only through a `ref` formal bound to the element (SIM-008)",
+                            crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS,
+                            self.source_path(path)
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether `actual` is the actual of a `ref` formal of call `call`.
+    fn ref_actual_of(&self, call: NodeId, actual: NodeId) -> bool {
+        let NodeKind::FuncCall {
+            callee: Some(callee),
+            ..
+        } = self.kind(call)
+        else {
+            return false;
+        };
+        let Some(position) = self
+            .node(call)
+            .children
+            .iter()
+            .position(|arg| *arg == actual)
+        else {
+            return false;
+        };
+        self.node(*callee)
+            .children
+            .iter()
+            .filter(|formal| matches!(self.kind(**formal), NodeKind::FuncArg { .. }))
+            .nth(position)
+            .is_some_and(|formal| {
+                matches!(
+                    self.kind(*formal),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
+                )
+            })
+    }
+
+    /// What `path` of native value `value` selects below a member array the
+    /// value holds in its own slot, whose element type has container
+    /// members: the container member itself (or a selection below it), or a
+    /// value holding one.
+    fn slot_container_select(
+        &self,
+        value: usize,
+        path: &[AggregatePathPart],
+    ) -> Option<SlotSelect> {
+        let layout = self.native_layout_of_value(value).ok()?;
+        let leaf = layout
+            .fixed
+            .iter()
+            .find(|leaf| path.len() > leaf.path.len() && path.starts_with(&leaf.path))?;
+        if !holds_container(&leaf.element) {
+            return None;
+        }
+        let mut prefix = leaf.path.clone();
+        for part in &path[leaf.path.len()..] {
+            prefix.push(part.clone());
+            let descriptor = Self::descriptor_at_path(&layout.descriptor, &prefix)?;
+            if matches!(descriptor.shape, TypeShape::Container { .. }) {
+                return Some(SlotSelect::Container);
+            }
+        }
+        let descriptor = Self::descriptor_at_path(&layout.descriptor, path)?;
+        let scalar = match &descriptor.shape {
+            TypeShape::Aggregate(aggregate) => matches!(
+                aggregate.kind,
+                AggregateKind::PackedStruct | AggregateKind::PackedUnion
+            ),
+            TypeShape::FixedArray { .. } | TypeShape::Container { .. } => false,
+            _ => true,
+        };
+        (!scalar).then_some(SlotSelect::Holder)
+    }
+
     /// Whether `actual` of native record `ref` formal `formal` is a member or
     /// element of a subroutine record and the formal's type has queue or
     /// dynamic-array members. The formal then takes the record's companion
@@ -360,13 +482,22 @@ impl Codegen<'_> {
         // array, a queue or a dynamic array) has no leaf form to stop at
         // (`lower_per_record_element`); with index checks on, the call stops
         // at the reference instead, as at fewer cells.
-        let stop_unselected = (kind == IrElementRefKind::Record
-            && matches!(place.root, IrElementRoot::Element { .. }))
-        .then(|| IrRefStop {
-            scope: path.to_owned(),
-            location: self.source_location(self.record_ref_call_site.unwrap_or(node)),
-            waited: false,
-        });
+        let unselectable = match place.root {
+            IrElementRoot::Element { .. } => true,
+            // A subroutine record selects no element only below a run-time
+            // position in a member array.
+            IrElementRoot::Value(_) => place
+                .steps
+                .iter()
+                .any(|step| matches!(step, IrElementStep::Position(_))),
+            IrElementRoot::Leaves { .. } => false,
+        };
+        let stop_unselected =
+            (kind == IrElementRefKind::Record && unselectable).then(|| IrRefStop {
+                scope: path.to_owned(),
+                location: self.source_location(self.record_ref_call_site.unwrap_or(node)),
+                waited: false,
+            });
         Ok(Some(IrCallArg::ElementRef(Box::new(IrElementRef {
             root: place.root,
             steps: place.steps,
@@ -907,5 +1038,26 @@ impl Codegen<'_> {
             members,
             leaves,
         })
+    }
+}
+
+/// See [`Codegen::slot_container_select`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SlotSelect {
+    Container,
+    Holder,
+}
+
+/// Whether a value of `element` holds a queue, dynamic or associative array.
+fn holds_container(element: &crate::sim::ir::IrContainerElement) -> bool {
+    use crate::sim::ir::IrContainerElement;
+    match element {
+        IrContainerElement::Container { .. } => true,
+        IrContainerElement::Aggregate { members, .. }
+        | IrContainerElement::Union { members, .. } => members
+            .iter()
+            .any(|member| holds_container(&member.element)),
+        IrContainerElement::FixedArray { element, .. } => holds_container(element),
+        _ => false,
     }
 }

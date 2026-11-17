@@ -382,12 +382,14 @@ fn subroutine_record_elements_with_container_members_bind_ref_formals() {
     let expected = include_str!(
         "../fixtures/sim/feature_completion/sim_008/record_ref_subroutine_container_member.out"
     );
+    // The `none` line binds an index that selects no element, which stops
+    // the run with index checks on (`record_ref_subroutine_unselected`).
     for size in ["N=2", "N=16"] {
         sim_cli::run_case_backend_parity(
             SUITE,
             "record_ref_subroutine_container_member",
             expected,
-            &["-D", size],
+            &["--no-index-checks", "-D", size],
             &[],
         );
     }
@@ -508,6 +510,87 @@ fn ref_waits_on_record_elements_wake_at_every_store() {
             SUITE,
             "record_ref_container_member_wake",
             container,
+            &["-D", size],
+            &[],
+        );
+    }
+}
+
+/// A run-time index into a member array of a subroutine record that selects
+/// no element, as a `ref` actual: with index checks off the callee binds the
+/// default (S07-D15); with them on the run stops at the actual, before a
+/// callee that does not wait (record or packed formal) and before one that
+/// waits (S13-D6). Both record storage forms, with and without a queue
+/// member.
+#[test]
+fn unselected_subroutine_record_elements_stop_or_bind_the_default() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_subroutine_unselected.out"
+    );
+    let unchecked: [&[&str]; 2] = [
+        &["--no-index-checks", "-D", "N=2"],
+        &["--no-index-checks", "-D", "N=16", "-D", "Q"],
+    ];
+    for args in unchecked {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_ref_subroutine_unselected",
+            expected,
+            args,
+            &[],
+        );
+    }
+    let checked: [&[&str]; 3] = [
+        &["-D", "N=16"],
+        &["-D", "N=2", "-D", "Q"],
+        &["-D", "N=2", "-D", "LEAF"],
+    ];
+    for args in checked {
+        sim_cli::run_case_failing_at_runtime_with_args(
+            SUITE,
+            "record_ref_subroutine_unselected",
+            args,
+            "selected 3\n",
+            "index of a `ref` actual selects no element; run with --no-index-checks",
+        );
+    }
+    for size in ["N=2", "N=16"] {
+        sim_cli::run_case_failing_at_runtime_with_args(
+            SUITE,
+            "record_ref_subroutine_unselected_wait",
+            &["-D", size],
+            "before\nwoke 7\nselected\n",
+            UNSELECTED_DIAGNOSTIC,
+        );
+    }
+}
+
+/// A queue member of an element of a member array that a subroutine record
+/// holds in its own slot (16 or more cells) rejects at its location outside a
+/// `ref` actual; the packed member of the same element is stored directly.
+#[test]
+fn slot_container_members_of_subroutine_records_reject_located() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_record_ref_subroutine_slot_container",
+        "neg_record_ref_subroutine_slot_container.sv:10:5: [CODEGEN-009] a queue or dynamic-array member below an element of a record member array of 16 or more cells",
+    );
+}
+
+/// A record element selected at run time, below a constant element select
+/// or directly, of a module and a subroutine record, compares member-wise
+/// (SV 11.4.5), and the subroutine form is an assignment source, target and
+/// `ref` actual. Both record storage forms.
+#[test]
+fn run_time_selected_record_elements_compare_and_copy() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_element_select_equality.out"
+    );
+    for size in ["N=2", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_element_select_equality",
+            expected,
             &["-D", size],
             &[],
         );

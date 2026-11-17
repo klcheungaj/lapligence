@@ -714,14 +714,28 @@ impl Codegen<'_> {
         }
         let select_path = self.db.array_select_path(select);
         let value_root = match &select_path {
-            Some((owner, members)) => self.native_roots.get(owner).map(|value| {
-                let prefix = members
-                    .iter()
-                    .cloned()
-                    .map(AggregatePathPart::Member)
-                    .collect::<Vec<_>>();
-                (*value, prefix)
-            }),
+            Some((owner, members)) => {
+                let members = members.iter().cloned().map(AggregatePathPart::Member);
+                match self.native_roots.get(owner) {
+                    Some(value) => Some((*value, members.collect::<Vec<_>>())),
+                    // A member array of a constant element of a subroutine
+                    // record (`t.m[1].a[k]`).
+                    None if matches!(
+                        self.kind(*owner),
+                        NodeKind::Expr(ExprKind::ArraySelect { .. })
+                    ) =>
+                    {
+                        self.native_path_of(*owner)
+                            .ok()
+                            .flatten()
+                            .map(|(value, mut path)| {
+                                path.extend(members);
+                                (value, path)
+                            })
+                    }
+                    None => None,
+                }
+            }
             None => self.native_path_of(base)?,
         };
         let module_root = match (&value_root, select_path) {
@@ -951,11 +965,25 @@ impl Codegen<'_> {
         nba: bool,
     ) -> Result<IrStmt, String> {
         let mut statements = Vec::new();
-        let hoist = select.hoist || self.native_select_at_issue;
-        let (index, width) =
-            self.member_select_index(path, select.index, hoist, &mut statements)?;
         // Every element and the default fill one temporary, which then moves
         // to the target, so a queued write has one source.
+        let value = self.native_record_select_value(path, select, node, &mut statements)?;
+        statements.push(self.native_transfer(path, target, &value, nba)?);
+        Ok(IrStmt::Block(statements))
+    }
+
+    /// Declare a temporary of the selected record's type and copy the
+    /// selected element into it (the default when none is selected); the
+    /// index is evaluated once. Returns the temporary.
+    pub(in crate::sim::codegen) fn native_record_select_value(
+        &mut self,
+        path: &str,
+        select: &NativeRecordSelect,
+        node: NodeId,
+        statements: &mut Vec<IrStmt>,
+    ) -> Result<NativeEndpoint, String> {
+        let hoist = select.hoist || self.native_select_at_issue;
+        let (index, width) = self.member_select_index(path, select.index, hoist, statements)?;
         let temporary = self.native_temporary(node)?;
         statements.push(IrStmt::NativeValueDeclare(temporary));
         let value = NativeEndpoint::Value {
@@ -968,8 +996,7 @@ impl Codegen<'_> {
             branches.push((*declared, Some(copy)));
         }
         statements.extend(member_select_statement(branches, &index, width, None));
-        statements.push(self.native_transfer(path, target, &value, nba)?);
-        Ok(IrStmt::Block(statements))
+        Ok(value)
     }
 
     /// Store `rhs` into the selected element; an unmatched index writes

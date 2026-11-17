@@ -1032,6 +1032,31 @@ pub(crate) fn run_case_failing_at_runtime(
     }
 }
 
+/// [`run_case_failing_at_runtime`] with compile options `args`.
+pub(crate) fn run_case_failing_at_runtime_with_args(
+    suite: &str,
+    fixture: &str,
+    args: &[&str],
+    expected: &str,
+    diagnostic: &str,
+) {
+    for optimized in [false, true] {
+        let output = invoke_with_runtime_args(suite, fixture, optimized, args, &[]);
+        let seen = observed_output(&output);
+        let label = format!("{fixture} {args:?}, optimized={optimized}");
+        assert_eq!(output.status.code(), Some(1), "{label}: {seen}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "{label}: {seen}"
+        );
+        assert!(
+            sim_harness::mentions(&String::from_utf8_lossy(&output.stderr), diagnostic),
+            "{label}: {seen}"
+        );
+    }
+}
+
 /// [`run_case_failing_at_runtime`] that requires the message with id `id`
 /// (`SIM-009`) whose text contains `text`, at any location
 /// ([`sim_harness::has_message`]).
