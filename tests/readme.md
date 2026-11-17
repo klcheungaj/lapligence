@@ -1177,7 +1177,7 @@ support; the corresponding execution tests must also pass.
 
 ### Prerequisites
 
-- Pinned Rust 1.98.0, initialized vendors, and
+- Pinned Rust 1.100.0, initialized vendors, and
   `cargo install cargo-nextest --locked`.
 - CMake, Ninja (the default model generator; set `CMAKE_GENERATOR` to use
   another) and a C compiler for public conformance; run commands at repository root.

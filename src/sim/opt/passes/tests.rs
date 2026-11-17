@@ -1442,6 +1442,29 @@ fn unused_storage_counts_call_temp_inits_and_copyouts() {
 // ── external observation (optimizer storage pruning) ──────────────────
 
 #[test]
+fn opt_external_observation_keeps_vpi_member_cells() {
+    // s1 and s2 are the cells of a structure's array member that only a VPI
+    // cell table reads; s0 is unobserved.
+    let mut m = model_with(Vec::new(), sigs(3));
+    m.vpi_objects.push(crate::sim::ir::IrVpiObject {
+        full_name: "t.r.arr".to_string(),
+        name: "arr".to_string(),
+        kind: crate::sim::ir::IrVpiObjectKind::RegArray,
+        width: 8,
+        member: true,
+        cells: vec![1, 2],
+        dims: vec![(0, 1)],
+        ..Default::default()
+    });
+
+    run(&mut m, &storage_only());
+
+    assert!(m.signals[0].omit, "unobserved signal is omitted");
+    assert!(!m.signals[1].omit, "VPI cell keeps storage");
+    assert!(!m.signals[2].omit, "VPI cell keeps storage");
+}
+
+#[test]
 fn opt_external_observation_keeps_foreign_and_callback_storage() {
     // s0 is written; s3 is dead; s1 is referenced only by a VPI descriptor
     // (foreign handle) and s2 only by a monitor evaluator (callback). Neither

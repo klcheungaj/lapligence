@@ -58,8 +58,10 @@ pub(super) fn render_vpi_dynamic(
         return;
     }
     out.push_str("/* dynamic objects of the VPI catalog (37.17, 37.29) */\n");
-    // The members of every record shape, one run per shape.
+    // The members of every record shape, one run per shape, and the
+    // declared ranges of every fixed-size array shape.
     let mut members = Vec::new();
+    let mut shape_dims = Vec::new();
     let shapes = dynamic
         .shapes
         .iter()
@@ -105,6 +107,15 @@ pub(super) fn render_vpi_dynamic(
                     values = 1;
                     element = *shape;
                 }
+                IrVpiShape::FixedArray {
+                    element: shape,
+                    values: elements,
+                    ..
+                } => {
+                    array_type = "vpiStaticArray";
+                    values = u8::from(*elements);
+                    element = *shape;
+                }
                 IrVpiShape::String
                 | IrVpiShape::Chandle
                 | IrVpiShape::Event
@@ -112,9 +123,9 @@ pub(super) fn render_vpi_dynamic(
                 | IrVpiShape::Record { .. }
                 | IrVpiShape::Other => {}
             }
-            // Only an event array names a declared range and only a record
-            // its members; the other shapes leave both zero, so their rows
-            // keep their text.
+            // Only an event array names a declared range, only a record its
+            // members and only a fixed-size array shape its ranges; the
+            // other shapes leave them zero, so their rows keep their text.
             let range = match shape {
                 IrVpiShape::EventArray { left, right, .. } => {
                     format!(", INT64_C({left}), INT64_C({right})")
@@ -125,6 +136,18 @@ pub(super) fn render_vpi_dynamic(
                         format!("    {{ {}, {shape}u }}", c_string_literal(name))
                     }));
                     format!(", 0, 0, {first}u, {}u", list.len())
+                }
+                IrVpiShape::FixedArray { dims, inline, .. } => {
+                    let first = shape_dims.len();
+                    shape_dims.extend(dims.iter().map(|(left, right)| {
+                        format!("    INT64_C({left}), INT64_C({right})")
+                    }));
+                    format!(
+                        ", 0, 0, 0u, 0u, &llg_vpi_shape_dims[{}], {}u, {}u",
+                        2 * first,
+                        dims.len(),
+                        u8::from(*inline)
+                    )
                 }
                 _ => String::new(),
             };
@@ -138,6 +161,12 @@ pub(super) fn render_vpi_dynamic(
             )
         })
         .collect::<Vec<_>>();
+    if !shape_dims.is_empty() {
+        out.push_str(&format!(
+            "static const int64_t llg_vpi_shape_dims[] = {{\n{}\n}};\n",
+            shape_dims.join(",\n")
+        ));
+    }
     let shape_table = if shapes.is_empty() {
         "NULL"
     } else {

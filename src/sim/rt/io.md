@@ -265,7 +265,12 @@ element or a `SLOT_CONN` handle. Port bits, primitive terminals and interface
 port reference objects are dynamic slots on their row (`SLOT_PORTBIT`,
 `SLOT_PRIMTERM`, `SLOT_REFOBJ`). A scalar member of a chosen column record is a row with
 `LLG_VPI_OBJ_FIXED_CELL`: the row names its one-cell descriptor, and decoding
-materializes the cell, which never moves. Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
+materializes the cell, which never moves. An unpacked array member of a
+structure kept one packed or real leaf per cell is a `vpiRegArray` row with
+`LLG_VPI_OBJ_CELLS`: its storage is a table of the cells' addresses in
+row-major order and its `dims` the member's ranges; a member kept in a
+descriptor column uses that column. A string, handle or container member is
+a dynamic row of its own (decision A19-D89). Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
 out of the name index; instance array elements are found by composing the
 array's full name with the indices.
 Net and variable connectivity (vpiDriver, vpiLoad, their local forms,
@@ -308,7 +313,13 @@ nested container, a cell of a multidimensional fixed array, a member of a
 structure element, shape `LLG_VPI_SHAPE_RECORD` with its
 `llg_vpi_member_t` rows) keeps its further steps in a path the slot owns
 (`use`, `span`), resolved level by level from the top container; a write
-publishes through the top container (decision A19-D87). The path, name
+publishes through the top container (decision A19-D87). An array member of
+a structure value is a container shape with `inline_value` (one
+`LLG_VALUE_FIXED_ARRAY` item of the record) and `dims`, the ranges a
+fixed-size class instance property also carries; a step path ending at
+such a member is the array var, one going past it an element, and a
+structure property kept as a record value is the top of its members'
+paths (decision A19-D89). The path, name
 and static-property helpers are `LLG_OUTLYING` (with `dyn_element_by_index`
 and `rts_auto_iterate`), so their code sits behind `.text` and adds no
 `.cold` part in front of it: the model and the scheduler keep their
@@ -389,6 +400,19 @@ behind a `ref` descriptor) or a `double` array (`LLG_VPI_AUTO_REALS`) is read
 and written in place, with the same ended-frame error (A19-D83, A19-D84).
 `vpi_handle_by_name` finds an automatic, element or member of the innermost
 live activation of the named subprogram once the static lookup fails (A19-D84).
+A fixed-size array automatic kept in a keyed container is read cell by cell
+through its `llg_fixed_array_t` (`LLG_VPI_AUTO_FIXED`); an unpacked
+structure automatic kept as a record value is a dynamic-layer record whose
+members are dynamic elements; an element of an unpacked array member of a
+structure kept as a packed image is a part whose `span` is its element
+offset + 1. A block's locals are table entries flagged
+`LLG_VPI_AUTO_BLOCK`, named by their block path (`blk.x`): the declaration
+stores the address and the block's end (and every jump out of it) clears
+it, so `vpi_handle_by_name` and `vpiVariables` of the block find them only
+while the block runs, and `vpiAutomatics` skips them (A19-D88). A sparse
+module array (`LLG_VPI_OBJ_SPARSE`, its storage the `llg_fixed_array_t`)
+reads cells without allocating and writes through `llg_ba`, so waiters and
+callbacks see the change (A19-D88).
 A model ends a frame
 before releasing the value scopes that hold its body locals, so
 cbEndOfFrame still reads them (A19-D78).

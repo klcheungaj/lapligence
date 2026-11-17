@@ -2899,7 +2899,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   methods and the events of a definition's event array property, A19-D85; the
   source locations of class properties, container elements, ranges and the
   range bounds and indices made per request, and the identity of ranges and
-  those constants, A19-D86). A generated
+  those constants, A19-D86; sparse fixed-size arrays, class methods by
+  name with their statements, the members of record automatics and of
+  wide or sparse automatic arrays, and the locals of a task's or function's
+  blocks while the block runs, A19-D88). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, constant element/bit/part selects in the name, and
   associative array elements by integral or string key, `tb.aa["x"]`, decision A19-D81),
@@ -3026,7 +3029,11 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   innermost elements (`tb.qq[1][0]`), an element of an array of structures
   gives its members, and static class properties (variables and events)
   are listed by objects and definitions under `tb.C::si` full names
-  (decision A19-D87); string variables take
+  (decision A19-D87); the string, handle, unpacked array and container
+  members of a structure (a module's, in any storage form including
+  columns, of an element of an array or queue, or of a structure property)
+  and fixed-size class instance properties are objects with their elements,
+  names, values, writes and callbacks (decision A19-D89); string variables take
   `vpiStringVal` and `vpiIntVal` writes (A19-D25) and chandle variables read
   and write their 64-bit pointer image.
   `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject` follow construction,

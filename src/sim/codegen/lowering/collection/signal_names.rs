@@ -65,8 +65,8 @@ impl Codegen<'_> {
         if index.stale || index.indexed > count {
             *index = SignalNameIndex::default();
         }
-        for position in index.indexed..count {
-            let signal = &self.model.signals[position];
+        let start = index.indexed;
+        for (position, signal) in self.model.signals.iter().enumerate().skip(start) {
             index
                 .first
                 .entry(name_hash(&signal.c_name))

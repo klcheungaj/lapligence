@@ -158,6 +158,47 @@ impl Codegen<'_> {
         Some((block, statement))
     }
 
+    /// The path from frame `ft` (whose path is `frame_path`) of variable
+    /// `id` declared in a block of its body (`blk.x`, decision A19-D88), or
+    /// `None` for a top-level local, a variable of a fork's block (its own
+    /// process) or one under a declaration scope the catalog does not name.
+    pub(in super::super) fn vpi_block_local_path(
+        &self,
+        id: NodeId,
+        ft: NodeId,
+        frame_path: &[String],
+    ) -> Option<String> {
+        if !matches!(self.kind(id), NodeKind::Var { .. } | NodeKind::Array { .. }) {
+            return None;
+        }
+        let mut current = self.node(id).parent;
+        let mut scopes = 0usize;
+        while let Some(parent) = current {
+            if parent == ft {
+                break;
+            }
+            // A fork's blocks run in their own processes.
+            if matches!(self.kind(parent), NodeKind::Stmt(StmtKind::Fork { .. })) {
+                return None;
+            }
+            // A block statement is named by its declaration scope.
+            if let Some(scope) = self.vpi_block_scope(parent) {
+                if self.node(scope).name.is_empty() && self.vpi_unnamed_scope_name(scope).is_none()
+                {
+                    return None;
+                }
+                scopes += 1;
+            }
+            current = self.node(parent).parent;
+        }
+        if current != Some(ft) || scopes == 0 {
+            return None;
+        }
+        let path = self.vpi_path(id);
+        let relative = path.strip_prefix(frame_path)?;
+        (relative.len() == scopes + 1).then(|| relative.join("."))
+    }
+
     /// The statements of a block or list, lists folded in, declarations
     /// and the block's declaration scope left out.
     pub(super) fn vpi_flatten(&self, id: NodeId, out: &mut Vec<NodeId>) {

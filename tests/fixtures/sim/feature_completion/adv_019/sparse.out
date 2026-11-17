@@ -1,0 +1,44 @@
+== sparse 1
+tb.mem: type=116 size=8192 memory=1 [0:8191]
+  first: type=48 tb.mem[0] size=8 member=1 value=xx parent=mem
+  first: type=48 tb.mem[1] size=8 member=1 value=xx parent=mem
+  elements=8192
+tb.big: type=116 size=5000 memory=0 [4999:0]
+  first: type=612 tb.big[4999] size=32 member=1 value=00000000 parent=big
+  first: type=612 tb.big[4998] size=32 member=1 value=00000000 parent=big
+  elements=5000
+tb.two: type=116 size=10000 memory=0 [0:99] [0:99]
+  first: type=48 tb.two[0][0] size=4 member=1 value=x parent=two
+  first: type=48 tb.two[0][1] size=4 member=1 value=x parent=two
+  elements=10000
+tb.wide: type=116 size=4096 memory=1 [0:4095]
+  first: type=48 tb.wide[0] size=256 member=1 value=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx parent=wide
+  first: type=48 tb.wide[1] size=256 member=1 value=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx parent=wide
+  elements=4096
+tb.mem[5]: type=48 tb.mem[5] size=8 member=1 value=a5 parent=mem
+tb.mem[8191]: type=48 tb.mem[8191] size=8 member=1 value=xx parent=mem
+tb.big[4000]: type=612 tb.big[4000] size=32 member=1 value=0000004d parent=big
+tb.two[3][4]: type=48 tb.two[3][4] size=4 member=1 value=9 parent=two
+tb.wide[7]: type=48 tb.wide[7] size=256 member=1 value=0000000000000000000000000000000000000000000000000000000000000001 parent=wide
+tb.mem[8192]: NULL!
+index 5: type=48 tb.mem[5] size=8 member=1 value=a5 parent=mem
+index 9000: NULL!
+multi [3][4]: type=48 tb.two[3][4] size=4 member=1 value=9 parent=two
+put tb.mem[6]=60
+put tb.big[10]=1234
+put tb.two[1][2]=5
+put tb.wide[9]=90
+watch tb.mem[7]: ok
+watch tb.big: ok
+put_value_array mem[100..102]
+get_value_array mem[4..7]: 0 a5 3c 0
+mem[6]=3c big[10]=1234 two[1][2]=5 wide[9]=5a mem[0]=xx
+mem[100]=10 mem[101]=11 mem[102]=12
+0: hdl saw mem[6]=3c
+cb tb.mem[7] index=7 =77 at 1
+cb tb.big index=3 =00000003 at 2
+== sparse 2
+tb.mem[7]: type=48 tb.mem[7] size=8 member=1 value=77 parent=mem
+tb.mem[6]: type=48 tb.mem[6] size=8 member=1 value=3c parent=mem
+tb.big[3]: type=612 tb.big[3] size=32 member=1 value=00000003 parent=big
+tb.big[10]: type=612 tb.big[10] size=32 member=1 value=000004d2 parent=big

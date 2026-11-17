@@ -1,0 +1,72 @@
+== rmembers 1
+tb.r members: a(612) arr(116) s(616) q(116) da(116) h(615) f(48) arr20(116) ra(116) m(116)
+tb.cr members: big(116) w(48) x(47)
+tb.lr members: k(612) !
+tb.lr.sa[1]: NULL!
+tb.lr.ia[1].x: NULL!
+tb.r.s: type=616 s tb.r.s size=2 member=1 element=0 value=hi parent=r
+tb.r.h: type=615 h tb.r.h size=-99 member=1 element=0 value=- parent=r
+tb.r.h object=yes
+tb.r.arr: type=116 size=3 array_type=1 member=1 [0:2]
+  first: type=612 arr[0] tb.r.arr[0] size=32 member=0 element=1 value=00000005 parent=arr
+  first: type=612 arr[1] tb.r.arr[1] size=32 member=0 element=1 value=00000006 parent=arr
+  elements=3
+tb.r.m: type=116 size=6 array_type=1 member=1 [0:1] [0:2]
+  first: type=612 m[0][0] tb.r.m[0][0] size=32 member=0 element=1 value=00000000 parent=m
+  first: type=612 m[0][1] tb.r.m[0][1] size=32 member=0 element=1 value=00000000 parent=m
+  elements=6
+tb.r.ra: type=116 size=2 array_type=1 member=1 [0:1]
+  first: type=47 ra[0] tb.r.ra[0] size=64 member=0 element=1 value=0 parent=ra
+  first: type=47 ra[1] tb.r.ra[1] size=64 member=0 element=1 value=2.5 parent=ra
+  elements=2
+tb.r.arr20: type=116 size=20 array_type=1 member=1 [0:19]
+  first: type=612 arr20[0] tb.r.arr20[0] size=32 member=0 element=1 value=00000000 parent=arr20
+  first: type=612 arr20[1] tb.r.arr20[1] size=32 member=0 element=1 value=00000000 parent=arr20
+  elements=20
+tb.r.q: type=116 size=2 array_type=4 member=1
+  first: type=612 q[0] tb.r.q[0] size=32 member=0 element=1 value=00000003 parent=q
+  first: type=612 q[1] tb.r.q[1] size=32 member=0 element=1 value=00000004 parent=q
+  elements=2
+tb.r.da: type=116 size=2 array_type=2 member=1
+  first: type=612 da[0] tb.r.da[0] size=32 member=0 element=1 value=00000000 parent=da
+  first: type=612 da[1] tb.r.da[1] size=32 member=0 element=1 value=00000009 parent=da
+  elements=2
+tb.cr.big: type=116 size=5000 array_type=1 member=1 [0:4999]
+  first: type=612 big[0] tb.cr.big[0] size=32 member=0 element=1 value=00000000 parent=big
+  first: type=612 big[1] tb.cr.big[1] size=32 member=0 element=1 value=00000000 parent=big
+  elements=5000
+tb.r.q[1]: type=612 q[1] tb.r.q[1] size=32 member=0 element=1 value=00000004 parent=q
+tb.r.m[1][2]: type=612 m[1][2] tb.r.m[1][2] size=32 member=0 element=1 value=0000000c parent=m
+tb.r.arr[3]: NULL!
+tb.cr.big[4999]: type=612 big[4999] tb.cr.big[4999] size=32 member=0 element=1 value=0000002a parent=big
+tb.cr.w: type=48 w tb.cr.w size=8 member=1 element=0 value=f0 parent=cr
+tb.cr.x: type=47 x tb.cr.x size=64 member=1 element=0 value=1.5 parent=cr
+index arr 2: type=612 arr[2] tb.r.arr[2] size=32 member=0 element=1 value=00000007 parent=arr
+multi m [1][2]: type=612 m[1][2] tb.r.m[1][2] size=32 member=0 element=1 value=0000000c parent=m
+tb.r.f[1]: type=49 f[1] tb.r.f[1] size=1 member=0 element=0 value=0 parent=f
+tb.r.f[3:0]: type=42 f[3:0] tb.r.f[3:0] size=4 member=-99 element=0 value=5 parent=f
+tb.cr.w[4]: type=49 w[4] tb.cr.w[4] size=1 member=0 element=0 value=1 parent=w
+tb.cr.w[7:4]: type=42 w[7:4] tb.cr.w[7:4] size=4 member=-99 element=0 value=f parent=w
+tb.r.m[1][2][3]: type=49 m[1][2][3] tb.r.m[1][2][3] size=1 member=0 element=0 value=1 parent=m[1][2]
+put tb.r.arr[1]=66
+put tb.r.s="yo"
+put tb.r.q[0]=33
+put tb.r.da[1]=99
+put tb.r.f[0]=0
+put tb.r.arr20[19]=190
+put tb.r.ra[0]=4.25
+put tb.r.m[0][1]=21
+put tb.cr.big[4999]=4242
+put tb.cr.w[0]=1
+put tb.cr.x=0.5
+watch tb.r.arr[0]: ok
+watch tb.cr.big[7]: ok
+r.arr=5 66 7 s=yo q=33 4 da[1]=99 f=a4 arr20[19]=190 ra[0]=4.25 m[0][1]=21
+cr.big[4999]=4242 cr.w=f1 cr.x=0.50 h.v=3 lr=4 l 6
+0: hdl saw r.arr[1]=66
+cb tb.r.arr[0] =00000032 at 1
+cb tb.cr.big[7] =00000007 at 2
+== rmembers 2
+tb.r.arr[0]: type=612 arr[0] tb.r.arr[0] size=32 member=0 element=1 value=00000032 parent=arr
+tb.r.arr[1]: type=612 arr[1] tb.r.arr[1] size=32 member=0 element=1 value=00000042 parent=arr
+tb.cr.big[7]: type=612 big[7] tb.cr.big[7] size=32 member=0 element=1 value=00000007 parent=big

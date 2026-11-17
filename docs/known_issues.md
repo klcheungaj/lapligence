@@ -2805,27 +2805,24 @@ error (`LLG_VPI_UNSUPPORTED`, `LLG_VPI_INDEX` or `LLG_VPI_NOT_FOUND`) instead
 of a handle or value; `vpi_handle_by_name` of such an object returns NULL
 with no error status, as for a name that denotes nothing (S42-D11):
 
-- objects outside the generated catalog: sparse fixed arrays (stored in a keyed
-  container); among frame automatics (decisions A19-D76, A19-D82 to
-  A19-D84, A19-D87), the elements and members of automatics llg keeps as
-  descriptor-backed values rather than one packed image, real cells or a
-  container (fixed-size arrays wider than the packed transport, a
-  structure holding a string, real, handle or unpacked array member;
-  listed under `vpiAutomatics` with their size and no elements or
-  members), the
-  elements of an unpacked array member of an automatic structure, and the
-  automatic variables of blocks inside a task or function (llg models no
-  block frames, decisions A19-D44, A19-D76), tasks and functions of
-  packages, the
-  statements of class methods and class methods by name, programs, and checker objects (a checker instance is a module
-  scope with its variables; VPI-C1);
+- objects outside the generated catalog: the automatic variables of
+  process blocks (`initial`/`always` blocks have no frame) and of a fork's
+  blocks inside a task or function; a block of a task or function has no
+  frame of its own (decision A19-D76: `vpiFrame` stays the subprogram's;
+  its locals are served by name and by `vpiVariables` of the block while it
+  runs, decision A19-D88). A checker has no 2009 VPI object: a checker
+  instance is a module scope with its variables (decision A19-D88);
+  `cbForce`/`cbRelease` callbacks on the elements of a sparse fixed array
+  (one kept in a keyed container; its values, puts and value-change
+  callbacks are served, decision A19-D88);
 - dynamic objects (VPI-O4) other than string, chandle and class variables,
   dynamic, queue and associative arrays (nested ones flattened to their
   innermost elements), fixed-size arrays of strings, chandles, class
   handles and unpacked structures of any number of dimensions, the elements
   of arrays of structures with their members, frame automatics of those
-  kinds and static class properties (decisions A19-D73, A19-D76, A19-D82,
-  A19-D87): fixed-size class instance properties, fixed-size arrays of
+  kinds, static class properties, fixed-size class instance properties and
+  the members of structure elements and properties (decisions A19-D73,
+  A19-D76, A19-D82, A19-D87, A19-D89): fixed-size arrays of
   other element types not stored as packed values, events other than event
   properties of classes (decisions A19-D45, A19-D87), and virtual interface
   variables (virtual interface properties of classes are served, decision
@@ -2837,8 +2834,10 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `vpiArgument` of `vpiExtends` and `vpiParamAssign` of class typespecs; a
   parameterized class lists one class defn per specialization, each under
   the class's own name (decision A19-D36);
-  array and container members of an element of an array of structures
-  (listed as `vpiUndefined` objects without a value), associative arrays
+  the members of a structure kept as one packed value in a class property
+  or dynamic element, and bit and part selects of a dynamic element, member
+  or property (NULL with an error, decision A19-D89; industry-standard
+  behaviour serves them), associative arrays
   with a wildcard index or keys of more than 64 bits; `vpiFullName` of an
   element of a container property of a class object (37.17 detail 25
   gives a non-static class member no full name; industry-standard
@@ -2870,11 +2869,14 @@ with no error status, as for a name that denotes nothing (S42-D11):
   connection) are not indexed; a port declared with a module-side
   concatenation (`.q({y1, y0})`) on an element of an instance array has no
   `vpiHighConn` (decision A19-D58);
-- structure and union members that are not exposed: members of a record kept in columns (an unpacked structure
-  whose instances the optimizer split into per-field arrays), unpacked
-  array, string, handle and dynamic members of an unpacked structure, and
-  unpacked structures inside an unpacked union; bit and part selects of a
-  member (`tb.s.f[1]`); `vpiElement` of a `vpiPackedArrayVar` (its elements
+- structure and union members that are not exposed (decision A19-D89):
+  an unpacked array member of strings, handles or structures that llg keeps
+  one leaf per cell (`vpiMember` lists the other members and reports an
+  error; the member and its elements are NULL with an error), bit and part
+  selects of a member of an element of an array of structures
+  (`tb.ea[1].k[1]`; industry-standard behaviour serves these), and unpacked
+  structures inside an unpacked union (industry-standard behaviour rejects
+  unpacked unions); `vpiElement` of a `vpiPackedArrayVar` (its elements
   and bits are reached by index or name, decision A19-D67);
 - typespecs (the served properties and relations are in the catalog):
   interface, void and chandle typespecs (class typespecs are reached from

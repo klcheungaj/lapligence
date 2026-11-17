@@ -508,13 +508,19 @@ pub enum IrVpiAutoStorage {
     ///
     /// [`IrModel::containers`]: crate::sim::ir::IrModel
     Container(usize),
-    /// The body-scope fixed-size real array with this index into
-    /// [`IrModel::arrays`]: its `double` cells.
+    /// The body-scope fixed-size activation array with this index into
+    /// [`IrModel::arrays`]: its `double` cells (a real array) or its keyed
+    /// container of packed cells.
     ///
     /// [`IrModel::arrays`]: crate::sim::ir::IrModel
     Array(usize),
+    /// The body-scope unpacked structure kept as the activation record
+    /// value with this index into [`IrModel::native_values`].
+    ///
+    /// [`IrModel::native_values`]: crate::sim::ir::IrModel
+    NativeValue(usize),
     /// Listed without storage: a variable whose storage has no VPI form
-    /// (a record or array kept as a descriptor-backed value).
+    /// (a union or a structure kept as a descriptor-backed value).
     Unstored,
 }
 
@@ -546,6 +552,10 @@ pub struct IrVpiAutomatic {
     /// and writes when the array is kept as one packed image or as real
     /// cells.
     pub(in crate::sim) element: Option<usize>,
+    /// A local of a block of the body: `name` is its path from the frame
+    /// through the blocks (`blk.x`), and the frame does not list it
+    /// (decision A19-D88).
+    pub(in crate::sim) block: bool,
 }
 
 /// A lowered function or delay-free task: a static C function with a

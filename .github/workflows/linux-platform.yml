@@ -64,9 +64,9 @@ jobs:
           path: |
             target
             ${{ runner.temp }}/cargo-registry
-          key: cargo-deps-v1-${{ inputs.target }}-release-rust1.98.0-alpine-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
+          key: cargo-deps-v1-${{ inputs.target }}-release-rust1.100.0-alpine-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
           restore-keys: |
-            cargo-deps-v1-${{ inputs.target }}-release-rust1.98.0-alpine-
+            cargo-deps-v1-${{ inputs.target }}-release-rust1.100.0-alpine-
 
       - name: Phase 1 llg_co compile gate with GCC and Clang
         shell: bash
@@ -97,7 +97,7 @@ jobs:
             --env CMAKE_GENERATOR=Ninja \
             --env LLG_TARGET="${{ inputs.target }}" \
             --env LLG_SLANG_LTO=1 \
-            rust:1.98.0-alpine sh -euxc '
+            rust:1.100.0-alpine sh -euxc '
               apk add --no-cache build-base cmake curl git linux-headers ninja python3
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory /workspace/vendor/slang

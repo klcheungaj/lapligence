@@ -1,0 +1,44 @@
+== locals 1
+frame tb.t
+automatic: type=612 name=k full=tb.t.k size=32 automatic=1 value=00000001 parent=NULL
+automatic: type=618 name=one full=tb.t.one size=2 automatic=1 parent=NULL
+automatic: type=618 name=ua full=tb.t.ua size=2 automatic=1 parent=NULL
+automatic: type=116 name=wide full=tb.t.wide size=9001 automatic=1 array_type=1 parent=NULL
+automatic: type=116 name=big full=tb.t.big size=5001 automatic=1 array_type=1 parent=NULL
+  automatic count=5
+tb.t.wide: type=116 name=wide full=tb.t.wide size=9001 automatic=1 array_type=1 parent=NULL
+tb.t.wide[1]: type=48 name=wide[1] full=tb.t.wide[1] size=128 automatic=1 value=00000000000000000000000000001234 parent=wide
+tb.t.big[4000]: type=612 name=big[4000] full=tb.t.big[4000] size=32 automatic=1 value=00000009 parent=big
+tb.t.one: type=618 name=one full=tb.t.one size=2 automatic=1 parent=NULL
+tb.t.one.s: type=616 name=s full=tb.t.one.s size=2 automatic=1 value=hi parent=one
+member: type=612 name=a full=tb.t.one.a size=32 automatic=1 value=00000001 parent=one
+member: type=616 name=s full=tb.t.one.s size=2 automatic=1 value=hi parent=one
+  member count=2
+tb.t.ua.arr: type=116 name=arr full=tb.t.ua.arr size=3 automatic=1 array_type=1 parent=ua
+tb.t.ua.arr[1]: type=612 name=arr[1] full=tb.t.ua.arr[1] size=32 automatic=1 value=00000007 parent=arr
+element: type=612 name=arr[0] full=tb.t.ua.arr[0] size=32 automatic=1 value=00000000 parent=arr
+element: type=612 name=arr[1] full=tb.t.ua.arr[1] size=32 automatic=1 value=00000007 parent=arr
+element: type=612 name=arr[2] full=tb.t.ua.arr[2] size=32 automatic=1 value=00000000 parent=arr
+  element count=3
+tb.t.blk.bx: type=612 name=bx full=tb.t.blk.bx size=32 automatic=1 value=0000000b parent=NULL
+tb.t.blk.bs: type=616 name=bs full=tb.t.blk.bs size=2 automatic=1 value=bb parent=NULL
+tb.t.bx: NULL
+block variable: type=612 name=bx full=tb.t.blk.bx size=32 automatic=1 value=0000000b parent=NULL
+block variable: type=616 name=bs full=tb.t.blk.bs size=2 automatic=1 value=bb parent=NULL
+  block variable count=2
+put tb.t.blk.bx=99
+put tb.t.blk.bs="put"
+put tb.t.one.s="yo"
+put tb.t.one.a=42
+put tb.t.ua.arr[1]=70
+put tb.t.big[3]=33
+put tb.t.wide[2]=90
+tb.t.blk.bs: type=616 name=bs full=tb.t.blk.bs size=3 automatic=1 value=put parent=NULL
+after: bx=99 one.a=42 one.s=yo ua.arr[1]=70 big[3]=33 wide[2]=5a
+== locals 2
+tb.t.unnamed$$_0.unnamed$$_1.li: type=612 name=li full=tb.t.unnamed$$_0.unnamed$$_1.li size=32 automatic=1 value=00000005 parent=NULL
+tb.t.blk.bx: NULL
+== locals 3
+tb.t.unnamed$$_0.unnamed$$_1.li: NULL
+tb.t.blk.bx: NULL
+  block variable count=0

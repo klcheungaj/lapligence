@@ -1,6 +1,6 @@
 // A VPI application sees the objects of a chosen column record as it sees
-// those of its leaf form: the structure, its scalar members, and no object
-// for a member array or a string member.
+// those of its leaf form: the structure, its scalar members, its string
+// member and its member array with their elements (decision A19-D89).
 `timescale 1ns / 1ns
 
 typedef struct {

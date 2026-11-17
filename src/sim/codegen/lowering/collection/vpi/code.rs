@@ -1055,6 +1055,10 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 }
                 NodeKind::Array { .. } => "vpiRegArray",
                 NodeKind::NamedEvent => "vpiNamedEvent",
+                // A parameter of a class, used in a method body: the
+                // parameter itself (37.26), not a reference object (37.15
+                // detail 1 lists ports and `ref` arguments only).
+                NodeKind::Param { .. } => "vpiParameter",
                 _ => "vpiRefObj",
             };
             let mut code = self.typed(type_code, id);

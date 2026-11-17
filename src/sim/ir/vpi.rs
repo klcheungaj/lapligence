@@ -293,6 +293,10 @@ pub struct IrVpiObject {
     /// `array` is the one-cell column of a scalar record member: the object
     /// is that cell, not an array.
     pub(in crate::sim) fixed_cell: bool,
+    /// The cells of an unpacked array member of a structure kept as member
+    /// leaves, row-major (indices into [`super::IrModel::signals`]): the
+    /// row is the array, with its declared ranges in `dims`.
+    pub(in crate::sim) cells: Vec<usize>,
     /// Variable/element data type (variables, arrays and parameters).
     pub(in crate::sim) var_kind: IrVpiVarKind,
     /// Declared `[left:right]` of the outermost packed dimension; `None`

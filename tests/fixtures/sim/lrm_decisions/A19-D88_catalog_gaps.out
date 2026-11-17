@@ -1,0 +1,17 @@
+== d88 1
+frame: tb.t
+frame automatics: top_local
+tb.t.blk.x: tb.t.blk.x
+x=7 name=x
+tb.t.blk: tb.t.blk
+blk variables: x
+p::C::m: p::C::m
+m stmt type=691
+p::C::nop: p::C::nop
+nop stmt NULL
+== d88 2
+frame: tb.t
+frame automatics: top_local
+tb.t.blk.x: NULL
+tb.t.blk: tb.t.blk
+blk variables:

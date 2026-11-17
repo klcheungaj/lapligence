@@ -55,6 +55,12 @@ struct Entry {
     member: bool,
     slice: bool,
     fixed_cell: bool,
+    /// The `llg_fixed_array_t` of an array kept in a keyed (sparse)
+    /// container: its elements are that container's cells.
+    sparse: Option<String>,
+    /// The cell addresses, row-major, of an array member of a structure
+    /// kept as one leaf per cell (`llg_vpi_cells_<row>`, LLG_VPI_OBJ_CELLS).
+    cells: Vec<String>,
     record: bool,
     detail: &'static str,
     event: String,
@@ -107,6 +113,8 @@ impl Entry {
             member: false,
             slice: false,
             fixed_cell: false,
+            sparse: None,
+            cells: Vec::new(),
             record: false,
             detail: "0",
             event: "NULL".to_owned(),
@@ -185,7 +193,41 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
     // runtime's relation iterations follow (decision A19-D47).
     let mut entries = BTreeMap::<String, (usize, Entry)>::new();
     for object in objects {
-        let (packed, real_value, net_pointer, dims) = if let Some(signal) = object.signal {
+        let mut sparse = None;
+        let mut cells = Vec::new();
+        let (packed, real_value, net_pointer, dims) = if !object.cells.is_empty() {
+            // An array member kept as one leaf per cell: the row names a
+            // table of their addresses.
+            let Some(addresses) = object
+                .cells
+                .iter()
+                .map(|signal| {
+                    let (packed, real, _) = signal_storage(model, *signal)?;
+                    Some(if object.real { real } else { packed })
+                })
+                .collect::<Option<Vec<_>>>()
+                .filter(|addresses| addresses.iter().all(|address| address != "NULL"))
+            else {
+                continue;
+            };
+            let Some(dims) = object
+                .dims
+                .iter()
+                .map(|(left, right)| {
+                    Some((i32::try_from(*left).ok()?, i32::try_from(*right).ok()?))
+                })
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            cells = addresses;
+            (
+                "NULL".to_owned(),
+                "NULL".to_owned(),
+                "NULL".to_owned(),
+                dims,
+            )
+        } else if let Some(signal) = object.signal {
             let Some((packed, real_value, net)) = signal_storage(model, signal) else {
                 // A malformed/optimized-away storage reference is not a
                 // valid public object; omitting it keeps emitted C fail-closed.
@@ -196,9 +238,12 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             let Some(array) = model.arrays.get(array) else {
                 continue;
             };
-            // Sparse arrays live in a keyed container, not flat element
-            // cells; they are not VPI-visible (documented limit), except
-            // the one cell of a scalar record member.
+            // A sparse array keeps its cells in a keyed container, not
+            // flat element cells: the row names the container, whose cells
+            // the runtime looks up per element; so does an array member of
+            // a record kept in columns (descriptor storage). Lexical
+            // activation arrays have no static storage; the one cell of a
+            // scalar record member is that cell.
             if object.fixed_cell {
                 (
                     format!("&{}", array.c_name),
@@ -206,8 +251,16 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                     "NULL".to_owned(),
                     Vec::new(),
                 )
-            } else if array.sparse() || array.activation || array.descriptor {
+            } else if array.activation {
                 continue;
+            } else if array.sparse() {
+                sparse = Some(format!("&{}", array.c_name));
+                (
+                    "NULL".to_owned(),
+                    "NULL".to_owned(),
+                    "NULL".to_owned(),
+                    array.dims.clone(),
+                )
             } else if array.real {
                 (
                     "NULL".to_owned(),
@@ -327,6 +380,8 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             member: object.member,
             slice: object.slice,
             fixed_cell: object.fixed_cell,
+            sparse,
+            cells,
             record: object.kind == IrVpiObjectKind::Record,
             detail: object.detail.unwrap_or("0"),
             event,
@@ -648,6 +703,16 @@ pub(super) fn render_vpi_metadata(
     dynamic::render_vpi_dynamic(model, &indices, out);
     let timing = render_vpi_timing(model, &entries, out);
     let (udp_puts, udp_put_definition) = render_udp_puts(&entries, udp_sites, out);
+    // The cell tables of array members kept as one leaf per cell.
+    for (index, entry) in entries.iter().enumerate() {
+        if !entry.cells.is_empty() {
+            out.push_str(&format!(
+                "static {}* const llg_vpi_cells_{index}[] = {{ {} }};\n",
+                if entry.real { "double" } else { "sv4_t" },
+                entry.cells.join(", ")
+            ));
+        }
+    }
     let mut pack = pack::Pack::default();
     pack_objects(&entries, &indices, &timing, &udp_puts, &mut pack);
     let objects = pack.take_stream();
@@ -768,6 +833,12 @@ fn pack_objects(
         }
         if entry.fixed_cell {
             flags.push("LLG_VPI_OBJ_FIXED_CELL");
+        }
+        if entry.sparse.is_some() {
+            flags.push("LLG_VPI_OBJ_SPARSE");
+        }
+        if !entry.cells.is_empty() {
+            flags.push("LLG_VPI_OBJ_CELLS");
         }
         if entry.record {
             flags.push("LLG_VPI_OBJ_RECORD");
@@ -919,7 +990,9 @@ fn pack_objects(
             });
         let storage = match udp_puts[index] {
             Some(record) => Some(format!("&llg_vpi_udp_puts[{record}]")),
-            None => storage,
+            None => storage.or_else(|| entry.sparse.clone()).or_else(|| {
+                (!entry.cells.is_empty()).then(|| format!("(void*)llg_vpi_cells_{index}"))
+            }),
         };
         let references = [
             (REF_PACKED, present(&entry.packed)),

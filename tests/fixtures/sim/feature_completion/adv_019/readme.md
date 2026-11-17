@@ -553,8 +553,9 @@ query prints `-99`; `level=` is the status of the call before it.
 - Function types. Annex M: `vpiSizedSignedFunc` 5 for `int` results; `new`
   and the void function `lf` have no function type (refused) and size 0
   (37.37 detail 12, L60024-L60026: "For a void function, vpiSize shall
-  return 0"). A method's statements are not VPI objects in llg
-  (`stmt level=3`).
+  return 0"). A method's `vpiStmt` answers without an error
+  (`stmt level=0`): its body, or NULL for the pure method `vf` and an
+  empty body (37.12 detail 5; decision A19-D88, `methods` below).
 - Arguments. A method iterates its declared arguments (`vpiIODecl`, without
   the implicit `this`): `vpiDirection` `vpiInput` 1, `vpiOutput` 2 and
   `vpiRef` 6 (decision A19-D42), with `vpiTypespec`, `vpiTaskFunc` the
@@ -942,6 +943,199 @@ behaviour answers 1, gives a structure element `vpiSize` 1, lists indices
 outermost first, names static properties by the path that reached them and
 finds none under `C::`, and spells integral keys with a leading zero
 (decision A19-D87 records these differences).
+
+## sparse (37.17, 37.20, 38.16, 38.34, 38.35, 38.36.1, decision A19-D88)
+
+`sparse.sv` declares unpacked arrays llg keeps in a keyed container rather
+than flat cells: `mem[0:8191]` and `big[4999:0]` (more than 4096 cells),
+`two[0:99][0:99]` (10,000 cells) and `wide[0:4095]` of 256-bit vectors (more
+bits than one packed value holds). `sparse.c` prints, for each array,
+`vpiFullName`, `vpiType`, `vpiSize`, `vpiIsMemory`, its ranges, its first
+two elements and the element count `vpi_iterate(vpiReg)` gives; for each
+element `vpiType`, `vpiFullName`, `vpiSize`, `vpiArrayMember`, its value and
+`vpiParent`; `!` marks an answer that raised an error.
+`adv_019::sparse_fixed_arrays_give_elements_values_puts_and_callbacks` runs
+it in both optimizer modes with both value backends.
+
+- 37.17 detail 9 (SystemVerilog-1800-2009.txt L58760): "vpiSize for a
+  variable array shall return the number of variables in the array": 8192,
+  5000, 10000 and 4096. An element never written reads its default (`xx`,
+  `00000000`); `tb.mem[8192]` and `vpi_handle_by_index(mem, 9000)` are NULL
+  with an error, `vpi_handle_by_multi_index` selects `two[3][4]`.
+- 38.15 and 38.34: puts to `mem[6]`, `big[10]`, `two[1][2]` and `wide[9]`
+  reach the design (`mem[6]=3c big[10]=1234 two[1][2]=5 wide[9]=5a`), and
+  the process waiting on `mem[6]` wakes (`0: hdl saw mem[6]=3c`).
+- 38.36.1 (L64761-64763): "the value in the s_cb_data structure shall be the
+  value of the array member that changed value. The index field shall
+  contain the index of the rightmost range of the array declaration": the
+  callback on `mem[7]` reports index 7 when the design writes it at 1; the
+  callback on the whole array `big` reports the element 3 written at 2
+  (decision S43-D7).
+- 38.16 (L62946-62947) and 38.35 (L64348-64349): "shall retrieve simulation
+  values of contiguous elements in static unpacked variable or net arrays"
+  and "shall modify simulation values of contiguous elements": the put of
+  `mem[100..102]` gives `10 11 12`, the get of `mem[4..7]` gives
+  `0 a5 3c 0` (`mem[4]` and `mem[7]` hold x, which `vpiIntVal` reads as 0).
+
+Industry-standard behaviour gives the same answers (`vpiIsMemory` aside,
+decision A19-D49; it names the element as the object of a whole-array
+callback; it has no value-array routines).
+
+## methods (37.12, 37.37, 38.21, decision A19-D88)
+
+`methods.sv` declares a class `C` with the methods `get` (two statements),
+`run`, the static `sf` and the empty `nop`, a derived class `D` overriding
+`run`, and a class `PC` in the package `mpkg`. `methods.c` finds methods by
+name and prints `vpiType`, `vpiName`, `vpiFullName`, `vpiLineNo`,
+`vpiClassDefn` and the statement tree from `vpiStmt`.
+`adv_019::class_methods_are_found_by_name_and_give_their_statements` runs it
+in both optimizer modes with both value backends.
+
+- 38.21 (L63378-63379): "vpi_handle_by_name() shall return a handle to an
+  object with a specific name. This function can be applied to all objects
+  with a fullname property", and 37.37 detail 5 (L60004-60005): "vpiFullName
+  of a task or function declared inside a package or class defn shall begin
+  with the full name of the package or class defn followed by "::" and
+  immediately followed with the name of the task or function". So
+  `tb.C::get`, `tb.C::sf`, `tb.D::run` and `mpkg::PC::pget` find their
+  methods; `tb.D::get` (inherited, not declared by `D`) and `tb.C::missing`
+  find nothing.
+- Through a class variable, `tb.c.get` finds `C::get`, `tb.d.run` the
+  override `D::run` and `tb.d.get` the inherited `C::get`; `tb.c.missing`
+  finds nothing.
+- 37.12 (diagram, L58055: a scope's `stmt`): `vpiStmt` of `get` is its body,
+  a `vpiBegin` (4) holding the assignment (3) and the `return` (691); of
+  `run` and `sf` the single statement; an empty body has none (NULL without
+  an error, as for a module task, 37.12 detail 5).
+
+Industry-standard behaviour gives the same statements and finds the same
+methods through `tb.C::` and the class variables; it escapes method names
+(`\C::get `), gives an empty body a null statement and does not find a
+method of a package class by name (decision A19-D88).
+
+## block_locals (37.17, 37.24, 37.39, decisions A19-D76, A19-D88)
+
+`block_locals.sv` declares in the automatic task `t` a 9001-element array of
+128-bit vectors and a 5001-element `int` array (both kept in a keyed
+container), a structure with a `string` member (a record value), a
+structure with an unpacked array member (a packed image), the locals `bx`
+and `bs` of the named block `blk` and the local `li` of a `for` loop body.
+`block_locals.c` prints, for each object, `vpiType`, `vpiName`,
+`vpiFullName`, `vpiSize`, `vpiAutomatic`, `vpiArrayType` of an array, the
+value and the `vpiParent` name; `!` marks an answer that raised an error.
+`adv_019::stored_automatics_and_block_locals_are_found_read_and_written`
+runs it in both optimizer modes with both value backends.
+
+- 37.39 detail 1 (SystemVerilog-1800-2009.txt L60160): "Frames correspond
+  to the set of automatic variables declared in a given task or function":
+  the frame of `t` lists `k`, `one`, `ua`, `wide` and `big`; the elements
+  of `wide` and `big`, the members of `one` (37.24) and the elements of the
+  array member `ua.arr` are found by name, read and take `vpi_put_value`.
+- 6.21 (L6901-6902): "Variables declared in an automatic task, function, or
+  block are local in scope, default to the lifetime of the call or block":
+  while `blk` runs, `tb.t.blk.bx` and `tb.t.blk.bs` are found by name, read
+  and written, and `vpi_iterate(vpiVariables)` of `tb.t.blk` lists them;
+  `li` is found under its loop's scopes
+  (`tb.t.unnamed$$_0.unnamed$$_1.li`). After the block ends they are not
+  found and the block lists no variables (decision A19-D88).
+
+Industry-standard behaviour gives the same objects, names and values,
+except: `vpi_handle(vpiFrame, NULL)` inside `blk` gives a frame of the
+block, where llg keeps the task's frame (decision A19-D76); it gives the
+array member of a structure automatic and its elements `vpiAutomatic` 0,
+where llg follows 37.3.7 (a part of an automatic variable is automatic);
+and it still finds the block locals after their blocks ended (with a value
+error, then with the last value), where llg follows 6.21 (decision A19-D88).
+
+## record_members (37.17, 37.18, 37.24, 38.15, 38.36.1, decision A19-D89)
+
+`record_members.sv` declares the unpacked structure `r` with an `int`, a
+three-element `int` array (one leaf per cell), a `string`, a queue, a
+dynamic array, a class handle, a `logic [7:0]`, a 20-element `int` array (a
+member column), a `real` array and a two-dimensional `int` array; the
+structure `cr` with a 5000-element array (column layout: every member is a
+column); and the structure `lr` with an unpacked `string` array and an
+array of structures. `record_members.c` lists their members, prints each
+member and its first two elements (`vpiType`, `vpiName`, `vpiFullName`,
+`vpiSize`, `vpiStructUnionMember`, `vpiArrayMember`, value, `vpiParent`),
+selects bits and parts of members, writes members and elements and
+watches `r.arr[0]` and `cr.big[7]`; `!` marks an answer that raised an
+error. `adv_019::structure_members_of_every_storage_form_are_listed_read_and_written`
+runs it in both optimizer modes with both value backends.
+
+- 37.17 detail 3 (SystemVerilog-1800-2009.txt L58744): "To obtain the
+  members of a union and structure, see the relations in 37.24":
+  `vpiMember` of `r` lists its ten members in declaration order (37.24,
+  L59260-59275, gives no order).
+- 37.17 detail 9 (L58760-58764): "vpiSize for a variable array shall return
+  the number of variables in the array ... For a string var, it shall return
+  the number of characters": `arr` 3, `m` 6, `arr20` 20, `big` 5000, `q` and
+  `da` 2, `s` 2. Detail 4 (L58744-58750): one `vpiRange` per unpacked
+  dimension (`m` gives `[0:1] [0:2]`); a queue or dynamic array member gives
+  none, as any queue does.
+- 37.17 detail 17 (L58778-58779): "When the vpiStructUnionMember property is
+  TRUE, it indicates that the variable is a member of a parent struct or
+  union variable", and 37.18 detail 5 (L58959-58961): "This property shall
+  be FALSE for all sub-elements": TRUE for each member, FALSE for its
+  elements.
+- 38.15 and 38.34: the puts to `r.arr[1]`, `r.s`, `r.q[0]`, `r.da[1]`,
+  `r.f[0]`, `r.arr20[19]`, `r.ra[0]`, `r.m[0][1]`, `cr.big[4999]`, `cr.w[0]`
+  and `cr.x` reach the design, and the process waiting on `r.arr[1]` wakes
+  (`0: hdl saw r.arr[1]=66`). 38.36.1: the callback on `r.arr[0]` reports
+  the design's write at 1, the one on `cr.big[7]` the write at 2.
+- Bit and part selects of a member (`tb.r.f[1]`, `tb.r.f[3:0]`,
+  `tb.cr.w[4]`, `tb.r.m[1][2][3]`) are a `vpiRegBit` (49) and a
+  `vpiPartSelect` (42).
+- Refused (decision A19-D89): `lr.sa` and `lr.ia` are kept one leaf per cell
+  and have no object; `vpiMember` of `lr` lists `k` and reports an error,
+  and `tb.lr.sa[1]` and `tb.lr.ia[1].x` are NULL with an error.
+
+Industry-standard behaviour gives the same members, sizes, values and puts,
+except: it lists scalar members first; it gives the elements of an array
+member `vpiStructUnionMember` TRUE; it gives a queue or dynamic array member
+a `[0:size-1]` range; it gives a bit of a member type `vpiBitSelect` (106)
+where llg keeps the var bit of 37.17 detail 19 (`vpiRegBit`); it refuses the callback on
+`r.arr[0]` (NULL without an error) and does not wake the process waiting on
+`r.arr[1]` after the put; and it serves `lr.sa` and `lr.ia`.
+
+## element_members (37.17, 37.24, 37.29, 38.15, decision A19-D89)
+
+`element_members.sv` declares the structure type `er_t` (an `int`, a
+fixed-size `int` array, an `int` queue, a `string`, a `string` array and a
+two-dimensional `logic [3:0]` array), a two-element array `ea` and a queue
+`eq` of it, and a class `C` with the fixed-size array properties `fa`,
+`sa` and `la`, the structure property `pr` (kept as a record value) and the
+structure property `pe` (kept as one packed value). `element_members.c`
+walks `ea[1]`, `eq[0].fa` and the properties of a `C` object, finds
+elements by name, index and multi-index, prints `vpiIndex`, writes
+elements and members and asks for `tb.ea[1].k[1]` and `tb.c.pe.k`; `!`
+marks an answer that raised an error.
+`adv_019::array_members_of_structure_values_and_fixed_class_properties_are_served`
+runs it in both optimizer modes with both value backends.
+
+- 37.24 (L59260-59275) and 37.17 details 4 and 9: each array or container
+  member of an element is a `vpiArrayVar` (116) with its `vpiArrayType`,
+  `vpiSize` and ranges, its elements named `fa[0]` with the member as
+  `vpiParent` and full names `tb.ea[1].fa[0]`; `ea[1].m[1]` names a
+  subarray and is NULL with an error (decision A20-D23), `ea[1].fa[2]` is
+  outside the range (NULL, decision S42-D11).
+- 37.17 detail 5 (L58751-58753): `vpi_iterate(vpiIndex)` of `ea[1].m[0][2]`
+  gives `2 0`, innermost first (decision A19-D28).
+- 37.29: the fixed-size array properties of the object are `vpiArrayVar`s
+  with their ranges and elements; `pr` is a `vpiStructVar` (618) of three
+  members (`vpiSize` 3), its array member `fa` served as above.
+- 38.15: the puts reach the design (`ea[1].fa=200`, `q[0]=220`,
+  `ss[1]=y`, `m[1][0]=7`, `eq[0].fa[1]=211`, `eq[0].q[0]=222`, `c.fa[0]=100`,
+  `c.sa[1]=zz`, `c.la[0][1]=3`, `c.pr.k=9`, `c.pr.fa[0]=8`).
+- Refused (decision A19-D89): `pe` lists no members (an error),
+  `tb.c.pe.k` and the member select `tb.ea[1].k[1]` are NULL with an error.
+
+Industry-standard behaviour gives the same objects, values and puts,
+except: it lists indices outermost first (A19-D28); it gives an element of
+an array member `vpiStructUnionMember` TRUE; it names an element of a class
+property (`tb.c.fa[1]`), where llg gives no full name to a property
+element; it gives an empty string `vpiSize` 1; and it serves `pe`'s
+members and the member select.
 
 ## catalog (A01, A03; 37.3, 38.3, 38.6, 38.18, 38.23, 38.40, 40.5.3)
 

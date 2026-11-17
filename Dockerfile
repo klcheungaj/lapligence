@@ -54,7 +54,7 @@ ENV RUSTUP_HOME=/opt/rustup \
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y \
         --no-modify-path \
-        --default-toolchain 1.98.0 \
+        --default-toolchain 1.100.0 \
         --profile minimal
 
 ENV PATH="/opt/cargo/bin:${PATH}"
