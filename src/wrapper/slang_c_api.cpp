@@ -10394,9 +10394,10 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   engine.setSeverity(diag::RefArgAutomaticFunc, DiagnosticSeverity::Error);
   // IEEE 1364-2001 9.3.2 and 1800-2009 10.6.2 admit only nets, whole
   // variables, constant net selects and their concatenations as force/release
-  // targets. The frontend only warns (other tools' compatibility) but still
-  // drops the statement, which would otherwise surface as an unlocated
-  // lowering failure.
+  // targets; SystemVerilog also admits an element of a static unpacked array
+  // variable, a singular variable (slang-static-array-element-force.patch).
+  // The frontend only warns (other tools' compatibility) but still drops the
+  // statement, which would otherwise surface as an unlocated lowering failure.
   engine.setSeverity(diag::BadProceduralForce, DiagnosticSeverity::Error);
   // IEEE 1364-2001 Table 8 and 1800-2009 Table 6-11: a parameter "May not be
   // used inside specify blocks"; the frontend only warns. Duplicate or
