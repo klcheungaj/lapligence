@@ -3725,28 +3725,6 @@ run against the industry-standard simulator; the differences fixed then are in
 the [ki_uvm_run readme](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md).
 These remain.
 
-### Override visibility the frontend rejects
-
-**Symptom.** Examples whose classes override a virtual method with another
-visibility stop in the frontend, which reports the override as an error. The
-UVM 1.2 and 1.1d `registers/models/coverage` example overrides the protected
-`sample` method of `uvm_reg` as a public method; the UVM 1.1d APB agent
-(`integrated/apb`) overrides the public `run_phase` of `uvm_component` as a
-protected task, which stops the nine 1.1d examples built on that agent
-(`integrated/codec` and the `registers` examples `integration/10direct`,
-`integration/20layered`, `models/broadcast`, `models/fifo_reg`, `primer`,
-`sequence_api` and both `vertical_reuse` runs). The industry-standard
-simulator accepts these examples.
-
-**Cause.** SV 2009 8.19 lists the encapsulation criteria among the
-information a virtual method's prototype provides and requires overrides to
-"follow the prototype exactly", naming return and argument types; the
-frontend reads that as requiring the same visibility (decision S08-D1, open).
-
-**Intended direction.** Decide whether to accept a visibility change in an
-override as a warning; the wrapper can set the diagnostic's severity without
-a frontend patch.
-
 ### Mixed blocking and nonblocking assignments stop the run
 
 **Symptom.** The `ubus`, `integrated/codec` and `registers/models/broadcast`
