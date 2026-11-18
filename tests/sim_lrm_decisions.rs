@@ -4163,6 +4163,14 @@ fn s13_d7_process_self_static_initializer() {
 }
 
 #[test]
+fn f2_d3_default_timescale() {
+    run_decision(
+        "F2-D3_default_timescale",
+        include_str!("fixtures/sim/lrm_decisions/F2-D3_default_timescale.out"),
+    );
+}
+
+#[test]
 fn s45_d20_option_unknown_value() {
     run_decision(
         "S45-D20_option_unknown_value",
