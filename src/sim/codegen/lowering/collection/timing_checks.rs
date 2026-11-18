@@ -266,11 +266,11 @@ impl Codegen<'_> {
                 let limit = check.before.min(check.after);
                 let message = format!(
                     "the negative timing check limits of a module have no consistent delayed \
-                     signal delays; the limit {limit} of `{}` at {} counts as 0 (IEEE 1800-2009 \
+                     signal delays; the limit {limit} of `{}` counts as 0 (IEEE 1800-2009 \
                      31.9.1)",
-                    check.name, check.origin,
+                    check.name,
                 );
-                self.timing_warning(message);
+                self.timing_warning(&check.origin, message);
                 if check.before <= check.after {
                     check.before = 0;
                 } else {
@@ -446,16 +446,16 @@ impl Codegen<'_> {
             } else {
                 if sum <= 1 {
                     let message = format!(
-                        "`{}` at {}: the sum of its limits is not above one precision unit, so \
-                         it cannot report violations (IEEE 1800-2009 31.3.3, 31.9.1)",
-                        check.name, check.origin,
+                        "`{}`: the sum of its limits is not above one precision unit, so it \
+                         cannot report violations (IEEE 1800-2009 31.3.3, 31.9.1)",
+                        check.name,
                     );
-                    self.timing_warning(message);
+                    self.timing_warning(&check.origin, message);
                 }
                 continue;
             };
-            let message = format!("`{}` at {}: {reason}", check.name, check.origin);
-            self.timing_warning(message);
+            let message = format!("`{}`: {reason}", check.name);
+            self.timing_warning(&check.origin, message);
             check.before = check.before.max(0);
             check.after = check.after.max(0);
         }
@@ -494,18 +494,19 @@ impl Codegen<'_> {
             .min();
         if let Some(adjusted) = lowest.filter(|adjusted| *adjusted <= 0) {
             let message = format!(
-                "`{}` at {}: its limit {} adjusted by the delays of its delayed signals is \
+                "`{}`: its limit {} adjusted by the delays of its delayed signals is \
                  {adjusted}, so it counts as 0 (IEEE 1800-2009 31.9.1)",
                 ir_kind_name(kind),
-                check.origin,
                 check.limit,
             );
-            self.timing_warning(message);
+            self.timing_warning(&check.origin, message);
         }
     }
 
-    /// A warning about a check's source, given once for all instances.
-    fn timing_warning(&mut self, message: String) {
+    /// A warning about a check's source at `origin`, given once for all
+    /// instances.
+    fn timing_warning(&mut self, origin: &str, message: String) {
+        let message = crate::sim::codegen::error::located(origin, message);
         if !self.warnings.contains(&message) {
             self.warnings.push(message);
         }
@@ -1074,13 +1075,16 @@ impl Codegen<'_> {
             } else {
                 candidate
             };
-            self.warnings.push(format!(
-                "duplicate timing check `{}` at {} in `{}` is disabled; the one at {} with the \
+            let message = format!(
+                "duplicate timing check `{}` in `{}` is disabled; the one at {} with the \
                  larger limit is simulated",
                 dropped.source.name(),
-                dropped.check.origin,
                 self.source_path(scope),
                 kept[index].check.origin,
+            );
+            self.warnings.push(crate::sim::codegen::error::located(
+                &dropped.check.origin,
+                message,
             ));
         }
         kept

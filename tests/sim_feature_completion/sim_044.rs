@@ -73,15 +73,15 @@ fn bins_values_resolve_against_the_coverpoint_type() {
         let mut warnings = lowering_warnings(output);
         warnings.sort();
         let mut expected = vec![
-            format!("11:28: bins `b1` {limited}"),
-            format!("12:18: bins `b2` {ignored}"),
-            format!("12:22: bins `b2` {limited}"),
-            format!("12:30: bins `b2` {ignored}"),
-            format!("15:21: bins `b3` {limited}"),
-            format!("15:28: bins `b3` {ignored}"),
-            format!("16:22: bins `b4` {limited}"),
-            format!("16:30: bins `b4` {ignored}"),
-            format!("23:62: bins `never` {ignored}"),
+            format!("11:28 bins `b1` {limited}"),
+            format!("12:18 bins `b2` {ignored}"),
+            format!("12:22 bins `b2` {limited}"),
+            format!("12:30 bins `b2` {ignored}"),
+            format!("15:21 bins `b3` {limited}"),
+            format!("15:28 bins `b3` {ignored}"),
+            format!("16:22 bins `b4` {limited}"),
+            format!("16:30 bins `b4` {ignored}"),
+            format!("23:62 bins `never` {ignored}"),
         ];
         expected.sort();
         assert_eq!(warnings, expected, "{label}");

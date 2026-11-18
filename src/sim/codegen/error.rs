@@ -92,6 +92,37 @@ impl fmt::Display for CodegenError {
 
 impl Error for CodegenError {}
 
+/// A non-fatal lowering diagnostic (CODEGEN-010): plain text, plus the
+/// source location of the construct it is about when lowering had one.
+/// Lowering collects warnings as strings framed like errors ([`located`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodegenWarning {
+    text: String,
+    location: Option<String>,
+}
+
+impl CodegenWarning {
+    pub(super) fn new(detail: impl Into<String>) -> Self {
+        let (text, location) = take_location(detail.into());
+        Self { text, location }
+    }
+
+    /// Where the construct the warning is about is (`file:line:col`).
+    pub fn location(&self) -> Option<&str> {
+        self.location.as_deref()
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+impl fmt::Display for CodegenWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,5 +143,9 @@ mod tests {
         let error = CodegenError::new("plain");
         assert_eq!(error.location(), None);
         assert_eq!(error.detail(), "plain");
+
+        let warning = CodegenWarning::new(located("a.sv:4:2", "ignored"));
+        assert_eq!(warning.location(), Some("a.sv:4:2"));
+        assert_eq!(warning.text(), "ignored");
     }
 }

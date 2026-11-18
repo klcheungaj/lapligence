@@ -580,6 +580,14 @@ pub(crate) fn read_text_output(path: &Path) -> Result<String, String> {
         .map_err(|error| format!("{} is not UTF-8: {error}", path.display()))
 }
 
+/// The texts of lowering warnings, for tests that match them as strings.
+pub(crate) fn warning_texts(warnings: &[llg::sim::codegen::CodegenWarning]) -> Vec<String> {
+    warnings
+        .iter()
+        .map(|warning| warning.text().to_owned())
+        .collect()
+}
+
 pub(crate) fn run_executable(executable: &Path) -> Result<String, String> {
     let output = run_executable_output(executable)?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
@@ -729,7 +737,7 @@ fn run_generated_sim_in_dir(
         status: output.status,
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        warnings: generated.warnings,
+        warnings: warning_texts(&generated.warnings),
         model_c: generated.model_c,
     })
 }

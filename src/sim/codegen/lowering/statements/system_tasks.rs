@@ -767,9 +767,8 @@ impl EmitCtx<'_, '_> {
                 )),
             },
             "$displayon" | "$displayoff" => {
-                self.cg
-                    .warnings
-                    .push(format!("{name} in `{}` skipped (not supported)", self.path));
+                let message = format!("{name} in `{}` skipped (not supported)", self.path);
+                self.cg.warn_at(h, message);
                 Ok(vec![])
             }
             // A system function in statement position (a void cast, SV

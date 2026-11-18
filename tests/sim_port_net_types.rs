@@ -122,15 +122,18 @@ fn assert_collapse_warnings(output: std::process::Output, expected: &str, count:
         .lines()
         .filter_map(llg::core::report::parse)
         .filter(|message| message.id == lowering_warning)
-        .map(|message| message.text)
         .collect::<Vec<_>>();
     assert_eq!(warnings.len(), count, "{stderr}");
     for warning in warnings {
-        assert!(warning.starts_with("dissimilar inout port `"), "{warning}");
-        assert!(warning.contains("Table 23-1) at "), "{warning}");
+        let text = &warning.text;
+        assert!(text.starts_with("dissimilar inout port `"), "{text}");
+        assert!(text.ends_with("Table 23-1)"), "{text}");
         assert!(
-            warning.contains(".sv:"),
-            "warning must retain source location: {warning}"
+            warning
+                .location
+                .as_deref()
+                .is_some_and(|location| location.contains(".sv:")),
+            "warning must carry its source location: {text}"
         );
     }
     for line in stderr.lines() {

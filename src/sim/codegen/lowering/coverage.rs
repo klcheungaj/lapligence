@@ -2424,11 +2424,8 @@ impl<'a> Codegen<'a> {
         Ok(Some(keys))
     }
 
-    /// Lowering warnings are plain text (`GeneratedModel::warnings`), so the
-    /// node's location stays a prefix of the text.
     fn coverage_warning(&mut self, node: NodeId, message: String) {
-        let warning = format!("{}: {message}", self.source_location(node));
-        self.warnings.push(warning);
+        self.warn_at(node, message);
     }
 
     /// Lower every constructed covergroup's `sample` body and its sampling

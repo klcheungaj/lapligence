@@ -75,7 +75,7 @@ fn run_waveform_with_opts(
         }
         Ok((
             String::from_utf8_lossy(&process.stderr).into_owned(),
-            generated.warnings,
+            sim_harness::warning_texts(&generated.warnings),
         ))
     })?;
     Ok((dir, stderr, warnings))

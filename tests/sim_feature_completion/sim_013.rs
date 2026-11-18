@@ -61,7 +61,7 @@ fn always_comb_and_at_star_keep_distinct_sensitivity() {
         "comb_sensitivity",
         expected,
         "",
-        &["combinational always process in `tb` reads no signals; evaluating once at time 0"],
+        &["comb_sensitivity.sv:36:3 combinational always process in `tb` reads no signals; evaluating once at time 0"],
     );
     sim_cli::run_case_backend_parity(SUITE, "comb_sensitivity", expected, &[], &[]);
 }

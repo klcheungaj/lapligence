@@ -212,8 +212,9 @@ impl Codegen<'_> {
                     self.read_sdf_request(&mut state, &catalog, &scope_of, &origin, request)
                 }
                 Err(message) => {
-                    self.warnings.push(format!(
-                        "$sdf_annotate at {origin}: {message}; the call annotates nothing"
+                    self.warnings.push(crate::sim::codegen::error::located(
+                        &origin,
+                        format!("$sdf_annotate: {message}; the call annotates nothing"),
                     ));
                     None
                 }
@@ -418,8 +419,9 @@ impl Codegen<'_> {
                     "$sdf_annotate(\"{}\"): {message}; nothing is annotated\n",
                     request.file
                 ));
-                self.warnings.push(format!(
-                    "$sdf_annotate at {origin}: {message}; the call annotates nothing"
+                self.warnings.push(crate::sim::codegen::error::located(
+                    origin,
+                    format!("$sdf_annotate: {message}; the call annotates nothing"),
                 ));
                 None
             }

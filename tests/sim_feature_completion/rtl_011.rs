@@ -23,13 +23,14 @@ fn assert_collapse_warnings(fixture: &str, expected: &str, warnings: &[&str]) {
         let mut actual = Vec::new();
         for line in stderr.lines() {
             let lowering = llg::core::report::parse(line)
-                .filter(|message| message.id == llg::core::report::catalog::CODEGEN_WARNING.id())
-                .map(|message| message.text);
-            if let Some(warning) = lowering.as_deref() {
-                let (body, location) = warning
-                    .rsplit_once(" at ")
-                    .unwrap_or_else(|| panic!("{label}: unlocated warning {warning}"));
-                assert!(location.contains(".sv:"), "{label}: {warning}");
+                .filter(|message| message.id == llg::core::report::catalog::CODEGEN_WARNING.id());
+            if let Some(warning) = lowering {
+                let location = warning
+                    .location
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("{label}: unlocated warning {}", warning.text));
+                assert!(location.contains(".sv:"), "{label}: {}", warning.text);
+                let body = warning.text.as_str();
                 let body = if body.contains("same-depth connections") {
                     let (head, tail) = body.split_once('`').expect("port name");
                     let (_, tail) = tail.split_once('`').expect("port name end");

@@ -74,7 +74,7 @@ fn assert_run(label: &str, output: &Output, expected: &str, messages: &[&str]) {
 }
 
 const TESTBENCH_MESSAGES: &[&str] = &[
-    "WARNING: [CODEGEN-010] repeat count in `tb.bus` is not a constant; evaluated at runtime",
+    "WARNING: testbench.sv:52:13: [CODEGEN-010] repeat count in `tb.bus` is not a constant; evaluated at runtime",
     RANDOMIZE_WARNING,
 ];
 

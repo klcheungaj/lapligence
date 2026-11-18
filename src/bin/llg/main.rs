@@ -487,7 +487,11 @@ fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
         }
     };
     for w in &gen.warnings {
-        reporter.emit(Message::new(&catalog::CODEGEN_WARNING, w.as_str()));
+        let mut message = Message::new(&catalog::CODEGEN_WARNING, w.text());
+        if let Some(location) = w.location() {
+            message = message.location(location);
+        }
+        reporter.emit(message);
     }
     // `$sdf_annotate` log files describe the annotation read when the model
     // was generated.

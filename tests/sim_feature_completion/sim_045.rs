@@ -503,7 +503,7 @@ fn overlap_budget_is_a_located_warning() {
         assert_eq!(llg_messages(output), Vec::<String>::new(), "{label}");
         assert_eq!(
             lowering_warnings(output),
-            ["11:5: option.detect_overlap stops checking the transition bins of coverpoint `cp` in covergroup `g` at bins `a` and `b`, after 1048576 explored sequence steps; overlaps of these and later bins are not reported (llg limitation)"],
+            ["11:5 option.detect_overlap stops checking the transition bins of coverpoint `cp` in covergroup `g` at bins `a` and `b`, after 1048576 explored sequence steps; overlaps of these and later bins are not reported (llg limitation)"],
             "{label}"
         );
     });

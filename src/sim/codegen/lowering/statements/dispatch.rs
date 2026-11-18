@@ -556,10 +556,11 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Repeat { cond, body }) => {
                 let c = self.lower_repeat_count(*cond)?;
                 if !matches!(c.kind, IrExprKind::Const(_)) {
-                    self.cg.warnings.push(format!(
+                    let message = format!(
                         "repeat count in `{}` is not a constant; evaluated at runtime",
                         self.path
-                    ));
+                    );
+                    self.cg.warn_at(*cond, message);
                 }
                 let (body, brk) = self.lower_loop_body(*body)?;
                 let mut out = vec![IrStmt::Repeat { count: c, body }];

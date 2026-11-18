@@ -561,7 +561,7 @@ fn auto_bin_max_writes_are_ignored_with_a_warning() {
                 .collect::<Vec<_>>();
         let expected_warnings = lines
             .iter()
-            .map(|line| format!("{line}: {ignored}"))
+            .map(|line| format!("{line} {ignored}"))
             .collect::<Vec<_>>();
         assert_eq!(warnings, expected_warnings, "{label}");
     });

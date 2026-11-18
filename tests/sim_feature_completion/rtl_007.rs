@@ -55,7 +55,7 @@ fn evaluators_admit_helpers_with_private_loops_and_locals() {
         "evaluator_helpers",
         expected,
         "",
-        &["repeat count in `tb` is not a constant; evaluated at runtime"],
+        &["evaluator_helpers.sv:50:13 repeat count in `tb` is not a constant; evaluated at runtime"],
     );
     sim_cli::run_case_backend_parity(SUITE, "evaluator_helpers", expected, &[], &[]);
 }

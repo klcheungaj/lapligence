@@ -320,8 +320,8 @@ fn duplicate_checks_keep_the_larger_limit_with_a_warning() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         for (dropped, kept, scope) in [("34:42", "34:11", "tb.k"), ("37:11", "37:40", "tb.r")] {
             let warning = format!(
-                "duplicate timing check `$setup` at {path}:{dropped} in `{scope}` \
-                 is disabled; the one at {path}:{kept} with the larger limit is simulated"
+                "notifiers.v:{dropped} duplicate timing check `$setup` in `{scope}` is \
+                 disabled; the one at {path}:{kept} with the larger limit is simulated"
             );
             assert!(
                 super::sim_harness::listed_warnings(&stderr).contains(&warning),
