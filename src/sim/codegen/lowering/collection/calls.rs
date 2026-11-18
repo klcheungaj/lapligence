@@ -366,6 +366,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// [`Self::lower_call_arguments`] before its failure is located.
+    #[allow(clippy::too_many_arguments)]
     fn lower_call_arguments_unlocated(
         &mut self,
         scope_path: &str,

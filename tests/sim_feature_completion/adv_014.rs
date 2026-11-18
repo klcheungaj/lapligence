@@ -187,14 +187,26 @@ fn unsupported_deferred_forms_are_located() {
 fn unsupported_operand_forms_are_located() {
     const TAIL: &str = "in an assertion with global clocking future sampled value functions \
                         is not supported (IEEE 1800-2009 16.9.4)";
-    for (fixture, at, what) in [
-        ("neg_real_operand", "9:3", "a real operand"),
-        ("neg_system_function", "9:3", "this system function"),
-        ("neg_sampled_function", "7:3", "this sampled value function"),
-        ("neg_inside", "9:3", "this expression form"),
-    ] {
-        sim_cli::reject_case(SUITE, fixture, &format!("{fixture}.sv:{at} {what} {TAIL}"));
-    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_operand",
+        &format!("neg_real_operand.sv:9:3 a real operand {TAIL}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_system_function",
+        &format!("neg_system_function.sv:9:3 this system function {TAIL}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_sampled_function",
+        &format!("neg_sampled_function.sv:7:3 this sampled value function {TAIL}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_inside",
+        &format!("neg_inside.sv:9:3 this expression form {TAIL}"),
+    );
     sim_cli::reject_case(
         SUITE,
         "neg_procedural_automatic",

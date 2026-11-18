@@ -257,7 +257,7 @@ impl Codegen<'_> {
     fn checker_static_index(&self, index: NodeId, location: &str) -> Result<i128, String> {
         self.eval_bound_i128(index).map_err(|_| {
             crate::sim::codegen::error::located(
-                &location,
+                location,
                 "the target of a checker variable assignment must be its longest \
                  static prefix; its select must be a constant expression (IEEE 1800-2009 \
                  17.7.1, 11.5.3)",

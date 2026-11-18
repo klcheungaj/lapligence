@@ -1777,6 +1777,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// [`Self::lower_p30_container_to_fixed`] before its failure is located.
+    #[allow(clippy::too_many_arguments)]
     fn lower_p30_container_to_fixed_unlocated(
         &mut self,
         path: &str,
@@ -1912,6 +1913,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// [`Self::lower_p30_bitstream_container_cast`] before its failure is located.
+    #[allow(clippy::too_many_arguments)]
     fn lower_p30_bitstream_container_cast_unlocated(
         &mut self,
         path: &str,
