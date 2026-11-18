@@ -878,16 +878,12 @@ impl Codegen<'_> {
                     .is_ok_and(|bits| bits.iter().any(|bit| self.is_uwire(bit.owner())))
             });
             if actual.is_some() && (self.is_uwire(formal) || actual_uwire) {
-                let node = self.node(*port);
                 let message = format!(
                     "port `{}` connects a uwire net but keeps a continuous assignment; the two \
-                     sides stay separate nets (IEEE 1800-2009 23.3.3.6) at {}:{}:{}",
+                     sides stay separate nets (IEEE 1800-2009 23.3.3.6)",
                     self.display_name(*port),
-                    node.file.as_deref().unwrap_or("<unknown>"),
-                    node.line,
-                    node.col,
                 );
-                self.warnings.push(message);
+                self.warn_at(*port, message);
             }
         }
     }

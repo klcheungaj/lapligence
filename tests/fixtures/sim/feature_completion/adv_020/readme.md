@@ -381,7 +381,9 @@ obj, index and the `vpi_chk_error` status it sees.
   for `$error("first error 0")` and for the failing `assert (x == 2)`
   without an action block, each with level 3, state 3 and
   `LLG_RUNTIME_ERROR` and the report in the message; `$warning`, `$info` and
-  the assertion with an `else` action do not run it.
+  the assertion with an `else` action do not run it. The message is plain
+  text (`plain`: no scope or hint separator byte of the runtime's message
+  frame) and starts with the report's `file:line:col` (`at actions.sv:l:c`).
 - **Removal.** `$act_remove` removes the three records (each 1); the next
   routine error and `$error("unobserved error")` run nothing.
 

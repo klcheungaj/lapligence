@@ -428,7 +428,7 @@ impl Codegen<'_> {
             .ok_or_else(|| self.rand_error(node, path, "the object's class is not known"))?;
         let off = self.mode_off_value(path, *state)?;
         let local = format!("_llg_mode_{}", node.index());
-        let site = self.source_site(&format!("{name}()"), path, node);
+        let site = self.required_site(&format!("{name}()"), path, node);
         let mut statements = vec![
             IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
                 format!("{local}_h"),

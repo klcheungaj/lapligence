@@ -74,7 +74,7 @@ fn assert_run(label: &str, output: &Output, expected: &str, messages: &[&str]) {
 }
 
 const TESTBENCH_MESSAGES: &[&str] = &[
-    "WARNING: [CODEGEN-010] repeat count in `tb.bus` is not a constant; evaluated at runtime",
+    "WARNING: testbench.sv:52:13: [CODEGEN-010] repeat count in `tb.bus` is not a constant; evaluated at runtime",
     RANDOMIZE_WARNING,
 ];
 
@@ -650,7 +650,7 @@ fn null_handle_accesses_stop_at_once() {
     let class_expected =
         include_str!("../fixtures/sim/feature_completion/sim_099/null_handle_access.out");
     let vif = "virtual interface access failed: virtual interface";
-    let class = "null class handle access: property access at tb:";
+    let class = "null class handle access: property access";
     let cases = [
         ("0", format!("{vif} member access at tb:33:14")),
         ("1", format!("{vif} member access at tb:34:33")),
@@ -659,11 +659,11 @@ fn null_handle_accesses_stop_at_once() {
         ("4", format!("{vif} member access at tb:37:10")),
         ("5", format!("{vif} method call at tb:38:14")),
         ("6", format!("{vif} member access at tb:27:12")),
-        ("7", format!("{class}40:14")),
-        ("8", format!("{class}41:40")),
+        ("7", format!("null_handle_access.sv:40:14 {class}")),
+        ("8", format!("null_handle_access.sv:41:40 {class}")),
     ];
     for (case, diagnostic) in cases {
-        let expected = if diagnostic.starts_with(vif) {
+        let expected = if diagnostic.contains(vif) {
             vif_expected
         } else {
             class_expected

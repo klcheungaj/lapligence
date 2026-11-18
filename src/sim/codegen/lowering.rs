@@ -358,8 +358,9 @@ pub struct GeneratedModel {
     pub symbols_tsv: String,
     /// The design name (also embedded in the model's first comment line).
     pub design_name: String,
-    /// Non-fatal diagnostics about supported lowering limitations.
-    pub warnings: Vec<String>,
+    /// Non-fatal diagnostics about supported lowering limitations, each
+    /// with the source location of its construct when lowering had one.
+    pub warnings: Vec<crate::sim::codegen::CodegenWarning>,
     /// SDF log files (`$sdf_annotate` log_file argument) and their
     /// contents, for the driver to write.
     pub sdf_logs: Vec<(String, String)>,
@@ -575,6 +576,8 @@ fn generate_from_db_with_codegen_options_impl(
 struct LoweredModel {
     model: IrModel,
     design_name: String,
+    /// CODEGEN-010 warnings, framed like errors (`error::located`) when
+    /// they have a location; `GeneratedModel` splits the frame out.
     warnings: Vec<String>,
     sdf_logs: Vec<(String, String)>,
     /// The design calls a `$coverage_*` function (40.3.2).
@@ -1162,7 +1165,10 @@ fn finish_generation(
         design_name,
         model_c: rendered.source,
         symbols_tsv: rendered.symbols_tsv,
-        warnings,
+        warnings: warnings
+            .into_iter()
+            .map(crate::sim::codegen::CodegenWarning::new)
+            .collect(),
         sdf_logs,
     })
 }
@@ -1644,6 +1650,8 @@ struct Codegen<'a> {
     /// ([`crate::sim::ir::IrNativeValue::marker`], set when the model is finished). Read
     /// walks borrow the lowering state, hence the cell.
     native_value_markers: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    /// CODEGEN-010 warnings, framed like errors (`error::located`) when
+    /// they have a location; `GeneratedModel` splits the frame out.
     warnings: Vec<String>,
     /// The typed IR being built (signals/arrays/functions/processes); the C
     /// renderers in `emit_c` consume it.  During the seam transition the

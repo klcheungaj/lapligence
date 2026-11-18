@@ -338,37 +338,36 @@ impl EmitCtx<'_, '_> {
             [] => Ok(1),
             [argument] => {
                 let value = self.cg.eval_bits(*argument).map_err(|error| {
-                    format!(
-                        "{task} argument at {} must be an integral constant 0, 1, or 2: {error}",
-                        self.text_location(node)
+                    self.cg.locate_error(
+                        node,
+                        format!("{task} argument must be an integral constant 0, 1, or 2: {error}"),
                     )
                 })?;
                 if value.is_unknown() {
-                    return Err(format!(
-                        "{task} argument at {} must be a known integral constant 0, 1, or 2",
-                        self.text_location(node)
+                    return Err(self.cg.locate_error(
+                        node,
+                        format!("{task} argument must be a known integral constant 0, 1, or 2"),
                     ));
                 }
                 let value = value.to_u128().ok_or_else(|| {
-                    format!(
-                        "{task} argument at {} must be an integral constant 0, 1, or 2",
-                        self.text_location(node)
+                    self.cg.locate_error(
+                        node,
+                        format!("{task} argument must be an integral constant 0, 1, or 2"),
                     )
                 })?;
                 u8::try_from(value)
                     .ok()
                     .filter(|value| *value <= 2)
                     .ok_or_else(|| {
-                        format!(
-                            "{task} argument at {} must be 0, 1, or 2 (got {value})",
-                            self.text_location(node)
+                        self.cg.locate_error(
+                            node,
+                            format!("{task} argument must be 0, 1, or 2 (got {value})"),
                         )
                     })
             }
-            _ => Err(format!(
-                "{task} accepts at most one argument at {}",
-                self.text_location(node)
-            )),
+            _ => Err(self
+                .cg
+                .locate_error(node, format!("{task} accepts at most one argument"))),
         }
     }
 }

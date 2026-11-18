@@ -822,7 +822,10 @@ pub fn markdown() -> String {
                  `--no-timing-check-messages`), a refused `$system` (`LLG_ALLOW_SYSTEM`), \
                  a sequence thread budget (`LLG_SEQUENCE_THREAD_LIMIT`), a constraint \
                  solver budget (the `LLG_RAND_*` variable it names) and a VPI plugin \
-                 loaded by a model without the object catalog (`--vpi`).\n\n",
+                 loaded by a model without the object catalog (`--vpi`).\n\n\
+                 A model message that stops the run is an error or a fatal; a warning \
+                 never stops it. The deadlock warning (`SIM-019`) and the `SIM-022` info \
+                 report a run that ended because nothing was left to run.\n\n",
             ),
             _ => {}
         }

@@ -53,7 +53,8 @@ Lowers a validated `SemanticModel` and the owned DB into typed IR and an
 - A lowering error is plain text without a source path: `lower_stmt`,
   `lower_expr`, `lower_lhs` and the entry lowerings locate it
   (`Codegen::locate_error`); call `locate_error(node, …)` where a narrower
-  node names the failure. A second position may stay in the text.
+  node names the failure. A second position may stay in the text. Lowering
+  warnings (CODEGEN-010) follow the same rule through `Codegen::warn_at`.
 - Release the DB after typed lowering and collection state before execution
   lowering on the consuming path.
 

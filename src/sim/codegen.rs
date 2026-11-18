@@ -8,7 +8,7 @@ pub(crate) mod error;
 mod lowering;
 mod timescale;
 
-pub use error::CodegenError;
+pub use error::{CodegenError, CodegenWarning};
 pub use lowering::{
     generate, generate_from_db_with_codegen_options, generate_from_db_with_opts,
     generate_from_owned_db_with_codegen_options, generate_from_owned_db_with_opts,

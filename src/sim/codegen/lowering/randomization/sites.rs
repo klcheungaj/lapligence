@@ -243,7 +243,7 @@ impl Codegen<'_> {
             object_name,
             Some(IrChandleExpr::Required {
                 handle: Box::new(handle),
-                site: site.clone(),
+                site: self.required_site("randomize()", path, node),
             }),
         )))];
         let cases = self.class_cases(static_class);

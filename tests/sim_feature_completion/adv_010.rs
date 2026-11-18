@@ -4,8 +4,7 @@
 //! are hand-derived from IEEE 1364-2001 15 and IEEE 1800-2009 31, as quoted
 //! in the fixture readme. Every positive case runs in both editions, both
 //! optimizer modes and on every value backend.
-use super::{sim_cli, sim_harness};
-use std::path::Path;
+use super::sim_cli;
 use std::process::Output;
 
 const SUITE: &str = "feature_completion/adv_010";
@@ -19,17 +18,6 @@ macro_rules! fixture {
             $name
         ))
     };
-}
-
-/// The absolute fixture path, as reports name the source: the resolved
-/// native spelling, since a joined path keeps `SUITE`'s `/` on Windows.
-fn source_path(fixture: &str) -> String {
-    sim_harness::source_display(
-        &Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/sim")
-            .join(SUITE)
-            .join(fixture),
-    )
 }
 
 /// The timing violation reports of a run (`SIM-015`), sorted, as
@@ -195,7 +183,6 @@ fn nochange_negative_offsets_and_delayed_reference() {
 /// warning until the delays have a solution (31.9.1).
 #[test]
 fn inconsistent_negative_limits_are_zeroed_with_a_warning() {
-    let path = source_path("inconsistent.v");
     for options in [&[NEGATIVE][..], &[]] {
         sim_cli::run_case_backend_parity(
             SUITE,
@@ -208,9 +195,9 @@ fn inconsistent_negative_limits_are_zeroed_with_a_warning() {
     sim_cli::run_case_checked_matrix(SUITE, "inconsistent.v", &[NEGATIVE], &|label, output| {
         let warning = |limit: i32, line: u32| {
             format!(
-                "the negative timing check limits of a module have no consistent delayed signal \
-                 delays; the limit {limit} of `$setuphold` at {path}:{line}:5 counts as 0 (IEEE \
-                 1800-2009 31.9.1)"
+                "inconsistent.v:{line}:5 the negative timing check limits of a module have no \
+                 consistent delayed signal delays; the limit {limit} of `$setuphold` counts as 0 \
+                 (IEEE 1800-2009 31.9.1)"
             )
         };
         assert_eq!(
@@ -307,12 +294,11 @@ fn violation_reports_name_the_check_and_undelayed_times() {
 /// the delayed signals adjust another check's limit to 0 or less.
 #[test]
 fn negative_limit_settlements_are_warned_once_per_check() {
-    let path = source_path("negative.v");
     sim_cli::run_case_checked_matrix(SUITE, "negative.v", &[], &|label, output| {
         let warnings = generation_warnings(output);
         let off = |line: u32| {
             format!(
-                "`$setuphold` at {path}:{line}:5: negative limits count as 0 unless negative \
+                "negative.v:{line}:5 `$setuphold`: negative limits count as 0 unless negative \
                  timing checks are enabled (--neg-timing-checks; IEEE 1800-2009 31.9.4)"
             )
         };
@@ -327,20 +313,17 @@ fn negative_limit_settlements_are_warned_once_per_check() {
         assert_eq!(
             generation_warnings(output),
             vec![
-                format!(
-                    "`$setuphold` at {path}:72:5: the sum of its limits is negative, so its \
-                     negative limits count as 0 (IEEE 1800-2009 31.3.3)"
-                ),
-                format!(
-                    "`$setuphold` at {path}:81:5: the sum of its limits is not above one \
-                     precision unit, so it cannot report violations (IEEE 1800-2009 31.3.3, \
-                     31.9.1)"
-                ),
+                "negative.v:72:5 `$setuphold`: the sum of its limits is negative, so its \
+                 negative limits count as 0 (IEEE 1800-2009 31.3.3)"
+                    .to_owned(),
+                "negative.v:81:5 `$setuphold`: the sum of its limits is not above one \
+                 precision unit, so it cannot report violations (IEEE 1800-2009 31.3.3, \
+                 31.9.1)"
+                    .to_owned(),
             ],
             "{label}"
         );
     });
-    let path = source_path("adjusted_limit.v");
     sim_cli::run_case_checked_matrix(SUITE, "adjusted_limit.v", &[NEGATIVE], &|label, output| {
         assert!(output.status.success(), "{label}: {output:?}");
         assert_eq!(
@@ -350,10 +333,11 @@ fn negative_limit_settlements_are_warned_once_per_check() {
         );
         assert_eq!(
             generation_warnings(output),
-            vec![format!(
-                "`$hold` at {path}:14:5: its limit 2 adjusted by the delays of its delayed \
-                 signals is -2, so it counts as 0 (IEEE 1800-2009 31.9.1)"
-            )],
+            vec![
+                "adjusted_limit.v:14:5 `$hold`: its limit 2 adjusted by the delays of its \
+                  delayed signals is -2, so it counts as 0 (IEEE 1800-2009 31.9.1)"
+                    .to_owned()
+            ],
             "{label}"
         );
     });

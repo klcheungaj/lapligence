@@ -184,6 +184,8 @@ No messages.
 
 A model message whose check can be turned off, or whose limit raised, says how in its hint: an index-check stop (`SIM-009`, `simulator.index_checks`, `--no-index-checks`), a timing violation (`SIM-015`, `simulator.timing_check_messages`, `--no-timing-check-messages`), a refused `$system` (`LLG_ALLOW_SYSTEM`), a sequence thread budget (`LLG_SEQUENCE_THREAD_LIMIT`), a constraint solver budget (the `LLG_RAND_*` variable it names) and a VPI plugin loaded by a model without the object catalog (`--vpi`).
 
+A model message that stops the run is an error or a fatal; a warning never stops it. The deadlock warning (`SIM-019`) and the `SIM-022` info report a run that ended because nothing was left to run.
+
 | Id | Severity | Meaning | Disable |
 |---|---|---|---|
 | `SIM-000` | info | end-of-run counts, printed at every exit when the run reported a warning or worse | - |
@@ -196,7 +198,7 @@ A model message whose check can be turned off, or whose limit raised, says how i
 | `SIM-007` | error | an assert, assume or expect failed without an else action | an else action block, $assertoff, $assertfailoff |
 | `SIM-008` | info | run statistics printed by $finish(2) and $stop(2) | a finish number below 2 |
 | `SIM-009` | error | a run-time error the simulator detects in the design (bad cast, out-of-bounds access that stops the run) | - |
-| `SIM-010` | error | a run-time error of a runtime service (scheduler, synchronization, file I/O, coverage, constraints) | - |
+| `SIM-010` | error | a run-time error of a runtime service (scheduler, synchronization, file I/O, coverage, constraints), or a model environment setting that stops the run before time zero (LLG_SIM_LOG_FILE, LLG_SIM_OUT_DIR, LLG_STOP_POLICY, LLG_INDEX_CHECKS, the LLG_*_LIMIT settings) | - |
 | `SIM-011` | warning | a run-time warning of a runtime service | - |
 | `SIM-012` | warning | a dynamic array, queue or associative array operation fell back to the default (IEEE 1800-2009 7.4-7.10) | - |
 | `SIM-013` | warning | $readmem/$writemem file warning | - |
@@ -206,7 +208,7 @@ A model message whose check can be turned off, or whose limit raised, says how i
 | `SIM-017` | error | a DPI-C bridge error | - |
 | `SIM-018` | error | the waveform writer failed | - |
 | `SIM-019` | warning | the run ended in a deadlock: processes wait and no event remains | - |
-| `SIM-020` | warning | a model environment setting (LLG_SIM_LOG_FILE, LLG_STOP_POLICY, plusargs) is unusable | - |
+| `SIM-020` | warning | a model environment setting is unusable and is ignored; the run continues (an LLG_RAND_* solver budget that is not a decimal count) | - |
 | `SIM-021` | info | runtime information (randomize statistics, stack limit notes) | - |
 | `SIM-022` | info | the run ended without $finish because no process remains | - |
 | `SIM-023` | warning | a run-time warning the simulator detects in the design; the run continues (a $cast destination element that does not exist while index checks are off) | - |

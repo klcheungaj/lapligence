@@ -32,14 +32,10 @@ LLG_CLASS_RNG_MEMBER} llg_class_object_t;
  * an access through a missed collector root is reported. */
 #define LLG_CLASS_RECLAIMED UINT32_MAX
 /* A null handle is a run-time error (SV 8.4). The first check of a failing
- * statement reports at its source site; checks the same process reaches
- * while it is exiting stay quiet. */
+ * statement reports at its source site (llg_rt_null_handle); checks the
+ * same process reaches while it is exiting stay quiet. */
 static void* llg_class_require(void* object, const char* site) {
-    if (!object && !llg_rt_exiting()) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "null class handle access: %s", site);
-        llg_rt_mark_failed();
-        llg_rt_fatal_typed(0, "null class handle access", NULL, 0, "", site);
-    }
+    if (!object && !llg_rt_exiting()) llg_rt_null_handle(site);
     return object;
 }
 /* Callers test for NULL first, so the guard folds into their test; no class

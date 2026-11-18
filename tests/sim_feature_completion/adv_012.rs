@@ -280,17 +280,17 @@ fn command_line_annotation() {
 /// while the rest of the file applies.
 #[test]
 fn diagnostics() {
-    let call = "$sdf_annotate at {path}";
+    let call = "{file}";
     let check = warnings_check(
         "diagnostics.v",
         fixture!("diagnostics.out"),
         &[
             &format!(
-                "{call}:32:5: cannot open the SDF file `missing.sdf`: {{any}}; the call \
+                "{call}:32:5 $sdf_annotate: cannot open the SDF file `missing.sdf`: {{any}}; the call \
                  annotates nothing"
             ),
             &format!(
-                "{call}:33:5: malformed.sdf:5:76: expected `)` after the IOPATH delays, found \
+                "{call}:33:5 $sdf_annotate: malformed.sdf:5:76: expected `)` after the IOPATH delays, found \
                  `nine`; the call annotates nothing"
             ),
             "unmatched.sdf:5:2: instance `nosuch` not found in `tb`; the CELL is not annotated",
@@ -308,20 +308,20 @@ fn diagnostics() {
             "values.sdf:4:57: the value 1e999 is out of the simulation time range; it is \
              annotated as one precision unit",
             &format!(
-                "{call}:36:5: the mtm_spec `NOMINAL` is not MAXIMUM, MINIMUM, TYPICAL or \
+                "{call}:36:5 $sdf_annotate: the mtm_spec `NOMINAL` is not MAXIMUM, MINIMUM, TYPICAL or \
                  TOOL_CONTROL (IEEE 1800-2009 Table 32-5); the call annotates nothing"
             ),
             &format!(
-                "{call}:37:5: the scale_factors `1:x:2` are not three non-negative numbers \
+                "{call}:37:5 $sdf_annotate: the scale_factors `1:x:2` are not three non-negative numbers \
                  `min:typ:max` (IEEE 1800-2009 32.9); the call annotates nothing"
             ),
             &format!(
-                "{call}:38:5: the scale_type `FROM_ELSEWHERE` is not FROM_MINIMUM, \
+                "{call}:38:5 $sdf_annotate: the scale_type `FROM_ELSEWHERE` is not FROM_MINIMUM, \
                  FROM_TYPICAL, FROM_MAXIMUM or FROM_MTM (IEEE 1800-2009 Table 32-6); the call \
                  annotates nothing"
             ),
             &format!(
-                "{call}:39:5: configuration file `unknown.cfg`:2: unknown statement \
+                "{call}:39:5 $sdf_annotate: configuration file `unknown.cfg`:2: unknown statement \
                  `PULSE_DELAY`; llg reads MTM, SCALE_FACTORS, SCALE_TYPE, INTERCONNECT_MIPD and \
                  TURNOFF_DELAY; the call annotates nothing"
             ),

@@ -122,7 +122,7 @@ fn macro_generated_systemverilog_keyword_observes_edition() {
         "later_macro",
         "x=1\n",
         "INFO: later_macro.sv:13:5: [SIM-001] (tb @ 0 ps) $finish called\n",
-        &["combinational always process in `tb` reads no signals; evaluating once at time 0"],
+        &["later_macro.sv:7:3 combinational always process in `tb` reads no signals; evaluating once at time 0"],
         &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(

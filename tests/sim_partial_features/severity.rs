@@ -106,8 +106,14 @@ fn the_model_binary_exits_with_the_status_of_its_severity_tasks() {
 
 #[test]
 fn fatal_finish_number_must_be_a_known_constant_in_range() {
-    reject_case("severity_invalid_argument", "$fatal finish number at");
-    reject_case("severity_runtime_argument", "$fatal finish number at");
+    reject_case(
+        "severity_invalid_argument",
+        "severity_invalid_argument.sv:4:5 $fatal finish number must be 0, 1, or 2 (got 3)",
+    );
+    reject_case(
+        "severity_runtime_argument",
+        "severity_runtime_argument.sv:7:5 $fatal finish number must be an integral constant",
+    );
 }
 
 #[test]
