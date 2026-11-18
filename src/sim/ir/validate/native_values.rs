@@ -133,6 +133,56 @@ impl Validator<'_> {
         Ok(())
     }
 
+    /// The activation native values that `captures` hand to a callback
+    /// frame. A shared subroutine record (SIM-010) is captured under its
+    /// canonical capture name, and the callback binds that value to the
+    /// declaring frame's record, so the callback body may use the value
+    /// whole (a copy, a call operand) as the declaring scope does.
+    pub(super) fn captured_native_values(
+        &self,
+        captures: &[IrCapture],
+        path: &str,
+    ) -> Result<HashSet<usize>, IrValidationError> {
+        let mut values = HashSet::new();
+        for (position, capture) in captures.iter().enumerate() {
+            if capture.storage().kind() != StorageKind::Native {
+                continue;
+            }
+            let value = match capture.initial().kind() {
+                IrExprKind::LocalRead(name) => crate::sim::ir::shared_native_capture_index(name),
+                _ => None,
+            }
+            .filter(|value| {
+                self.model
+                    .native_values
+                    .get(*value)
+                    .is_some_and(|value| value.activation)
+            });
+            let Some(value) = value else {
+                return Err(IrValidationError::new(
+                    format!("{path}.captures[{position}]"),
+                    "a native capture must name a shared activation native value",
+                ));
+            };
+            values.insert(value);
+        }
+        Ok(values)
+    }
+
+    /// Validate `body` with the native values `captures` bind in scope.
+    pub(super) fn with_captured_native_values(
+        &self,
+        captures: &[IrCapture],
+        path: &str,
+        body: impl FnOnce() -> ValidationResult,
+    ) -> ValidationResult {
+        let values = self.captured_native_values(captures, path)?;
+        self.native_activations.borrow_mut().push(values);
+        let result = body();
+        self.native_activations.borrow_mut().pop();
+        result
+    }
+
     /// Leaf values of a call-built native value: distinct paths selecting
     /// leaves whose scalar kind matches the value.
     pub(super) fn validate_native_leaf_values(

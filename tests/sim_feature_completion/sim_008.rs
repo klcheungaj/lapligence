@@ -565,6 +565,26 @@ fn unselected_subroutine_record_elements_stop_or_bind_the_default() {
     }
 }
 
+/// A member of a record `ref` formal forwarded to a task that waits on it, at
+/// depth 1 to 3, wakes the waiter at every store into that member, whoever
+/// makes it (S09-D4); fork branches pass the owner's record whole as a call
+/// operand and copy it. Both record storage forms.
+#[test]
+fn forwarded_record_ref_members_wake_their_waiters() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_008/record_ref_forwarded_member_wake.out"
+    );
+    for size in ["N=2", "N=16"] {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "record_ref_forwarded_member_wake",
+            expected,
+            &["-D", size],
+            &[],
+        );
+    }
+}
+
 /// A queue member of an element of a member array that a subroutine record
 /// holds in its own slot (16 or more cells) rejects at its location outside a
 /// `ref` actual; the packed member of the same element is stored directly.

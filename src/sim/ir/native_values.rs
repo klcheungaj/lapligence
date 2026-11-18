@@ -65,9 +65,21 @@ impl IrNativeValue {
     }
 }
 
+const SHARED_NATIVE_CAPTURE_PREFIX: &str = "_llg_shared_native_";
+
 /// Capture name of shared activation native value `index` (SIM-010).
 pub(in crate::sim) fn shared_native_capture_name(index: usize) -> String {
-    format!("_llg_shared_native_{index}")
+    format!("{SHARED_NATIVE_CAPTURE_PREFIX}{index}")
+}
+
+/// The native value index that capture name `name` names, the inverse of
+/// [`shared_native_capture_name`].
+pub(in crate::sim) fn shared_native_capture_index(name: &str) -> Option<usize> {
+    let index = name
+        .strip_prefix(SHARED_NATIVE_CAPTURE_PREFIX)?
+        .parse()
+        .ok()?;
+    (shared_native_capture_name(index) == name).then_some(index)
 }
 
 /// One scalar leaf value of a native record built at a call boundary.

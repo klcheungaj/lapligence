@@ -24,7 +24,7 @@
 
 mod containers;
 pub(in crate::sim) use containers::shared_container_capture_name;
-pub(in crate::sim) use native_values::shared_native_capture_name;
+pub(in crate::sim) use native_values::{shared_native_capture_index, shared_native_capture_name};
 mod checkers;
 pub use checkers::IrFreeSet;
 mod native_access;
