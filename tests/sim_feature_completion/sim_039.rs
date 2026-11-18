@@ -133,7 +133,7 @@ fn triggered_across_clocks_is_a_located_error() {
     sim_cli::reject_case(
         SUITE,
         "neg_triggered_clock",
-        "neg_triggered_clock.sv:7:38 needs its sequence to end on the clock of its context (SV 16.9.11)",
+        "neg_triggered_clock.sv:7:38 `.triggered` needs its sequence to end on the clock of its context (SV 16.9.11)",
     );
 }
 
@@ -276,12 +276,7 @@ fn local_formal_direction_type_and_actual_errors_are_located() {
     sim_cli::reject_case(
         SUITE,
         "neg_match_call_timing",
-        "sequence match-item call task `slow` cannot contain timing controls at tb.c1:11:16 (sequence match item at ",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_match_call_timing",
-        "neg_match_call_timing.sv:11:16) (assertion `c1` at ",
+        "neg_match_call_timing.sv:11:16 sequence match-item call task `slow` cannot contain timing controls at tb.c1:11:16 (sequence match item) (assertion `c1`)",
     );
 }
 

@@ -220,7 +220,7 @@ fn inout_port_expression_width_difference_is_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_inout_width",
-        "inout port `p` connects a 2-bit actual to its 3-bit port expression at ",
+        "neg_inout_width.sv:5:15 inout port `p` connects a 2-bit actual to its 3-bit port expression",
     );
     sim_cli::reject_case(SUITE, "neg_inout_width", "neg_inout_width.sv:5:15");
 }

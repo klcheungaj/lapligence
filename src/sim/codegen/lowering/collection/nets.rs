@@ -134,11 +134,9 @@ impl<'a> Codegen<'a> {
             };
             self.inst = previous_inst;
             let Some(converted) = result.map_err(|error| {
-                format!(
-                    "net propagation delay for `{shown}` at {}:{}:{}: {error}",
-                    self.node(member).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(member).line,
-                    self.node(member).col,
+                self.locate_error(
+                    member,
+                    format!("net propagation delay for `{shown}`: {error}"),
                 )
             })?
             else {
@@ -146,11 +144,11 @@ impl<'a> Codegen<'a> {
             };
             if let Some((first, existing)) = selected {
                 if existing != converted && !(first < aliased && index < aliased) {
-                    return Err(format!(
-                        "net propagation delay for `{shown}` has conflicting member delays at {}:{}:{}",
-                        self.node(member).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(member).line,
-                        self.node(member).col,
+                    return Err(self.locate_error(
+                        member,
+                        format!(
+                            "net propagation delay for `{shown}` has conflicting member delays"
+                        ),
                     ));
                 }
             } else {
@@ -159,12 +157,12 @@ impl<'a> Codegen<'a> {
         }
         if let Some((member, delay)) = runtime {
             if declared > 1 {
-                return Err(format!(
-                    "net propagation delay for `{shown}` combines a runtime-valued delay with \
-                     another declared net delay at {}:{}:{}",
-                    self.node(member).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(member).line,
-                    self.node(member).col,
+                return Err(self.locate_error(
+                    member,
+                    format!(
+                        "net propagation delay for `{shown}` combines a runtime-valued delay with \
+                     another declared net delay"
+                    ),
                 ));
             }
             let Some(group) = group else {
@@ -243,12 +241,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn alias_error(&self, alias: NodeId, message: &str) -> String {
-        format!(
-            "net alias `{}` {message} at {}:{}:{}",
-            self.display_name(alias),
-            self.node(alias).file.as_deref().unwrap_or("<unknown>"),
-            self.node(alias).line,
-            self.node(alias).col,
+        self.locate_error(
+            alias,
+            format!("net alias `{}` {message}", self.display_name(alias)),
         )
     }
 
@@ -899,6 +894,16 @@ impl<'a> Codegen<'a> {
         source: NodeId,
         lhs: NodeId,
     ) -> Result<Option<Vec<(IrNetAliasBinding, u32)>>, String> {
+        self.alias_lvalue_bindings_unlocated(source, lhs)
+            .map_err(|error| self.locate_error(lhs, error))
+    }
+
+    /// [`Self::alias_lvalue_bindings`] before its failure is located.
+    fn alias_lvalue_bindings_unlocated(
+        &self,
+        source: NodeId,
+        lhs: NodeId,
+    ) -> Result<Option<Vec<(IrNetAliasBinding, u32)>>, String> {
         if let Some((array, element)) = self.array_net_endpoint(lhs) {
             if let Some((_, signal)) = self.model.arrays[array]
                 .net_elements
@@ -1010,12 +1015,12 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         }
         if saw_plain {
-            return Err(format!(
-                "continuous assignment `{}` mixes aliased and ordinary net bits at {}:{}:{}",
-                self.display_name(source),
-                self.node(source).file.as_deref().unwrap_or("<unknown>"),
-                self.node(source).line,
-                self.node(source).col,
+            return Err(self.locate_error(
+                source,
+                format!(
+                    "continuous assignment `{}` mixes aliased and ordinary net bits",
+                    self.display_name(source)
+                ),
             ));
         }
         Ok(Some(bindings))
@@ -1066,31 +1071,31 @@ impl<'a> Codegen<'a> {
         terminal_for_group: F,
     ) -> Result<Vec<(IrLhs, IrExpr)>, String> {
         if rhs.is_real() {
-            return Err(format!(
-                "continuous assignment `{}` has a real RHS for a packed net alias at {}:{}:{}",
-                self.display_name(source),
-                self.node(source).file.as_deref().unwrap_or("<unknown>"),
-                self.node(source).line,
-                self.node(source).col,
+            return Err(self.locate_error(
+                source,
+                format!(
+                    "continuous assignment `{}` has a real RHS for a packed net alias",
+                    self.display_name(source)
+                ),
             ));
         }
         if bindings.is_empty() || rhs.width() == 0 {
-            return Err(format!(
-                "continuous assignment `{}` has no alias bits at {}:{}:{}",
-                self.display_name(source),
-                self.node(source).file.as_deref().unwrap_or("<unknown>"),
-                self.node(source).line,
-                self.node(source).col,
+            return Err(self.locate_error(
+                source,
+                format!(
+                    "continuous assignment `{}` has no alias bits",
+                    self.display_name(source)
+                ),
             ));
         }
         let target_width = bindings.iter().try_fold(0_u32, |width, (_, rhs_bit)| {
             let bit_width = rhs_bit.checked_add(1).ok_or_else(|| {
-                format!(
-                    "continuous assignment `{}` has an alias RHS bit outside its width at {}:{}:{}",
-                    self.display_name(source),
-                    self.node(source).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(source).line,
-                    self.node(source).col,
+                self.locate_error(
+                    source,
+                    format!(
+                        "continuous assignment `{}` has an alias RHS bit outside its width",
+                        self.display_name(source)
+                    ),
                 )
             })?;
             Ok::<_, String>(width.max(bit_width))
@@ -1108,12 +1113,12 @@ impl<'a> Codegen<'a> {
                 group_bits.insert((binding.group(), binding.group_bit()), *rhs_bit)
             {
                 if previous != *rhs_bit {
-                    return Err(format!(
-                        "continuous assignment `{}` drives one aliased net bit from multiple RHS bits at {}:{}:{}",
-                        self.display_name(source),
-                        self.node(source).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(source).line,
-                        self.node(source).col,
+                    return Err(self.locate_error(
+                        source,
+                        format!(
+                            "continuous assignment `{}` drives one aliased net bit from multiple RHS bits",
+                            self.display_name(source)
+                        ),
                     ));
                 }
             }
@@ -1133,13 +1138,13 @@ impl<'a> Codegen<'a> {
             let driver = self
                 .structural_driver_signal_for_terminal(source, group, terminal_for_group(group))
                 .ok_or_else(|| {
-                    format!(
-                        "continuous assignment `{}` has no structural driver mapping for alias group {} at {}:{}:{}",
-                        self.display_name(source),
-                        group,
-                        self.node(source).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(source).line,
-                        self.node(source).col,
+                    self.locate_error(
+                        source,
+                        format!(
+                            "continuous assignment `{}` has no structural driver mapping for alias group {}",
+                            self.display_name(source),
+                            group
+                        ),
                     )
                 })?;
             let width = self.model.net_group(group).width;
@@ -1299,12 +1304,12 @@ impl<'a> Codegen<'a> {
                 continue;
             };
             if nets.len() < 2 {
-                return Err(format!(
-                    "net alias `{}` must contain at least two net expressions at {}:{}:{}",
-                    self.display_name(*id),
-                    self.node(*id).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(*id).line,
-                    self.node(*id).col,
+                return Err(self.locate_error(
+                    *id,
+                    format!(
+                        "net alias `{}` must contain at least two net expressions",
+                        self.display_name(*id)
+                    ),
                 ));
             }
             let expressions = nets
@@ -1451,14 +1456,14 @@ impl<'a> Codegen<'a> {
                         let actual_bits = self.alias_expression_bits(*id, *actual)?;
                         let formal_bits = self.alias_expression_bits(*id, *l)?;
                         if actual_bits.len() != formal_bits.len() {
-                            return Err(format!(
-                                "inout port `{}` connects a {}-bit actual to its {}-bit formal at {}:{}:{}",
-                                self.node(*id).name,
-                                actual_bits.len(),
-                                formal_bits.len(),
-                                self.node(*id).file.as_deref().unwrap_or("<unknown>"),
-                                self.node(*id).line,
-                                self.node(*id).col,
+                            return Err(self.locate_error(
+                                *id,
+                                format!(
+                                    "inout port `{}` connects a {}-bit actual to its {}-bit formal",
+                                    self.node(*id).name,
+                                    actual_bits.len(),
+                                    formal_bits.len()
+                                ),
                             ));
                         }
                         for (actual, formal) in actual_bits.into_iter().zip(formal_bits) {
@@ -1494,12 +1499,12 @@ impl<'a> Codegen<'a> {
                         _ => 1,
                     };
                     if high_width != low_width {
-                        return Err(format!(
-                            "inout port `{}` connects alias nets with different widths at {}:{}:{}",
-                            self.node(*id).name,
-                            self.node(*id).file.as_deref().unwrap_or("<unknown>"),
-                            self.node(*id).line,
-                            self.node(*id).col,
+                        return Err(self.locate_error(
+                            *id,
+                            format!(
+                                "inout port `{}` connects alias nets with different widths",
+                                self.node(*id).name
+                            ),
                         ));
                     }
                     alias_nets.insert(*h);
@@ -1533,14 +1538,14 @@ impl<'a> Codegen<'a> {
                     let actual_bits = self.alias_expression_bits(*id, actual)?;
                     let formal_bits = self.alias_expression_bits(*id, internal)?;
                     if actual_bits.len() != formal_bits.len() {
-                        return Err(format!(
-                            "inout port `{}` connects a {}-bit actual to its {}-bit port expression at {}:{}:{}",
-                            self.node(*id).name,
-                            actual_bits.len(),
-                            formal_bits.len(),
-                            self.node(*id).file.as_deref().unwrap_or("<unknown>"),
-                            self.node(*id).line,
-                            self.node(*id).col,
+                        return Err(self.locate_error(
+                            *id,
+                            format!(
+                                "inout port `{}` connects a {}-bit actual to its {}-bit port expression",
+                                self.node(*id).name,
+                                actual_bits.len(),
+                                formal_bits.len()
+                            ),
                         ));
                     }
                     for (actual, formal) in actual_bits.into_iter().zip(formal_bits) {
@@ -1553,12 +1558,12 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
                 if high.is_some() || high_expr.is_some() {
-                    return Err(format!(
-                        "inout port `{}` has no child-side connection at {}:{}:{}",
-                        self.node(*id).name,
-                        self.node(*id).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(*id).line,
-                        self.node(*id).col,
+                    return Err(self.locate_error(
+                        *id,
+                        format!(
+                            "inout port `{}` has no child-side connection",
+                            self.node(*id).name
+                        ),
                     ));
                 }
             }
@@ -1790,15 +1795,12 @@ impl<'a> Codegen<'a> {
             let kind = Self::ir_net_kind(resolved_type.kind)
                 .ok_or("selected net group has an unsupported effective net type")?;
             if members.len() > LLG_MAX_NET_DRIVERS {
-                return Err(format!(
-                    "{shown}: {} members exceed the runtime driver-count range at {}:{}:{}",
-                    members.len(),
-                    self.node(first_owner)
-                        .file
-                        .as_deref()
-                        .unwrap_or("<unknown>"),
-                    self.node(first_owner).line,
-                    self.node(first_owner).col,
+                return Err(self.locate_error(
+                    first_owner,
+                    format!(
+                        "{shown}: {} members exceed the runtime driver-count range",
+                        members.len()
+                    ),
                 ));
             }
             let name = match first_bit {
@@ -1932,12 +1934,12 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .find(|m| !matches!(self.kind(**m), NodeKind::Net { .. }))
             {
-                return Err(format!(
-                    "{joined}: member `{}` is not a net at {}:{}:{}",
-                    self.display_name(*bad),
-                    self.node(*bad).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(*bad).line,
-                    self.node(*bad).col,
+                return Err(self.locate_error(
+                    *bad,
+                    format!(
+                        "{joined}: member `{}` is not a net",
+                        self.display_name(*bad)
+                    ),
                 ));
             }
             // 2. Widths must agree across the collapsed net.
@@ -1956,13 +1958,13 @@ impl<'a> Codegen<'a> {
                 }
                 _ => true,
             }) {
-                return Err(format!(
-                    "{joined}: member `{}` has a different width than `{}` at {}:{}:{}",
-                    self.display_name(*bad),
-                    self.display_name(members[0]),
-                    self.node(*bad).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(*bad).line,
-                    self.node(*bad).col,
+                return Err(self.locate_error(
+                    *bad,
+                    format!(
+                        "{joined}: member `{}` has a different width than `{}`",
+                        self.display_name(*bad),
+                        self.display_name(members[0])
+                    ),
                 ));
             }
             // 3. Port orientation, not member order, selects the resolver.
@@ -1980,24 +1982,19 @@ impl<'a> Codegen<'a> {
                 .ok_or("inout group has an unsupported effective net type")?;
             // 4. Driver counts must fit the emitted runtime integer field.
             if members.len() > LLG_MAX_NET_DRIVERS {
-                return Err(format!(
-                    "{joined}: {}-member group exceeds the runtime driver-count range at {}:{}:{}",
-                    members.len(),
-                    self.node(members[0]).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(members[0]).line,
-                    self.node(members[0]).col,
+                return Err(self.locate_error(
+                    members[0],
+                    format!(
+                        "{joined}: {}-member group exceeds the runtime driver-count range",
+                        members.len()
+                    ),
                 ));
             }
             // 5. Constant packed selects are admitted as masked contributions
             //    to the member's dedicated slot. Dynamic selects, NBA writes
             //    and task `sv4_t*` actuals would bypass the resolution cell.
             if let Some(reason) = self.unsupported_member_write(&nodes, &writers, members) {
-                return Err(format!(
-                    "{joined}: {reason} at {}:{}:{}",
-                    self.node(members[0]).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(members[0]).line,
-                    self.node(members[0]).col,
-                ));
+                return Err(self.locate_error(members[0], format!("{joined}: {reason}")));
             }
             let propagation_delay = self.net_propagation_delay_for_members(
                 &resolved_type.delay_members,
@@ -2192,10 +2189,15 @@ impl<'a> Codegen<'a> {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        Err(format!(
+        // Located at the first driver; the text lists every driver.
+        let message = format!(
             "a collapsed uwire net has {} drivers; uwire allows one (IEEE 1800-2009 6.6.2): {names}",
             sources.len()
-        ))
+        );
+        Err(match sources.values().next() {
+            Some(first) => self.locate_error(*first, message),
+            None => message,
+        })
     }
 
     /// LHS/terminal expressions through which a structural source drives.
@@ -2442,13 +2444,12 @@ impl<'a> Codegen<'a> {
             ..
         } = self.kind(net)
         {
-            let node = self.node(assignment);
-            return Err(format!(
-                "drive strength on continuous assignment to supply net `{}` is not permitted (IEEE 1364-2001 6.1.4, IEEE 1800-2009 10.3.4) at {}:{}:{}",
-                self.display_name(net),
-                node.file.as_deref().unwrap_or("<unknown>"),
-                node.line,
-                node.col,
+            return Err(self.locate_error(
+                assignment,
+                format!(
+                    "drive strength on continuous assignment to supply net `{}` is not permitted (IEEE 1364-2001 6.1.4, IEEE 1800-2009 10.3.4)",
+                    self.display_name(net)
+                ),
             ));
         }
         Ok(())
@@ -2489,7 +2490,8 @@ impl<'a> Codegen<'a> {
                             *strength1,
                             &self.display_name(id),
                             width,
-                        )?;
+                        )
+                        .map_err(|error| self.locate_error(id, error))?;
                         sources.insert(id, strengths);
                     }
                 }
@@ -2640,6 +2642,17 @@ impl<'a> Codegen<'a> {
         nodes: &[NodeId],
         writers: &NetWriterIndex,
     ) -> Result<DriverSites, String> {
+        self.standalone_net_sites_unlocated(net, nodes, writers)
+            .map_err(|error| self.locate_error(net, error))
+    }
+
+    /// [`Self::standalone_net_sites`] before its failure is located.
+    fn standalone_net_sites_unlocated(
+        &self,
+        net: NodeId,
+        nodes: &[NodeId],
+        writers: &NetWriterIndex,
+    ) -> Result<DriverSites, String> {
         let shown = self.display_name(net);
         let member_set = HashSet::from([net]);
         let mut sites: HashMap<NodeId, (u8, u8)> = HashMap::new();
@@ -2691,7 +2704,8 @@ impl<'a> Codegen<'a> {
                                     .unwrap_or(1);
                                 let strengths = continuous_assignment_strengths_for_width(
                                     *strength0, *strength1, &shown, width,
-                                )?;
+                                )
+                                .map_err(|error| self.locate_error(*id, error))?;
                                 sites.insert(*id, strengths);
                             } else if self.nested_member_target(lhs, &member_set).is_some() {
                                 let width = self
@@ -2701,7 +2715,8 @@ impl<'a> Codegen<'a> {
                                     .unwrap_or(1);
                                 let strengths = continuous_assignment_strengths_for_width(
                                     *strength0, *strength1, &shown, width,
-                                )?;
+                                )
+                                .map_err(|error| self.locate_error(*id, error))?;
                                 sites.insert(*id, strengths);
                             }
                         }
@@ -2715,7 +2730,8 @@ impl<'a> Codegen<'a> {
                                 *id,
                                 continuous_assignment_strengths_for_width(
                                     *strength0, *strength1, &shown, width,
-                                )?,
+                                )
+                                .map_err(|error| self.locate_error(*id, error))?,
                             );
                         }
                         MemberWrite::Select => {
@@ -2726,7 +2742,8 @@ impl<'a> Codegen<'a> {
                                 .unwrap_or(1);
                             let strengths = continuous_assignment_strengths_for_width(
                                 *strength0, *strength1, &shown, width,
-                            )?;
+                            )
+                            .map_err(|error| self.locate_error(*id, error))?;
                             sites.insert(*id, strengths);
                         }
                     }

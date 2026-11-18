@@ -56,10 +56,12 @@ impl Codegen<'_> {
                 _ => false,
             };
             if modifies {
-                return Err(format!(
-                    "{}: `{name}` modifies `{}`, which is declared const; a const variable cannot be written after its initialization (SV 6.20.6)",
-                    self.source_location(node),
-                    self.node(declaration).name
+                return Err(self.locate_error(
+                    node,
+                    format!(
+                        "`{name}` modifies `{}`, which is declared const; a const variable cannot be written after its initialization (SV 6.20.6)",
+                        self.node(declaration).name
+                    ),
                 ));
             }
         }

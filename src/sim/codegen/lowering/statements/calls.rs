@@ -9,13 +9,12 @@ use super::*;
 impl EmitCtx<'_, '_> {
     /// A waited record `ref` actual with neither a binding nor a marker.
     fn record_wait_error(&self, call: NodeId, name: &str) -> String {
-        let node = self.cg.node(call);
-        format!(
-            "task `{name}` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record or an element of an array or container (SIM-009) at {}:{}:{} in `{}`",
-            node.file.as_deref().unwrap_or("<unknown>"),
-            node.line,
-            node.col,
-            self.cg.source_path(&self.path)
+        self.cg.locate_error(
+            call,
+            format!(
+                "task `{name}` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record or an element of an array or container (SIM-009) in `{}`",
+                self.cg.source_path(&self.path)
+            ),
         )
     }
 
@@ -137,14 +136,13 @@ impl EmitCtx<'_, '_> {
                 .iter()
                 .position(|(formal, _)| *formal == record.formal)
                 .map_or(h, |index| bound[index].expr);
-            let node = self.cg.node(actual);
-            return Err(format!(
-                "task `{name}` waits on record `ref` formal `{}` of the column form (16 or more cells), whose actual holds string, real, handle or container members and publishes no change that form follows: the wait could never resume (SIM-009) at {}:{}:{} in `{}`",
-                self.cg.node(record.formal).name,
-                node.file.as_deref().unwrap_or("<unknown>"),
-                node.line,
-                node.col,
-                self.cg.source_path(&self.path)
+            return Err(self.cg.locate_error(
+                actual,
+                format!(
+                    "task `{name}` waits on record `ref` formal `{}` of the column form (16 or more cells), whose actual holds string, real, handle or container members and publishes no change that form follows: the wait could never resume (SIM-009) in `{}`",
+                    self.cg.node(record.formal).name,
+                    self.cg.source_path(&self.path)
+                ),
             ));
         }
         // A member of a subroutine record with container members takes the
@@ -167,14 +165,13 @@ impl EmitCtx<'_, '_> {
                 .cg
                 .subroutine_record_container_member(&self.path, *formal, actual.expr)?
             {
-                let node = self.cg.node(actual.expr);
-                return Err(format!(
-                    "task `{name}` waits on record `ref` formal `{}`, whose actual is a member of a subroutine record with queue or dynamic-array members; changes to the record publish no change the wait could follow (SIM-009) at {}:{}:{} in `{}`",
-                    self.cg.node(*formal).name,
-                    node.file.as_deref().unwrap_or("<unknown>"),
-                    node.line,
-                    node.col,
-                    self.cg.source_path(&self.path)
+                return Err(self.cg.locate_error(
+                    actual.expr,
+                    format!(
+                        "task `{name}` waits on record `ref` formal `{}`, whose actual is a member of a subroutine record with queue or dynamic-array members; changes to the record publish no change the wait could follow (SIM-009) in `{}`",
+                        self.cg.node(*formal).name,
+                        self.cg.source_path(&self.path)
+                    ),
                 ));
             }
         }
@@ -287,14 +284,13 @@ impl EmitCtx<'_, '_> {
         for &index in &shape.native_refs {
             let actual = bound[index].expr;
             if !self.cg.native_ref_actual_observable(actual) {
-                let node = self.cg.node(actual);
-                return Err(format!(
-                    "`ref` actual of string or handle formal `{}` of task `{name}`, which waits on it, is neither a variable nor a class property; its changes publish no marker the task can wait on (SIM-009) at {}:{}:{} in `{}`",
-                    self.cg.node(formals[index].0).name,
-                    node.file.as_deref().unwrap_or("<unknown>"),
-                    node.line,
-                    node.col,
-                    self.cg.source_path(&self.path)
+                return Err(self.cg.locate_error(
+                    actual,
+                    format!(
+                        "`ref` actual of string or handle formal `{}` of task `{name}`, which waits on it, is neither a variable nor a class property; its changes publish no marker the task can wait on (SIM-009) in `{}`",
+                        self.cg.node(formals[index].0).name,
+                        self.cg.source_path(&self.path)
+                    ),
                 ));
             }
         }
@@ -392,13 +388,12 @@ impl EmitCtx<'_, '_> {
                         {
                             if let Some(before) = self.effect_before(h, select.source, select.index)
                             {
-                                let node = self.cg.node(before);
-                                return Err(format!(
-                                    "run-time selected record element as a `ref` actual of function `{name}` after a call or an assignment operator at {}:{}:{} in the same statement in `{}` is not supported: the element is chosen when the statement starts; move the earlier operand to a statement of its own (SIM-008)",
-                                    node.file.as_deref().unwrap_or("<unknown>"),
-                                    node.line,
-                                    node.col,
-                                    self.cg.source_path(&self.path)
+                                return Err(self.cg.locate_error(
+                                    before,
+                                    format!(
+                                        "run-time selected record element as a `ref` actual of function `{name}` after a call or an assignment operator in the same statement in `{}` is not supported: the element is chosen when the statement starts; move the earlier operand to a statement of its own (SIM-008)",
+                                        self.cg.source_path(&self.path)
+                                    ),
                                 ));
                             }
                             return Ok(Some(select));

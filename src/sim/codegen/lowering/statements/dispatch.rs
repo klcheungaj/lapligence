@@ -9,8 +9,12 @@ impl EmitCtx<'_, '_> {
     /// sensitivity sets and wait tracking.
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         let check = self.cg.static_effect_check(h);
-        self.cg.reject_slot_container_members(&self.path, h)?;
-        let mut statements = self.lower_checked_stmt(h)?;
+        self.cg
+            .reject_slot_container_members(&self.path, h)
+            .map_err(|error| self.cg.locate_error(h, error))?;
+        let mut statements = self
+            .lower_checked_stmt(h)
+            .map_err(|error| self.cg.locate_error(h, error))?;
         statements.splice(0..0, check);
         Ok(statements)
     }
@@ -107,13 +111,13 @@ impl EmitCtx<'_, '_> {
         let mailbox_prelude =
             std::mem::replace(&mut self.cg.mailbox_statement_prelude, saved_mailbox);
         let rand_prelude = std::mem::replace(&mut self.cg.rand_prelude, saved_rand);
-        let mut statements = lowered.map_err(|error| self.cg.record_located_error(h, error))?;
+        let mut statements = lowered?;
         // An operand reached by another path than the expression lowering
         // would read a handle local that was never set.
         for root in receiver_roots {
             self.cg.receiver_roots.remove(&root);
             if !self.cg.receiver_roots_lowered.remove(&root) {
-                return Err(self.cg.record_located_error(h, format!(
+                return Err(self.cg.locate_error(h, format!(
                     "a class property selected through a computed handle in `{}` is not supported in this operand; assign the handle to a variable first",
                     self.path
                 )));

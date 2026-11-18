@@ -626,12 +626,12 @@ fn neg_memory_names_that_are_not_variable_memories() {
     sim_cli::reject_case(
         SUITE,
         "neg_associative_rows",
-        "$readmemh requires an associative array with an index of integral type, not a string index (IEEE 1800-2009 21.4.1), at ",
+        "$readmemh requires an associative array with an index of integral type, not a string index (IEEE 1800-2009 21.4.1), in `tb`",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_associative_rows_wildcard",
-        "$readmemh requires an associative array with an index of integral type, not a wildcard `[*]` index (IEEE 1800-2009 21.4.1), at ",
+        "$readmemh requires an associative array with an index of integral type, not a wildcard `[*]` index (IEEE 1800-2009 21.4.1), in `tb`",
     );
     sim_cli::reject_case(
         SUITE,
@@ -640,7 +640,7 @@ fn neg_memory_names_that_are_not_variable_memories() {
     );
     // A whole container of unpacked arrays, or a slice of its elements, is
     // not a memory (decision S27-D22).
-    let whole = "memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements, at ";
+    let whole = "memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements in `tb`";
     sim_cli::reject_case(
         SUITE,
         "neg_container_rows_whole",
@@ -668,9 +668,13 @@ fn neg_associative_memory_without_an_integral_index() {
     sim_cli::reject_case(
         SUITE,
         "neg_associative",
-        "$readmemh requires an associative array with an index of integral type, not a wildcard `[*]` index (IEEE 1800-2009 21.4.1), at ",
+        "$readmemh requires an associative array with an index of integral type, not a wildcard `[*]` index (IEEE 1800-2009 21.4.1), in `tb`",
     );
-    sim_cli::reject_case(SUITE, "neg_associative", "neg_associative.sv:6:31 in `tb`");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_associative",
+        "neg_associative.sv:6:31 $readmemh requires an associative array",
+    );
 }
 
 #[test]

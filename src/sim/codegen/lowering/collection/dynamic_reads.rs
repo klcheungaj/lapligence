@@ -245,11 +245,13 @@ impl Codegen<'_> {
                         .iter()
                         .any(|child| cg.dynamic_reads.contains_key(child));
                 if named && !watched {
-                    return Err(format!(
-                        "{}: `$monitor` of class storage `{}` in `{}` has no dependency that sees it change",
-                        cg.source_location(*node),
-                        cg.node(*node).name,
-                        cg.source_path(path)
+                    return Err(crate::sim::codegen::error::located(
+                        &cg.source_location(*node),
+                        format!(
+                            "`$monitor` of class storage `{}` in `{}` has no dependency that sees it change",
+                            cg.node(*node).name,
+                            cg.source_path(path)
+                        ),
                     ));
                 }
             }
@@ -337,13 +339,12 @@ impl Codegen<'_> {
 
     /// A located rejection of a read whose changes no wait can observe.
     fn unobservable_read(&self, path: &str, node: NodeId, what: &str) -> String {
-        let site = self.node(node);
-        format!(
-            "{what} at {}:{}:{} cannot be observed by a wait or event expression in `{}`: llg publishes no change for it, so the wait could never resume (IEEE 1800-2009 9.4.2)",
-            site.file.as_deref().unwrap_or("<unknown>"),
-            site.line,
-            site.col,
-            self.source_path(path)
+        self.locate_error(
+            node,
+            format!(
+                "{what} cannot be observed by a wait or event expression in `{}`: llg publishes no change for it, so the wait could never resume (IEEE 1800-2009 9.4.2)",
+                self.source_path(path)
+            ),
         )
     }
 
@@ -1777,10 +1778,12 @@ impl Codegen<'_> {
     /// A located rejection of a virtual-interface read that an implicit
     /// sensitivity cannot follow.
     fn unobservable_interface_read(&self, path: &str, node: NodeId, what: &str) -> String {
-        format!(
-            "{}: the implicit sensitivity of `{}` cannot follow {what} (IEEE 1800-2009 9.2.2.2.1, 25.9)",
-            self.source_location(node),
-            self.source_path(path)
+        self.locate_error(
+            node,
+            format!(
+                "the implicit sensitivity of `{}` cannot follow {what} (IEEE 1800-2009 9.2.2.2.1, 25.9)",
+                self.source_path(path)
+            ),
         )
     }
 

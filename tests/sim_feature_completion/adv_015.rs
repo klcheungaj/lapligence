@@ -99,32 +99,32 @@ fn illegal_checker_procedures_are_rejected() {
         SUITE,
         "neg_blocking",
         &format!(
-            "neg_blocking.sv:5:17: a blocking assignment (17.7.1 allows only nonblocking \
+            "neg_blocking.sv:5:17 a blocking assignment (17.7.1 allows only nonblocking \
              assignments) {procedure}"
         ),
     );
     sim_cli::reject_case(
         SUITE,
         "neg_if",
-        &format!("neg_if.sv:5:17: an if statement {procedure}"),
+        &format!("neg_if.sv:5:17 an if statement {procedure}"),
     );
     sim_cli::reject_case(
         SUITE,
         "neg_delay",
-        &format!("neg_delay.sv:6:5: a delay control (only event controls are allowed) {procedure}"),
+        &format!("neg_delay.sv:6:5 a delay control (only event controls are allowed) {procedure}"),
     );
     sim_cli::reject_case(
         SUITE,
         "neg_immediate",
         &format!(
-            "neg_immediate.sv:5:5: a simple immediate assertion (only deferred and concurrent \
+            "neg_immediate.sv:5:5 a simple immediate assertion (only deferred and concurrent \
              assertions are allowed) {procedure}"
         ),
     );
     sim_cli::reject_case(
         SUITE,
         "neg_sar",
-        "neg_sar.sv:6:17: checker variable `b` is already assigned at ",
+        "neg_sar.sv:6:17 checker variable `b` is already assigned at ",
     );
     sim_cli::reject_case(
         SUITE,
@@ -135,14 +135,14 @@ fn illegal_checker_procedures_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_select",
-        "neg_select.sv:5:17: the target of a checker variable assignment must be its longest \
+        "neg_select.sv:5:17 the target of a checker variable assignment must be its longest \
          static prefix; its select must be a constant expression (IEEE 1800-2009 17.7.1, \
          11.5.3)",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_foreign",
-        "neg_foreign.sv:7:19: a checker procedure may assign only variables of its own \
+        "neg_foreign.sv:7:19 a checker procedure may assign only variables of its own \
          checker, not `m` (IEEE 1800-2009 17.7.1)",
     );
     sim_cli::reject_case(
@@ -194,14 +194,14 @@ fn unsupported_free_variable_forms_are_located() {
     sim_cli::reject_case(
         SUITE,
         "neg_free_history",
-        "neg_free_history.sv:6:35: $rose of active free checker variable `f` is not supported: \
+        "neg_free_history.sv:6:35 $rose of active free checker variable `f` is not supported: \
          llg reads active free variables with their current value (IEEE 1800-2009 17.7.2) and \
          keeps no sampled history of them",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_free_unpacked",
-        "neg_free_unpacked.sv:4:12: free checker variable `f` of an unpacked type is not \
+        "neg_free_unpacked.sv:4:12 free checker variable `f` of an unpacked type is not \
          supported: llg randomizes packed integral free variables (IEEE 1800-2009 17.7.2)",
     );
 }
@@ -225,7 +225,7 @@ fn unsupported_checker_forms_are_located() {
     sim_cli::reject_case(
         SUITE,
         "neg_procedural_automatic",
-        "neg_procedural_automatic.sv:6:29: automatic variable `v` in a procedural concurrent \
+        "neg_procedural_automatic.sv:6:29 automatic variable `v` in a procedural concurrent \
          assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1)",
     );
 }
@@ -236,11 +236,11 @@ fn real_and_enum_free_variables_are_located_limits() {
     sim_cli::reject_case(
         SUITE,
         "neg_free_real",
-        "neg_free_real.sv:5:13: free checker variable `f` of a real type is not supported",
+        "neg_free_real.sv:5:13 free checker variable `f` of a real type is not supported",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_free_enum",
-        "neg_free_enum.sv:6:12: free checker variable `f` of an enum type is not supported",
+        "neg_free_enum.sv:6:12 free checker variable `f` of an enum type is not supported",
     );
 }

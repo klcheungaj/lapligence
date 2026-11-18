@@ -740,6 +740,20 @@ impl Codegen<'_> {
         item: NodeId,
         guard: Option<u32>,
     ) -> Result<u32, String> {
+        self.constraint_item_unlocated(path, builder, vars, object, item, guard)
+            .map_err(|error| self.locate_error(item, error))
+    }
+
+    /// [`Self::constraint_item`] before its failure is located.
+    fn constraint_item_unlocated(
+        &mut self,
+        path: &str,
+        builder: &mut ProblemBuilder,
+        vars: &[VarPlan],
+        object: &IrChandleExpr,
+        item: NodeId,
+        guard: Option<u32>,
+    ) -> Result<u32, String> {
         let kind = match self.kind(item) {
             NodeKind::Constraint(kind) => kind.clone(),
             _ => return Err(self.rand_error(item, path, "unsupported constraint item")),

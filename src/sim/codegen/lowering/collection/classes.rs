@@ -636,9 +636,9 @@ impl<'a> Codegen<'a> {
             .native_layout(child)?
             .ok_or_else(|| format!("class property `{name}` has no native record layout"))?;
         if !layout.containers.is_empty() {
-            return Err(format!(
+            return Err(self.locate_error(child, format!(
                 "class property `{name}` of a record type with queue, dynamic or associative members is not supported (SIM-011)"
-            ));
+            )));
         }
         let field_index = fields.len();
         let value = self.model.native_values.len();

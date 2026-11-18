@@ -533,9 +533,9 @@ impl Codegen<'_> {
                     check.data.terminal
                 };
                 let error = |message: String| {
-                    format!(
-                        "timing check `{}` at {} in `{label}`: {message}",
-                        check.name, check.origin
+                    crate::sim::codegen::error::located(
+                        &check.origin,
+                        format!("timing check `{}` in `{label}`: {message}", check.name),
                     )
                 };
                 let name = self.display_name(target.node);
@@ -687,9 +687,28 @@ impl Codegen<'_> {
         lowered: &mut Vec<LoweredCheck>,
         combined: &mut Vec<CombinedCheck>,
     ) -> Result<(), String> {
+        self.lower_timing_check_unlocated(scope, check, terminals, conditions, lowered, combined)
+            .map_err(|error| self.locate_error(check.node, error))
+    }
+
+    /// [`Self::lower_timing_check`] before its failure is located.
+    fn lower_timing_check_unlocated(
+        &mut self,
+        scope: &str,
+        check: &TimingCheck,
+        terminals: &mut Vec<IrTimingTerminal>,
+        conditions: &mut Vec<IrExpr>,
+        lowered: &mut Vec<LoweredCheck>,
+        combined: &mut Vec<CombinedCheck>,
+    ) -> Result<(), String> {
         let location = self.specify_location(check.node);
         let name = check.kind.name();
-        let error = |message: String| format!("timing check `{name}` at {location}: {message}");
+        let error = |message: String| {
+            crate::sim::codegen::error::located(
+                &location,
+                format!("timing check `{name}`: {message}"),
+            )
+        };
         let kind = match check.kind {
             TimingCheckKind::Setup => IrTimingCheckKind::Setup,
             TimingCheckKind::Hold | TimingCheckKind::SetupHold => IrTimingCheckKind::Hold,

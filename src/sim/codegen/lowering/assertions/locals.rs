@@ -145,23 +145,36 @@ impl Codegen<'_> {
         let mut copy_outs = Vec::new();
         for formal in &formals {
             let name = self.node(formal.formal).name.clone();
-            let binding = self.assertion_local_binding(formal.formal)?.ok_or_else(|| {
-                format!("local formal `{name}` of the sequence instance at {location} is outside a sequence")
-            })?;
+            let binding = self
+                .assertion_local_binding(formal.formal)?
+                .ok_or_else(|| {
+                    crate::sim::codegen::error::located(
+                        &location,
+                        format!(
+                            "local formal `{name}` of the sequence instance is outside a sequence"
+                        ),
+                    )
+                })?;
             match formal.direction {
                 DbDirection::Input | DbDirection::Inout => {
                     let actual = self.lower_expr(path, formal.actual)?;
                     if actual.is_real() || !self.sampled_compatible(&actual) {
-                        return Err(format!(
-                            "local formal `{name}` of the sequence instance at {location} needs one packed sampled actual (SV 16.8.2)"
+                        return Err(crate::sim::codegen::error::located(
+                            &location,
+                            format!(
+                                "local formal `{name}` of the sequence instance needs one packed sampled actual (SV 16.8.2)"
+                            ),
                         ));
                     }
                     initializers.push(local_assignment(binding, actual));
                 }
                 DbDirection::Output => {}
                 direction => {
-                    return Err(format!(
-                        "local formal `{name}` of the sequence instance at {location} has unsupported direction {direction:?} (SV 16.8.2)"
+                    return Err(crate::sim::codegen::error::located(
+                        &location,
+                        format!(
+                            "local formal `{name}` of the sequence instance has unsupported direction {direction:?} (SV 16.8.2)"
+                        ),
                     ));
                 }
             }
@@ -170,14 +183,19 @@ impl Codegen<'_> {
                 // inout or output local variable formal argument shall itself
                 // be a reference to a local variable".
                 let Some(target) = self.assertion_local_lhs_target(formal.actual) else {
-                    return Err(format!(
-                        "the actual of {} local formal `{name}` at {} must be a local variable (SV 16.8.2)",
-                        direction_word(formal.direction),
-                        self.source_location(formal.actual)
+                    return Err(self.locate_error(
+                        formal.actual,
+                        format!(
+                            "the actual of {} local formal `{name}` must be a local variable (SV 16.8.2)",
+                            direction_word(formal.direction)
+                        ),
                     ));
                 };
                 let outer = self.assertion_local_binding(target)?.ok_or_else(|| {
-                    format!("local variable actual of `{name}` at {location} is outside a sequence")
+                    crate::sim::codegen::error::located(
+                        &location,
+                        format!("local variable actual of `{name}` is outside a sequence"),
+                    )
                 })?;
                 let value = IrExpr::new(
                     IrExprKind::LocalRead(format!(
@@ -203,19 +221,24 @@ impl Codegen<'_> {
             .extend(inlined.iter().copied());
         let body = self.lower_assertion_instance(expression, false, |this, body| {
             for local in &declared {
-                let binding = this
-                    .assertion_local_binding(*local)?
-                    .ok_or_else(|| format!("local variable at {location} is outside a sequence"))?;
+                let binding = this.assertion_local_binding(*local)?.ok_or_else(|| {
+                    crate::sim::codegen::error::located(
+                        &location,
+                        "local variable is outside a sequence",
+                    )
+                })?;
                 let source = this
                     .db
                     .assertion_local_initializer(*local)
                     .ok_or_else(|| "declared local lost its initializer".to_owned())?;
                 let value = this.lower_expr(path, source)?;
                 if value.is_real() || !this.sampled_compatible(&value) {
-                    return Err(format!(
-                        "local variable `{}` declared at {} needs one packed sampled initial value",
-                        this.node(*local).name,
-                        this.source_location(*local)
+                    return Err(this.locate_error(
+                        *local,
+                        format!(
+                            "local variable `{}` needs one packed sampled initial value",
+                            this.node(*local).name
+                        ),
                     ));
                 }
                 initializers.push(local_assignment(binding, value));
@@ -225,7 +248,9 @@ impl Codegen<'_> {
         for formal in &inlined {
             self.assertion_inlined_formals.remove(formal);
         }
-        let body = body?.ok_or_else(|| format!("sequence instance at {location} has no body"))?;
+        let body = body?.ok_or_else(|| {
+            crate::sim::codegen::error::located(&location, "sequence instance has no body")
+        })?;
         if body.empty {
             return Err(if copy_outs.is_empty() {
                 format!(

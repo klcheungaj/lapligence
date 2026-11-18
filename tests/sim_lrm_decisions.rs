@@ -24,7 +24,7 @@ fn t1_d2_event_compare_wait_rejected() {
     sim_cli::reject_case(
         SUITE,
         "T1-D2_event_compare_wait_rejected",
-        "an event variable comparison at",
+        "T1-D2_event_compare_wait_rejected.sv:16:15 an event variable comparison cannot be observed",
     );
 }
 
@@ -1923,7 +1923,7 @@ fn s27_d22_container_of_arrays_rejected() {
     sim_cli::reject_case(
         SUITE,
         "S27-D22_container_of_arrays_rejected",
-        "$readmemh memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements, at ",
+        "S27-D22_container_of_arrays_rejected.sv:28:30 $readmemh memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements in `tb`",
     );
 }
 
@@ -4067,7 +4067,7 @@ fn s45_d11_length_zero_repetition() {
     sim_cli::reject_case(
         SUITE,
         "S45-D11_length_zero_repetition",
-        "S45-D11_length_zero_repetition.sv:16:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0",
+        "S45-D11_length_zero_repetition.sv:16:29 transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0",
     );
 }
 
@@ -4092,7 +4092,7 @@ fn s45_d13_binsof_outside_cross() {
     sim_cli::reject_case(
         SUITE,
         "S45-D13_binsof_outside_cross",
-        "S45-D13_binsof_outside_cross.sv:17:35: binsof in bins `sel` of cross `ab` in covergroup `g` names coverpoint `cd`, which the cross does not cross",
+        "S45-D13_binsof_outside_cross.sv:17:35 binsof in bins `sel` of cross `ab` in covergroup `g` names coverpoint `cd`, which the cross does not cross",
     );
 }
 
@@ -4434,7 +4434,7 @@ fn s16_d10_rand_join_rule_forms_rejected() {
     sim_cli::reject_case(
         SUITE,
         "S16-D10_rand_join_rule_forms_rejected",
-        "S16-D10_rand_join_rule_forms_rejected.sv:20:23: production `s1` has more than one rule",
+        "S16-D10_rand_join_rule_forms_rejected.sv:20:23 rand join: production `s1` has more than one rule",
     );
 }
 

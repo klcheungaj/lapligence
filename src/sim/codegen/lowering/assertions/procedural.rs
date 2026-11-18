@@ -212,10 +212,10 @@ impl Codegen<'_> {
                 .lower_sampled_clock_spec(path, std::slice::from_ref(&spec))?
                 .map(Some)
                 .ok_or_else(|| {
-                    format!(
-                        "{}: the clock inferred from the procedure is not a direct signal edge \
+                    self.locate_error(
+                        origin,
+                        "the clock inferred from the procedure is not a direct signal edge \
                          (IEEE 1800-2009 16.15.6)",
-                        self.source_location(origin)
                     )
                 }),
         }
@@ -405,11 +405,13 @@ impl Codegen<'_> {
             }) => format!("automatic variable `{}`", self.node(*target).name),
             _ => "const cast".to_owned(),
         };
-        Err(format!(
-            "{}: {what} in a procedural concurrent assertion takes its value when the \
+        Err(self.locate_error(
+            node,
+            format!(
+                "{what} in a procedural concurrent assertion takes its value when the \
              assertion is queued (IEEE 1800-2009 16.15.6.1); llg saves packed integral values \
-             only",
-            self.source_location(node)
+             only"
+            ),
         ))
     }
 
@@ -435,16 +437,16 @@ impl Codegen<'_> {
         if !reads {
             return Ok(());
         }
-        let location = self
-            .assertion_inferred_origin
-            .map(|origin| self.source_location(origin))
-            .unwrap_or_default();
-        Err(format!(
-            "{location}: {what} of this procedural concurrent assertion reads an automatic \
-             variable or a const cast, whose value the instance saves when it is queued (IEEE \
-             1800-2009 16.15.6.1); llg evaluates it outside the instance's attempts and does \
-             not support this"
-        ))
+        let message = format!(
+            "{what} of this procedural concurrent assertion reads an automatic variable or a \
+             const cast, whose value the instance saves when it is queued (IEEE 1800-2009 \
+             16.15.6.1); llg evaluates it outside the instance's attempts and does not support \
+             this"
+        );
+        Err(match self.assertion_inferred_origin {
+            Some(origin) => self.locate_error(origin, message),
+            None => message,
+        })
     }
 
     /// Reject queued values in an assertion lowered outside the procedure
@@ -464,12 +466,14 @@ impl Codegen<'_> {
             }) => format!("automatic variable `{}`", self.node(*target).name),
             _ => "a const cast".to_owned(),
         };
-        Err(format!(
-            "{}: {what} in a procedural concurrent assertion takes its value when the \
+        Err(self.locate_error(
+            site.node,
+            format!(
+                "{what} in a procedural concurrent assertion takes its value when the \
              assertion is queued (IEEE 1800-2009 16.15.6.1); llg saves queued values for \
              assertions written in the procedure, not for the assertions of a procedural \
-             checker (17.3)",
-            self.source_location(site.node)
+             checker (17.3)"
+            ),
         ))
     }
 }

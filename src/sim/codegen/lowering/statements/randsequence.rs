@@ -290,15 +290,15 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         let mut pending = vec![top];
         while let Some(item) = pending.pop() {
             let NodeKind::Production(ProductionKind::Item(info)) = db.node_kind(item) else {
-                return Err(format!(
-                    "randsequence production item at {} is malformed",
-                    self.production_location(item)
+                return Err(crate::sim::codegen::error::located(
+                    &self.production_location(item),
+                    "randsequence production item is malformed",
                 ));
             };
             let production = info.production.ok_or_else(|| {
-                format!(
-                    "randsequence production item at {} names no production",
-                    self.production_location(item)
+                crate::sim::codegen::error::located(
+                    &self.production_location(item),
+                    "randsequence production item names no production",
                 )
             })?;
             grammar.items.insert(item, info.clone());
@@ -308,27 +308,29 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             }
             let NodeKind::Production(ProductionKind::Declaration(decl)) = db.node_kind(production)
             else {
-                return Err(format!(
-                    "randsequence production at {} is malformed",
-                    self.production_location(production)
+                return Err(crate::sim::codegen::error::located(
+                    &self.production_location(production),
+                    "randsequence production is malformed",
                 ));
             };
             if let Some(index) = decl.non_input.iter().position(|flag| *flag) {
-                return Err(format!(
-                    "randsequence production `{}` at {}: formal `{}` is not an input; llg \
+                return Err(crate::sim::codegen::error::located(
+                    &self.production_location(production),
+                    format!(
+                        "randsequence production `{}`: formal `{}` is not an input; llg \
                      supports only input production arguments",
-                    self.production_name(production),
-                    self.production_location(production),
-                    self.cg.node(decl.formals[index]).name
+                        self.production_name(production),
+                        self.cg.node(decl.formals[index]).name
+                    ),
                 ));
             }
             grammar.decls.insert(production, decl.as_ref().clone());
             grammar.order.push(production);
             for rule in &decl.rules {
                 let NodeKind::Production(ProductionKind::Rule(info)) = db.node_kind(*rule) else {
-                    return Err(format!(
-                        "randsequence rule at {} is malformed",
-                        self.production_location(*rule)
+                    return Err(crate::sim::codegen::error::located(
+                        &self.production_location(*rule),
+                        "randsequence rule is malformed",
                     ));
                 };
                 grammar.rules.insert(*rule, info.as_ref().clone());
@@ -564,33 +566,41 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     } else {
                         "contains an if, case or repeat item"
                     };
-                    return Err(format!(
-                        "rand join at {}: production `{name}` {what}; a production that rand \
-                         join interleaves must have one rule of production items and code blocks",
-                        self.production_location(*item)
+                    return Err(crate::sim::codegen::error::located(
+                        &self.production_location(*item),
+                        format!(
+                            "rand join: production `{name}` {what}; a production that rand \
+                         join interleaves must have one rule of production items and code blocks"
+                        ),
                     ));
                 }
                 if grammar.segmented.contains(production) {
-                    return Err(format!(
-                        "rand join at {}: production `{name}` is recursive or generates a \
-                         recursive production; llg interleaves only non-recursive productions",
-                        self.production_location(*item)
+                    return Err(crate::sim::codegen::error::located(
+                        &self.production_location(*item),
+                        format!(
+                            "rand join: production `{name}` is recursive or generates a \
+                         recursive production; llg interleaves only non-recursive productions"
+                        ),
                     ));
                 }
                 if productions[..index].contains(production) {
-                    return Err(format!(
-                        "rand join at {}: production `{name}` is interleaved more than once; \
-                         llg requires distinct productions",
-                        self.production_location(*item)
+                    return Err(crate::sim::codegen::error::located(
+                        &self.production_location(*item),
+                        format!(
+                            "rand join: production `{name}` is interleaved more than once; \
+                         llg requires distinct productions"
+                        ),
                     ));
                 }
                 let reachable = reaches(*production);
                 if let Some(other) = productions.iter().find(|other| reachable.contains(other)) {
-                    return Err(format!(
-                        "rand join at {}: production `{name}` generates `{}`, which the same \
+                    return Err(crate::sim::codegen::error::located(
+                        &self.production_location(*item),
+                        format!(
+                            "rand join: production `{name}` generates `{}`, which the same \
                          rand join interleaves; llg does not support this",
-                        self.production_location(*item),
-                        self.production_name(*other)
+                            self.production_name(*other)
+                        ),
                     ));
                 }
             }
@@ -678,10 +688,12 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     ) && self.cg.node(child).parent == Some(owner)
                     {
                         declarations.extend(self.lower_variable_decl(child).map_err(|error| {
-                            format!(
-                                "randsequence production `{}` at {}: {error}",
-                                self.production_name(production),
-                                self.production_location(production)
+                            crate::sim::codegen::error::located(
+                                &self.production_location(production),
+                                format!(
+                                    "randsequence production `{}`: {error}",
+                                    self.production_name(production)
+                                ),
                             )
                         })?);
                     }
@@ -765,17 +777,17 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     /// Lower the synthesized assignment `node` (a binding, reset or copy).
     fn production_assignment(&mut self, node: NodeId) -> Result<IrStmt, String> {
         let NodeKind::Expr(ExprKind::Operation { operands, .. }) = self.cg.kind(node) else {
-            return Err(format!(
-                "randsequence assignment at {} is malformed",
-                self.production_location(node)
+            return Err(crate::sim::codegen::error::located(
+                &self.production_location(node),
+                "randsequence assignment is malformed",
             ));
         };
         let (lhs, rhs) = match operands.as_slice() {
             [lhs, rhs] => (*lhs, *rhs),
             _ => {
-                return Err(format!(
-                    "randsequence assignment at {} is malformed",
-                    self.production_location(node)
+                return Err(crate::sim::codegen::error::located(
+                    &self.production_location(node),
+                    "randsequence assignment is malformed",
                 ))
             }
         };
@@ -854,12 +866,14 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
 
     /// The error for a value of recursive `production` that no frame can save.
     fn unsaveable(&self, production: NodeId, reference: NodeId) -> String {
-        format!(
-            "recursive randsequence production `{}` at {}: `{}` has a type llg cannot save \
+        crate::sim::codegen::error::located(
+            &self.production_location(production),
+            format!(
+                "recursive randsequence production `{}`: `{}` has a type llg cannot save \
              across a recursive generation (packed, real and string values are supported)",
-            self.production_name(production),
-            self.production_location(production),
-            self.cg.node(reference).name
+                self.production_name(production),
+                self.cg.node(reference).name
+            ),
         )
     }
 
@@ -975,9 +989,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 let body = *body;
                 self.lower_stmt(body)
             }
-            _ => Err(format!(
-                "randsequence code block at {} is malformed",
-                self.production_location(code)
+            _ => Err(crate::sim::codegen::error::located(
+                &self.production_location(code),
+                "randsequence code block is malformed",
             )),
         }
     }
@@ -987,9 +1001,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         let kind = match self.cg.kind(element) {
             NodeKind::Production(kind) => kind.clone(),
             other => {
-                return Err(format!(
-                    "randsequence element at {} is malformed ({other:?})",
-                    self.production_location(element)
+                return Err(crate::sim::codegen::error::located(
+                    &self.production_location(element),
+                    format!("randsequence element is malformed ({other:?})"),
                 ))
             }
         };
@@ -1026,10 +1040,12 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 }
                 self.production_case(selector, &items, default.is_some(), bodies)
             }
-            ProductionKind::Declaration(_) | ProductionKind::Rule(_) => Err(format!(
-                "randsequence element at {} is malformed",
-                self.production_location(element)
-            )),
+            ProductionKind::Declaration(_) | ProductionKind::Rule(_) => {
+                Err(crate::sim::codegen::error::located(
+                    &self.production_location(element),
+                    "randsequence element is malformed",
+                ))
+            }
         }
     }
 
@@ -1074,9 +1090,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     ) -> Result<(Vec<IrStmt>, IrExpr), String> {
         let value = self.cg.lower_expr(&self.path, count)?;
         if value.is_real() || value.width == 0 {
-            return Err(format!(
-                "randsequence repeat at {}: the count must be integral",
-                self.production_location(element)
+            return Err(crate::sim::codegen::error::located(
+                &self.production_location(element),
+                "randsequence repeat: the count must be integral",
             ));
         }
         let (width, signed) = (value.width, value.signed);
@@ -1211,10 +1227,12 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             let production = grammar.production_of(*item);
             let decl = &grammar.decls[&production];
             let [chosen_rule] = decl.rules[..] else {
-                return Err(format!(
-                    "rand join at {}: production `{}` must have one rule",
-                    self.production_location(*item),
-                    self.production_name(production)
+                return Err(crate::sim::codegen::error::located(
+                    &self.production_location(*item),
+                    format!(
+                        "rand join: production `{}` must have one rule",
+                        self.production_name(production)
+                    ),
                 ));
             };
             statements.extend(self.bind_formals(*item, None)?);
@@ -1577,9 +1595,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         let kind = match self.cg.kind(element) {
             NodeKind::Production(kind) => kind.clone(),
             _ => {
-                return Err(format!(
-                    "randsequence element at {} is malformed",
-                    self.production_location(element)
+                return Err(crate::sim::codegen::error::located(
+                    &self.production_location(element),
+                    "randsequence element is malformed",
                 ))
             }
         };
@@ -1662,9 +1680,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             ProductionKind::CodeBlock { .. }
             | ProductionKind::Declaration(_)
             | ProductionKind::Rule(_) => {
-                return Err(format!(
-                    "randsequence element at {} is malformed",
-                    self.production_location(element)
+                return Err(crate::sim::codegen::error::located(
+                    &self.production_location(element),
+                    "randsequence element is malformed",
                 ))
             }
         }
@@ -1816,9 +1834,12 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             .try_fold(0u32, |total, entry| total.checked_add(entry.width))
             .filter(|width| *width < crate::sim::emit_c::LLG_WIDTH_LIMIT)
             .ok_or_else(|| {
-                format!(
-                    "recursive randsequence production `{name}` at {location}: its saved \
+                crate::sim::codegen::error::located(
+                    &location,
+                    format!(
+                        "recursive randsequence production `{name}`: its saved \
                      values are wider than the packed-value limit"
+                    ),
                 )
             })?;
         let container = self.cg.model.containers.len();

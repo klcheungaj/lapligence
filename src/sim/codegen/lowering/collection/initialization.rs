@@ -179,6 +179,18 @@ impl<'a> Codegen<'a> {
         layout: &crate::core::db::AggregateLayout,
         storage: &SignalInfo,
     ) -> Result<IrConst, String> {
+        self.packed_aggregate_decl_init_unlocated(path, init, layout, storage)
+            .map_err(|error| self.locate_error(init, error))
+    }
+
+    /// [`Self::packed_aggregate_decl_init`] before its failure is located.
+    fn packed_aggregate_decl_init_unlocated(
+        &self,
+        path: &str,
+        init: NodeId,
+        layout: &crate::core::db::AggregateLayout,
+        storage: &SignalInfo,
+    ) -> Result<IrConst, String> {
         let value = self.packed_aggregate_decl_value(path, init, layout)?;
         let value = materialize_decl_cast_value(
             value,
@@ -190,6 +202,18 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn collect_unpacked_aggregate_decl_init(
+        &mut self,
+        path: &str,
+        object: NodeId,
+        init: NodeId,
+        aggregate: &UnpackedAggregateInfo,
+    ) -> Result<(), String> {
+        self.collect_unpacked_aggregate_decl_init_unlocated(path, object, init, aggregate)
+            .map_err(|error| self.locate_error(init, error))
+    }
+
+    /// [`Self::collect_unpacked_aggregate_decl_init`] before its failure is located.
+    fn collect_unpacked_aggregate_decl_init_unlocated(
         &mut self,
         path: &str,
         object: NodeId,

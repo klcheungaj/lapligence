@@ -141,7 +141,7 @@ fn locals_disables_actions_and_end_across_domains() {
     sim_cli::reject_case(
         SUITE,
         "neg_local_clocks_implies",
-        "neg_local_clocks_implies.sv:12:43 would be initialized at more than one semantic leading \
+        "neg_local_clocks_implies.sv:12:43 the local variables of the property instance would be initialized at more than one semantic leading \
          clock below an operator other than `and`, `or` or `not`; this is not supported (SV 16.14.7)",
     );
 }
@@ -241,19 +241,19 @@ fn illegal_recursive_properties_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_rec_reentry_args",
-        "neg_rec_reentry_args.sv:8:21 does not repeat an enclosing expansion with the same \
+        "neg_rec_reentry_args.sv:8:21 recursive property instance does not repeat an enclosing expansion with the same \
          actual arguments, which llg does not support (SV 16.13.17)",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_rec_locals_args",
-        "neg_rec_locals_args.sv:9:33 re-enters a property with local variables after its other \
+        "neg_rec_locals_args.sv:9:33 recursive property instance re-enters a property with local variables after its other \
          actual arguments changed; this is not supported (SV 16.13.17)",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_rec_locals_clocks",
-        "neg_rec_locals_clocks.sv:7:42 re-enters a property whose local variables are \
+        "neg_rec_locals_clocks.sv:7:42 recursive property instance re-enters a property whose local variables are \
          initialized at more than one semantic leading clock; this is not supported (SV \
          16.13.17, 16.14.7)",
     );

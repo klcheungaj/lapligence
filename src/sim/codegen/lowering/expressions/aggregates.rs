@@ -16,6 +16,12 @@ impl<'a> Codegen<'a> {
     /// converted to [`IrLhs`] (identical by construction during the seam
     /// transition; sub-expression codes ride along verbatim).
     pub(in super::super) fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
+        self.lower_lhs_node(path, lhs)
+            .map_err(|error| self.locate_error(lhs, error))
+    }
+
+    /// [`Self::lower_lhs`] before its failure is located at `lhs`.
+    fn lower_lhs_node(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
         if let Some(target) = self.assertion_local_lhs_target(lhs) {
             let binding = self
                 .assertion_local_binding(target)?
@@ -211,6 +217,19 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn lower_unpacked_aggregate_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
+        self.lower_unpacked_aggregate_assignment_unlocated(path, lhs, rhs, nba, op)
+            .map_err(|error| self.locate_error(lhs, error))
+    }
+
+    /// [`Self::lower_unpacked_aggregate_assignment`] before its failure is located.
+    fn lower_unpacked_aggregate_assignment_unlocated(
         &mut self,
         path: &str,
         lhs: NodeId,

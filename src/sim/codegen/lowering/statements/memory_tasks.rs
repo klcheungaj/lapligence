@@ -101,17 +101,21 @@ impl EmitCtx<'_, '_> {
         // (a string where the memory belongs, fewer than four arguments);
         // this guards the shape the lowering relies on.
         let [memory, start, finish, strings @ ..] = args else {
-            return Err(format!(
-                "{}: {name} requires a memory, start and finish address and at least one string in `{}`",
-                self.cg.source_location(call),
-                self.path
+            return Err(self.cg.locate_error(
+                call,
+                format!(
+                    "{name} requires a memory, start and finish address and at least one string in `{}`",
+                    self.path
+                ),
             ));
         };
         if strings.is_empty() {
-            return Err(format!(
-                "{}: {name} requires at least one string after the finish address in `{}`",
-                self.cg.source_location(call),
-                self.path
+            return Err(self.cg.locate_error(
+                call,
+                format!(
+                    "{name} requires at least one string after the finish address in `{}`",
+                    self.path
+                ),
             ));
         }
         // Adjacent literals merge into one piece, so all-literal data stays a
@@ -129,11 +133,13 @@ impl EmitCtx<'_, '_> {
                 None => {
                     let value = self.cg.lower_expr(&self.path, *node)?;
                     if value.is_real() {
-                        return Err(format!(
-                            "{}: a data argument of {name} must be a string or integral \
+                        return Err(self.cg.locate_error(
+                            *node,
+                            format!(
+                                "a data argument of {name} must be a string or integral \
                              expression (IEEE 1800-2009 D.14) in `{}`",
-                            self.cg.source_location(*node),
-                            self.path
+                                self.path
+                            ),
                         ));
                     }
                     IrStringExpr::FromPacked(Box::new(value))
@@ -160,7 +166,7 @@ impl EmitCtx<'_, '_> {
         // only supplies the (unused) file name.
         let readmem_layout = [strings[0], *memory, *start, *finish];
         self.lower_memory_task_from(name, &readmem_layout, false, source)
-            .map_err(|error| format!("{}: {error}", self.cg.source_location(*memory)))
+            .map_err(|error| self.cg.locate_error(*memory, error))
     }
 
     /// The bytes of a string literal argument, `None` for any other
@@ -559,10 +565,12 @@ impl EmitCtx<'_, '_> {
             IrAssocKey::Class => "a class index",
             IrAssocKey::Integral { .. } => unreachable!("integral indices are accepted"),
         };
-        format!(
-            "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), at {} in `{}`",
-            self.cg.source_location(args[1]),
-            self.path
+        self.cg.locate_error(
+            args[1],
+            format!(
+                "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), in `{}`",
+                self.path
+            ),
         )
     }
 
@@ -617,10 +625,12 @@ impl EmitCtx<'_, '_> {
             }
         }
         let Some(row) = row else {
-            return Err(format!(
-                "{name} memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements, at {} in `{}`",
-                self.cg.source_location(args[1]),
-                self.path
+            return Err(self.cg.locate_error(
+                args[1],
+                format!(
+                    "{name} memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements in `{}`",
+                    self.path
+                ),
             ));
         };
         let packed_elements = || {

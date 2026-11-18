@@ -377,6 +377,16 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrChandleExpr, String> {
+        self.lower_chandle_unlocated(path, node)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::lower_chandle`] before its failure is located.
+    fn lower_chandle_unlocated(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrChandleExpr, String> {
         if let Some(HoistedValue::Handle(name)) = self.hoisted_value(node) {
             return Ok(IrChandleExpr::LocalRead(name.clone()));
         }

@@ -625,10 +625,12 @@ impl Codegen<'_> {
     /// transfers. The caller declares it with `NativeValueDeclare`.
     pub(in super::super) fn native_temporary(&mut self, node: NodeId) -> Result<usize, String> {
         let layout = self.native_layout(node)?.ok_or_else(|| {
-            format!(
-                "{}: a whole record with a member array selected at a run-time index is not supported below {} cells",
-                self.source_location(node),
-                crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS
+            self.locate_error(
+                node,
+                format!(
+                    "a whole record with a member array selected at a run-time index is not supported below {} cells",
+                    crate::sim::ir::LLG_RECORD_COLUMN_MIN_CELLS
+                ),
             )
         })?;
         let companions = self.native_companions(&layout, true);
@@ -1029,9 +1031,9 @@ impl Codegen<'_> {
                         .ok()
                         .and_then(|index| i32::try_from(index).ok())
                         .ok_or_else(|| {
-                            format!(
-                                "{}: runtime index into a native record array member is not supported",
-                                self.source_location(*index)
+                            self.locate_error(
+                                *index,
+                                "runtime index into a native record array member is not supported",
                             )
                         })?;
                     path.push(AggregatePathPart::Index(index));
@@ -2982,6 +2984,19 @@ impl Codegen<'_> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        self.lower_native_value_assignment_unlocated(path, lhs, rhs, nba, op)
+            .map_err(|error| self.locate_error(lhs, error))
+    }
+
+    /// [`Self::lower_native_value_assignment`] before its failure is located.
+    fn lower_native_value_assignment_unlocated(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
         if op == Operation::Assignment {
             if let Some(statement) = self.element_subrecord_assignment(path, lhs, rhs, nba)? {
                 return Ok(Some(statement));
@@ -3108,14 +3123,13 @@ impl Codegen<'_> {
             }
             Some(argument) => Ok(argument),
             None if self.leaf_record_element_at_run_time(path, actual) => {
-                let node = self.node(actual);
-                Err(format!(
-                    "run-time selected record element as the `ref` actual of native record formal `{}` of a function called outside an assignment without timing control, a `return` or a system-task statement (a condition or a loop header) is not supported; assign the call's result in a statement first (SIM-008) at {}:{}:{} in `{}`",
-                    self.node(formal).name,
-                    node.file.as_deref().unwrap_or("<unknown>"),
-                    node.line,
-                    node.col,
-                    self.source_path(path)
+                Err(self.locate_error(
+                    actual,
+                    format!(
+                        "run-time selected record element as the `ref` actual of native record formal `{}` of a function called outside an assignment without timing control, a `return` or a system-task statement (a condition or a loop header) is not supported; assign the call's result in a statement first (SIM-008) in `{}`",
+                        self.node(formal).name,
+                        self.source_path(path)
+                    ),
                 ))
             }
             None => Err(self.native_ref_actual_error(path, formal)),

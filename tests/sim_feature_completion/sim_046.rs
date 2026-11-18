@@ -557,7 +557,7 @@ fn definition_only_options_and_partial_counts_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_option_compound",
-        "neg_option_compound.sv:11:5: option.weight can only be written by a plain blocking assignment (llg limitation)",
+        "neg_option_compound.sv:11:5 option.weight can only be written by a plain blocking assignment (llg limitation)",
     );
     sim_cli::reject_case(
         SUITE,
@@ -567,7 +567,7 @@ fn definition_only_options_and_partial_counts_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_count_args",
-        "neg_count_args.sv:12:9: `get_inst_coverage` takes either no arguments or both covered and total bin arguments (IEEE 1800-2009 19.8)",
+        "neg_count_args.sv:12:9 `get_inst_coverage` takes either no arguments or both covered and total bin arguments (IEEE 1800-2009 19.8)",
     );
 }
 

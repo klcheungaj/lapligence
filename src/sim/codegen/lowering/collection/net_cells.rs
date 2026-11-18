@@ -389,11 +389,9 @@ impl Codegen<'_> {
             let kind = Self::ir_net_kind(resolved.kind)
                 .ok_or("undriven net-array cell has an unsupported effective net type")?;
             if members > LLG_MAX_NET_DRIVERS {
-                return Err(format!(
-                    "{shown}: {members} members exceed the runtime driver-count range at {}:{}:{}",
-                    self.node(owner).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(owner).line,
-                    self.node(owner).col,
+                return Err(self.locate_error(
+                    owner,
+                    format!("{shown}: {members} members exceed the runtime driver-count range"),
                 ));
             }
             // An undriven net never transitions; the delay is still checked

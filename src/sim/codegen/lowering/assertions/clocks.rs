@@ -114,10 +114,7 @@ impl Codegen<'_> {
         }
         let NodeKind::AssertionExpr(AssertionExprKind::Clocking { specs, .. }) = self.kind(node)
         else {
-            return Err(format!(
-                "assertion clocking event expected at {}",
-                self.source_location(node)
-            ));
+            return Err(self.locate_error(node, "assertion clocking event expected"));
         };
         let specs = specs.clone();
         if let [EventSpec::Named(event) | EventSpec::AnyChange { sig: event }] = specs.as_slice() {
@@ -163,11 +160,13 @@ impl Codegen<'_> {
             None => None,
         };
         clock.ok_or_else(|| {
-            format!(
-                "$inferred_clock at {} has no clock at the instantiation of checker `{}`: \
+            self.locate_error(
+                node,
+                format!(
+                    "$inferred_clock has no clock at the instantiation of checker `{}`: \
                  no default clocking applies there (IEEE 1800-2009 16.15.7, 17.4)",
-                self.source_location(node),
-                self.node(checker).name
+                    self.node(checker).name
+                ),
             )
         })
     }
@@ -195,9 +194,9 @@ impl Codegen<'_> {
             }
         };
         context.ok_or_else(|| {
-            format!(
-                "$inferred_clock at {} has no current resolved event expression (IEEE 1800-2009 16.15.7)",
-                self.source_location(node)
+            self.locate_error(
+                node,
+                "$inferred_clock has no current resolved event expression (IEEE 1800-2009 16.15.7)",
             )
         })
     }
@@ -238,10 +237,7 @@ impl Codegen<'_> {
     ) -> Result<SampledClock, String> {
         let NodeKind::AssertionExpr(AssertionExprKind::Clocking { specs, .. }) = self.kind(node)
         else {
-            return Err(format!(
-                "assertion clocking event expected at {}",
-                self.source_location(node)
-            ));
+            return Err(self.locate_error(node, "assertion clocking event expected"));
         };
         let specs = specs.clone();
         self.assertion_pulse_clock(path, &specs)
@@ -679,16 +675,18 @@ impl Codegen<'_> {
                 let mut seen = HashSet::new();
                 self.first_assertion_clock(path, root, &mut seen)?
                     .ok_or_else(|| {
-                        format!(
-                            "concurrent assertions require one explicit signal clock at {} ({path})",
-                            self.assertion_location(root, origin)
+                        crate::sim::codegen::error::located(
+                            &self.assertion_location(root, origin),
+                            format!(
+                                "concurrent assertions require one explicit signal clock ({path})"
+                            ),
                         )
                     })?
             }
             _ => {
-                return Err(format!(
-                    "the property at {} has no unique semantic leading clock (IEEE 1800-2009 16.17 e), 16.17.1)",
-                    self.assertion_location(root, origin)
+                return Err(crate::sim::codegen::error::located(
+                    &self.assertion_location(root, origin),
+                    "the property has no unique semantic leading clock (IEEE 1800-2009 16.17 e), 16.17.1)",
                 ))
             }
         };
@@ -844,9 +842,11 @@ impl Codegen<'_> {
             .into_iter()
             .any(|operand| self.changes_clock_within(operand))
         {
-            return Err(format!(
-                "sequence operator {operator}{} combines differently clocked or multiclocked sequence operands; only ##1 and ##0 may (IEEE 1800-2009 16.14.1)",
-                self.known_location_suffix(node)
+            return Err(self.locate_error(
+                node,
+                format!(
+                    "sequence operator {operator} combines differently clocked or multiclocked sequence operands; only ##1 and ##0 may (IEEE 1800-2009 16.14.1)"
+                ),
             ));
         }
         Ok(())
@@ -867,29 +867,19 @@ impl Codegen<'_> {
         if !self.changes_clock_within(left) && !self.changes_clock_within(right) {
             return Ok(());
         }
-        let location = self.known_location_suffix(node);
         if delay.max != Some(delay.min) || delay.min > 1 {
-            return Err(format!(
-                "differently clocked or multiclocked sequences{location} may be concatenated only with ##1 or ##0 (IEEE 1800-2009 16.14.1)"
+            return Err(self.locate_error(
+                node,
+                "differently clocked or multiclocked sequences may be concatenated only with ##1 or ##0 (IEEE 1800-2009 16.14.1)",
             ));
         }
         if empty_side {
-            return Err(format!(
-                "a maximal singly clocked subsequence of the multiclocked sequence{location} admits an empty match (IEEE 1800-2009 16.14.1)"
+            return Err(self.locate_error(
+                node,
+                "a maximal singly clocked subsequence of the multiclocked sequence admits an empty match (IEEE 1800-2009 16.14.1)",
             ));
         }
         Ok(())
-    }
-
-    /// ` at file:line:col` when the node has a source location; the caller
-    /// appends the assertion's own location otherwise.
-    fn known_location_suffix(&self, node: NodeId) -> String {
-        let location = self.source_location(node);
-        if location == "<unknown>:0:0" {
-            String::new()
-        } else {
-            format!(" at {location}")
-        }
     }
 
     /// Whether some clocking event inside `node` changes the clock of the

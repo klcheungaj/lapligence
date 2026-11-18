@@ -284,13 +284,9 @@ impl Codegen<'_> {
                 None => break,
             }
         }
-        let source = self.node(located);
-        format!(
-            "randomization: {message} at {}:{}:{} in `{}`",
-            source.file.as_deref().unwrap_or("<unknown>"),
-            source.line,
-            source.col,
-            self.source_path(path)
+        self.locate_error(
+            located,
+            format!("randomization: {message} in `{}`", self.source_path(path)),
         )
     }
 

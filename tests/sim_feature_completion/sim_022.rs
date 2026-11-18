@@ -174,9 +174,10 @@ fn merged_compilation_unit_rejects_a_unit_name_declared_twice() {
         assert!(output.stdout.is_empty(), "{seen}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("redefinition of `unit_text` in the compilation-unit scope at")
-                && stderr.contains("unit_isolated_b.sv:4:8")
-                && stderr.contains("unit_shared_a.sv:9:8"),
+            crate::sim_harness::mentions(
+                &stderr,
+                "unit_isolated_b.sv:4:8 redefinition of `unit_text` in the compilation-unit scope (previous declaration at "
+            ) && stderr.contains("unit_shared_a.sv:9:8"),
             "{seen}"
         );
     }
@@ -361,17 +362,17 @@ fn modifying_methods_on_const_variables_are_rejected_with_their_location() {
     sim_cli::reject_case(
         SUITE,
         "neg_const_queue_method",
-        "neg_const_queue_method.sv:6:5: `push_back` modifies `limits`, which is declared const",
+        "neg_const_queue_method.sv:6:5 `push_back` modifies `limits`, which is declared const",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_const_string_method",
-        "neg_const_string_method.sv:5:5: `putc` modifies `name`, which is declared const",
+        "neg_const_string_method.sv:5:5 `putc` modifies `name`, which is declared const",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_const_property_method",
-        "neg_const_property_method.sv:9:5: `delete` modifies `entries`, which is declared const",
+        "neg_const_property_method.sv:9:5 `delete` modifies `entries`, which is declared const",
     );
 }
 

@@ -178,6 +178,18 @@ impl<'a> Codegen<'a> {
         ft: NodeId,
         specialization: Option<&PendingSpecialization>,
     ) -> Result<(), String> {
+        self.emit_func_task_with_unlocated(path, inst, ft, specialization)
+            .map_err(|error| self.locate_error(ft, error))
+    }
+
+    /// [`Self::emit_func_task_with`] before its failure is located.
+    fn emit_func_task_with_unlocated(
+        &mut self,
+        path: &str,
+        inst: NodeId,
+        ft: NodeId,
+        specialization: Option<&PendingSpecialization>,
+    ) -> Result<(), String> {
         let automatic = matches!(
             self.kind(ft),
             NodeKind::FuncTask {

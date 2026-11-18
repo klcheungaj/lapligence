@@ -39,6 +39,19 @@ impl<'a> Codegen<'a> {
         kind: PatternAssignmentKind,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        self.lower_p30_pattern_lvalue_assignment_unlocated(path, lhs, rhs, kind, op)
+            .map_err(|error| self.locate_error(lhs, error))
+    }
+
+    /// [`Self::lower_p30_pattern_lvalue_assignment`] before its failure is located.
+    fn lower_p30_pattern_lvalue_assignment_unlocated(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        kind: PatternAssignmentKind,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
         let blocking = kind != PatternAssignmentKind::Nonblocking;
         let pattern = self.p30_unwrap_cast(lhs);
         let NodeKind::Expr(ExprKind::Operation { op: pattern_op, .. }) = self.kind(pattern) else {
@@ -215,8 +228,9 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         }
         if *op == Operation::MultiAssignmentPattern {
-            return Err(format!(
-                "replicated assignment-pattern lvalue in `{path}` is not supported"
+            return Err(self.locate_error(
+                lhs,
+                format!("replicated assignment-pattern lvalue in `{path}` is not supported"),
             ));
         }
 
@@ -250,6 +264,18 @@ impl<'a> Codegen<'a> {
     }
 
     fn p30_collect_pattern_lvalue_targets(
+        &self,
+        path: &str,
+        node: NodeId,
+        descriptor: &TypeDescriptor,
+        out: &mut Vec<(NodeId, TypeDescriptor)>,
+    ) -> Result<(), String> {
+        self.p30_collect_pattern_lvalue_targets_unlocated(path, node, descriptor, out)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::p30_collect_pattern_lvalue_targets`] before its failure is located.
+    fn p30_collect_pattern_lvalue_targets_unlocated(
         &self,
         path: &str,
         node: NodeId,
@@ -307,6 +333,16 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn p30_pattern_lvalue_operand(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<NodeId, String> {
+        self.p30_pattern_lvalue_operand_unlocated(path, node)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::p30_pattern_lvalue_operand`] before its failure is located.
+    fn p30_pattern_lvalue_operand_unlocated(
         &self,
         path: &str,
         node: NodeId,
@@ -765,10 +801,10 @@ impl<'a> Codegen<'a> {
             &mut HashMap::new(),
         )?;
         if u64::try_from(values.len()).ok() != Some(count) {
-            return Err(format!(
+            return Err(self.locate_error(rhs, format!(
                 "fixed unpacked-array assignment in `{path}` has {} source elements; destination requires {count}",
                 values.len()
-            ));
+            )));
         }
         statements.push(IrStmt::Container(Box::new(IrContainerStmt::SetRange {
             container: view,
@@ -1087,6 +1123,17 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn p30_pattern_level(
+        &self,
+        path: &str,
+        node: NodeId,
+        bounds: (i32, i32),
+    ) -> Result<Vec<NodeId>, String> {
+        self.p30_pattern_level_unlocated(path, node, bounds)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::p30_pattern_level`] before its failure is located.
+    fn p30_pattern_level_unlocated(
         &self,
         path: &str,
         node: NodeId,
@@ -1454,6 +1501,27 @@ impl<'a> Codegen<'a> {
         captures: &mut Vec<IrStmt>,
         captured_indices: &mut HashMap<NodeId, (String, u32, bool)>,
     ) -> Result<Vec<IrExpr>, String> {
+        self.p30_lower_source_values_unlocated(
+            path,
+            lhs,
+            rhs,
+            target_dims,
+            captures,
+            captured_indices,
+        )
+        .map_err(|error| self.locate_error(rhs, error))
+    }
+
+    /// [`Self::p30_lower_source_values`] before its failure is located.
+    fn p30_lower_source_values_unlocated(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        target_dims: &[(i32, i32)],
+        captures: &mut Vec<IrStmt>,
+        captured_indices: &mut HashMap<NodeId, (String, u32, bool)>,
+    ) -> Result<Vec<IrExpr>, String> {
         if matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Cast { .. })) {
             let target_is_fixed = self
                 .query_descriptor(rhs)
@@ -1700,6 +1768,24 @@ impl<'a> Codegen<'a> {
         blocking: bool,
         target: P30ArrayView,
         source: ContainerInfo,
+        captures: Vec<IrStmt>,
+    ) -> Result<IrStmt, String> {
+        self.lower_p30_container_to_fixed_unlocated(
+            path, lhs, rhs, blocking, target, source, captures,
+        )
+        .map_err(|error| self.locate_error(rhs, error))
+    }
+
+    /// [`Self::lower_p30_container_to_fixed`] before its failure is located.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_p30_container_to_fixed_unlocated(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        target: P30ArrayView,
+        source: ContainerInfo,
         mut captures: Vec<IrStmt>,
     ) -> Result<IrStmt, String> {
         let kind = self.model.containers[source.ir].kind.clone();
@@ -1811,6 +1897,24 @@ impl<'a> Codegen<'a> {
     /// write, preserving the destination on a mismatch.
     #[allow(clippy::too_many_arguments)]
     fn lower_p30_bitstream_container_cast(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        target: P30ArrayView,
+        source: ContainerInfo,
+        captures: Vec<IrStmt>,
+    ) -> Result<IrStmt, String> {
+        self.lower_p30_bitstream_container_cast_unlocated(
+            path, lhs, rhs, blocking, target, source, captures,
+        )
+        .map_err(|error| self.locate_error(rhs, error))
+    }
+
+    /// [`Self::lower_p30_bitstream_container_cast`] before its failure is located.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_p30_bitstream_container_cast_unlocated(
         &mut self,
         path: &str,
         lhs: NodeId,
@@ -1973,6 +2077,19 @@ impl<'a> Codegen<'a> {
     /// reading one reports the error and yields the member's
     /// default-uninitialized value.
     pub(in super::super) fn lower_p30_fixed_array_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
+        self.lower_p30_fixed_array_assignment_unlocated(path, lhs, rhs, blocking, op)
+            .map_err(|error| self.locate_error(lhs, error))
+    }
+
+    /// [`Self::lower_p30_fixed_array_assignment`] before its failure is located.
+    fn lower_p30_fixed_array_assignment_unlocated(
         &mut self,
         path: &str,
         lhs: NodeId,

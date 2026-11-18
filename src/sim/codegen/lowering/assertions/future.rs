@@ -60,18 +60,20 @@ impl Deferral<'_> {
     fn slot(&mut self) -> Result<u32, String> {
         let slot = self.slots;
         self.slots = slot.checked_add(1).ok_or_else(|| {
-            format!(
-                "assertion at {} captures too many operands for its global clocking future sampled value functions",
-                self.location
+            crate::sim::codegen::error::located(
+                self.location,
+                "assertion captures too many operands for its global clocking future sampled value functions",
             )
         })?;
         Ok(slot)
     }
 
     fn limit(&self, what: &str) -> String {
-        format!(
-            "{what} in an assertion with global clocking future sampled value functions at {} is not supported (IEEE 1800-2009 16.9.4)",
-            self.location
+        crate::sim::codegen::error::located(
+            self.location,
+            format!(
+                "{what} in an assertion with global clocking future sampled value functions is not supported (IEEE 1800-2009 16.9.4)"
+            ),
         )
     }
 
@@ -169,8 +171,11 @@ impl Codegen<'_> {
         }
         let location = assertion.location.clone();
         let deferral_limit = |what: &str| {
-            format!(
-                "{what} with global clocking future sampled value functions at {location} is not supported (IEEE 1800-2009 16.9.4)"
+            crate::sim::codegen::error::located(
+                &location,
+                format!(
+                    "{what} with global clocking future sampled value functions is not supported (IEEE 1800-2009 16.9.4)"
+                ),
             )
         };
         if assertion.kind == IrConcurrentAssertionKind::Expect {

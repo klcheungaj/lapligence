@@ -1,7 +1,9 @@
 # Simulator lowering
 
 `codegen.rs` lowers a validated `SemanticModel` into typed operations and an
-`ExecutionModel`, returning `GeneratedModel` or a typed `CodegenError`.
+`ExecutionModel`, returning `GeneratedModel` or a typed `CodegenError`
+whose location is the failing construct, or the innermost statement,
+expression or declaration that contains it (`error.rs`).
 It performs no native frontend calls, unsafe operations or C emission.
 
 | Component | Responsibility |

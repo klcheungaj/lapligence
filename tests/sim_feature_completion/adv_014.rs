@@ -167,17 +167,17 @@ fn unsupported_deferred_forms_are_located() {
     sim_cli::reject_case(
         SUITE,
         "neg_expect",
-        "neg_expect.sv:11:5 is not supported (IEEE 1800-2009 16.9.4)",
+        "neg_expect.sv:11:5 `expect` with global clocking future sampled value functions is not supported (IEEE 1800-2009 16.9.4)",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_async_abort",
-        "neg_async_abort.sv:10:3 is not supported (IEEE 1800-2009 16.9.4)",
+        "neg_async_abort.sv:10:3 `accept_on`/`reject_on` with global clocking future sampled value functions is not supported (IEEE 1800-2009 16.9.4)",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_endpoint",
-        "neg_endpoint.sv:14:11 is not supported (IEEE 1800-2009 16.9.4)",
+        "neg_endpoint.sv:14:11 a sequence end point with global clocking future sampled value functions is not supported (IEEE 1800-2009 16.9.4)",
     );
 }
 
@@ -185,45 +185,33 @@ fn unsupported_deferred_forms_are_located() {
 /// capture are located limits.
 #[test]
 fn unsupported_operand_forms_are_located() {
-    const TAIL: &str = "in an assertion with global clocking future sampled value functions at";
-    const END: &str = "is not supported (IEEE 1800-2009 16.9.4)";
-    sim_cli::reject_case(SUITE, "neg_real_operand", &format!("a real operand {TAIL}"));
+    const TAIL: &str = "in an assertion with global clocking future sampled value functions \
+                        is not supported (IEEE 1800-2009 16.9.4)";
     sim_cli::reject_case(
         SUITE,
         "neg_real_operand",
-        &format!("neg_real_operand.sv:9:3 {END}"),
+        &format!("neg_real_operand.sv:9:3 a real operand {TAIL}"),
     );
     sim_cli::reject_case(
         SUITE,
         "neg_system_function",
-        &format!("this system function {TAIL}"),
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_system_function",
-        &format!("neg_system_function.sv:9:3 {END}"),
+        &format!("neg_system_function.sv:9:3 this system function {TAIL}"),
     );
     sim_cli::reject_case(
         SUITE,
         "neg_sampled_function",
-        &format!("this sampled value function {TAIL}"),
+        &format!("neg_sampled_function.sv:7:3 this sampled value function {TAIL}"),
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_sampled_function",
-        &format!("neg_sampled_function.sv:7:3 {END}"),
-    );
-    sim_cli::reject_case(SUITE, "neg_inside", &format!("this expression form {TAIL}"));
-    sim_cli::reject_case(SUITE, "neg_inside", &format!("neg_inside.sv:9:3 {END}"));
-    sim_cli::reject_case(
-        SUITE,
-        "neg_procedural_automatic",
-        "a procedural assertion reading an automatic variable or a const cast with global \
-         clocking future sampled value functions at",
+        "neg_inside",
+        &format!("neg_inside.sv:9:3 this expression form {TAIL}"),
     );
     sim_cli::reject_case(
         SUITE,
         "neg_procedural_automatic",
-        &format!("neg_procedural_automatic.sv:13:5 {END}"),
+        "neg_procedural_automatic.sv:13:5 a procedural assertion reading an automatic variable \
+         or a const cast with global clocking future sampled value functions is not supported \
+         (IEEE 1800-2009 16.9.4)",
     );
 }

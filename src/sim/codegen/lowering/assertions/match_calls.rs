@@ -45,8 +45,9 @@ impl Codegen<'_> {
                 .map(|action| (action, std::mem::take(&mut ctx.pre_fns)))
         };
         (self.func, self.depth_arg, self.inst) = saved;
-        let (action, mut pre_fns) =
-            lowered.map_err(|error| format!("{error} (sequence match item at {location})"))?;
+        let (action, mut pre_fns) = lowered.map_err(|error| {
+            crate::sim::codegen::error::located(&location, format!("{error} (sequence match item)"))
+        })?;
         pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
         let writes = self.ir_process_writes(self.collect_process_writes(node)?);
         let name = self.new_fn_name(&label, "match_call");

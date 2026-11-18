@@ -475,11 +475,13 @@ impl EmitCtx<'_, '_> {
             return Ok(None);
         };
         if op != Operation::Assignment {
-            return Err(format!(
-                "{}: a compound assignment to an element of an unpacked array member through \
+            return Err(self.cg.locate_error(
+                lhs,
+                format!(
+                    "a compound assignment to an element of an unpacked array member through \
                  a virtual interface is not supported in `{}`; use `=` or `<=`",
-                self.cg.source_location(lhs),
-                self.path
+                    self.path
+                ),
             ));
         }
         let indices = element
@@ -783,12 +785,14 @@ impl EmitCtx<'_, '_> {
         else {
             return Ok(());
         };
-        Err(format!(
-            "nonblocking assignment to class property `{}` at {} in `{}` is illegal \
+        Err(self.cg.locate_error(
+            lhs,
+            format!(
+                "nonblocking assignment to class property `{}` in `{}` is illegal \
              (IEEE 1800-2009 6.21: class properties shall not be written with nonblocking assignments)",
-            self.cg.node(field).name,
-            self.cg.source_location(lhs),
-            self.path
+                self.cg.node(field).name,
+                self.path
+            ),
         ))
     }
 
@@ -1700,26 +1704,17 @@ impl EmitCtx<'_, '_> {
                 "delay timing reached event-assignment lowering in `{}`",
                 self.path
             )),
-            IntraControl::Cycle { control, .. } => {
-                let node = self.cg.node(*control);
-                Err(format!(
-                    "cycle delay cannot be nested in an event assignment at {}:{}:{} in `{}`",
-                    node.file.as_deref().unwrap_or("<unknown>"),
-                    node.line,
-                    node.col,
+            IntraControl::Cycle { control, .. } => Err(self.cg.locate_error(
+                *control,
+                format!(
+                    "cycle delay cannot be nested in an event assignment in `{}`",
                     self.path
-                ))
-            }
-            IntraControl::Unsupported { control } => {
-                let node = self.cg.node(*control);
-                Err(format!(
-                    "unsupported intra-assignment timing at {}:{}:{} in `{}`",
-                    node.file.as_deref().unwrap_or("<unknown>"),
-                    node.line,
-                    node.col,
-                    self.path
-                ))
-            }
+                ),
+            )),
+            IntraControl::Unsupported { control } => Err(self.cg.locate_error(
+                *control,
+                format!("unsupported intra-assignment timing in `{}`", self.path),
+            )),
         }
     }
 
