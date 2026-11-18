@@ -78,7 +78,6 @@ static PLI_INT32 act_register(PLI_BYTE8* data) {
         PLI_INT32 reason;
     } refused[] = {
         {"cbStmt", cbStmt},
-        {"cbSizeChange", cbSizeChange},
         {"cbAssign", cbAssign},
         {"cbDeassign", cbDeassign},
         {"cbUnresolvedSystf", cbUnresolvedSystf},

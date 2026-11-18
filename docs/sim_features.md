@@ -3101,7 +3101,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   shallow copies and collection; handles track objects without pinning
   them and are released when the collector reclaims the object;
   `cbValueChange` watches class variables (decisions A19-D21..D23) and
-  chandle variables, reporting the new pointer image once per check. Models
+  chandle variables, reporting the new pointer image once per check;
+  `cbSizeChange` (`vpiSuppressVal`) runs after each resize of a dynamic
+  array, queue or associative array variable of a scope (decision A19-D91). Models
   without a VPI catalog emit no tables and no creation calls.
   `vpi_get_value` serves every Table
   38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs

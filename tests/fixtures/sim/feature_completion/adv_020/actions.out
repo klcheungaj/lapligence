@@ -3,7 +3,6 @@ register sigterm handle: level=0 code=-
 register signal 0 NULL: level=3 code=LLG_VPI_CALLBACK
 register signal -1 NULL: level=3 code=LLG_VPI_CALLBACK
 register cbStmt NULL: level=3 code=LLG_VPI_UNSUPPORTED
-register cbSizeChange NULL: level=3 code=LLG_VPI_UNSUPPORTED
 register cbAssign NULL: level=3 code=LLG_VPI_UNSUPPORTED
 register cbDeassign NULL: level=3 code=LLG_VPI_UNSUPPORTED
 register cbUnresolvedSystf NULL: level=3 code=LLG_VPI_UNSUPPORTED

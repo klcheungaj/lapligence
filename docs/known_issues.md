@@ -3297,9 +3297,6 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - callback reasons refused with an error naming the reason: `cbStmt` (a
   statement has no execution hook; adding one would cost every model
   statement a check, or a second statement-hooked code path per process),
-  `cbSizeChange` (no resize of a dynamic array, queue, associative array
-  or string reaches VPI; industry-standard behaviour never calls it either,
-  decision A19-D91),
   `cbAssign`/`cbDeassign` (procedural `assign`/`deassign` is rejected,
   decision A20-D9), `cbUnresolvedSystf` (every system call is resolved when
   the model is generated) and the save, restart, reset and interactive

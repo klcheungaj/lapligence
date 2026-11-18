@@ -7,11 +7,12 @@ register h suppress: handle level=0
 register h2 hex: handle level=0
 register h strength: NULL level=3
 register da size: NULL level=3
-register q size: NULL level=3
+register q size: handle level=0
 register aa size: NULL level=3
 register s size: NULL level=3
 register cont assign: NULL level=3
 register gate: NULL level=3
+1: q size obj=vpiArrayVar index=0 value=NULL
 1: h suppress obj=vpiChandleVar index=0 value=NULL
 1: h vector obj=vpiChandleVar index=0 vector=0000000000001005/0000000000000000
 1: h dec obj=vpiChandleVar index=0 dec=                4101
