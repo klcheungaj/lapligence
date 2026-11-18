@@ -692,8 +692,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   static class members of package classes, forks in package tasks) execute
   from every importer (FIN-001 probes). Instance-hierarchical names are not constant-expression operands;
   lexical package references remain distinct. Among initializers that read
-  nothing from one another, class static properties run first, then package
-  and `$unit` variables, then the design hierarchy (decision S22-D8). A
+  nothing from one another, packages run first in declaration order, then
+  `$unit`, then the design hierarchy in post-order (an instance after the
+  instances below it), each scope its class static properties before its
+  variables (decision S22-D8). A
   package defined twice (a guarded header compiled on its own and included
   again in another compilation unit; the frontend warns) is simulated once, as
   every reference binds the first definition

@@ -1845,6 +1845,14 @@ fn s22_d8_package_initializers_before_design() {
 }
 
 #[test]
+fn s22_d8_scope_initialization_order() {
+    run_decision(
+        "S22-D8_scope_initialization_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_scope_initialization_order.out"),
+    );
+}
+
+#[test]
 fn s22_d9_initializer_finish_runs_finals() {
     run_decision(
         "S22-D9_initializer_finish_runs_finals",
