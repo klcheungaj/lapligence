@@ -218,7 +218,7 @@ fn reports_keep_their_source_positions() {
     let randomize_warning = format!("WARNING: [SIM-011] {randomize}");
     let messages = [
         "ERROR: source_map.sv:10:10: [SIM-005] (checks_pkg @ 0 ns) not positive: -2",
-        "WARNING: source_map.sv:23:5: [SIM-004] (limited_c @ 0 ns) limited_c warning 1",
+        "WARNING: source_map.sv:23:5: [SIM-004] ($unit @ 0 ns) limited_c warning 1",
         randomize_warning.as_str(),
         "ERROR: source_map.sv:16:3: [SIM-007] (5 ns) assert failed (always_low)",
     ];
