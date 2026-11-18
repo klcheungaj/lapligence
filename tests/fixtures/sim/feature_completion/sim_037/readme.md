@@ -173,12 +173,13 @@ dropped silently. An invalid limit (`0`) is rejected at startup.
 
 ## Negatives
 
+`property_and_pending` was the `neg_property_and` negative: `and` with an
+implication operand is property-level composition, rejected until SIM-038
+implemented it; the fixture now runs and its one attempt is still pending
+(weak) at `$finish`, so it prints nothing.
+
 - `neg_join_local`: a local variable assignment inside an `and` operand is
   legal (16.10) but belongs to SIM-039; rejected with an explicit message.
-- `neg_property_and`: `and` with an implication operand is property-level
-  composition, rejected until SIM-038 implemented it; the fixture now runs
-  and its one attempt is still pending (weak) at `$finish`, so it prints
-  nothing.
 - `neg_multiclock_and`: an `and` operand with a different clock; Slang
   reports that the expression has no unique leading clock.
 - `neg_goto_sequence`: goto repetition of a sequence is illegal (16.9.2).

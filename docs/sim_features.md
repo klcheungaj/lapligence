@@ -48,6 +48,15 @@ The current stackless runtime has no sanitizer-specific stack-switch path; its
 configured generated-model lanes use ordinary ASan/UBSan flags. Configuration
 alone is not fresh execution evidence or native-platform qualification.
 
+Every rejected form named in [known issues](known_issues.md) is a
+compile-time error, located where lowering has a source node, or a run-time
+stop with a message id; each section there
+gives Status, Symptom, Cause, Intended direction and Reproduce (FIN-001 X1).
+`negative_fixture_sweep` fails when a `neg_*`/`reject_*` fixture generates a
+C model without a listed run-, link-time or strict-2001 reason, and
+[`ki_audit`](../tests/fixtures/sim/feature_completion/ki_audit/readme.md)
+pins the limits that had no test.
+
 References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retain
 **[1995]**, **[2001]**, **[1364-2005]**, **[SV-2005]** and **[SV-2009]**.
 
@@ -1110,7 +1119,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Real edges (SV §6.12.1), chandles (§6.14) and functions with output/ref
   formals (§13.4) reject as language rules. Event handles or array-reading
   helpers in named-event lists with process-evaluated sources, virtual
-  methods and helper forms outside §9 reject.
+  methods and helper forms outside §9 reject. A wait or event control on the
+  identity of event variables (`wait (k == g)`, `@(k == g)`) rejects at the
+  comparison ([known issue](known_issues.md#level-waits-on-the-identity-of-an-event-variable-reject)).
   Per-object container properties (`h.q.size()`, `h.fa[1]`, `h.aa.exists(k)`,
   also inside methods and inherited), mailbox `num()` (module, property and
   callee handles; rebinding a mailbox handle publishes a change), callee
@@ -1329,7 +1340,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (`get().v++`, `get().r += 1.5`, `y = get().v++`) mutate with the handle
   evaluated once
   ([rtl_006](../tests/fixtures/sim/feature_completion/rtl_006/readme.md));
-  selects of such a property as targets reject
+  elements of an unpacked array property of one read, write and take compound
+  assignments ([ki_audit](../tests/fixtures/sim/feature_completion/ki_audit/readme.md));
+  packed selects of such a property as targets reject
   ([known issue](known_issues.md#selects-of-properties-of-computed-class-handles)).
   Non-lvalues, continuous/port mutation expressions and unsupported
   aggregates reject. SV §§11.4.1–11.4.2 **[SV-2005]**.

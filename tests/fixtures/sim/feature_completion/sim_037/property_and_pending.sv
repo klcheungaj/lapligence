@@ -1,5 +1,5 @@
-// llg-test-fixture: tests/fixtures/sim/feature_completion/sim_037/neg_property_and.sv
-// SIM-037 negative: a property-level `and` whose operand is an implication
+// llg-test-fixture: tests/fixtures/sim/feature_completion/sim_037/property_and_pending.sv
+// Formerly a SIM-037 negative: a property-level `and` whose operand is an implication
 // is a property operator owned by SIM-038, not sequence composition. SIM-038
 // implements it; the attempt is pending (weak) at $finish.
 module tb;

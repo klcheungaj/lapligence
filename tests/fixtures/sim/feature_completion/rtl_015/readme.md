@@ -44,3 +44,9 @@ earlier by a nonblocking (`neg_nba_with_dependence`) or right-to-left
 owned by SIM-020 and keeps an explicit diagnostic. The former mixed-state,
 copy-out and descriptor-stream `with` negatives are RTL-103 positives
 (`../rtl_103/rtl015_*.sv`).
+`neg_delayed_with_range` is a legal form that stays a located limit
+(`docs/known_issues.md`, streaming `with` targets): its runtime range sits on
+an intra-assignment-delayed target, while §11.4.14.4
+(`SystemVerilog-1800-2009.txt` L15622-15623) requires that "The expression
+within the with is evaluated immediately before its corresponding array is
+streamed (i.e., packed or unpacked)."

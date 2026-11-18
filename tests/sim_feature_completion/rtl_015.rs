@@ -133,6 +133,17 @@ fn neg_selector_reading_an_earlier_target() {
     );
 }
 
+/// A runtime `with` range on an intra-assignment-delayed target is a located
+/// limit (`docs/known_issues.md`, streaming `with` targets).
+#[test]
+fn neg_delayed_target_runtime_range() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_delayed_with_range",
+        "neg_delayed_with_range.sv:8:5 streaming `with` target whose range is runtime-valued or outside the array bounds requires a direct streaming assignment",
+    );
+}
+
 // The mixed-state, copy-out and descriptor-stream `with` negatives are
 // positives of RTL-103 (`rtl_103::rtl015_*`); the container NBA stays SIM-020's.
 #[test]
