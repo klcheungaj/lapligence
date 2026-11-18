@@ -314,6 +314,9 @@ mod sim_047;
 #[path = "sim_feature_completion/sim_099.rs"]
 mod sim_099;
 
+#[path = "sim_feature_completion/ki_audit.rs"]
+mod ki_audit;
+
 #[path = "sim_feature_completion/ki_class_defects.rs"]
 mod ki_class_defects;
 

@@ -921,6 +921,49 @@ pub(crate) fn reject_case_with_args(suite: &str, fixture: &str, diagnostic: &str
     }
 }
 
+/// Reject a fixture in both optimizer modes with exit status 1, no output and
+/// exactly one error message: id `id` (its family), a text containing `text`,
+/// located at `<fixture>.sv:<at>` or, when `at` is `None`, unlocated.
+pub(crate) fn reject_case_with_id(
+    suite: &str,
+    fixture: &str,
+    id: &str,
+    at: Option<&str>,
+    text: &str,
+) {
+    let source = fixture_path(suite, fixture);
+    let file = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(fixture)
+        .to_owned();
+    for optimized in [false, true] {
+        let output = invoke_with_args(suite, fixture, optimized, &[]);
+        let seen = observed_output(&output);
+        let label = format!("{suite}/{fixture}, optimized={optimized}");
+        assert_eq!(output.status.code(), Some(1), "{label}: {seen}");
+        assert!(output.stdout.is_empty(), "{label}: {seen}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let errors: Vec<_> = stderr
+            .lines()
+            .filter_map(llg::core::report::parse)
+            .filter(|message| message.severity == llg::core::report::Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1, "{label}: {seen}");
+        assert_eq!(errors[0].id, id, "{label}: {seen}");
+        assert!(errors[0].text.contains(text), "{label}: {seen}");
+        let location = errors[0]
+            .location
+            .as_deref()
+            .map(sim_harness::short_location);
+        assert_eq!(
+            location,
+            at.map(|at| format!("{file}:{at}")),
+            "{label}: {seen}"
+        );
+    }
+}
+
 pub(crate) fn reject_case_with_exact_stderr(
     suite: &str,
     fixture: &str,
