@@ -601,6 +601,9 @@ pub struct IrModel {
     pub(in crate::sim) waveform: bool,
     /// Driver-requested dumping that starts at time zero.
     pub(in crate::sim) wave_start: Option<IrWaveStart>,
+    /// Every change of a dumped variable is its own record (`--wave-deltas`,
+    /// decision S47-D15); meaningful only with `waveform`.
+    pub(in crate::sim) wave_deltas: bool,
     /// Static block and subroutine variables and events the waveform dumps;
     /// empty unless `waveform`.
     pub(in crate::sim) wave_variables: Vec<IrWaveVariable>,
@@ -876,6 +879,7 @@ impl IrModel {
             precision_fs,
             waveform: parts.waveform || parts.wave_start.is_some(),
             wave_start: parts.wave_start,
+            wave_deltas: false,
             wave_variables: parts.wave_variables,
             signals: parts.signals,
             net_groups: parts.net_groups,

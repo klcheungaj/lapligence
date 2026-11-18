@@ -27,12 +27,16 @@
 //! of the dropped value itself. The pass therefore does not run where a
 //! consumer sees each write instead of the change at the T1-D11 check
 //! (`docs/lrm_decisions.md`): per storage, `$monitor` marking and sampled
-//! value history (`sampled_record_write`); per model, waveforms, timing
+//! value history (`sampled_record_write`); per model, the per-delta dump
+//! mode (`--wave-deltas`, S47-D15, which records every write), timing
 //! checks, sequential UDP change logs, asynchronous `accept_on`/`reject_on`
 //! conditions, gated sampled-value clocks (AA-D6), and toggle and FSM
 //! coverage. Waiters, VPI value-change callbacks, `disable iff`, force
 //! expressions and switch controls run at the check, which compares the
 //! value with the value at the last check, so they see the same change.
+//! The default dump writes a variable's end-of-step value, in registration
+//! order, only when it differs from the value last written (S47-D2,
+//! S47-D14), so a merged model writes the same file.
 //!
 //! An update directly followed by an `if` or `case` without a uniqueness
 //! check, or by a plain block, moves into the front of every branch (an
@@ -149,7 +153,7 @@ fn observed_storage(model: &IrModel, monitors: &MonitorReads) -> Option<HashSet<
                 )
             })
         });
-    if model.waveform
+    if (model.waveform && model.wave_deltas)
         || !model.timing_checks.is_empty()
         || !model.udp_states.is_empty()
         || coverage_watches

@@ -60,6 +60,9 @@ pub(crate) struct DriverOptions {
     pub lint_config: llg::core::lint::LintConfig,
     /// Waveform dumping from time 0 (`--wave`, `[waveform]`).
     pub wave: Option<sim::codegen::WaveformOptions>,
+    /// Every change of a dumped variable is recorded (`--wave-deltas`,
+    /// `waveform.deltas`).
+    pub wave_deltas: bool,
     pub generator: Option<String>,
     pub dpi_libraries: Vec<PathBuf>,
     /// Write the model executable's import library here and stop
@@ -471,6 +474,7 @@ pub(crate) fn resolve(
         lint_json_path,
         lint_config: config.lint.clone(),
         wave,
+        wave_deltas: cli.wave_deltas.or(config.waveform.deltas).unwrap_or(false),
         generator: layered(
             cli.generator,
             env.generator.clone(),
@@ -703,6 +707,10 @@ files = ["a.sv"]
         assert!(!options.no_opt && !options.gen_only);
         assert!(!options.lint_only && !options.warnings_as_errors && !options.lint_json_mode);
         assert_eq!(options.wave, None);
+        assert!(
+            !options.wave_deltas,
+            "the default dump records end-of-step values"
+        );
         assert!(options.include_dirs.is_empty() && options.runtime_args.is_empty());
     }
 
@@ -1326,6 +1334,29 @@ files = ["a.sv"]
                 "{rejected:?}"
             );
         }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_per_delta_dump_mode_follows_the_precedence_rules() {
+        let dir = temp("wave_deltas");
+        // The mode also applies to `$dumpvars` dumps, so it needs no file.
+        let on = config(&dir, "schema_version = 1\n[waveform]\ndeltas = true\n");
+        let options = resolve_no_env(cli(&["x.sv"]), Some(&on)).unwrap();
+        assert!(options.wave_deltas);
+        assert_eq!(options.wave, None);
+        let options = resolve_no_env(cli(&["--no-wave-deltas", "x.sv"]), Some(&on)).unwrap();
+        assert!(
+            !options.wave_deltas,
+            "--no-wave-deltas overrides the config"
+        );
+        let options = resolve_no_env(cli(&["--no-wave", "x.sv"]), Some(&on)).unwrap();
+        assert!(options.wave_deltas, "--no-wave cancels only the file");
+        let options = resolve_no_env(cli(&["--wave-deltas", "x.sv"]), None).unwrap();
+        assert!(options.wave_deltas);
+        let options =
+            resolve_no_env(cli(&["--wave-deltas", "--no-wave-deltas", "x.sv"]), None).unwrap();
+        assert!(!options.wave_deltas, "the last flag wins");
         let _ = std::fs::remove_dir_all(dir);
     }
 

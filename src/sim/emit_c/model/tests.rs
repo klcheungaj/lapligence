@@ -300,11 +300,14 @@ fn only_catalog_models_mark_their_header() {
 
 #[test]
 fn non_waveform_model_has_no_waveform_integration() {
-    let model = IrModel::new("plain".to_string(), 1).unwrap();
+    let mut model = IrModel::new("plain".to_string(), 1).unwrap();
+    // The per-delta mode needs a dump to mark.
+    model.wave_deltas = true;
     let execution = ExecutionModel::lower(model).unwrap();
     let c = render(&execution).unwrap();
 
     assert!(!c.contains("#define LLG_WAVEFORM 1"));
+    assert!(!c.contains("LLG_WAVE_DELTAS"));
     assert!(!c.contains("llg_wave.h"));
     assert!(!c.contains("llg_wave_model_init"));
     assert!(c.contains("llg_rt_init_with_args_and_precision(argc, argv, 1ULL)"));
@@ -439,8 +442,16 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     }];
     model.spawns = vec!["p_top_initial_0".to_string()];
 
+    let mut deltas = model.clone();
     let execution = ExecutionModel::lower(model).unwrap();
     let c = render(&execution).unwrap();
+
+    // The per-delta dump is marked for the model build (S47-D15).
+    assert!(!c.contains("LLG_WAVE_DELTAS"));
+    deltas.wave_deltas = true;
+    let marked = render(&ExecutionModel::lower(deltas).unwrap()).unwrap();
+    assert_eq!(marked.matches("#define LLG_WAVE_DELTAS 1").count(), 1);
+    assert_eq!(marked.replace("#define LLG_WAVE_DELTAS 1\n", ""), c);
 
     assert_eq!(c.matches("#define LLG_WAVEFORM 1").count(), 1);
     assert!(c.contains("#include \"llg_wave.h\""));

@@ -3844,6 +3844,22 @@ fn s47_d13_catalog_encoding() {
 }
 
 #[test]
+fn s47_d14_restored_value_no_record() {
+    run_decision(
+        "S47-D14_restored_value_no_record",
+        include_str!("fixtures/sim/lrm_decisions/S47-D14_restored_value_no_record.out"),
+    );
+}
+
+#[test]
+fn s47_d15_per_delta_dump() {
+    run_decision(
+        "S47-D15_per_delta_dump",
+        include_str!("fixtures/sim/lrm_decisions/S47-D15_per_delta_dump.out"),
+    );
+}
+
+#[test]
 fn s47_d9_named_string_rejected() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(include_str!("fixtures/sim/lrm_decisions/S47-D9_named_string_rejected.out").is_empty());

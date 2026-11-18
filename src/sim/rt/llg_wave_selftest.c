@@ -74,6 +74,66 @@ static int file_contains(const char* path, const char* needle) {
     return found;
 }
 
+#ifndef LLG_WAVE_DELTAS
+#define ORDERED_COUNT 20u
+
+// End-of-step records (S47-D14): a step's records follow registration order
+// whatever the order of the writes (more than the insertion-sorted batch
+// size), and a value that ends its step where its last record left it
+// writes no record.
+static int restored_and_ordered(const char* path) {
+    sv4_t values[ORDERED_COUNT];
+    double real_value = 0.5;
+    char name[32];
+    char expected[ORDERED_COUNT * 16u + 8u];
+    size_t used = 0;
+    int ok = 0;
+    for (uint32_t i = 0; i < ORDERED_COUNT; i++) values[i] = SV4_C(0, 8);
+    if (llg_wave_model_init(1) != 0) goto done;
+    for (uint32_t i = 0; i < ORDERED_COUNT; i++) {
+        snprintf(name, sizeof name, "top\037v%02u", (unsigned)i);
+        if (llg_wave_register_sv4(name, &values[i], 8) != 0) goto done;
+    }
+    if (llg_wave_register_real("top\037r", &real_value) != 0) goto done;
+    llg_wave_file(path, 0);
+    llg_wave_dumpvars(0);
+    llg_wave_slot_end(0);
+    used += (size_t)snprintf(expected + used, sizeof expected - used, "#1\n");
+    for (uint32_t i = ORDERED_COUNT; i-- > 0;) {
+        sv4_replace(&values[i], SV4_C(i + 1u, 8));
+        llg_wave_changed_sv4(&values[i]);
+    }
+    for (uint32_t i = 0; i < ORDERED_COUNT; i++) {
+        uint32_t v = i + 1u;
+        used += (size_t)snprintf(expected + used, sizeof expected - used,
+                                 "b%u%u%u%u%u%u%u%u %c\n", (v >> 7) & 1u, (v >> 6) & 1u,
+                                 (v >> 5) & 1u, (v >> 4) & 1u, (v >> 3) & 1u, (v >> 2) & 1u,
+                                 (v >> 1) & 1u, v & 1u, (char)('!' + i));
+    }
+    llg_wave_slot_end(1);
+    sv4_replace(&values[3], SV4_C(99, 8));
+    llg_wave_changed_sv4(&values[3]);
+    sv4_replace(&values[3], SV4_C(4, 8));
+    llg_wave_changed_sv4(&values[3]);
+    llg_wave_slot_end(2);
+    real_value = 1.5;
+    llg_wave_changed_real(&real_value);
+    real_value = 0.5;
+    llg_wave_changed_real(&real_value);
+    llg_wave_slot_end(3);
+    sv4_replace(&values[0], SV4_C(0x80, 8));
+    llg_wave_changed_sv4(&values[0]);
+    llg_wave_slot_end(4);
+    if (llg_wave_close(4) != 0) goto done;
+    ok = file_contains(path, expected) && !file_contains(path, "#2\n") &&
+         !file_contains(path, "#3\n") && file_contains(path, "#4\nb10000000 !\n");
+done:
+    for (uint32_t i = 0; i < ORDERED_COUNT; i++) sv4_destroy(&values[i]);
+    (void)remove(path);
+    return ok;
+}
+#endif
+
 int main(void) {
     const char* vcd_path = "llg_wave_selftest.vcd";
     const char* selected_vcd_path = "llg_wave_selection_selftest.vcd";
@@ -148,6 +208,10 @@ int main(void) {
     CHECK(file_contains(selected_vcd_path, "mem$5B3$5D $end"));
     CHECK(file_contains(selected_vcd_path, "mem$5B2$5D $end"));
     CHECK(llg_wave_close(0) == 0);
+
+#ifndef LLG_WAVE_DELTAS
+    CHECK(restored_and_ordered("llg_wave_restore_selftest.vcd"));
+#endif
 
     sv4_replace(&packed, SV4_C(0, 8));
     CHECK(llg_wave_model_init(1) == 0);

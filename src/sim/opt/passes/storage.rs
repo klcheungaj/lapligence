@@ -126,6 +126,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         // Waveform models keep every HDL-visible signal (below).
         waveform,
         wave_start: _,
+        wave_deltas: _,
         wave_variables,
         signals: _,
         net_groups: _,
