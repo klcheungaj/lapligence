@@ -204,6 +204,22 @@ toggles at once reuses the row lookup that found it unwaited
 keeps plain copies of its values instead of a registered snapshot scope
 (`sig_write_as`).
 
+The step loop, each publication and each check run every time step, so their
+code is laid out to touch few instruction-cache lines. A test of an optional
+consumer (sampled values, monitors, assertions, clocking history and drives,
+deferred triggers, region callbacks, inertial updates, delayed NBAs, strobes,
+deferred assertion reports, marked arrays) is predicted absent
+(`LLG_CO_UNLIKELY`/`LLG_CO_LIKELY`), so that the tests sit together and the
+bodies behind the hot path; a body only some designs reach is out of line
+(`LLG_OUTLYING`). The waiter walk (`publish_waiters_packed`) is one
+out-of-line function shared by every settle and publication, with the waiter
+lists and the rare waiter kinds in helpers of their own; the check settles a
+packed storage record inline and every other kind out of line
+(`change_settle_other`); and the step loop's region-pending tests are shared
+out-of-line functions. A new consumer on these paths follows the same rule:
+its test inline and predicted absent, its body out of line
+([trade-offs](../../../../docs/sim_performance_tradeoffs.md#hot-paths-on-few-cache-lines)).
+
 A force part's target may be an array cell (a dense element, a lazily
 allocated cell of a sparse array, a record leaf or a column cell) that the
 generated code finds when the force or release executes; an invalid index

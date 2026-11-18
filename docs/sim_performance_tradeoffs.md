@@ -729,6 +729,47 @@ processes or clock edges, at the cost of a few bytes per object.
   +0.8% / +1.5%, so their difference is code placement, not work; it needs a
   quiet host to settle.
 
+### Hot paths on few cache lines
+
+- **Trade-off:** the step loop, each publication and each check run every
+  time step. With every consumer inlined they need no calls, but a step then
+  runs a few instructions of each of many cache lines: the waiter walk was
+  inlined into four places, and the tests of consumers most designs lack sat
+  between the consumers' bodies. The first-level instruction cache was
+  nearly full on some rows, so changes that executed fewer instructions moved
+  rows by 1–3% through placement alone. Out-of-line copies cost a call each.
+- **Decision:** a test of an optional consumer on these paths is predicted
+  absent, so that the tests sit together and the bodies behind the hot path;
+  a body only some designs reach is out of line (`LLG_OUTLYING`). The waiter
+  walk is one out-of-line function, with the waiter lists and the rare kinds
+  in helpers of their own; the check settles a packed storage record inline
+  and every other kind out of line; the step loop's region-pending tests are
+  shared out-of-line functions. Outlining alone was measured first and did not
+  help: the hot parts only moved, and each new function boundary added
+  partly used lines; the predictions are what compacted the paths. No logic
+  changed and generated C is identical.
+- **Evidence:** cache simulation (callgrind, 32 KiB 8-way L1i) of the
+  dev tip against the change, counting 64-byte lines whose most executed
+  instruction ran at least once every four time steps. Output and generated
+  C are identical (`--gen-only` over the fixture tree, both optimizer modes).
+
+  | Workload | Hot lines | Instructions | L1i misses |
+  | --- | ---: | ---: | ---: |
+  | Clocking block present, 500 unwaited array cells written per cycle | 194 → 178 | −3.8% | 0.54M → 0.40M |
+  | Every write changes a waited variable once per turn | 383 → 357 | +0.5% | 14.4M → 10.2M |
+  | Clocking input `#1step`, read every cycle | 352 → 335 | +0.7% | 25.0M → 33.0M |
+  | Default-then-override in 2,000 instances (model code dominates) | 304 → 296 | −0.2% | 90.3M → 89.7M |
+
+  In the second row the publication and check functions went from 9.5 KB
+  and 6.8 KB with 21 and 18 hot lines to 3.6 KB and 1.3 KB with 11 and 10,
+  plus a 1 KB waiter walk with 10; the step loop went from 53 to 39 hot
+  lines. Instruction counts move by under 1% either way: the out-of-line
+  copies add calls, the predictions remove taken branches. Wall-clock
+  pairs could not be settled on a host carrying another agent's test suite
+  (load 35–45, interquartile range above 30%); they are still to be taken
+  on a quiet host, together with the placement control of the clocking
+  history change above (one unused 64-byte function).
+
 ### Bounded retention of finished work
 
 - **Trade-off:** keeping completed process records and every sampled slot until
