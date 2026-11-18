@@ -326,6 +326,9 @@ mod ki_record_shapes;
 #[path = "sim_feature_completion/ki_static_init_errors.rs"]
 mod ki_static_init_errors;
 
+#[path = "sim_feature_completion/ki_initializer_order.rs"]
+mod ki_initializer_order;
+
 #[test]
 fn component_fixture_integrity() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

@@ -8,16 +8,17 @@ use super::sim_cli;
 const SUITE: &str = "feature_completion/ki_static_init_errors";
 
 #[test]
-fn coverage_option_error_reports_and_the_run_goes_on() {
-    sim_cli::run_case_stopping_at_runtime(
+fn coverage_option_error_ends_the_run_at_the_construction() {
+    sim_cli::run_case(
         SUITE,
         "coverage_option",
-        &[],
         include_str!(
             "../fixtures/sim/feature_completion/ki_static_init_errors/coverage_option.out"
         ),
-        "SIM-010",
-        "coverage option.weight value -1 is out of range; the option keeps its value",
+        "ERROR: coverage_option.sv:12:5: [SIM-010] (tb @ 0 ps) coverage option.weight value -1 is out of range\n\
+         FATAL: coverage_option.sv:12:5: [SIM-009] (tb @ 0 ps) coverage option value out of range\n\
+         INFO: [SIM-000] 1 fatal, 1 error(s), 0 warning(s)\n",
+        &[],
     );
 }
 

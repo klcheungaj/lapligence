@@ -8,8 +8,9 @@
 //! descriptor-backed fixed arrays are lowered after every array is collected.
 //! The schedule therefore orders initializers by the static declarations
 //! their values read, directly or through called functions, and otherwise
-//! by scope (class statics, package variables, then the design hierarchy)
-//! and the declaration order recorded during collection.
+//! by scope (class statics, package variables, then the design hierarchy),
+//! the order in which collection first reached each declaring scope, and
+//! declaration order within the scope.
 
 use super::*;
 use std::cmp::Reverse;
@@ -194,6 +195,65 @@ impl<'a> Codegen<'a> {
         usize::from(!class)
     }
 
+    /// The base order of each entry: the scope rank (S22-D8), then the
+    /// declaring scopes in the order collection first reached them, then
+    /// declaration order within the scope. Collection reaches the kinds of
+    /// one scope (patterns, handles, strings, containers, records) in
+    /// separate passes, so its order alone does not follow the source; the
+    /// position among the scope's members does.
+    fn initializer_priorities(&self, declarations: &[u32]) -> Vec<usize> {
+        let unordered = self.initializer_order.len();
+        let order_of = |declaration: &u32| {
+            self.initializer_order
+                .get(declaration)
+                .copied()
+                .unwrap_or(unordered)
+        };
+        let mut scope_order: HashMap<Option<NodeId>, usize> = HashMap::new();
+        let mut positions: HashMap<NodeId, HashMap<NodeId, usize>> = HashMap::new();
+        for declaration in declarations {
+            let node = NodeId::from_index(*declaration as usize);
+            let scope = self.node(node).parent;
+            let order = order_of(declaration);
+            scope_order
+                .entry(scope)
+                .and_modify(|first| *first = (*first).min(order))
+                .or_insert(order);
+            if let Some(scope) = scope {
+                positions.entry(scope).or_insert_with(|| {
+                    self.node(scope)
+                        .children
+                        .iter()
+                        .enumerate()
+                        .map(|(position, child)| (*child, position))
+                        .collect()
+                });
+            }
+        }
+        let keys = declarations
+            .iter()
+            .map(|declaration| {
+                let node = NodeId::from_index(*declaration as usize);
+                let scope = self.node(node).parent;
+                let position = scope
+                    .and_then(|scope| positions.get(&scope)?.get(&node).copied())
+                    .unwrap_or(0);
+                (
+                    self.initializer_rank(node),
+                    scope_order.get(&scope).copied().unwrap_or(unordered),
+                    position,
+                    order_of(declaration),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        keys.iter()
+            .map(|key| sorted.binary_search(key).unwrap_or_else(|index| index))
+            .collect()
+    }
+
     /// Order initializer entries identified by their declaration identities.
     /// Returns entry indices in execution order.
     pub(super) fn initializer_schedule(&self, declarations: &[u32]) -> Vec<usize> {
@@ -201,20 +261,7 @@ impl<'a> Codegen<'a> {
         for (entry, declaration) in declarations.iter().enumerate() {
             entries_of.entry(*declaration).or_default().push(entry);
         }
-        let unordered = self.initializer_order.len();
-        // The scope rank comes first, then the collection order within it.
-        let priorities = declarations
-            .iter()
-            .map(|declaration| {
-                let order = self
-                    .initializer_order
-                    .get(declaration)
-                    .copied()
-                    .unwrap_or(unordered);
-                let rank = self.initializer_rank(NodeId::from_index(*declaration as usize));
-                rank * (unordered + 1) + order
-            })
-            .collect::<Vec<_>>();
+        let priorities = self.initializer_priorities(declarations);
         let mut dependencies: Vec<Vec<usize>> = vec![Vec::new(); declarations.len()];
         // A declaration with several entries (unpacked aggregate leaves) is
         // reached through one pass-through hub, so readers add one edge each

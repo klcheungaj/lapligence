@@ -1216,7 +1216,15 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(_) => Ok(()),
             },
-            ("type_option", "goal" | "comment") => Ok(()),
+            // goal is a percentage (industry-standard range; the text is
+            // silent), checked here like the constant weight.
+            ("type_option", "goal") => match self.eval_bound_i128(value) {
+                Ok(goal) if !(0..=100).contains(&goal) => {
+                    unsupported("must be an integral value from 0 to 100")
+                }
+                _ => Ok(()),
+            },
+            ("type_option", "comment") => Ok(()),
             ("type_option", "strobe") if !group_level => {
                 unsupported("can only be set for a covergroup (IEEE 1800-2009 Table 19-4)")
             }

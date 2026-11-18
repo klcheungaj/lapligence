@@ -4147,6 +4147,14 @@ fn s45_d17_detect_overlap() {
 }
 
 #[test]
+fn s45_d20_option_unknown_value() {
+    run_decision(
+        "S45-D20_option_unknown_value",
+        include_str!("fixtures/sim/lrm_decisions/S45-D20_option_unknown_value.out"),
+    );
+}
+
+#[test]
 fn s45_d18_merged_at_least() {
     run_decision(
         "S45-D18_merged_at_least",
