@@ -234,7 +234,8 @@ impl Default for AnalysisConfig {
 pub struct LintRunConfig {
     /// Lint without emitting or running a model (`--lint-only`).
     pub only: Option<bool>,
-    /// Treat lint warnings as errors (`-Werror`).
+    /// Treat lint warnings, and the frontend warnings of
+    /// `core::compile::WERROR_FRONTEND_WARNINGS`, as errors (`-Werror`).
     pub warnings_as_errors: Option<bool>,
     pub json: Option<bool>,
     /// Normalized absolute JSON report file.

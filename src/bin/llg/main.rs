@@ -353,8 +353,12 @@ fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
             out.retain_frontend_diagnostics(|index, _, _| quiet.binary_search(&index).is_err());
         }
     }
+    let promoted = warnings_as_errors && out.promote_werror_frontend_warnings();
     for d in &out.diagnostics {
         reporter.emit(diag_message(d));
+    }
+    if promoted {
+        return Next::Exit(1);
     }
 
     // 2. Lint gate: every run lints the owned db before codegen. Errors

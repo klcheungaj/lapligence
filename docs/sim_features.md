@@ -2527,7 +2527,12 @@ These are bounded implementations, not full verification-infrastructure support.
   output and `ref` formals, keep independent automatic locals per activation,
   and virtual dispatch to a suspending override enters it with the receiver
   fixed at the call, so rebinding the handle during a wait changes only later
-  calls. Packed, unpacked-record (integral leaves; member, bit and part
+  calls. A virtual override that changes the method's visibility (`local`,
+  `protected` or public) warns and still overrides; each call keeps the
+  visibility of the method its handle's class declares, and `-Werror` makes
+  the override an error
+  ([S08-D1](lrm_decisions.md#override-visibility-u2)). Packed, unpacked-record
+  (integral leaves; member, bit and part
   selections), real, string, chandle and class-handle properties have explicit
   storage, and records with string, real or handle members are one value per
   object; resizable-container and one-dimensional fixed-array properties are

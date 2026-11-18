@@ -611,7 +611,31 @@ impl CompileOut {
     ) {
         retain_frontend_diagnostics(&self.snapshot, &mut self.diagnostics, decide);
     }
+
+    /// Report each warning of [`WERROR_FRONTEND_WARNINGS`] as an error, as
+    /// `-Werror` asks; returns whether any was. Only the projection changes:
+    /// the caller stops the run itself.
+    pub fn promote_werror_frontend_warnings(&mut self) -> bool {
+        let mut promoted = false;
+        for diag in &mut self.diagnostics {
+            if diag.severity == Severity::Warning
+                && diag
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| WERROR_FRONTEND_WARNINGS.contains(&id))
+            {
+                diag.severity = Severity::Error;
+                promoted = true;
+            }
+        }
+        promoted
+    }
 }
+
+/// Frontend errors that llg reports as warnings by decision, which `-Werror`
+/// reports as errors again: an override that changes a virtual method's
+/// visibility (S08-D1).
+pub const WERROR_FRONTEND_WARNINGS: &[&str] = &["SLANG-VirtualVisibilityMismatch"];
 
 /// [`CompileOut::retain_frontend_diagnostics`] over a compile projection,
 /// whose leading entries are the non-ignored frontend diagnostics in order

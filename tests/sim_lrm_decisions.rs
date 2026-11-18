@@ -689,6 +689,91 @@ fn s13_d2_ref_binds_missing_entry() {
 }
 
 #[test]
+fn s08_d1_override_visibility() {
+    run_decision(
+        "S08-D1_override_visibility",
+        include_str!("fixtures/sim/lrm_decisions/S08-D1_override_visibility.out"),
+    );
+}
+
+/// Each call that the visibility in its handle's class forbids stays an
+/// error, while the overrides that change visibility only warn.
+#[test]
+fn s08_d1_override_visibility_calls_rejected() {
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/S08-D1_override_visibility_calls_rejected.out"
+    )
+    .is_empty());
+    let file = "S08-D1_override_visibility_calls_rejected.sv";
+    let expected: Vec<String> = [
+        (
+            "56:24",
+            "ProtectedMemberAccess",
+            "'f' is a protected member of 'D1'",
+        ),
+        (
+            "57:24",
+            "ProtectedMemberAccess",
+            "'g' is a protected member of 'B2'",
+        ),
+        (
+            "58:24",
+            "LocalMemberAccess",
+            "'f' is a local member of 'D4'",
+        ),
+        (
+            "59:24",
+            "ProtectedMemberAccess",
+            "'f' is a protected member of 'A6'",
+        ),
+        (
+            "60:24",
+            "ProtectedMemberAccess",
+            "'f' is a protected member of 'M8'",
+        ),
+    ]
+    .iter()
+    .map(|(at, name, text)| format!("{file}:{at}: SLANG-{name} {text}"))
+    .collect();
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S08-D1_override_visibility_calls_rejected",
+        &[],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+            assert!(output.stdout.is_empty(), "{label}: {output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let messages: Vec<_> = stderr
+                .lines()
+                .filter_map(llg::core::report::parse)
+                .collect();
+            let errors: Vec<String> = messages
+                .iter()
+                .filter(|message| message.severity == llg::core::report::Severity::Error)
+                .map(|message| {
+                    let location = message.location.as_deref().unwrap_or_default();
+                    format!(
+                        "{}: {} {}",
+                        crate::sim_harness::short_location(location),
+                        message.id,
+                        message.text
+                    )
+                })
+                .collect();
+            assert_eq!(errors, expected, "{label}: {stderr}");
+            let overrides = messages
+                .iter()
+                .filter(|message| {
+                    message.id == "SLANG-VirtualVisibilityMismatch"
+                        && message.severity == llg::core::report::Severity::Warning
+                })
+                .count();
+            assert_eq!(overrides, 6, "{label}: {stderr}");
+        },
+    );
+}
+
+#[test]
 fn s12_d1_foreach_array_each_bound_check() {
     run_decision(
         "S12-D1_foreach_array_each_bound_check",

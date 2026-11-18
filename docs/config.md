@@ -318,7 +318,10 @@ lint errors stop the run (exit 1), warnings are printed and the run continues.
 - `only` (bool, `llg` only) — lint and exit without generating the model
   (`--lint-only`).
 - `warnings_as_errors` (bool, `llg` only) — report lint warnings as errors,
-  which stop the run (`-Werror`).
+  which stop the run (`-Werror`). It also reports the frontend's warning for
+  a virtual-method override that changes visibility
+  (`SLANG-VirtualVisibilityMismatch`, decision S08-D1) as the error it is by
+  default in the frontend; other frontend warnings stay warnings.
 - `json` (bool, `llg` only) — report lint as JSON on stdout and exit
   (`--lint-json`); implies `only`.
 - `json_file` (string, `llg` only) — write the JSON report to this file
