@@ -250,7 +250,7 @@ fn initializer_stop_reachable() {
 fn initializer_stop_held() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/ki_uvm_cast/initializer_stop_held.out");
-    let stop = "INFO: initializer_stop_held.sv:10:19: [SIM-002] (reporter @ 0 ps) $stop called\n";
+    let stop = "INFO: initializer_stop_held.sv:10:19: [SIM-002] ($unit @ 0 ps) $stop called\n";
     sim_cli::run_case_with_args(
         SUITE,
         "initializer_stop_held",
