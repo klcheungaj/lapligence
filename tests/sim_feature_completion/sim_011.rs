@@ -305,7 +305,7 @@ fn packed_element_members_of_class_arrays_are_written() {
     sim_cli::reject_case(
         SUITE,
         "neg_class_packed_member_actual",
-        "neg_class_packed_member_actual.sv:14:10: writing a member of an element of a class array property other than by an assignment statement (as an output or inout actual, for example) is not supported in `tb`; assign it with `=` or assign the whole element",
+        "neg_class_packed_member_actual.sv:14:10 writing a member of an element of a class array property other than by an assignment statement (as an output or inout actual, for example) is not supported in `tb`; assign it with `=` or assign the whole element",
     );
 }
 

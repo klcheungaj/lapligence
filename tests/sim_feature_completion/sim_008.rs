@@ -424,7 +424,7 @@ fn waited_record_refs_bound_to_native_elements() {
     sim_cli::reject_case_with_args(
         SUITE,
         "record_ref_wait_native_elements",
-        "record_ref_wait_native_elements.sv:27:9 in `tb`",
+        "record_ref_wait_native_elements.sv:27:9 task `w` waits on record `ref` formal `r` of the column form",
         &["-D", "N=16"],
     );
 }
@@ -447,7 +447,7 @@ fn virtual_interface_methods_wait_on_element_bound_record_refs() {
     sim_cli::reject_case_with_args(
         SUITE,
         "record_ref_interface_element_waits",
-        "record_ref_interface_element_waits.sv:43:11 in `tb`",
+        "record_ref_interface_element_waits.sv:43:11 task `w` waits on record `ref` formal `r` of the column form",
         &["-D", "N=16"],
     );
 }

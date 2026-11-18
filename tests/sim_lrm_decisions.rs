@@ -4051,7 +4051,7 @@ fn s45_d11_length_zero_repetition() {
     sim_cli::reject_case(
         SUITE,
         "S45-D11_length_zero_repetition",
-        "S45-D11_length_zero_repetition.sv:16:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0",
+        "S45-D11_length_zero_repetition.sv:16:29 transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0",
     );
 }
 
@@ -4076,7 +4076,7 @@ fn s45_d13_binsof_outside_cross() {
     sim_cli::reject_case(
         SUITE,
         "S45-D13_binsof_outside_cross",
-        "S45-D13_binsof_outside_cross.sv:17:35: binsof in bins `sel` of cross `ab` in covergroup `g` names coverpoint `cd`, which the cross does not cross",
+        "S45-D13_binsof_outside_cross.sv:17:35 binsof in bins `sel` of cross `ab` in covergroup `g` names coverpoint `cd`, which the cross does not cross",
     );
 }
 
