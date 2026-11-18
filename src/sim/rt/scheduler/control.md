@@ -16,6 +16,14 @@ assertion settling a `$finish` still does.
 A severity report with an empty `%m` scope is simulator-generated: a warning
 is SIM-023, an error or fatal SIM-009; a design task names its scope and is
 SIM-003..006 (`llg_report_severity_typed`).
+Static initialization runs with no current process: there `llg_rt_exiting`
+reports a requested finish, so the initialization frame and the plain
+functions it calls leave at the exit checks a process takes, and no later
+initializer runs. Model start then goes on whatever the initializers
+reported; `llg_rt_run` returns before any process runs when the run is
+finishing, and the run ends through `llg_rt_run_finals` and the exit status
+as from a process (S22-D9). A failure an initializer marks without finishing
+the run (a coverage option error) leaves start and the run going.
 
 Semaphore service order (AB-N4) and suspended waiters (AB-N1):
 `scheduler/wait_queues.c` and `process_control.c` comments.

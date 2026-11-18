@@ -333,7 +333,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   ([sim_022](../tests/fixtures/sim/feature_completion/sim_022/readme.md);
   decisions S22-D1, S22-D2, S22-D7). A `fork`-`join_none`, nonblocking assignment or
   nonblocking trigger that executes under a static initializer is a located
-  run-time error before any process starts (SV 13.4.4, S13-D5); modifying built-in methods on `const`
+  run-time error before any process starts (SV 13.4.4, S13-D5). Any other
+  run-time error, `$finish` or `$fatal` under a static initializer is the
+  same event as in a process: one that ends the run stops initialization at
+  once, no procedure starts, and the run ends as from a process (final
+  procedures included, S22-D9); any other reports and the run goes on
+  ([ki_static_init_errors](../tests/fixtures/sim/feature_completion/ki_static_init_errors/readme.md)). Modifying built-in methods on `const`
   variables and properties are located errors (S22-D4); an initialized block
   variable without `static`/`automatic` is accepted with a warning as static
   (S22-D5). Unsupported native/resizable layouts, oversized records and

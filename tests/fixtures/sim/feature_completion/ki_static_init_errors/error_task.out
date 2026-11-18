@@ -1,0 +1,4 @@
+init first
+init last
+initial first=1 v=7 last=1 base=5
+at 1

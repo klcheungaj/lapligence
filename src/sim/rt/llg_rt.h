@@ -1730,8 +1730,10 @@ void llg_rt_skip_finals(void);
 void llg_rt_finish(void);
 void llg_rt_finish_with_level(int verbosity, const char* location);
 // True only while the current process or transient final record has a pending
-// COMPLETE/ABANDON exit. This out-of-line query is for plain generated
-// functions; coroutine code reads its chain with LLG_CO_EXIT_CHECK.
+// COMPLETE/ABANDON exit, or, during static initialization (no current
+// process), once the run is finishing. This out-of-line query is for plain
+// generated functions and the initialization frame; coroutine code reads its
+// chain with LLG_CO_EXIT_CHECK.
 int llg_rt_exiting(void);
 // Deferred stop for generated functions and vpi_control(vpiStop). Reports the
 // stop now and, when called during a scheduler process turn, records a request

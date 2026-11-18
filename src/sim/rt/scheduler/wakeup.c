@@ -1,10 +1,17 @@
 
+// Wait and trigger evaluators run only in the scheduler loop, never under a
+// static initializer, so they test the current process alone; the static
+// initialization case of llg_rt_exiting stays out of these hot paths.
+static inline int evaluator_exiting(void) {
+    return g.current && g.current->chain.exiting != LLG_EXIT_NONE;
+}
+
 static int expression_qualifies(const llg_expr_event_spec_t* spec) {
     if (!spec->condition) return 1;
     llg_value_scope_t* scope = llg_value_scope_begin(1);
     sv4_t* result = llg_value_scope_values(scope);
     spec->condition(result, spec->condition_context);
-    if (llg_rt_exiting()) {
+    if (evaluator_exiting()) {
         llg_value_scope_end(scope);
         return 0;
     }

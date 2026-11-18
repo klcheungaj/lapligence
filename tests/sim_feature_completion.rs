@@ -323,6 +323,9 @@ mod ki_fp_contract;
 #[path = "sim_feature_completion/ki_record_shapes.rs"]
 mod ki_record_shapes;
 
+#[path = "sim_feature_completion/ki_static_init_errors.rs"]
+mod ki_static_init_errors;
+
 #[test]
 fn component_fixture_integrity() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

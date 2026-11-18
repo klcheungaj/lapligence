@@ -1829,6 +1829,14 @@ fn s22_d8_package_initializers_before_design() {
 }
 
 #[test]
+fn s22_d9_initializer_finish_runs_finals() {
+    run_decision(
+        "S22-D9_initializer_finish_runs_finals",
+        include_str!("fixtures/sim/lrm_decisions/S22-D9_initializer_finish_runs_finals.out"),
+    );
+}
+
+#[test]
 fn s22_d2_static_locals_initialize_once() {
     run_decision(
         "S22-D2_static_locals_initialize_once",
