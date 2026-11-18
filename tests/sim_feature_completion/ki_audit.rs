@@ -177,3 +177,33 @@ fn record_call_result_with_a_real_member_in_equality_is_a_located_limit() {
         "real aggregate bit-stream source is not supported",
     );
 }
+
+#[test]
+fn deferred_actions_with_dynamic_array_or_event_arguments_are_located_limits() {
+    let text = "unpacked aggregate, container and event arguments of deferred immediate assertion actions are not supported";
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_dynamic_array_action",
+        "CODEGEN-001",
+        Some("12:24"),
+        text,
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_event_action",
+        "CODEGEN-001",
+        Some("10:24"),
+        text,
+    );
+}
+
+#[test]
+fn wait_on_a_property_a_callee_reads_through_a_container_element_is_a_located_limit() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_wait_container_element_property",
+        "CODEGEN-002",
+        Some("9:12"),
+        "class property `x` read by a called subroutine through a handle other than a class-handle input formal",
+    );
+}

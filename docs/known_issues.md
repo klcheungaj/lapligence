@@ -1936,6 +1936,8 @@ one receiver).
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`;
+`tests/fixtures/sim/feature_completion/ki_audit/neg_wait_container_element_property.sv`
+(a callee reading a property through a container element);
 `tests/fixtures/sim/feature_completion/sim_014/reject_wait_call_result.sv`,
 `reject_wait_automatic_record.sv`, `reject_event_automatic_record.sv`.
 
@@ -2314,7 +2316,10 @@ interface handle like a method receiver.
 [`sim_036/neg_vif_action.sv`](../tests/fixtures/sim/feature_completion/sim_036/neg_vif_action.sv)
 and
 [`sim_039/neg_match_call_queue.sv`](../tests/fixtures/sim/feature_completion/sim_039/neg_match_call_queue.sv);
-the timing-control form is `sim_039/neg_match_call_timing.sv`.
+the timing-control form is `sim_039/neg_match_call_timing.sv`; a dynamic array
+and a named event by value:
+`tests/fixtures/sim/feature_completion/ki_audit/neg_dynamic_array_action.sv`
+and `neg_event_action.sv`.
 
 ## Assertion locals in join operands and end points
 

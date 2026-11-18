@@ -28,6 +28,9 @@ Clause lines quote `docs/specification/SystemVerilog-1800-2009.txt`.
 | `neg_inside_container_call` | Set membership items outside packed storage | 11.4.13 L15366-15367, as above; the item is a function returning a queue. |
 | `neg_computed_handle_select_write` | Selects of properties of computed class handles | 11.5.1 L15737: "Bit-selects extract a particular bit from a vector, packed array, packed structure, parameter, or concatenation."; the vector is a property reached through a function result (8.4). |
 | `neg_record_real_call_equality` | Record results with real members as equality operands | 11.2.2 L14175: "Aggregate expressions can also be compared with equality or inequality operators." |
+| `neg_dynamic_array_action` | Deferred assertion actions with container, event or virtual-interface arguments | 16.4 L21223-21225: "Actual argument expressions that are passed by value use the values of the underlying variables at the instant the deferred assertion expression was evaluated." |
+| `neg_event_action` | Deferred assertion actions with container, event or virtual-interface arguments | 16.4 L21223-21225, as above; the argument is a named event. |
+| `neg_wait_container_element_property` | Waits on storage without a change notification | 9.4.3 L12028-12029: "The execution of a procedural statement can also be delayed until a condition becomes true. This is accomplished using the wait statement" |
 
 `computed_handle_element` is a positive case: the elements of an unpacked
 array property of a computed handle, which the known issues listed as
