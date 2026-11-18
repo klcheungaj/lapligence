@@ -78,10 +78,13 @@ static int llg_output_console_log(const char* path) {
     char error[4096 + 256];  // a resolved path plus the reason
     int ok = llg_console_log_start(resolved, error, sizeof error);
     free(resolved);
+    // A log that cannot start stops the run before time zero, so it is an
+    // error like the other unusable settings (SIM-020 is for a setting the
+    // run continues without).
     if (ok)
         llg_console_log_active = 1;
     else
-        llg_msg(LLG_MSG_ENVIRONMENT, NULL, "%s", error);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s", error);
     return ok;
 }
 

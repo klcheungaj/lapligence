@@ -1055,7 +1055,7 @@ fn run_time_output_settings_redirect_one_built_model() {
                 "console a5\n"
             );
             // A log the model cannot open stops it before time zero with
-            // the environment message, not a free-form line.
+            // an error, not a free-form line or a warning.
             let mut command = Command::new(&exe);
             command
                 .current_dir(dir.path())
@@ -1068,12 +1068,40 @@ fn run_time_output_settings_redirect_one_built_model() {
             assert!(
                 sim_harness::has_message(
                     &stderr,
-                    "SIM-020",
+                    "SIM-010",
                     "",
                     "cannot open LLG_SIM_LOG_FILE `missing/console.log`: "
                 ),
                 "{label}: {stderr}"
             );
+        }
+
+        // An unusable stop or index-check setting stops the run before time
+        // zero; a message that ends the run is an error, never a warning.
+        for (name, value, text) in [
+            (
+                "LLG_STOP_POLICY",
+                "bogus",
+                "invalid LLG_STOP_POLICY `bogus` (expected resume or exit)",
+            ),
+            (
+                "LLG_INDEX_CHECKS",
+                "maybe",
+                "invalid LLG_INDEX_CHECKS `maybe` (expected on or off)",
+            ),
+        ] {
+            let mut command = Command::new(&exe);
+            command.current_dir(dir.path()).env(name, value);
+            let output = sim_harness::run_command(&mut command, Duration::from_secs(60))
+                .unwrap_or_else(|error| panic!("{label}: {error}"));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{label} {name}: {stderr}");
+            assert!(output.stdout.is_empty(), "{label} {name}: {stderr}");
+            assert!(
+                sim_harness::has_message(&stderr, "SIM-010", "", text),
+                "{label} {name}: {stderr}"
+            );
+            assert!(!stderr.contains("WARNING:"), "{label} {name}: {stderr}");
         }
 
         run(&[
