@@ -28,8 +28,6 @@ module tb;
     v = 4'bx01z;
     r = 1.5;
     r = 0.5;
-    q <= 4'd3;
-    q <= 4'd2;
     $strobe("1: v=%b q=%0d r=%0.1f", v, q, r);
     #1 v = 4'b0110;
     #0 v = 4'bx01z;
@@ -37,5 +35,9 @@ module tb;
     #1 v = 4'b0110;
     $strobe("3: v=%b", v);
     #1 $finish;
+  end
+  initial begin
+    #1 q <= 4'd3;
+    q <= 4'd2;
   end
 endmodule
