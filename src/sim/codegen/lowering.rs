@@ -401,6 +401,10 @@ pub struct CodegenOptions {
     pub value_config: crate::sim::value_backend::ValueConfig,
     /// Dump waveforms from time zero without design system tasks.
     pub waveform: Option<WaveformOptions>,
+    /// Record every change of a dumped variable, in execution order, instead
+    /// of its end-of-step value (`--wave-deltas`, decision S47-D15). Applies
+    /// to `$dumpvars` dumps too; a model without dumping ignores it.
+    pub wave_deltas: bool,
     /// Emit the VPI object catalog even when the design calls no user system
     /// task or function. A VPI application loaded at run time
     /// (`LLG_VPI_PLUGIN`) or linked with `--dpi-lib` reaches design objects
@@ -837,6 +841,7 @@ fn lower_model_with(
             crate::sim::ir::IrWaveDumpVars::new(waveform.depth, scopes),
         ));
     }
+    cg.model.wave_deltas = options.wave_deltas;
     let compilation_units = cg.compilation_unit_scopes();
     lower_timing_metadata(&mut cg, &tops, options)?;
     cg.collapse_variable_ports()?;

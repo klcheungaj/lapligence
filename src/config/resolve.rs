@@ -338,7 +338,11 @@ fn resolve_waveform(base_dir: &Path, raw: &RawWaveform) -> Result<WaveformConfig
     if depth.is_some() && file.is_none() {
         return Err(ConfigError::new("waveform.depth requires waveform.file"));
     }
-    Ok(WaveformConfig { file, depth })
+    Ok(WaveformConfig {
+        file,
+        depth,
+        deltas: raw.deltas,
+    })
 }
 
 fn resolve_build(base_dir: &Path, raw: &RawBuild) -> Result<BuildConfig, ConfigError> {

@@ -659,10 +659,12 @@ processes or clock edges, at the cost of a few bytes per object.
   ([`nba_merge.rs`](../src/sim/codegen/lowering/statements/nba_merge.rs)).
   Kept updates keep their queue order. The merge is skipped for storage a
   `$monitor` names or that keeps sampled history, and for whole models with
-  waveforms, timing checks, sequential UDPs, asynchronous `accept_on` or
-  `reject_on`, gated sampled-value clocks, or toggle or FSM coverage, whose
-  consumers see each write. Waveforms are the largest exclusion: a model
-  built with `--wave` or `$dumpvars` keeps every update.
+  the per-delta dump (`--wave-deltas`), timing checks, sequential UDPs,
+  asynchronous `accept_on` or `reject_on`, gated sampled-value clocks, or
+  toggle or FSM coverage, whose consumers see each write. A model with the
+  default dump merges: its writer records an end-of-step value only when it
+  differs from the last record, in registration order (S47-D14), so the
+  file is the same with and without the merge (see "Waveform records" below).
 - **Evidence:** over the fixture tree the generated C of 5 existing models
   changed in both optimizer modes (three T1-D11 cases, the VPI value-change
   case and an NBA ordering case), all with unchanged output. Those cases
@@ -678,6 +680,68 @@ processes or clock edges, at the cost of a few bytes per object.
   100 alternating pairs faster in both orders, medians 14.55 → 10.77 s and
   14.50 → 10.82 s (CPU seconds under a load of 30–40 from other agents,
   which inflates both; on the base the row ran 9.25 s on a quiet machine).
+
+### Waveform records: end-of-step values compared with the last record
+
+- **Trade-off:** a variable changed and restored within a time step (one
+  process turn, one NBA batch or a later delta) used to get a record of its
+  unchanged value. Comparing each end-of-step value with the value last
+  written needs that value kept per identifier code; ordering a step's
+  records by registration, so that the file does not depend on the order of
+  the writes (and lowering may merge overridden updates), needs a sort per
+  step. Either could be paid on the simulation thread or on the writer
+  thread.
+- **Decision:** the writer thread pays both (`llg_wave.c`, decisions S47-D2,
+  S47-D14): it keeps the last written value per registration (the snapshot
+  of the written record moves there, no copy), drops an ordinary record that
+  repeats it, and sorts each end-of-step batch (insertion sort up to
+  `LLG_WAVE_BATCH_INSERTION_MAX` = 16, qsort above). The simulation thread is
+  unchanged: one lookup and a dirty flag per write, a snapshot per changed
+  variable at the end of the step. Memory: one value descriptor and a flag
+  per registration on the writer. The per-delta dump (`--wave-deltas`,
+  S47-D15) is a separate runtime archive (`LLG_WAVE_DELTAS`) that queues a
+  snapshot at every change and skips the NBA merge, so the default archive
+  has no code for it.
+- **Evidence:** the ten `--wave` rows (FST), dev tip against this change,
+  100 alternating pairs per row in both orders from one fixed path
+  (`pairs_fixed.py`), each pinned to an idle CPU, CPU seconds of the model
+  process (both threads), medians; generated C is identical except in the
+  two-NBA row, which the merge now reaches. Ratio is tip/dev in order A and
+  in order B (executables swapped).
+
+  | Workload with `--wave` | Dev s | Tip s | Ratio A | Ratio B |
+  | --- | ---: | ---: | ---: | ---: |
+  | Two NBAs per register per cycle | 19.52 | 17.61 | 0.902 | 0.902 |
+  | Glitch row | 8.06 | 7.79 | 0.967 | 0.972 |
+  | 2,000 waiters on one clock | 4.436 | 4.404 | 0.993 | 0.991 |
+  | Clocking block, 500 unwaited cells | 1.996 | 1.989 | 0.996 | 0.998 |
+  | 256 array cells, each read by an `always @*` | 0.819 | 0.807 | 0.986 | 0.981 |
+  | Every write a waited change | 1.168 | 1.167 | 0.999 | 0.999 |
+  | Record leaf rows (3) | | | 0.997–1.001 | 0.999–1.005 |
+  | Glitch vector row | 0.0769 | 0.0767 | 0.997 | 1.000 |
+
+  The 1.005 (three-field record store) did not repeat: eight more runs of
+  100 pairs of that row, four per order, gave 0.994–1.005 with a median of
+  1.000 (IQR 0.05 s on 2.18 s), so no row is measurably slower. The two-NBA
+  row gains from the merge (one queue record, allocation and commit fewer
+  per register and cycle); the glitch row and the cell row gain because a
+  value restored within the step is no longer formatted and written.
+
+  The per-delta dump against the default dev model (20 pairs per order,
+  same rows; FST size from the default run):
+
+  | Workload with `--wave` | CPU ratio A | CPU ratio B | FST default → per-delta |
+  | --- | ---: | ---: | --- |
+  | Two NBAs per register per cycle | 4.83 | 4.89 | 177 KB → 104 MB |
+  | Record leaf rows (3) | 4.25–5.09 | 4.53–6.32 | 42–79 KB → 8.3–46.7 MB |
+  | Glitch vector row | 2.74 | 2.75 | 1.6 KB → 330 KB |
+  | Every write a waited change | 1.36 | 1.42 | 4.0 MB → 8.5 MB |
+  | Cells, clock waiters, clocking, glitch | 0.91–1.07 | 0.94–1.05 | same; glitch 22 → 140 KB |
+
+  Rows whose variables change once per step cost about the same; rows that
+  write a dumped variable several times per step pay one queued snapshot
+  and one formatted record per write (a load from other agents widened the
+  IQRs of this run to 10–30%, so only the large ratios are significant).
 
 ### Clocking history only for the signals its readers name
 

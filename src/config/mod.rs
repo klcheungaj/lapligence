@@ -272,13 +272,17 @@ pub struct SimulatorConfig {
     pub plusargs: Option<Vec<String>>,
 }
 
-/// Waveform dumping requested without `$dumpfile`/`$dumpvars`. Driver only.
+/// Waveform dumping requested without `$dumpfile`/`$dumpvars`, and the dump
+/// mode of every dump. Driver only.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WaveformConfig {
     /// Normalized absolute `.vcd` or `.fst` output file.
     pub file: Option<PathBuf>,
     /// Hierarchy levels below each top instance; 0 dumps every level.
     pub depth: Option<u32>,
+    /// Record every value change, not end-of-step values; also applies to
+    /// `$dumpvars` dumps, so it needs no `file`.
+    pub deltas: Option<bool>,
 }
 
 /// Model build tooling. Driver only.

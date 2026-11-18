@@ -13,8 +13,18 @@
 // end-of-step call snapshots the dirty storage. A $dumpvars likewise starts
 // the dump at the end of its time step (18.1.3/21.7.1.3), so the $dumpvars
 // checkpoint holds the step's final values. The producer-side dump state
-// (`dump_state`) decides which controls take effect; the writer thread only
-// formats the events it receives.
+// (`dump_state`) decides which controls take effect.
+//
+// The writer thread keeps the last value it wrote for each identifier code
+// and writes no end-of-step record that repeats it, so a value changed and
+// restored within a step leaves no record (S47-D14). It writes the records of
+// one end-of-step flush in registration order, so the file does not depend on
+// the order of the writes within the step (or on writes merged away in
+// lowering). Checkpoints are always written.
+//
+// A model built with LLG_WAVE_DELTAS (`llg --wave-deltas`, S47-D15) records
+// every change instead: each store queues its value at the current time, and
+// the writer writes every record in execution order.
 
 #define LLG_PLATFORM_POSIX_2008 1
 #include "llg_platform.h"
@@ -33,6 +43,9 @@
 #include "llg_msg.h"
 
 #define LLG_WAVE_QUEUE_CAP 1024u
+// End-of-step batches up to this size are sorted by insertion; larger ones
+// by qsort.
+#define LLG_WAVE_BATCH_INSERTION_MAX 16u
 #define LLG_WAVE_NO_REG UINT32_MAX
 #define LLG_WAVE_HIER_SEP '\x1f'
 
@@ -99,6 +112,17 @@ typedef struct {
 } map_entry_t;
 
 
+#ifndef LLG_WAVE_DELTAS
+// Writer-owned: the last value written for one identifier code.
+typedef struct {
+    union {
+        sv4_t packed;
+        double real;
+    } value;
+    uint8_t known;
+} written_value_t;
+#endif
+
 typedef struct {
     FILE* file;
     void* fst;
@@ -118,6 +142,15 @@ typedef struct {
     int active;
     int snapshot_open;
     int limit_reached;
+#ifndef LLG_WAVE_DELTAS
+    // The end-of-step records of the current flush, in arrival order (`arg`
+    // holds the position) until they are sorted and written.
+    wave_event_t* batch;
+    uint32_t batch_count;
+    uint32_t batch_cap;
+    // Indexed by registration; allocated with the first record.
+    written_value_t* written;
+#endif
 } writer_t;
 
 typedef struct {
@@ -1026,7 +1059,50 @@ static void vcd_off_values(writer_t* w) {
     }
 }
 
-static void process_event(writer_t* w, const wave_event_t* e) {
+#ifndef LLG_WAVE_DELTAS
+// Whether two snapshots of one registration hold the same bit states. The
+// neutral word reads are inline in every value backend.
+static int same_states(sv4_t a, sv4_t b) {
+    size_t words = llg_sv4_words(a);
+    for (size_t word = 0; word < words; word++) {
+        if (llg_sv4_word(a, word, LLG_SV4_BITS) != llg_sv4_word(b, word, LLG_SV4_BITS) ||
+            llg_sv4_word(a, word, LLG_SV4_X) != llg_sv4_word(b, word, LLG_SV4_X) ||
+            llg_sv4_word(a, word, LLG_SV4_Z) != llg_sv4_word(b, word, LLG_SV4_Z))
+            return 0;
+    }
+    return 1;
+}
+
+// Whether an end-of-step record repeats the last value written for its
+// identifier code (S47-D14). Checkpoint records are always written; an event
+// has no value, so each of its records is a change.
+static int writer_repeats(const writer_t* w, const wave_event_t* e) {
+    if (e->snapshot || !w->written) return 0;
+    const written_value_t* last = &w->written[e->first_reg];
+    if (!last->known) return 0;
+    if (e->kind == EV_CHANGE_SV4) return same_states(last->value.packed, e->payload.sv4);
+    // Bitwise, like the runtime's real write: -0.0 and NaN payloads differ.
+    return memcmp(&last->value.real, &e->payload.real, sizeof(double)) == 0;
+}
+
+// Keeps the value just written; a packed record's snapshot moves here.
+static void writer_remember(writer_t* w, wave_event_t* e) {
+    if (!w->written) {
+        w->written = (written_value_t*)calloc(g_wave.reg_count ? g_wave.reg_count : 1u,
+                                              sizeof(written_value_t));
+        if (!w->written) {
+            wave_error("out of memory while keeping written waveform values");
+            return;
+        }
+    }
+    written_value_t* last = &w->written[e->first_reg];
+    if (e->kind == EV_CHANGE_SV4) sv4_move(&last->value.packed, &e->payload.sv4);
+    else last->value.real = e->payload.real;
+    last->known = 1;
+}
+#endif
+
+static void process_event(writer_t* w, wave_event_t* e) {
     if (e->kind == EV_FILE) {
         if (!llg_atomic_int_load(&g_wave.error)) (void)writer_open(w, e->payload.path);
         return;
@@ -1083,15 +1159,27 @@ static void process_event(writer_t* w, const wave_event_t* e) {
         case EV_CHANGE_SV4:
             if (w->active || e->snapshot) {
                 if (!writer_write_header(w)) break;
+#ifndef LLG_WAVE_DELTAS
+                if (writer_repeats(w, e)) break;
+#endif
                 writer_time(w, e->now);
                 writer_sv4_aliases(w, e->first_reg, &e->payload.sv4);
+#ifndef LLG_WAVE_DELTAS
+                writer_remember(w, e);
+#endif
             }
             break;
         case EV_CHANGE_REAL:
             if (w->active || e->snapshot) {
                 if (!writer_write_header(w)) break;
+#ifndef LLG_WAVE_DELTAS
+                if (writer_repeats(w, e)) break;
+#endif
                 writer_time(w, e->now);
                 writer_real_aliases(w, e->first_reg, e->payload.real);
+#ifndef LLG_WAVE_DELTAS
+                writer_remember(w, e);
+#endif
             }
             break;
         case EV_CHANGE_EVENT:
@@ -1124,12 +1212,90 @@ static void process_event(writer_t* w, const wave_event_t* e) {
     }
 }
 
+#ifndef LLG_WAVE_DELTAS
+static int batch_before(const wave_event_t* a, const wave_event_t* b) {
+    if (a->first_reg != b->first_reg) return a->first_reg < b->first_reg;
+    return a->arg < b->arg;
+}
+
+static int batch_compare(const void* lhs, const void* rhs) {
+    const wave_event_t* a = (const wave_event_t*)lhs;
+    const wave_event_t* b = (const wave_event_t*)rhs;
+    return batch_before(a, b) ? -1 : batch_before(b, a) ? 1 : 0;
+}
+
+// Writes the waiting end-of-step records in registration order (arrival
+// order for one registration). Moving whole events only permutes owners.
+static void writer_write_batch(writer_t* w) {
+    uint32_t count = w->batch_count;
+    if (count > LLG_WAVE_BATCH_INSERTION_MAX) {
+        qsort(w->batch, count, sizeof(*w->batch), batch_compare);
+    } else {
+        for (uint32_t i = 1; i < count; i++) {
+            wave_event_t moving = w->batch[i];
+            uint32_t j = i;
+            for (; j > 0 && batch_before(&moving, &w->batch[j - 1u]); j--)
+                w->batch[j] = w->batch[j - 1u];
+            w->batch[j] = moving;
+        }
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        process_event(w, &w->batch[i]);
+        event_destroy(&w->batch[i]);
+    }
+    w->batch_count = 0;
+}
+
+// Consumes the event. The records of one flush arrive together with one
+// time; a record of another time ends the waiting batch.
+static void writer_batch_add(writer_t* w, wave_event_t* e) {
+    if (w->batch_count && w->batch[0].now != e->now) writer_write_batch(w);
+    if (w->batch_count == w->batch_cap) {
+        uint32_t cap = w->batch_cap ? w->batch_cap * 2u : 64u;
+        wave_event_t* grown = (wave_event_t*)realloc(w->batch, (size_t)cap * sizeof(*grown));
+        if (!grown) {
+            wave_error("out of memory while ordering waveform records");
+            event_destroy(e);
+            return;
+        }
+        w->batch = grown;
+        w->batch_cap = cap;
+    }
+    e->arg = w->batch_count;
+    event_move(&w->batch[w->batch_count++], e);
+}
+
+static void writer_free_records(writer_t* w) {
+    for (uint32_t i = 0; i < w->batch_count; i++) event_destroy(&w->batch[i]);
+    free(w->batch);
+    w->batch = NULL;
+    w->batch_count = w->batch_cap = 0;
+    if (w->written) {
+        for (uint32_t i = 0; i < g_wave.reg_count; i++)
+            if (w->written[i].known && g_wave.regs[i].var_kind != VAR_REAL)
+                sv4_destroy(&w->written[i].value.packed);
+        free(w->written);
+        w->written = NULL;
+    }
+}
+#endif
+
 static LLG_THREAD_RETURN writer_thread(void* unused) {
     (void)unused;
     writer_t writer;
     memset(&writer, 0, sizeof(writer));
     for (;;) {
         wave_event_t event = queue_pop();
+#ifndef LLG_WAVE_DELTAS
+        // An end-of-step record waits for the rest of its flush; any other
+        // event first writes the waiting records.
+        if ((event.kind == EV_CHANGE_SV4 || event.kind == EV_CHANGE_REAL ||
+             event.kind == EV_CHANGE_EVENT) && !event.snapshot) {
+            writer_batch_add(&writer, &event);
+            continue;
+        }
+        writer_write_batch(&writer);
+#endif
         if (event.kind == EV_CLOSE) {
             if (writer.format != FORMAT_NONE) {
                 (void)writer_write_header(&writer);
@@ -1147,6 +1313,9 @@ static LLG_THREAD_RETURN writer_thread(void* unused) {
         // disabled/unselected value; ownership ends here on every such path.
         event_destroy(&event);
     }
+#ifndef LLG_WAVE_DELTAS
+    writer_free_records(&writer);
+#endif
     llg_atomic_int_store(&g_wave.worker_alive, 0);
     llg_mutex_lock(&g_wave.mutex);
     llg_cond_broadcast(&g_wave.ack_changed);
@@ -1540,9 +1709,18 @@ static void mark_changed(const void* ptr) {
     uint32_t first = lookup_registration(ptr);
     if (first == LLG_WAVE_NO_REG) return;
     registration_t* reg = &g_wave.regs[first];
+#ifdef LLG_WAVE_DELTAS
+    // Every change is its own record at the current time, in execution order.
+    if (reg->dump_reg == LLG_WAVE_NO_REG) return;
+    wave_event_t event = {0};
+    event.now = llg_time();
+    event.first_reg = reg->dump_reg;
+    if (fill_change(&event, reg)) queue_push(&event);
+#else
     if (reg->dirty || reg->dump_reg == LLG_WAVE_NO_REG) return;
     reg->dirty = 1;
     g_wave.dirty[g_wave.dirty_count++] = first;
+#endif
 }
 
 void llg_wave_changed_sv4(const sv4_t* ptr) { mark_changed(ptr); }
