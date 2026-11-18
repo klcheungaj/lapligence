@@ -1941,9 +1941,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   to an element or member of an element of a subroutine record, or of a
   queue element, wakes at every store into what it binds: the owner's,
   a sibling branch's and those through other `ref` formals (decision S09-D4,
-  `record_ref_subroutine_element_wake`, `record_ref_container_member_wake`);
-  a run-time index of a subroutine record that selects no element stops at
-  the actual (S07-D15, `record_ref_subroutine_unselected`). A run-time record
+  `record_ref_subroutine_element_wake`, `record_ref_container_member_wake`),
+  also when a task forwards a member of its record `ref` formal to the waiter,
+  at any depth (`record_ref_forwarded_member_wake`); fork branches use the
+  owner's record whole as a call operand or copy source. A run-time index of
+  a subroutine record that selects no element stops at the actual (S07-D15,
+  `record_ref_subroutine_unselected`, `record_ref_forwarded_member_unselected`);
+  a `ref` stop ends the run at the call, and no caller runs on
+  (`S07-D15_ref_stop_nested_call`). A run-time record
   element (`o.m[1].a[k]`, `t.e[k]`) compares with `==`, `!=` and `===`, and a
   subroutine record's `t.m[1].a[k]` is an assignment source and target
   (`record_element_select_equality`). At 16 or more cells a subroutine
@@ -1973,7 +1978,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   packed, real and string input formals and packed and real output and inout
   formals are shared like locals (outputs are copied out at return), and so
   are string outputs, native records with their companion containers and
-  container formals, with branches of every fork kind and nested forks.
+  container formals, with branches of every fork kind and nested forks (a
+  `join` branch reading a string input formal fails:
+  [known issue](known_issues.md#a-string-input-formal-read-in-a-fork-join-branch)).
   Semaphore, mailbox, chandle and class-handle variables and by-value handle
   formals are shared through an opaque frame slot
   ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)); a
