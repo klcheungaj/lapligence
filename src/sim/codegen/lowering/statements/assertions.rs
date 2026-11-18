@@ -21,10 +21,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             unreachable!("immediate assertion lowering received another statement kind")
         };
         if *is_final {
-            return Err(format!(
-                "final immediate assertions are not supported at {}",
-                self.text_location(h)
-            ));
+            return Err(self
+                .cg
+                .locate_error(h, "final immediate assertions are not supported"));
         }
         let condition = self.cg.lower_boolean_expr(&self.path, *cond)?;
         let kind = match *kind {
@@ -104,10 +103,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             [stmt] => Some(stmt.clone()),
             _ => {
                 self.pre_fns.truncate(pre_fn_start);
-                return Err(format!(
-                    "{} at {} must be one subroutine call",
-                    self.call_owner,
-                    self.text_location(statement)
+                return Err(self.cg.locate_error(
+                    statement,
+                    format!("{} must be one subroutine call", self.call_owner),
                 ));
             }
         }) else {
@@ -137,7 +135,6 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             Ok(body) => body,
             Err(error) => {
                 self.pre_fns.truncate(pre_fn_start);
-                let error = format!("{error} at {}", self.text_location(statement));
                 return Err(if crate::sim::codegen::error::is_located(&error) {
                     error
                 } else {
@@ -194,10 +191,12 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             .cg
             .resolve_callee_env(self.inst, name, is_task, callee)?;
         if is_task && self.cg.task_has_wait(callee_function, callee_inst) {
-            return Err(format!(
-                "{} task `{name}` cannot contain timing controls at {}",
-                self.call_owner,
-                self.text_location(statement)
+            return Err(self.cg.locate_error(
+                statement,
+                format!(
+                    "{} task `{name}` cannot contain timing controls",
+                    self.call_owner
+                ),
             ));
         }
         let (_, _, formals) = self.cg.func_info(callee_function, callee_inst)?;
@@ -216,27 +215,33 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             }
             let actual = bound[idx].expr;
             if let Some(local) = self.cg.nested_proc_local_ref(actual) {
-                return Err(format!(
-                    "{} cannot retain automatic ref argument `{}` at {}",
-                    self.call_owner,
-                    self.cg.node(local).name,
-                    self.text_location(statement)
+                return Err(self.cg.locate_error(
+                    statement,
+                    format!(
+                        "{} cannot retain automatic ref argument `{}`",
+                        self.call_owner,
+                        self.cg.node(local).name,
+                    ),
                 ));
             }
             if let Some(local) = self.cg.nested_capture_ref(actual) {
-                return Err(format!(
-                    "{} cannot retain captured ref argument `{}` at {}",
-                    self.call_owner,
-                    self.cg.node(local).name,
-                    self.text_location(statement)
+                return Err(self.cg.locate_error(
+                    statement,
+                    format!(
+                        "{} cannot retain captured ref argument `{}`",
+                        self.call_owner,
+                        self.cg.node(local).name,
+                    ),
                 ));
             }
             if self.dynamic_ref_actual(actual) {
-                return Err(format!(
-                    "{} cannot pass a dynamic variable to ref argument `{}` at {} (SV 16.4)",
-                    self.call_owner,
-                    self.cg.node(formals[idx].0).name,
-                    self.text_location(statement)
+                return Err(self.cg.locate_error(
+                    statement,
+                    format!(
+                        "{} cannot pass a dynamic variable to ref argument `{}` (SV 16.4)",
+                        self.call_owner,
+                        self.cg.node(formals[idx].0).name,
+                    ),
                 ));
             }
         }

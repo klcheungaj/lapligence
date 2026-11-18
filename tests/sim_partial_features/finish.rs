@@ -57,15 +57,15 @@ fn finish_levels_report_time_and_statistics_without_changing_exit_status() {
 
 #[test]
 fn finish_rejects_an_out_of_range_verbosity_with_source_context() {
-    reject_case("finish_invalid_argument", "$finish argument at");
+    reject_case(
+        "finish_invalid_argument",
+        "finish_invalid_argument.sv:2:11 $finish argument must be 0, 1, or 2 (got 3)",
+    );
 }
 
 #[test]
 fn finish_number_is_constant_in_both_target_editions() {
-    reject_case_with_args("finish_runtime_argument", "$finish argument at", &[]);
-    reject_case_with_args(
-        "finish_runtime_argument",
-        "$finish argument at",
-        &["--edition", "v2001"],
-    );
+    let located = "finish_runtime_argument.sv:6:5 $finish argument must be an integral constant";
+    reject_case_with_args("finish_runtime_argument", located, &[]);
+    reject_case_with_args("finish_runtime_argument", located, &["--edition", "v2001"]);
 }
