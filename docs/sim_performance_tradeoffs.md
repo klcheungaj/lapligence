@@ -772,10 +772,10 @@ processes or clock edges, at the cost of a few bytes per object.
   before the call.
 
   Wall clock, 100 alternating pairs in both orders on pinned idle cores,
-  over all micro, wave and corpus rows: 35 of 38 rows are faster, most by
-  1.5–9% (every write waited 3.5%, `#1step` 7–9%, default-then-override
-  3% plain and 3.4% with waves, assertions 5%, packed and plain record
-  leaves of 16 elements about 4%). The rest are within ±0.5% except one:
+  over all micro, wave and corpus rows: 32 of 38 rows are faster in both
+  orders, most by 1.5–9% (every write waited 3.5%, `#1step` 7–9%,
+  default-then-override 3% plain and 3.4% with waves, assertions 5%,
+  packed and plain record leaves of 16 elements about 4%). Five are within ±0.6%; one is slower:
   writes to an element of a three-element `int` array inside a packed
   struct are 2.3–2.5% slower with 0.08% fewer instructions. That row's
   roughly 400 hot lines are mostly wide part-select arithmetic; the smaller
@@ -786,7 +786,8 @@ processes or clock edges, at the cost of a few bytes per object.
 
   Placement control (one unused 64-byte function before the clocking
   code): it moves default-then-override by 1.1% on the old layout and
-  by 0.3% on the new one, and the `#1step` rows by under 0.8% on either.
+  by 0.3% on the new one, every-write-waited by 1.0% and 0.6%, and the
+  `#1step` rows by under 1% on either.
 
 ### Bounded retention of finished work
 
