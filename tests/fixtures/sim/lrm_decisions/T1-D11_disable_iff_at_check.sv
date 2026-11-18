@@ -23,9 +23,17 @@
 //   runs after the process suspends and reads 0.
 // - 175 (no line): r holds for 1 ns.
 // - 205: the same with a random call between the writes.
+// The overridden nonblocking update takes its value from `counted`, a
+// function with a side effect, so lowering cannot drop it and the NBA batch
+// commits both writes.
 `timescale 1ns / 1ns
 module tb;
   bit clk, a, b, r;
+  int calls;
+  function automatic bit counted(bit value);
+    calls++;
+    return value;
+  endfunction
   assert property (@(posedge clk) disable iff (r) a |-> ##2 b)
     else $display("%0t fail", $time);
   always #5 clk = ~clk;
@@ -44,7 +52,7 @@ module tb;
     #20 $finish;
   end
   initial #100 begin
-    r <= 1'b1;
+    r <= counted(1'b1);
     r <= 1'b0;
   end
 endmodule

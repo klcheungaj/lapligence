@@ -69,7 +69,7 @@ static void llg_rt_co_count(size_t* counter) {
     if (*counter != SIZE_MAX) (*counter)++;
 }
 
-_Noreturn void llg_rt_co_oom(size_t bytes) {
+LLG_CO_NORETURN void llg_co_host_oom(size_t bytes) {
     llg_fatal_allocation("coroutine frame", 1, bytes);
 }
 
@@ -100,7 +100,7 @@ static void llg_rt_co_trace_frame(void* user, const llg_co_desc_t* desc,
     llg_report_bytes(report, "\n", 1);
 }
 
-_Noreturn void llg_rt_co_bad_state(const llg_co_frame_t* co, const char* fn) {
+LLG_CO_NORETURN void llg_co_host_bad_state(const llg_co_frame_t* co, const char* fn) {
     llg_report_t report;
     llg_report_t text;
     llg_report_init(&report);
@@ -109,7 +109,7 @@ _Noreturn void llg_rt_co_bad_state(const llg_co_frame_t* co, const char* fn) {
                       fn ? fn : "<unknown>", (const void*)co,
                       co ? (unsigned long)co->state : 0ul);
     llg_msg_append(&report, LLG_MSG_INTERNAL, LLG_SEVERITY_FATAL, NULL, NULL, NULL, text.data,
-                   text.len);
+                   text.len, NULL);
     llg_report_free(&text);
     llg_co_chain_t* chain = llg_rt_current_chain();
     if (chain) {
@@ -147,7 +147,7 @@ void* llg_co_host_chunk_alloc(size_t bytes) {
     }
 
     void* allocation = malloc(bytes);
-    if (!allocation) llg_rt_co_oom(bytes);
+    if (!allocation) llg_co_host_oom(bytes);
     llg_rt_co_count(&llg_rt_co_chunk_cache.stats.system_allocations);
     return allocation;
 }

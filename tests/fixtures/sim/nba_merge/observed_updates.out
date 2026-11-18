@@ -1,0 +1,6 @@
+0 monitor q=2 r=0 s=0
+1 monitor q=2 r=1 s=4
+1 strobe q=2 r=1 s=4 k=2
+3 monitor q=2 r=2 s=5
+3 strobe q=2 r=2 s=5 k=2
+5 n_q=1 n_k=1 q=2 r=2 s=5 k=2

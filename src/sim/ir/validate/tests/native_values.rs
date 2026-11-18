@@ -53,6 +53,7 @@ fn native_model() -> IrModel {
         class_field: None,
         receiver: None,
         marker: false,
+        ref_rooted: false,
     });
     model.native_values.push(IrNativeValue {
         c_name: "S_llg_native_1".into(),
@@ -62,6 +63,7 @@ fn native_model() -> IrModel {
         class_field: None,
         receiver: None,
         marker: false,
+        ref_rooted: false,
     });
     model
 }
@@ -176,6 +178,7 @@ fn native_value_identities_and_leaf_paths_must_resolve() {
         class_field: None,
         receiver: None,
         marker: false,
+        ref_rooted: false,
     };
     model.validate().unwrap();
 
@@ -384,6 +387,7 @@ fn native_companion_containers_follow_their_values() {
         class_field: None,
         receiver: None,
         marker: false,
+        ref_rooted: false,
     });
     model.native_values.push(IrNativeValue {
         c_name: "S_llg_native_1".into(),
@@ -393,6 +397,7 @@ fn native_companion_containers_follow_their_values() {
         class_field: None,
         receiver: None,
         marker: false,
+        ref_rooted: false,
     });
     let mut formal = native_formal(1, false);
     formal.native_companions = vec![1];
@@ -615,6 +620,7 @@ fn record_marker_dependencies_name_observed_records() {
         class_field: Some((0, 0)),
         receiver: None,
         marker: true,
+        ref_rooted: false,
     });
     model.native_accesses.push(IrNativeAccess {
         name: "_llg_access_0".into(),

@@ -1681,12 +1681,13 @@ static void cr_warn_fallback_measure(const cr_solve_t* st, const cr_plan_t* plan
     if (!measured || s->site->fallback_warned) return;
     s->site->fallback_warned = 1;
     const char* budget = st->budget ? st->budget : "LLG_RAND_BDD_NODES";
-    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL,
-            "%s: a constraint component exceeds the exact solver budget "
-            "(%s), so the fallback solvers ignore its dist weights and solve...before "
-            "orders (IEEE 1800-2009 18.5.4, 18.5.9); the constraints still hold. Raise %s "
-            "to keep them.",
-            p->name ? p->name : "randomize()", budget, budget);
+    char hint[96];
+    snprintf(hint, sizeof hint, "raise %s to keep them", budget);
+    llg_msg_hint(LLG_MSG_RUNTIME_WARNING, NULL, hint,
+                 "%s: a constraint component exceeds the exact solver budget "
+                 "(%s), so the fallback solvers ignore its dist weights and solve...before "
+                 "orders (IEEE 1800-2009 18.5.4, 18.5.9); the constraints still hold",
+                 p->name ? p->name : "randomize()", budget);
 }
 
 /* ---- cached search encodings ------------------------------------------------

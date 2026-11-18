@@ -643,6 +643,42 @@ processes or clock edges, at the cost of a few bytes per object.
   stays 88 B and a value watch subscription grows from 32 to 40 B (one
   48-byte allocation either way).
 
+### Overridden nonblocking assignments merged in lowering
+
+- **Trade-off:** `q <= 0; if (c) q <= d;` queues, commits and frees two
+  updates of `q` where only the last one counts (IEEE 1800-2009 4.6 b).
+  Dropping the first in lowering costs nothing at run time, but a consumer
+  that sees each write instead of the change at the T1-D11 check could see
+  the dropped write, and an update that moves into a branch is repeated in
+  the arms that do not override it.
+- **Decision:** lowering drops an untimed nonblocking update of a constant
+  packed target with a pure value when a later update of the same target
+  follows in the same statement list with only such updates between; an
+  update directly followed by an `if`, `case` or block moves into its arms
+  when an arm begins with its override
+  ([`nba_merge.rs`](../src/sim/codegen/lowering/statements/nba_merge.rs)).
+  Kept updates keep their queue order. The merge is skipped for storage a
+  `$monitor` names or that keeps sampled history, and for whole models with
+  waveforms, timing checks, sequential UDPs, asynchronous `accept_on` or
+  `reject_on`, gated sampled-value clocks, or toggle or FSM coverage, whose
+  consumers see each write. Waveforms are the largest exclusion: a model
+  built with `--wave` or `$dumpvars` keeps every update.
+- **Evidence:** over the fixture tree the generated C of 5 existing models
+  changed in both optimizer modes (three T1-D11 cases, the VPI value-change
+  case and an NBA ordering case), all with unchanged output. Those cases
+  check the NBA batch at run time, so their overridden updates now take a
+  value from a function with a side effect or a run-time-indexed target,
+  which the merge leaves alone. Of the timed
+  rows only the two-NBA register row changes: the glitch, record and corpus
+  rows and both `--wave` rows build to identical code, and in the changed
+  row the runtime's hot scheduler functions keep their addresses. Two NBAs
+  per register per cycle (1,000 registers, 20,000 cycles): 9.7% fewer
+  instructions (callgrind without cache simulation, 99.2 G → 89.6 G; the
+  saving is the queue record, its allocation and its commit), and 100 of
+  100 alternating pairs faster in both orders, medians 14.55 → 10.77 s and
+  14.50 → 10.82 s (CPU seconds under a load of 30–40 from other agents,
+  which inflates both; on the base the row ran 9.25 s on a quiet machine).
+
 ### Clocking history only for the signals its readers name
 
 - **Trade-off:** a clocking drive or `##0` may ask whether its clocking

@@ -834,11 +834,28 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         }
     }
     frame.line("}");
-    // A runtime error inside an initializer (a null handle read, for
-    // example) leaves the frame like a plain function; `main` then sees the
-    // failed runtime and stops before any process runs.
+    // A `$finish`, a `$fatal` or a run-ending error inside an initializer (a
+    // null handle read, for example) leaves the frame like a plain function,
+    // and no later initializer runs; the model then ends the run through
+    // its normal end-of-run path without starting any process.
     frame.line("if (0) goto _llg_return;");
     frame.line("_llg_return: ;");
+    // An initializer left early never reached its scope ends; final
+    // procedures must not run inside them.
+    if model
+        .init_steps
+        .iter()
+        .any(|step| matches!(step, IrInitStep::StaticScopeEnter { .. }))
+    {
+        frame.line("llg_rt_static_init_leave();");
+    }
+    if model.init_steps.iter().any(|step| match step {
+        IrInitStep::Execute { random_scope, .. } => random_scope.is_some(),
+        IrInitStep::Initialize(initialization) => initialization.random_scope().is_some(),
+        _ => false,
+    }) {
+        frame.line("llg_rng_initializer_scope_end();");
+    }
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
     out.push_str(&format!(
         "static void llg_model_initializers(void) {{\n{}{}\n}}\n\n",

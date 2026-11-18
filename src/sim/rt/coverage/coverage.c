@@ -228,7 +228,7 @@ static void llg_cov_report(llg_msg_id_t id, const char* site, const char* fmt, .
     va_start(args, fmt);
     llg_report_vprintf(&text, fmt, args);
     va_end(args);
-    llg_rt_framed(&out, id, llg_msg_default_severity(id), site, NULL, text.data, text.len);
+    llg_rt_framed(&out, id, llg_msg_default_severity(id), site, NULL, text.data, text.len, NULL);
     llg_report_free(&text);
     llg_report_emit(&out, stderr);
 }

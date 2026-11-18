@@ -171,7 +171,11 @@ static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t sta
         llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%s: the constraints cannot be satisfied; randomize returns 0", site);
         return 0;
     case LLG_CR_RESOURCE:
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: solver budget %s exhausted before a solution or proof of unsatisfiability was found (raise %s); randomize returns 0", site, report->budget, report->budget);
+        {
+            char hint[96];
+            snprintf(hint, sizeof hint, "raise %s", report->budget);
+            llg_msg_hint(LLG_MSG_RUNTIME_ERROR, NULL, hint, "%s: solver budget %s exhausted before a solution or proof of unsatisfiability was found; randomize returns 0", site, report->budget);
+        }
         llg_last_failure = 1;
         llg_rt_note_error(0, "randomize solver budget exhausted", site);
         return 0;

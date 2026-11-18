@@ -39,9 +39,20 @@ static void llg_report_severity_typed(int severity, const char* fmt,
     llg_msg_id_t id = scope && scope[0]                 ? task_ids[severity]
                       : severity == LLG_SEVERITY_WARNING ? LLG_MSG_RUNTIME_DESIGN_WARNING
                                                          : LLG_MSG_RUNTIME_FAILURE;
+    // A simulator-generated report may carry a hint after the separator; user
+    // task text is never split.
+    const char* hint = NULL;
+    if (!(scope && scope[0])) {
+        char* separator = (char*)memchr(out, LLG_RT_HINT_SEPARATOR, len);
+        if (separator) {
+            *separator = '\0';
+            hint = separator + 1;
+            len = (size_t)(separator - out);
+        }
+    }
     llg_report_t report;
     llg_report_init(&report);
-    llg_rt_framed(&report, id, severity, location, scope, out, len);
+    llg_rt_framed(&report, id, severity, location, scope, out, len, hint);
     llg_report_emit(&report, stderr);
     if (severity >= LLG_SEVERITY_ERROR && llg_error_hook) {
         char message[512];
@@ -108,7 +119,7 @@ static void assertion_report_failure(int kind, const char* label,
     llg_report_printf(&text, "%s failed", llg_assertion_name(kind));
     if (label && label[0]) llg_report_printf(&text, " (%s)", label);
     llg_rt_framed(&report, LLG_MSG_ASSERTION_FAILED, LLG_SEVERITY_ERROR, location, NULL,
-                  text.data, text.len);
+                  text.data, text.len, NULL);
     llg_report_free(&text);
     llg_report_emit(&report, stderr);
     if (llg_error_hook) {

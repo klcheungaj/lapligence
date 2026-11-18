@@ -18,7 +18,7 @@ dynamic_ownership/selected_nba_capture.sv	mixed-assignments	5:5
 emit_value_traffic/arithmetic.sv	mixed-assignments	10:5
 feature_completion/g1_05/owner_publication_snapshot.sv	mixed-assignments	9:5
 feature_completion/g1_19/nba_issue_capture.sv	mixed-assignments	10:5
-feature_completion/g1_19/nba_ordered_updates.sv	mixed-assignments	10:5
+feature_completion/g1_19/nba_ordered_updates.sv	mixed-assignments	20:5
 feature_completion/ki_packed_range/procedural_selects.sv	mixed-assignments	17:3
 feature_completion/ki_pattern_rows/dense_rows.sv	mixed-assignments	33:3
 feature_completion/ki_pattern_rows/descriptor_rows.sv	mixed-assignments	22:3

@@ -59,7 +59,7 @@ reclaimed objects print `(reclaimed)` and output stops at
 | `llg_compiler.h`, `llg_platform.h`, `llg_platform_native.h` | The platform layer: every compiler and OS conditional (atomics, threads, dynamic libraries, host paths/directories, stack limit, console log process) behind neutral inline functions. `llg_compiler.h` is safe for generated models; the other two are private to runtime `.c` files. |
 | `vendor/libfst` + `patches/libfst` | Pristine upstream libfst/FastLZ/LZ4 snapshot and its tracked local patch; the build script applies the patch in place in `vendor/libfst` (like Slang), and `waveform_sources()` embeds those files only for waveform models. The applied state is a build product and is never committed. |
 | `vendor/zlib` (submodule) | zlib v1.3.2 sources libfst needs, embedded by `waveform_sources()` and written under `zlib/` only for waveform models. |
-| `llg_rt_selftest.c`, `llg_wave_selftest.c` | Value/scheduler checks and VCD/FST lifecycle/reader checks. |
+| `llg_rt_selftest.c`, `llg_wave_selftest.c` | Value/scheduler checks and VCD/FST lifecycle/reader checks; results print in the message layout as `SIM-032` (failures ERROR on stderr, passes INFO on stdout). |
 
 The scheduler keeps typed region queues, owned pending values and process origins.
 Current-slot nonblocking assignments use an issue-ordered FIFO per region and a
@@ -231,7 +231,10 @@ flatten the same order. `llg_co.c` is an independent translation unit, not a
 scheduler fragment.
 
 `llg_co` owns no global or thread-local state. The runtime supplies its allocation
-hooks and owns one simulation-thread chunk cache, capped by
+and report hooks at link time (`LLG_CO_HOST_ALLOC`; [scheduler](scheduler/readme.md)),
+so the library's internal aborts use the message layout without a reporter
+dependency; a standalone `llg_co.c` keeps a plain `llg: fatal:` line. The
+runtime owns one simulation-thread chunk cache, capped by
 `LLG_CO_CHUNK_CACHE_MAX_BYTES` (1 MiB by default). Exact-size chunks are reused;
 the exported counter snapshot records system allocations, cache hits, system
 frees, current cached bytes and the peak. Runtime cleanup frees every retained

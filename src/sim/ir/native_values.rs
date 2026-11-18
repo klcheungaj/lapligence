@@ -45,6 +45,12 @@ pub struct IrNativeValue {
     /// value toggles. A class record property publishes on its object's
     /// marker instead ([`super::IrNativeAccessKind::ClassRecord`]).
     pub(in crate::sim) marker: bool,
+    /// A call binds a member of this subroutine record to a `ref` formal
+    /// through a retained reference ([`super::IrElementRoot::Value`]), here
+    /// or after the record passes whole to a `ref` formal: nothing else
+    /// follows the record, so every store into it tells those references
+    /// (`llg_native_ref_value_stored`), whose readers re-read their member.
+    pub(in crate::sim) ref_rooted: bool,
 }
 
 impl IrNativeValue {

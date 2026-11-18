@@ -747,7 +747,9 @@ pub fn markdown() -> String {
          its separator) when a message has none. \
          Design context is the hierarchical scope and the simulation time, joined by `{}`; \
          the time is in the largest unit that shows it exactly. The hint, when present, \
-         names the lint rule or frontend warning option that selects the message.\n\n",
+         names the lint rule or frontend warning option that selects the message, or, \
+         for a generated-model message, the option or setting that turns its check \
+         off or raises its limit.\n\n",
         layout.severity_fatal,
         layout.severity_error,
         layout.severity_warning,
@@ -808,6 +810,16 @@ pub fn markdown() -> String {
                 "Lowering failures are grouped into families by their text until each \
                  site gets its own id; a failure carries a location where the lowering \
                  had the source node at hand.\n\n",
+            ),
+            Tool::Sim => out.push_str(
+                "A model message whose check can be turned off, or whose limit raised, \
+                 says how in its hint: an index-check stop (`SIM-009`, \
+                 `simulator.index_checks`, `--no-index-checks`), a timing violation \
+                 (`SIM-015`, `simulator.timing_check_messages`, \
+                 `--no-timing-check-messages`), a refused `$system` (`LLG_ALLOW_SYSTEM`), \
+                 a sequence thread budget (`LLG_SEQUENCE_THREAD_LIMIT`), a constraint \
+                 solver budget (the `LLG_RAND_*` variable it names) and a VPI plugin \
+                 loaded by a model without the object catalog (`--vpi`).\n\n",
             ),
             _ => {}
         }

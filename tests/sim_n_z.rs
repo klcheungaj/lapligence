@@ -15,6 +15,7 @@ mod support;
 #[path = "support/vcd.rs"]
 mod vcd;
 
+mod sim_nba_merge;
 mod sim_net_decl;
 mod sim_net_defaults;
 mod sim_net_interval;

@@ -2278,6 +2278,7 @@ impl Codegen<'_> {
                 class_field: None,
                 receiver: None,
                 marker: false,
+                ref_rooted: false,
             });
         before.push(IrStmt::NativeValueDeclare(temporary));
         let inout = matches!(

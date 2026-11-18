@@ -183,7 +183,7 @@ fn dynamic_array_new_with_an_invalid_size_stops_the_run() {
     for (case, detail) in cases {
         let plusarg = format!("+case={case}");
         let text = format!(
-            "new[] in process 'tb.initial': {detail}; run with --no-index-checks or set simulator.index_checks = false"
+            "new[] in process 'tb.initial': {detail} (run with --no-index-checks or set simulator.index_checks = false"
         );
         sim_cli::run_case_stopping_at_runtime(
             SUITE,

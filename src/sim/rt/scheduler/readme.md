@@ -71,9 +71,13 @@ contract; an arm that must retain an array or an output address (the
 `wait_order` result) must say so there and the emitter must then keep it in a
 frame field or registered cell.
 
-`llg_rt.h` defines the exported OOM and bad-state hooks before including
-`llg_co.h`; `llg_co.c` alone receives the matching `LLG_CO_HOST_ALLOC` compile
-definition because it includes the library header directly. The runtime owns one
+`llg_rt.h` defines `LLG_CO_HOST_ALLOC` before including `llg_co.h`, which then
+declares the host hooks this runtime defines (`llg_co_host_chunk_alloc/free`,
+`llg_co_host_oom`, `llg_co_host_bad_state`) and maps `LLG_CO_OOM` and
+`LLG_CO_BAD_STATE` to them; `llg_co.c` alone receives the matching compile
+definition because it includes the library header directly, so the library's
+own reports also print as SIM-031/SIM-030 in the message layout while `llg_co`
+includes no reporter header. The runtime owns one
 non-TLS chunk cache for the simulation thread, bounded by the named
 `LLG_CO_CHUNK_CACHE_MAX_BYTES` tunable. Segregated free lists make geometric
 arena reuse a constant-time head lookup while retaining exact-size matching.
@@ -177,7 +181,11 @@ waveforms, monitors, abort conditions, coverage watches and timing checks,
 and the AA-D6 gate, which a gate-at-write wait
 latches at each write (`llg_wait_gate_at_write`, `payload.expression.gate_open`,
 walked through `write_walkers`); moving one to the check means calling it
-from `sig_settle` and counting what it observes in `wait_source_observed`. Ordered change logs (`llg_wait_changes`) also log per write.
+from `sig_settle` and counting what it observes in `wait_source_observed`.
+Lowering drops a nonblocking update that a later one in the same process
+turn overrides only where none of these per-write consumers can see it
+(`codegen/lowering/statements/nba_merge.rs`), so a new per-write consumer
+must be added to its exclusions. Ordered change logs (`llg_wait_changes`) also log per write.
 Strings, container cells and reference markers publish per write, and so do
 markers bound to an unwaited marker. The contents marker of a native record
 (`llg_record_changed`, called after each statement that stores into a record a

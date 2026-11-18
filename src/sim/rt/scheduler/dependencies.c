@@ -592,7 +592,7 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
         double value;
         if (spec->real_eval) {
             spec->real_eval(&value, spec->eval_context);
-            if (llg_rt_exiting()) return 0;
+            if (evaluator_exiting()) return 0;
         }
         else if (spec->real_sig) value = *spec->real_sig;
         else return 0;
@@ -605,7 +605,7 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
     sv4_t* value = llg_value_scope_values(scope);
     if (spec->eval) {
         spec->eval(value, spec->eval_context);
-        if (llg_rt_exiting()) {
+        if (evaluator_exiting()) {
             llg_value_scope_end(scope);
             return 0;
         }
@@ -632,7 +632,7 @@ static void expression_gate_latch(llg_wait_t* wait, int index, sv4_t* sig,
         double value;
         if (spec->real_eval) {
             spec->real_eval(&value, spec->eval_context);
-            if (llg_rt_exiting()) return;
+            if (evaluator_exiting()) return;
         } else if (spec->real_sig) value = *spec->real_sig;
         else return;
         matched = real_ev_matches(payload->real_last[index], value, spec->kind);
@@ -642,7 +642,7 @@ static void expression_gate_latch(llg_wait_t* wait, int index, sv4_t* sig,
         sv4_t* value = llg_value_scope_values(scope);
         if (spec->eval) {
             spec->eval(value, spec->eval_context);
-            if (llg_rt_exiting()) {
+            if (evaluator_exiting()) {
                 llg_value_scope_end(scope);
                 return;
             }
@@ -661,7 +661,7 @@ static int deferred_expression_update(llg_deferred_trigger_t* trigger,
         double value;
         if (spec->real_eval) {
             spec->real_eval(&value, spec->eval_context);
-            if (llg_rt_exiting()) return 0;
+            if (evaluator_exiting()) return 0;
         }
         else if (spec->real_sig) value = *spec->real_sig;
         else return 0;
@@ -674,7 +674,7 @@ static int deferred_expression_update(llg_deferred_trigger_t* trigger,
     sv4_t* value = llg_value_scope_values(scope);
     if (spec->eval) {
         spec->eval(value, spec->eval_context);
-        if (llg_rt_exiting()) {
+        if (evaluator_exiting()) {
             llg_value_scope_end(scope);
             return 0;
         }

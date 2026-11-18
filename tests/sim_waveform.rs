@@ -1054,6 +1054,26 @@ fn run_time_output_settings_redirect_one_built_model() {
                 std::fs::read_to_string(one.join("console.log")).unwrap(),
                 "console a5\n"
             );
+            // A log the model cannot open stops it before time zero with
+            // the environment message, not a free-form line.
+            let mut command = Command::new(&exe);
+            command
+                .current_dir(dir.path())
+                .env("LLG_SIM_LOG_FILE", "missing/console.log");
+            let output = sim_harness::run_command(&mut command, Duration::from_secs(60))
+                .unwrap_or_else(|error| panic!("{label}: {error}"));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{label}: {stderr}");
+            assert!(output.stdout.is_empty(), "{label}: {stderr}");
+            assert!(
+                sim_harness::has_message(
+                    &stderr,
+                    "SIM-020",
+                    "",
+                    "cannot open LLG_SIM_LOG_FILE `missing/console.log`: "
+                ),
+                "{label}: {stderr}"
+            );
         }
 
         run(&[

@@ -20,7 +20,7 @@ ERROR: [CLI-003] --top requires a module name
 INFO: f.sv:3:35: [SIM-001] (tb @ 5 ns) $finish called
 ```
 
-Severity words: `FATAL`, `ERROR`, `WARNING`, `INFO`. The id is the tool name, `-` and a three-digit index; index 000 of a tool is its summary. The location is the physical `file:line:col` (`file:line` where the column is not known), followed by `` (`line file:line)`` when a `` `line`` directive maps it, and is left out (with its separator) when a message has none. Design context is the hierarchical scope and the simulation time, joined by ` @ `; the time is in the largest unit that shows it exactly. The hint, when present, names the lint rule or frontend warning option that selects the message.
+Severity words: `FATAL`, `ERROR`, `WARNING`, `INFO`. The id is the tool name, `-` and a three-digit index; index 000 of a tool is its summary. The location is the physical `file:line:col` (`file:line` where the column is not known), followed by `` (`line file:line)`` when a `` `line`` directive maps it, and is left out (with its separator) when a message has none. Design context is the hierarchical scope and the simulation time, joined by ` @ `; the time is in the largest unit that shows it exactly. The hint, when present, names the lint rule or frontend warning option that selects the message, or, for a generated-model message, the option or setting that turns its check off or raises its limit.
 
 Each phase that reported a warning or worse ends with a summary message, `LINT-000` for lint, with the text `<{fatal} fatal, >{error} error(s), {warning} warning(s)<, {info} info(s)>`.
 
@@ -182,6 +182,8 @@ No messages.
 
 ## SIM
 
+A model message whose check can be turned off, or whose limit raised, says how in its hint: an index-check stop (`SIM-009`, `simulator.index_checks`, `--no-index-checks`), a timing violation (`SIM-015`, `simulator.timing_check_messages`, `--no-timing-check-messages`), a refused `$system` (`LLG_ALLOW_SYSTEM`), a sequence thread budget (`LLG_SEQUENCE_THREAD_LIMIT`), a constraint solver budget (the `LLG_RAND_*` variable it names) and a VPI plugin loaded by a model without the object catalog (`--vpi`).
+
 | Id | Severity | Meaning | Disable |
 |---|---|---|---|
 | `SIM-000` | info | end-of-run counts, printed at every exit when the run reported a warning or worse | - |
@@ -210,4 +212,5 @@ No messages.
 | `SIM-023` | warning | a run-time warning the simulator detects in the design; the run continues (a $cast destination element that does not exist while index checks are off) | - |
 | `SIM-030` | fatal | an internal runtime invariant failed; the model aborts | - |
 | `SIM-031` | fatal | the model could not allocate memory; it aborts | - |
+| `SIM-032` | error | a runtime self-test result (a failed check is an error, a passed group an info); only the runtime C self-tests print it, never a model | - |
 

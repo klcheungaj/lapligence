@@ -333,7 +333,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   ([sim_022](../tests/fixtures/sim/feature_completion/sim_022/readme.md);
   decisions S22-D1, S22-D2, S22-D7). A `fork`-`join_none`, nonblocking assignment or
   nonblocking trigger that executes under a static initializer is a located
-  run-time error before any process starts (SV 13.4.4, S13-D5); modifying built-in methods on `const`
+  run-time error before any process starts (SV 13.4.4, S13-D5). Any other
+  run-time error, `$finish` or `$fatal` under a static initializer is the
+  same event as in a process: one that ends the run stops initialization at
+  once, no procedure starts, and the run ends as from a process (final
+  procedures included, S22-D9); any other reports and the run goes on
+  ([ki_static_init_errors](../tests/fixtures/sim/feature_completion/ki_static_init_errors/readme.md)). Modifying built-in methods on `const`
   variables and properties are located errors (S22-D4); an initialized block
   variable without `static`/`automatic` is accepted with a warning as static
   (S22-D5). Unsupported native/resizable layouts, oversized records and
@@ -1915,7 +1920,19 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Members of subroutine records with container members pass the record's own
   companions, or mirrors of nested slots at 16 or more cells
   ([record_ref_subroutine_container_member](../tests/fixtures/sim/feature_completion/sim_008/readme.md));
-  a task waiting on such a formal rejects.
+  a task waiting on such a formal rejects. A task waiting on a formal bound
+  to an element or member of an element of a subroutine record, or of a
+  queue element, wakes at every store into what it binds: the owner's,
+  a sibling branch's and those through other `ref` formals (decision S09-D4,
+  `record_ref_subroutine_element_wake`, `record_ref_container_member_wake`);
+  a run-time index of a subroutine record that selects no element stops at
+  the actual (S07-D15, `record_ref_subroutine_unselected`). A run-time record
+  element (`o.m[1].a[k]`, `t.e[k]`) compares with `==`, `!=` and `===`, and a
+  subroutine record's `t.m[1].a[k]` is an assignment source and target
+  (`record_element_select_equality`). At 16 or more cells a subroutine
+  record's queue or dynamic-array member below an element is reached only
+  through a `ref` formal bound to the element
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)).
   Run-time elements of module records below 16 cells in calls inside
   conditions and loop headers, and reference-formal NBAs remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be

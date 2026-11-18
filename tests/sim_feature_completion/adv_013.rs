@@ -196,7 +196,7 @@ fn unbounded_recursion_with_local_variables_reports_the_thread_budget() {
                     "SIM-010",
                     "rec_budget.sv:12:3",
                     "sequence thread budget exhausted: more than 200 live sequence threads at \
-                     time 75 (concurrent assertion g); raise"
+                     time 75 (concurrent assertion g) (raise LLG_SEQUENCE_THREAD_LIMIT)"
                 ),
                 "{label}: {stderr}"
             );

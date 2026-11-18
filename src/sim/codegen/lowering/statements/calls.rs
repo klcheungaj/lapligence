@@ -610,7 +610,9 @@ impl EmitCtx<'_, '_> {
             };
             let stop = IrStmt::Severity {
                 level: crate::sim::ir::IrSeverityLevel::Fatal,
-                fmt: format!("\"{message}{}\"", crate::sim::ir::INDEX_CHECK_HINT),
+                // `\036` is the runtime's hint separator
+                // (`crate::sim::ir::HINT_SEPARATOR`).
+                fmt: format!("\"{message}\\036{}\"", crate::sim::ir::INDEX_CHECK_HINT),
                 args: Vec::new(),
                 scope: self.path.clone(),
                 location: self.cg.source_location(site),
@@ -731,9 +733,14 @@ impl EmitCtx<'_, '_> {
             {
                 *stop_unselected = Some(stop);
             }
+            // A subroutine record selects no element only below a run-time
+            // position in a member array.
             IrCallArg::ElementRef(reference)
                 if reference.kind != crate::sim::ir::IrElementRefKind::Record
-                    && !matches!(reference.root, crate::sim::ir::IrElementRoot::Value(_)) =>
+                    && (!matches!(reference.root, crate::sim::ir::IrElementRoot::Value(_))
+                        || reference.steps.iter().any(|step| {
+                            matches!(step, crate::sim::ir::IrElementStep::Position(_))
+                        })) =>
             {
                 reference.stop_unselected = Some(stop);
             }

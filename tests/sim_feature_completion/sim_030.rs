@@ -203,7 +203,7 @@ fn wide_randc_walk_budget_is_a_resource_error() {
         &[("LLG_RAND_CYCLIC_WALK", "0")],
         &runtime_failure(
             "ok=0 legal=0\n",
-            "ERROR: [SIM-010] randomize() at tb:13:10: solver budget LLG_RAND_CYCLIC_WALK exhausted before a solution or proof of unsatisfiability was found (raise LLG_RAND_CYCLIC_WALK); randomize returns 0",
+            "ERROR: [SIM-010] randomize() at tb:13:10: solver budget LLG_RAND_CYCLIC_WALK exhausted before a solution or proof of unsatisfiability was found; randomize returns 0 (raise LLG_RAND_CYCLIC_WALK)",
         ),
     );
     sim_cli::run_case_checked_matrix(SUITE, "rt_randc_walk_budget", &[], &|label, output| {
@@ -489,7 +489,9 @@ fn fallback_that_drops_weights_warns_once_per_call_site() {
                 for line in &warnings {
                     assert!(
                         line.contains(&format!("exceeds the exact solver budget ({variable})"))
-                            && line.contains(&format!("Raise {variable} to keep them")),
+                            && line.contains(&format!(
+                                "the constraints still hold (raise {variable} to keep them)"
+                            )),
                         "{label}: {line}"
                     );
                 }

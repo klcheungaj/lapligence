@@ -10,7 +10,9 @@
  * (file:line:col, with a `line-mapped suffix when one applies), {id}
  * (TOOL ID_JOIN index), {context} (design scope and simulation time, joined by
  * CONTEXT_JOIN), {text} (the message; user text is never changed) and {hint}
- * (how to select the message: a lint rule name or a frontend warning option).
+ * (how to select the message: a lint rule name or a frontend warning option;
+ * for a model message, the option or setting that turns its check off or
+ * raises its limit).
  * <...> is an optional group, left out whole when a field inside it is empty;
  * groups do not nest. Fields after {text} are not recovered by parsers.
  *

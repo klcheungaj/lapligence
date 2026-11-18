@@ -202,23 +202,17 @@ void llg_fixed_array_cells_store(llg_fixed_array_t* array, uint64_t first, uint6
 void llg_fixed_array_cells_fill(llg_fixed_array_t* array, uint64_t first, uint64_t count,
                                 const sv4_t* value, int nba);
 
-// Keep the library and every model translation unit on the host-allocation
-// declaration contract. CMake supplies the same definition when compiling
-// llg_co.c, which includes llg_co.h directly.
+// Keep the library and every model translation unit on the host contract:
+// llg_co.h then declares the chunk-allocation and report hooks this runtime
+// defines (llg_rt_prelude.c) and maps LLG_CO_OOM and LLG_CO_BAD_STATE to
+// them. CMake supplies the same definition when compiling llg_co.c, which
+// includes llg_co.h directly, so the library's own reports use them too.
+// llg_co_host_bad_state reports `co` and `fn` (SIM-030), then walks the
+// current process's descriptor chain with llg_co_backtrace when a process
+// resume is active; llg_co_host_oom is the fatal allocation report (SIM-031).
 #ifndef LLG_CO_HOST_ALLOC
 #define LLG_CO_HOST_ALLOC 1
 #endif
-struct llg_co_frame;
-_Noreturn void llg_rt_co_oom(size_t bytes);
-// Reports `co` and `fn`, then walks the current process's descriptor chain
-// with llg_co_backtrace when a process resume is active. Never returns.
-_Noreturn void llg_rt_co_bad_state(const struct llg_co_frame* co,
-                                   const char* fn);
-#define LLG_CO_OOM(bytes) llg_rt_co_oom(bytes)
-#define LLG_CO_BAD_STATE(co, fn) llg_rt_co_bad_state((co), (fn))
-// The handler above is _Noreturn: lets the coroutine dispatch drop its
-// unreachable fallback return on MSVC (C4702 at /W4).
-#define LLG_CO_BAD_STATE_NORETURN 1
 #include "llg_co.h"
 
 // Startup is mandatory even for models without arena calls. Separate debug
@@ -1736,8 +1730,10 @@ void llg_rt_skip_finals(void);
 void llg_rt_finish(void);
 void llg_rt_finish_with_level(int verbosity, const char* location);
 // True only while the current process or transient final record has a pending
-// COMPLETE/ABANDON exit. This out-of-line query is for plain generated
-// functions; coroutine code reads its chain with LLG_CO_EXIT_CHECK.
+// COMPLETE/ABANDON exit, or, during static initialization (no current
+// process), once the run is finishing. This out-of-line query is for plain
+// generated functions and the initialization frame; coroutine code reads its
+// chain with LLG_CO_EXIT_CHECK.
 int llg_rt_exiting(void);
 // Deferred stop for generated functions and vpi_control(vpiStop). Reports the
 // stop now and, when called during a scheduler process turn, records a request

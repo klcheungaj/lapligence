@@ -989,6 +989,7 @@ impl Codegen<'_> {
                 class_field: None,
                 receiver: None,
                 marker: false,
+                ref_rooted: false,
             });
         Ok(Some(index))
     }

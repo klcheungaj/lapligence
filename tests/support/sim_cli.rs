@@ -575,7 +575,7 @@ fn assert_case_output(
     for line in stderr.lines() {
         match llg::core::report::parse(line) {
             Some(message) if sim_harness::is_listed_warning(&message) => {
-                warnings.push(sim_harness::located_text(&message))
+                warnings.push(sim_harness::listed_text(&message))
             }
             _ if crate::sim_harness::is_compile_report_line(line) => {
                 // Legal conformance probes intentionally provoke frontend
@@ -1019,6 +1019,31 @@ pub(crate) fn run_case_failing_at_runtime(
         let output = invoke_with_runtime_args(suite, fixture, optimized, &[], runtime_args);
         let seen = observed_output(&output);
         let label = format!("{fixture} {runtime_args:?}, optimized={optimized}");
+        assert_eq!(output.status.code(), Some(1), "{label}: {seen}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "{label}: {seen}"
+        );
+        assert!(
+            sim_harness::mentions(&String::from_utf8_lossy(&output.stderr), diagnostic),
+            "{label}: {seen}"
+        );
+    }
+}
+
+/// [`run_case_failing_at_runtime`] with compile options `args`.
+pub(crate) fn run_case_failing_at_runtime_with_args(
+    suite: &str,
+    fixture: &str,
+    args: &[&str],
+    expected: &str,
+    diagnostic: &str,
+) {
+    for optimized in [false, true] {
+        let output = invoke_with_runtime_args(suite, fixture, optimized, args, &[]);
+        let seen = observed_output(&output);
+        let label = format!("{fixture} {args:?}, optimized={optimized}");
         assert_eq!(output.status.code(), Some(1), "{label}: {seen}");
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),

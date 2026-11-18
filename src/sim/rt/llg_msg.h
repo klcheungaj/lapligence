@@ -77,15 +77,22 @@ LLG_MSG_API void llg_report_printf(llg_report_t* report, const char* fmt, ...);
 // The catalog severity of message `id`.
 LLG_MSG_API int llg_msg_default_severity(llg_msg_id_t id);
 // Append message `id` with `severity` to `out` (newline included) and count
-// it. `location`, `scope` and `time` may be NULL or empty.
+// it. `location`, `scope`, `time` and `hint` may be NULL or empty. The hint
+// says how to turn the check off or change the limit that raised the message.
 LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity,
                                 const char* location, const char* scope,
-                                const char* time, const char* text, size_t text_len);
-// Report message `id` (its catalog severity) with printf-style text.
-LLG_MSG_API void llg_msg_vreport(llg_msg_id_t id, const char* location, const char* fmt,
-                                 va_list args);
+                                const char* time, const char* text, size_t text_len,
+                                const char* hint);
+// Report message `id` (its catalog severity) with printf-style text and an
+// optional hint.
+LLG_MSG_API void llg_msg_vreport(llg_msg_id_t id, const char* location, const char* hint,
+                                 const char* fmt, va_list args);
 LLG_MSG_PRINTF(3, 4)
 LLG_MSG_API void llg_msg(llg_msg_id_t id, const char* location, const char* fmt, ...);
+// llg_msg with a hint (see llg_msg_append).
+LLG_MSG_PRINTF(4, 5)
+LLG_MSG_API void llg_msg_hint(llg_msg_id_t id, const char* location, const char* hint,
+                              const char* fmt, ...);
 // Report a fatal internal message and abort.
 LLG_MSG_PRINTF(2, 3)
 LLG_MSG_API _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...);
@@ -185,6 +192,7 @@ typedef struct {
     const char* context;
     const char* text;
     size_t text_len;
+    const char* hint;
 } llg_msg_fields_t;
 
 #if LLG_MSG_DEFINE
@@ -196,6 +204,7 @@ static inline const char* llg_msg_field(const llg_msg_fields_t* f, const char* n
     else if (len == 8 && memcmp(name, "location", 8) == 0) value = f->location;
     else if (len == 2 && memcmp(name, "id", 2) == 0) value = f->id;
     else if (len == 7 && memcmp(name, "context", 7) == 0) value = f->context;
+    else if (len == 4 && memcmp(name, "hint", 4) == 0) value = f->hint;
     else if (len == 4 && memcmp(name, "text", 4) == 0) {
         *value_len = f->text_len;
         return f->text;
@@ -282,10 +291,11 @@ LLG_MSG_API int llg_msg_default_severity(llg_msg_id_t id) {
 }
 
 // Append message `id` with `severity` to `out` (newline included) and count
-// it. `location`, `scope` and `time` may be NULL or empty.
+// it. `location`, `scope`, `time` and `hint` may be NULL or empty.
 LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity,
                                   const char* location, const char* scope,
-                                  const char* time, const char* text, size_t text_len) {
+                                  const char* time, const char* text, size_t text_len,
+                                  const char* hint) {
     static const char* const tools[] = {
 #define LLG_MSG_ID(name, tool, index, severity, meaning, disable) #tool,
 #include "llg_msg_ids.def"
@@ -319,15 +329,16 @@ LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity
     if (!has_scope && !has_time) context[0] = '\0';
     if (severity < LLG_SEVERITY_INFO || severity > LLG_SEVERITY_FATAL) severity = LLG_SEVERITY_FATAL;
     llg_msg_fields_t fields = {llg_msg_severity_word(severity), location, id_text,
-                               context, text, text_len};
+                               context, text, text_len, hint};
     llg_msg_render(out, LLG_MSG_LAYOUT_TEMPLATE, &fields);
     llg_report_bytes(out, "\n", 1);
     if (context != context_inline) free(context);
     if (llg_msg_counts[severity] != UINT64_MAX) llg_msg_counts[severity]++;
 }
 
-// Report message `id` (its catalog severity) with printf-style text.
-LLG_MSG_API void llg_msg_vreport(llg_msg_id_t id, const char* location,
+// Report message `id` (its catalog severity) with printf-style text and an
+// optional hint.
+LLG_MSG_API void llg_msg_vreport(llg_msg_id_t id, const char* location, const char* hint,
                                    const char* fmt, va_list args) {
     llg_report_t text;
     llg_report_t out;
@@ -335,7 +346,7 @@ LLG_MSG_API void llg_msg_vreport(llg_msg_id_t id, const char* location,
     llg_report_init(&out);
     llg_report_vprintf(&text, fmt, args);
     llg_msg_append(&out, id, llg_msg_default_severity(id), location, NULL, NULL, text.data,
-                   text.len);
+                   text.len, hint);
     llg_report_free(&text);
     llg_report_emit(&out, stderr);
 }
@@ -343,7 +354,15 @@ LLG_MSG_API void llg_msg_vreport(llg_msg_id_t id, const char* location,
 LLG_MSG_API void llg_msg(llg_msg_id_t id, const char* location, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    llg_msg_vreport(id, location, fmt, args);
+    llg_msg_vreport(id, location, NULL, fmt, args);
+    va_end(args);
+}
+
+LLG_MSG_API void llg_msg_hint(llg_msg_id_t id, const char* location, const char* hint,
+                              const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    llg_msg_vreport(id, location, hint, fmt, args);
     va_end(args);
 }
 
@@ -351,7 +370,7 @@ LLG_MSG_API void llg_msg(llg_msg_id_t id, const char* location, const char* fmt,
 LLG_MSG_API _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    llg_msg_vreport(id, NULL, fmt, args);
+    llg_msg_vreport(id, NULL, NULL, fmt, args);
     va_end(args);
     abort();
 }

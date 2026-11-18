@@ -74,7 +74,17 @@ private default cell (`llg_native_ref_detached_string` and its siblings).
 A record reference a task waits on is watched (`llg_native_ref_watch`): any
 change of a container toggles its marker, since a notify carries no position, and
 the wait re-reads the record, so only that element's change ends it. Unwatched
-references cost nothing.
+references cost nothing. A store into a record that roots member references
+(the `origin` of `llg_native_ref_root`: a subroutine record) reaches
+`llg_native_ref_value_stored` with the record's address, from the owner's own
+stores and from `ref` formals bound to the record or to one of its members;
+the member references inside it (also below a member another reference
+binds) then publish: a packed leaf and a watched record at once, a handle or
+real leaf only when it differs from what it last published, which the
+reference keeps in its own `value` (a real is written again through
+`store_real`, since its readers follow the cell). A container change
+publishes the changed handle and real leaves of its elements the same way. A
+reference's own publication is never a store through it (`syncing`).
 A record some wait observes that a call binds to a `ref` formal, whole or by a
 member, registers a `llg_record_watch_t` for the call (a value-scope object):
 `llg_native_ref_value_stored` then also runs the watch's function on the

@@ -1,15 +1,22 @@
 // SIM-043 T1-D11: a value-change callback (value_changes.c) sees one change
 // per check: a value changed and changed back within one process turn or
 // one NBA batch calls nothing; a print call, a #0 delay and a later time
-// step each end a turn.
+// step each end a turn. The overridden nonblocking update of k takes its
+// value from `counted`, a function with a side effect, so lowering cannot
+// drop it and the NBA batch commits both writes.
 `timescale 1ns / 1ns
 module tb;
   logic g, h, k, v;
   logic [7:0] w;
   real r;
+  int calls;
+  function automatic logic counted(logic value);
+    calls++;
+    return value;
+  endfunction
   initial begin
     k <= 1'b0;
-    #3 k <= 1'b1;
+    #3 k <= counted(1'b1);
     k <= 1'b0;
   end
   initial begin

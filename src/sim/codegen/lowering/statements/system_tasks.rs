@@ -396,6 +396,11 @@ impl EmitCtx<'_, '_> {
                         });
                         (name, count)
                     });
+                    if !strobe {
+                        self.cg
+                            .monitor_reads
+                            .note(&reads, poll || dynamic_reads.is_some());
+                    }
                     let time_args = display_args
                         .iter()
                         .enumerate()

@@ -4,6 +4,7 @@
 #include "llg_wave.h"
 #include "fstapi.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,9 +16,31 @@ size_t value_test_live(void);
 size_t value_test_bytes(void);
 #endif
 
+// Results use the model's message layout with id SIM-032: a failure is an
+// ERROR on stderr (located at its selftest line when it has one), the pass
+// an INFO on stdout.
+LLG_MSG_PRINTF(4, 5)
+static void selftest_report(FILE* stream, int severity, int line, const char* fmt, ...) {
+    char location[64];
+    llg_report_t text;
+    llg_report_t out;
+    va_list args;
+    if (line > 0) snprintf(location, sizeof location, "llg_wave_selftest.c:%d", line);
+    llg_report_init(&text);
+    llg_report_init(&out);
+    va_start(args, fmt);
+    llg_report_vprintf(&text, fmt, args);
+    va_end(args);
+    llg_msg_append(&out, LLG_MSG_SELFTEST, severity, line > 0 ? location : NULL, NULL, NULL,
+                   text.data, text.len, NULL);
+    llg_report_free(&text);
+    llg_report_emit(&out, stream);
+}
+
 #define CHECK(expr) do { \
     if (!(expr)) { \
-        fprintf(stderr, "wave selftest failed at line %d: %s\n", __LINE__, #expr); \
+        selftest_report(stderr, LLG_SEVERITY_ERROR, __LINE__, "wave selftest check failed: %s", \
+                        #expr); \
         goto cleanup; \
     } \
 } while (0)
@@ -159,7 +182,7 @@ cleanup:
     sv4_destroy(&packed);
 #ifdef LLG_SELFTEST_TRACK_STORAGE
     if (value_test_live() || value_test_bytes()) {
-        fprintf(stderr, "wave selftest leaked packed storage\n");
+        selftest_report(stderr, LLG_SEVERITY_ERROR, 0, "wave selftest leaked packed storage");
         result = 1;
     }
 #endif
@@ -167,6 +190,6 @@ cleanup:
     (void)remove(vcd_path);
     (void)remove(selected_vcd_path);
     (void)remove(fst_path);
-    if (!result) puts("llg waveform selftest: OK");
+    if (!result) selftest_report(stdout, LLG_SEVERITY_INFO, 0, "llg waveform selftest: OK");
     return result;
 }

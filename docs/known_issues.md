@@ -555,7 +555,13 @@ a run-time selection among more than 4,096 leaves of a module record
 record (`NATIVE_RECORD_SELECT_LIMIT`); a task waiting on a `ref` formal bound
 to a member of a subroutine record whose type has container members (the
 formal takes the record's companions, whose changes publish nothing it
-follows); as a `ref` actual, a run-time-indexed record element
+follows); a queue or dynamic-array member below an element of a member array
+of 16 or more cells, which a subroutine record holds in its own slot,
+anywhere but through a `ref` formal bound to the element
+(`t.e[1].q.push_back(x)`, `x = t.e[1].q[0]`, `v = t.e[1]`, `%p` of
+`t.e[1]`; located at the selection, since the member is a nested slot of the
+record's value that only the reference mirror reaches, about two days); as a
+`ref` actual, a run-time-indexed record element
 of a module, static or block record of fewer than 16 cells bound by a function
 called in a condition, a loop header or another statement that is not an
 assignment without timing control, a `return` or a system-task statement, or
@@ -639,6 +645,7 @@ roots for forked automatic block records, strings and handles.
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_008/neg_record_ref_element_select_value.sv`,
+`sim_008/neg_record_ref_subroutine_slot_container.sv`,
 `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
@@ -3081,6 +3088,55 @@ pin collectable targets in the handle slot, and turn the catalog row from
 [sim_042](../tests/fixtures/sim/feature_completion/sim_042/readme.md) and a
 plugin that asks for one of the objects above, or with the ADV-019 catalog
 walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
+
+## A `ref` actual stop inside a nested call lets the callers run on
+
+### Symptom
+
+With index checks on, a `ref` actual whose index selects no element stops the
+run at the call (S07-D15, S13-D6) with exit status 1. When the call sits in a
+task or function that another subroutine or a process called, only the
+subroutine holding the call ends: its callers keep running until the process
+suspends or ends, so a `$display` after the outer call still prints before the
+run ends. Some simulators end the run at the call.
+
+### Cause
+
+The stop marks the run failed and leaves the subroutine through its exit path
+after the call; the calling frames are not told to unwind.
+
+### Intended direction
+
+Unwind every frame of the process at the stop.
+
+### Reproduce
+
+A task `body` calling `tr(q[k])` with `k` past the end of `q`, called from an
+`initial` block followed by `$display("after")`.
+
+## Forwarding a member of a record `ref` formal to a waiting task
+
+### Symptom
+
+`task automatic f(ref rec_t x); waitn(x.e[1]); endtask`, where `waitn` waits
+on its record `ref` formal, stops compilation with an internal error ("invalid
+simulator IR at funcs[..].pre_fns[..]...: native value is used outside its
+declaration scope") instead of running or rejecting at the call.
+
+### Cause
+
+Not analysed: the validator finds a pre-function of `f` naming `f`'s native
+record formal outside the scope that declares it.
+
+### Intended direction
+
+Find which lowering hoists the formal into the pre-function; serve the form,
+or reject it at the call with its location.
+
+### Reproduce
+
+The task above, called as `fork f(t, "fwd"); join_none` with an automatic
+`rec_t t`.
 
 ## Container index-check stops name no array or source line
 

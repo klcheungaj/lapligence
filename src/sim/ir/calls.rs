@@ -250,10 +250,22 @@ pub const UNSELECTED_REF_MESSAGE: &str =
 /// on whose actual selects no element.
 pub const UNSELECTED_REF_BIND_MESSAGE: &str = "index of a `ref` actual selects no element";
 
-/// How to turn an index check off, appended to every message of one: the
+/// How to turn an index check off, the hint of every message of one: the
 /// stop applies where some simulators stop the run, while IEEE 1800 gives
-/// the access a result.
-pub const INDEX_CHECK_HINT: &str = "; run with --no-index-checks or set simulator.index_checks = false to apply the result IEEE 1800 gives instead";
+/// the access a result. The runtime's own index-check stop
+/// (`LLG_RT_INDEX_CHECK_HINT` in `src/sim/rt/scheduler/policy.c`) uses the
+/// same text.
+pub const INDEX_CHECK_HINT: &str = "run with --no-index-checks or set simulator.index_checks = false to apply the result IEEE 1800 gives instead";
+
+/// Ends the text of a simulator-generated failure and starts its hint: the
+/// runtime prints what follows in the layout's `{hint}` field
+/// (`LLG_RT_HINT_SEPARATOR` in `src/sim/rt/scheduler/simulation_control.c`).
+pub const HINT_SEPARATOR: char = '\u{1e}';
+
+/// `text` with the index-check hint attached for the runtime to split off.
+pub fn with_index_check_hint(text: &str) -> String {
+    format!("{text}{HINT_SEPARATOR}{INDEX_CHECK_HINT}")
+}
 
 /// Source context of the stop of [`IrElementRef::stop_unselected`].
 #[derive(Clone, Debug, PartialEq)]

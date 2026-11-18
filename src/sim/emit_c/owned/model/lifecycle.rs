@@ -407,7 +407,12 @@ pub(in crate::sim::emit_c) fn main(
     {
         out.push_str("    llg_model_unobserved_contents();\n");
     }
-    out.push_str("    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n");
+    // A run-time error in a static initializer is the same error as in a
+    // process: one that ends the run (`$finish`, `$fatal`, a null handle
+    // access) stops the initializers and `llg_rt_run` returns before any
+    // process runs, so the run ends through the normal end-of-run path;
+    // any other reports and initialization goes on.
+    out.push_str("    llg_model_initializers();\n");
     out.push_str(&crate::sim::emit_c::owned::coverage::fsm_startup(model));
     out.push_str(&crate::sim::emit_c::owned::coverage::toggle_startup(model));
     out.push_str(&crate::sim::emit_c::owned::native::helpers_used());

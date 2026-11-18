@@ -1585,6 +1585,14 @@ fn s09_d4_class_property_ref_wait() {
 }
 
 #[test]
+fn s09_d4_subroutine_record_element_ref_wait() {
+    run_decision(
+        "S09-D4_subroutine_record_element_ref_wait",
+        include_str!("fixtures/sim/lrm_decisions/S09-D4_subroutine_record_element_ref_wait.out"),
+    );
+}
+
+#[test]
 fn s09_d5_handle_ref_store_immediate() {
     run_decision(
         "S09-D5_handle_ref_store_immediate",
@@ -1825,6 +1833,14 @@ fn s22_d8_package_initializers_before_design() {
     run_decision(
         "S22-D8_package_initializers_before_design",
         include_str!("fixtures/sim/lrm_decisions/S22-D8_package_initializers_before_design.out"),
+    );
+}
+
+#[test]
+fn s22_d9_initializer_finish_runs_finals() {
+    run_decision(
+        "S22-D9_initializer_finish_runs_finals",
+        include_str!("fixtures/sim/lrm_decisions/S22-D9_initializer_finish_runs_finals.out"),
     );
 }
 
@@ -5842,7 +5858,7 @@ fn s07_d15_index_checks_stop() {
         "S07-D15_index_checks",
         &["+case=1"],
         "",
-        "; run with --no-index-checks or set simulator.index_checks = false",
+        " (run with --no-index-checks or set simulator.index_checks = false to apply the result IEEE 1800 gives instead)",
     );
 }
 
