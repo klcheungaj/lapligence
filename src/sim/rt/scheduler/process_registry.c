@@ -247,6 +247,7 @@ typedef struct llg_rng_scope_entry {
     size_t length;
     llg_rng_state_t rng;
     llg_rng_state_t initializers;
+    llg_process_handle_t* init_process;  // see llg_init_process_self
 } llg_rng_scope_t;
 
 static size_t rng_scope_length(const char* name) {
@@ -343,10 +344,51 @@ void llg_rt_use_instance_random_streams(void) {
 void llg_rng_initializer_scope_begin(const char* label) {
     g.rng_initializer =
         g.rng_instance_streams ? &rng_instance_stream(label)->initializers : NULL;
+    g.rng_initializer_label = label;
 }
 
 void llg_rng_initializer_scope_end(void) {
     g.rng_initializer = NULL;
+    g.rng_initializer_label = NULL;
+}
+
+/* Static initialization runs before any process exists (SV 6.8), but
+ * process::self() there returns the process running it, as industry-standard
+ * simulators do (S13-D7): one per initialization scope (the instance or
+ * package of the initializer's label, or the root outside them), running
+ * while the initializers execute and finished when llg_rt_run starts. Its
+ * random stream is the one the initializer draws from (T1-D3), so its
+ * random-state methods act on that stream. The handle has no coroutine and
+ * keeps one permanent reference until runtime cleanup. */
+static llg_process_handle_t* init_process_new(llg_rng_state_t* rng) {
+    llg_process_handle_t* handle = process_handle_new(NULL);
+    handle->init_rng = rng;
+    handle->pinned = 1;
+    g.init_processes = 1;
+    return handle;
+}
+
+static llg_process_handle_t* llg_init_process_self(void) {
+    if (g.rng_initializer_label) {
+        llg_rng_scope_t* entry = rng_instance_stream(g.rng_initializer_label);
+        if (!entry->init_process)
+            entry->init_process = init_process_new(
+                g.rng_instance_streams ? &entry->initializers : &g.rng_root);
+        return entry->init_process;
+    }
+    if (!g.init_process_root) g.init_process_root = init_process_new(&g.rng_root);
+    return g.init_process_root;
+}
+
+/* Called when the first process may run: initialization has finished. */
+static void llg_init_processes_finish(void) {
+    if (!g.init_processes) return;
+    for (llg_process_handle_t* handle = g.process_handles; handle; handle = handle->next)
+        if (handle->init_rng) {
+            handle->status = LLG_PROCESS_FINISHED;
+            handle->init_rng = NULL;
+        }
+    g.init_processes = 0;
 }
 
 int32_t llg_random_default(void) {

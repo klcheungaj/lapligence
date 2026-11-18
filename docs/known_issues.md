@@ -3728,29 +3728,6 @@ run against the industry-standard simulator; the differences fixed then are in
 the [ki_uvm_run readme](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md).
 These remain.
 
-### `process::self()` in a static initializer
-
-**Symptom.** `process::self()` called while a static declaration initializer
-runs returns null, so a following `get_randstate()` stops the run as a null
-process access. UVM 1.1d's `uvm_config_db::set` calls it unguarded, and the
-1.1d `module` and `pkg` examples construct components in module-scope
-initializers, so both end with a fatal error at time 0. The industry-standard
-simulator returns a running process there whose random state can be read and
-restored. UVM 1.2 checks the handle for null and is not affected.
-
-**Cause.** Static initialization runs before any process exists (SV 6.8), and
-the runtime has no process object for it; 9.7 defines `self()` only as the
-process making the call.
-
-**Intended direction.** Give static initialization one runtime process handle:
-running while the initializers execute and finished afterwards, its random
-state the initialization stream the initializers already draw from (T1-D3),
-with `kill`, `suspend` and `resume` of it a run-time error. This changes
-shared runtime paths and needs a decision row.
-
-**Reproduce.** [`process_self_static_initializer.sv`](../tests/fixtures/sim/feature_completion/ki_uvm_run/process_self_static_initializer.sv)
-pins the current output; its readme row gives the simulator's.
-
 ### Override visibility the frontend rejects
 
 **Symptom.** Examples whose classes override a virtual method with another

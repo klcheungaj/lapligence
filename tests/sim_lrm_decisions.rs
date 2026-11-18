@@ -4147,6 +4147,14 @@ fn s45_d17_detect_overlap() {
 }
 
 #[test]
+fn s13_d7_process_self_static_initializer() {
+    run_decision(
+        "S13-D7_process_self_static_initializer",
+        include_str!("fixtures/sim/lrm_decisions/S13-D7_process_self_static_initializer.out"),
+    );
+}
+
+#[test]
 fn s45_d20_option_unknown_value() {
     run_decision(
         "S45-D20_option_unknown_value",

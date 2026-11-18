@@ -457,6 +457,7 @@ void llg_rt_run(void) {
     // coroutine untouched when an embedding probes the runtime again.
     if (g.suspended) return;
     g.static_init_phase = 0;
+    llg_init_processes_finish();
     if (g.held_stop) {
         // A static initializer's `$stop`, already reported. The RESUME policy
         // continues at once; EXIT returns before any process runs, as a stop

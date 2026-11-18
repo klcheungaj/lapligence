@@ -1838,6 +1838,10 @@ struct Codegen<'a> {
     /// Declaration identity -> label of the instance whose initialization
     /// RNG seeds the objects its static handle initializer creates.
     initializer_random_scopes: HashMap<u32, String>,
+    /// Some code calls `process::self()`: static initializers that call
+    /// anything then name their scope, whose initialization process
+    /// `self()` returns there (S13-D7).
+    process_self_used: bool,
     /// Mailbox variables with declaration-time `new(...)` initializers use
     /// the same time-zero ordering, but are constructed by the mailbox
     /// runtime rather than a user class constructor.
@@ -2609,6 +2613,7 @@ impl<'a> Codegen<'a> {
             native_record_initializers: Vec::new(),
             native_record_initialized: HashSet::new(),
             initializer_random_scopes: HashMap::new(),
+            process_self_used: false,
             mailbox_object_initializers: Vec::new(),
             class_init_receiver: None,
             fork_branch_receiver: None,

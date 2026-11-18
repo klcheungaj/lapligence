@@ -242,7 +242,9 @@ impl<'a> Codegen<'a> {
             .collect::<Vec<_>>();
         let values = self.declaration_inits.len();
         let statements = self.declaration_statements.len();
-        let random_threads = model.random.threads;
+        // A scope label also names the initialization process that
+        // `process::self()` returns in the initializer (S13-D7).
+        let random_threads = model.random.threads || self.process_self_used;
         for entry in self.initializer_schedule(&declarations) {
             let scope = self.static_effect_scope(declarations[entry]);
             if let Some((variable, location)) = scope.clone() {

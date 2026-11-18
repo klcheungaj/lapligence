@@ -2681,7 +2681,9 @@ These are bounded implementations, not full verification-infrastructure support.
   `get_randstate` and `set_randstate` act on the named process's stream
   ([sim_015](../tests/fixtures/sim/feature_completion/sim_015/readme.md)).
   Methods through a null handle and `await` on the current process end the
-  simulation with an error. `resume()` resensitizes a process suspended on an
+  simulation with an error. In a static initializer `self()` returns the
+  process running static initialization, one per instance or package
+  (S13-D7). `resume()` resensitizes a process suspended on an
   event control (an occurrence while it is suspended is not delivered), and
   completes a wait condition that became true or a delay that transpired.
   A process suspended in semaphore `get` or mailbox `get`/`peek`/`put` keeps
