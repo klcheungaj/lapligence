@@ -2030,6 +2030,11 @@ uint64_t llg_rt_severity_count(int severity);
 typedef void (*llg_rt_error_fn)(int fatal, const char* message, const char* location);
 void llg_rt_error_hook(llg_rt_error_fn hook);
 void llg_rt_note_error(int fatal, const char* message, const char* location);
+// A null class handle access (SV 8.4) at `site`: what the check guards, then
+// optionally the unit separator and the framed site (scope, separator,
+// `file:line:col`) the error and the fatal end are located at. Reports the
+// error, marks the run failed and ends it like $fatal.
+void llg_rt_null_handle(const char* site);
 // Immediate assertion default-failure and successful-cover callbacks. The
 // identity is retained at the call boundary for future per-assertion APIs.
 void llg_assertion_failure(int kind, uint64_t identity, const char* label,
@@ -4007,6 +4012,7 @@ typedef struct {
 } llg_cov_trans_t;
 typedef struct {
     const char* name;
+    const char* site; /* declaration location, for run-time messages (NULL: none) */
     uint32_t width;  /* 1..64 */
     uint8_t is_signed;
     uint8_t kind;    /* LLG_COV_POINT_* */
@@ -4044,6 +4050,7 @@ typedef struct {
 } llg_cov_xbin_t;
 typedef struct {
     const char* name;
+    const char* site; /* declaration location, for run-time messages (NULL: none) */
     uint32_t n_dims;
     const uint32_t* dims; /* coverpoint indices */
     uint32_t n_selects;

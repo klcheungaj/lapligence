@@ -294,8 +294,8 @@ fn options_follow_19_7_and_19_11() {
         assert_eq!(
             llg_messages(output),
             [
-                "WARNING: [SIM-011] covergroup `go` coverpoint `cx`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
-                "WARNING: [SIM-011] covergroup `go` coverpoint `tx`: bins `t1` and `t2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: options.sv:51:5: [SIM-011] (tb @ 0 ps) covergroup `go` coverpoint `cx`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: options.sv:52:5: [SIM-011] (tb @ 0 ps) covergroup `go` coverpoint `tx`: bins `t1` and `t2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
             ],
             "{label}"
         );
@@ -310,7 +310,7 @@ fn merged_crosses_need_the_same_cross_bins() {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         assert_eq!(
             llg_messages(output),
-            ["ERROR: [SIM-010] covergroup `g` cross `ab`: merged type coverage needs every instance to have the same cross bins (llg limitation)"],
+            ["ERROR: merge_cross.sv:12:5: [SIM-010] (tb @ 0 ps) covergroup `g` cross `ab`: merged type coverage needs every instance to have the same cross bins (llg limitation)"],
             "{label}"
         );
     });

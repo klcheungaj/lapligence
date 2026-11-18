@@ -152,7 +152,9 @@ fn null_covergroup_handle_is_a_runtime_error() {
             "{label}"
         );
         assert!(
-            stderr.contains("null class handle access: covergroup method call at tb:11:5"),
+            stderr.contains(
+                "null_sample.sv:11:5: [SIM-010] (tb @ 0 ps) null class handle access: covergroup method call"
+            ),
             "{label}: {stderr}"
         );
     });

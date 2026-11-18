@@ -2078,7 +2078,7 @@ fn s29_d9_null_receiver() {
             label,
             output,
             expected,
-            "null class handle access: randomize() at tb:",
+            "S29-D9_null_receiver.sv:14:10 null class handle access: randomize()",
         );
     });
 }
@@ -4145,17 +4145,18 @@ fn s45_d17_detect_overlap() {
             include_str!("fixtures/sim/lrm_decisions/S45-D17_detect_overlap.out"),
             "{label}"
         );
+        // Each warning is located at its coverpoint's declaration.
         let warnings: Vec<_> = String::from_utf8_lossy(&output.stderr)
             .lines()
-            .filter(|line| line.starts_with("WARNING: [SIM-011] covergroup"))
-            .map(str::to_owned)
+            .filter(|line| line.contains("[SIM-011] (tb @ 0 ps) covergroup"))
+            .map(crate::sim_harness::canonical_message)
             .collect();
         assert_eq!(
             warnings,
             [
-                "WARNING: [SIM-011] covergroup `g` coverpoint `c1`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
-                "WARNING: [SIM-011] covergroup `g` coverpoint `c2`: bins `r` and `r2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
-                "WARNING: [SIM-011] covergroup `g` coverpoint `c3`: bins `v` and `w` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: S45-D17_detect_overlap.sv:27:5: [SIM-011] (tb @ 0 ps) covergroup `g` coverpoint `c1`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: S45-D17_detect_overlap.sv:28:5: [SIM-011] (tb @ 0 ps) covergroup `g` coverpoint `c2`: bins `r` and `r2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: S45-D17_detect_overlap.sv:29:5: [SIM-011] (tb @ 0 ps) covergroup `g` coverpoint `c3`: bins `v` and `w` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
             ],
             "{label}"
         );
@@ -4900,7 +4901,7 @@ fn s99_d11_null_class_access_runs_finals() {
                 label,
                 output,
                 expected,
-                "null class handle access: property access at tb:22:",
+                "S99-D11_null_class_access_runs_finals.sv:22:46 null class handle access: property access",
             );
         },
     );

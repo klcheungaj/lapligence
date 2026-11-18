@@ -519,7 +519,7 @@ impl<'a> Codegen<'a> {
         let handle = self.lower_chandle(path, handle_node)?;
         let object = IrChandleExpr::Required {
             handle: Box::new(handle),
-            site: self.source_site("covergroup option access", path, node),
+            site: self.required_site("covergroup option access", path, node),
         };
         self.coverage_record(access.owner.group, object)
     }
@@ -1340,6 +1340,7 @@ impl<'a> Codegen<'a> {
         };
         let mut coverpoint = IrCoverpoint {
             name: point_name.clone(),
+            site: self.coverage_site(&build.path, point),
             width,
             signed,
             automatic,
@@ -1509,6 +1510,7 @@ impl<'a> Codegen<'a> {
         }
         let mut table = IrCoverCross {
             name: cross_name,
+            site: self.coverage_site(&build.path, cross),
             points: dims.clone(),
             selects: Vec::new(),
             bins: Vec::with_capacity(metadata.bins.len()),
@@ -1633,6 +1635,7 @@ impl<'a> Codegen<'a> {
                 let point = &points[dims[dim] as usize];
                 let mut scratch = IrCoverpoint {
                     name: String::new(),
+                    site: String::new(),
                     width: point.width,
                     signed: point.signed,
                     automatic: IrCoverAutomatic::None,
@@ -1860,6 +1863,7 @@ impl<'a> Codegen<'a> {
                 }
                 let mut scratch = IrCoverpoint {
                     name: String::new(),
+                    site: String::new(),
                     width,
                     signed,
                     automatic: IrCoverAutomatic::None,
@@ -3075,7 +3079,7 @@ impl<'a> Codegen<'a> {
         let handle = self.lower_chandle(path, handle_node)?;
         Ok(IrChandleExpr::Required {
             handle: Box::new(handle),
-            site: self.source_site("covergroup method call", path, node),
+            site: self.required_site("covergroup method call", path, node),
         })
     }
 

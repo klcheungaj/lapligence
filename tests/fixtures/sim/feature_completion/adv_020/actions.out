@@ -24,8 +24,8 @@ size=-1, next call
   cbPLIError(pli) at 0: obj=NULL index=0 level=3 state=3 code=LLG_VPI_HANDLE
 returning
 after act_pli
-  cbError(error) at 1000: obj=NULL index=0 level=3 state=3 code=LLG_RUNTIME_ERROR message has "first error 0"
-  cbError(error) at 1000: obj=NULL index=0 level=3 state=3 code=LLG_RUNTIME_ERROR message has "assertion assert failed"
+  cbError(error) at 1000: obj=NULL index=0 level=3 state=3 code=LLG_RUNTIME_ERROR message has "first error 0" plain at actions.sv:13:12
+  cbError(error) at 1000: obj=NULL index=0 level=3 state=3 code=LLG_RUNTIME_ERROR message has "assertion assert failed" plain at actions.sv:17:9
 else action
 raising SIGTERM
   cbSignal(sigterm) at 2000: obj=NULL index=SIGTERM level=0 state=0 code=-

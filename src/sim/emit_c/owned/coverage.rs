@@ -131,8 +131,9 @@ fn cross_tables(out: &mut String, prefix: &str, cross: &IrCoverCross) -> String 
     );
     let bins = static_array(out, "llg_cov_xbin_t", &format!("{prefix}_xbins"), bins);
     format!(
-        "{{ .name = {}, .n_dims = {}u, .dims = {dims}, .n_selects = {}u, .selects = {selects}, .items = {items}, .n_boxes = {n_boxes}u, .boxes = {boxes}, .box_selects = {box_selects}, .n_bins = {}u, .bins = {bins}, .dynamic = {}u }}",
+        "{{ .name = {}, .site = {}, .n_dims = {}u, .dims = {dims}, .n_selects = {}u, .selects = {selects}, .items = {items}, .n_boxes = {n_boxes}u, .boxes = {boxes}, .box_selects = {box_selects}, .n_bins = {}u, .bins = {bins}, .dynamic = {}u }}",
         c_string_literal(&cross.name),
+        c_string_literal(&cross.site),
         cross.points.len(),
         cross.selects.len(),
         cross.bins.len(),
@@ -415,8 +416,9 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 |tables| transition_tables(out, &point_prefix, tables),
             );
             points.push(format!(
-                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans}, .crossed = {}u }}",
+                "{{ .name = {}, .site = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans}, .crossed = {}u }}",
                 c_string_literal(&point.name),
+                c_string_literal(&point.site),
                 point.width,
                 u8::from(point.signed),
                 u8::from(point.dynamic()),
