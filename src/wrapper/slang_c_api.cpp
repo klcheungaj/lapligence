@@ -537,6 +537,9 @@ struct Capture {
   // `NAME=VALUE` options and for VALUE texts.
   std::unordered_map<std::string, std::string> givenOverrideOptions;
   std::unordered_map<std::string, std::string> givenOverrideValues;
+  // Statements holding a procedural `auto_bin_max` write that the capture
+  // kept (S46-D16); the frontend's rejection inside one is not reported.
+  std::vector<SourceRange> ignoredCoverOptionWrites;
   uint64_t valueBits = 0;
   uint64_t semanticEdgeCount = 0;
   bool declarationOnly = false;
@@ -1386,6 +1389,15 @@ struct Capture {
     chargeRecord(output, sizeof(LlgSlangSourceLibrary));
     output.source_libraries.push_back({id, storeString(output, library->name),
                                        storeString(output, config)});
+  }
+
+  // Give `alias` the semantic identity of `target`. Fails when `alias`
+  // already has its own node.
+  bool aliasSemantic(const void* alias, const void* target) {
+    if (semanticIds.contains(alias))
+      return false;
+    semanticIds.emplace(alias, ensureSemantic(target));
+    return true;
   }
 
   uint64_t ensureSemantic(const void* identity) {
@@ -2615,6 +2627,87 @@ std::vector<const Type*> orderedSpecializations(const GenericClassDefSymbol& gen
   return ordered;
 }
 
+// A procedural write of a covergroup's `option.auto_bin_max` (an assignment
+// of any form, or an increment/decrement) outside the covergroup definition.
+// IEEE 1800-2009 19.7 sets this option only in the definition; the frontend
+// rejects the write (CoverOptionImmutable) and wraps it as invalid. llg
+// follows industry-standard behaviour instead: the write is captured as
+// written and the simulator ignores it with a warning (decision S46-D16).
+// Returns the write wrapped by `expression`, or null.
+const Expression* ignoredCoverOptionWrite(const Expression& expression) {
+  if (expression.kind != ExpressionKind::Invalid)
+    return nullptr;
+  const Expression* write = expression.as<InvalidExpression>().child;
+  if (!write)
+    return nullptr;
+  const Expression* target = nullptr;
+  if (write->kind == ExpressionKind::Assignment) {
+    const auto& assignment = write->as<AssignmentExpression>();
+    if (assignment.right().bad())
+      return nullptr;
+    target = &assignment.left();
+  }
+  else if (write->kind == ExpressionKind::UnaryOp) {
+    const auto& unary = write->as<UnaryExpression>();
+    switch (unary.op) {
+      case UnaryOperator::Preincrement:
+      case UnaryOperator::Predecrement:
+      case UnaryOperator::Postincrement:
+      case UnaryOperator::Postdecrement: break;
+      default: return nullptr;
+    }
+    target = &unary.operand();
+  }
+  if (!target || target->bad() || target->kind != ExpressionKind::MemberAccess)
+    return nullptr;
+  const Symbol& member = target->as<MemberAccessExpression>().member;
+  if (!VariableSymbol::isKind(member.kind) || member.name != "auto_bin_max" ||
+      !member.as<VariableSymbol>().flags.has(VariableFlags::ImmutableCoverageOption))
+    return nullptr;
+  return write;
+}
+
+// Whether an invalid statement is invalid only because it holds such writes
+// in statement position: the frontend marks every enclosing statement (block,
+// branch, loop, procedure body) invalid as well. Any other invalid node keeps
+// the statement invalid.
+class IgnoredCoverOptionWriteScan final
+    : public ASTVisitor<IgnoredCoverOptionWriteScan,
+                        VisitFlags::Statements | VisitFlags::Expressions | VisitFlags::Bad> {
+public:
+  bool repairable = true;
+
+  void handle(const InvalidStatement& statement) {
+    if (!statement.child)
+      repairable = false;
+    else if (repairable)
+      statement.child->visit(*this);
+  }
+
+  void handle(const ExpressionStatement& statement) {
+    if (!ignoredCoverOptionWrite(statement.expr))
+      visitDefault(statement);
+  }
+
+  void handle(const InvalidExpression&) { repairable = false; }
+};
+
+bool onlyIgnoredCoverOptionWrites(const InvalidStatement& statement) {
+  IgnoredCoverOptionWriteScan scan;
+  statement.visit(scan);
+  return scan.repairable;
+}
+
+// Whether `diagnostic` is the frontend's rejection of an `auto_bin_max`
+// write. It is held back until capture shows whether the write is one llg
+// ignores (then it is dropped) or not (then it is reported as an error).
+bool isCoverOptionWriteRejection(const Diagnostic& diagnostic) {
+  if (diagnostic.code != diag::CoverOptionImmutable || diagnostic.args.empty())
+    return false;
+  const auto* name = std::get_if<std::string>(&diagnostic.args.front());
+  return name && *name == "auto_bin_max";
+}
+
 class SemanticCapture final
     : public ASTVisitor<SemanticCapture, VisitFlags::AllGood | VisitFlags::Bad> {
 public:
@@ -3717,6 +3810,18 @@ public:
     // visits (see compoundAssignmentSourceRhs). The only visited placeholder
     // is an overloaded update's current target value (UPDATE_CURRENT).
 
+    // An ignored `auto_bin_max` write is captured as written (S46-D16).
+    if constexpr (std::same_as<T, InvalidExpression>) {
+      // The invalid node gets the write's identity, so the statement's
+      // roles name the write.
+      const Expression* write =
+          ignoredWriteRepairs > 0 ? ignoredCoverOptionWrite(expression) : nullptr;
+      if (write && capture.aliasSemantic(&expression, write)) {
+        capture.ignoredCoverOptionWrites.push_back(write->sourceRange);
+        write->visit(*this);
+        return;
+      }
+    }
     if (capture.declarationOnly) {
       bindValueName(expression);
       bindNameTokens(expression);
@@ -4006,6 +4111,35 @@ public:
 
   template<std::derived_from<Statement> T>
   void handle(const T& statement) {
+    // A statement invalid only through ignored `auto_bin_max` writes is
+    // captured as written (S46-D16); the frontend's rejection of each write
+    // is dropped once the write is captured.
+    // The invalid node itself, which its owner may already reference, is
+    // captured as a statement list holding its child.
+    if constexpr (std::same_as<T, InvalidStatement>) {
+      if (onlyIgnoredCoverOptionWrites(statement)) {
+        ++ignoredWriteRepairs;
+        if (capture.declarationOnly) {
+          statement.child->visit(*this);
+        }
+        else {
+          const uint64_t id = capture.ensureSemantic(&statement);
+          attach(id);
+          if (markVisited(id)) {
+            auto& result = capture.output.semantic_nodes[static_cast<size_t>(id)];
+            result.kind = LLG_SLANG_SEMANTIC_STATEMENT;
+            result.subkind = LLG_SLANG_STMT_LIST;
+            result.detail = storeString(capture.output, toString(StatementKind::List));
+            result.range = capture.span(statement.sourceRange);
+            parents.push_back(id);
+            statement.child->visit(*this);
+            parents.pop_back();
+          }
+        }
+        --ignoredWriteRepairs;
+        return;
+      }
+    }
     if (capture.declarationOnly) {
       if constexpr (std::same_as<T, VariableDeclStatement>)
         handle(statement.symbol);
@@ -5755,6 +5889,9 @@ private:
   // expressions are being visited: the lookup context of the names Slang
   // binds and then discards (bindSizeCastNames).
   const Symbol* lookupOwner = nullptr;
+  // Depth of invalid statements being captured as written because they hold
+  // only ignored `auto_bin_max` writes (S46-D16).
+  uint32_t ignoredWriteRepairs = 0;
 
   uint64_t captureReferenceTarget(const Symbol& symbol) {
     const uint64_t id = capture.ensureSemantic(&symbol);
@@ -9481,6 +9618,10 @@ public:
       capture.addInvalidSourceByte(diagnostic.location);
       return;
     }
+    if (!flushing && isCoverOptionWriteRejection(diagnostic)) {
+      deferred.push_back(diagnostic);
+      return;
+    }
     root = &diagnostic;
     rootIndex = LLG_SLANG_INVALID_ID;
     if (diagnostic.isError() && diagnostic.code != diag::AlwaysWithoutTimingControl &&
@@ -9508,11 +9649,32 @@ public:
     parent.related_count = capture.output.related.size() - parent.related_start;
   }
 
+  // Report the held-back `auto_bin_max` write rejections that lie in no
+  // write the capture kept (S46-D16): those stay errors. Runs after capture.
+  void issueDeferred(DiagnosticEngine& diagnosticEngine) {
+    flushing = true;
+    for (const Diagnostic& diagnostic : deferred) {
+      const SourceLocation location = diagnostic.location;
+      const bool kept = std::ranges::any_of(
+          capture.ignoredCoverOptionWrites, [&](const SourceRange& range) {
+            return range.start().buffer() == location.buffer() &&
+                   range.start().offset() <= location.offset() &&
+                   location.offset() < range.end().offset();
+          });
+      if (!kept)
+        issue(diagnosticEngine, diagnostic);
+    }
+    deferred.clear();
+    flushing = false;
+  }
+
 private:
   Capture& capture;
   uint32_t provider;
   const Diagnostic* root = nullptr;
   uint64_t rootIndex = LLG_SLANG_INVALID_ID;
+  std::vector<Diagnostic> deferred;
+  bool flushing = false;
 };
 
 class FreezeGuard {
@@ -10502,6 +10664,11 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     semanticCapture.captureImports(compilation);
   }
   semanticStage.finish();
+  // Every body is captured now: the `auto_bin_max` write rejections outside
+  // the writes kept (S46-D16) are reported as the compilation errors they are.
+  engine.clearClients();
+  engine.addClient(compilationClient);
+  compilationClient->issueDeferred(engine);
   ProfileStage finalizeStage("wrapper.finalize");
   capture.markOverriddenParameters();
   capture.finalizeSourceIdentities();

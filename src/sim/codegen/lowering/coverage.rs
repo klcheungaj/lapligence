@@ -633,6 +633,9 @@ impl<'a> Codegen<'a> {
             "option"
         };
         let member = access.member.as_str();
+        if let Some(ignored) = self.ignored_coverage_option_write(path, lhs, Some(rhs))? {
+            return Ok(Some(ignored));
+        }
         if !blocking || op != Operation::Assignment {
             return Err(self.coverage_error(
                 lhs,
@@ -646,7 +649,7 @@ impl<'a> Codegen<'a> {
         } else {
             matches!(
                 member,
-                "per_instance" | "get_inst_coverage" | "auto_bin_max" | "detect_overlap"
+                "per_instance" | "get_inst_coverage" | "detect_overlap"
             )
             .then_some("19.7")
         };
@@ -712,6 +715,41 @@ impl<'a> Codegen<'a> {
             }
         };
         Ok(Some(IrStmt::Coverage(Box::new(statement))))
+    }
+
+    /// A procedural write of an instance `option.auto_bin_max` (any
+    /// assignment form, or an increment/decrement when `rhs` is `None`), or
+    /// `None` when `target` names another member. 19.7 sets the option only
+    /// in the covergroup definition; following industry-standard behaviour
+    /// the write is ignored with a warning, and its right-hand side is still
+    /// evaluated for its side effects (decision S46-D16).
+    pub(in super::super) fn ignored_coverage_option_write(
+        &mut self,
+        path: &str,
+        target: NodeId,
+        rhs: Option<NodeId>,
+    ) -> Result<Option<IrStmt>, String> {
+        let Some(access) = self.coverage_option_access(target) else {
+            return Ok(None);
+        };
+        if access.owner.type_option || access.member != "auto_bin_max" {
+            return Ok(None);
+        }
+        self.coverage_warning(
+            target,
+            "procedural write of option.auto_bin_max is ignored: the automatic bins are fixed when the covergroup is constructed (IEEE 1800-2009 19.7)".to_string(),
+        );
+        let Some(rhs) = rhs else {
+            return Ok(Some(IrStmt::Nop));
+        };
+        let value = self.lower_coverage_option_value(path, rhs, "option", "auto_bin_max")?;
+        Ok(Some(IrStmt::Block(vec![IrStmt::DeclLocal {
+            name: format!("_ignored{}", target.0),
+            width: value.width,
+            signed: value.signed,
+            two_state: false,
+            init: Some(Box::new(value)),
+        }])))
     }
 
     fn lower_coverage_option_value(

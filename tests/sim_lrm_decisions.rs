@@ -4212,6 +4212,14 @@ fn s46_d2_loaded_runs_join_instances() {
 }
 
 #[test]
+fn s46_d16_auto_bin_max_write() {
+    run_decision(
+        "S46-D16_auto_bin_max_write",
+        include_str!("fixtures/sim/lrm_decisions/S46-D16_auto_bin_max_write.out"),
+    );
+}
+
+#[test]
 fn s46_d15_loaded_type_options() {
     // Two runs in one directory: the first saves, the second (+load) loads.
     let expected = include_str!("fixtures/sim/lrm_decisions/S46-D15_loaded_type_options.out");

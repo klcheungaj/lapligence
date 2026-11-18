@@ -1,0 +1,4 @@
+decl cp=4 cq=8 group=8
+after cp=4 cq=8 group=8 calls=1
+cp 25.00 cq 12.50
+after nba cp=4

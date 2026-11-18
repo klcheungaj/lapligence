@@ -3245,7 +3245,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   and `$get_coverage()` follow 19.11; the two-argument forms of 19.8 assign
   the covered and total bins (S46-D7). Options are read through an
   instance, coverpoint, cross or type name and written procedurally where
-  19.7 allows it (writes of definition-only options are compile errors).
+  19.7 allows it (writes of definition-only options are compile errors,
+  except a procedural `option.auto_bin_max` write statement, which is
+  ignored with a lowering warning and keeps the defined value, S46-D16).
   An option value out of range (weight below 0, goal outside 0 to 100,
   at_least below 0, auto_bin_max below 1) is a located run-time error that
   ends the run, final procedures included, at construction, at a procedural
