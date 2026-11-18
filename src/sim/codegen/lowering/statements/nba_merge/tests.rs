@@ -240,9 +240,13 @@ fn a_branch_value_reading_a_local_does_not_move() {
 /// turn: their overridden update has an impure value or a run-time-indexed
 /// target. The same sources with plain values and constant targets merge,
 /// so a widened rule that dropped these updates fails here.
+/// A fixture name, its source, the rewrites that make it mergeable, and how
+/// many merges the rewritten source must make.
+type BatchCase<'a> = (&'a str, &'a str, &'a [(&'a str, &'a str)], usize);
+
 #[test]
 fn run_time_batch_fixtures_keep_each_update() {
-    let cases: [(&str, &str, &[(&str, &str)], usize); 5] = [
+    let cases: [BatchCase; 5] = [
         (
             "g1_19/nba_ordered_updates",
             include_str!(
