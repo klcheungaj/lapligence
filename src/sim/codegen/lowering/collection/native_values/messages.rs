@@ -99,6 +99,7 @@ impl Codegen<'_> {
             class_field: None,
             receiver: None,
             marker: false,
+            ref_rooted: false,
         });
         self.native_value_layouts.insert(index, site);
         Ok(index)

@@ -733,9 +733,14 @@ impl EmitCtx<'_, '_> {
             {
                 *stop_unselected = Some(stop);
             }
+            // A subroutine record selects no element only below a run-time
+            // position in a member array.
             IrCallArg::ElementRef(reference)
                 if reference.kind != crate::sim::ir::IrElementRefKind::Record
-                    && !matches!(reference.root, crate::sim::ir::IrElementRoot::Value(_)) =>
+                    && (!matches!(reference.root, crate::sim::ir::IrElementRoot::Value(_))
+                        || reference.steps.iter().any(|step| {
+                            matches!(step, crate::sim::ir::IrElementStep::Position(_))
+                        })) =>
             {
                 reference.stop_unselected = Some(stop);
             }

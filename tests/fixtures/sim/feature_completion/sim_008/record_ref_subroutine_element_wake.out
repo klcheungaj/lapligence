@@ -1,0 +1,14 @@
+2 owner level n=2
+3 edge m=1
+4 text s=x
+5 packed x=4
+6 edge m=5
+7 handle v=7
+8 real r=2.5
+9 packed x=6
+10 owner n=2 m=5 p=6
+11 poke level n=2
+13 whole level n=2
+15 sibling level n=2
+16 static level n=2
+17 done

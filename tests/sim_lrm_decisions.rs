@@ -1585,6 +1585,14 @@ fn s09_d4_class_property_ref_wait() {
 }
 
 #[test]
+fn s09_d4_subroutine_record_element_ref_wait() {
+    run_decision(
+        "S09-D4_subroutine_record_element_ref_wait",
+        include_str!("fixtures/sim/lrm_decisions/S09-D4_subroutine_record_element_ref_wait.out"),
+    );
+}
+
+#[test]
 fn s09_d5_handle_ref_store_immediate() {
     run_decision(
         "S09-D5_handle_ref_store_immediate",

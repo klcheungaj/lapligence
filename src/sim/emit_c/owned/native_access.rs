@@ -9,7 +9,20 @@ impl Frame<'_, '_> {
     /// as the store finishes (`publish_touches`).
     pub(super) fn note_ref_store(&mut self, value: usize) -> Result<(), String> {
         self.note_record_store(value)?;
-        self.note_formal_store(value)
+        self.note_formal_store(value)?;
+        self.note_rooted_store(value)
+    }
+
+    /// When members of record `value` are bound to `ref` formals
+    /// ([`crate::sim::ir::IrNativeValue::ref_rooted`]), a store into it
+    /// tells those references, whose readers follow nothing else.
+    fn note_rooted_store(&mut self, value: usize) -> Result<(), String> {
+        if self.ctx.model.native_values[value].ref_rooted {
+            let address = self.native_value_read(value)?;
+            self.pending_touches
+                .push(format!("llg_native_ref_value_stored({address});"));
+        }
+        Ok(())
     }
 
     /// The contents marker of native value `value` when some wait observes

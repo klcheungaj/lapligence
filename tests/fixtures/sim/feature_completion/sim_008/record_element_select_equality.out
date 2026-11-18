@@ -1,0 +1,6 @@
+o 1 0 1
+o0 0 1
+else
+t 1 0 0
+t moved 6 x 9 0
+done
