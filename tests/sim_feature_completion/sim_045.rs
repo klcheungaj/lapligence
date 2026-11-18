@@ -377,7 +377,7 @@ fn invalid_options_are_located_errors() {
     sim_cli::reject_case(
         SUITE,
         "neg_type_goal",
-        "neg_type_goal.sv:6:5: type_option.goal in covergroup `g` must be an integral value from 0 to 100",
+        "neg_type_goal.sv:6:5 type_option.goal in covergroup `g` must be an integral value from 0 to 100",
     );
     sim_cli::reject_case(
         SUITE,
