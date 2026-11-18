@@ -32,7 +32,7 @@ static void selftest_report(FILE* stream, int severity, int line, const char* fm
     llg_report_vprintf(&text, fmt, args);
     va_end(args);
     llg_msg_append(&out, LLG_MSG_SELFTEST, severity, line > 0 ? location : NULL, NULL, NULL,
-                   text.data, text.len);
+                   text.data, text.len, NULL);
     llg_report_free(&text);
     llg_report_emit(&out, stream);
 }

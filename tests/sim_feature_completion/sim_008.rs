@@ -551,7 +551,7 @@ fn unselected_subroutine_record_elements_stop_or_bind_the_default() {
             "record_ref_subroutine_unselected",
             args,
             "selected 3\n",
-            "index of a `ref` actual selects no element; run with --no-index-checks",
+            "index of a `ref` actual selects no element (run with --no-index-checks",
         );
     }
     for size in ["N=2", "N=16"] {
