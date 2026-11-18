@@ -417,17 +417,21 @@ impl<'a> Codegen<'a> {
             .virtual_interface_array_element(path, lhs, true)?
             .is_some()
         {
-            return Err(format!(
-                "{}: this write to an element of an unpacked array member through a \
-                 virtual interface is not supported in `{path}`; assign it with `=` or `<=`",
-                self.source_location(lhs)
+            return Err(self.locate_error(
+                lhs,
+                format!(
+                    "this write to an element of an unpacked array member through a \
+                 virtual interface is not supported in `{path}`; assign it with `=` or `<=`"
+                ),
             ));
         }
         if let Some(select) = self.packed_element_member_select(lhs) {
             if self.class_packed_select(select) {
-                return Err(format!(
-                    "{}: writing a member of an element of a class array property other than by an assignment statement (as an output or inout actual, for example) is not supported in `{path}`; assign it with `=` or assign the whole element",
-                    self.source_location(lhs)
+                return Err(self.locate_error(
+                    lhs,
+                    format!(
+                        "writing a member of an element of a class array property other than by an assignment statement (as an output or inout actual, for example) is not supported in `{path}`; assign it with `=` or assign the whole element"
+                    ),
                 ));
             }
             if let Some(target) = self.packed_value_lhs(path, lhs)? {
@@ -789,10 +793,12 @@ impl<'a> Codegen<'a> {
                     .ok_or_else(|| {
                         self.nested_associative_select_error(*base, path)
                             .unwrap_or_else(|| {
-                                format!(
-                                    "{}: cannot resolve array base of select `{}` in `{path}`",
-                                    self.source_location(lhs),
-                                    self.node(*base).name,
+                                self.locate_error(
+                                    lhs,
+                                    format!(
+                                        "cannot resolve array base of select `{}` in `{path}`",
+                                        self.node(*base).name
+                                    ),
                                 )
                             })
                     })?;

@@ -223,7 +223,7 @@ fn coverage_type_option(member: &str) -> Option<IrCoverageTypeOption> {
 
 impl<'a> Codegen<'a> {
     fn coverage_error(&self, node: NodeId, message: impl std::fmt::Display) -> String {
-        format!("{}: {message}", self.source_location(node))
+        crate::sim::codegen::error::located(&self.source_location(node), message)
     }
 
     /// The name a diagnostic uses for a covergroup: its declared name, or
@@ -1216,7 +1216,15 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(_) => Ok(()),
             },
-            ("type_option", "goal" | "comment") => Ok(()),
+            // goal is a percentage (industry-standard range; the text is
+            // silent), checked here like the constant weight.
+            ("type_option", "goal") => match self.eval_bound_i128(value) {
+                Ok(goal) if !(0..=100).contains(&goal) => {
+                    unsupported("must be an integral value from 0 to 100")
+                }
+                _ => Ok(()),
+            },
+            ("type_option", "comment") => Ok(()),
             ("type_option", "strobe") if !group_level => {
                 unsupported("can only be set for a covergroup (IEEE 1800-2009 Table 19-4)")
             }
@@ -2378,8 +2386,10 @@ impl<'a> Codegen<'a> {
         Ok(Some(keys))
     }
 
+    /// Lowering warnings are plain text (`GeneratedModel::warnings`), so the
+    /// node's location stays a prefix of the text.
     fn coverage_warning(&mut self, node: NodeId, message: String) {
-        let warning = self.coverage_error(node, message);
+        let warning = format!("{}: {message}", self.source_location(node));
         self.warnings.push(warning);
     }
 
@@ -2643,6 +2653,17 @@ impl<'a> Codegen<'a> {
     /// the capture keeps the instance, and through it the owner and the
     /// arguments, reachable for the rest of the run (S44-D3).
     fn emit_covergroup_waiter(
+        &mut self,
+        group: NodeId,
+        timing: NodeId,
+        specs: &[EventSpec],
+    ) -> Result<(), String> {
+        self.emit_covergroup_waiter_unlocated(group, timing, specs)
+            .map_err(|error| self.locate_error(timing, error))
+    }
+
+    /// [`Self::emit_covergroup_waiter`] before its failure is located.
+    fn emit_covergroup_waiter_unlocated(
         &mut self,
         group: NodeId,
         timing: NodeId,

@@ -3070,9 +3070,9 @@ impl Codegen<'_> {
         arg: NodeId,
     ) -> Result<IrExpr, String> {
         let located = |this: &Self, error: String| {
-            format!(
-                "{}: argument of VPI system {routine} `{name}`: {error}",
-                this.source_location(arg)
+            this.locate_error(
+                arg,
+                format!("argument of VPI system {routine} `{name}`: {error}"),
             )
         };
         if let NodeKind::Expr(ExprKind::ScopeRef { target }) = self.kind(arg) {

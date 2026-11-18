@@ -926,6 +926,25 @@ impl<'a> Codegen<'a> {
         ),
         String,
     > {
+        self.validate_dpi_import_unlocated(ft, inst, dpi, formals, formals_ir)
+            .map_err(|error| self.locate_error(ft, error))
+    }
+
+    /// [`Self::validate_dpi_import`] before its failure is located.
+    fn validate_dpi_import_unlocated(
+        &mut self,
+        ft: NodeId,
+        inst: NodeId,
+        dpi: &crate::core::db::DpiImportInfo,
+        formals: &[(NodeId, bool)],
+        formals_ir: &[IrFormal],
+    ) -> Result<
+        (
+            Vec<crate::sim::ir::IrDpiType>,
+            Option<crate::sim::ir::IrDpiType>,
+        ),
+        String,
+    > {
         if !super::dpi::valid_c_identifier(&dpi.c_name) {
             return Err(format!(
                 "DPI-C import `{}` has an invalid C linkage identifier `{}`",

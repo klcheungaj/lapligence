@@ -116,6 +116,6 @@ fn neg_ref_formals_in_fork_branches() {
     sim_cli::reject_case(
         SUITE,
         "neg_ref_formal_join_none",
-        "neg_ref_formal_join_none.sv:8:7 in `tb` refers to `ref` formal `r` inside a fork-join_any or fork-join_none block; this is illegal except in the initializer of a fork block-item declaration (IEEE 1800-2009 9.3.2)",
+        "neg_ref_formal_join_none.sv:8:7 fork branch in `tb` refers to `ref` formal `r` inside a fork-join_any or fork-join_none block; this is illegal except in the initializer of a fork block-item declaration (IEEE 1800-2009 9.3.2)",
     );
 }

@@ -139,9 +139,9 @@ impl Codegen<'_> {
             .keys()
             .find(|statement| !self.static_effect_sites.contains_key(statement))
         {
-            Some(statement) => Err(format!(
-                "statement at {} is reachable from a static initializer but has no check",
-                self.source_location(*statement)
+            Some(statement) => Err(self.locate_error(
+                *statement,
+                "statement is reachable from a static initializer but has no check",
             )),
             None => Ok(()),
         }

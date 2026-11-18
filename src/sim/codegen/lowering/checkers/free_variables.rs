@@ -141,9 +141,12 @@ impl Codegen<'_> {
                 let name = self.node(variable).name.clone();
                 let location = self.source_location(variable);
                 let unsupported = |what: &str| {
-                    format!(
-                        "{location}: free checker variable `{name}` {what} is not supported: \
+                    crate::sim::codegen::error::located(
+                        &location,
+                        format!(
+                            "free checker variable `{name}` {what} is not supported: \
                          llg randomizes packed integral free variables (IEEE 1800-2009 17.7.2)"
+                        ),
                     )
                 };
                 let Some(info) = self.sig_globals.get(&variable).cloned() else {

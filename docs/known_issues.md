@@ -2434,7 +2434,7 @@ need each side's own net.
 An assertion with a global clocking future sampled value function
 (`$future_gclk`, `$rising_gclk`, `$falling_gclk`, `$steady_gclk`,
 `$changing_gclk`, SV 16.9.4) is rejected at its location ("... with global
-clocking future sampled value functions at FILE:LINE:COL is not supported")
+clocking future sampled value functions is not supported")
 when it is an `expect` statement, when it contains an asynchronous
 `accept_on`/`reject_on`, or when the sequence is a sequence end point
 (`.triggered`, `.matched`, `@(seq)`). Inside such an assertion a real-valued

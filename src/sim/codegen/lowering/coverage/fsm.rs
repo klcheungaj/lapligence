@@ -15,19 +15,22 @@ impl Codegen<'_> {
     /// an FSM uncovered.
     pub(in crate::sim::codegen::lowering) fn check_fsm_pragmas(&self) -> Result<(), String> {
         let errors = self.db.fsm_pragma_errors();
-        if errors.is_empty() {
+        // The first error is located; any further one keeps its position in
+        // its own line, since a message has one location.
+        let Some((first, rest)) = errors.split_first() else {
             return Ok(());
+        };
+        let mut message = crate::sim::codegen::error::located(
+            &format!("{}:{}:{}", first.file, first.line, first.column),
+            &first.message,
+        );
+        for error in rest {
+            message.push_str(&format!(
+                "\n{}:{}:{}: {}",
+                error.file, error.line, error.column, error.message
+            ));
         }
-        Err(errors
-            .iter()
-            .map(|error| {
-                format!(
-                    "{}:{}:{}: {}",
-                    error.file, error.line, error.column, error.message
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"))
+        Err(message)
     }
 
     /// Add the FSMs of every instance to the coverage tables of `model`.
@@ -50,16 +53,19 @@ impl Codegen<'_> {
             for part in &fsm.state {
                 let signal = &self.node(part.signal).name;
                 let Some(info) = self.sig_globals.get(&part.signal) else {
-                    return Err(format!(
-                        "{at}: FSM `{}` state signal `{signal}` has no storage",
-                        fsm.name
+                    return Err(crate::sim::codegen::error::located(
+                        &at,
+                        format!("FSM `{}` state signal `{signal}` has no storage", fsm.name),
                     ));
                 };
                 if info.real {
-                    return Err(format!(
-                        "{at}: FSM `{}` state signal `{signal}` must be a packed variable or net \
+                    return Err(crate::sim::codegen::error::located(
+                        &at,
+                        format!(
+                            "FSM `{}` state signal `{signal}` must be a packed variable or net \
                          (IEEE 1800-2009 40.4.1)",
-                        fsm.name
+                            fsm.name
+                        ),
                     ));
                 }
                 let ir = info.ir;
@@ -69,9 +75,12 @@ impl Codegen<'_> {
                     .get(ir)
                     .is_some_and(|signal| !signal.net_alias.is_empty())
                 {
-                    return Err(format!(
-                        "{at}: unsupported: FSM `{}` state signal `{signal}` is an aliased net",
-                        fsm.name
+                    return Err(crate::sim::codegen::error::located(
+                        &at,
+                        format!(
+                            "unsupported: FSM `{}` state signal `{signal}` is an aliased net",
+                            fsm.name
+                        ),
                     ));
                 }
                 let (lsb, bits) = match part.select {
@@ -79,11 +88,14 @@ impl Codegen<'_> {
                     Some((left, right)) => self
                         .fsm_select_bits(part.signal, total, left, right)
                         .ok_or_else(|| {
-                            format!(
-                                "{at}: FSM `{}` part-select `{signal}[{left}:{right}]` is not \
+                            crate::sim::codegen::error::located(
+                                &at,
+                                format!(
+                                    "FSM `{}` part-select `{signal}[{left}:{right}]` is not \
                                      within the declared range of `{signal}` in the declared \
                                      direction (IEEE 1800-2009 40.4.2)",
-                                fsm.name
+                                    fsm.name
+                                ),
                             )
                         })?,
                 };
@@ -95,10 +107,13 @@ impl Codegen<'_> {
                 });
             }
             if width == 0 || width > FSM_MAX_STATE_BITS {
-                return Err(format!(
-                    "{at}: unsupported: FSM `{}` state vector is {width} bits wide; llg covers \
+                return Err(crate::sim::codegen::error::located(
+                    &at,
+                    format!(
+                        "unsupported: FSM `{}` state vector is {width} bits wide; llg covers \
                      FSM state vectors of 1 to {FSM_MAX_STATE_BITS} bits",
-                    fsm.name
+                        fsm.name
+                    ),
                 ));
             }
             let mut states: Vec<IrFsmState> = Vec::with_capacity(fsm.states.len());
@@ -115,16 +130,22 @@ impl Codegen<'_> {
                     .filter(|value| width >= 64 || *value >> width == 0)
                     .and_then(|value| u64::try_from(value).ok())
                 else {
-                    return Err(format!(
-                        "{at}: FSM `{}` state `{name}` is not a known value of the {width}-bit \
+                    return Err(crate::sim::codegen::error::located(
+                        &at,
+                        format!(
+                            "FSM `{}` state `{name}` is not a known value of the {width}-bit \
                          state vector (IEEE 1800-2009 40.4.6)",
-                        fsm.name
+                            fsm.name
+                        ),
                     ));
                 };
                 if let Some(other) = states.iter().find(|other| other.value == value) {
-                    return Err(format!(
-                        "{at}: FSM `{}` states `{}` and `{name}` have the same value {value}",
-                        fsm.name, other.name
+                    return Err(crate::sim::codegen::error::located(
+                        &at,
+                        format!(
+                            "FSM `{}` states `{}` and `{name}` have the same value {value}",
+                            fsm.name, other.name
+                        ),
                     ));
                 }
                 states.push(IrFsmState { name, value });

@@ -364,21 +364,21 @@ fn invalid_checks_are_rejected_with_their_location() {
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_notifier_vector.v",
-            "neg_notifier_vector.v:9:5: notifier `tb.u.n` must be a scalar variable (IEEE \
+            "neg_notifier_vector.v:9:5 timing check `$setup`: notifier `tb.u.n` must be a scalar variable (IEEE \
              1800-2009 31.6)",
             &args,
         );
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_width_notifier.v",
-            "neg_width_notifier.v:7:5: the threshold argument must be present when the notifier \
+            "neg_width_notifier.v:7:5 timing check `$width`: the threshold argument must be present when the notifier \
              is given",
             &args,
         );
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_period_edges.v",
-            "timing check `$period` at ",
+            "neg_period_edges.v:7:5 timing check `$period`: ",
             &args,
         );
         sim_cli::reject_case_with_args(

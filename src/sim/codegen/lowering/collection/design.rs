@@ -44,10 +44,10 @@ impl<'a> Codegen<'a> {
                     .query_descriptor(node)
                     .is_some_and(contains_unpacked_union)
             {
-                return Err(format!(
+                return Err(self.locate_error(node, format!(
                     "unpacked union in `{}` is not a valid net type under IEEE 1800-2009 section 6.7",
                     self.display_name(node)
-                ));
+                )));
             }
         }
         let mut tops = Vec::new();
@@ -149,10 +149,12 @@ impl<'a> Codegen<'a> {
                 } else {
                     format!("scope `{}`", self.node(scope).full_name())
                 };
-                return Err(format!(
-                    "redefinition of `{name}` in {scope_name} at {} (previous declaration at {}); a name is declared once per scope",
-                    location(*child),
-                    location(previous)
+                return Err(crate::sim::codegen::error::located(
+                    &location(*child),
+                    format!(
+                        "redefinition of `{name}` in {scope_name} (previous declaration at {}); a name is declared once per scope",
+                        location(previous)
+                    ),
                 ));
             }
         }
@@ -216,151 +218,8 @@ impl<'a> Codegen<'a> {
         self.c_paths.insert(path.to_owned(), components);
         let mut seen: HashSet<String> = HashSet::new();
         for c in &self.node(inst).children {
-            let nid = *c;
-            if self.collect_object(path, nid)? {
-                continue;
-            }
-            if self.collect_aggregate(path, nid)? {
-                continue;
-            }
-            match self.kind(nid) {
-                NodeKind::Array { ty } => {
-                    let name = self.node(nid).name.clone();
-                    if name.is_empty() || !seen.insert(name.clone()) {
-                        continue;
-                    }
-                    if self.is_virtual_interface_array(nid) || self.is_fixed_handle_array(nid) {
-                        let info = self.container_info(path, &name, nid, ty)?;
-                        self.container_globals.insert(nid, info);
-                        continue;
-                    }
-                    if !self
-                        .db
-                        .array_meta(nid)
-                        .is_some_and(|meta| matches!(meta.kind(), ArrayKind::Static))
-                    {
-                        let info = self.container_info(path, &name, nid, ty)?;
-                        self.container_globals.insert(nid, info);
-                        continue;
-                    }
-                    let info = self.array_info(path, &name, nid, ty)?;
-                    self.arrays.push(info.clone());
-                    self.array_globals.insert(nid, info.clone());
-                    self.scope_array_names
-                        .entry(path.to_string())
-                        .or_default()
-                        .insert(name, info);
-                }
-                NodeKind::Var { .. } if self.db.is_clocking_var(nid) => {}
-                NodeKind::Net { ty, .. } | NodeKind::Var { ty } => {
-                    let name = self.node(nid).name.clone();
-                    if name.is_empty() || !seen.insert(name.clone()) {
-                        continue;
-                    }
-                    let w = match self.unpacked_tagged_width(nid) {
-                        Some(width) => width,
-                        None => self.signal_width(path, name.as_str(), ty)?,
-                    };
-                    let ir = self.model.signals.len();
-                    let info = SignalInfo {
-                        global: if is_real_kind(&ty.kind) {
-                            self.real_global_name(path, &name)
-                        } else {
-                            self.global_name(path, &name)
-                        },
-                        width: w,
-                        signed: ty.signed,
-                        two_state: self.db.is_two_state_type(nid) || is_two_state_kind(&ty.kind),
-                        real: is_real_kind(&ty.kind),
-                        shortreal: ty.kind == "shortreal",
-                        net_driver: None,
-                        ir,
-                    };
-                    self.model.signals.push(IrSignal {
-                        fixed_default: None,
-                        c_name: info.global.clone(),
-                        hdl_name: Some(self.waveform_name(nid)),
-                        ty: if info.real {
-                            IrType::Real {
-                                shortreal: info.shortreal,
-                            }
-                        } else {
-                            IrType::Packed {
-                                width: info.width,
-                                signed: info.signed,
-                                two_state: info.two_state,
-                            }
-                        },
-                        net_driver: None,
-                        net_alias: Vec::new(),
-                        alias: None,
-                        omit: false,
-                    });
-                    self.signals.push(info.clone());
-                    self.insert_sig_global(nid, info.clone());
-                    self.scope_sig_names
-                        .entry(path.to_string())
-                        .or_default()
-                        .insert(name, info);
-                }
-                NodeKind::Param { .. } => self.collect_parameter_value(inst, nid)?,
-                // Specparams declared in a specify block belong to the
-                // module (IEEE 1800-2009 6.20.5); module items and path
-                // delays read them like module-body specparams.
-                NodeKind::Other => {
-                    let specparams = self
-                        .node(nid)
-                        .children
-                        .iter()
-                        .copied()
-                        .filter(|child| self.db.specparam(*child).is_some())
-                        .collect::<Vec<_>>();
-                    for specparam in specparams {
-                        self.collect_parameter_value(inst, specparam)?;
-                    }
-                }
-                NodeKind::NamedEvent => {
-                    self.collect_named_event(path, nid, &mut seen)?;
-                }
-                // A declaration initializer on an `array_net` (`reg [7:0] m
-                // [0:3] = '{…}` — represented as a
-                // net-decl-assign continuous assignment whose LHS is the
-                // array).  Applied to the array's `ArrayInfo`; the assignment
-                // itself is skipped at emission. A scalar reg initializer is
-                // collected into `scalar_inits`; true nets stay available to
-                // `emit_cont_assign` as continuous drivers.
-                NodeKind::ContAssign { net_decl: true, .. } => {
-                    if let Some((arr, vals)) = self.cont_assign_array_init(path, nid)? {
-                        let name = self.node(arr).name.clone();
-                        let ai = self.array_globals.get_mut(&arr).ok_or_else(|| {
-                            format!(
-                                "array initializer for `{name}` in `{path}` references an \
-                                 array that was not collected"
-                            )
-                        })?;
-                        if ai.init.is_some() {
-                            return Err(format!(
-                                "array `{name}` in `{path}` has more than one declaration \
-                                 initializer"
-                            ));
-                        }
-                        ai.init = Some(vals.clone());
-                        // Keep the deterministic-emission Vec in sync (its
-                        // entry was cloned before the initializer was known).
-                        if let Some(vi) = self.arrays.iter_mut().find(|vi| vi.global == ai.global) {
-                            vi.init = Some(vals);
-                        }
-                    } else if self.collect_aggregate_cont_assign_init(path, nid)? {
-                        self.scalar_init_ca.insert(nid);
-                    } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
-                        // Scalar declaration assignments are lowered after
-                        // the complete scope has allocated its signals and
-                        // parameters, so runtime RHS references can resolve
-                        // regardless of declaration order.
-                    }
-                }
-                _ => {}
-            }
+            self.collect_instance_member(inst, path, *c, &mut seen)
+                .map_err(|error| self.locate_error(*c, error))?;
         }
         self.collect_scope_block_records(path, inst)?;
         // Parent declaration initializers may read elaborated child parameters
@@ -379,7 +238,8 @@ impl<'a> Codegen<'a> {
             ) && matches!(self.net_decl_target(*child), NetDeclTarget::Variable)
                 && !self.scalar_init_ca.contains(child)
             {
-                self.collect_scalar_decl_init(path, *child)?;
+                self.collect_scalar_decl_init(path, *child)
+                    .map_err(|error| self.locate_error(*child, error))?;
             }
         }
         for c in &self.node(inst).children {
@@ -398,13 +258,13 @@ impl<'a> Codegen<'a> {
                 && !child_names.insert(self.child_instance_name(inst, *c))
             {
                 let node = self.node(*c);
-                return Err(format!(
-                    "duplicate instance name `{}` in `{}` at {}:{}:{}; bound and declared instances share the target scope's name space (SV 23.11)",
-                    node.name,
-                    self.display_path(path),
-                    node.file.as_deref().unwrap_or("<unknown>"),
-                    node.line,
-                    node.col
+                return Err(self.locate_error(
+                    *c,
+                    format!(
+                        "duplicate instance name `{}` in `{}`; bound and declared instances share the target scope's name space (SV 23.11)",
+                        node.name,
+                        self.display_path(path)
+                    ),
                 ));
             }
         }
@@ -416,6 +276,162 @@ impl<'a> Codegen<'a> {
                 let child_path = format!("{path}.{}", self.child_instance_name(inst, *c));
                 self.collect_instance(*c, &child_path)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Collect the storage of one declaration `nid` of instance `inst`; a
+    /// failure is located at the declaration by the caller.
+    fn collect_instance_member(
+        &mut self,
+        inst: NodeId,
+        path: &str,
+        nid: NodeId,
+        seen: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        if self.collect_object(path, nid)? {
+            return Ok(());
+        }
+        if self.collect_aggregate(path, nid)? {
+            return Ok(());
+        }
+        match self.kind(nid) {
+            NodeKind::Array { ty } => {
+                let name = self.node(nid).name.clone();
+                if name.is_empty() || !seen.insert(name.clone()) {
+                    return Ok(());
+                }
+                if self.is_virtual_interface_array(nid) || self.is_fixed_handle_array(nid) {
+                    let info = self.container_info(path, &name, nid, ty)?;
+                    self.container_globals.insert(nid, info);
+                    return Ok(());
+                }
+                if !self
+                    .db
+                    .array_meta(nid)
+                    .is_some_and(|meta| matches!(meta.kind(), ArrayKind::Static))
+                {
+                    let info = self.container_info(path, &name, nid, ty)?;
+                    self.container_globals.insert(nid, info);
+                    return Ok(());
+                }
+                let info = self.array_info(path, &name, nid, ty)?;
+                self.arrays.push(info.clone());
+                self.array_globals.insert(nid, info.clone());
+                self.scope_array_names
+                    .entry(path.to_string())
+                    .or_default()
+                    .insert(name, info);
+            }
+            NodeKind::Var { .. } if self.db.is_clocking_var(nid) => {}
+            NodeKind::Net { ty, .. } | NodeKind::Var { ty } => {
+                let name = self.node(nid).name.clone();
+                if name.is_empty() || !seen.insert(name.clone()) {
+                    return Ok(());
+                }
+                let w = match self.unpacked_tagged_width(nid) {
+                    Some(width) => width,
+                    None => self.signal_width(path, name.as_str(), ty)?,
+                };
+                let ir = self.model.signals.len();
+                let info = SignalInfo {
+                    global: if is_real_kind(&ty.kind) {
+                        self.real_global_name(path, &name)
+                    } else {
+                        self.global_name(path, &name)
+                    },
+                    width: w,
+                    signed: ty.signed,
+                    two_state: self.db.is_two_state_type(nid) || is_two_state_kind(&ty.kind),
+                    real: is_real_kind(&ty.kind),
+                    shortreal: ty.kind == "shortreal",
+                    net_driver: None,
+                    ir,
+                };
+                self.model.signals.push(IrSignal {
+                    fixed_default: None,
+                    c_name: info.global.clone(),
+                    hdl_name: Some(self.waveform_name(nid)),
+                    ty: if info.real {
+                        IrType::Real {
+                            shortreal: info.shortreal,
+                        }
+                    } else {
+                        IrType::Packed {
+                            width: info.width,
+                            signed: info.signed,
+                            two_state: info.two_state,
+                        }
+                    },
+                    net_driver: None,
+                    net_alias: Vec::new(),
+                    alias: None,
+                    omit: false,
+                });
+                self.signals.push(info.clone());
+                self.insert_sig_global(nid, info.clone());
+                self.scope_sig_names
+                    .entry(path.to_string())
+                    .or_default()
+                    .insert(name, info);
+            }
+            NodeKind::Param { .. } => self.collect_parameter_value(inst, nid)?,
+            // Specparams declared in a specify block belong to the
+            // module (IEEE 1800-2009 6.20.5); module items and path
+            // delays read them like module-body specparams.
+            NodeKind::Other => {
+                let specparams = self
+                    .node(nid)
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|child| self.db.specparam(*child).is_some())
+                    .collect::<Vec<_>>();
+                for specparam in specparams {
+                    self.collect_parameter_value(inst, specparam)?;
+                }
+            }
+            NodeKind::NamedEvent => {
+                self.collect_named_event(path, nid, seen)?;
+            }
+            // A declaration initializer on an `array_net` (`reg [7:0] m
+            // [0:3] = '{…}` — represented as a
+            // net-decl-assign continuous assignment whose LHS is the
+            // array).  Applied to the array's `ArrayInfo`; the assignment
+            // itself is skipped at emission. A scalar reg initializer is
+            // collected into `scalar_inits`; true nets stay available to
+            // `emit_cont_assign` as continuous drivers.
+            NodeKind::ContAssign { net_decl: true, .. } => {
+                if let Some((arr, vals)) = self.cont_assign_array_init(path, nid)? {
+                    let name = self.node(arr).name.clone();
+                    let ai = self.array_globals.get_mut(&arr).ok_or_else(|| {
+                        format!(
+                            "array initializer for `{name}` in `{path}` references an \
+                             array that was not collected"
+                        )
+                    })?;
+                    if ai.init.is_some() {
+                        return Err(format!(
+                            "array `{name}` in `{path}` has more than one declaration \
+                             initializer"
+                        ));
+                    }
+                    ai.init = Some(vals.clone());
+                    // Keep the deterministic-emission Vec in sync (its
+                    // entry was cloned before the initializer was known).
+                    if let Some(vi) = self.arrays.iter_mut().find(|vi| vi.global == ai.global) {
+                        vi.init = Some(vals);
+                    }
+                } else if self.collect_aggregate_cont_assign_init(path, nid)? {
+                    self.scalar_init_ca.insert(nid);
+                } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
+                    // Scalar declaration assignments are lowered after
+                    // the complete scope has allocated its signals and
+                    // parameters, so runtime RHS references can resolve
+                    // regardless of declaration order.
+                }
+            }
+            _ => {}
         }
         Ok(())
     }

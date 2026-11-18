@@ -453,18 +453,24 @@ impl EmitCtx<'_, '_> {
                 let name = &self.cg.node(*target).name;
                 let location = self.cg.source_location(*branch);
                 if join != IrJoinKind::Join {
-                    return Err(format!(
-                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` inside a fork-join_any or fork-join_none block; this is illegal except in the initializer of a fork block-item declaration (IEEE 1800-2009 9.3.2)",
-                        self.cg.source_path(&self.path)
+                    return Err(crate::sim::codegen::error::located(
+                        &location,
+                        format!(
+                            "fork branch in `{}` refers to `ref` formal `{name}` inside a fork-join_any or fork-join_none block; this is illegal except in the initializer of a fork block-item declaration (IEEE 1800-2009 9.3.2)",
+                            self.cg.source_path(&self.path)
+                        ),
                     ));
                 }
                 let aliased = self.cg.capture_source(*target).is_some_and(|source| {
                     matches!(source.kind, StorageKind::Container | StorageKind::Native)
                 });
                 if !aliased && self.ref_formal_descriptor(*target).is_none() {
-                    return Err(format!(
-                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` of the enclosing task, which the branch cannot bind to the caller's actual",
-                        self.cg.source_path(&self.path)
+                    return Err(crate::sim::codegen::error::located(
+                        &location,
+                        format!(
+                            "fork branch in `{}` refers to `ref` formal `{name}` of the enclosing task, which the branch cannot bind to the caller's actual",
+                            self.cg.source_path(&self.path)
+                        ),
                     ));
                 }
             }

@@ -1051,6 +1051,19 @@ impl Codegen<'_> {
         decl: NodeId,
         expr: Option<NodeId>,
     ) -> Result<u32, String> {
+        self.unit_slot_unlocated(path, at, builder, decl, expr)
+            .map_err(|error| self.locate_error(at, error))
+    }
+
+    /// [`Self::unit_slot`] before its failure is located.
+    fn unit_slot_unlocated(
+        &mut self,
+        path: &str,
+        at: NodeId,
+        builder: &mut ProblemBuilder,
+        decl: NodeId,
+        expr: Option<NodeId>,
+    ) -> Result<u32, String> {
         if let Some(index) = state(builder).slot_of.get(&decl) {
             return Ok(*index);
         }
@@ -2191,6 +2204,19 @@ impl Codegen<'_> {
     /// `array.size()` and the reductions `sum`, `product`, `and`, `or` and
     /// `xor` (7.12.3) of a template array; `false` when `node` is not one.
     fn template_method(
+        &mut self,
+        path: &str,
+        builder: &mut ProblemBuilder,
+        node: NodeId,
+        name: &str,
+        receiver: NodeId,
+    ) -> Result<bool, String> {
+        self.template_method_unlocated(path, builder, node, name, receiver)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::template_method`] before its failure is located.
+    fn template_method_unlocated(
         &mut self,
         path: &str,
         builder: &mut ProblemBuilder,

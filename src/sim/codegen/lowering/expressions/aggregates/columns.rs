@@ -473,6 +473,19 @@ impl Codegen<'_> {
         nba: bool,
         out: &mut Vec<IrStmt>,
     ) -> Result<(), String> {
+        self.lower_record_value_into_unlocated(path, dst, node, nba, out)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::lower_record_value_into`] before its failure is located.
+    fn lower_record_value_into_unlocated(
+        &mut self,
+        path: &str,
+        dst: &RecordValue,
+        node: NodeId,
+        nba: bool,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<(), String> {
         let node = self.p30_unwrap_cast(node);
         if let Some(source) = self.column_record_storage(node) {
             return self.record_copy(path, dst, &source, nba, out);

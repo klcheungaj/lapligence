@@ -227,7 +227,7 @@ fn a_weight_sum_beyond_the_packed_limit_is_a_source_addressed_error() {
     sim_cli::reject_case(
         SUITE,
         "neg_sum_overflow",
-        "neg_sum_overflow.sv:8:5 in `tb`: the exact weight sum of 2 items with 1048575-bit \
+        "neg_sum_overflow.sv:8:5 randcase in `tb`: the exact weight sum of 2 items with 1048575-bit \
          weights needs 1048576 bits, but packed values must be narrower than 1048576 bits",
     );
 }

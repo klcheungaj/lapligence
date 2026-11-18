@@ -124,6 +124,12 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<bool, String> {
+        self.collect_object_unlocated(path, node)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::collect_object`] before its failure is located.
+    fn collect_object_unlocated(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
         let is_mailbox = self.is_mailbox_expr(path, node);
         let ty = match self.kind(node) {
             NodeKind::Var { ty } => match ty.kind.as_str() {

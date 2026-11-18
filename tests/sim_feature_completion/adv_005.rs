@@ -235,14 +235,14 @@ fn unsupported_switch_forms_are_located_errors() {
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_wired",
-            "neg_wired.sv:10:8: its switch network joins wired-AND (wand, triand) and \
+            "neg_wired.sv:10:8 unsupported bidirectional switch `t1` in `tb`: its switch network joins wired-AND (wand, triand) and \
              wired-OR (wor, trior) nets; such a mixed network is not simulated",
             &["--edition", edition],
         );
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_wired_supply",
-            "neg_wired_supply.sv:9:8: its switch network joins a wired-logic (wand, wor, \
+            "neg_wired_supply.sv:9:8 unsupported bidirectional switch `t1` in `tb`: its switch network joins a wired-logic (wand, wor, \
              triand or trior) net and a tri0, tri1, supply0 or supply1 net; such a mixed \
              network is not simulated",
             &["--edition", edition],
@@ -250,14 +250,14 @@ fn unsupported_switch_forms_are_located_errors() {
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_wide_terminal",
-            "neg_wide_terminal.sv:5:8: terminal `p` is 2 bits wide; a terminal is a scalar \
+            "neg_wide_terminal.sv:5:8 unsupported bidirectional switch `t1` in `tb`: terminal `p` is 2 bits wide; a terminal is a scalar \
              net or a bit select (IEEE 1800-2009 28.8)",
             &["--edition", edition],
         );
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_array_width",
-            "neg_array_width.sv:4:8: terminal `p` is 3 bits wide for an array of 2 switches; \
+            "neg_array_width.sv:4:8 unsupported bidirectional switch `switch` in `tb`: terminal `p` is 3 bits wide for an array of 2 switches; \
              it must be 1 bit or one bit per switch (IEEE 1800-2009 28.3.6)",
             &["--edition", edition],
         );

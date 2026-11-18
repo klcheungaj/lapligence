@@ -807,9 +807,11 @@ pub fn markdown() -> String {
             }
             Tool::Elab => {}
             Tool::Codegen => out.push_str(
-                "Lowering failures are grouped into families by their text until each \
-                 site gets its own id; a failure carries a location where the lowering \
-                 had the source node at hand.\n\n",
+                "Lowering failures are grouped into families by their text. A failure \
+                 is located at the construct that names it, else at the innermost \
+                 statement, expression or declaration that contains it; failures of \
+                 whole-design passes (no top module, internal invariants) have no \
+                 location.\n\n",
             ),
             Tool::Sim => out.push_str(
                 "A model message whose check can be turned off, or whose limit raised, \

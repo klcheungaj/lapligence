@@ -530,30 +530,30 @@ fn wrong_forms_are_rejected_at_compile_time() {
     sim_cli::reject_case(
         SUITE,
         "neg_real_memory",
-        "neg_real_memory.sv:4:22: $sreadmemh does not support real or shortreal memory elements",
+        "neg_real_memory.sv:4:22 $sreadmemh does not support real or shortreal memory elements",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_string_elements",
-        "neg_string_elements.sv:4:22: $sreadmemh requires packed integral or packed-struct \
+        "neg_string_elements.sv:4:22 $sreadmemh requires packed integral or packed-struct \
          memory elements",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_wildcard_index",
-        "neg_wildcard_index.sv:5:22: $sreadmemh requires an associative array with an index of \
+        "neg_wildcard_index.sv:5:22 $sreadmemh requires an associative array with an index of \
          integral type, not a wildcard `[*]` index",
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_slice_v2001.v",
-        "neg_slice_v2001.v:4:22: $sreadmemh memory slices require SystemVerilog-2009",
+        "neg_slice_v2001.v:4:22 $sreadmemh memory slices require SystemVerilog-2009",
         &["--edition", "v2001"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_multidimensional_v2001.v",
-        "neg_multidimensional_v2001.v:4:22: $sreadmemh multidimensional memory views require \
+        "neg_multidimensional_v2001.v:4:22 $sreadmemh multidimensional memory views require \
          SystemVerilog-2009",
         &["--edition", "v2001"],
     );

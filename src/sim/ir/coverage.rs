@@ -394,6 +394,15 @@ impl IrCoverageOption {
             Self::DetectOverlap | Self::GetInstCoverage | Self::PerInstance
         )
     }
+
+    /// Whether the runtime checks the value's range; a value out of range
+    /// ends the run (`llg_cov_option`).
+    pub(in crate::sim) fn is_bounded(self) -> bool {
+        matches!(
+            self,
+            Self::Weight | Self::Goal | Self::AtLeast | Self::AutoBinMax
+        )
+    }
 }
 
 /// The integral type options (Table 19-3).
@@ -418,6 +427,12 @@ impl IrCoverageTypeOption {
     /// The option's member type in `type_option` (19.10).
     pub(in crate::sim) fn is_bit(self) -> bool {
         matches!(self, Self::Strobe | Self::MergeInstances)
+    }
+
+    /// Whether the runtime checks the value's range; a value out of range
+    /// ends the run (`llg_cov_type_option`).
+    pub(in crate::sim) fn is_bounded(self) -> bool {
+        matches!(self, Self::Weight | Self::Goal)
     }
 }
 

@@ -96,6 +96,12 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn collect_aggregate(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
+        self.collect_aggregate_unlocated(path, node)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::collect_aggregate`] before its failure is located.
+    fn collect_aggregate_unlocated(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
         let Some(layout) = self.db.aggregate_layout(node).cloned() else {
             return Ok(false);
         };
@@ -1079,6 +1085,18 @@ impl<'a> Codegen<'a> {
         node: NodeId,
         ty: &crate::core::model::TypeInfo,
     ) -> Result<ArrayInfo, String> {
+        self.array_info_unlocated(path, name, node, ty)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::array_info`] before its failure is located.
+    fn array_info_unlocated(
+        &mut self,
+        path: &str,
+        name: &str,
+        node: NodeId,
+        ty: &crate::core::model::TypeInfo,
+    ) -> Result<ArrayInfo, String> {
         let meta = self
             .db
             .arrays()
@@ -1222,6 +1240,18 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn container_info(
+        &mut self,
+        path: &str,
+        name: &str,
+        node: NodeId,
+        _ty: &crate::core::model::TypeInfo,
+    ) -> Result<ContainerInfo, String> {
+        self.container_info_unlocated(path, name, node, _ty)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::container_info`] before its failure is located.
+    fn container_info_unlocated(
         &mut self,
         path: &str,
         name: &str,

@@ -239,6 +239,16 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrLhs>, String> {
+        self.fixed_storage_lhs_unlocated(path, node)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::fixed_storage_lhs`] before its failure is located.
+    fn fixed_storage_lhs_unlocated(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrLhs>, String> {
         if let Some(lhs) = self.fixed_activation_lhs(path, node)? {
             return Ok(Some(lhs));
         }

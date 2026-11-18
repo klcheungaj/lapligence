@@ -28,6 +28,12 @@ impl<'a> Codegen<'a> {
     /// lower through [`Self::emit_switch`]; MOS switches never get here
     /// (`legacy_unsupported`).
     pub(super) fn emit_gate(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
+        self.emit_gate_unlocated(inst, path, g)
+            .map_err(|error| self.locate_error(g, error))
+    }
+
+    /// [`Self::emit_gate`] before its failure is located.
+    fn emit_gate_unlocated(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
         let (class, prim_type, strength0, strength1, delay, terms, udp_table) = match self.kind(g) {
             NodeKind::Gate {
                 class,
@@ -216,11 +222,11 @@ impl<'a> Codegen<'a> {
                 ));
             }
             if is_udp && expr.width() != 1 {
-                return Err(format!(
-                    "input terminal {} of {udp_kind} UDP `{shown}` in `{path}` must be scalar \
-                     (at {})",
-                    i,
-                    self.source_location(g)
+                return Err(self.locate_error(
+                    g,
+                    format!(
+                        "input terminal {i} of {udp_kind} UDP `{shown}` in `{path}` must be scalar"
+                    ),
                 ));
             }
             widths[*i] = expr.width();
@@ -253,11 +259,9 @@ impl<'a> Codegen<'a> {
                 ));
             }
             if is_udp && width != 1 {
-                return Err(format!(
-                    "output terminal {} of {udp_kind} UDP `{shown}` in `{path}` must be scalar \
-                     (at {})",
-                    i,
-                    self.source_location(g)
+                return Err(self.locate_error(
+                    g,
+                    format!("output terminal {i} of {udp_kind} UDP `{shown}` in `{path}` must be scalar"),
                 ));
             }
             widths[*i] = width;
@@ -266,10 +270,7 @@ impl<'a> Codegen<'a> {
 
         let scaled_delay = match delay {
             Some(de) => Some(self.driver_delay(path, g, de).map_err(|error| {
-                format!(
-                    "delay of `{shown}` in `{path}` at {}: {error}",
-                    self.source_location(g)
-                )
+                self.locate_error(g, format!("delay of `{shown}` in `{path}`: {error}"))
             })?),
             None => None,
         };
@@ -293,11 +294,13 @@ impl<'a> Codegen<'a> {
                     None => IrTransitionDelay::uniform(0),
                     Some(IrInertialDelay::Constant(delay)) => delay,
                     Some(_) => {
-                        return Err(format!(
-                            "delay of `{shown}` in `{path}` at {}: an SDF DEVICE entry \
+                        return Err(self.locate_error(
+                            g,
+                            format!(
+                                "delay of `{shown}` in `{path}`: an SDF DEVICE entry \
                              annotates this gate, whose delay is runtime-valued; llg annotates \
-                             constant gate delays",
-                            self.source_location(g)
+                             constant gate delays"
+                            ),
                         ))
                     }
                 };
@@ -339,12 +342,12 @@ impl<'a> Codegen<'a> {
                     alias_terminals.insert(group, alias_terminal);
                     if alias_terminal == 0 {
                         if self.structural_driver_signal(g, group).is_none() {
-                            return Err(format!(
-                                "gate `{shown}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
-                                group,
-                                self.node(g).file.as_deref().unwrap_or("<unknown>"),
-                                self.node(g).line,
-                                self.node(g).col,
+                            return Err(self.locate_error(
+                                g,
+                                format!(
+                                    "gate `{shown}` has no structural driver mapping for resolved net group {}",
+                                    group
+                                ),
                             ));
                         }
                     } else {
@@ -372,13 +375,13 @@ impl<'a> Codegen<'a> {
                     .count();
                 if terminal == 0 {
                     if self.structural_driver_signal(g, group).is_none() {
-                        return Err(format!(
-                            "gate `{shown}` has no structural driver mapping for resolved net \
-                             group {} at {}:{}:{}",
-                            group,
-                            self.node(g).file.as_deref().unwrap_or("<unknown>"),
-                            self.node(g).line,
-                            self.node(g).col,
+                        return Err(self.locate_error(
+                            g,
+                            format!(
+                                "gate `{shown}` has no structural driver mapping for resolved net \
+                             group {}",
+                                group
+                            ),
                         ));
                     }
                 } else {
@@ -389,11 +392,11 @@ impl<'a> Codegen<'a> {
                 if let Some(unmapped) =
                     self.unmapped_structural_group_for_terminal(&raw_lhs, g, terminal)
                 {
-                    return Err(format!(
-                        "gate `{shown}` has no structural driver mapping for resolved net group {unmapped} at {}:{}:{}",
-                        self.node(g).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(g).line,
-                        self.node(g).col,
+                    return Err(self.locate_error(
+                        g,
+                        format!(
+                            "gate `{shown}` has no structural driver mapping for resolved net group {unmapped}"
+                        ),
                     ));
                 }
             }
@@ -538,10 +541,12 @@ impl<'a> Codegen<'a> {
                                 self.alias_driver_assignments(g, bindings, side, |_| terminal)?;
                             match (assignment.pop(), assignment.is_empty()) {
                                 (Some(assignment), true) => Ok(assignment),
-                                _ => Err(format!(
-                                    "delayed enable gate `{shown}` in `{path}` at {} drives \
-                                     several pieces of an aliased net, which llg does not support",
-                                    self.source_location(g)
+                                _ => Err(self.locate_error(
+                                    g,
+                                    format!(
+                                        "delayed enable gate `{shown}` in `{path}` drives \
+                                     several pieces of an aliased net, which llg does not support"
+                                    ),
                                 )),
                             }
                         })

@@ -27,7 +27,7 @@ Lowers a validated `SemanticModel` and the owned DB into typed IR and an
   `expressions/`, `containers/`, `objects/`, `randomization/`, `coverage/`,
   `assertions/`, `initialization/`, `net_delay_layout/`, `packed_geometry/`.
 - `timescale.rs` — checked femtosecond ticks.
-- `error.rs` — `CodegenError`.
+- `error.rs` — `CodegenError` and the framed location (`located`).
 
 ## Conventions and pitfalls
 
@@ -50,6 +50,10 @@ Lowers a validated `SemanticModel` and the owned DB into typed IR and an
   design or signal scans.
 - New topology, driver or writer forms must be added to the `net_cells.rs`
   inventory and register cell intervals for the single-writer rule.
+- A lowering error is plain text without a source path: `lower_stmt`,
+  `lower_expr`, `lower_lhs` and the entry lowerings locate it
+  (`Codegen::locate_error`); call `locate_error(node, …)` where a narrower
+  node names the failure. A second position may stay in the text.
 - Release the DB after typed lowering and collection state before execution
   lowering on the consuming path.
 

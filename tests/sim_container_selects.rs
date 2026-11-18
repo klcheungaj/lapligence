@@ -92,7 +92,9 @@ fn compound_assignment_to_container_element_select_is_rejected() {
     sim_cli::reject_case(
         "container_selects",
         "compound_select",
-        "compound assignment to resizable container element in `tb` is not supported",
+        // Located at the statement that contains the failing operation.
+        "compound_select.sv:10:9 compound assignment to resizable container element in `tb` \
+         is not supported",
     );
 }
 

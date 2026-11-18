@@ -473,20 +473,23 @@ impl EmitCtx<'_, '_> {
         let spare = usize::BITS - (weights.len().max(1) - 1).leading_zeros();
         let sum_width = widest.saturating_add(spare);
         if sum_width >= crate::sim::emit_c::LLG_WIDTH_LIMIT {
-            let location = match &origin {
-                crate::sim::semantic::Origin::Source {
-                    path, line, column, ..
-                } => format!("{path}:{line}:{column}"),
-                crate::sim::semantic::Origin::Synthetic { reason } => reason.clone(),
-            };
-            return Err(format!(
-                "{what} at {location} in `{}`: the exact weight sum of {} items with \
-                 {widest}-bit weights needs {sum_width} bits, but packed values must be \
-                 narrower than {} bits",
+            let message = format!(
+                "{what} in `{}`: the exact weight sum of {} items with {widest}-bit weights \
+                 needs {sum_width} bits, but packed values must be narrower than {} bits",
                 self.path,
                 weights.len(),
                 crate::sim::emit_c::LLG_WIDTH_LIMIT
-            ));
+            );
+            return Err(match &origin {
+                crate::sim::semantic::Origin::Source {
+                    path, line, column, ..
+                } => {
+                    crate::sim::codegen::error::located(&format!("{path}:{line}:{column}"), message)
+                }
+                crate::sim::semantic::Origin::Synthetic { reason } => {
+                    format!("{message} ({reason})")
+                }
+            });
         }
         self.cg.model.random.threads = true;
         Ok(IrExpr::new(

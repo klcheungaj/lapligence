@@ -438,7 +438,7 @@ fn procedural_assertion_forms_without_exact_semantics_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_procedural_automatic_past",
-        "neg_procedural_automatic_past.sv:10:7: the argument of $past of this procedural \
+        "neg_procedural_automatic_past.sv:10:7 the argument of $past of this procedural \
          concurrent assertion reads an automatic variable or a const cast, whose value the \
          instance saves when it is queued (IEEE 1800-2009 16.15.6.1)",
     );
@@ -488,7 +488,7 @@ fn virtual_interface_array_member_limits_are_located() {
     sim_cli::reject_case(
         SUITE,
         "neg_vif_array_whole",
-        "neg_vif_array_whole.sv:11:12: unpacked array member `mem` of virtual interface \
+        "neg_vif_array_whole.sv:11:12 unpacked array member `mem` of virtual interface \
          `bus_if` is supported only through element selects (`mem[i]`, `mem[i][b]`) that are \
          read or assigned with `=` or `<=`; a whole-array or slice use, or a use in an event \
          control or wait, is not supported in `tb`",
@@ -496,13 +496,13 @@ fn virtual_interface_array_member_limits_are_located() {
     sim_cli::reject_case(
         SUITE,
         "neg_vif_array_update",
-        "neg_vif_array_update.sv:10:5: a compound assignment to an element of an unpacked array \
+        "neg_vif_array_update.sv:10:5 a compound assignment to an element of an unpacked array \
          member through a virtual interface is not supported in `tb`; use `=` or `<=`",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_vif_array_increment",
-        "neg_vif_array_increment.sv:10:5: this write to an element of an unpacked array member \
+        "neg_vif_array_increment.sv:10:5 this write to an element of an unpacked array member \
          through a virtual interface is not supported in `tb`; assign it with `=` or `<=`",
     );
 }
@@ -612,7 +612,7 @@ fn implicit_sensitivity_virtual_interface_limits_are_located() {
         SUITE,
         "neg_vif_sensitivity_formal",
         &format!(
-            "neg_vif_sensitivity_formal.sv:12:12: the implicit sensitivity of `tb` cannot \
+            "neg_vif_sensitivity_formal.sv:12:12 the implicit sensitivity of `tb` cannot \
              follow a virtual-interface member that a called function reads through a handle \
              other than a virtual-interface variable {reason}"
         ),
@@ -621,7 +621,7 @@ fn implicit_sensitivity_virtual_interface_limits_are_located() {
         SUITE,
         "neg_vif_sensitivity_method",
         &format!(
-            "neg_vif_sensitivity_method.sv:13:19: the implicit sensitivity of `tb` cannot \
+            "neg_vif_sensitivity_method.sv:13:19 the implicit sensitivity of `tb` cannot \
              follow the storage a virtual-interface method call reads {reason}"
         ),
     );
@@ -629,7 +629,7 @@ fn implicit_sensitivity_virtual_interface_limits_are_located() {
         SUITE,
         "neg_vif_sensitivity_handle",
         &format!(
-            "neg_vif_sensitivity_handle.sv:11:19: the implicit sensitivity of `tb` cannot \
+            "neg_vif_sensitivity_handle.sv:11:19 the implicit sensitivity of `tb` cannot \
              follow a virtual-interface member read through a handle that is neither a \
              variable nor a formal {reason}"
         ),
@@ -709,7 +709,7 @@ fn vpi_string_and_scope_arguments() {
     sim_cli::reject_case(
         SUITE,
         "neg_vpi_string_variable",
-        "neg_vpi_string_variable.sv:5:18: argument of VPI system task `$input`: a string \
+        "neg_vpi_string_variable.sv:5:18 argument of VPI system task `$input`: a string \
          variable or expression is not supported (only string literals reach VPI applications) \
          in `tb`",
     );
@@ -742,7 +742,7 @@ fn unsupported_builtin_forms_are_located_rejections() {
     sim_cli::reject_case(
         SUITE,
         "neg_void_string",
-        "neg_void_string.sv:5:11: the discarded string result of `$sformatf` in statement \
+        "neg_void_string.sv:5:11 the discarded string result of `$sformatf` in statement \
          position is not supported",
     );
     sim_cli::reject_case(

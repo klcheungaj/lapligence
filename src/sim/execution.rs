@@ -1018,14 +1018,20 @@ fn collect_effects(
                 if operation.written_access().is_some() {
                     effects.push(ExecutionEffect::ImmediateStore);
                 }
-                // A bins array size that is not positive (at construction)
-                // and an illegal bin hit (when sampling) end the run (S45-D3,
-                // S45-D5).
+                // A bins array size that is not positive (at construction),
+                // an illegal bin hit (when sampling) and an option value out
+                // of range end the run (S45-D3, S45-D5).
                 if matches!(
                     operation.as_ref(),
                     crate::sim::ir::IrCoverageStmt::Ready { .. }
                         | crate::sim::ir::IrCoverageStmt::SampleInstance { .. }
                         | crate::sim::ir::IrCoverageStmt::SampleRegistered { .. }
+                ) || matches!(
+                    operation.as_ref(),
+                    crate::sim::ir::IrCoverageStmt::Option { option, .. } if option.is_bounded()
+                ) || matches!(
+                    operation.as_ref(),
+                    crate::sim::ir::IrCoverageStmt::TypeOption { option, .. } if option.is_bounded()
                 ) {
                     effects.push(ExecutionEffect::Terminate);
                 }

@@ -13,7 +13,7 @@ a process:
 The task module runs each fixture through the public CLI in both HDL
 optimizer modes and checks stdout, the exit status and the run-time messages.
 Expected stdout was checked against an independent industry-standard
-simulator, which matches every row except `coverage_option` (see its row).
+simulator, which matches every row.
 None of the fixtures has a final procedure: whether one runs after a run that
 a static initializer ends is decision S22-D9. Clause lines are from
 `SystemVerilog-1800-2009.txt`.
@@ -31,7 +31,7 @@ Common clauses:
 
 | Fixture | Clause and oracle |
 | --- | --- |
-| `coverage_option` | 19.7 Table 19-1 L33254-33260: weight's default is 1, and "The specified weight shall be a non-negative integral value." `g a = new(-1)` sets `option.weight` to -1 in the constructor a module variable's initializer runs: the run-time error located at `option.weight = w` (line 11), the option keeps its default, and, as for the same construction in a process (`sim_045` `option_errors`), the run goes on: `init first`, `init last`, then the initial procedure prints `first=1 last=1 weight=1`. Exit status 1 for the error. The industry-standard simulator ends the run at this option error in every context (in a process, after its final procedures); llg reports it and continues everywhere, so this row pins llg's current behaviour, which follows the process form. |
+| `coverage_option` | 19.7 Table 19-1 L33254-33260: weight's default is 1, and "The specified weight shall be a non-negative integral value." `g a = new(-1)` sets `option.weight` to -1 in the constructor a module variable's initializer runs: the run-time error located at `option.weight = w` (line 12) ends the run, as the same construction does in a process (`sim_045` `option_errors`): `init first`, then the error and its fatal end; `last`'s initializer and the initial procedure do not run. Exit status 1. |
 | `index_check` | 7.10.2.2 L9090: "The insert() method inserts the given item at the specified index position." S07-D15: an `insert` with an index outside the queue stops the run under the default index checks. `q.insert(5, 3)` on a one-element queue, in a function the initializer of `size` calls: `init first`, then the stop; neither the rest of the function, `last`'s initializer nor the initial procedure runs. Exit status 1. |
 | `null_access` | 8.4 L9653-9654: "Accessing nonstatic members (see 8.8) or virtual methods (see 8.19) via a null object handle is illegal. The result of an illegal access via a null object is indeterminate, and implementations may issue an error." The constructor that `holder h = new` runs reads `l.x` with `l` null: `init first`, `holder new`, then the null-access error that ends the run (as in a process); the rest of the constructor, `last`'s initializer and the initial procedure do not run. Exit status 1. |
 | `error_task` | 20.9 L34913 (above). 6.8 L5286-5287 includes static class members. `$error` in a static class function that a class static property's initializer and a module variable's initializer call: each reports, the function returns its value and the run goes on: `init first`, `init last`, `initial first=1 v=7 last=1 base=5`, `at 1`. Exit status 0 (ES-D2). |

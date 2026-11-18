@@ -485,6 +485,16 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrChandleExpr, String> {
+        self.lower_event_identity_unlocated(path, node)
+            .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// [`Self::lower_event_identity`] before its failure is located.
+    fn lower_event_identity_unlocated(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrChandleExpr, String> {
         if self.is_null_event_expression(node) {
             return Ok(IrChandleExpr::Null);
         }
