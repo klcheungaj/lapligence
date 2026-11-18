@@ -1599,8 +1599,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   derived values wake only on value changes. The
   [RTL-012 matrix](../tests/fixtures/sim/feature_completion/rtl_012/readme.md)
   checks every source pair against an exhaustive outcome oracle in both
-  editions. Explicit continuous strengths on vectors, selected vector bits and
-  supply nets reject; gate instance arrays keep per-instance strengths. Delayed
+  editions. Explicit continuous strengths apply at any net width (whole
+  vectors, selected bits and parts, net array elements, decision T1-D14);
+  on supply nets they reject; gate instance arrays keep per-instance
+  strengths. Delayed
   enable gates drive L/H too (decision T1-D1); VPI reads these strengths
   through `vpiStrengthVal` (decision A20-D21); charge and resistive contexts
   are outside this row (`trireg` and the resistive

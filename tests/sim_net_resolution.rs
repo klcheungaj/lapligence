@@ -10,25 +10,6 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-fn generate_error(tag: &str, source: &str) -> String {
-    sim_harness::with_frontend_temp_cwd(tag, |dir| {
-        let path = dir.join("tb.sv");
-        std::fs::write(&path, source).map_err(|error| error.to_string())?;
-        let compiled = compile::compile_checked(&compile::CompileOpts {
-            files: vec![path.to_string_lossy().into_owned()],
-            top: Some("tb".to_owned()),
-            ..Default::default()
-        })
-        .map_err(|error| error.to_string())?;
-        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
-        match sim::codegen::generate(&db) {
-            Ok(_) => Err("wired-net design unexpectedly generated".to_owned()),
-            Err(error) => Ok(error.to_string()),
-        }
-    })
-    .expect("wired-net rejection must reach codegen")
-}
-
 #[test]
 fn wired_nets_resolve_each_continuous_driver_site_with_optimizer_parity() {
     if !sim::build::cmake_available() {
@@ -397,18 +378,6 @@ fn ordinary_wire_continuous_assignment_rejects_variable_target_select() {
 
 #[test]
 fn wired_nets_reject_unimplemented_driver_paths() {
-    let lowering_cases = [(
-        "strength_vector",
-        "module tb; logic [1:0] a; wand [1:0] w; assign (strong0, strong1) w=a; endmodule",
-        "drive strength on non-scalar net",
-    )];
-    for (tag, source, expected) in lowering_cases {
-        let source =
-            format!("// llg-test-fixture: tests/sim_net_resolution.rs/{tag}.sv\n{source}\n");
-        let error = generate_error(&format!("wired_{tag}"), &source);
-        assert!(error.contains(expected), "{tag}: {error}");
-    }
-
     let frontend_cases = [
         (
             "blocking",

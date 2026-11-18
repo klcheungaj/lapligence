@@ -687,7 +687,3 @@ datatype_case!(
     "container_assignment_contexts"
 );
 
-#[test]
-fn continuous_assignment_vector_strength_is_rejected_as_non_scalar() {
-    run_rejection_fixture("continuous_assignment_vector_strength_rejected.sv");
-}
