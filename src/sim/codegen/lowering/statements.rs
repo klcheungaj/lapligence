@@ -22,6 +22,7 @@ mod forks;
 mod formatting;
 mod memory_tasks;
 mod native_delays;
+pub(super) mod nba_merge;
 mod randsequence;
 mod system_tasks;
 

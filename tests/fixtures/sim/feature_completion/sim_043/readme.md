@@ -218,7 +218,9 @@ variables" leaves open when, within a process, a change is seen). Time-0 callbac
 
 - 1: `g = 1; g = 0;` in one turn: no callback.
 - 2: `h = 1; #0 h = 0;`: the `#0` ends the turn, so both changes call.
-- 3: `k <= 1; k <= 0;` in one NBA batch: no callback.
+- 3: `k <= counted(1); k <= 0;` in one NBA batch: no callback. The first
+  value comes from a function with a side effect, so lowering keeps both
+  updates and the batch commits both.
 - 4: `v = 1; $display; v = 0;`: the print is a check, so `v=1` calls before
   the print's text and `v=0` after it.
 - 5: `w = 8'h01; w = 8'h02;`: one callback with the last value, `02`.

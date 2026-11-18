@@ -579,6 +579,8 @@ struct LoweredModel {
     sdf_logs: Vec<(String, String)>,
     /// The design calls a `$coverage_*` function (40.3.2).
     coverage_api_used: bool,
+    /// Storage that `$monitor` reports mark at each write.
+    monitor_reads: statements::nba_merge::MonitorReads,
     /// Some port sink shares variable storage (decisions A21-D1..D3), which
     /// a model that keeps the VPI catalog does not allow.
     shared_variable_ports: bool,
@@ -1009,6 +1011,7 @@ fn lower_model_with(
     let warnings = std::mem::take(&mut cg.warnings);
     let sdf_logs = std::mem::take(&mut cg.sdf_logs);
     let coverage_api_used = cg.coverage_api_used;
+    let monitor_reads = std::mem::take(&mut cg.monitor_reads);
     let shared_variable_ports = cg.shared_variable_ports;
     drop(cg);
     drop(semantic);
@@ -1019,6 +1022,7 @@ fn lower_model_with(
         warnings,
         sdf_logs,
         coverage_api_used,
+        monitor_reads,
         shared_variable_ports,
         retry_ports,
         strength_link_ports,
@@ -1106,6 +1110,7 @@ fn finish_generation(
         warnings,
         sdf_logs,
         coverage_api_used,
+        monitor_reads,
         ..
     } = lowered;
     if !options.vpi && model.vpi_compile_calls.is_empty() {
@@ -1136,6 +1141,9 @@ fn finish_generation(
     if !model.vpi_catalog && !coverage_api_used {
         model.assertion_coverage = None;
     }
+    // After the coverage tables are settled: their toggle and FSM watches
+    // see each write.
+    statements::nba_merge::merge_overridden_nbas(&mut model, &monitor_reads);
     let execution_stage = crate::profile::Stage::new("execution");
     let mut execution =
         crate::sim::execution::ExecutionModel::lower_with_options(model, options.execution)
@@ -1854,6 +1862,8 @@ struct Codegen<'a> {
     immediate_assertion_items: BTreeMap<u64, coverage::ImmediateAssertionItem>,
     /// The design calls a coverage access function of 40.3.2.
     coverage_api_used: bool,
+    /// Storage that `$monitor` reports mark at each write (FIN-001 O2).
+    monitor_reads: statements::nba_merge::MonitorReads,
     /// The statement and toggle coverage the model carries (40.2.2).
     code_coverage: coverage::CodeCoveragePlan,
     /// Statement coverage entity of each statement node, and the nodes in
@@ -2600,6 +2610,7 @@ impl<'a> Codegen<'a> {
             coverage_option_vars: HashMap::new(),
             immediate_assertion_items: BTreeMap::new(),
             coverage_api_used: false,
+            monitor_reads: Default::default(),
             code_coverage: Default::default(),
             statement_entities: HashMap::new(),
             statement_entity_order: Vec::new(),
