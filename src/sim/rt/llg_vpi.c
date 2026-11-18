@@ -386,6 +386,8 @@ static vpiHandle dyn_by_suffix(uint32_t row, const char* suffix);
 static vpiHandle dyn_static_by_name(const char* name);
 static int dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot);
 static void dyn_handle_cb_value(const struct llg_vpi_cb* cb, p_vpi_value output);
+static int dyn_bind_size_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot, const s_cb_data* data);
+static int dyn_size_cb_changed(struct llg_vpi_cb* cb);
 static int dyn_bind_object_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
 static void dyn_object_cb_added(void);
 static void dyn_object_cb_removed(void);
@@ -12540,6 +12542,7 @@ typedef struct llg_vpi_cb {
     int value_signed;
     int32_t index;            /* reported s_cb_data index */
     sv4_t last;               /* last value of a watched select */
+    uint64_t last_size;       /* cbSizeChange: the size last reported */
     const llg_vpi_model_object_t* scope; /* time scaling object */
     struct llg_vpi_cb* next;
     struct llg_vpi_cb** prev_link;
@@ -12588,6 +12591,7 @@ static void assertion_cb_release(llg_vpi_cb_t* cb);
 #define LLG_VPI_WATCH_EVENT 1
 #define LLG_VPI_WATCH_OPAQUE 2
 #define LLG_VPI_WATCH_HANDLE 3
+#define LLG_VPI_WATCH_SIZE 4 /* cbSizeChange: a container's shape marker */
 
 /* One watched storage address of a cbValueChange record. */
 typedef struct llg_vpi_watch {
@@ -12988,6 +12992,18 @@ static void vpi_value_changed(const void* key) {
         llg_vpi_watch_t* watch = items[i];
         llg_vpi_cb_t* cb = watch->cb;
         if (cb->removed) continue;
+        if (watch->event == LLG_VPI_WATCH_SIZE) {
+            /* 37.17 detail 14: after a resize; the shape marker also flips
+             * when a check sees no net resize (a push and a pop). */
+            if (!dyn_size_cb_changed(cb)) continue;
+            s_cb_data data;
+            s_vpi_time time;
+            base_data(cb, &data);
+            data.time = callback_time(cb->time.type, cb->scope, llg_time(), &time);
+            data.value = NULL;
+            invoke_cb(cb, &data);
+            continue;
+        }
         if (watch->event) {
             /* 38.36.1: an event has no value and a class variable's value is
              * opaque; the callback's value is NULL. */
@@ -13599,6 +13615,7 @@ static const void* watch_key(const llg_vpi_target_t* target) {
 static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     llg_vpi_slot_t* slot = checked_handle(data->obj, NULL);
     if (!slot) return 0;
+    if (data->reason == cbSizeChange) return dyn_bind_size_cb(cb, slot, data);
     int dynamic = dyn_bind_value_cb(cb, slot);
     if (dynamic >= 0) return dynamic;
     if (slot->kind == SLOT_OBJECT && g_vpi.objects[slot->object].type == vpiNamedEvent) {
@@ -13709,10 +13726,6 @@ static void vpi_refuse_reason(int reason) {
         case cbStmt:
             why = "cbStmt is not supported by llg: statements have no execution hook";
             break;
-        case cbSizeChange:
-            why = "cbSizeChange is not supported by llg: dynamic arrays, queues, associative "
-                  "arrays and strings report no resize to VPI (decision A19-D91)";
-            break;
         case cbUnresolvedSystf:
             why = "cbUnresolvedSystf never occurs in llg: every system task and function call "
                   "is resolved when the model is generated";
@@ -13773,6 +13786,9 @@ vpiHandle vpi_register_cb(p_cb_data data) {
             fired_attach(index, done);
             return encode_handle(index);
         }
+    } else if (reason == cbSizeChange) {
+        /* A value-change record on a container's shape marker (A19-D91). */
+        kind = CB_VALUE;
     } else if (reason == cbValueChange) {
         kind = CB_VALUE;
         /* 37.39 detail 2: no value change callback on an automatic. */

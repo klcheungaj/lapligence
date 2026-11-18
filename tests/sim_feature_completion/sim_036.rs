@@ -170,7 +170,7 @@ fn automatic_and_dynamic_ref_actuals_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_dynamic_array_ref",
-        "deferred immediate assertion action cannot pass a dynamic variable to ref argument `x` at tb:11:27",
+        "neg_dynamic_array_ref.sv:11:27 deferred immediate assertion action cannot pass a dynamic variable to ref argument `x` (SV 16.4)",
     );
 }
 

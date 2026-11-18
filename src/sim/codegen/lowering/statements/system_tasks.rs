@@ -176,30 +176,32 @@ impl EmitCtx<'_, '_> {
                     }
                     Some(first) => {
                         let value = self.cg.eval_bits(first).map_err(|error| {
-                            format!(
-                                "$fatal finish number at {} must be an integral constant 0, 1, or 2: {error}",
-                                self.text_location(h)
+                            self.cg.locate_error(
+                                h,
+                                format!("$fatal finish number must be an integral constant 0, 1, or 2: {error}"),
                             )
                         })?;
                         if value.is_unknown() {
-                            return Err(format!(
-                                "$fatal finish number at {} must be a known integral constant 0, 1, or 2",
-                                self.text_location(h)
+                            return Err(self.cg.locate_error(
+                                h,
+                                "$fatal finish number must be a known integral constant 0, 1, or 2",
                             ));
                         }
                         let value = value.to_u128().ok_or_else(|| {
-                            format!(
-                                "$fatal finish number at {} must be an integral constant 0, 1, or 2",
-                                self.text_location(h)
+                            self.cg.locate_error(
+                                h,
+                                "$fatal finish number must be an integral constant 0, 1, or 2",
                             )
                         })?;
                         let finish_number = u8::try_from(value)
                             .ok()
                             .filter(|value| *value <= 2)
                             .ok_or_else(|| {
-                                format!(
-                                    "$fatal finish number at {} must be 0, 1, or 2 (got {value})",
-                                    self.text_location(h)
+                                self.cg.locate_error(
+                                    h,
+                                    format!(
+                                        "$fatal finish number must be 0, 1, or 2 (got {value})"
+                                    ),
                                 )
                             })?;
                         (&args[1..], Some(finish_number))
@@ -767,9 +769,8 @@ impl EmitCtx<'_, '_> {
                 )),
             },
             "$displayon" | "$displayoff" => {
-                self.cg
-                    .warnings
-                    .push(format!("{name} in `{}` skipped (not supported)", self.path));
+                let message = format!("{name} in `{}` skipped (not supported)", self.path);
+                self.cg.warn_at(h, message);
                 Ok(vec![])
             }
             // A system function in statement position (a void cast, SV

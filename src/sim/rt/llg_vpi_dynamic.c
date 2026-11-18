@@ -4337,6 +4337,88 @@ static int dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot) {
     return 1;
 }
 
+/* The shape marker a container publishes on each resize, or NULL. */
+static sv4_t* dyn_container_shape_marker(const dyn_place_t* place) {
+    const llg_vpi_shape_t* shape = place->shape;
+    void* storage = place->storage;
+    if (!storage || shape->inline_value) return NULL;
+    switch (shape->array_type) {
+        case vpiDynamicArray:
+            return shape->values ? ((llg_dyn_value_array_t*)storage)->shape_dependency
+                                 : ((llg_dyn_array_t*)storage)->shape_dependency;
+        case vpiQueueArray:
+            return shape->values ? ((llg_queue_value_array_t*)storage)->shape_dependency
+                                 : ((llg_queue_t*)storage)->shape_dependency;
+        case vpiAssocArray:
+            return shape->values ? ((llg_assoc_value_t*)storage)->shape_dependency
+                                 : ((llg_assoc_t*)storage)->shape_dependency;
+        default: return NULL;
+    }
+}
+
+/* cbSizeChange (decision A19-D91): on a dynamic array, queue or associative
+ * array variable of a scope, with vpiSuppressVal as industry-standard
+ * simulators accept it; the record watches the container's shape marker and
+ * runs after a check that sees a new size (37.17 detail 14). A string var,
+ * another value format, a class property, a fixed array of containers and a
+ * nested container are refused, so that no accepted record stays silent. */
+static int dyn_bind_size_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot, const s_cb_data* data) {
+    if (data->value && data->value->format != vpiSuppressVal) {
+        vpi_error("LLG_VPI_CALLBACK",
+                  "cbSizeChange takes vpiSuppressVal; read the new size with vpiSize "
+                  "(decision A19-D91)");
+        return 0;
+    }
+    dyn_place_t place;
+    if (slot->kind != SLOT_OBJECT || !dyn_slot(slot) || !dyn_place(slot, &place) ||
+        place.shape->shape != LLG_VPI_SHAPE_CONTAINER) {
+        vpi_error("LLG_VPI_CALLBACK",
+                  "cbSizeChange applies to dynamic array, queue and associative array "
+                  "variables of a module, interface, program or package (37.17 detail 14, "
+                  "decision A19-D91)");
+        return 0;
+    }
+    sv4_t* marker = dyn_container_shape_marker(&place);
+    if (!marker) {
+        vpi_error("LLG_VPI_CALLBACK",
+                  "cbSizeChange on a fixed array of containers is not supported by llg; "
+                  "decision A19-D91");
+        return 0;
+    }
+    llg_vpi_watch_t* watch = (llg_vpi_watch_t*)calloc(1, sizeof(*watch));
+    if (!watch) {
+        vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
+        return 0;
+    }
+    watch->key = marker;
+    watch->cb = cb;
+    watch->element = LLG_VPI_NO_ELEMENT;
+    watch->event = LLG_VPI_WATCH_SIZE;
+    cb->watches = watch;
+    cb->watch_total = 1;
+    cb->target.object = slot->object;
+    cb->target.element = LLG_VPI_NO_ELEMENT;
+    cb->scope = row_object(slot->object);
+    cb->value_type = place.shape->array_type;
+    cb->last_size = dyn_container_size(&place);
+    return 1;
+}
+
+/* Whether the container of a cbSizeChange record has a new size; records
+ * it. */
+static int dyn_size_cb_changed(struct llg_vpi_cb* cb) {
+    llg_vpi_model_object_t* object = row_object(cb->target.object);
+    dyn_place_t place;
+    memset(&place, 0, sizeof(place));
+    place.shape = dyn_shape(object->shape - 1u);
+    place.storage = object->storage;
+    if (!place.shape) return 0;
+    uint64_t size = dyn_container_size(&place);
+    if (size == cb->last_size) return 0;
+    cb->last_size = size;
+    return 1;
+}
+
 /* The value of a cbValueChange record on a chandle variable: the variable
  * as it holds now, in the record's format. */
 static LLG_OUTLYING void dyn_handle_cb_value(const struct llg_vpi_cb* cb, p_vpi_value output) {

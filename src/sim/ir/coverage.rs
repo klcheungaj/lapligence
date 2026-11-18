@@ -61,6 +61,9 @@ pub struct IrCovergroup {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCoverpoint {
     pub(in crate::sim) name: String,
+    /// Declaration site for run-time messages about the coverpoint as a
+    /// whole (like [`IrCoverBin::site`]); empty for a scratch table.
+    pub(in crate::sim) site: String,
     /// 1..=64 bits.
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
@@ -123,6 +126,9 @@ impl IrCoverWide {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCoverCross {
     pub(in crate::sim) name: String,
+    /// Declaration site for run-time messages about the cross as a whole
+    /// (like [`IrCoverBin::site`]).
+    pub(in crate::sim) site: String,
     /// The crossed coverpoints, by index.
     pub(in crate::sim) points: Vec<u32>,
     pub(in crate::sim) selects: Vec<IrCoverSelect>,

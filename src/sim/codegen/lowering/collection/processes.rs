@@ -1845,6 +1845,13 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Record lowering warning `message` (CODEGEN-010) located at `node`
+    /// as [`locate_error`](Self::locate_error) locates an error.
+    pub(in super::super) fn warn_at(&mut self, node: NodeId, message: impl Into<String>) {
+        let warning = self.locate_error(node, message);
+        self.warnings.push(warning);
+    }
+
     fn scan_process_contract(
         &self,
         node: NodeId,
@@ -2193,11 +2200,12 @@ impl<'a> Codegen<'a> {
                 )?;
                 ctx.cg.add_strength_reads(&mut sigs)?;
                 if sigs.is_empty() {
-                    ctx.cg.warnings.push(format!(
+                    let message = format!(
                         "combinational always process in `{}` reads no \
                          signals; evaluating once at time 0",
                         ctx.cg.source_path(path)
-                    ));
+                    );
+                    ctx.cg.warn_at(proc, message);
                     IrShape::RunOnce
                 } else {
                     IrShape::SensLoop { reads: sigs }

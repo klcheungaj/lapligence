@@ -152,7 +152,7 @@ fn packed_array_prefixes() {
         "packed_array_prefixes",
         "packed array prefixes ok\n",
         "",
-        &["combinational always process in `tb` reads no signals; evaluating once at time 0"],
+        &["packed_array_prefixes.sv:8:5 combinational always process in `tb` reads no signals; evaluating once at time 0"],
     );
 }
 

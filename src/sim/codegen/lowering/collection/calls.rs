@@ -310,9 +310,10 @@ impl<'a> Codegen<'a> {
             && !is_class_constructor
             && !self.lowering_assertion_match_item
         {
-            self.warnings.push(format!(
-                "void function `{name}` used as a value in `{scope_path}`; result is X"
-            ));
+            self.warn_at(
+                h,
+                format!("void function `{name}` used as a value in `{scope_path}`; result is X"),
+            );
         }
         let depth = parse_depth(&self.depth_arg);
         let call = IrExpr::new(

@@ -306,11 +306,22 @@ impl EmitCtx<'_, '_> {
     /// `llg_rt_site` in the runtime prelude). Without a source position the
     /// site is the scope alone.
     pub(super) fn finish_location(&self, node: NodeId) -> String {
-        let scope = self.message_scope();
+        let scope = self.site_scope();
         if self.cg.node(node).line == 0 {
-            return scope.clone();
+            return scope.to_owned();
         }
         format!("{scope}\u{1f}{}", self.cg.source_location(node))
+    }
+
+    /// The design scope a run-time message from this code names. Code of
+    /// the compilation unit, a `$unit` subroutine or a method of a class
+    /// declared there (directly or inside such a class), names `$unit`, as
+    /// industry-standard simulators do; other code names its own scope.
+    fn site_scope(&self) -> &str {
+        if self.display_scope.is_none() && self.cg.in_compilation_unit_scope(self.inst) {
+            return "$unit";
+        }
+        self.message_scope()
     }
 
     /// Lower the optional diagnostic level shared by `$finish` and `$stop`.
@@ -327,37 +338,36 @@ impl EmitCtx<'_, '_> {
             [] => Ok(1),
             [argument] => {
                 let value = self.cg.eval_bits(*argument).map_err(|error| {
-                    format!(
-                        "{task} argument at {} must be an integral constant 0, 1, or 2: {error}",
-                        self.text_location(node)
+                    self.cg.locate_error(
+                        node,
+                        format!("{task} argument must be an integral constant 0, 1, or 2: {error}"),
                     )
                 })?;
                 if value.is_unknown() {
-                    return Err(format!(
-                        "{task} argument at {} must be a known integral constant 0, 1, or 2",
-                        self.text_location(node)
+                    return Err(self.cg.locate_error(
+                        node,
+                        format!("{task} argument must be a known integral constant 0, 1, or 2"),
                     ));
                 }
                 let value = value.to_u128().ok_or_else(|| {
-                    format!(
-                        "{task} argument at {} must be an integral constant 0, 1, or 2",
-                        self.text_location(node)
+                    self.cg.locate_error(
+                        node,
+                        format!("{task} argument must be an integral constant 0, 1, or 2"),
                     )
                 })?;
                 u8::try_from(value)
                     .ok()
                     .filter(|value| *value <= 2)
                     .ok_or_else(|| {
-                        format!(
-                            "{task} argument at {} must be 0, 1, or 2 (got {value})",
-                            self.text_location(node)
+                        self.cg.locate_error(
+                            node,
+                            format!("{task} argument must be 0, 1, or 2 (got {value})"),
                         )
                     })
             }
-            _ => Err(format!(
-                "{task} accepts at most one argument at {}",
-                self.text_location(node)
-            )),
+            _ => Err(self
+                .cg
+                .locate_error(node, format!("{task} accepts at most one argument"))),
         }
     }
 }

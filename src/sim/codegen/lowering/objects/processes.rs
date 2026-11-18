@@ -31,6 +31,7 @@ impl Codegen<'_> {
             return Ok(IrProcessExpr::Null);
         }
         if self.is_process_self_call(node) {
+            self.process_self_used = true;
             return Ok(IrProcessExpr::SelfHandle);
         }
         if self.is_plain_process_storage(node) {

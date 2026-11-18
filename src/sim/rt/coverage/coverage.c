@@ -233,13 +233,6 @@ static void llg_cov_report(llg_msg_id_t id, const char* site, const char* fmt, .
     llg_report_emit(&out, stderr);
 }
 
-// The `file:line:col` part of a framed site, for the error hook (cbError),
-// which takes a location; a site without the separator is returned whole.
-static const char* llg_cov_site_location(const char* site) {
-    const char* separator = site ? strchr(site, LLG_RT_SITE_SEPARATOR) : NULL;
-    return separator ? separator + 1 : site;
-}
-
 static void* llg_cov_grow(void* data, size_t count, size_t size, const char* what) {
     if (size != 0 && count > SIZE_MAX / size) llg_fatal_allocation(what, count, size);
     size_t bytes = count * size;
@@ -1447,6 +1440,20 @@ void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, c
         llg_cov_option_range_error("option", llg_cov_option_names[option], number, site);
         return;
     }
+    // A negative cross_num_print_missing (a count, Table 19-1) ends the run
+    // at construction; a procedural write of one is ignored with a warning
+    // and the option keeps its value (industry-standard behaviour, S46-D17).
+    if (option == LLG_COV_OPTION_CROSS_NUM_PRINT_MISSING && number < 0) {
+        if (!inst->ready) {
+            llg_cov_option_range_error("option", llg_cov_option_names[option], number, site);
+            return;
+        }
+        if (!llg_rt_exiting())
+            llg_cov_report(LLG_MSG_RUNTIME_WARNING, site,
+                           "coverage option.cross_num_print_missing value %lld is negative; the write is ignored",
+                           (long long)number);
+        return;
+    }
     uint32_t items = inst->group->n_points + inst->group->n_crosses;
     if (point < 0) {
         switch (option) {
@@ -1699,7 +1706,7 @@ static int llg_cov_pair_order(const void* a, const void* b) {
 
 static void llg_cov_overlap_warning(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                                     const char* a, const char* b) {
-    llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "covergroup `%s` coverpoint `%s`: bins `%s` and `%s` overlap (option.detect_overlap, IEEE 1800-2009 19.7)", inst->group->name, point->name, a, b);
+    llg_cov_report(LLG_MSG_RUNTIME_WARNING, point->site, "covergroup `%s` coverpoint `%s`: bins `%s` and `%s` overlap (option.detect_overlap, IEEE 1800-2009 19.7)", inst->group->name, point->name, a, b);
 }
 
 // option.detect_overlap (19.7): `bins` declarations whose values (after
@@ -2176,7 +2183,7 @@ static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov
     // (S45-D10); an explicit illegal transition ends it (S45-D3).
     if (bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) {
         llg_rt_mark_failed();
-        llg_rt_note_error(0, "illegal_bins transition sampled", llg_cov_site_location(bin->site));
+        llg_rt_note_error(0, "illegal_bins transition sampled", bin->site);
     }
     else llg_cov_fatal("illegal_bins transition sampled", bin->site);
 }
@@ -2944,9 +2951,10 @@ static void llg_cov_merged_cross(llg_cov_type_t* type, const llg_cov_inst_t* con
         if (!cross || !llg_cov_xlayout_same(cross->layout, xl)) {
             if (!type->merge_error) {
                 type->merge_error = 1;
-                llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "covergroup `%s` cross `%s`: merged type coverage needs every instance to have the same cross bins (llg limitation)", first->group->name, first->group->crosses[index].name);
+                const llg_cov_cross_t* table = &first->group->crosses[index];
+                llg_cov_report(LLG_MSG_RUNTIME_ERROR, table->site, "covergroup `%s` cross `%s`: merged type coverage needs every instance to have the same cross bins (llg limitation)", first->group->name, table->name);
                 llg_rt_mark_failed();
-                llg_rt_note_error(0, "merged type coverage needs equal cross bins", NULL);
+                llg_rt_note_error(0, "merged type coverage needs equal cross bins", table->site);
             }
             return;
         }

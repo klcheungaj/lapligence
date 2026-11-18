@@ -20,7 +20,7 @@ ERROR: [CLI-003] --top requires a module name
 INFO: f.sv:3:35: [SIM-001] (tb @ 5 ns) $finish called
 ```
 
-Severity words: `FATAL`, `ERROR`, `WARNING`, `INFO`. The id is the tool name, `-` and a three-digit index; index 000 of a tool is its summary. The location is the physical `file:line:col` (`file:line` where the column is not known), followed by `` (`line file:line)`` when a `` `line`` directive maps it, and is left out (with its separator) when a message has none. Design context is the hierarchical scope and the simulation time, joined by ` @ `; the time is in the largest unit that shows it exactly. The hint, when present, names the lint rule or frontend warning option that selects the message, or, for a generated-model message, the option or setting that turns its check off or raises its limit.
+Severity words: `FATAL`, `ERROR`, `WARNING`, `INFO`. The id is the tool name, `-` and a three-digit index; index 000 of a tool is its summary. The location is the physical `file:line:col` (`file:line` where the column is not known), followed by `` (`line file:line)`` when a `` `line`` directive maps it, and is left out (with its separator) when a message has none. Design context is the hierarchical scope and the simulation time, joined by ` @ `; code of the compilation unit or of a class declared there names `$unit`; the time is in the largest unit that shows it exactly. The hint, when present, names the lint rule or frontend warning option that selects the message, or, for a generated-model message, the option or setting that turns its check off or raises its limit.
 
 Each phase that reported a warning or worse ends with a summary message, `LINT-000` for lint, with the text `<{fatal} fatal, >{error} error(s), {warning} warning(s)<, {info} info(s)>`.
 
@@ -70,7 +70,7 @@ Each phase that reported a warning or worse ends with a summary message, `LINT-0
 
 ## SLANG
 
-Frontend diagnostics keep Slang's text; the id is `SLANG-<name>` with the diagnostic name from Slang's list (`vendor/slang/scripts/diagnostics.txt`), and the hint is the warning option (`-W<option>`) when Slang has one. Slang notes print as `INFO`. A frontend warning is disabled in the source with `` `pragma diagnostic ignore="-W<option>"`` (IEEE 1800-2009 22.11 leaves pragma meaning to the tool).
+Frontend diagnostics keep Slang's text; the id is `SLANG-<name>` with the diagnostic name from Slang's list (`vendor/slang/scripts/diagnostics.txt`), and the hint is the warning option (`-W<option>`) when Slang has one. Slang notes print as `INFO`. A frontend warning is disabled in the source with `` `pragma diagnostic ignore="-W<option>"`` (IEEE 1800-2009 22.11 leaves pragma meaning to the tool). `SLANG-VirtualVisibilityMismatch`, a virtual-method override that changes the method's visibility, is a warning (decision S08-D1); `-Werror` reports it as an error, which stops the run.
 
 | Id | Severity | Meaning | Disable |
 |---|---|---|---|
@@ -184,6 +184,8 @@ No messages.
 
 A model message whose check can be turned off, or whose limit raised, says how in its hint: an index-check stop (`SIM-009`, `simulator.index_checks`, `--no-index-checks`), a timing violation (`SIM-015`, `simulator.timing_check_messages`, `--no-timing-check-messages`), a refused `$system` (`LLG_ALLOW_SYSTEM`), a sequence thread budget (`LLG_SEQUENCE_THREAD_LIMIT`), a constraint solver budget (the `LLG_RAND_*` variable it names) and a VPI plugin loaded by a model without the object catalog (`--vpi`).
 
+A model message that stops the run is an error or a fatal; a warning never stops it. The deadlock warning (`SIM-019`) and the `SIM-022` info report a run that ended because nothing was left to run.
+
 | Id | Severity | Meaning | Disable |
 |---|---|---|---|
 | `SIM-000` | info | end-of-run counts, printed at every exit when the run reported a warning or worse | - |
@@ -196,7 +198,7 @@ A model message whose check can be turned off, or whose limit raised, says how i
 | `SIM-007` | error | an assert, assume or expect failed without an else action | an else action block, $assertoff, $assertfailoff |
 | `SIM-008` | info | run statistics printed by $finish(2) and $stop(2) | a finish number below 2 |
 | `SIM-009` | error | a run-time error the simulator detects in the design (bad cast, out-of-bounds access that stops the run) | - |
-| `SIM-010` | error | a run-time error of a runtime service (scheduler, synchronization, file I/O, coverage, constraints) | - |
+| `SIM-010` | error | a run-time error of a runtime service (scheduler, synchronization, file I/O, coverage, constraints), or a model environment setting that stops the run before time zero (LLG_SIM_LOG_FILE, LLG_SIM_OUT_DIR, LLG_STOP_POLICY, LLG_INDEX_CHECKS, the LLG_*_LIMIT settings) | - |
 | `SIM-011` | warning | a run-time warning of a runtime service | - |
 | `SIM-012` | warning | a dynamic array, queue or associative array operation fell back to the default (IEEE 1800-2009 7.4-7.10) | - |
 | `SIM-013` | warning | $readmem/$writemem file warning | - |
@@ -206,7 +208,7 @@ A model message whose check can be turned off, or whose limit raised, says how i
 | `SIM-017` | error | a DPI-C bridge error | - |
 | `SIM-018` | error | the waveform writer failed | - |
 | `SIM-019` | warning | the run ended in a deadlock: processes wait and no event remains | - |
-| `SIM-020` | warning | a model environment setting (LLG_SIM_LOG_FILE, LLG_STOP_POLICY, plusargs) is unusable | - |
+| `SIM-020` | warning | a model environment setting is unusable and is ignored; the run continues (an LLG_RAND_* solver budget that is not a decimal count) | - |
 | `SIM-021` | info | runtime information (randomize statistics, stack limit notes) | - |
 | `SIM-022` | info | the run ended without $finish because no process remains | - |
 | `SIM-023` | warning | a run-time warning the simulator detects in the design; the run continues (a $cast destination element that does not exist while index checks are off) | - |

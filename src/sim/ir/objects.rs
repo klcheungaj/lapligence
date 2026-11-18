@@ -462,7 +462,9 @@ pub enum IrChandleExpr {
         inst: Box<IrExpr>,
     },
     /// A class handle used as a method-call receiver or to select a
-    /// property (SV 8.4): null is a run-time error reported at `site`.
+    /// property (SV 8.4): null is a run-time error reported at `site`, what
+    /// the check guards followed by the unit separator and its framed site
+    /// (`Codegen::required_site`).
     Required {
         handle: Box<IrChandleExpr>,
         site: String,

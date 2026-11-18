@@ -8,13 +8,22 @@
 //! descriptor-backed fixed arrays are lowered after every array is collected.
 //! The schedule therefore orders initializers by the static declarations
 //! their values read, directly or through called functions, and otherwise
-//! by scope (class statics, package variables, then the design hierarchy),
+//! by scope (packages, the compilation unit, then the design hierarchy in
+//! post-order; class statics first in each),
 //! the order in which collection first reached each declaring scope, and
 //! declaration order within the scope.
 
 use super::*;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+
+/// The scope whose initialization runs a static initializer (S22-D8).
+#[derive(Clone, Copy)]
+enum InitializerOwner {
+    Package(NodeId),
+    Unit,
+    Instance(NodeId),
+}
 
 /// Dependency graph over initializer entries followed by pass-through
 /// subroutine and multi-entry declaration nodes. `dependencies[node]` lists nodes that must complete
@@ -173,30 +182,80 @@ impl<'a> Codegen<'a> {
             .push(initializer);
     }
 
-    /// The base rank of a static initializer by the scope that declares it
-    /// (decision S22-D8): class static properties run first, then package
-    /// and compilation-unit variables, then declarations of the design
-    /// hierarchy, so independent initializers of a design run after those of
-    /// the packages it uses. Dependencies still order every initializer
-    /// after what it reads. A static local takes the rank of the scope that
-    /// declares its subroutine.
-    fn initializer_rank(&self, declaration: NodeId) -> usize {
+    /// The scope that runs a static initializer (decision S22-D8) and the
+    /// initializer's sub-rank there: a package or the compilation unit
+    /// (class static properties 0, variables 1), or a design instance (class
+    /// static properties 0, variables of its generate blocks 1, its own
+    /// variables 2). A class property belongs to the scope that declares the
+    /// class, a static local to the scope of its subroutine.
+    fn initializer_owner(&self, declaration: NodeId) -> (InitializerOwner, usize) {
         let mut class = false;
-        let mut current = Some(declaration);
+        let mut generate = false;
+        let mut current = self.node(declaration).parent;
         while let Some(node) = current {
             match self.kind(node) {
-                NodeKind::ClassDef => class = true,
-                NodeKind::ModuleInst { .. } => return 2,
-                NodeKind::Package => break,
+                NodeKind::ClassDef => {
+                    class = true;
+                    current = self
+                        .db
+                        .class_declaring_scope(node)
+                        .or(self.node(node).parent);
+                    continue;
+                }
+                NodeKind::ModuleInst { .. } => {
+                    let sub = if class {
+                        0
+                    } else if generate {
+                        1
+                    } else {
+                        2
+                    };
+                    return (InitializerOwner::Instance(node), sub);
+                }
+                NodeKind::Package => {
+                    return (InitializerOwner::Package(node), usize::from(!class));
+                }
+                NodeKind::GenScope | NodeKind::GenScopeArray => generate = true,
+                _ if self.is_compilation_unit(node) => break,
                 _ => {}
             }
             current = self.node(node).parent;
         }
-        usize::from(!class)
+        (InitializerOwner::Unit, usize::from(!class))
     }
 
-    /// The base order of each entry: the scope rank (S22-D8), then the
-    /// declaring scopes in the order collection first reached them, then
+    /// The post-order key of a design instance: the child positions on its
+    /// path from the root, closed by `usize::MAX`, so an instance's
+    /// descendants sort before it and siblings keep declaration order.
+    fn instance_post_order(
+        &self,
+        instance: NodeId,
+        positions: &mut HashMap<NodeId, HashMap<NodeId, usize>>,
+    ) -> Vec<usize> {
+        let mut path = vec![usize::MAX];
+        let mut current = instance;
+        while let Some(parent) = self.node(current).parent {
+            let children = positions.entry(parent).or_insert_with(|| {
+                self.node(parent)
+                    .children
+                    .iter()
+                    .enumerate()
+                    .map(|(position, child)| (*child, position))
+                    .collect()
+            });
+            path.push(children.get(&current).copied().unwrap_or(0));
+            current = parent;
+        }
+        path.reverse();
+        path
+    }
+
+    /// The base order of each entry (decision S22-D8): packages first, each
+    /// in declaration order, then the compilation unit, then the design
+    /// hierarchy in post-order (an instance after the instances below it);
+    /// in each scope class static properties, then (in an instance) the
+    /// variables of its generate blocks, then its own variables. Ties keep
+    /// the declaring scopes in the order collection first reached them and
     /// declaration order within the scope. Collection reaches the kinds of
     /// one scope (patterns, handles, strings, containers, records) in
     /// separate passes, so its order alone does not follow the source; the
@@ -230,6 +289,7 @@ impl<'a> Codegen<'a> {
                 });
             }
         }
+        let mut instance_keys: HashMap<NodeId, Vec<usize>> = HashMap::new();
         let keys = declarations
             .iter()
             .map(|declaration| {
@@ -238,8 +298,27 @@ impl<'a> Codegen<'a> {
                 let position = scope
                     .and_then(|scope| positions.get(&scope)?.get(&node).copied())
                     .unwrap_or(0);
+                let (owner, sub) = self.initializer_owner(node);
+                let (group, index, path) = match owner {
+                    InitializerOwner::Package(package) => (0, package.index(), Vec::new()),
+                    InitializerOwner::Unit => (1, 0, Vec::new()),
+                    InitializerOwner::Instance(instance) => {
+                        let path = match instance_keys.get(&instance) {
+                            Some(path) => path.clone(),
+                            None => {
+                                let path = self.instance_post_order(instance, &mut positions);
+                                instance_keys.insert(instance, path.clone());
+                                path
+                            }
+                        };
+                        (2, 0, path)
+                    }
+                };
                 (
-                    self.initializer_rank(node),
+                    group,
+                    index,
+                    path,
+                    sub,
                     scope_order.get(&scope).copied().unwrap_or(unordered),
                     position,
                     order_of(declaration),

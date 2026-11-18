@@ -127,19 +127,18 @@ endmodule
     .expect("net-default simulations");
 }
 
+/// A supply net takes no continuous-assignment strength at any width
+/// (IEEE 1800-2009 10.3.4); a pull net takes one at any width (T1-D14).
 #[test]
-fn pull_and_supply_nets_reject_vector_drive_strengths() {
-    for (tag, declaration) in [("tri0", "tri0 [1:0] w;"), ("supply1", "supply1 [1:0] w;")] {
-        let source = format!(
-            "// llg-test-fixture: tests/sim_net_defaults.rs/{tag}_strength.sv\n\
-             module tb; logic [1:0] a; {declaration} assign (strong0, strong1) w=a; endmodule\n"
-        );
-        let error = generate_error(&format!("{tag}_strength"), &source);
-        assert!(
-            error.contains("drive strength on non-scalar net"),
-            "{tag}: {error}"
-        );
-    }
+fn supply_nets_reject_vector_drive_strengths() {
+    let source = "// llg-test-fixture: tests/sim_net_defaults.rs/supply1_strength.sv\n\
+                  module tb; logic [1:0] a; supply1 [1:0] w; assign (strong0, strong1) w=a; endmodule\n";
+    let error = generate_error("supply1_strength", source);
+    assert!(
+        error
+            .contains("drive strength on continuous assignment to supply net `w` is not permitted"),
+        "{error}"
+    );
 }
 
 #[test]

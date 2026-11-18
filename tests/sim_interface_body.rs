@@ -41,7 +41,7 @@ fn run_design(sv: &str, tag: &str) -> Result<String, String> {
         assert!(
             !gen.warnings
                 .iter()
-                .any(|w| w.contains("interface body process skipped")),
+                .any(|w| w.text().contains("interface body process skipped")),
             "interface body processes must not be skipped with a warning: {:?}",
             gen.warnings
         );

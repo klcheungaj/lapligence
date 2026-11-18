@@ -9,8 +9,8 @@ pattern and a last scalar. Each initializer calls a subroutine that appends
 the initializer's name to its scope's `log` string, which has no initializer
 itself, and no initializer reads another, so only the base order decides.
 
-Decision S22-D8 orders independent initializers by scope, "each group in
-declaration order". Within each scope the log must therefore list the names
+Decision S22-D8 orders independent initializers by scope, keeping
+declaration order within a scope. Within each scope the log must therefore list the names
 in declaration order, whatever the kind:
 `scalar1 pattern handle string queue record dynamic assoc scalar2` for the
 package, the class and the module. The order between the scopes is S22-D8's

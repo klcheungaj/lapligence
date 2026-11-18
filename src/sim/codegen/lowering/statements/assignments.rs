@@ -701,6 +701,12 @@ impl EmitCtx<'_, '_> {
     }
 
     fn lower_inc_dec_captured(&mut self, op: Operation, operand: NodeId) -> Result<IrStmt, String> {
+        if let Some(ignored) = self
+            .cg
+            .ignored_coverage_option_write(&self.path, operand, None)?
+        {
+            return Ok(ignored);
+        }
         if let Some(select) = self.cg.native_member_select(&self.path, operand)? {
             let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
             return self

@@ -2430,13 +2430,9 @@ impl<'a> Codegen<'a> {
         strength0: Strength,
         strength1: Strength,
     ) -> Result<(), String> {
-        // A vector net reports the scalar-only rule instead (10.3.4).
-        if (strength0 == Strength::Unspecified && strength1 == Strength::Unspecified)
-            || self
-                .sig_globals
-                .get(&net)
-                .is_some_and(|info| info.width != 1)
-        {
+        // Supply nets take no assignment strength at any width (10.3.4);
+        // other nets take one at any width (T1-D14).
+        if strength0 == Strength::Unspecified && strength1 == Strength::Unspecified {
             return Ok(());
         }
         if let NodeKind::Net {
@@ -2481,15 +2477,10 @@ impl<'a> Codegen<'a> {
                     };
                     if let Some(member) = self.nested_member_target(lhs, &member_set) {
                         self.reject_supply_drive_strength(id, member, *strength0, *strength1)?;
-                        let width = self
-                            .query_descriptor(lhs)
-                            .and_then(|descriptor| descriptor.info.width)
-                            .unwrap_or(1);
-                        let strengths = continuous_assignment_strengths_for_width(
+                        let strengths = continuous_assignment_strengths(
                             *strength0,
                             *strength1,
                             &self.display_name(id),
-                            width,
                         )
                         .map_err(|error| self.locate_error(id, error))?;
                         sources.insert(id, strengths);
@@ -2697,53 +2688,28 @@ impl<'a> Codegen<'a> {
                             if matches!(self.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. }))
                                 && self.member_write_base(lhs, &member_set).is_some()
                             {
-                                let width = self
-                                    .sig_globals
-                                    .get(&net)
-                                    .map(|info| info.width)
-                                    .unwrap_or(1);
-                                let strengths = continuous_assignment_strengths_for_width(
-                                    *strength0, *strength1, &shown, width,
-                                )
-                                .map_err(|error| self.locate_error(*id, error))?;
+                                let strengths =
+                                    continuous_assignment_strengths(*strength0, *strength1, &shown)
+                                        .map_err(|error| self.locate_error(*id, error))?;
                                 sites.insert(*id, strengths);
                             } else if self.nested_member_target(lhs, &member_set).is_some() {
-                                let width = self
-                                    .sig_globals
-                                    .get(&net)
-                                    .map(|info| info.width)
-                                    .unwrap_or(1);
-                                let strengths = continuous_assignment_strengths_for_width(
-                                    *strength0, *strength1, &shown, width,
-                                )
-                                .map_err(|error| self.locate_error(*id, error))?;
+                                let strengths =
+                                    continuous_assignment_strengths(*strength0, *strength1, &shown)
+                                        .map_err(|error| self.locate_error(*id, error))?;
                                 sites.insert(*id, strengths);
                             }
                         }
                         MemberWrite::Whole => {
-                            let width = self
-                                .sig_globals
-                                .get(&net)
-                                .map(|info| info.width)
-                                .unwrap_or(1);
                             sites.insert(
                                 *id,
-                                continuous_assignment_strengths_for_width(
-                                    *strength0, *strength1, &shown, width,
-                                )
-                                .map_err(|error| self.locate_error(*id, error))?,
+                                continuous_assignment_strengths(*strength0, *strength1, &shown)
+                                    .map_err(|error| self.locate_error(*id, error))?,
                             );
                         }
                         MemberWrite::Select => {
-                            let width = self
-                                .sig_globals
-                                .get(&net)
-                                .map(|info| info.width)
-                                .unwrap_or(1);
-                            let strengths = continuous_assignment_strengths_for_width(
-                                *strength0, *strength1, &shown, width,
-                            )
-                            .map_err(|error| self.locate_error(*id, error))?;
+                            let strengths =
+                                continuous_assignment_strengths(*strength0, *strength1, &shown)
+                                    .map_err(|error| self.locate_error(*id, error))?;
                             sites.insert(*id, strengths);
                         }
                     }

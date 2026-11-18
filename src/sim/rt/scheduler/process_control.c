@@ -202,7 +202,19 @@ static void process_handle_null(const char* method) {
 
 llg_process_handle_t* llg_process_self(llg_proc_t* self) {
     llg_runtime_service_enter(self, "process::self");
+    if (!self && g.static_init_phase) return llg_init_process_self();
     return self ? self->handle : NULL;
+}
+
+// Process control of the running static initialization (S13-D7) has no
+// coroutine to act on: the call reports a run-time error and does nothing.
+static int init_process_control(const llg_process_handle_t* handle, const char* method) {
+    if (!handle || !handle->init_rng) return 0;
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL,
+            "process::%s of the process running static initialization is not supported (llg limitation)",
+            method);
+    llg_rt_mark_failed();
+    return 1;
 }
 
 int llg_process_status(const llg_process_handle_t* handle) {
@@ -308,6 +320,7 @@ void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle) {
         process_handle_null("kill");
         return;
     }
+    if (init_process_control(handle, "kill")) return;
     if (!handle->proc || !region_can_mutate("process control")) return;
     llg_proc_t* target = handle->proc;
     llg_kill_proc_tree(target);
@@ -326,6 +339,7 @@ llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
         process_handle_null("suspend");
         return self && self->chain.exiting ? LLG_CO_ARM_EXIT : LLG_CO_ARM_READY;
     }
+    if (init_process_control(handle, "suspend")) return LLG_CO_ARM_READY;
     if (!handle->proc || !region_can_mutate("process suspension"))
         return LLG_CO_ARM_READY;
     llg_proc_t* target = handle->proc;
@@ -354,6 +368,7 @@ void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle) {
         process_handle_null("resume");
         return;
     }
+    if (init_process_control(handle, "resume")) return;
     if (!handle->proc || !region_can_mutate("process resumption")) return;
     llg_proc_t* target = handle->proc;
     if (!target->suspended || target->killed || target->completed) return;
@@ -415,6 +430,7 @@ static llg_rng_state_t* process_handle_rng(const llg_process_handle_t* handle,
         process_handle_null(method);
         return NULL;
     }
+    if (handle->init_rng) return handle->init_rng;
     if (!handle->proc) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "random runtime: process::%s on a terminated process", method);
         llg_last_failure = 1;

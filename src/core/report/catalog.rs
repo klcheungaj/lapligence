@@ -746,6 +746,7 @@ pub fn markdown() -> String {
          `` (`line file:line)`` when a `` `line`` directive maps it, and is left out (with \
          its separator) when a message has none. \
          Design context is the hierarchical scope and the simulation time, joined by `{}`; \
+         code of the compilation unit or of a class declared there names `$unit`; \
          the time is in the largest unit that shows it exactly. The hint, when present, \
          names the lint rule or frontend warning option that selects the message, or, \
          for a generated-model message, the option or setting that turns its check \
@@ -780,7 +781,10 @@ pub fn markdown() -> String {
                  and the hint is the warning option (`-W<option>`) when Slang has one. \
                  Slang notes print as `INFO`. A frontend warning is disabled in the \
                  source with `` `pragma diagnostic ignore=\"-W<option>\"`` (IEEE 1800-2009 \
-                 22.11 leaves pragma meaning to the tool).\n\n",
+                 22.11 leaves pragma meaning to the tool). `SLANG-VirtualVisibilityMismatch`, \
+                 a virtual-method override that changes the method's visibility, is a \
+                 warning (decision S08-D1); `-Werror` reports it as an error, which stops \
+                 the run.\n\n",
             ),
             Tool::Lint => {
                 out.push_str(
@@ -821,7 +825,10 @@ pub fn markdown() -> String {
                  `--no-timing-check-messages`), a refused `$system` (`LLG_ALLOW_SYSTEM`), \
                  a sequence thread budget (`LLG_SEQUENCE_THREAD_LIMIT`), a constraint \
                  solver budget (the `LLG_RAND_*` variable it names) and a VPI plugin \
-                 loaded by a model without the object catalog (`--vpi`).\n\n",
+                 loaded by a model without the object catalog (`--vpi`).\n\n\
+                 A model message that stops the run is an error or a fatal; a warning \
+                 never stops it. The deadlock warning (`SIM-019`) and the `SIM-022` info \
+                 report a run that ended because nothing was left to run.\n\n",
             ),
             _ => {}
         }

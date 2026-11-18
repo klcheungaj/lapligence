@@ -43,5 +43,8 @@ fn stop_default_and_level_two_report_diagnostics_without_affecting_exit_status()
 
 #[test]
 fn stop_rejects_an_out_of_range_verbosity_with_source_context() {
-    reject_case("stop_invalid_argument", "$stop argument at");
+    reject_case(
+        "stop_invalid_argument",
+        "stop_invalid_argument.sv:4:13 $stop argument must be 0, 1, or 2 (got 3)",
+    );
 }

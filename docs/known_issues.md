@@ -436,6 +436,8 @@ caps the time growth and the C bytes per cell of a 300 -> 1,200-cell netlist.
 **Status:** open; RTL-002 and RTL-002b implement descriptor transport for
 integral fixed arrays, and RTL-101/RTL-101b column layout for large records.
 
+### Symptom
+
 Integral variable arrays copy, compare, select rows, merge conditionals, stream
 (including multiple segments and unaligned slices), initialize and pass through
 input/output/inout/ref formals and returns of static, automatic and recursive
@@ -480,8 +482,7 @@ descriptor values. Arrays above the dense-cell threshold but within the packed
 limit still flatten outside equality and descriptor-destination assignment: a
 reshaping cast into a dense destination, mid-size conditionals passed to packed
 formals, and mid-size function returns expand every cell into the generated C
-(megabytes at 5,000 cells). Correctness is unaffected; widening the
-descriptor call ABI below the packed limit is the intended direction.
+(megabytes at 5,000 cells). Correctness is unaffected.
 
 Each call or view operand currently takes its own snapshot, so a whole-array
 input argument or selected source is copied once more than necessary; the cost
@@ -498,6 +499,26 @@ Fixed-copy publication prepares every destination cell, range and change record
 before the first value becomes visible, and runs observer callbacks only after
 the complete image is committed. Callback-side allocation can still fail after
 that commit; allocation failure is fatal, so no partial image is observed.
+
+### Cause
+
+Descriptor transport and column layout cover the contexts listed above; the
+call ABI passes values within the packed limit as packed values, so mid-size
+arrays expand every cell, and each call or view operand takes its own
+snapshot. The rejected column-record forms have no descriptor view yet.
+
+### Intended direction
+
+Widen the descriptor call ABI below the packed limit, and give the rejected
+column-record selections and comparisons descriptor views.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/rtl_101b/neg_call_member_array.sv` and
+`neg_continuous_whole_binding.sv`;
+`tests/fixtures/sim/feature_completion/rtl_014/neg_row_key_capacity.sv`; for
+the flattening cost, a 5,000-cell `int` array passed through a packed formal
+with `--gen-only`, then measure `model.c`.
 
 
 ## Native record values outside by-value subroutine storage
@@ -1306,7 +1327,9 @@ process from a function with a run-time check for self-suspension.
 
 `task automatic t(ref process p); ... t(obj.p);`, `x = f(q) + 1;` with
 `function int f(output process p)`, `mb.try_get(q)` for a `process q`,
-`wait (p.status() == process::FINISHED);`.
+`wait (p.status() == process::FINISHED);`. Fixtures:
+`tests/fixtures/sim/feature_completion/ki_audit/neg_process_status_wait.sv`,
+`neg_process_suspend_function.sv` and `neg_process_try_get.sv`.
 
 ## Real references and real-array expressions outside stable storage
 
@@ -1345,14 +1368,22 @@ element-wise expressions run as cell loops.
 `with` targets in a direct (blocking or nonblocking) streaming assignment, and
 RTL-103 adds output copy-out from task and void-function call statements.
 
+### Symptom
+
+A runtime or out-of-bounds `with` range rejects with a located diagnostic in
+two places: an output copy-out from a function call inside an expression, and
+the target of an intra-assignment-delayed assignment. A constant in-bounds range
+works there. Three further forms reject by owner policy (see Cause).
+
+### Cause
+
 Such a range needs its bounds checked and its in-range elements written at run
 time (IEEE 1800-2009 §11.4.14.4), which the `StreamAssign` statement does. A
 copy-out runs it after the call with the selectors fixed when the call starts.
 A function call inside an expression has no statement after it to run it in,
 and an intra-assignment-delayed assignment lowers its target as a static
 lvalue (SIM-014), so a runtime or out-of-bounds `with` range there rejects; a
-constant in-bounds range works. Supporting the expression call needs a
-writeback form of the checked unpack in the call ABI.
+constant in-bounds range works.
 
 Three forms reject by owner policy rather than cost: a selector that reads a
 target unpacked earlier by the same nonblocking unpack (nothing is published at
@@ -1360,15 +1391,45 @@ issue), by a right-to-left unpack (the consumed width must be known before the
 bits are reordered) or by a copy-out (its selectors are fixed before the call).
 Assign the length first in its own statement.
 
+### Intended direction
+
+Supporting the expression call needs a writeback form of the checked unpack in
+the call ABI. The delayed target needs the `StreamAssign` range check at the
+delayed write. The three policy forms stay rejected.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/rtl_103/neg_expression_copyout.sv` and
+`neg_copyout_dependence.sv`;
+`tests/fixtures/sim/feature_completion/rtl_015/neg_delayed_with_range.sv`,
+`neg_nba_with_dependence.sv` and `neg_reversed_with_dependence.sv`.
+
 ## Runtime-selected module reference connections have no qualified binding oracle
 
-The fixed module-ref path requires constant actual selectors. A connection such
-as `child c(values[index]);` rejects with an explicit runtime-reference-rewiring
+**Status:** open by policy. Static selected connections and nested packed
+projections execute.
+
+### Symptom
+
+A `ref` port connection with a runtime selector, such as
+`child c(values[index]);`, rejects with an explicit runtime-reference-rewiring
 diagnostic; it must not silently reread `index` on each access or invent a
-canonical storage cell. IEEE 1800-2009 §23.3.3.2 describes hierarchical reference
-binding, but the retained runtime-selector characterization has no adjudicated
-binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
-connections. Static selected connections and nested packed projections execute.
+canonical storage cell.
+
+### Cause
+
+The fixed module-ref path requires constant actual selectors. IEEE 1800-2009
+§23.3.3.2 describes hierarchical reference binding, but the retained
+runtime-selector characterization has no adjudicated binding/rebinding oracle.
+
+### Intended direction
+
+Qualify that boundary before enabling runtime-selected connections.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/rtl_009/neg_runtime_ref.sv` and
+`tests/fixtures/sim/feature_completion/rtl_003/runtime_ref_port.sv`.
 
 ## Delayed native continuous writes
 
@@ -1421,53 +1482,51 @@ packed locator path does not produce. Key order reads
 
 Give locator results a handle queue form.
 
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_006/neg_class_key_builtin.sv`,
+`neg_nested_key_type.sv` and `neg_class_key_item_index.sv`;
+`tests/fixtures/sim/feature_completion/ki_audit/neg_class_key_find_index.sv`
+and `neg_class_key_call_compound.sv`.
+
 ## Selects of properties of computed class handles
 
-**Status:** open (FIN-001 G3, F07-09 and F07-14). Whole properties of a
+**Status:** narrowed (FIN-001 G3, F07-09 and F07-14). Whole properties of a
 computed handle (`get().v`, `q.pop_front().s`, `get().nxt.v`) read, write
-and mutate with the handle evaluated once per operation, and a packed select
-of one reads (`get().b[3:0]`).
+and mutate with the handle evaluated once per operation, a packed select of
+one reads (`get().b[3:0]`), and elements of an unpacked array property
+(`get().a[1]`, `q.pop_front().a[0]`) read, write and take compound
+assignments
+([`computed_handle_element.sv`](../tests/fixtures/sim/feature_completion/ki_audit/computed_handle_element.sv)).
 
 ### Symptom
 
 A packed select of such a property as a write target (`get().b[2] = 1'b1;`,
-`get().b[1:0] += 1;`) and any element of an unpacked array property
-(`get().a[1]`, `q.pop_front().a[0]`, read or written) stop compilation with
-"cannot resolve array base of select".
+`get().b[1:0] += 1;`) stops compilation with "cannot resolve array base of
+select" (a compound write: "cannot resolve base signal of select"), located
+at the statement.
 
 ### Cause
 
-Selects on class properties are resolved from declaration paths
-(`h.b[2]`, `h.a[1]`); the `MemberSelect` node of a computed base reaches only
-the whole-property access.
+Packed selects on class properties as write targets are resolved from
+declaration paths (`h.b[2]`); the `MemberSelect` node of a computed base
+reaches only the whole-property access.
 
 ### Intended direction
 
 Resolve the select's base through the same computed-handle property access
-(`computed_handle_property`) and build the packed or fixed-array element
-access on it, capturing the handle once for read-modify-write forms.
+(`computed_handle_property`) and build the packed element access on it,
+capturing the handle once for read-modify-write forms.
 
 ### Reproduce
 
-```systemverilog
-module tb;
-  class C;
-    bit [7:0] b;
-    int a[3];
-  endclass
-  C h = new;
-  function automatic C get();
-    return h;
-  endfunction
-  initial begin
-    get().b[2] = 1'b1;  // expected h.b == 8'b00000100
-    get().a[1] = 5;     // expected h.a[1] == 5
-    $finish;
-  end
-endmodule
-```
+`tests/fixtures/sim/feature_completion/ki_audit/neg_computed_handle_select_write.sv`
+(`get().b[2] = 1'b1;`, expected `h.b == 8'b00000100`).
 
 ## Records of the leaf form: two errors a column does not have
+
+**Status:** open (FIN-001 rule 7: records below `LLG_RECORD_COLUMN_MIN_CELLS`
+cells use the leaf form).
 
 ### Symptom
 
@@ -1482,6 +1541,17 @@ between incompatible unpacked aggregate types".
 
 The leaf form names one object per cell, so an index outside the array names
 none, and `equivalent_copy_shape` accepts only `chandle` and `void` handles.
+
+### Intended direction
+
+Give the leaf form what the column does: an out-of-range constant select that
+reads the default and drops the write, and a whole-value copy of class handle
+members.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/ki_audit/neg_leaf_string_select.sv` and
+`neg_leaf_handle_member_element.sv`.
 
 ## Record results with real members as equality operands
 
@@ -1522,33 +1592,57 @@ module tb;
 endmodule
 ```
 
+`tests/fixtures/sim/feature_completion/ki_audit/neg_record_real_call_equality.sv`
+holds the `==` form.
+
 ## `%p` of tagged unions and built-in synchronization handles
 
-SIM-024 formats every other value under `%p` from a display-type table, but
-two forms still reject during lowering instead of printing: tagged unions
-(the table has no tag view; SV §21.2.1.7 leaves the text to the
-implementation, which would print the active member) and `semaphore`/
-`mailbox` handles held directly in a `%p` argument (their objects are runtime
-records, not class layouts). As class properties they print as handles.
-Fixing it means a tagged-union table entry that reads the tag and active
-member, and handle kinds for the two runtime records. Reproduce with
+**Status:** open. SIM-024 formats every other value under `%p` from a
+display-type table.
+
+### Symptom
+
+Two forms reject during lowering instead of printing: tagged unions and
+`semaphore`/`mailbox` handles held directly in a `%p` argument. As class
+properties they print as handles.
+
+### Cause
+
+The display-type table has no tag view (SV §21.2.1.7 leaves the text to the
+implementation, which would print the active member), and semaphore and
+mailbox objects are runtime records, not class layouts.
+
+### Intended direction
+
+A tagged-union table entry that reads the tag and active member, and handle
+kinds for the two runtime records.
+
+### Reproduce
+
 [`neg_tagged_union_pattern.sv`](../tests/fixtures/sim/feature_completion/sim_024/neg_tagged_union_pattern.sv)
-or `semaphore s = new; initial $display("%p", s);`.
+and
+[`neg_pattern_semaphore.sv`](../tests/fixtures/sim/feature_completion/ki_audit/neg_pattern_semaphore.sv)
+(`semaphore s = new; initial $display("%p", s);`).
 
 ## Deferred reports that name class state or activation storage
 
-`$strobe`, `$monitor` and the file variants re-evaluate their arguments in the
-Postponed region. Class properties, reports in class methods and static string
-and handle variables work ([S25-D9](lrm_decisions.md),
-[sim_025](../tests/fixtures/sim/feature_completion/sim_025/readme.md)). What is
+**Status:** open. `$strobe`, `$monitor` and the file variants re-evaluate their
+arguments in the Postponed region. Class properties, reports in class methods
+and static string and handle variables work ([S25-D9](lrm_decisions.md),
+[sim_025](../tests/fixtures/sim/feature_completion/sim_025/readme.md)).
+
+### Symptom
+
 A `$monitor` of a member of an unpacked structure property or of a static
 subroutine record follows the record's contents marker
 ([`monitor_record_property.sv`](../tests/fixtures/sim/feature_completion/sim_025/monitor_record_property.sv)):
 it evaluates its list after a store into any member of that record and prints
 when a listed value changed. What is left:
 
-- **`$monitor` through a computed handle** (`f().v`) rejects: nothing can name the
-  storage without calling the function again.
+- **`$monitor` through a computed handle** (`f().v`) rejects before C
+  compilation with an unlocated "native or impure calls in evaluator
+  callbacks" error: nothing can name the storage without calling the function
+  again.
 - **Some reads are not exact**: such a `$monitor` re-evaluates at every settled
   slot, which costs one evaluation per slot. These are a virtual-interface member,
   `%p` of an object, a mailbox or semaphore method other than a callee's
@@ -1576,11 +1670,33 @@ neighbouring form still rejects at the call:
   ([`neg_strobe_container_conversion.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_strobe_container_conversion.sv)):
   the Postponed region writes nothing.
 - **A `$strobe` helper that prints** (`$display` inside the function): it has
-  output effects, which the private evaluator refuses; about a day.
+  output effects, which the private evaluator refuses with the unlocated
+  "side-effect-capable evaluator expressions" error; about a day.
 
 `$finish` also drops the reports still pending in its own slot
 ([S25-D5](lrm_decisions.md)); a `$strobe` in a `final` block rejects because no
 Postponed region runs after finals.
+
+### Cause
+
+The Postponed evaluator is private and read-only: it cannot call a function
+again to name storage behind a computed handle, does not dispatch virtual
+methods, refuses output and write effects, and has no region after `final`
+blocks. A `$monitor` read it cannot bind to a change marker is evaluated at
+every settled slot.
+
+### Intended direction
+
+Bind more reads to markers, dispatch virtual methods and run statement bodies
+in the private evaluator, and allow helper output effects (about a day).
+
+### Reproduce
+
+[`neg_monitor_virtual_method.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_monitor_virtual_method.sv),
+[`neg_monitor_handle_local_helper.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_monitor_handle_local_helper.sv),
+[`neg_strobe_container_conversion.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_strobe_container_conversion.sv);
+`tests/fixtures/sim/feature_completion/ki_audit/neg_monitor_computed_handle.sv`,
+`neg_strobe_printing_helper.sv` and `neg_strobe_in_final.sv`.
 
 ## Effectful helpers in runtime-callback evaluators
 
@@ -1590,13 +1706,34 @@ Legal helpers with visible writes, persistent static state or descriptor-array
 formals now run in processes for blocking, intra-assignment, nonblocking and
 `->>` event controls, force sources and named-event/real event lists, and in a
 private Postponed evaluation for `$monitor`/`$strobe` (writes outside the
-helper reject there by SV 4.4.2.9). Still rejected: a named event in the same
-list as such a helper whose sensitivity includes unpacked-array, container or
-string storage (the atomic mixed wait has no source form for those markers),
-and event handles other than declared named events in such a list or as the
-target of such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own
-static storage publish no event, so a hierarchical wait on that storage does
-not wake.
+helper reject there by SV 4.4.2.9).
+
+### Symptom
+
+Still rejected: a named event in the same list as such a helper whose
+sensitivity includes unpacked-array, container or string storage, and event
+handles other than declared named events in such a list or as the target of
+such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own static
+storage publish no event, so a hierarchical wait on that storage does not
+wake.
+
+### Cause
+
+The atomic mixed wait has no source form for unpacked-array, container or
+string markers, and the helper process names only declared named events. The
+private Postponed evaluation publishes no change events.
+
+### Intended direction
+
+Give the mixed wait source forms for those markers and event-handle operands;
+publish the private evaluation's static stores.
+
+### Reproduce
+
+[`neg_named_event_array.sv`](../tests/fixtures/sim/feature_completion/rtl_007b/neg_named_event_array.sv)
+(a named event beside a helper that reads array storage) and
+`tests/fixtures/sim/feature_completion/ki_audit/neg_helper_event_handle.sv`
+(an event handle other than a declared named event in a helper's list).
 
 ## Waited `ref` formals with unobservable actuals
 
@@ -1652,29 +1789,33 @@ Pass a native record's leaf markers with the record value.
 `neg_ref_wait_record_property_real.sv`;
 `sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
 
-## Level waits on the identity of an event variable hang
+## Level waits on the identity of an event variable reject
+
+**Status:** rejected with a located diagnostic (no longer a hang). Class event
+properties are served.
 
 ### Symptom
 
-`wait (k == g)` on event variables or a `ref` event formal never wakes after
-`k = g`: the run ends with a deadlock report instead of a wake or a diagnostic.
-Class event properties are served.
+`wait (k == g)` on event variables or a `ref` event formal, and an event
+control on the same comparison (`@(k == g)`), stop compilation with "an event
+variable comparison cannot be observed by a wait", located at the comparison.
 
 ### Cause
 
-Event variables have no change marker, and the wait lowering does not reject
-the read.
+Event variables have no change marker, so a wait on their identity could never
+resume after `k = g`.
 
 ### Intended direction
 
-Reject the read with its location, or give `llg_event_assign` a marker. Some
-simulators reject any event operand in a `wait` expression. Estimate: a quarter
-of a day to reject, half a day to serve.
+Give `llg_event_assign` a marker if a design needs the form served. Some
+simulators reject any event operand in a `wait` expression. Estimate: half a
+day to serve.
 
 ### Reproduce
 
-`module tb; event g, k; initial fork wait (k == g) $display("woke"); #1 k = g;
-join endmodule`
+`tests/fixtures/sim/feature_completion/sim_014/reject_event_wait_compare.sv`,
+`reject_event_ref_wait_compare.sv` and `reject_event_control_compare.sv`
+(`sim_014::event_variable_comparisons_in_waits_reject`).
 
 ## Wired-logic nets in bidirectional switch networks
 
@@ -1737,7 +1878,10 @@ nested and call forms. Estimate: 1 day for string and real containers.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_019/neg_string_container_inside.sv`
-and `neg_real_container_inside.sv`.
+and `neg_real_container_inside.sv`;
+`tests/fixtures/sim/feature_completion/ki_audit/neg_inside_nested_container.sv`
+and `neg_inside_container_call.sv` (the call form reports "container result
+of `g` ... must be assigned whole to a container variable").
 
 ## Waits on storage without a change notification
 
@@ -1746,6 +1890,8 @@ and `neg_real_container_inside.sv`.
 read in called functions now wake waits
 (`ki_lrm_audit_b/observed_storage`, `callee_dataflow`).
 
+### Symptom
+
 A `wait` condition or event expression that reads storage publishing no
 change is still rejected at compile time with its source location ("cannot
 be observed by a wait or event expression"), because the wait could never
@@ -1753,19 +1899,21 @@ resume: semaphore methods and mailbox methods other than `num()`, class
 properties a called function reads through a local that holds different
 handles on different paths or through any other expression (a container
 element, a call result), and virtual methods (industry-standard behaviour
-rejects these in `wait` conditions as well). Direction: bind callee locals
-to every handle they can hold (a dependency set instead of one receiver).
-Reproduce: `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`.
+rejects these in `wait` conditions as well).
 
 The same rejection applies to a property selected through a call result,
 `wait (f().x == 1)`, and to a member of an automatic record with a native member
 (a string, a real, a handle, a container) that a fork shares and that something
 stores into inside a fork branch, or anywhere once a `join_none` or `join_any`
-fork names it: such a record is one value per activation with no change
-marker. An automatic record that nothing can store into while a branch waits
-is read as it is, and its container members have their own markers. Reproduce:
-`tests/fixtures/sim/feature_completion/sim_014/reject_wait_call_result.sv`,
-`reject_wait_automatic_record.sv`, `reject_event_automatic_record.sv`.
+fork names it. An automatic record that nothing can store into while a branch
+waits is read as it is, and its container members have their own markers.
+
+### Cause
+
+The rejected reads publish no change: a semaphore or mailbox method result, a
+property behind a handle the waiter cannot bind, a virtual method's result, a
+call result, and a forked automatic record, which is one value per activation
+with no change marker.
 
 A member of an unpacked structure with a native member that is a class property
 or a static subroutine variable is waited on through the record's contents
@@ -1779,6 +1927,19 @@ the writer suspends wakes nobody, a string member's included
 ([T1-D11](lrm_decisions.md)). A run-time index into a member array of a record
 property (`h.r.arr[k]`) or of a static subroutine record is served, also in a
 `wait` condition.
+
+### Intended direction
+
+Bind callee locals to every handle they can hold (a dependency set instead of
+one receiver).
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`;
+`tests/fixtures/sim/feature_completion/ki_audit/neg_wait_container_element_property.sv`
+(a callee reading a property through a container element);
+`tests/fixtures/sim/feature_completion/sim_014/reject_wait_call_result.sv`,
+`reject_wait_automatic_record.sv`, `reject_event_automatic_record.sv`.
 
 ## Native stack frames grow with a statement's format-argument count
 
@@ -1823,6 +1984,26 @@ halves it.
 **Status:** open for driven cells. RTL-010 removed the quadratic net-array
 driver discovery; KI-NET-INTERVAL removed all per-cell cost of undriven cells.
 
+### Symptom
+
+Driven cells still cost about 2.4 KB of C each: every driven cell owns an
+electrical group, a declared-view alias row and an observation cell, and a
+whole-array continuous driver gathers its RHS cells into one packed value with
+one element read per cell (19.8 MB for an 8,192-cell
+`wire [7:0] n[8192]; assign n = src;`). Lowering is linear in the cell count:
+driver sources are indexed by the cells they drive once.
+
+Input-port links into a net-array formal and `unconnected_drive` pulls on one
+(RTL-012) gather the cells into one packed contribution the same way. Above
+the packed width limit they keep the older per-element storage write, which
+bypasses the formal's internal drivers.
+
+### Cause
+
+A driven cell keeps its electrical group, declared-view alias row and
+observation cell, and whole-array drivers gather their sources into one packed
+value. Undriven cells already avoid all of it:
+
 Lowering first classifies net-array cells by interval
 ([`collection/net_cells.rs`](../src/sim/codegen/lowering/collection/net_cells.rs)).
 A cell that no structural driver, true alias, selected inout connection or
@@ -1849,22 +2030,18 @@ The 200,000-cell model then ran in 217 s before the dependency index and
 0.14 s after. [`sim_net_interval`](../tests/sim_net_interval.rs) caps both
 large fixtures' `model.c` at 1 MiB and codegen at 20 s per optimizer mode.
 
-Driven cells still cost about 2.4 KB of C each: every driven cell owns an
-electrical group, a declared-view alias row and an observation cell, and a
-whole-array continuous driver gathers its RHS cells into one packed value with
-one element read per cell (19.8 MB for an 8,192-cell
-`wire [7:0] n[8192]; assign n = src;`). Lowering is linear in the cell count:
-driver sources are indexed by the cells they drive once.
+### Intended direction
 
-Input-port links into a net-array formal and `unconnected_drive` pulls on one
-(RTL-012) gather the cells into one packed contribution the same way. Above
-the packed width limit they keep the older per-element storage write, which
-bypasses the formal's internal drivers.
+For driven cells: a descriptor-backed net-array cell table with a loop over a
+contiguous RHS view, keeping per-cell resolution state but not per-cell
+generated code; see the remaining steps in "Declared net views retain per-bit
+lowering bindings".
 
-The intended direction for driven cells is a descriptor-backed net-array cell
-table with a loop over a contiguous RHS view, keeping per-cell resolution
-state but not per-cell generated code; see the remaining steps in
-"Declared net views retain per-bit lowering bindings".
+### Reproduce
+
+`wire [7:0] n[8192]; assign n = src;` with `--gen-only`, then measure
+`model.c`; [`sim_net_interval`](../tests/sim_net_interval.rs) holds the
+undriven caps.
 
 ## Unpacked records with dense member arrays emit per-cell code
 
@@ -1873,6 +2050,8 @@ state but not per-cell generated code; see the remaining steps in
 ([record storage by size](sim_performance_tradeoffs.md#record-storage-by-size)),
 so its selections do not grow with the array. Below 16 cells each cell is its
 own leaf, a structural rule: the code is small and a reader needs no lookup.
+
+### Symptom
 
 Every shape follows that rule. A member array of integral, packed or `real`
 elements in a structure that also holds a member with no packed width, such as
@@ -1930,22 +2109,34 @@ limits apply to the form named:
   automatic record of a subroutine; a module, static or procedural-block record
   works, and so does an element of a column.
 
+### Cause
+
+Each storage form lowers whole values and selections its own way; a use that
+the form at hand cannot lower is an error rather than a per-cell expansion.
 codegen-size made whole-value reads and writes of unpacked arrays O(1)
 in generated C (`emit_c/owned/dense_cells.rs`), and removed the lowering
 stack overflow that whole equality of such records hit from about 256 leaves
 (the leaf comparisons are now combined as a balanced tree).
 
-Reproduce with the record above, `rec_t a, b; initial b = a;` and
-`--gen-only`, then measure `model.c`.
+### Intended direction
+
+Lower each listed use in the form named, as the other form already does where
+it has none of the limit; give the two non-column shapes a column.
+
+### Reproduce
+
+The record above, `rec_t a, b; initial b = a;` and `--gen-only`, then measure
+`model.c`. The located limits:
+`tests/fixtures/sim/feature_completion/sim_008/neg_record_ref_element_select_value.sv`
+and `neg_record_ref_element_select_product.sv`.
 
 ## Gate and UDP array elements emit one process function each
 
 **Status:** open; found by RTL-020.
 
-Each element of a gate or UDP instance array is lowered to its own
-continuous process, and each process gets its own C function because the
-elements read and write different constant bits, so exact body sharing does
-not merge them. A 4,096-element mux UDP array produces 9.8 MB of `model.c`
+### Symptom
+
+A 4,096-element mux UDP array produces 9.8 MB of `model.c`
 (about 2.4 KB per element) after RTL-020's dense-index lookup, which already
 removed the per-evaluation input copies (15.8 MB before). Evaluation cost per
 element is constant; the cost is C size and compile time, linear in the
@@ -1953,12 +2144,22 @@ element count. Sequential UDP arrays (ADV-003) follow the same pattern: each
 element also owns one small state record, while the next-state table and the
 step function are shared per definition.
 
-Reproduce with `mux3 m[4095:0] (y, sel, a, b);` over 4,096-bit vectors and
-`--gen-only`, then measure `model.c`.
+### Cause
 
-The intended direction is one shared process body per array declaration,
-parameterized by the element's bit offsets, like the table-driven
-net-contribution batches.
+Each element of a gate or UDP instance array is lowered to its own
+continuous process, and each process gets its own C function because the
+elements read and write different constant bits, so exact body sharing does
+not merge them.
+
+### Intended direction
+
+One shared process body per array declaration, parameterized by the element's
+bit offsets, like the table-driven net-contribution batches.
+
+### Reproduce
+
+`mux3 m[4095:0] (y, sel, a, b);` over 4,096-bit vectors and `--gen-only`, then
+measure `model.c`.
 
 ## Unsupported force and release targets
 
@@ -1970,19 +2171,30 @@ their unpacked-structure elements are forced and released (decision S23-D6),
 including lazily allocated cells and the member arrays of records in both
 record storage forms.
 
+### Symptom
+
 This legal target stops the run with a located error instead of being
 forced: a member of an element of an array of records that have a real,
 string, class-handle, chandle, event or container member (for example
-`force x[1].a = 1;` on `struct { int a; real r; } x[2]`). Such a record is a
+`force x[1].a = 1;` on `struct { int a; real r; } x[2]`).
+
+### Cause
+
+Such a record is a
 native value: a whole-element or whole-array write rebuilds its members, so a
 member has no fixed address the force runtime can overlay, and its waiters
-watch the array's change marker rather than the member. Supporting it needs a
-force target that names the array, the element and the member path, re-found
+watch the array's change marker rather than the member.
+
+### Intended direction
+
+Supporting it needs a force target that names the array, the element and the member path, re-found
 after every write of the element, and those native write paths (element and
 whole-array copies, located nonblocking writes, member setters) keeping the
 forced member and publishing the array's marker after a force or release.
 
-Reproduce: `native_record_member_is_a_known_limitation` in
+### Reproduce
+
+`native_record_member_is_a_known_limitation` in
 [sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md).
 
 ## Operator-overload update values on oversized or native targets
@@ -2019,7 +2231,7 @@ values have no such capture: SIM-021 runs their assignment-value forms as
 postfix value), which needs side-effect-free selectors and a statement
 context.
 
-### Direction
+### Intended direction
 
 Give `IrFixedValue` and native record roots a once-resolved read/modify/write
 form whose old value can be kept, usable inside expressions.
@@ -2031,6 +2243,18 @@ form whose old value can be kept, usable inside expressions.
 
 ## Strict 2001 profile checks grammar and listed semantics
 
+**Status:** open by design; the grammar side is closed.
+
+### Symptom
+
+A 2001 constraint that is neither grammar nor one of the listed semantic rules
+stays admitted under `--edition v2001` unless the frontend rejects it, for
+example an `output real` module port. Navigation snapshots have no subroutine
+bodies, so the body rules do not run there. Directives in trivia are checked
+by token, not by the syntax profile.
+
+### Cause
+
 The pinned frontend parses 1364-2001 sources with its 1364-2005/SystemVerilog
 grammar. The wrapper's `Verilog2001SyntaxProfile` closes the grammar side: a
 Verilog-2001 compile rejects every parsed syntax kind outside the IEEE
@@ -2038,11 +2262,17 @@ Verilog-2001 compile rejects every parsed syntax kind outside the IEEE
 on the macro-expanded trees. [`editions.rs`](../src/core/compile/editions.rs)
 adds keywords, system names and the semantic rules in the
 [edition table](sim_features.md#target-language-editions), including variable
-drivers. A 2001 constraint that is neither grammar nor one of those rules
-stays admitted unless the frontend rejects it, for example an `output real` module port. Navigation snapshots have no subroutine bodies, so the
-body rules do not run there. Directives in trivia are checked by
-token, not by the syntax profile. Reproduce: compile `module tb(output real r); initial r = 1.0; endmodule`
-with `--edition v2001`.
+drivers. Other 2001 constraints have no rule.
+
+### Intended direction
+
+Add a rule to the edition table for each further 2001 constraint a design
+needs; the profile does not aim at a complete 1364-2001 semantic check.
+
+### Reproduce
+
+Compile `module tb(output real r); initial r = 1.0; endmodule` with
+`--edition v2001`: it is admitted.
 
 ## Deferred assertion actions with container, event or virtual-interface arguments
 
@@ -2086,7 +2316,10 @@ interface handle like a method receiver.
 [`sim_036/neg_vif_action.sv`](../tests/fixtures/sim/feature_completion/sim_036/neg_vif_action.sv)
 and
 [`sim_039/neg_match_call_queue.sv`](../tests/fixtures/sim/feature_completion/sim_039/neg_match_call_queue.sv);
-the timing-control form is `sim_039/neg_match_call_timing.sv`.
+the timing-control form is `sim_039/neg_match_call_timing.sv`; a dynamic array
+and a named event by value:
+`tests/fixtures/sim/feature_completion/ki_audit/neg_dynamic_array_action.sv`
+and `neg_event_action.sv`.
 
 ## Assertion locals in join operands and end points
 
@@ -2105,6 +2338,10 @@ are still rejected; the runtime keeps one local array per thread and a join
 keeps the locals of the operand that matched last. A local read by an
 `accept_on`/`reject_on` condition is rejected as well (a frontend error).
 The join message is located at the composite's first operand.
+The guard "local variable `v` of the property is initialized at the property
+attempt's start, which this property form does not support" has no form that
+reaches it (`not`, `until` and `if`/`else` with a declared local simulate); it
+is kept as a defensive error and has no test.
 
 ### Cause
 
@@ -2130,6 +2367,8 @@ and
 
 **Status:** open (gate-fixes-2 limit, decision S99-D7).
 
+### Symptom
+
 `always_comb`, `always_latch` and `@*` wait on a member read through a
 virtual-interface handle by evaluating the handle each time they arm. Three
 forms have no handle the arming process can evaluate, so they stop
@@ -2139,31 +2378,55 @@ handle formal or local (`function f(virtual bus_if b); return b.a;`), a member
 read through an element of a virtual-interface array (`va[1].a`), and an
 interface method call through a handle under `always_comb` (`v.f()`, whose
 body the bound instance selects). Elements of unpacked array members are
-followed only through a virtual-interface variable. Supporting the formal
-needs the call's actual bound at arm time (like `CalleeReceivers` for class
-handles); the method call needs the method body's reads per bound instance.
+followed only through a virtual-interface variable.
 
-Reproduce with
+### Cause
+
+The arming process evaluates a handle it can name; a callee's formal or local,
+an array element handle and a method body selected by the bound instance are
+none it can name.
+
+### Intended direction
+
+Supporting the formal needs the call's actual bound at arm time (like
+`CalleeReceivers` for class handles); the method call needs the method body's
+reads per bound instance.
+
+### Reproduce
+
 `tests/fixtures/sim/feature_completion/sim_099/neg_vif_sensitivity_*.sv`.
 
 ## Modport expression ports through virtual interfaces
 
 **Status:** open (RTL-102 deferral).
 
-A modport expression port `.p(expr)` (SV 25.5.4) executes through static
-interface ports and hierarchical references, but a virtual interface handle
-has runtime member slots only for interface storage, so `vif.p` rejects with
-"modport expression port `p` is not supported through virtual interface view".
-Supporting it needs a per-descriptor evaluator (and, for outputs, a writer)
-for each expression port, selected by the bound instance at run time.
+### Symptom
 
-Reproduce with `interface i; logic [7:0] a; modport m(input .p(a[3:0]));
-endinterface`, `virtual i.m v = inst;` and `$display("%h", v.p);`.
+A modport expression port `.p(expr)` (SV 25.5.4) executes through static
+interface ports and hierarchical references, but through a virtual interface
+`vif.p` rejects with "modport expression port `p` is not supported through
+virtual interface view".
 
 An interface instance used directly as a value outside a virtual-interface
 assignment, argument or comparison (the message of `mb.put(i1)` for a
 `mailbox #(virtual ifc)`) also rejects ("instance `i1` is used as a value";
-assign it to a virtual interface variable first). Reproduce with
+assign it to a virtual interface variable first).
+
+### Cause
+
+A virtual interface handle has runtime member slots only for interface
+storage.
+
+### Intended direction
+
+Supporting it needs a per-descriptor evaluator (and, for outputs, a writer)
+for each expression port, selected by the bound instance at run time.
+
+### Reproduce
+
+`interface i; logic [7:0] a; modport m(input .p(a[3:0]));
+endinterface`, `virtual i.m v = inst;` and `$display("%h", v.p);`
+(`tests/fixtures/sim/feature_completion/rtl_102/neg_virtual_interface_expression_port.sv`);
 `tests/fixtures/sim/feature_completion/sim_012/neg_instance_mailbox_put.sv`
 (FIN-001 F12-02).
 
@@ -2172,29 +2435,39 @@ assign it to a virtual interface variable first). Reproduce with
 **Status:** open (boundary kept when member access through packed-array
 elements was admitted).
 
+### Symptom
+
 A member of a tagged union that is an element of a packed array, such as
 `tp[i].a` for `t_t [1:0] tp` with `typedef union tagged packed {...} t_t`,
 rejects with ``tagged-union member `a` of a packed-array element is not
-supported``. Reading or writing it needs the tag check on the selected
-element; the packed element-member projection (`collection/packed_elements.rs`)
-carries no tag guard, so it rejects rather than read inactive payload bits.
-Other packed structure and union members of packed-array elements work, as do
-tagged-union members of whole signals. Lowering it as an
-`IrExprKind::TaggedSelect` / `IrLhs::TaggedSelect` whose steps are the element
-chain followed by the guarded member step would admit it. Until then, select
-the element into a tagged-union variable first.
+supported``. Other packed structure and union members of packed-array
+elements work, as do tagged-union members of whole signals. Until it is
+served, select the element into a tagged-union variable first.
 
-Reproduce with `typedef union tagged packed { logic [3:0] a, b; } t_t;
-t_t [1:0] tp; initial $display("%h", tp[0].a);`.
+### Cause
+
+Reading or writing it needs the tag check on the selected element; the packed
+element-member projection (`collection/packed_elements.rs`) carries no tag
+guard, so it rejects rather than read inactive payload bits.
+
+### Intended direction
+
+Lower it as an `IrExprKind::TaggedSelect` / `IrLhs::TaggedSelect` whose steps
+are the element chain followed by the guarded member step.
+
+### Reproduce
+
+`typedef union tagged packed { logic [3:0] a, b; } t_t;
+t_t [1:0] tp; initial $display("%h", tp[0].a);`
+(`tests/fixtures/sim/feature_completion/ki_select_bugs/unsupported_tagged_element_member.sv`).
 
 ## Clocking input forms outside the sampled storage model
 
 **Status:** open (SIM-033 boundary, K1).
 
-Clocking inputs sample into one static storage cell per clockvar, sized from
-its packed, real or shortreal type, or holding the whole declaration-order
-image of an unpacked fixed-size type. These legal forms reject with a located
-message instead of sampling:
+### Symptom
+
+These legal forms reject with a located message instead of sampling:
 
 - string, class handle, event, unpacked or tagged union, queue, dynamic array
   and associative array clockvars ("string, class handle, event, unpacked or
@@ -2213,6 +2486,12 @@ An `edge` input skew and an edge skew under an event list also reject; the
 first is a syntax error and the second an error in industry-standard
 behaviour.
 
+### Cause
+
+Clocking inputs sample into one static storage cell per clockvar, sized from
+its packed, real or shortreal type, or holding the whole declaration-order
+image of an unpacked fixed-size type.
+
 An unpacked clockvar keeps its sample image current with a synthetic process
 that rebuilds the whole image on every write to its source, so a write costs
 time linear in the aggregate's size; only designs with such clockvars pay it.
@@ -2225,7 +2504,14 @@ reusing one copy record per clockvar halve the allocations, but a pinned A/B
 showed wall-time regressions of up to 10% on some forms (with equal or fewer
 instructions), so the runtime keeps the allocating form.
 
-Reproduce with
+### Intended direction
+
+Give unpacked clockvars with real elements or members a native sample image
+and edge input skews a delay, which industry-standard behaviour serves; the
+other types stay rejected by decision K1-D1.
+
+### Reproduce
+
 [`neg_string_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_string_input.sv),
 [`neg_unpacked_union_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_unpacked_union_input.sv),
 [`neg_real_array_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_real_array_input.sv) and
@@ -2235,15 +2521,21 @@ Reproduce with
 
 **Status:** open (SIM-034 boundary).
 
-Synchronous drives reach their target through the clockvar's signal, the
-clocking block's own net driver, or the lvalue a clocking expression names,
-with each wired net in it retargeted to the clockvar's own driver on that net.
+### Symptom
+
 One legal form rejects explicitly:
 
 - a runtime select of a clockvar bound to a concatenation (`cb.y[i] <= ...`
   when `y` is declared `output y = {a, b}`): the select would have to pick
   the concatenation part at run time ("a runtime select of clockvar `y`,
   which is bound to a concatenation, is not supported").
+
+### Cause
+
+Synchronous drives reach their target through the clockvar's signal, the
+clocking block's own net driver, or the lvalue a clocking expression names,
+with each wired net in it retargeted to the clockvar's own driver on that net;
+a concatenation's parts are chosen at compile time.
 
 A drive through a virtual interface dispatches on the bound instance with a
 `case` over the descriptor's instances, so each drive site carries one drive
@@ -2252,7 +2544,13 @@ per instance of that interface type: code size grows with the instance count
 record each until they mature; a drive of a clockvar bound to a concatenation
 keeps one per part.
 
-Reproduce with
+### Intended direction
+
+Select the concatenation part at run time with a `case` over the parts, as a
+virtual-interface drive selects its instance.
+
+### Reproduce
+
 [`neg_concat_runtime_select.sv`](../tests/fixtures/sim/feature_completion/sim_034/neg_concat_runtime_select.sv).
 
 ## Sampled-value arguments without sampled storage
@@ -2438,9 +2736,12 @@ clocking future sampled value functions is not supported")
 when it is an `expect` statement, when it contains an asynchronous
 `accept_on`/`reject_on`, or when the sequence is a sequence end point
 (`.triggered`, `.matched`, `@(seq)`). Inside such an assertion a real-valued
-operand outside the future function arguments, a future value of a sequence
-local variable and expression forms other than operators, selects, casts and
-concatenations around the future calls are rejected the same way. The
+operand outside the future function arguments and expression forms other than
+operators, selects, casts and concatenations around the future calls are
+rejected the same way. A function call as a future function's argument is
+rejected at the argument ("$future_gclk argument ... must be a static packed
+or real expression"). A future value of a sequence local variable is a
+frontend error (16.9.3). The
 assertion coverage counters of these assertions count an attempt and its
 result when its clock event is evaluated at the next global clock tick (as
 the VPI callbacks of 39.4.2.1 are delivered), not at the event itself.
@@ -2467,9 +2768,11 @@ operand forms (FIN-001 A3) with `neg_real_operand.sv` (a real operand),
 `neg_system_function.sv` (`$countones` of a future value),
 `neg_sampled_function.sv` (`$rose` of a future value), `neg_inside.sv`
 (`inside` around a future call) and `neg_procedural_automatic.sv` (a
-procedural assertion with a saved automatic value). A future value of a
-local variable is rejected by the frontend first (16.9.3: no local
-variables in sampled value functions). Industry-standard behaviour rejects
+procedural assertion with a saved automatic value);
+`tests/fixtures/sim/feature_completion/ki_audit/neg_future_call_argument.sv`
+(a call as the argument). A future value of a local variable is rejected by
+the frontend first (16.9.3: no local variables in sampled value functions).
+Industry-standard behaviour rejects
 the `$rose`, `inside` and automatic forms and serves the real operand.
 
 ## Checker limits after ADV-015
@@ -2707,7 +3010,7 @@ supported`).
 Block-level string storage is a global per declaration, chosen for procedural
 blocks with one activation; the detached branch has no lexical string local.
 
-### Direction
+### Intended direction
 
 Declare the string as a branch-local native value, as records are.
 
@@ -2835,9 +3138,13 @@ errors for `assign` to a net, select or streaming target are kept as they are.
 The scan matches system calls by name only; whether a VPI task registered under
 one of the rejected built-in names is distinguished was not checked.
 
-### Direction
+### Intended direction
 
-None: the decision is to reject. Reproduce with the files in
+None: the decision is to reject.
+
+### Reproduce
+
+The files in
 [adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md).
 
 ## VPI object model limits (SIM-042)
@@ -2990,9 +3297,6 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - callback reasons refused with an error naming the reason: `cbStmt` (a
   statement has no execution hook; adding one would cost every model
   statement a check, or a second statement-hooked code path per process),
-  `cbSizeChange` (no resize of a dynamic array, queue, associative array
-  or string reaches VPI; industry-standard behaviour never calls it either,
-  decision A19-D91),
   `cbAssign`/`cbDeassign` (procedural `assign`/`deassign` is rejected,
   decision A20-D9), `cbUnresolvedSystf` (every system call is resolved when
   the model is generated) and the save, restart, reset and interactive
@@ -3080,16 +3384,21 @@ The catalog is emitted from the owned database's static storage; everything
 else would need runtime-owned handle targets with GC pins (containers, class
 objects) or descriptor tables the emitter does not produce yet.
 
-### Direction
+### Intended direction
 
 Extend the catalog per object family with the same generation-checked slots;
 pin collectable targets in the handle slot, and turn the catalog row from
-`unsupported` to `implemented` with its test. Reproduce with
+`unsupported` to `implemented` with its test.
+
+### Reproduce
+
 [sim_042](../tests/fixtures/sim/feature_completion/sim_042/readme.md) and a
 plugin that asks for one of the objects above, or with the ADV-019 catalog
 walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
 
 ## A `ref` actual stop inside a nested call lets the callers run on
+
+**Status:** open.
 
 ### Symptom
 
@@ -3116,6 +3425,8 @@ A task `body` calling `tr(q[k])` with `k` past the end of `q`, called from an
 
 ## Forwarding a member of a record `ref` formal to a waiting task
 
+**Status:** open; an internal error, not a located rejection.
+
 ### Symptom
 
 `task automatic f(ref rec_t x); waitn(x.e[1]); endtask`, where `waitn` waits
@@ -3139,6 +3450,8 @@ The task above, called as `fork f(t, "fwd"); join_none` with an automatic
 `rec_t t`.
 
 ## Container index-check stops name no array or source line
+
+**Status:** open by cost (S07-D15 stops are served).
 
 ### Symptom
 
@@ -3167,6 +3480,8 @@ name the array and line, if the cost measures as zero.
 `q.insert(5, 9);` on a two-element queue.
 
 ## VPI work during static initialization
+
+**Status:** open.
 
 ### Symptom
 
@@ -3410,51 +3725,6 @@ run against the industry-standard simulator; the differences fixed then are in
 the [ki_uvm_run readme](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md).
 These remain.
 
-### `process::self()` in a static initializer
-
-**Symptom.** `process::self()` called while a static declaration initializer
-runs returns null, so a following `get_randstate()` stops the run as a null
-process access. UVM 1.1d's `uvm_config_db::set` calls it unguarded, and the
-1.1d `module` and `pkg` examples construct components in module-scope
-initializers, so both end with a fatal error at time 0. The industry-standard
-simulator returns a running process there whose random state can be read and
-restored. UVM 1.2 checks the handle for null and is not affected.
-
-**Cause.** Static initialization runs before any process exists (SV 6.8), and
-the runtime has no process object for it; 9.7 defines `self()` only as the
-process making the call.
-
-**Intended direction.** Give static initialization one runtime process handle:
-running while the initializers execute and finished afterwards, its random
-state the initialization stream the initializers already draw from (T1-D3),
-with `kill`, `suspend` and `resume` of it a run-time error. This changes
-shared runtime paths and needs a decision row.
-
-**Reproduce.** [`process_self_static_initializer.sv`](../tests/fixtures/sim/feature_completion/ki_uvm_run/process_self_static_initializer.sv)
-pins the current output; its readme row gives the simulator's.
-
-### Override visibility the frontend rejects
-
-**Symptom.** Examples whose classes override a virtual method with another
-visibility stop in the frontend, which reports the override as an error. The
-UVM 1.2 and 1.1d `registers/models/coverage` example overrides the protected
-`sample` method of `uvm_reg` as a public method; the UVM 1.1d APB agent
-(`integrated/apb`) overrides the public `run_phase` of `uvm_component` as a
-protected task, which stops the nine 1.1d examples built on that agent
-(`integrated/codec` and the `registers` examples `integration/10direct`,
-`integration/20layered`, `models/broadcast`, `models/fifo_reg`, `primer`,
-`sequence_api` and both `vertical_reuse` runs). The industry-standard
-simulator accepts these examples.
-
-**Cause.** SV 2009 8.19 lists the encapsulation criteria among the
-information a virtual method's prototype provides and requires overrides to
-"follow the prototype exactly", naming return and argument types; the
-frontend reads that as requiring the same visibility (decision S08-D1, open).
-
-**Intended direction.** Decide whether to accept a visibility change in an
-override as a warning; the wrapper can set the diagnostic's severity without
-a frontend patch.
-
 ### Mixed blocking and nonblocking assignments stop the run
 
 **Symptom.** The `ubus`, `integrated/codec` and `registers/models/broadcast`
@@ -3580,11 +3850,6 @@ Give attribute names a decorator kind.
 
 Request semantic tokens for a file with `(* keep *) logic a;`: the stream
 has no token at `keep`.
-
-## Reproduce
-
-Run `llg_ls --dump-tokens` on a file with `` `define ADD(a, b) ((a) + (b)) ``:
-`a` and `b` in the definition are `macro`.
 
 ## Semantic token kinds that need more capture (llg_ls)
 

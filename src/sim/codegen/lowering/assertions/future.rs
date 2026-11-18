@@ -111,10 +111,11 @@ impl Deferral<'_> {
                 if !call.kind.is_future() {
                     return Err(self.limit("this sampled value function"));
                 }
-                let argument = needs(&call.argument);
-                if argument.local || argument.effect {
-                    return Err(self.limit("a future value of a local variable"));
-                }
+                // The frontend rejects a local variable in a sampled value
+                // function's argument (16.9.3), a future function in an
+                // assertion with match items (16.9.4), and assignments and
+                // increments in assertion expressions, so the argument has no
+                // effect and reads no local.
                 if call.kind != IrSampledFunc::Future {
                     call.ticks = u64::from(self.slot()?);
                 }

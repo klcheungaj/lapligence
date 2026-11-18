@@ -544,24 +544,6 @@ fn continuous_assignment_strengths(
     Ok((zero, one))
 }
 
-/// Apply the language restriction that an explicit continuous-assignment
-/// strength belongs only to a scalar net.  The resolved runtime still carries
-/// one strength pair per structural driver, so scalar wired and collapsed
-/// groups use the same path as ordinary wires.
-fn continuous_assignment_strengths_for_width(
-    strength0: Strength,
-    strength1: Strength,
-    net_name: &str,
-    width: u32,
-) -> Result<(u8, u8), String> {
-    if (strength0 != Strength::Unspecified || strength1 != Strength::Unspecified) && width != 1 {
-        return Err(format!(
-            "drive strength on non-scalar net `{net_name}` is not permitted by IEEE 1800-2009 10.3.4"
-        ));
-    }
-    continuous_assignment_strengths(strength0, strength1, net_name)
-}
-
 /// Return the effective drive pair for a primitive output.  Ordinary gate
 /// outputs default to strong/strong, while pullup/pulldown primitives are
 /// pull-strength sources.  Explicit gate strengths retain their asymmetric

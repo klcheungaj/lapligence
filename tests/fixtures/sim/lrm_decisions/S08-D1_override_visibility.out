@@ -1,0 +1,8 @@
+public->protected: b1.f=2 b1.callf=2
+protected->public: d2.g=20 b2.callg=20
+local base: d3.f=3 b3.callf=3
+local derived: b4.f=4 b4.callf=4 d4.dcall=4
+extern: b5.f=50 x=51 y=51
+pure: c6.f=6 a6.callf=6
+three levels: d8.f=8 b8.f=8
+super: d9.f=111 e9.ecall=111

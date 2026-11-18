@@ -42,6 +42,14 @@ static PLI_INT32 on_action(p_cb_data data) {
     const char* words[] = {"first error 0", "assertion assert failed", NULL};
     for (int i = 0; words[i]; ++i)
         if (strstr(message, words[i])) vpi_printf(" message has \"%s\"", words[i]);
+    if (data->reason == cbError) {
+        /* The message is plain text: the source position and the report,
+         * without the runtime's scope or hint separator bytes. */
+        vpi_printf(strpbrk(message, "\036\037") ? " with separators" : " plain");
+        const char* file = strstr(message, "actions.sv:");
+        const char* end = file ? strstr(file, ": ") : NULL;
+        if (end) vpi_printf(" at %.*s", (int)(end - file), file);
+    }
     vpi_printf("\n");
     if (data->reason == cbPLIError) {
         /* An error raised inside a cbPLIError routine is not reported
@@ -78,7 +86,6 @@ static PLI_INT32 act_register(PLI_BYTE8* data) {
         PLI_INT32 reason;
     } refused[] = {
         {"cbStmt", cbStmt},
-        {"cbSizeChange", cbSizeChange},
         {"cbAssign", cbAssign},
         {"cbDeassign", cbDeassign},
         {"cbUnresolvedSystf", cbUnresolvedSystf},

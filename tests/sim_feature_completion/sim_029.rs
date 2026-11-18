@@ -192,7 +192,7 @@ fn null_receiver_is_a_runtime_error() {
         &[],
         &runtime_failure(
             "before\n",
-            "null class handle access: randomize() at tb:8:10",
+            "rt_null_receiver.sv:8:10 null class handle access: randomize()",
         ),
     );
 }

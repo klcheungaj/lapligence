@@ -353,8 +353,12 @@ fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
             out.retain_frontend_diagnostics(|index, _, _| quiet.binary_search(&index).is_err());
         }
     }
+    let promoted = warnings_as_errors && out.promote_werror_frontend_warnings();
     for d in &out.diagnostics {
         reporter.emit(diag_message(d));
+    }
+    if promoted {
+        return Next::Exit(1);
     }
 
     // 2. Lint gate: every run lints the owned db before codegen. Errors
@@ -487,7 +491,11 @@ fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
         }
     };
     for w in &gen.warnings {
-        reporter.emit(Message::new(&catalog::CODEGEN_WARNING, w.as_str()));
+        let mut message = Message::new(&catalog::CODEGEN_WARNING, w.text());
+        if let Some(location) = w.location() {
+            message = message.location(location);
+        }
+        reporter.emit(message);
     }
     // `$sdf_annotate` log files describe the annotation read when the model
     // was generated.

@@ -1,0 +1,7 @@
+before new
+decl group=3 xc=2
+xc negative write=2
+group negative write=3
+xc positive write=5
+xc zero write=0
+final

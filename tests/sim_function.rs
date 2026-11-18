@@ -42,7 +42,7 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), Stri
         let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
             .map_err(|e| format!("cmake: {e}"))?;
         let stdout = sim_harness::run_executable(&exe)?;
-        Ok((stdout, gen.warnings))
+        Ok((stdout, sim_harness::warning_texts(&gen.warnings)))
     })
 }
 

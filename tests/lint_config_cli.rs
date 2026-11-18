@@ -784,3 +784,81 @@ fn wide_index_warns_and_honors_config_and_werror() {
     assert!(out.status.success(), "stderr: {err}");
     assert!(!err.contains("wide-index"), "{err}");
 }
+
+/// An override that makes a public virtual method protected (decision
+/// S08-D1): the frontend warns at the override and the model runs;
+/// `-Werror`, or `warnings_as_errors = true` in `llg.toml`, reports the same
+/// diagnostic as an error, which stops the run before codegen.
+#[test]
+fn werror_restores_override_visibility_error() {
+    const OVERRIDE_SV: &str = r#"class B;
+  virtual function int f(); return 1; endfunction
+endclass
+class D extends B;
+  protected virtual function int f(); return 2; endfunction
+endclass
+module tb;
+  D d;
+  B b;
+  initial begin
+    d = new;
+    b = d;
+    $display("b.f=%0d", b.f());
+    $finish;
+  end
+endmodule
+"#;
+    fn visibility(err: &str, severity: Severity) -> Vec<String> {
+        err.lines()
+            .filter_map(report::parse)
+            .filter(|message| {
+                message.id == "SLANG-VirtualVisibilityMismatch" && message.severity == severity
+            })
+            .map(|message| {
+                let location = message.location.unwrap_or_default();
+                let file = location.rsplit(['/', '\\']).next().unwrap_or_default();
+                format!("{file}: {}", message.text)
+            })
+            .collect()
+    }
+    let expected =
+        ["design.sv:5:34: virtual method 'f' is 'protected' but declared 'public' in superclass method"];
+    let dir = TempDir::new("override_visibility");
+    dir.write("design.sv", OVERRIDE_SV);
+    let out = run_llg(&dir.path, &["--top", "tb", "design.sv"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "stderr: {err}");
+    assert_eq!(visibility(&err, Severity::Warning), expected, "{err}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "b.f=2\n", "{err}");
+
+    let cfg = dir.write(
+        "llg.toml",
+        "schema_version = 1\n[lint]\nwarnings_as_errors = true\n",
+    );
+    let cfg = cfg.to_str().unwrap();
+    for args in [
+        &["-Werror", "--top", "tb", "design.sv"][..],
+        &["--config", cfg, "--top", "tb", "design.sv"][..],
+    ] {
+        let _ = std::fs::remove_dir_all(dir.path.join("build"));
+        let out = run_llg(&dir.path, args);
+        let err = stderr(&out);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {err}");
+        assert_eq!(
+            visibility(&err, Severity::Error),
+            expected,
+            "{args:?}: {err}"
+        );
+        assert!(visibility(&err, Severity::Warning).is_empty(), "{err}");
+        assert!(out.stdout.is_empty(), "{args:?}: no model ran: {err}");
+        assert!(
+            !dir.path.join("build/sim").exists(),
+            "{args:?}: no model was generated"
+        );
+    }
+    let out = run_llg(
+        &dir.path,
+        &["--config", cfg, "-Wno-error", "--top", "tb", "design.sv"],
+    );
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+}

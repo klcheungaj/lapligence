@@ -41,8 +41,10 @@ type records, and queries read them at call time.
 Run-time messages (19.5.5 illegal values, 19.5.6 warnings, bad option
 values, database failures) go through `llg_cov_report` at a site the
 lowering frames like a status line's: the scope, the unit separator, then
-`file:line:col` of the bins, option or call. The position prints in the
-location field and the scope with the time in the context. The fatal end of
+`file:line:col` of the bins, option or call. The `detect_overlap` warning
+reports at its coverpoint's declaration and the merged-cross error at its
+cross's (`site` of `llg_cov_point_t` and `llg_cov_cross_t`). The position
+prints in the location field and the scope with the time in the context. The fatal end of
 an illegal hit, a bins count that is not positive or an option value out of
 range (`llg_cov_fatal`) reports at the same site through
 `llg_rt_fatal_typed`, as `$fatal` does; the lowering gives the statements
