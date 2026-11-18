@@ -647,11 +647,11 @@ fn neg_join_local() {
 }
 
 #[test]
-fn neg_property_and() {
+fn property_and_pending_at_finish() {
     // Property-level `and` was owned by SIM-038, which implements it: the
     // single attempt (tick at 5) is still pending at $finish (10) and both
     // operands are weak, so it ends without a result (Annex F F.5.3.2).
-    sim_cli::run_case_checked_matrix(SUITE, "neg_property_and", &[], &|label, output| {
+    sim_cli::run_case_checked_matrix(SUITE, "property_and_pending", &[], &|label, output| {
         assert!(
             output.status.success(),
             "{label}: {}",
