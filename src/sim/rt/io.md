@@ -459,7 +459,9 @@ attaching a VPI-owned one (`llg_net_strength_attach`) to a net without a
 `%v` consumer, and fires when the codes of its bits change (A20-D21).
 
 End-of-step recording, the pending dump and the producer-side dump state
-(SIM-047, S47-D1..D8): `llg_wave.h` and `llg_wave.c` comments. Registrations name
+(SIM-047, S47-D1..D8), the writer's comparison with the last record and its
+registration order (S47-D14) and the per-delta build (`LLG_WAVE_DELTAS`,
+S47-D15, a separate runtime archive): `llg_wave.h` and `llg_wave.c` comments. Registrations name
 static model storage only (signals, record members, fixed arrays, static block
 and subroutine variables, the object declared with an event); nothing
 collectable is registered, so no handle outlives its storage. A scoped

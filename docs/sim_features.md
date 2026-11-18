@@ -2399,8 +2399,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **VCD/FST** — `$dumpfile` names the file (`.fst` selects FST, any other
   name VCD; default `dump.vcd`); `$dumpvars` calls of one time step combine
   their depth, scope and variable selections, and the dump starts at the end
-  of that step. Each changed variable is recorded once per time step with its
-  end-of-step value. Packed values, array elements with declared bounds, real
+  of that step. Each changed variable is recorded at most once per time step
+  with its end-of-step value, and not at all when that value equals its last
+  record (a value restored within the step), in registration order, so
+  lowering's merge of overridden nonblocking updates leaves the file
+  unchanged. `--wave-deltas` (`waveform.deltas`) instead records every change
+  in execution order, several per step, which makes dumps larger and slower;
+  it is compiled in, so other models pay nothing for it. Packed values, array elements with declared bounds, real
   values, X/Z, aliases (one identifier code per merged net), hierarchy with
   `g[i]` loop generate scopes and femtosecond timestamps are represented, and
   so are the static variables of blocks, tasks and functions (their scopes,
@@ -2412,7 +2417,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   task or function may name a `$dumpvars` scope, the depth counting from it.
   `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
   `$dumpflush` follow the dump state; an output error is reported, stops the
-  dump and fails the run (decisions S47-D1..D13; [SIM-047
+  dump and fails the run (decisions S47-D1..D15; [SIM-047
   fixtures](../tests/fixtures/sim/feature_completion/sim_047/readme.md), read
   by an independent VCD reader and GTKWave's FST reader). Remaining gaps are
   listed in [known issues](known_issues.md#waveform-dump-coverage-limits-sim-047).

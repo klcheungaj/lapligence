@@ -31,7 +31,8 @@ These file-backed designs cover the ordinary Verilog waveform tasks in IEEE
 The owning Rust suite runs every fixture in optimized and `--no-opt` modes and
 uses independent VCD/FST metadata and value oracles; every VCD it reads must
 also parse with the independent reader `tests/support/vcd.rs`. Values are
-recorded once per time step with their end-of-step value, and `$dumpvars`
+recorded at most once per time step with their end-of-step value, not at all
+when it equals the last record (S47-D14), and `$dumpvars`
 starts the dump at the end of its step (SIM-047, S47-D1/D2), so a `$dumpvars`
 checkpoint holds the values assigned in the rest of that step. A `$dumplimit`
 stop appends a `dump limit reached` comment (S47-D8). The SIM-047 acceptance

@@ -659,10 +659,12 @@ processes or clock edges, at the cost of a few bytes per object.
   ([`nba_merge.rs`](../src/sim/codegen/lowering/statements/nba_merge.rs)).
   Kept updates keep their queue order. The merge is skipped for storage a
   `$monitor` names or that keeps sampled history, and for whole models with
-  waveforms, timing checks, sequential UDPs, asynchronous `accept_on` or
-  `reject_on`, gated sampled-value clocks, or toggle or FSM coverage, whose
-  consumers see each write. Waveforms are the largest exclusion: a model
-  built with `--wave` or `$dumpvars` keeps every update.
+  the per-delta dump (`--wave-deltas`), timing checks, sequential UDPs,
+  asynchronous `accept_on` or `reject_on`, gated sampled-value clocks, or
+  toggle or FSM coverage, whose consumers see each write. A model with the
+  default dump merges: its writer records an end-of-step value only when it
+  differs from the last record, in registration order (S47-D14), so the
+  file is the same with and without the merge (see "Waveform records" below).
 - **Evidence:** over the fixture tree the generated C of 5 existing models
   changed in both optimizer modes (three T1-D11 cases, the VPI value-change
   case and an NBA ordering case), all with unchanged output. Those cases
