@@ -585,6 +585,67 @@ fn forwarded_record_ref_members_wake_their_waiters() {
     }
 }
 
+/// A forwarded member of a record `ref` formal whose run-time index selects no
+/// element ends the run at the forwarding call two calls below the process
+/// (S07-D15, S13-D6): no caller runs on and the final procedure runs. With
+/// index checks off the callee binds the default and every caller runs on.
+#[test]
+fn unselected_forwarded_record_ref_members_end_the_run() {
+    const FIXTURE: &str = "record_ref_forwarded_member_unselected";
+    const BIND: &str = "index of a `ref` actual selects no element (run with --no-index-checks";
+    let cases: [(&[&str], &str, &str, &str); 7] = [
+        (&["-D", "N=2"], "0 shw 7\n0 fk back\nfinal\n", "45:5", BIND),
+        (&["-D", "N=16"], "0 shw 7\n0 fk back\nfinal\n", "45:5", BIND),
+        (
+            &["-D", "N=2", "-D", "PACKED"],
+            "0 shi 8\n0 fk back\nfinal\n",
+            "39:5",
+            BIND,
+        ),
+        (
+            &["-D", "N=16", "-D", "PACKED"],
+            "0 shi 8\n0 fk back\nfinal\n",
+            "39:5",
+            BIND,
+        ),
+        (
+            &["-D", "N=2", "-D", "LEAF"],
+            "0 shi 7\n0 fk back\nfinal\n",
+            "41:5",
+            BIND,
+        ),
+        (
+            &["-D", "N=2", "-D", "WAIT"],
+            "final\n",
+            "43:5",
+            UNSELECTED_DIAGNOSTIC,
+        ),
+        (
+            &["-D", "N=16", "-D", "WAIT"],
+            "final\n",
+            "43:5",
+            UNSELECTED_DIAGNOSTIC,
+        ),
+    ];
+    for (args, expected, line, diagnostic) in cases {
+        // The stop names the forwarding actual's line.
+        sim_cli::run_case_failing_at_runtime_with_args(
+            SUITE,
+            FIXTURE,
+            args,
+            expected,
+            &format!("{FIXTURE}.sv:{line}: [SIM-009] (tb @ 0 ns) {diagnostic}"),
+        );
+    }
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        FIXTURE,
+        "0 shi 8\n0 fk back\n0 shi 0\n0 fk back\n0 body after\n0 initial after\n3 other process\nfinal\n",
+        &["--no-index-checks", "-D", "PACKED"],
+        &[],
+    );
+}
+
 /// A queue member of an element of a member array that a subroutine record
 /// holds in its own slot (16 or more cells) rejects at its location outside a
 /// `ref` actual; the packed member of the same element is stored directly.

@@ -4926,6 +4926,19 @@ fn s13_d6_ref_wait_nonexistent_element() {
 }
 
 #[test]
+fn s07_d15_ref_stop_nested_call() {
+    // The run stops at the call two subroutines below the process, so stdout
+    // holds the line before it and the final procedure's line.
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "S07-D15_ref_stop_nested_call",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S07-D15_ref_stop_nested_call.out"),
+        "S07-D15_ref_stop_nested_call.sv:29:5: [SIM-009] (tb @ 0 ps) index of a `ref` actual selects no element (run with --no-index-checks",
+    );
+}
+
+#[test]
 fn s07_d12_iterator_index_declared_range() {
     run_decision(
         "S07-D12_iterator_index_declared_range",
