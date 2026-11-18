@@ -902,6 +902,11 @@ typedef struct {
     // Instance stream of the static initializer being run outside any
     // process, or NULL (the root stream).
     llg_rng_state_t* rng_initializer;
+    // The label of that initializer's scope, or NULL, and the process
+    // running initialization outside every labelled scope (S13-D7).
+    const char* rng_initializer_label;
+    llg_process_handle_t* init_process_root;
+    int init_processes;  // some initialization process handle exists
     size_t rng_scope_capacity;
     size_t rng_scope_count;
     // Free checker variable sets (free_variables.c), in registration order;

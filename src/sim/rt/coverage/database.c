@@ -684,7 +684,7 @@ static int llg_cov_db_save(const char* name, uint32_t sections, const char* what
     if (error) {
         llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "%s: coverage database `%s` was not saved: %s", what, name, error);
         llg_rt_mark_failed();
-        llg_rt_note_error(0, "coverage database was not saved", llg_cov_site_location(site));
+        llg_rt_note_error(0, "coverage database was not saved", site);
         (void)llg_remove_file(temporary);
         (void)llg_remove_file(path);
     }
@@ -1094,7 +1094,7 @@ void llg_cov_load_db(llg_string_t name, const char* site) {
     if (error) {
         llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "$load_coverage_db: coverage database `%s` was not loaded: %s; no coverage changed", path, error);
         llg_rt_mark_failed();
-        llg_rt_note_error(0, "coverage database was not loaded", llg_cov_site_location(site));
+        llg_rt_note_error(0, "coverage database was not loaded", site);
         for (size_t i = 0; i < n_staged; ++i) llg_cov_free_record(staged[i]);
     } else {
         // Everything validated: publish. Records merge by name and layout.

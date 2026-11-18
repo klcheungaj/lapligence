@@ -1,7 +1,7 @@
 `timescale 1ns/1ns
 // process::self() in static declaration initializers and in an initial
-// procedure. Known issue: llg returns null in the initializers, where the
-// industry-standard simulator returns a running process (see the readme).
+// procedure: each returns a running process whose random state can be read
+// and restored (S13-D7, see the readme).
 module tb;
   function automatic int probe(string tag);
     process p = process::self();

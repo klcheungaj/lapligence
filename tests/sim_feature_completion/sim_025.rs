@@ -255,13 +255,13 @@ fn null_handle_in_a_report_stops_the_run() {
         "null_report",
         &[],
         include_str!("../fixtures/sim/feature_completion/sim_025/null_report.out"),
-        "null class handle access: property access at tb:19:",
+        "null_report.sv:19:40 null class handle access: property access",
     );
     sim_cli::run_case_failing_at_runtime(
         SUITE,
         "null_monitor",
         &[],
         include_str!("../fixtures/sim/feature_completion/sim_025/null_monitor.out"),
-        "null class handle access: property access at tb:11:",
+        "null_monitor.sv:11:34 null class handle access: property access",
     );
 }

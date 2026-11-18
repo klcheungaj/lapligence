@@ -577,12 +577,28 @@ the first 8 have started; when the last `$display` reads its arguments,
 `cs` is 0 (state `A`) at time 0 and 1 (`B`) after its write: 2 covered
 states before and after. `before 8 2 after 11 2`: the merges added nothing.
 
+## Ignored `auto_bin_max` writes (S46-D16)
+
+`auto_bin_max_write` writes `option.auto_bin_max` procedurally in every form
+after `a = new`: `= f(2)` on the coverpoint, `= 0` on the group, `+= 1`,
+`++`, `--` and, under an `if`, `= 16`; a second process writes it with `<=`
+at time 1. 19.7 (L33340-33344, quoted above) allows the option only in the
+definition; following industry-standard behaviour each write compiles with a
+warning (lines 24, 25, 26, 27, 28, 30 and 39) and changes nothing. The
+definition gives `cp` 4 and the group 8, which `cq` inherits as its default
+(19.7, L33358-33363): `decl cp=4 cq=8 group=8`, and the same after the
+writes. `f` still runs once (`calls=1`). The automatic bins stay 4 for `cp`
+(16 values in 4 bins) and 8 for `cq` (19.5.2, L32751-32752: "If the number
+of automatic bins is smaller than the number of possible values (N < 2M ),
+then the 2M values are uniformly distributed in the N bins"): sampling 0
+covers one bin of each, `cp 25.00 cq 12.50`.
+
 ## Negative cases
 
 | Fixture | Rejected construct | Owner |
 | --- | --- | --- |
 | `neg_option_definition` | `c.option.per_instance = 1` (19.7) | frontend |
-| `neg_auto_bin_max` | `c.cp.option.auto_bin_max = 2` (19.7) | frontend |
+| `neg_auto_bin_max` | `n = (c.cp.option.auto_bin_max = 2)`: a write inside an expression (19.7; a write statement is ignored, S46-D16) | frontend (llg writes no option inside an expression) |
 | `neg_type_strobe` | `g::type_option.strobe = 1` (19.7.1) | frontend |
 | `neg_option_compound` | `c.option.weight += 1` | llg limitation |
 | `neg_count_args` | `get_inst_coverage(covered)` with one bin argument | llg (19.8 pairs them) |

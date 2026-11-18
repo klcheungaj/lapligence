@@ -35,7 +35,11 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, Strin
             sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
                 .map_err(|error| format!("cmake: {error}"))?;
         let stdout = sim_harness::run_executable(&executable)?;
-        Ok((stdout, generated.warnings, generated.model_c))
+        Ok((
+            stdout,
+            sim_harness::warning_texts(&generated.warnings),
+            generated.model_c,
+        ))
     })
 }
 

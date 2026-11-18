@@ -692,8 +692,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   static class members of package classes, forks in package tasks) execute
   from every importer (FIN-001 probes). Instance-hierarchical names are not constant-expression operands;
   lexical package references remain distinct. Among initializers that read
-  nothing from one another, class static properties run first, then package
-  and `$unit` variables, then the design hierarchy (decision S22-D8). A
+  nothing from one another, packages run first in declaration order, then
+  `$unit`, then the design hierarchy in post-order (an instance after the
+  instances below it), each scope its class static properties before its
+  variables (decision S22-D8). A
   package defined twice (a guarded header compiled on its own and included
   again in another compilation unit; the frontend warns) is simulated once, as
   every reference binds the first definition
@@ -1599,8 +1601,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   derived values wake only on value changes. The
   [RTL-012 matrix](../tests/fixtures/sim/feature_completion/rtl_012/readme.md)
   checks every source pair against an exhaustive outcome oracle in both
-  editions. Explicit continuous strengths on vectors, selected vector bits and
-  supply nets reject; gate instance arrays keep per-instance strengths. Delayed
+  editions. Explicit continuous strengths apply at any net width (whole
+  vectors, selected bits and parts, net array elements, decision T1-D14);
+  on supply nets they reject; gate instance arrays keep per-instance
+  strengths. Delayed
   enable gates drive L/H too (decision T1-D1); VPI reads these strengths
   through `vpiStrengthVal` (decision A20-D21); charge and resistive contexts
   are outside this row (`trireg` and the resistive
@@ -2528,7 +2532,12 @@ These are bounded implementations, not full verification-infrastructure support.
   output and `ref` formals, keep independent automatic locals per activation,
   and virtual dispatch to a suspending override enters it with the receiver
   fixed at the call, so rebinding the handle during a wait changes only later
-  calls. Packed, unpacked-record (integral leaves; member, bit and part
+  calls. A virtual override that changes the method's visibility (`local`,
+  `protected` or public) warns and still overrides; each call keeps the
+  visibility of the method its handle's class declares, and `-Werror` makes
+  the override an error
+  ([S08-D1](lrm_decisions.md#override-visibility-u2)). Packed, unpacked-record
+  (integral leaves; member, bit and part
   selections), real, string, chandle and class-handle properties have explicit
   storage, and records with string, real or handle members are one value per
   object; resizable-container and one-dimensional fixed-array properties are
@@ -2686,7 +2695,9 @@ These are bounded implementations, not full verification-infrastructure support.
   `get_randstate` and `set_randstate` act on the named process's stream
   ([sim_015](../tests/fixtures/sim/feature_completion/sim_015/readme.md)).
   Methods through a null handle and `await` on the current process end the
-  simulation with an error. `resume()` resensitizes a process suspended on an
+  simulation with an error. In a static initializer `self()` returns the
+  process running static initialization, one per instance or package
+  (S13-D7). `resume()` resensitizes a process suspended on an
   event control (an occurrence while it is suspended is not delivered), and
   completes a wait condition that became true or a delay that transpired.
   A process suspended in semaphore `get` or mailbox `get`/`peek`/`put` keeps
@@ -3102,7 +3113,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   shallow copies and collection; handles track objects without pinning
   them and are released when the collector reclaims the object;
   `cbValueChange` watches class variables (decisions A19-D21..D23) and
-  chandle variables, reporting the new pointer image once per check. Models
+  chandle variables, reporting the new pointer image once per check;
+  `cbSizeChange` (`vpiSuppressVal`) runs after each resize of a dynamic
+  array, queue or associative array variable of a scope (decision A19-D91). Models
   without a VPI catalog emit no tables and no creation calls.
   `vpi_get_value` serves every Table
   38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs
@@ -3250,9 +3263,13 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   and `$get_coverage()` follow 19.11; the two-argument forms of 19.8 assign
   the covered and total bins (S46-D7). Options are read through an
   instance, coverpoint, cross or type name and written procedurally where
-  19.7 allows it (writes of definition-only options are compile errors).
+  19.7 allows it (writes of definition-only options are compile errors,
+  except a procedural `option.auto_bin_max` write statement, which is
+  ignored with a lowering warning and keeps the defined value, S46-D16).
   An option value out of range (weight below 0, goal outside 0 to 100,
-  at_least below 0, auto_bin_max below 1) is a located run-time error that
+  at_least below 0, auto_bin_max below 1, cross_num_print_missing below 0
+  in the definition; a negative cross_num_print_missing write is ignored with
+  a warning, S46-D17) is a located run-time error that
   ends the run, final procedures included, at construction, at a procedural
   write and under a static initializer; a constant `type_option` out of
   range is a compile error; an X or Z option value is 0 (S45-D20).

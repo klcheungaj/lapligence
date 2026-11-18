@@ -627,6 +627,9 @@ struct llg_activation {
 struct llg_process_handle {
     size_t refs;
     llg_proc_t* proc;
+    // The process running static initialization (S13-D7): no coroutine,
+    // the stream of its initialization scope while it runs. NULL otherwise.
+    llg_rng_state_t* init_rng;
     int status;
     int linked;
     int pinned; // one permanent reference for uncounted storage

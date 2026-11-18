@@ -52,8 +52,8 @@ fn error_task_reports_and_initialization_goes_on() {
         SUITE,
         "error_task",
         include_str!("../fixtures/sim/feature_completion/ki_static_init_errors/error_task.out"),
-        "ERROR: error_task.sv:8:5: [SIM-005] (counter @ 0 ns) class static initializer error\n\
-         ERROR: error_task.sv:8:5: [SIM-005] (counter @ 0 ns) module initializer error\n\
+        "ERROR: error_task.sv:8:5: [SIM-005] ($unit @ 0 ns) class static initializer error\n\
+         ERROR: error_task.sv:8:5: [SIM-005] ($unit @ 0 ns) module initializer error\n\
          INFO: error_task.sv:23:5: [SIM-001] (tb @ 1 ns) $finish called\n\
          INFO: [SIM-000] 2 error(s), 0 warning(s), 1 info(s)\n",
         &[],

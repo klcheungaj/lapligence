@@ -3297,9 +3297,6 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - callback reasons refused with an error naming the reason: `cbStmt` (a
   statement has no execution hook; adding one would cost every model
   statement a check, or a second statement-hooked code path per process),
-  `cbSizeChange` (no resize of a dynamic array, queue, associative array
-  or string reaches VPI; industry-standard behaviour never calls it either,
-  decision A19-D91),
   `cbAssign`/`cbDeassign` (procedural `assign`/`deassign` is rejected,
   decision A20-D9), `cbUnresolvedSystf` (every system call is resolved when
   the model is generated) and the save, restart, reset and interactive
@@ -3727,51 +3724,6 @@ state vector), `relations.sv` (declarations without bodies).
 run against the industry-standard simulator; the differences fixed then are in
 the [ki_uvm_run readme](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md).
 These remain.
-
-### `process::self()` in a static initializer
-
-**Symptom.** `process::self()` called while a static declaration initializer
-runs returns null, so a following `get_randstate()` stops the run as a null
-process access. UVM 1.1d's `uvm_config_db::set` calls it unguarded, and the
-1.1d `module` and `pkg` examples construct components in module-scope
-initializers, so both end with a fatal error at time 0. The industry-standard
-simulator returns a running process there whose random state can be read and
-restored. UVM 1.2 checks the handle for null and is not affected.
-
-**Cause.** Static initialization runs before any process exists (SV 6.8), and
-the runtime has no process object for it; 9.7 defines `self()` only as the
-process making the call.
-
-**Intended direction.** Give static initialization one runtime process handle:
-running while the initializers execute and finished afterwards, its random
-state the initialization stream the initializers already draw from (T1-D3),
-with `kill`, `suspend` and `resume` of it a run-time error. This changes
-shared runtime paths and needs a decision row.
-
-**Reproduce.** [`process_self_static_initializer.sv`](../tests/fixtures/sim/feature_completion/ki_uvm_run/process_self_static_initializer.sv)
-pins the current output; its readme row gives the simulator's.
-
-### Override visibility the frontend rejects
-
-**Symptom.** Examples whose classes override a virtual method with another
-visibility stop in the frontend, which reports the override as an error. The
-UVM 1.2 and 1.1d `registers/models/coverage` example overrides the protected
-`sample` method of `uvm_reg` as a public method; the UVM 1.1d APB agent
-(`integrated/apb`) overrides the public `run_phase` of `uvm_component` as a
-protected task, which stops the nine 1.1d examples built on that agent
-(`integrated/codec` and the `registers` examples `integration/10direct`,
-`integration/20layered`, `models/broadcast`, `models/fifo_reg`, `primer`,
-`sequence_api` and both `vertical_reuse` runs). The industry-standard
-simulator accepts these examples.
-
-**Cause.** SV 2009 8.19 lists the encapsulation criteria among the
-information a virtual method's prototype provides and requires overrides to
-"follow the prototype exactly", naming return and argument types; the
-frontend reads that as requiring the same visibility (decision S08-D1, open).
-
-**Intended direction.** Decide whether to accept a visibility change in an
-override as a warning; the wrapper can set the diagnostic's severity without
-a frontend patch.
 
 ### Mixed blocking and nonblocking assignments stop the run
 

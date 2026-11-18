@@ -519,7 +519,7 @@ impl<'a> Codegen<'a> {
         let handle = self.lower_chandle(path, handle_node)?;
         let object = IrChandleExpr::Required {
             handle: Box::new(handle),
-            site: self.source_site("covergroup option access", path, node),
+            site: self.required_site("covergroup option access", path, node),
         };
         self.coverage_record(access.owner.group, object)
     }
@@ -633,6 +633,9 @@ impl<'a> Codegen<'a> {
             "option"
         };
         let member = access.member.as_str();
+        if let Some(ignored) = self.ignored_coverage_option_write(path, lhs, Some(rhs))? {
+            return Ok(Some(ignored));
+        }
         if !blocking || op != Operation::Assignment {
             return Err(self.coverage_error(
                 lhs,
@@ -646,7 +649,7 @@ impl<'a> Codegen<'a> {
         } else {
             matches!(
                 member,
-                "per_instance" | "get_inst_coverage" | "auto_bin_max" | "detect_overlap"
+                "per_instance" | "get_inst_coverage" | "detect_overlap"
             )
             .then_some("19.7")
         };
@@ -712,6 +715,41 @@ impl<'a> Codegen<'a> {
             }
         };
         Ok(Some(IrStmt::Coverage(Box::new(statement))))
+    }
+
+    /// A procedural write of an instance `option.auto_bin_max` (any
+    /// assignment form, or an increment/decrement when `rhs` is `None`), or
+    /// `None` when `target` names another member. 19.7 sets the option only
+    /// in the covergroup definition; following industry-standard behaviour
+    /// the write is ignored with a warning, and its right-hand side is still
+    /// evaluated for its side effects (decision S46-D16).
+    pub(in super::super) fn ignored_coverage_option_write(
+        &mut self,
+        path: &str,
+        target: NodeId,
+        rhs: Option<NodeId>,
+    ) -> Result<Option<IrStmt>, String> {
+        let Some(access) = self.coverage_option_access(target) else {
+            return Ok(None);
+        };
+        if access.owner.type_option || access.member != "auto_bin_max" {
+            return Ok(None);
+        }
+        self.coverage_warning(
+            target,
+            "procedural write of option.auto_bin_max is ignored: the automatic bins are fixed when the covergroup is constructed (IEEE 1800-2009 19.7)".to_string(),
+        );
+        let Some(rhs) = rhs else {
+            return Ok(Some(IrStmt::Nop));
+        };
+        let value = self.lower_coverage_option_value(path, rhs, "option", "auto_bin_max")?;
+        Ok(Some(IrStmt::Block(vec![IrStmt::DeclLocal {
+            name: format!("_ignored{}", target.0),
+            width: value.width,
+            signed: value.signed,
+            two_state: false,
+            init: Some(Box::new(value)),
+        }])))
     }
 
     fn lower_coverage_option_value(
@@ -1302,6 +1340,7 @@ impl<'a> Codegen<'a> {
         };
         let mut coverpoint = IrCoverpoint {
             name: point_name.clone(),
+            site: self.coverage_site(&build.path, point),
             width,
             signed,
             automatic,
@@ -1471,6 +1510,7 @@ impl<'a> Codegen<'a> {
         }
         let mut table = IrCoverCross {
             name: cross_name,
+            site: self.coverage_site(&build.path, cross),
             points: dims.clone(),
             selects: Vec::new(),
             bins: Vec::with_capacity(metadata.bins.len()),
@@ -1595,6 +1635,7 @@ impl<'a> Codegen<'a> {
                 let point = &points[dims[dim] as usize];
                 let mut scratch = IrCoverpoint {
                     name: String::new(),
+                    site: String::new(),
                     width: point.width,
                     signed: point.signed,
                     automatic: IrCoverAutomatic::None,
@@ -1822,6 +1863,7 @@ impl<'a> Codegen<'a> {
                 }
                 let mut scratch = IrCoverpoint {
                     name: String::new(),
+                    site: String::new(),
                     width,
                     signed,
                     automatic: IrCoverAutomatic::None,
@@ -2386,11 +2428,8 @@ impl<'a> Codegen<'a> {
         Ok(Some(keys))
     }
 
-    /// Lowering warnings are plain text (`GeneratedModel::warnings`), so the
-    /// node's location stays a prefix of the text.
     fn coverage_warning(&mut self, node: NodeId, message: String) {
-        let warning = format!("{}: {message}", self.source_location(node));
-        self.warnings.push(warning);
+        self.warn_at(node, message);
     }
 
     /// Lower every constructed covergroup's `sample` body and its sampling
@@ -3040,7 +3079,7 @@ impl<'a> Codegen<'a> {
         let handle = self.lower_chandle(path, handle_node)?;
         Ok(IrChandleExpr::Required {
             handle: Box::new(handle),
-            site: self.source_site("covergroup method call", path, node),
+            site: self.required_site("covergroup method call", path, node),
         })
     }
 

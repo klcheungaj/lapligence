@@ -280,9 +280,4 @@ fn neg_strength_syntax_keeps_context_prohibitions() {
             &args,
         );
     }
-    sim_cli::reject_case(
-        SUITE,
-        "neg_selected_vector_strength",
-        "drive strength on non-scalar net `w` is not permitted",
-    );
 }

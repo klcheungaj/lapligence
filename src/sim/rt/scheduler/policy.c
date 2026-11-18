@@ -164,7 +164,7 @@ static int configure_stop_policy(void) {
         g.stop_policy = LLG_STOP_POLICY_EXIT;
         return 1;
     }
-    llg_msg(LLG_MSG_ENVIRONMENT, NULL, "invalid LLG_STOP_POLICY `%s` (expected resume or exit)", text);
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid LLG_STOP_POLICY `%s` (expected resume or exit)", text);
     return 0;
 }
 
@@ -178,7 +178,7 @@ static int configure_index_checks(void) {
         g.index_checks = 0;
         return 1;
     }
-    llg_msg(LLG_MSG_ENVIRONMENT, NULL, "invalid LLG_INDEX_CHECKS `%s` (expected on or off)",
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid LLG_INDEX_CHECKS `%s` (expected on or off)",
             text);
     return 0;
 }

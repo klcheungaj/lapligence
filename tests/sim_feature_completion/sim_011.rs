@@ -137,7 +137,13 @@ fn packed_and_record_properties_project_members() {
 }
 
 /// The located null-handle report of `site`, then the process stops.
-fn null_handle_check(stdout: &'static str, site: &'static str) -> impl Fn(&str, &Output) {
+/// `what` the failed check guards and `at`, the `:line:col` both reports
+/// are located at.
+fn null_handle_check(
+    stdout: &'static str,
+    what: &'static str,
+    at: &'static str,
+) -> impl Fn(&str, &Output) {
     move |label, output| {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
@@ -153,18 +159,27 @@ fn null_handle_check(stdout: &'static str, site: &'static str) -> impl Fn(&str, 
         assert_eq!(runtime[0].id, "SIM-010", "{label}: {stderr}");
         assert_eq!(
             runtime[0].text,
-            format!("null class handle access: {site}"),
+            format!("null class handle access: {what}"),
             "{label}"
         );
         assert_eq!(runtime[1].id, "SIM-009", "{label}: {stderr}");
         assert_eq!(runtime[1].severity, llg::core::report::Severity::Fatal);
-        assert!(
-            runtime[1]
-                .context
-                .as_deref()
-                .is_some_and(|context| context.starts_with(&format!("{site} @ "))),
-            "{label}: {stderr}"
-        );
+        for message in &runtime[..2] {
+            assert!(
+                message
+                    .location
+                    .as_deref()
+                    .is_some_and(|location| location.ends_with(at)),
+                "{label}: {stderr}"
+            );
+            assert!(
+                message
+                    .context
+                    .as_deref()
+                    .is_some_and(|context| context.starts_with("tb @ ")),
+                "{label}: {stderr}"
+            );
+        }
         assert_eq!(runtime[1].text, "null class handle access", "{label}");
         assert_eq!(runtime[2].id, "SIM-000", "{label}: {stderr}");
     }
@@ -176,13 +191,13 @@ fn null_receivers_fail_at_their_source_site() {
         SUITE,
         "null_receiver",
         &[],
-        &null_handle_check("before\n", "method call at tb:15:12"),
+        &null_handle_check("before\n", "method call", ":15:12"),
     );
     sim_cli::run_case_checked_matrix(
         SUITE,
         "null_property",
         &[],
-        &null_handle_check("before 3\n", "property access at tb:15:9"),
+        &null_handle_check("before 3\n", "property access", ":15:9"),
     );
 }
 
@@ -199,7 +214,7 @@ fn shallow_copies_copy_properties_without_construction() {
         SUITE,
         "null_copy",
         &[],
-        &null_handle_check("before\n", "class copy at tb:12:16"),
+        &null_handle_check("before\n", "class copy", ":12:16"),
     );
 }
 
@@ -334,25 +349,25 @@ fn null_property_containers_stop_cleanly() {
         SUITE,
         "null_container_read",
         &[],
-        &null_handle_check("before\n", "property access at tb:9:9"),
+        &null_handle_check("before\n", "property access", ":9:9"),
     );
     sim_cli::run_case_checked_matrix(
         SUITE,
         "null_container_write",
         &[],
-        &null_handle_check("before\n", "property access at tb:9:5"),
+        &null_handle_check("before\n", "property access", ":9:5"),
     );
     sim_cli::run_case_checked_matrix(
         SUITE,
         "null_container_select",
         &[],
-        &null_handle_check("before\n", "property access at tb:9:5"),
+        &null_handle_check("before\n", "property access", ":9:5"),
     );
     sim_cli::run_case_checked_matrix(
         SUITE,
         "null_container_chain",
         &[],
-        &null_handle_check("before\n", "property access at tb:9:14"),
+        &null_handle_check("before\n", "property access", ":9:14"),
     );
 }
 

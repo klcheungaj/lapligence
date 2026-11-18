@@ -250,7 +250,8 @@ Options:
       --lint-only            Lint without generating or running the model
       --no-lint-only         Generate and run after lint (overrides llg.toml)
       --lint-json [<path>]   Report lint as JSON and exit (implies --lint-only)
-      -Werror                Treat lint warnings as errors
+      -Werror                Treat lint warnings, and a virtual-method override
+                              that changes visibility, as errors
       -Wno-error             Keep lint warnings as warnings (overrides llg.toml)
       --wave <file>          Dump every signal from time 0 into this .vcd or .fst
                               file; replaces the $dumpfile name and $dumpvars

@@ -537,6 +537,36 @@ fn corrupt_and_foreign_databases_change_nothing() {
     }
 }
 
+/// A procedural `option.auto_bin_max` write is ignored with a located
+/// lowering warning in every assignment form; its right-hand side still runs
+/// (S46-D16).
+#[test]
+fn auto_bin_max_writes_are_ignored_with_a_warning() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_046/auto_bin_max_write.out");
+    let ignored = "procedural write of option.auto_bin_max is ignored: the automatic bins are fixed when the covergroup is constructed (IEEE 1800-2009 19.7)";
+    let lines = ["24:5", "25:5", "26:5", "27:5", "28:7", "30:7", "39:14"];
+    sim_cli::run_case_checked_matrix(SUITE, "auto_bin_max_write", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert!(llg_messages(output).is_empty(), "{label}");
+        let warnings =
+            super::sim_harness::listed_warnings(&String::from_utf8_lossy(&output.stderr))
+                .iter()
+                .map(|warning| {
+                    warning
+                        .split_once("auto_bin_max_write.sv:")
+                        .map_or(warning.as_str(), |(_, rest)| rest)
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+        let expected_warnings = lines
+            .iter()
+            .map(|line| format!("{line} {ignored}"))
+            .collect::<Vec<_>>();
+        assert_eq!(warnings, expected_warnings, "{label}");
+    });
+}
+
 #[test]
 fn definition_only_options_and_partial_counts_are_rejected() {
     sim_cli::reject_case(
@@ -547,7 +577,7 @@ fn definition_only_options_and_partial_counts_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_auto_bin_max",
-        "neg_auto_bin_max.sv:10:30 the 'auto_bin_max' option cannot be modified outside of the covergroup definition",
+        "neg_auto_bin_max.sv:13:35 the 'auto_bin_max' option cannot be modified outside of the covergroup definition",
     );
     sim_cli::reject_case(
         SUITE,

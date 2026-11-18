@@ -1221,15 +1221,16 @@ runs it in both optimizer modes.
   it (`h dec`) no longer runs at 8.
 - `cbSizeChange` (38.36.1 L64657: "After a dynamic array, associative
   array, queue, or string has been resized"; 37.17 detail 14 L58772-L58774)
-  is refused on `da`, `q`, `aa` and `s`: NULL with level 3 (decision
-  A19-D91), and the resizes at 1 call nothing.
+  is served with `vpiSuppressVal` on `q`: the `push_back` at 1 calls it once
+  with a NULL value. With `vpiIntVal` on `da` and `aa` and on the string `s`
+  it is refused: NULL with level 3 (decision A19-D91).
 - A continuous assignment and a primitive are not among the objects of
   38.36.1 (L64642-L64644, above): `cbValueChange` on the assignment of `w`
   and on the gate `g1` is NULL with level 3 (decision A19-D91).
 
 Industry-standard behaviour gives the same calls and values (it passes a
 `vpiSuppressVal` record a value structure of that format instead of NULL).
-It accepts the `vpiStrengthVal` record on `h` and a `vpiSuppressVal`
+It accepts the `vpiStrengthVal` record on `h` and the `vpiSuppressVal`
 `cbSizeChange` record on `q` but never calls the latter, and returns NULL
 for the continuous assignment without an error (decision A19-D91).
 

@@ -88,7 +88,7 @@ static PLI_INT32 cbk(PLI_BYTE8* user) {
         place(cbValueChange, named("tb.h2"), vpiHexStrVal, "h2 hex");
         /* Table 38-5: vpiStrengthVal is for scalar objects only. */
         place(cbValueChange, h, vpiStrengthVal, "h strength");
-        /* Decision A19-D91: no resize reaches VPI. */
+        /* Decision A19-D91: only vpiSuppressVal on a container is served. */
         place(cbSizeChange, named("tb.da"), vpiIntVal, "da size");
         place(cbSizeChange, named("tb.q"), vpiSuppressVal, "q size");
         place(cbSizeChange, named("tb.aa"), vpiIntVal, "aa size");

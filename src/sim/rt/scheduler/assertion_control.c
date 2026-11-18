@@ -5,9 +5,20 @@ static int llg_error_hook_active;
 void llg_rt_error_hook(llg_rt_error_fn hook) { llg_error_hook = hook; }
 
 // An error reported while the observer runs (its own application failing)
-// is not reported to it again.
+// is not reported to it again. The observer gets plain text: a framed site
+// gives only its `file:line:col` part (the scope before the unit separator
+// is message context), and a simulator text ends before its hint separator.
 void llg_rt_note_error(int fatal, const char* message, const char* location) {
     if (!llg_error_hook || llg_error_hook_active) return;
+    const char* separator = location ? strchr(location, LLG_RT_SITE_SEPARATOR) : NULL;
+    if (separator) location = separator + 1;
+    char text[512];
+    const char* hint = message ? strchr(message, LLG_RT_HINT_SEPARATOR) : NULL;
+    if (hint) {
+        size_t len = (size_t)(hint - message);
+        snprintf(text, sizeof text, "%.*s", len > 511u ? 511 : (int)len, message);
+        message = text;
+    }
     llg_error_hook_active = 1;
     llg_error_hook(fatal, message ? message : "", location && location[0] ? location : NULL);
     llg_error_hook_active = 0;
@@ -80,6 +91,27 @@ void llg_rt_fatal_typed(int finish_number, const char* fmt,
     llg_fmt_args_destroy(args, n);
     llg_fatal_severity_ran = 1;
     llg_rt_finish_with_level(finish_number, location);
+}
+
+void llg_rt_null_handle(const char* site) {
+    const char* framed = strchr(site, LLG_RT_SITE_SEPARATOR);
+    if (!framed) {
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "null class handle access: %s", site);
+        llg_rt_mark_failed();
+        llg_rt_fatal_typed(0, "null class handle access", NULL, 0, "", site);
+        return;
+    }
+    llg_report_t text;
+    llg_report_t out;
+    llg_report_init(&text);
+    llg_report_init(&out);
+    llg_report_printf(&text, "null class handle access: %.*s", (int)(framed - site), site);
+    llg_rt_framed(&out, LLG_MSG_RUNTIME_ERROR, llg_msg_default_severity(LLG_MSG_RUNTIME_ERROR),
+                  framed + 1, NULL, text.data, text.len, NULL);
+    llg_report_free(&text);
+    llg_report_emit(&out, stderr);
+    llg_rt_mark_failed();
+    llg_rt_fatal_typed(0, "null class handle access", NULL, 0, "", framed + 1);
 }
 
 uint64_t llg_rt_severity_count(int severity) {

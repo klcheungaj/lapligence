@@ -164,6 +164,6 @@ fn random_method_through_a_null_handle_is_a_runtime_error() {
     sim_cli::reject_case(
         SUITE,
         "neg_srandom_null",
-        "null class handle access: method call at tb:10:5",
+        "neg_srandom_null.sv:10:5 null class handle access: method call",
     );
 }

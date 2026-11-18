@@ -252,18 +252,17 @@ impl Codegen<'_> {
             crate::sim::codegen::error::located(&location, "sequence instance has no body")
         })?;
         if body.empty {
-            return Err(if copy_outs.is_empty() {
-                format!(
-                    "a sequence instance that initializes local variables and admits an empty match is not supported at {location}"
-                )
-            } else {
-                // 16.8.2: "It shall be an error for an instance of a named
-                // sequence with an inout or output local variable formal
-                // argument to admit an empty match."
-                format!(
-                    "the sequence instance at {location} has an inout or output local formal and admits an empty match (SV 16.8.2)"
-                )
-            });
+            return Err(crate::sim::codegen::error::located(
+                &location,
+                if copy_outs.is_empty() {
+                    "a sequence instance that initializes local variables and admits an empty match is not supported"
+                } else {
+                    // 16.8.2: "It shall be an error for an instance of a named
+                    // sequence with an inout or output local variable formal
+                    // argument to admit an empty match."
+                    "the sequence instance has an inout or output local formal and admits an empty match (SV 16.8.2)"
+                },
+            ));
         }
         let mut fragment = body;
         if !initializers.is_empty() {

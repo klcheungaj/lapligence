@@ -217,11 +217,9 @@ fn duplicate_package_definition() {
     );
 }
 
-/// `process::self()` in static declaration initializers returns null, a
-/// known issue (see `docs/known_issues.md`, "UVM example differences"): the
-/// industry-standard simulator returns a running process there, which a
-/// library's configuration database calls `get_randstate` on. The case pins
-/// the current output so a change is deliberate.
+/// `process::self()` in static declaration initializers returns the process
+/// running static initialization (S13-D7), as the industry-standard simulator
+/// does; a library's configuration database calls `get_randstate` on it.
 #[test]
 fn process_self_static_initializer() {
     sim_cli::run_case_backend_parity(
@@ -232,6 +230,19 @@ fn process_self_static_initializer() {
         ),
         &[],
         &[],
+    );
+}
+
+/// `kill()` of the process running static initialization is a run-time
+/// error that does nothing (S13-D7, llg limitation).
+#[test]
+fn process_self_static_kill() {
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "process_self_static_kill",
+        &[],
+        "x=1\n",
+        "process::kill of the process running static initialization is not supported (llg limitation)",
     );
 }
 

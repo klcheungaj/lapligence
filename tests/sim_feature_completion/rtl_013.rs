@@ -41,7 +41,7 @@ fn comb_and_latch_run_once_at_time_zero_after_procedures_start() {
         "time_zero",
         expected,
         "",
-        &["combinational always process in `tb` reads no signals; evaluating once at time 0"],
+        &["time_zero.sv:25:5 combinational always process in `tb` reads no signals; evaluating once at time 0"],
     );
     sim_cli::run_case_backend_parity(SUITE, "time_zero", expected, &[], &[]);
 }

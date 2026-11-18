@@ -292,6 +292,19 @@ impl Codegen<'_> {
         }
     }
 
+    /// The site of a null-handle check ([`IrChandleExpr::Required`]): `what`
+    /// the check guards, the unit separator, then the framed site the
+    /// run-time error reports at (`llg_rt_null_handle` in the runtime): the
+    /// scope, the separator and `node`'s `source_location`. A node without
+    /// a position gives the scope alone.
+    pub(in super::super) fn required_site(&self, what: &str, path: &str, node: NodeId) -> String {
+        if self.node(node).line == 0 {
+            format!("{what}\u{1f}{path}")
+        } else {
+            format!("{what}\u{1f}{path}\u{1f}{}", self.source_location(node))
+        }
+    }
+
     /// `handle` checked against null where `node` uses it (SV 8.4), with
     /// the run-time error addressed to the use's scope, line and column.
     /// The implicit `this` of a method body is checked at method entry.
@@ -312,7 +325,7 @@ impl Codegen<'_> {
         }
         IrChandleExpr::Required {
             handle: Box::new(handle),
-            site: self.source_site(what, path, node),
+            site: self.required_site(what, path, node),
         }
     }
 

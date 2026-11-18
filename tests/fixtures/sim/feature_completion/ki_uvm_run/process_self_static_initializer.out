@@ -1,5 +1,9 @@
-static: null=1
-static2: null=1
+static: null=0
+static: status=RUNNING
+static: replay=1
+static2: null=0
+static2: status=RUNNING
+static2: replay=1
 initial: null=0
 initial: status=RUNNING
 initial: replay=1

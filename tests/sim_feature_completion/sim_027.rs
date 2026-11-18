@@ -580,7 +580,7 @@ fn null_class_handles_stop_before_the_memory_file_task() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 stderr.contains(&format!(
-                    "ERROR: [SIM-010] null class handle access: property access at {location}"
+                    "{location}: [SIM-010] (tb @ 0 ps) null class handle access: property access"
                 )),
                 "{label}: {stderr}"
             );
@@ -593,14 +593,14 @@ fn null_class_handles_stop_before_the_memory_file_task() {
         "null_handle",
         &[],
         &files,
-        &stopped("tb:11:28"),
+        &stopped("null_handle.sv:11:28"),
     );
     sim_cli::run_case_checked_matrix_with_files(
         SUITE,
         "null_handle_load",
         &[],
         &files,
-        &stopped("tb:10:28"),
+        &stopped("null_handle_load.sv:10:28"),
     );
 }
 

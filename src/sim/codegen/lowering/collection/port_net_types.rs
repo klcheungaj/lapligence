@@ -309,12 +309,11 @@ impl Codegen<'_> {
             for tie in ties {
                 let port = edge_ports[tie.edge];
                 if tied.insert((port, tie.candidates.clone())) {
-                    self.warnings.push(format!(
-                        "dissimilar inout port `{}`: same-depth connections choose {:?} among non-dominating {:?} (decision R11-D1; IEEE 1800-2009 Table 23-1) at {}:{}:{}",
+                    let message = format!(
+                        "dissimilar inout port `{}`: same-depth connections choose {:?} among non-dominating {:?} (decision R11-D1; IEEE 1800-2009 Table 23-1)",
                         self.display_name(port), tie.selected, tie.candidates,
-                        self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(port).line, self.node(port).col,
-                    ));
+                    );
+                    self.warn_at(port, message);
                 }
             }
             level_start = level_end;
@@ -329,12 +328,11 @@ impl Codegen<'_> {
         seen: &mut HashSet<(NodeId, CollapseWarning)>,
     ) {
         if seen.insert((port, warning)) {
-            self.warnings.push(format!(
-                "dissimilar inout port `{}`: internal {:?}, external {:?}; table choice {:?} (IEEE 1800-2009 Table 23-1) at {}:{}:{}",
+            let message = format!(
+                "dissimilar inout port `{}`: internal {:?}, external {:?}; table choice {:?} (IEEE 1800-2009 Table 23-1)",
                 self.display_name(port), warning.internal, warning.external, warning.selected,
-                self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                self.node(port).line, self.node(port).col,
-            ));
+            );
+            self.warn_at(port, message);
         }
     }
 }

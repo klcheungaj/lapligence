@@ -173,6 +173,22 @@ impl<'a> Codegen<'a> {
             && self.db.semantic_detail(id) == Some("CompilationUnit")
     }
 
+    /// Whether `scope` is the compilation unit or a class declared in it,
+    /// directly or nested in such a class.
+    pub(in super::super) fn in_compilation_unit_scope(&self, scope: NodeId) -> bool {
+        let mut current = Some(scope);
+        while let Some(id) = current {
+            if self.is_compilation_unit(id) {
+                return true;
+            }
+            if !self.class_nodes.contains_key(&id) {
+                return false;
+            }
+            current = self.db.class_declaring_scope(id);
+        }
+        false
+    }
+
     pub(in super::super) fn is_runtime_environment(&self, id: NodeId) -> bool {
         matches!(self.kind(id), NodeKind::Package) || self.is_compilation_unit(id)
     }

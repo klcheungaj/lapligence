@@ -123,6 +123,14 @@ fn t1_d13_converting_port_strength() {
 }
 
 #[test]
+fn t1_d14_vector_assignment_strength() {
+    run_decision(
+        "T1-D14_vector_assignment_strength",
+        include_str!("fixtures/sim/lrm_decisions/T1-D14_vector_assignment_strength.out"),
+    );
+}
+
+#[test]
 fn t1_d9_output_port_delay_merges() {
     run_decision(
         "T1-D9_output_port_delay_merges",
@@ -677,6 +685,91 @@ fn s13_d2_ref_binds_missing_entry() {
     run_decision(
         "S13-D2_ref_binds_missing_entry",
         include_str!("fixtures/sim/lrm_decisions/S13-D2_ref_binds_missing_entry.out"),
+    );
+}
+
+#[test]
+fn s08_d1_override_visibility() {
+    run_decision(
+        "S08-D1_override_visibility",
+        include_str!("fixtures/sim/lrm_decisions/S08-D1_override_visibility.out"),
+    );
+}
+
+/// Each call that the visibility in its handle's class forbids stays an
+/// error, while the overrides that change visibility only warn.
+#[test]
+fn s08_d1_override_visibility_calls_rejected() {
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/S08-D1_override_visibility_calls_rejected.out"
+    )
+    .is_empty());
+    let file = "S08-D1_override_visibility_calls_rejected.sv";
+    let expected: Vec<String> = [
+        (
+            "56:24",
+            "ProtectedMemberAccess",
+            "'f' is a protected member of 'D1'",
+        ),
+        (
+            "57:24",
+            "ProtectedMemberAccess",
+            "'g' is a protected member of 'B2'",
+        ),
+        (
+            "58:24",
+            "LocalMemberAccess",
+            "'f' is a local member of 'D4'",
+        ),
+        (
+            "59:24",
+            "ProtectedMemberAccess",
+            "'f' is a protected member of 'A6'",
+        ),
+        (
+            "60:24",
+            "ProtectedMemberAccess",
+            "'f' is a protected member of 'M8'",
+        ),
+    ]
+    .iter()
+    .map(|(at, name, text)| format!("{file}:{at}: SLANG-{name} {text}"))
+    .collect();
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S08-D1_override_visibility_calls_rejected",
+        &[],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+            assert!(output.stdout.is_empty(), "{label}: {output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let messages: Vec<_> = stderr
+                .lines()
+                .filter_map(llg::core::report::parse)
+                .collect();
+            let errors: Vec<String> = messages
+                .iter()
+                .filter(|message| message.severity == llg::core::report::Severity::Error)
+                .map(|message| {
+                    let location = message.location.as_deref().unwrap_or_default();
+                    format!(
+                        "{}: {} {}",
+                        crate::sim_harness::short_location(location),
+                        message.id,
+                        message.text
+                    )
+                })
+                .collect();
+            assert_eq!(errors, expected, "{label}: {stderr}");
+            let overrides = messages
+                .iter()
+                .filter(|message| {
+                    message.id == "SLANG-VirtualVisibilityMismatch"
+                        && message.severity == llg::core::report::Severity::Warning
+                })
+                .count();
+            assert_eq!(overrides, 6, "{label}: {stderr}");
+        },
     );
 }
 
@@ -1837,6 +1930,14 @@ fn s22_d8_package_initializers_before_design() {
 }
 
 #[test]
+fn s22_d8_scope_initialization_order() {
+    run_decision(
+        "S22-D8_scope_initialization_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_scope_initialization_order.out"),
+    );
+}
+
+#[test]
 fn s22_d9_initializer_finish_runs_finals() {
     run_decision(
         "S22-D9_initializer_finish_runs_finals",
@@ -2062,7 +2163,7 @@ fn s29_d9_null_receiver() {
             label,
             output,
             expected,
-            "null class handle access: randomize() at tb:",
+            "S29-D9_null_receiver.sv:14:10 null class handle access: randomize()",
         );
     });
 }
@@ -4145,21 +4246,38 @@ fn s45_d17_detect_overlap() {
             include_str!("fixtures/sim/lrm_decisions/S45-D17_detect_overlap.out"),
             "{label}"
         );
+        // Each warning is located at its coverpoint's declaration.
         let warnings: Vec<_> = String::from_utf8_lossy(&output.stderr)
             .lines()
-            .filter(|line| line.starts_with("WARNING: [SIM-011] covergroup"))
-            .map(str::to_owned)
+            .filter(|line| line.contains("[SIM-011] (tb @ 0 ps) covergroup"))
+            .map(crate::sim_harness::canonical_message)
             .collect();
         assert_eq!(
             warnings,
             [
-                "WARNING: [SIM-011] covergroup `g` coverpoint `c1`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
-                "WARNING: [SIM-011] covergroup `g` coverpoint `c2`: bins `r` and `r2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
-                "WARNING: [SIM-011] covergroup `g` coverpoint `c3`: bins `v` and `w` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: S45-D17_detect_overlap.sv:27:5: [SIM-011] (tb @ 0 ps) covergroup `g` coverpoint `c1`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: S45-D17_detect_overlap.sv:28:5: [SIM-011] (tb @ 0 ps) covergroup `g` coverpoint `c2`: bins `r` and `r2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "WARNING: S45-D17_detect_overlap.sv:29:5: [SIM-011] (tb @ 0 ps) covergroup `g` coverpoint `c3`: bins `v` and `w` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
             ],
             "{label}"
         );
     });
+}
+
+#[test]
+fn s13_d7_process_self_static_initializer() {
+    run_decision(
+        "S13-D7_process_self_static_initializer",
+        include_str!("fixtures/sim/lrm_decisions/S13-D7_process_self_static_initializer.out"),
+    );
+}
+
+#[test]
+fn f2_d3_default_timescale() {
+    run_decision(
+        "F2-D3_default_timescale",
+        include_str!("fixtures/sim/lrm_decisions/F2-D3_default_timescale.out"),
+    );
 }
 
 #[test]
@@ -4225,6 +4343,22 @@ fn s46_d2_loaded_runs_join_instances() {
             assert_eq!(stdout, expected, "{label}");
         }
     }
+}
+
+#[test]
+fn s46_d16_auto_bin_max_write() {
+    run_decision(
+        "S46-D16_auto_bin_max_write",
+        include_str!("fixtures/sim/lrm_decisions/S46-D16_auto_bin_max_write.out"),
+    );
+}
+
+#[test]
+fn s46_d17_negative_cross_print_missing() {
+    run_decision(
+        "S46-D17_negative_cross_print_missing",
+        include_str!("fixtures/sim/lrm_decisions/S46-D17_negative_cross_print_missing.out"),
+    );
 }
 
 #[test]
@@ -4868,7 +5002,7 @@ fn s99_d11_null_class_access_runs_finals() {
                 label,
                 output,
                 expected,
-                "null class handle access: property access at tb:22:",
+                "S99-D11_null_class_access_runs_finals.sv:22:46 null class handle access: property access",
             );
         },
     );

@@ -91,49 +91,6 @@ fn run_fixture_output(file: &str, expected: &str) {
     run_fixture_bytes(file, expected.as_bytes());
 }
 
-fn run_rejection_fixture(file: &str) {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim/data_types_next")
-        .join(file);
-    sim_harness::with_frontend_temp_cwd("data-types-next-rejection", |dir| {
-        let source = dir.join(file);
-        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
-        let compiled = compile::compile(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_owned()),
-            ..Default::default()
-        })
-        .map_err(|error| format!("{file}: compile: {error}"))?;
-        if !compiled.ok() {
-            let diagnostic = format!("{:?}", compiled.diagnostics).to_ascii_lowercase();
-            return if diagnostic.contains("strength") && diagnostic.contains("scalar") {
-                Ok(())
-            } else {
-                Err(format!(
-                    "{file}: unexpected frontend diagnostic: {diagnostic}"
-                ))
-            };
-        }
-
-        let database = Db::from_slang(&compiled.snapshot)
-            .map_err(|error| format!("{file}: database: {error}"))?;
-        for (variant, options) in [
-            ("unoptimized", OptConfig::none()),
-            ("optimized", OptConfig::default()),
-        ] {
-            let error = sim::codegen::generate_from_db_with_opts(&database, &options)
-                .map(|_| "generated successfully".to_owned())
-                .unwrap_or_else(|error| error.to_string());
-            let normalized = error.to_ascii_lowercase();
-            if !normalized.contains("strength") || !normalized.contains("scalar") {
-                return Err(format!("{file}: {variant}: unexpected result: {error}"));
-            }
-        }
-        Ok(())
-    })
-    .expect("next-phase datatype rejection conformance");
-}
-
 #[test]
 fn distinct_unpacked_struct_typedefs_are_not_assignment_compatible() {
     let source = r#"module tb;
@@ -686,8 +643,3 @@ datatype_case!(
     "container_assignment_contexts.sv",
     "container_assignment_contexts"
 );
-
-#[test]
-fn continuous_assignment_vector_strength_is_rejected_as_non_scalar() {
-    run_rejection_fixture("continuous_assignment_vector_strength_rejected.sv");
-}

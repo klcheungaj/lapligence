@@ -439,11 +439,10 @@ impl Codegen<'_> {
                         strength0,
                         strength1,
                         ..
-                    } => continuous_assignment_strengths_for_width(
+                    } => continuous_assignment_strengths(
                         *strength0,
                         *strength1,
                         &self.model.arrays[array].hdl_name,
-                        self.model.arrays[array].elem_width,
                     )
                     .map_err(|error| self.locate_error(*source, error))?,
                     NodeKind::Port {

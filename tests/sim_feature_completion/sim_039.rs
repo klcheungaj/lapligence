@@ -276,7 +276,7 @@ fn local_formal_direction_type_and_actual_errors_are_located() {
     sim_cli::reject_case(
         SUITE,
         "neg_match_call_timing",
-        "neg_match_call_timing.sv:11:16 sequence match-item call task `slow` cannot contain timing controls at tb.c1:11:16 (sequence match item) (assertion `c1`)",
+        "neg_match_call_timing.sv:11:16 sequence match-item call task `slow` cannot contain timing controls (sequence match item) (assertion `c1`)",
     );
 }
 
