@@ -135,9 +135,8 @@ fn supply_nets_reject_vector_drive_strengths() {
                   module tb; logic [1:0] a; supply1 [1:0] w; assign (strong0, strong1) w=a; endmodule\n";
     let error = generate_error("supply1_strength", source);
     assert!(
-        error.contains(
-            "drive strength on continuous assignment to supply net `w` is not permitted"
-        ),
+        error
+            .contains("drive strength on continuous assignment to supply net `w` is not permitted"),
         "{error}"
     );
 }

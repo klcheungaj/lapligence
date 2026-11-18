@@ -643,4 +643,3 @@ datatype_case!(
     "container_assignment_contexts.sv",
     "container_assignment_contexts"
 );
-
