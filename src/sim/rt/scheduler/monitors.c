@@ -369,7 +369,7 @@ static void check_monitor(llg_monitor_state_t* m) {
 
 // Registration order is the report order within one time slot.
 static void check_monitors(void) {
-    if (!g.monitors) return;
+    if (LLG_CO_LIKELY(!g.monitors)) return;
     g.monitors_sweeping = 1;
     for (llg_monitor_state_t* m = g.monitors; m && !g.finish; m = m->next) {
         if (!m->dead) check_monitor(m);
@@ -381,7 +381,7 @@ static void check_monitors(void) {
 // Print queued $strobe lines after the current time step has settled, the
 // last issued first.
 static void flush_strobes(void) {
-    while (g.strobes && !g.finish) {
+    while (LLG_CO_UNLIKELY(g.strobes != NULL) && !g.finish) {
         llg_strobe_t* e = g.strobes;
         g.strobes = e->next;
         if (e->typed) {

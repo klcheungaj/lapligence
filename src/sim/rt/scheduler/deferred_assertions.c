@@ -302,8 +302,8 @@ static void deferred_report_execute(llg_deferred_assertion_report_t* report) {
 static void deferred_matured_callback(void* data);
 
 static int deferred_schedule_matured(void) {
-    if (g.deferred_matured_scheduled ||
-        g.deferred_matured_next >= g.deferred_matured.count)
+    if (LLG_CO_LIKELY(g.deferred_matured_scheduled ||
+                      g.deferred_matured_next >= g.deferred_matured.count))
         return 1;
     if (!llg_schedule_region_callback(LLG_REGION_REACTIVE,
                                       deferred_matured_callback, NULL))
@@ -370,7 +370,7 @@ void llg_sequence_match_call(llg_deferred_assertion_fn call, llg_frame_t* frame)
 // records and their per-process chains, and the moved reports are only
 // marked dead.
 static void deferred_mature_pending(void) {
-    if (!g.deferred_pending.count) return;
+    if (LLG_CO_LIKELY(!g.deferred_pending.count)) return;
     if (g.deferred_matured_next == g.deferred_matured.count) {
         g.deferred_matured.count = 0;
         g.deferred_matured_next = 0;

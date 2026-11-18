@@ -6,7 +6,12 @@ static void report_zero_delay_loop(void) {
     g.finish = 1;
 }
 
+// The step loop asks every region whether it has work; the region-callback,
+// inertial-update and delayed-NBA lists are predicted empty there (their
+// scans sit behind the loop's hot path), and the pending tests below are
+// shared out-of-line copies instead of one inlined copy per call site.
 static int callback_pending(llg_region_t region) {
+    if (LLG_CO_LIKELY(!g.callbacks)) return 0;
     for (llg_region_callback_t* entry = g.callbacks; entry; entry = entry->next) {
         if (entry->time > g.now) break;
         if (entry->time == g.now && entry->region == region) return 1;
@@ -15,6 +20,7 @@ static int callback_pending(llg_region_t region) {
 }
 
 static llg_region_callback_t* take_region_callback(llg_region_t region) {
+    if (LLG_CO_LIKELY(!g.callbacks)) return NULL;
     llg_region_callback_t** slot = &g.callbacks;
     while (*slot && (*slot)->time <= g.now) {
         llg_region_callback_t* entry = *slot;
@@ -141,7 +147,7 @@ static void wake_zero_waits(llg_region_t region) {
     }
 }
 
-static int design_pending(void) {
+static LLG_NOINLINE int design_pending(void) {
     for (llg_region_t region = LLG_REGION_ACTIVE;
          region <= LLG_REGION_POST_NBA_PLI; region++) {
         if (region_pending(region)) return 1;
@@ -151,7 +157,7 @@ static int design_pending(void) {
     return pending;
 }
 
-static int reactive_pending(void) {
+static LLG_NOINLINE int reactive_pending(void) {
     for (llg_region_t region = LLG_REGION_REACTIVE;
          region <= LLG_REGION_POST_RE_NBA_PLI; region++) {
         if (region_pending(region)) return 1;
@@ -186,7 +192,7 @@ static int drain_design_set(void) {
 
 // Earlier-phase work enabled by a callback precedes the next phase. NBA
 // batches themselves retain issue order before another Active iteration.
-static int design_pending_before(llg_region_t stop) {
+static LLG_NOINLINE int design_pending_before(llg_region_t stop) {
     for (llg_region_t region = LLG_REGION_ACTIVE; region < stop; region++)
         if (region_pending(region)) return 1;
     return g.zero_waits[LLG_REGION_INACTIVE].head != NULL ||
@@ -223,7 +229,7 @@ static int run_design_set(void) {
 // Observed work enabled after the design set reached its fixed point: an
 // assertion clock edge produced by the reactive set, or a queued Observed
 // process/callback.
-static int observed_pending(void) {
+static LLG_NOINLINE int observed_pending(void) {
     // A pending procedural concurrent assertion instance matures only in
     // Observed (SV 16.15.6), also when a reactive process queued it.
     // A write after the last Observed pass can raise an asynchronous abort
@@ -287,7 +293,7 @@ static int drain_reactive_set(void) {
     return 1;
 }
 
-static int reactive_pending_before(llg_region_t stop) {
+static LLG_NOINLINE int reactive_pending_before(llg_region_t stop) {
     for (llg_region_t region = LLG_REGION_REACTIVE; region < stop; region++)
         if (region_pending(region)) return 1;
     return g.zero_waits[LLG_REGION_RE_INACTIVE].head != NULL ||
