@@ -180,13 +180,21 @@ struct llg_co_desc {
  * live by accident. Release builds only store 0. */
 #define LLG_CO_FRAME_LIVE 0x4C495645u
 
-/* Corrupted resume state or debug check failure. The runtime may define this
- * to a diagnostic naming the C function `fn` (a string); it must not return.
- * An override whose handler is declared noreturn may also define
- * LLG_CO_BAD_STATE_NORETURN (see LLG_CO_DISPATCH_END). */
+/* Corrupted resume state or debug check failure, naming the C function `fn`
+ * (a string); it must not return. A host build (LLG_CO_HOST_ALLOC) reports
+ * through the host's llg_co_host_bad_state, so a generated model prints the
+ * library's own reports in the runtime's message layout without this library
+ * depending on the runtime's reporter. A standalone build prints a plain line
+ * (llg_co_bad_state). Another override whose handler is declared noreturn may
+ * also define LLG_CO_BAD_STATE_NORETURN (see LLG_CO_DISPATCH_END). */
 #ifndef LLG_CO_BAD_STATE
+#ifdef LLG_CO_HOST_ALLOC
+#define LLG_CO_BAD_STATE(co, fn) llg_co_host_bad_state((co), (fn))
+#define LLG_CO_BAD_STATE_NORETURN 1
+#else
 #define LLG_CO_BAD_STATE(co, fn) llg_co_bad_state((co), (fn))
 #define LLG_CO_BAD_STATE_DEFAULT_ 1
+#endif
 #endif
 
 /* Poison only dead storage, after registered owners have been drained. Fresh
@@ -266,20 +274,31 @@ typedef struct llg_co_arena {
 } llg_co_arena_t;
 
 #ifdef LLG_CO_HOST_ALLOC
-/* Provided by the host when llg_co.c is built with LLG_CO_HOST_ALLOC.
- * `bytes` includes the chunk header; alloc returns NULL on failure. */
+/* Provided by the host when llg_co.c and every unit including this header
+ * are built with LLG_CO_HOST_ALLOC (a host build: the generated-model
+ * runtime). Link-time hooks rather than function pointers keep the library
+ * free of mutable globals.
+ * Chunk memory: `bytes` includes the chunk header; alloc returns NULL on
+ * failure. Reports: a corrupted state (LLG_CO_BAD_STATE) and an arena
+ * allocation failure (LLG_CO_OOM); neither returns. */
 void* llg_co_host_chunk_alloc(size_t bytes);
 void llg_co_host_chunk_free(void* chunk, size_t bytes);
+LLG_CO_NORETURN void llg_co_host_bad_state(const llg_co_frame_t* co, const char* fn);
+LLG_CO_NORETURN void llg_co_host_oom(size_t bytes);
 #endif
 
 #ifndef LLG_CO_ARENA_MIN_CHUNK
 #define LLG_CO_ARENA_MIN_CHUNK 1024u
 #endif
 
-/* Allocation failure policy for arena calls. The runtime defines this before
- * including the header and maps it to its fatal-allocation path. */
+/* Allocation failure policy for arena calls: the host's fatal-allocation
+ * report in a host build, abort() in a standalone one. */
 #ifndef LLG_CO_OOM
+#ifdef LLG_CO_HOST_ALLOC
+#define LLG_CO_OOM(bytes) llg_co_host_oom(bytes)
+#else
 #define LLG_CO_OOM(bytes) abort()
+#endif
 #endif
 
 #define LLG_CO_ALIGN_UP(n) \
@@ -296,7 +315,9 @@ void llg_co_host_chunk_free(void* chunk, size_t bytes);
 void* llg_co_arena_grow(llg_co_arena_t* arena, size_t need); /* NULL on OOM */
 void llg_co_arena_retire(llg_co_arena_t* arena);             /* head chunk emptied */
 void llg_co_arena_release(llg_co_arena_t* arena);            /* teardown/cancel */
+#ifndef LLG_CO_HOST_ALLOC
 LLG_CO_NORETURN void llg_co_bad_state(const llg_co_frame_t* co, const char* fn);
+#endif
 
 /* Push `size` bytes aligned for any object. Returns NULL on OOM. */
 LLG_CO_INLINE void* llg_co_arena_push(llg_co_arena_t* arena, size_t size) {
@@ -418,7 +439,7 @@ size_t llg_co_backtrace(const llg_co_chain_t* ch, llg_co_visit_fn visit,
  * when the handler is declared noreturn, so it is omitted there for the
  * default handler (__declspec(noreturn)) and for an override that also
  * defines LLG_CO_BAD_STATE_NORETURN to promise a noreturn declaration (the
- * runtime's _Noreturn llg_rt_co_bad_state does). Other compilers keep it. */
+ * host build's llg_co_host_bad_state does). Other compilers keep it. */
 #if defined(_MSC_VER) && !defined(__clang__) && \
     (defined(LLG_CO_BAD_STATE_DEFAULT_) || defined(LLG_CO_BAD_STATE_NORETURN))
 #define LLG_CO_BAD_STATE_RETURN_

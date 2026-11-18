@@ -75,9 +75,13 @@ static int llg_console_log_active;
 static int llg_output_console_log(const char* path) {
     if (llg_console_log_active) return 1;
     char* resolved = llg_output_path(path);
-    int ok = llg_console_log_start(resolved);
+    char error[4096 + 256];  // a resolved path plus the reason
+    int ok = llg_console_log_start(resolved, error, sizeof error);
     free(resolved);
-    if (ok) llg_console_log_active = 1;
+    if (ok)
+        llg_console_log_active = 1;
+    else
+        llg_msg(LLG_MSG_ENVIRONMENT, NULL, "%s", error);
     return ok;
 }
 

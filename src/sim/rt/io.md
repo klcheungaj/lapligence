@@ -11,7 +11,8 @@ distinguish omitted system(NULL) from an empty command.
 `LLG_SIM_OUT_DIR` (created if missing) prefixes relative write paths only —
 waveform, `$fopen` w/a modes, `$writemem*`, the log — never reads;
 `LLG_SIM_WAVE_FILE` replaces `$dumpfile`/`dump.vcd`; `LLG_SIM_LOG_FILE` starts a
-once-per-process forked tee (POSIX only; Windows reports an error) that survives
+once-per-process forked tee (POSIX only; Windows reports an error; the platform
+layer returns the reason and `output_files.c` reports it as SIM-020) that survives
 simulator crashes, shares one pipe when stdout/stderr reach the same file, and is
 joined at exit. `llg_wave.c` reads `LLG_SIM_OUT_DIR`/`LLG_SIM_WAVE_FILE` itself in
 `llg_wave_model_init`, keeping the waveform unit scheduler-independent.

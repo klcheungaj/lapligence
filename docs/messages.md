@@ -212,4 +212,5 @@ A model message whose check can be turned off, or whose limit raised, says how i
 | `SIM-023` | warning | a run-time warning the simulator detects in the design; the run continues (a $cast destination element that does not exist while index checks are off) | - |
 | `SIM-030` | fatal | an internal runtime invariant failed; the model aborts | - |
 | `SIM-031` | fatal | the model could not allocate memory; it aborts | - |
+| `SIM-032` | error | a runtime self-test result (a failed check is an error, a passed group an info); only the runtime C self-tests print it, never a model | - |
 

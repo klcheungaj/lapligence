@@ -227,7 +227,7 @@ fn generated_runtime_backtrace_reports_the_resumed_wait_and_call_sites() {
             assert_eq!(c.matches(&arm).count(), 1, "{c}");
             c = c.replace(
                 &arm,
-                &format!("{arm}\nllg_rt_co_bad_state(co, \"resume location probe\");"),
+                &format!("{arm}\nllg_co_host_bad_state(co, \"resume location probe\");"),
             );
             let executable = llg::sim::build::build_model_cmake(
                 &directory.join(name),
@@ -286,7 +286,7 @@ endmodule\n",
         assert_eq!(c.matches(&arm).count(), 1, "{c}");
         c = c.replace(
             &arm,
-            &format!("{arm}\nllg_rt_co_bad_state(co, \"shared root probe\");"),
+            &format!("{arm}\nllg_co_host_bad_state(co, \"shared root probe\");"),
         );
         let executable = llg::sim::build::build_model_cmake(
             &directory.join("shared"),

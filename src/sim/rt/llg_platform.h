@@ -325,13 +325,16 @@ static inline int llg_console_dup_cloexec(int fd) {
 #endif
 
 // Start copying stdout and stderr to `path` (already resolved by the caller)
-// for the rest of the process. Returns 1 on success; reports and returns 0
-// otherwise, including on hosts without a console log implementation.
-static inline int llg_console_log_start(const char* path) {
+// for the rest of the process. Returns 1 on success; otherwise writes the
+// reason to `error` (the caller reports it, so this layer stays free of the
+// runtime's reporter) and returns 0, including on hosts without a console
+// log implementation.
+static inline int llg_console_log_start(const char* path, char* error, size_t error_size) {
 #if !defined(_WIN32)
     int log_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
     if (log_fd < 0) {
-        fprintf(stderr, "llg: cannot open LLG_SIM_LOG_FILE `%s`: %s\n", path, strerror(errno));
+        (void)snprintf(error, error_size, "cannot open LLG_SIM_LOG_FILE `%s`: %s", path,
+                       strerror(errno));
         return 0;
     }
     int out_pipe[2] = {-1, -1};
@@ -347,7 +350,7 @@ static inline int llg_console_log_start(const char* path) {
                  out_info.st_ino == err_info.st_ino;
     if (saved_out < 0 || saved_err < 0 || pipe(out_pipe) != 0 ||
         (!shared && pipe(err_pipe) != 0)) {
-        fprintf(stderr, "llg: cannot set up LLG_SIM_LOG_FILE: %s\n", strerror(errno));
+        (void)snprintf(error, error_size, "cannot set up LLG_SIM_LOG_FILE: %s", strerror(errno));
         int fds[] = {log_fd, saved_out, saved_err, out_pipe[0], out_pipe[1],
                      err_pipe[0], err_pipe[1]};
         for (size_t i = 0; i < sizeof(fds) / sizeof(fds[0]); ++i)
@@ -356,7 +359,8 @@ static inline int llg_console_log_start(const char* path) {
     }
     pid_t pid = fork();
     if (pid < 0) {
-        fprintf(stderr, "llg: cannot start LLG_SIM_LOG_FILE writer: %s\n", strerror(errno));
+        (void)snprintf(error, error_size, "cannot start LLG_SIM_LOG_FILE writer: %s",
+                       strerror(errno));
         int fds[] = {log_fd, saved_out, saved_err, out_pipe[0], out_pipe[1],
                      err_pipe[0], err_pipe[1]};
         for (size_t i = 0; i < sizeof(fds) / sizeof(fds[0]); ++i)
@@ -390,7 +394,7 @@ static inline int llg_console_log_start(const char* path) {
     return 1;
 #else
     (void)path;
-    fprintf(stderr, "llg: LLG_SIM_LOG_FILE is not supported on Windows\n");
+    (void)snprintf(error, error_size, "LLG_SIM_LOG_FILE is not supported on Windows");
     return 0;
 #endif
 }
