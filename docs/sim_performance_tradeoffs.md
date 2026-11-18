@@ -764,11 +764,29 @@ processes or clock edges, at the cost of a few bytes per object.
   and 6.8 KB with 21 and 18 hot lines to 3.6 KB and 1.3 KB with 11 and 10,
   plus a 1 KB waiter walk with 10; the step loop went from 53 to 39 hot
   lines. Instruction counts move by under 1% either way: the out-of-line
-  copies add calls, the predictions remove taken branches. Wall-clock
-  pairs could not be settled on a host carrying another agent's test suite
-  (load 35–45, interquartile range above 30%); they are still to be taken
-  on a quiet host, together with the placement control of the clocking
-  history change above (one unused 64-byte function).
+  copies add calls, the predictions remove taken branches. An out-of-line
+  body still costs its call on the common path unless the caller tests
+  first: the marker routing of a deferred write was out of line at first
+  and made the record-leaf rows 1–1.5% slower with 1.35% more
+  instructions, until the caller tested for a binding or contents marker
+  before the call.
+
+  Wall clock, 100 alternating pairs in both orders on pinned idle cores,
+  over all micro, wave and corpus rows: 35 of 38 rows are faster, most by
+  1.5–9% (every write waited 3.5%, `#1step` 7–9%, default-then-override
+  3% plain and 3.4% with waves, assertions 5%, packed and plain record
+  leaves of 16 elements about 4%). The rest are within ±0.5% except one:
+  writes to an element of a three-element `int` array inside a packed
+  struct are 2.3–2.5% slower with 0.08% fewer instructions. That row's
+  roughly 400 hot lines are mostly wide part-select arithmetic; the smaller
+  runtime moved that code by 9 KB, so two cache sets it now shares with the
+  C library's `memset` and `free` carry 13 and 12 hot lines against 8 ways
+  (L1i misses 63M → 82M on a shortened copy). It is placement only; a
+  generic remedy belongs to that write path, not to the scheduler.
+
+  Placement control (one unused 64-byte function before the clocking
+  code): it moves default-then-override by 1.1% on the old layout and
+  by 0.3% on the new one, and the `#1step` rows by under 0.8% on either.
 
 ### Bounded retention of finished work
 
