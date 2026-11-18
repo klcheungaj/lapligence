@@ -255,47 +255,47 @@ fn unsupported_grammars_are_located_compile_errors() {
     sim_cli::reject_case(
         SUITE,
         "neg_output_formal",
-        "neg_output_formal.sv:7:5: formal `o` is not an input; llg supports only input \
+        "neg_output_formal.sv:7:5 randsequence production `p`: formal `o` is not an input; llg supports only input \
          production arguments",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_join_duplicate",
-        "neg_join_duplicate.sv:4:24: production `a` is interleaved more than once",
+        "neg_join_duplicate.sv:4:24 rand join: production `a` is interleaved more than once",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_join_reach",
-        "neg_join_reach.sv:5:22: production `a` generates `b`, which the same rand join \
+        "neg_join_reach.sv:5:22 rand join: production `a` generates `b`, which the same rand join \
          interleaves",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_join_alternatives",
-        "neg_join_alternatives.sv:5:22: production `a` has more than one rule; a production \
+        "neg_join_alternatives.sv:5:22 rand join: production `a` has more than one rule; a production \
          that rand join interleaves must have one rule of production items and code blocks",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_join_control",
-        "neg_join_control.sv:5:22: production `a` contains an if, case or repeat item",
+        "neg_join_control.sv:5:22 rand join: production `a` contains an if, case or repeat item",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_join_recursive",
-        "neg_join_recursive.sv:5:22: production `a` is recursive or generates a recursive \
+        "neg_join_recursive.sv:5:22 rand join: production `a` is recursive or generates a recursive \
          production",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_recursive_handle_frame",
-        "neg_recursive_handle_frame.sv:11:7: `h` has a type llg cannot save across a \
+        "neg_recursive_handle_frame.sv:11:7 recursive randsequence production `walk`: `h` has a type llg cannot save across a \
          recursive generation",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_recursive_string_array_frame",
-        "neg_recursive_string_array_frame.sv:6:12: `w` has a type llg cannot save across a \
+        "neg_recursive_string_array_frame.sv:6:12 recursive randsequence production `words`: `w` has a type llg cannot save across a \
          recursive generation",
     );
 }

@@ -369,35 +369,35 @@ fn invalid_configurations_are_rejected_with_their_location() {
             sim_cli::reject_case_with_args(
                 SUITE,
                 "neg_delayed_width.v",
-                "neg_delayed_width.v:8:5 in `tb.u`: delayed signal `tb.u.dd` has 2 bits but its \
+                "neg_delayed_width.v:8:5 timing check `$setuphold` in `tb.u`: delayed signal `tb.u.dd` has 2 bits but its \
                  signal has 1 (IEEE 1800-2009 31.9.1)",
                 &args,
             );
             sim_cli::reject_case_with_args(
                 SUITE,
                 "neg_delayed_self.v",
-                "neg_delayed_self.v:7:5 in `tb.u`: delayed signal `tb.u.c` cannot be its own \
+                "neg_delayed_self.v:7:5 timing check `$setuphold` in `tb.u`: delayed signal `tb.u.c` cannot be its own \
                  signal",
                 &args,
             );
             sim_cli::reject_case_with_args(
                 SUITE,
                 "neg_delayed_two_names.v",
-                "neg_delayed_two_names.v:9:5 in `tb.u`: one signal has two delayed signals, \
+                "neg_delayed_two_names.v:9:5 timing check `$setuphold` in `tb.u`: one signal has two delayed signals, \
                  `tb.u.dc1` and `tb.u.dc2`",
                 &args,
             );
             sim_cli::reject_case_with_args(
                 SUITE,
                 "neg_delayed_shared.v",
-                "neg_delayed_shared.v:8:5 in `tb.u`: delayed signal `tb.u.dd` is named for two \
+                "neg_delayed_shared.v:8:5 timing check `$setuphold` in `tb.u`: delayed signal `tb.u.dd` is named for two \
                  different signals",
                 &args,
             );
             sim_cli::reject_case_with_args(
                 SUITE,
                 "neg_skew_flag.v",
-                "neg_skew_flag.v:6:5: an event_based or remain_active flag must be a known value",
+                "neg_skew_flag.v:6:5 timing check `$timeskew`: an event_based or remain_active flag must be a known value",
                 &args,
             );
         }

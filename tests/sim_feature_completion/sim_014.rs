@@ -285,7 +285,7 @@ fn neg_class_property_nba() {
     sim_cli::reject_case(
         SUITE,
         "neg_class_property_nba",
-        "neg_class_property_nba.sv:10:14 in `tb` is illegal (IEEE 1800-2009 6.21",
+        "neg_class_property_nba.sv:10:14 nonblocking assignment to class property `x` in `tb` is illegal (IEEE 1800-2009 6.21",
     );
 }
 
@@ -297,19 +297,19 @@ fn neg_class_record_property_nba() {
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_class_record_property_nba_whole",
-            "neg_class_record_property_nba_whole.sv:16:8 in `tb` is illegal (IEEE 1800-2009 6.21",
+            "neg_class_record_property_nba_whole.sv:16:8 nonblocking assignment to class property `r` in `tb` is illegal (IEEE 1800-2009 6.21",
             &["-D", cells],
         );
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_class_record_property_nba_member",
-            "neg_class_record_property_nba_member.sv:16:8 in `tb` is illegal (IEEE 1800-2009 6.21",
+            "neg_class_record_property_nba_member.sv:16:8 nonblocking assignment to class property `r` in `tb` is illegal (IEEE 1800-2009 6.21",
             &["-D", cells],
         );
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_class_record_property_nba_string",
-            "neg_class_record_property_nba_string.sv:16:8 in `tb` is illegal (IEEE 1800-2009 6.21",
+            "neg_class_record_property_nba_string.sv:16:8 nonblocking assignment to class property `r` in `tb` is illegal (IEEE 1800-2009 6.21",
             &["-D", cells],
         );
     }
@@ -358,7 +358,7 @@ fn neg_ref_wait_record_property() {
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_ref_wait_record_property_real",
-            "neg_ref_wait_record_property_real.sv:21:9 cannot be observed by a wait or event expression",
+            "neg_ref_wait_record_property_real.sv:21:9 storage of record class property `r` bound to a `ref` formal its task waits on cannot be observed by a wait or event expression",
             &["-D", cells],
         );
     }
@@ -416,7 +416,7 @@ fn neg_function_event_control() {
 
 #[test]
 fn event_variable_comparisons_in_waits_reject() {
-    let reason = "an event variable comparison at";
+    let reason = "an event variable comparison cannot be observed by a wait";
     sim_cli::reject_case(SUITE, "reject_event_wait_compare", reason);
     sim_cli::reject_case(SUITE, "reject_event_ref_wait_compare", reason);
     sim_cli::reject_case(SUITE, "reject_event_control_compare", reason);
@@ -427,7 +427,7 @@ fn storage_with_no_change_marker_rejects_in_waits() {
     let reason = "cannot be observed by a wait or event expression";
     sim_cli::reject_case(SUITE, "reject_wait_call_result", reason);
     // An automatic record a fork shares has no marker (FIN-001 R0).
-    let reason = "automatic record `r` shared with a fork at";
+    let reason = "automatic record `r` shared with a fork cannot be observed by a wait";
     sim_cli::reject_case(SUITE, "reject_wait_automatic_record", reason);
     sim_cli::reject_case(SUITE, "reject_event_automatic_record", reason);
     // Nothing stores into the record while a branch waits: it is read as it is.

@@ -234,31 +234,31 @@ fn fsm_pragma_errors_are_reported() {
     sim_cli::reject_case(
         SUITE,
         "neg_fsm_signal",
-        "neg_fsm_signal.sv:5:3: `cz` is not a signal of module `tb`: an FSM pragma belongs in the module that declares its state vector (IEEE 1800-2009 40.4.1)",
+        "neg_fsm_signal.sv:5:3 `cz` is not a signal of module `tb`: an FSM pragma belongs in the module that declares its state vector (IEEE 1800-2009 40.4.1)",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_fsm_states",
-        "neg_fsm_states.sv:4:3: no `parameter /* tool enum E */` declaration lists the states of FSM `cs`; llg does not extract FSM states automatically (IEEE 1800-2009 40.4, 40.4.6)",
+        "neg_fsm_states.sv:4:3 no `parameter /* tool enum E */` declaration lists the states of FSM `cs`; llg does not extract FSM states automatically (IEEE 1800-2009 40.4, 40.4.6)",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_fsm_malformed",
-        "neg_fsm_malformed.sv:4:3: malformed FSM pragma: `enum` needs an enumeration name, found the end of the pragma",
+        "neg_fsm_malformed.sv:4:3 malformed FSM pragma: `enum` needs an enumeration name, found the end of the pragma",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_fsm_select",
-        "neg_fsm_select.sv:5:3: FSM `field` part-select `r[9:8]` is not within the declared range of `r` in the declared direction (IEEE 1800-2009 40.4.2)",
+        "neg_fsm_select.sv:5:3 FSM `field` part-select `r[9:8]` is not within the declared range of `r` in the declared direction (IEEE 1800-2009 40.4.2)",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_fsm_value",
-        "neg_fsm_value.sv:5:3: FSM `cs` state `S4` is not a known value of the 2-bit state vector (IEEE 1800-2009 40.4.6)",
+        "neg_fsm_value.sv:5:3 FSM `cs` state `S4` is not a known value of the 2-bit state vector (IEEE 1800-2009 40.4.6)",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_fsm_width",
-        "neg_fsm_width.sv:5:3: unsupported: FSM `cs` state vector is 65 bits wide; llg covers FSM state vectors of 1 to 64 bits",
+        "neg_fsm_width.sv:5:3 unsupported: FSM `cs` state vector is 65 bits wide; llg covers FSM state vectors of 1 to 64 bits",
     );
 }

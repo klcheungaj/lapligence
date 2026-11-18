@@ -134,7 +134,7 @@ The hint is the rule name. Disable or re-grade a rule with `[lint.rules.<rule>] 
 
 ## CODEGEN
 
-Lowering failures are grouped into families by their text until each site gets its own id; a failure carries a location where the lowering had the source node at hand.
+Lowering failures are grouped into families by their text. A failure is located at the construct that names it, else at the innermost statement, expression or declaration that contains it; failures of whole-design passes (no top module, internal invariants) have no location.
 
 | Id | Severity | Meaning | Disable |
 |---|---|---|---|

@@ -356,7 +356,7 @@ fn leaf_form_run_time_selections_beyond_the_branch_limit_are_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_record_ref_element_select_effect",
-        "run-time selected record element as a `ref` actual of function `f` after a call or an assignment operator at",
+        "neg_record_ref_element_select_effect.sv:19:15 run-time selected record element as a `ref` actual of function `f` after a call or an assignment operator in the same statement",
     );
 }
 
