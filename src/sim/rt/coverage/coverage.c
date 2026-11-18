@@ -1447,6 +1447,20 @@ void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, c
         llg_cov_option_range_error("option", llg_cov_option_names[option], number, site);
         return;
     }
+    // A negative cross_num_print_missing (a count, Table 19-1) ends the run
+    // at construction; a procedural write of one is ignored with a warning
+    // and the option keeps its value (industry-standard behaviour, S46-D17).
+    if (option == LLG_COV_OPTION_CROSS_NUM_PRINT_MISSING && number < 0) {
+        if (!inst->ready) {
+            llg_cov_option_range_error("option", llg_cov_option_names[option], number, site);
+            return;
+        }
+        if (!llg_rt_exiting())
+            llg_cov_report(LLG_MSG_RUNTIME_WARNING, site,
+                           "coverage option.cross_num_print_missing value %lld is negative; the write is ignored",
+                           (long long)number);
+        return;
+    }
     uint32_t items = inst->group->n_points + inst->group->n_crosses;
     if (point < 0) {
         switch (option) {

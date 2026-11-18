@@ -4220,6 +4220,14 @@ fn s46_d16_auto_bin_max_write() {
 }
 
 #[test]
+fn s46_d17_negative_cross_print_missing() {
+    run_decision(
+        "S46-D17_negative_cross_print_missing",
+        include_str!("fixtures/sim/lrm_decisions/S46-D17_negative_cross_print_missing.out"),
+    );
+}
+
+#[test]
 fn s46_d15_loaded_type_options() {
     // Two runs in one directory: the first saves, the second (+load) loads.
     let expected = include_str!("fixtures/sim/lrm_decisions/S46-D15_loaded_type_options.out");

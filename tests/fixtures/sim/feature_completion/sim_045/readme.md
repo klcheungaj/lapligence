@@ -465,6 +465,23 @@ follows the industry-standard ranges, goal 0 to 100 and at_least of at least
 0. Each write is a run-time error at its line that ends the run: `before
 write`, `final`; exit status 1.
 
+`cross_print_missing.sv` (S46-D17): `option.cross_num_print_missing` is a
+number of cross products (19.7 Table 19-1, L33282-33283: "Number of missing
+(not covered) cross product bins that shall be saved to the coverage
+database and printed in the coverage report"); the text says nothing of a
+negative one. The definition gives the group 3 and the cross 2: `decl
+group=3 xc=2`. A procedural negative write (cross -1 at line 27, group -2 at
+line 29) is ignored with a run-time warning at its line, as industry-standard
+behaviour does, and the option keeps its value: `xc negative write=2`,
+`group negative write=3`. A positive or zero write is stored (19.7,
+L33343-33344: "Other instance-specific options can be assigned procedurally
+after a covergroup has been instantiated"): `xc positive write=5`, `xc zero
+write=0`, then `final`; exit status 0. (Industry-standard behaviour ignores
+every procedural write of this option, positive ones too; llg keeps them.)
+With `DECL` the cross takes the covergroup argument, -4, in its definition:
+a run-time error at the construction that ends the run, as for the other
+bounded options: `before new`, `final`; exit status 1.
+
 ## Negative cases
 
 | Fixture | Error |

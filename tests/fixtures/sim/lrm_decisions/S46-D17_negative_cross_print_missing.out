@@ -1,0 +1,4 @@
+decl group=3 xc=2
+xc negative write=2
+group negative write=3
+final

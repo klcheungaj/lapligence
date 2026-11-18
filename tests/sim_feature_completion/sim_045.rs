@@ -367,6 +367,37 @@ fn procedural_option_writes_out_of_range_end_the_run() {
     }
 }
 
+/// A negative `option.cross_num_print_missing`: a procedural write is
+/// ignored with a located warning, a defined one ends the run at the
+/// construction (S46-D17).
+#[test]
+fn negative_cross_print_missing_is_ignored_or_ends_the_run() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_045/cross_print_missing.out");
+    let ignored = "is negative; the write is ignored";
+    sim_cli::run_case_checked_matrix(SUITE, "cross_print_missing", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(
+            llg_messages(output),
+            [
+                format!("WARNING: cross_print_missing.sv:27:5: [SIM-011] (tb @ 0 ps) coverage option.cross_num_print_missing value -1 {ignored}"),
+                format!("WARNING: cross_print_missing.sv:29:5: [SIM-011] (tb @ 0 ps) coverage option.cross_num_print_missing value -2 {ignored}"),
+            ],
+            "{label}"
+        );
+    });
+    sim_cli::run_case_with_args(
+        SUITE,
+        "cross_print_missing",
+        "before new\nfinal\n",
+        "ERROR: cross_print_missing.sv:16:24: [SIM-010] (tb @ 0 ps) coverage option.cross_num_print_missing value -4 is out of range\n\
+         FATAL: cross_print_missing.sv:16:24: [SIM-009] (tb @ 0 ps) coverage option value out of range\n\
+         INFO: [SIM-000] 1 fatal, 1 error(s), 0 warning(s)\n",
+        &[],
+        &["-D", "DECL"],
+    );
+}
+
 #[test]
 fn invalid_options_are_located_errors() {
     sim_cli::reject_case(

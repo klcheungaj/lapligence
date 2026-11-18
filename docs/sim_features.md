@@ -3249,7 +3249,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   except a procedural `option.auto_bin_max` write statement, which is
   ignored with a lowering warning and keeps the defined value, S46-D16).
   An option value out of range (weight below 0, goal outside 0 to 100,
-  at_least below 0, auto_bin_max below 1) is a located run-time error that
+  at_least below 0, auto_bin_max below 1, cross_num_print_missing below 0
+  in the definition; a negative cross_num_print_missing write is ignored with
+  a warning, S46-D17) is a located run-time error that
   ends the run, final procedures included, at construction, at a procedural
   write and under a static initializer; a constant `type_option` out of
   range is a compile error; an X or Z option value is 0 (S45-D20).
