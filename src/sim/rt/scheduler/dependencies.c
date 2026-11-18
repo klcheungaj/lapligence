@@ -1540,7 +1540,10 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
             if (contents && !change_marker_defer(contents, &rowless, NULL))
                 marker_toggle(contents, rowless);
         } else if (before) {
-            (void)change_route_markers(target, before, contents, source);
+            // Only storage with a binding in its bucket or an array contents
+            // marker has anything to route: the common write skips the call.
+            if (contents || dependency_bucket_head(target))
+                (void)change_route_markers(target, before, contents, source);
         } else {
             publish_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED);
             if (contents) llg_dependency_changed(contents);
