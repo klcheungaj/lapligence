@@ -210,7 +210,9 @@ static void nba_capture_masked(llg_nba_t* n, uint32_t target_width,
 }
 
 static void promote_delayed_nbas(void) {
-    while (g.delayed_nba_buckets && g.delayed_nba_buckets->time == g.now) {
+    // Predicted none due: every NBA region test of the step loop runs this.
+    while (LLG_CO_UNLIKELY(g.delayed_nba_buckets != NULL) &&
+           g.delayed_nba_buckets->time == g.now) {
         llg_nba_bucket_t* bucket = g.delayed_nba_buckets;
         g.delayed_nba_buckets = bucket->next;
         for (int region = 0; region < LLG_REGION_COUNT; ++region) {

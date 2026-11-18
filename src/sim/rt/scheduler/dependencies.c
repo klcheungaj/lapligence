@@ -1219,7 +1219,76 @@ static void wait_write_walk(llg_wait_source_t* source, sv4_t* sig, double* real)
     }
 }
 
-LLG_CO_INLINE void publish_waiters_packed(llg_wait_subscription_t* cursor, sv4_t* target) {
+// The waiter kinds a publication rarely meets: mixed event lists, general
+// level waits, ordered dependency waits and change logs, and an inline
+// snapshot that must grow to hold a wider value. Kept out of
+// publish_waiters_packed so that the common kinds stay on a few dense cache
+// lines. Returns whether `w` wakes.
+static LLG_OUTLYING int publish_waiter_rare(llg_wait_t* w, sv4_t* target) {
+    int wake = 0;
+    if (w->kind == W_EVENTS_INLINE) {
+        wait_inline_promote(w, target);
+    } else if (w->kind == W_MIXED) {
+        llg_wait_mixed_payload_t* payload = &w->payload.rare->mixed;
+        for (int i = 0; i < payload->n; i++) {
+            if (payload->specs[i].sig == target) {
+                if (ev_matches(payload->last[i], *target,
+                               payload->specs[i].kind))
+                    wake = 1;
+                sv4_copy(&payload->last[i], target);
+            }
+        }
+    } else if (w->kind == W_DEPS) {
+        // An ordered wait shares its lists with its retained record.
+        wake = wait_change_log_packed(w->proc->retained_wait->changes, target);
+    } else if (w->kind == W_LEVEL) {
+        llg_wait_level_payload_t* level = &w->payload.rare->level;
+        if (level->sig == target && sv4_same(*target, level->value)) wake = 1;
+    } else if (w->kind == W_CHANGE_LOG) {
+        (void)wait_change_log_packed((llg_wait_change_log_t*)w, target);
+    }
+    return wake;
+}
+
+// An edge or change list over several signals: whether one of its entries
+// for `target` matched. Updates each entry's snapshot.
+static LLG_NOINLINE int publish_events_wake(llg_wait_expression_payload_t* payload,
+                                            sv4_t* target) {
+    int wake = 0;
+    for (int i = 0; i < payload->n; i++) {
+        if (payload->specs[i].sig == target) {
+            if (ev_matches(payload->last[i], *target, payload->specs[i].kind)) wake = 1;
+            sv4_copy(&payload->last[i], target);
+        }
+    }
+    return wake;
+}
+
+// A dependency list (`@*` and inferred sensitivity): a whole dependency
+// changes on every publication, a selected one when its bits changed.
+static LLG_NOINLINE int publish_deps_wake(llg_wait_expression_payload_t* payload,
+                                          sv4_t* target) {
+    int wake = 0;
+    for (int i = 0; i < payload->n; i++) {
+        const llg_wait_dependency_t* dependency = &payload->dependencies[i];
+        if (dependency->sig == target) {
+            if (dependency->width) {
+                sv4_t selected = sv4_part_select(dependency->value ? *dependency->value : *target,
+                    (int64_t)dependency->lsb + dependency->width - 1, dependency->lsb);
+                if (!sv4_same(payload->last[i], selected)) wake = 1;
+                sv4_move(&payload->last[i], &selected);
+            } else wake = 1;
+        }
+    }
+    return wake;
+}
+
+// One out-of-line copy shared by every settle and publication: each inlined
+// copy put its own lines in the cache although a step runs few of them. The
+// walk keeps the one-signal waits inline and calls out for the lists, so a
+// design that uses one kind runs a few dense lines.
+static LLG_NOINLINE void publish_waiters_packed(llg_wait_subscription_t* cursor,
+                                                sv4_t* target) {
     llg_wait_t* w;
     while ((w = wait_source_next(cursor)) != NULL) {
         int wake = 0;
@@ -1229,58 +1298,23 @@ LLG_CO_INLINE void publish_waiters_packed(llg_wait_subscription_t* cursor, sv4_t
                 wake = ev_inline_matches(w, *target, single->specs[0].kind);
                 if (wake && wait_held_by_suspension(w)) wake = 0;
                 if (!wake) {
-                    if (wait_inline_fits(target)) wait_inline_copy(w, target);
-                    else wait_inline_promote(w, target);
+                    if (LLG_CO_LIKELY(wait_inline_fits(target))) wait_inline_copy(w, target);
+                    else (void)publish_waiter_rare(w, target);
                 }
             }
         } else if (w->kind == W_LEVEL_INLINE) {
             if (w->payload.single.specs[0].sig == target &&
                 wait_inline_same(w, *target)) wake = 1;
         } else if (w->kind == W_EVENTS) {
-            llg_wait_expression_payload_t* payload = &w->payload.expression;
-            for (int i = 0; i < payload->n; i++) {
-                if (payload->specs[i].sig == target) {
-                    if (ev_matches(payload->last[i], *target,
-                                   payload->specs[i].kind))
-                        wake = 1;
-                    sv4_copy(&payload->last[i], target);
-                }
-            }
-        } else if (w->kind == W_MIXED && w->payload.rare) {
-            llg_wait_mixed_payload_t* payload = &w->payload.rare->mixed;
-            for (int i = 0; i < payload->n; i++) {
-                if (payload->specs[i].sig == target) {
-                    if (ev_matches(payload->last[i], *target,
-                                   payload->specs[i].kind))
-                        wake = 1;
-                    sv4_copy(&payload->last[i], target);
-                }
-            }
-        } else if (w->kind == W_DEPS) {
-            llg_wait_expression_payload_t* payload = &w->payload.expression;
-            // An ordered wait shares its lists with its retained record.
-            if (LLG_CO_UNLIKELY(w->proc->wait_ordered))
-                wake = wait_change_log_packed(w->proc->retained_wait->changes, target);
-            else for (int i = 0; i < payload->n; i++) {
-                const llg_wait_dependency_t* dependency = &payload->dependencies[i];
-                if (dependency->sig == target) {
-                    if (dependency->width) {
-                        sv4_t selected = sv4_part_select(dependency->value ? *dependency->value : *target,
-                            (int64_t)dependency->lsb + dependency->width - 1, dependency->lsb);
-                        if (!sv4_same(payload->last[i], selected)) wake = 1;
-                        sv4_move(&payload->last[i], &selected);
-                    } else wake = 1;
-                }
-            }
+            wake = publish_events_wake(&w->payload.expression, target);
+        } else if (w->kind == W_DEPS && LLG_CO_LIKELY(!w->proc->wait_ordered)) {
+            wake = publish_deps_wake(&w->payload.expression, target);
         } else if (w->kind == W_EXPR) {
             for (int i = 0; i < w->payload.expression.n; i++) {
                 if (expression_update(w, i, target, NULL)) wake = 1;
             }
-        } else if (w->kind == W_LEVEL) {
-            llg_wait_level_payload_t* level = &w->payload.rare->level;
-            if (level->sig == target && sv4_same(*target, level->value)) wake = 1;
-        } else if (w->kind == W_CHANGE_LOG) {
-            (void)wait_change_log_packed((llg_wait_change_log_t*)w, target);
+        } else if (w->kind != W_MIXED || w->payload.rare) {
+            wake = publish_waiter_rare(w, target);
         }
         if (wake && !wait_held_by_suspension(w)) wake_proc(w->proc);
     }
@@ -1296,16 +1330,18 @@ static void publish_bound_markers(const void* target, uint8_t kind) {
 
 // Clocking drives, sampled-value clocks and assertion clocks. Each is called
 // only when it has entries: `sv4_t` arguments passed by value cost a copy
-// per call on the hottest path.
+// per call on the hottest path. The tests are predicted not taken so that
+// they sit together on the settle's hot path, with the calls behind it.
 LLG_CO_INLINE void clock_consumers_changed(sv4_t* target, sv4_t old, sv4_t value,
                                           int deferred) {
-    if (g.clocking_drives && clocking_drive_source_pending(target))
+    if (LLG_CO_UNLIKELY(g.clocking_drives != NULL) && clocking_drive_source_pending(target))
         clocking_drive_signal_match(target, old, value);
-    if (g.sampled_edge_clocks) sampled_domain_clock_signal_changed(target, old, value, deferred);
+    if (LLG_CO_UNLIKELY(g.sampled_edge_clocks != NULL))
+        sampled_domain_clock_signal_changed(target, old, value, deferred);
     // Queue the clock event after asynchronous controls have seen the new
     // value. This keeps a clock that also changes an accept/reject condition
     // from being discarded before its sampled control can resolve it.
-    if (g.assertions) assertion_clock_signal_changed(target, old, value);
+    if (LLG_CO_UNLIKELY(g.assertions != NULL)) assertion_clock_signal_changed(target, old, value);
 }
 
 // How a publication reaches the markers bound to its storage.
@@ -1326,7 +1362,7 @@ enum {
 LLG_CO_INLINE void sig_settle(sv4_t* target, llg_wait_source_t* source,
                               llg_wait_subscription_t* cursor, sv4_t old, sv4_t value,
                               int bound, sv4_t* contents) {
-    clocking_record_edge(target, old, value);
+    if (LLG_CO_UNLIKELY(g.clocking_count != 0)) clocking_record_edge(target, old, value);
     clock_consumers_changed(target, old, value, cursor != NULL);
     if (cursor) {
         publish_waiters_packed(cursor, target);
@@ -1337,15 +1373,15 @@ LLG_CO_INLINE void sig_settle(sv4_t* target, llg_wait_source_t* source,
         publish_waiters_packed(&own, target);
         wait_subscription_unlink(&own);
     }
-    deferred_trigger_source_change(target, NULL);
+    if (LLG_CO_UNLIKELY(g.deferred_triggers)) deferred_trigger_source_change(target, NULL);
     if (bound == LLG_BOUND_PUBLISH) {
         publish_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED);
         if (contents) llg_dependency_changed(contents);
     } else {
-        if (bound != LLG_BOUND_NONE)
+        if (LLG_CO_UNLIKELY(bound != LLG_BOUND_NONE))
             fire_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED,
                                bound == LLG_BOUND_SETTLE);
-        if (contents) fire_marker(contents);
+        if (LLG_CO_UNLIKELY(contents != NULL)) fire_marker(contents);
     }
     if (LLG_CO_UNLIKELY(source && source->checks))
         check_consumers_changed(source, target, NULL, cursor != NULL);
@@ -1388,8 +1424,8 @@ static void change_route_note(llg_route_t* route, const sv4_t* target,
     ++route->fired;
 }
 
-static int change_route_markers(sv4_t* target, const sv4_t* before, sv4_t* contents,
-                                llg_wait_source_t* row) {
+static LLG_NOINLINE int change_route_markers(sv4_t* target, const sv4_t* before,
+                                             sv4_t* contents, llg_wait_source_t* row) {
     llg_route_t route = {{NULL, NULL}, {NULL, NULL}, NULL, 0, 0};
     int bound = 0;
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
@@ -1464,13 +1500,17 @@ static int change_route_markers(sv4_t* target, const sv4_t* before, sv4_t* conte
 static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
                         llg_wait_source_t* source, int deferred,
                         const sv4_t* before, llg_wait_subscription_t* cursor) {
-    sampled_record_write(target);
-    if (deferred && g.sampled_edge_clocks) sampled_clock_gates_latch(target, old, value);
+    // Each per-write consumer below is predicted absent, so that a write
+    // runs its tests on a few lines and the consumers sit behind them.
+    if (LLG_CO_UNLIKELY(g.sampled != NULL)) sampled_record_write(target);
+    if (LLG_CO_UNLIKELY(deferred && g.sampled_edge_clocks))
+        sampled_clock_gates_latch(target, old, value);
     // Ordinary accept_on/reject_on controls are also asynchronous. Their
     // predicate is evaluated only after the write is visible, while the
     // synchronous variants are checked at the sampled assertion edge below.
-    assertion_abort_condition_changed();
-    if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_PACKED);
+    if (LLG_CO_UNLIKELY(g.property_async_count || g.assertions))
+        assertion_abort_condition_changed();
+    if (LLG_CO_UNLIKELY(g.monitors != NULL)) llg_monitor_target_changed(target, LLG_FMT_PACKED);
 #ifdef LLG_WAVEFORM
     llg_wave_changed_sv4(target);
 #endif
@@ -1694,8 +1734,10 @@ static void publish_waiters_real(llg_wait_subscription_t* cursor, double* target
     }
 }
 
-static void real_settle(double* target, llg_wait_source_t* source,
-                        llg_wait_subscription_t* cursor) {
+// Out of line: only models with real storage reach it, and an inlined copy
+// in each caller would sit among the packed paths' hot lines.
+static LLG_NOINLINE void real_settle(double* target, llg_wait_source_t* source,
+                                     llg_wait_subscription_t* cursor) {
     if (cursor) {
         publish_waiters_real(cursor, target);
     } else if (source) {
@@ -1705,7 +1747,7 @@ static void real_settle(double* target, llg_wait_source_t* source,
         publish_waiters_real(&own, target);
         wait_subscription_unlink(&own);
     }
-    deferred_trigger_source_change(NULL, target);
+    if (LLG_CO_UNLIKELY(g.deferred_triggers)) deferred_trigger_source_change(NULL, target);
     if (cursor) fire_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL, 0);
     else publish_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
     if (LLG_CO_UNLIKELY(source && source->checks))
@@ -1772,7 +1814,7 @@ static void rowless_settle(llg_change_t* change, sv4_t* target) {
     if (change->edge) clocking_edge_note(change->edge, old, *target);
     else clocking_record_edge(target, old, *target);
     clock_consumers_changed(target, old, *target, 1);
-    deferred_trigger_source_change(target, NULL);
+    if (LLG_CO_UNLIKELY(g.deferred_triggers)) deferred_trigger_source_change(target, NULL);
     if (change->fires_exact) {
         for (int i = 0; i < 2; i++) {
             llg_change_t* marker = change->fires[i];
@@ -1785,7 +1827,9 @@ static void rowless_settle(llg_change_t* change, sv4_t* target) {
     }
 }
 
-static void change_settle(llg_change_t* change) {
+// The check of every record but a packed storage's with a row: history and
+// rowless records, real storage and markers.
+static LLG_NOINLINE void change_settle_other(llg_change_t* change) {
     llg_wait_subscription_t* cursor = &change->cursor;
     if (change->kind == LLG_CHANGE_ROWLESS) {
         sv4_t* target = (sv4_t*)change->key;
@@ -1795,34 +1839,38 @@ static void change_settle(llg_change_t* change) {
         // A history record (no markers routed) always has its entry.
         if (!change->contents_known) history_settle(change->edge, target, change->before, *target);
         else rowless_settle(change, target);
-        return;
-    }
-    const void* key = change->key;
-    if (change->kind == LLG_CHANGE_PACKED) {
-        sv4_t* target = (sv4_t*)key;
-        if (llg_sv4_width(change->before) != llg_sv4_width(*target) ||
-            !sv4_same(change->before, *target)) {
-            if (change->fires_exact) {
-                for (int i = 0; i < 2; i++) {
-                    llg_change_t* marker = change->fires[i];
-                    if (marker && marker->serial == change->fires_serial[i]) marker->fire = 1;
-                }
-                sig_settle(target, cursor->source, cursor, change->before, *target,
-                           LLG_BOUND_NONE, NULL);
-            } else {
-                sig_settle(target, cursor->source, cursor, change->before, *target,
-                           change_bound(change, target) ? LLG_BOUND_FIRE : LLG_BOUND_NONE,
-                           change->contents_known ? change->contents
-                                                  : fixed_array_contents_marker(target));
-            }
-        }
     } else if (change->kind == LLG_CHANGE_REAL) {
-        double* target = (double*)key;
+        double* target = (double*)change->key;
         if (!real_same(change->before_real, *target))
             real_settle(target, cursor->source, cursor);
     } else if (change->fire || (change->slot && *change->slot != change->before_handle)) {
-        marker_settle((sv4_t*)key, cursor);
+        marker_settle((sv4_t*)change->key, cursor);
     }
+}
+
+static void change_settle(llg_change_t* change) {
+    if (LLG_CO_UNLIKELY(change->kind != LLG_CHANGE_PACKED)) {
+        change_settle_other(change);
+        return;
+    }
+    llg_wait_subscription_t* cursor = &change->cursor;
+    sv4_t* target = (sv4_t*)change->key;
+    if (llg_sv4_width(change->before) == llg_sv4_width(*target) &&
+        sv4_same(change->before, *target))
+        return;
+    int bound = LLG_BOUND_NONE;
+    sv4_t* contents = NULL;
+    if (change->fires_exact) {
+        for (int i = 0; i < 2; i++) {
+            llg_change_t* marker = change->fires[i];
+            if (marker && marker->serial == change->fires_serial[i]) marker->fire = 1;
+        }
+    } else {
+        if (change_bound(change, target)) bound = LLG_BOUND_FIRE;
+        contents = change->contents_known ? change->contents
+                                          : fixed_array_contents_marker(target);
+    }
+    sig_settle(target, cursor->source, cursor, change->before, *target, bound, contents);
 }
 
 // Publishes in first-write order, with deferral off: what a walk evaluates or

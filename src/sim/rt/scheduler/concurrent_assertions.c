@@ -420,7 +420,9 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
     }
 }
 
-static void assertion_abort_condition_changed(void) {
+// Out of line, and called only when a property program or an assertion
+// exists: every publication runs the call site.
+static LLG_OUTLYING void assertion_abort_condition_changed(void) {
     // Asynchronous aborts of property programs read current values in the
     // next Observed pass (property_assertions_async).
     if (g.property_async_count) g.property_async_pending = 1;

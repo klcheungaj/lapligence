@@ -461,12 +461,16 @@ int llg_sampled_domain_status(uint64_t identity, int kind) {
     }
 }
 
+// Runs once per time step; each list is predicted empty so that a model
+// without assertions or sampled values runs a few straight lines here.
 static void sample_preponed_values(void) {
     g.assertion_edges_pending = 0;
-    for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
-         assertion = assertion->next) {
-        assertion->edge_pending = 0;
-        free_assertion_clock_events(assertion);
+    if (LLG_CO_UNLIKELY(g.assertions != NULL)) {
+        for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+             assertion = assertion->next) {
+            assertion->edge_pending = 0;
+            free_assertion_clock_events(assertion);
+        }
     }
     // The scheduler revisits PREPONED for zero-delay deltas in the same time
     // slot. #1step samples are fixed at the slot boundary and must not observe
@@ -474,6 +478,7 @@ static void sample_preponed_values(void) {
     if (g.sampled_time_valid && g.sampled_time == g.now) return;
     g.sampled_time = g.now;
     g.sampled_time_valid = 1;
+    if (LLG_CO_LIKELY(!g.sampled_reals && !g.sampled_values && !g.sampled)) return;
     for (llg_sampled_real_t* item = g.sampled_reals; item; item = item->next)
         item->value = *item->signal;
     for (llg_sampled_value_t* item = g.sampled_values; item; item = item->next)

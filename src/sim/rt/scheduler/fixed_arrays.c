@@ -194,13 +194,17 @@ static struct llg_fixed_block* fixed_block_new(llg_fixed_array_t* array, uint64_
     return block;
 }
 
-static void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index, sv4_t old);
+// Out of line: only arrays read by sampled-value functions keep cell history,
+// and the publication of every other cell should not carry its code.
+static LLG_OUTLYING void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index,
+                                              sv4_t old);
 
 // The block holding `target` when it is a cell of a marked fixed array, else
 // NULL. A publication looks it up once for its sampled history and its
 // contents marker.
 static struct llg_fixed_block* fixed_array_block(const sv4_t* target) {
-    if (!fixed_marked_arrays || !fixed_address_capacity) return NULL;
+    // Predicted unmarked: a publication's hot path keeps only this test.
+    if (LLG_CO_LIKELY(!fixed_marked_arrays || !fixed_address_capacity)) return NULL;
     return fixed_block_of(target);
 }
 
@@ -212,7 +216,7 @@ static void fixed_block_sampled_changed(struct llg_fixed_block* block,
                                         sv4_t* target, sv4_t old) {
     if (!block) return;
     llg_fixed_array_t* array = block->array;
-    if (array->sampled) {
+    if (LLG_CO_UNLIKELY(array->sampled != NULL)) {
         uint64_t index;
         if (fixed_direct(array)) index = block->first + (uint64_t)(target - fixed_block_page(block));
         else {
@@ -404,7 +408,8 @@ static void fixed_sampled_reserve(struct llg_fixed_sampled* sampled) {
     free(previous.entries);
 }
 
-static void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index, sv4_t old) {
+static LLG_OUTLYING void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index,
+                                              sv4_t old) {
     struct llg_fixed_sampled* sampled = fixed_sampled_slot(array);
     if (!sampled || sampled->has_whole) return;
     fixed_sampled_reserve(sampled);

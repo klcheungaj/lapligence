@@ -801,7 +801,7 @@ static void event_triggered_unlink(llg_wait_t* w);
 static void mailbox_unlink_wait(llg_wait_t* w);
 static void mailbox_value_destroy(llg_mailbox_value_t* value);
 static LLG_OUTLYING void assertion_disable_signal_changed(sv4_t* signal);
-static void assertion_abort_condition_changed(void);
+static LLG_OUTLYING void assertion_abort_condition_changed(void);
 static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                            sv4_t value);
 struct llg_concurrent_assertion;

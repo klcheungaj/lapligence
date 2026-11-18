@@ -2496,6 +2496,7 @@ static void llg_net_propagation_sync(llg_net_t* net) {
 // The first pending update due now in `region`. The list is sorted, so the
 // scan stops at the first later maturity.
 static llg_inertial_t* inertial_due(llg_region_t region) {
+    if (LLG_CO_LIKELY(!g.inertial_pending)) return NULL;
     for (llg_inertial_t* driver = g.inertial_pending;
          driver && driver->time <= g.now; driver = driver->next_pending) {
         if (driver->time == g.now && driver->region == region) return driver;
