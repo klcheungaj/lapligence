@@ -746,6 +746,7 @@ pub fn markdown() -> String {
          `` (`line file:line)`` when a `` `line`` directive maps it, and is left out (with \
          its separator) when a message has none. \
          Design context is the hierarchical scope and the simulation time, joined by `{}`; \
+         code of the compilation unit or of a class declared there names `$unit`; \
          the time is in the largest unit that shows it exactly. The hint, when present, \
          names the lint rule or frontend warning option that selects the message, or, \
          for a generated-model message, the option or setting that turns its check \

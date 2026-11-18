@@ -306,11 +306,22 @@ impl EmitCtx<'_, '_> {
     /// `llg_rt_site` in the runtime prelude). Without a source position the
     /// site is the scope alone.
     pub(super) fn finish_location(&self, node: NodeId) -> String {
-        let scope = self.message_scope();
+        let scope = self.site_scope();
         if self.cg.node(node).line == 0 {
-            return scope.clone();
+            return scope.to_owned();
         }
         format!("{scope}\u{1f}{}", self.cg.source_location(node))
+    }
+
+    /// The design scope a run-time message from this code names. Code of
+    /// the compilation unit, a `$unit` subroutine or a method of a class
+    /// declared there (directly or inside such a class), names `$unit`, as
+    /// industry-standard simulators do; other code names its own scope.
+    fn site_scope(&self) -> &str {
+        if self.display_scope.is_none() && self.cg.in_compilation_unit_scope(self.inst) {
+            return "$unit";
+        }
+        self.message_scope()
     }
 
     /// Lower the optional diagnostic level shared by `$finish` and `$stop`.

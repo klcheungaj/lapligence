@@ -124,3 +124,20 @@ fn long_runtime_reports_keep_every_byte_on_one_line() {
     );
     run_case_with_stderr("severity_long_messages", "", &stderr);
 }
+
+/// Compilation-unit code reports under `$unit`, as industry-standard
+/// simulators print it; module code keeps its instance.
+#[test]
+fn compilation_unit_code_reports_under_unit() {
+    run_case_with_stderr(
+        "severity_unit_scope",
+        "done\n",
+        "ERROR: severity_unit_scope.sv:15:5: [SIM-005] ($unit @ 0 ns) bad count 1\n\
+         INFO: severity_unit_scope.sv:18:5: [SIM-003] ($unit @ 0 ns) static check\n\
+         WARNING: severity_unit_scope.sv:10:7: [SIM-004] ($unit @ 0 ns) nested 1\n\
+         ERROR: severity_unit_scope.sv:22:3: [SIM-005] ($unit @ 0 ns) unit function error\n\
+         ERROR: severity_unit_scope.sv:34:5: [SIM-005] (tb @ 0 ns) module error\n\
+         INFO: severity_unit_scope.sv:36:5: [SIM-001] (tb @ 0 ns) $finish called\n\
+         INFO: [SIM-000] 3 error(s), 1 warning(s), 2 info(s)\n",
+    );
+}
