@@ -103,3 +103,77 @@ fn future_function_call_argument_is_a_located_limit() {
         "$future_gclk argument in `tb` is not supported: it must be a static packed or real expression",
     );
 }
+
+#[test]
+fn process_handle_forms_are_located_limits() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_process_status_wait",
+        "CODEGEN-001",
+        Some("10:5"),
+        "process status() in a wait, event or sensitivity expression in `tb` is not supported",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_process_suspend_function",
+        "CODEGEN-001",
+        Some("6:5"),
+        "process method `suspend` inside a function body in `tb` is not supported",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_process_try_get",
+        "CODEGEN-001",
+        Some("8:9"),
+        "mailbox try_get or try_peek into a process variable in `tb` is not supported",
+    );
+}
+
+#[test]
+fn set_items_of_nested_containers_and_container_calls_are_located_limits() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_inside_nested_container",
+        "CODEGEN-009",
+        Some("8:31"),
+        "container element access in tb requires a scalar value",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_inside_container_call",
+        "CODEGEN-009",
+        Some("10:31"),
+        "container result of `g` in `tb` must be assigned whole to a container variable",
+    );
+}
+
+#[test]
+fn computed_handle_packed_select_target_is_a_located_limit() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_computed_handle_select_write",
+        "CODEGEN-002",
+        Some("13:5"),
+        "cannot resolve array base of select `b`",
+    );
+}
+
+/// Formerly a known issue: elements of an unpacked array property of a
+/// computed handle read, write and take a compound assignment.
+#[test]
+fn computed_handle_array_property_elements_execute() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_audit/computed_handle_element.out");
+    sim_cli::run_case(SUITE, "computed_handle_element", expected, "", &[]);
+}
+
+#[test]
+fn record_call_result_with_a_real_member_in_equality_is_a_located_limit() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_record_real_call_equality",
+        "CODEGEN-001",
+        Some("12:32"),
+        "real aggregate bit-stream source is not supported",
+    );
+}

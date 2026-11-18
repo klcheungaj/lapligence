@@ -21,3 +21,17 @@ Clause lines quote `docs/specification/SystemVerilog-1800-2009.txt`.
 | `neg_class_key_find_index` | Class-keyed associative arrays | 7.12.1 L9280: "find_index() returns the indices of all the elements satisfying the given expression." |
 | `neg_class_key_call_compound` | Class-keyed associative arrays | 11.4.1 L14478-14479: an assignment operator is a blocking assignment "with the exception that any left-hand index expression is only evaluated once." |
 | `neg_future_call_argument` | Global clocking future sampled value function limits | 16.9.4 L22888: "$future_gclk ( expression )"; the text puts no restriction on a function call in the argument beyond the 16.9.3 rules for sampled value functions. |
+| `neg_process_status_wait` | Rejected process-handle forms | 9.7 L12614: "The status() function returns the process status, as defined by the state enumeration:"; a wait condition may read any expression (9.4.3). |
+| `neg_process_suspend_function` | Rejected process-handle forms | 9.7 L12639: "The suspend() function allows a process to suspend either its own execution or that of another process." |
+| `neg_process_try_get` | Rejected process-handle forms | 15.4.6 L20584: "If a message is available and the message type is equivalent to the type of the message variable, the message is retrieved, and the method returns a positive integer." |
+| `neg_inside_nested_container` | Set membership items outside packed storage | 11.4.13 L15366-15367: "If an expression in the list is an unpacked array, its elements are traversed by descending into the array until reaching a singular value." |
+| `neg_inside_container_call` | Set membership items outside packed storage | 11.4.13 L15366-15367, as above; the item is a function returning a queue. |
+| `neg_computed_handle_select_write` | Selects of properties of computed class handles | 11.5.1 L15737: "Bit-selects extract a particular bit from a vector, packed array, packed structure, parameter, or concatenation."; the vector is a property reached through a function result (8.4). |
+| `neg_record_real_call_equality` | Record results with real members as equality operands | 11.2.2 L14175: "Aggregate expressions can also be compared with equality or inequality operators." |
+
+`computed_handle_element` is a positive case: the elements of an unpacked
+array property of a computed handle, which the known issues listed as
+rejected, read, write and take a compound assignment. Its `.out` follows from
+11.4.1 L14478-14479 ("any left-hand index expression is only evaluated
+once": `get()` runs once per statement, so `calls` counts 1, 2, 3) and from
+the stored values 3, 5 and 7; `pop_front` leaves the queue empty (7.10.2.4).
