@@ -781,7 +781,10 @@ pub fn markdown() -> String {
                  and the hint is the warning option (`-W<option>`) when Slang has one. \
                  Slang notes print as `INFO`. A frontend warning is disabled in the \
                  source with `` `pragma diagnostic ignore=\"-W<option>\"`` (IEEE 1800-2009 \
-                 22.11 leaves pragma meaning to the tool).\n\n",
+                 22.11 leaves pragma meaning to the tool). `SLANG-VirtualVisibilityMismatch`, \
+                 a virtual-method override that changes the method's visibility, is a \
+                 warning (decision S08-D1); `-Werror` reports it as an error, which stops \
+                 the run.\n\n",
             ),
             Tool::Lint => {
                 out.push_str(
