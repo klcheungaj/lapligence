@@ -746,11 +746,6 @@ pub enum IrSampledFunc {
     Stable,
     Changed,
     Past,
-    /// `$stable`/`$changed` of a real argument: the domain history holds the
-    /// argument's exact 64-bit IEEE image and the two samples compare as
-    /// reals with `==` (so -0.0 equals 0.0 and NaN never equals itself).
-    RealStable,
-    RealChanged,
     /// An operand of an assertion with global clocking future sampled value
     /// functions (IEEE 1800-2009 16.9.4), captured when its clock event
     /// occurs and read when the event is evaluated at the next global clock

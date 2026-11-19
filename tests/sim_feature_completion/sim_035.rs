@@ -37,7 +37,7 @@ fn complex_clocking_events_sample_on_every_tick() {
             ..Default::default()
         },
         expected,
-        "INFO: complex_clocks.sv:85:8: [SIM-001] (tb @ 17 ns) $finish called\n",
+        "INFO: complex_clocks.sv:91:8: [SIM-001] (tb @ 17 ns) $finish called\n",
     );
 }
 
@@ -94,30 +94,49 @@ fn neg_fell_shortreal() {
 }
 
 #[test]
-fn neg_real_assertion() {
+fn neg_rose_real_compare() {
     sim_cli::reject_case(
         SUITE,
-        "neg_real_assertion",
-        "$changed of a real expression is illegal",
+        "neg_rose_real_compare",
+        "neg_rose_real_compare.sv:10:40 $rose of a real expression is illegal",
     );
 }
 
 #[test]
-fn neg_real_past() {
+fn neg_past_gclk_real() {
     sim_cli::reject_case(
         SUITE,
-        "neg_real_past",
-        "$past of a real expression is illegal",
+        "neg_past_gclk_real",
+        "$past_gclk of a real expression is illegal",
     );
 }
 
 #[test]
-fn neg_stable_realtime() {
+fn neg_stable_gclk_real() {
     sim_cli::reject_case(
         SUITE,
-        "neg_stable_realtime",
-        "$stable of a real expression is illegal",
+        "neg_stable_gclk_real",
+        "$stable_gclk of a real expression is illegal",
     );
+}
+
+#[test]
+fn real_values_keep_exact_histories() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_035/real_past.out");
+    sim_cli::run_case_backend_parity(SUITE, "real_past", expected, &[], &[]);
+}
+
+#[test]
+fn real_array_cells_keep_exact_histories() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_035/real_element_past.out");
+    sim_cli::run_case_backend_parity(SUITE, "real_element_past", expected, &[], &[]);
+}
+
+#[test]
+fn shortreal_values_keep_exact_histories() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_035/real_past_shortreal.out");
+    sim_cli::run_case_backend_parity(SUITE, "real_past_shortreal", expected, &[], &[]);
 }
 
 #[test]
@@ -343,14 +362,5 @@ fn neg_assoc_element() {
         SUITE,
         "neg_assoc_element",
         "neg_assoc_element.sv:9:47 $past argument selecting a container element in `tb`",
-    );
-}
-
-#[test]
-fn neg_real_element_past() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_real_element_past",
-        "neg_real_element_past.sv:11:42 $past of a real expression is illegal",
     );
 }

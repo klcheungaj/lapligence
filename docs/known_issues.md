@@ -2560,7 +2560,9 @@ arrays are served since sampled-array-cells, see Intended direction).
 
 ### Symptom
 
-Sampled-value functions keep a history of packed integral values. Whole fixed
+Sampled-value functions keep a history of packed integral values and of the
+exact 64-bit images of real values (`$past`, `$stable` and `$changed` of reals,
+and of real cells of fixed arrays, are served by decision AA-D8). Whole fixed
 unpacked arrays, unpacked structures and unions, and queues are legal
 arguments (SV 16.6.1, L21575 onward: "The following types are not allowed: —
 Noninteger types (shortreal, real, and realtime)", then string, event,

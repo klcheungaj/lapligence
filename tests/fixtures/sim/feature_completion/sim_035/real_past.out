@@ -1,0 +1,19 @@
+5 p1=0.25 p2=0.25 p3=0.25 g=0.25 u=0.00 ax=1.50 eq=1 lt=0
+5 t=2.00 ci=0 sum=3.25 cmp=0 st=1
+5 a_proc fail
+5 a_mod fail
+5 a_eq fail past2=0.25 r=0.75
+5 a_t fail
+10 proc=0.25
+15 p1=0.25 p2=0.25 p3=0.25 g=0.25 u=0.00 ax=1.50 eq=0 lt=1
+15 t=2.00 ci=0 sum=3.25 cmp=0 st=1
+15 a_eq fail past2=0.25 r=1.25
+20 proc=0.75
+25 p1=0.75 p2=0.25 p3=0.25 g=0.75 u=0.00 ax=3.00 eq=0 lt=1
+25 t=3.00 ci=1 sum=4.75 cmp=0 st=0
+30 proc=1.25
+35 p1=1.25 p2=0.75 p3=0.25 g=0.75 u=0.00 ax=4.50 eq=0 lt=1
+35 t=4.00 ci=1 sum=6.25 cmp=1 st=1
+40 proc=1.75
+45 p1=1.75 p2=1.25 p3=0.75 g=1.75 u=0.00 ax=6.00 eq=0 lt=1
+45 t=5.00 ci=2 sum=7.75 cmp=1 st=1

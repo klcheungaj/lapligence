@@ -1623,13 +1623,6 @@ impl Validator<'_> {
                     if call.argument.is_real() && call.kind != IrSampledFunc::Sampled {
                         return self.fail(path, "sampled-value argument must be packed");
                     }
-                    if matches!(
-                        call.kind,
-                        IrSampledFunc::RealStable | IrSampledFunc::RealChanged
-                    ) && call.argument.width != 64
-                    {
-                        return self.fail(path, "real sampled status needs a 64-bit real image");
-                    }
                     match call.kind {
                         crate::sim::ir::IrSampledFunc::Sampled => {
                             if call.domain.is_some() || call.ticks != 0 {
@@ -1713,9 +1706,7 @@ impl Validator<'_> {
                         IrSampledFunc::Rose
                         | IrSampledFunc::Fell
                         | IrSampledFunc::Stable
-                        | IrSampledFunc::Changed
-                        | IrSampledFunc::RealStable
-                        | IrSampledFunc::RealChanged => {
+                        | IrSampledFunc::Changed => {
                             if !call.domain.is_some_and(|domain| {
                                 self.model
                                     .sampled_domains

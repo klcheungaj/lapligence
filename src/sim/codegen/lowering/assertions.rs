@@ -2806,6 +2806,14 @@ impl Codegen<'_> {
                 crate::sim::ir::IrSysFunc::Sampled(call) => {
                     call.domain.is_some() || self.sampled_compatible(&call.argument)
                 }
+                // `$past` of a real decodes its domain's 64-bit image (AA-D8).
+                crate::sim::ir::IrSysFunc::BitsToReal(image) => matches!(
+                    image.kind(),
+                    IrExprKind::SysFunc(inner) if matches!(
+                        &**inner,
+                        crate::sim::ir::IrSysFunc::Sampled(call) if call.domain.is_some()
+                    )
+                ),
                 // `$countones`, `$onehot`, `$onehot0` and `$isunknown` are
                 // functions of their argument's value alone, so they read the
                 // sampled argument (16.5, 16.12).
