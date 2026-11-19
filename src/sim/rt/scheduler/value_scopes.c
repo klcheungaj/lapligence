@@ -1,6 +1,11 @@
 /* Exact descriptor identity lookup. Hash integer representations, but compare
  * pointers only for equality; never order/subtract unrelated C pointers.
- * Entries outlive lexical scope exit when an NBA retains the scope. */
+ * Entries outlive lexical scope exit when an NBA retains the scope.
+ * Linear probing; a removal leaves a tombstone (one store, no branch on its
+ * neighbours), and tombstones are reclaimed by rebuilding before live entries
+ * and tombstones together fill more than 1/N of the index. Backward-shift
+ * deletion needs no tombstones, but its branch on each later entry of the
+ * cluster mispredicted on scope-heavy designs. */
 typedef struct {
     const void* target;
     llg_value_scope_t* scope;
@@ -9,33 +14,46 @@ typedef struct {
 static llg_value_scope_entry_t* value_scope_index;
 static size_t value_scope_capacity;
 static size_t value_scope_count;
+/* Live entries plus tombstones. */
 static size_t value_scope_used;
 /* A real, private object is a portable tombstone, not a fabricated pointer. */
 static sv4_t value_scope_deleted_key = SV4_EMPTY;
+/* Live entries and tombstones together stay within 1/LOAD of the index. The
+ * common lookup misses (a global target never has an entry), and a miss
+ * walks its whole cluster, tombstones included: on 1,000 flops with NBAs a
+ * miss probed 1.4 slots on average at half against 29 at three quarters.
+ * A live entry then costs 32 to 85 bytes instead of 21 to 43. A rebuild at
+ * the same size needs tombstones in at least 1/RECLAIM of the index, so
+ * each rebuild is paid for by that many insertions. */
+#define LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR 2u
+#define LLG_VALUE_SCOPE_INDEX_RECLAIM_DIVISOR 8u
 
-static size_t value_scope_hash(const void* target) {
-    uint64_t hash = (uint64_t)(uintptr_t)target;
-    hash ^= hash >> 30;
-    hash *= UINT64_C(0xbf58476d1ce4e5b9);
-    hash ^= hash >> 27;
-    hash *= UINT64_C(0x94d049bb133111eb);
-    hash ^= hash >> 31;
-    return (size_t)hash;
+/* 64 - log2(value_scope_capacity) while the index exists. */
+static unsigned value_scope_shift;
+
+/* Home slot: the top bits of a multiplicative (Fibonacci) hash, which depend
+ * on every bit of the address. It runs on every lookup, insertion and
+ * removal, so it is one multiply rather than a full mixer. */
+static size_t value_scope_home(const void* target, unsigned shift) {
+    return (size_t)(((uint64_t)(uintptr_t)target * UINT64_C(0x9e3779b97f4a7c15)) >> shift);
 }
 
 static void value_scope_index_rebuild(size_t capacity) {
     llg_value_scope_entry_t* entries = (llg_value_scope_entry_t*)llg_checked_calloc(
         capacity, sizeof(*entries), "value scope address index");
+    unsigned shift = 64;
+    for (size_t size = capacity; size > 1; size >>= 1) --shift;
     for (size_t i = 0; i < value_scope_capacity; ++i) {
         llg_value_scope_entry_t entry = value_scope_index[i];
         if (!entry.scope) continue;
-        size_t slot = value_scope_hash(entry.target) & (capacity - 1);
+        size_t slot = value_scope_home(entry.target, shift);
         while (entries[slot].target) slot = (slot + 1) & (capacity - 1);
         entries[slot] = entry;
     }
     free(value_scope_index);
     value_scope_index = entries;
     value_scope_capacity = capacity;
+    value_scope_shift = shift;
     value_scope_used = value_scope_count;
 }
 
@@ -66,20 +84,31 @@ static void value_scope_index_add(llg_value_scope_t* scope) {
     }
     size_t needed = value_scope_count + count;
     size_t capacity = value_scope_capacity ? value_scope_capacity : 16;
-    while (needed > capacity - capacity / 4) {
+    while (needed > capacity / LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR) {
         if (capacity > SIZE_MAX / 2) {
             llg_msg(LLG_MSG_INTERNAL, NULL, "value scope index capacity overflow");
             abort();
         }
         capacity *= 2;
     }
-    /* Reclaim tombstones before they can force a full-table probe. */
+    /* Tombstones count against the load too. Rebuilding at the same size
+     * frees only the tombstones, so it grows instead unless they are at
+     * least 1/RECLAIM of the index. */
+    if (capacity == value_scope_capacity &&
+        value_scope_used + count > capacity / LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR &&
+        value_scope_used - value_scope_count < capacity / LLG_VALUE_SCOPE_INDEX_RECLAIM_DIVISOR) {
+        if (capacity > SIZE_MAX / 2) {
+            llg_msg(LLG_MSG_INTERNAL, NULL, "value scope index capacity overflow");
+            abort();
+        }
+        capacity *= 2;
+    }
     if (capacity != value_scope_capacity ||
-        count > capacity - capacity / 4 - value_scope_used)
+        value_scope_used + count > capacity / LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR)
         value_scope_index_rebuild(capacity);
     for (size_t i = 0; i < count; ++i) {
         const void* target = value_scope_key(scope, i);
-        size_t slot = value_scope_hash(target) & (capacity - 1);
+        size_t slot = value_scope_home(target, value_scope_shift);
         while (value_scope_index[slot].scope)
             slot = (slot + 1) & (capacity - 1);
         if (!value_scope_index[slot].target) ++value_scope_used;
@@ -90,7 +119,7 @@ static void value_scope_index_add(llg_value_scope_t* scope) {
 
 static llg_value_scope_t* value_scope_index_find(const void* target) {
     if (!value_scope_count) return NULL;
-    size_t slot = value_scope_hash(target) & (value_scope_capacity - 1);
+    size_t slot = value_scope_home(target, value_scope_shift);
     while (value_scope_index[slot].target) {
         if (value_scope_index[slot].target == target)
             return value_scope_index[slot].scope;
@@ -103,8 +132,9 @@ static void value_scope_index_remove(llg_value_scope_t* scope) {
     size_t count = value_scope_key_count(scope);
     for (size_t i = 0; i < count; ++i) {
         const void* target = value_scope_key(scope, i);
-        size_t slot = value_scope_hash(target) & (value_scope_capacity - 1);
-        while (value_scope_index[slot].target != target) {
+        size_t slot = value_scope_home(target, value_scope_shift);
+        while (value_scope_index[slot].target != target ||
+               value_scope_index[slot].scope != scope) {
             if (!value_scope_index[slot].target) {
                 llg_msg(LLG_MSG_INTERNAL, NULL, "value scope index entry missing");
                 abort();

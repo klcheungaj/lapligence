@@ -423,6 +423,20 @@ code at `-O1` instead of 0.13×).
 - **Threshold:** 16 cells. Columns already win on accesses at 4 cells, but
   below 16 the tree stays a few hundred lines, so small records keep their
   form.
+- **Selections of leaf records:** a record of integral members below the
+  threshold is one signal per leaf, but its selections used to start from all
+  leaves joined into one value. `r.a[1] = v` built a composite reference (six
+  scoped descriptors) and merged the whole record through the wide
+  part-select path, a read concatenated every leaf, and a run-time `r.a[k]`
+  did both with a run-time selection plan. A constant selection inside one
+  leaf now reads and writes that leaf (the whole leaf, or a constant part of
+  it). A run-time element of a module record compares the index with each
+  declared index, as for records with a `string` member; records of
+  subroutines and procedural blocks keep the joined form for run-time
+  elements. Instructions (callgrind, 1M accesses to a three-cell `int` member
+  of a record of integral members): constant write 16.6G → 1.20G, constant
+  read 3.28G → 1.17G, run-time read-modify-write 17.8G → 3.15G, which equals
+  the same record with a `string` member. Wall clock (100 alternating pairs, both orders): constant write 92% faster, constant read 66%, run-time read-modify-write 83%.
 
 ### Coroutine frame: C locals wherever possible
 
@@ -473,6 +487,7 @@ processes or clock edges, at the cost of a few bytes per object.
 | Waiter, process-handle and activation removal; process registration | Intrusive back-links and a free-slot bitmap: O(1) instead of list searches | Included above (these were 22–48% of samples) | Included above |
 | Clock-history lookup | Exact-pointer hash index; entries expire at descriptor release and time-slot advance | `tasks` 75% faster, suite fixture 34%; lookup share 69% → 0.03% | 8 B per hash bucket (about 11–21 B per live entry); history holds only current-slot entries |
 | Fork groups and named-event waiters | Tail pointers and back-links: O(1) fork-group append/unlink and event-waiter removal | One parent spawning 300k `join_none` children: 2,321 → 0.41 s; 1M children 1.34 s (previously over an hour); corpus within noise | Process record 400 → 424 B, fork group 72 → 88 B, 4 B per entry of a multi-event wait list; ~786 B per process at 1M |
+| Value-scope address index, looked up for every write, NBA and pin target (global targets always miss) | Live entries and tombstones together within half the index (`LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR`); a same-size rebuild only once tombstones fill 1/8 of it, otherwise growth (`LLG_VALUE_SCOPE_INDEX_RECLAIM_DIVISOR`); home slot from one multiply (top bits of a Fibonacci product) instead of a 64-bit mixer. Backward-shift deletion was measured and dropped: its branch on each later entry of a cluster mispredicted, and the task corpus row ran 4% slower with 1.3% fewer instructions | Mean slots per lookup: 1,000 flops with NBAs 29.0 → 1.37, `k2_drive` 2.87 → 1.17, glitch row 4.71 → 2.18, `m_cells` 2.12 → 1.15; the clocking row 1.90 → 5.0, yet it runs 1.5% fewer instructions. Wall clock: the NBA rows 6–7% faster, `tasks` about 5%, the glitch rows about 5%, most others 1–3%; no row runs more instructions. One record-read row reads 1.3% slower with 4% fewer instructions and far fewer branch mispredictions (code placement). | 32–85 B per live entry (was 21–43) |
 
 ### Inline storage for common waits
 

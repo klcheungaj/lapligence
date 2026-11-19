@@ -12,6 +12,16 @@ enum FixedRoot {
         read: IrExpr,
         target: IrLhs,
     },
+    /// A value held as separate cells (a record with one signal per leaf, a
+    /// whole fixed array of cells): `read` joins the cells most significant
+    /// first and `target` streams them. Each cell keeps its own read, target
+    /// and width so a constant selection inside one cell selects that cell
+    /// alone (`narrow_to_cell`).
+    Cells {
+        read: IrExpr,
+        target: IrLhs,
+        cells: Vec<(IrExpr, IrLhs, u32)>,
+    },
 }
 
 struct Projection {
@@ -245,27 +255,18 @@ impl Codegen<'_> {
                         }));
                     }
                 }
-                let mut values = Vec::new();
-                let mut parts = Vec::new();
+                let mut cells = Vec::new();
                 for leaf in &aggregate.leaves {
                     let value = self.aggregate_leaf_read(leaf)?;
-                    parts.push((self.aggregate_leaf_lhs(leaf)?, value.width));
-                    values.push(value);
+                    let width = value.width;
+                    cells.push((value, self.aggregate_leaf_lhs(leaf)?, width));
                 }
-                let read = Self::join_bitstream_parts(path, values)?;
-                if read.width != width {
+                let root = Self::cells_root(path, cells, width)?;
+                if matches!(&root, FixedRoot::Cells { read, .. } if read.width != width) {
                     return Err("aggregate backing layout disagrees with its type".into());
                 }
                 return Ok(Some(Projection {
-                    root: FixedRoot::Cell {
-                        read,
-                        target: IrLhs::Stream {
-                            parts,
-                            width,
-                            slice: 1,
-                            direction: IrStreamDirection::LeftToRight,
-                        },
-                    },
+                    root,
                     descriptor,
                     steps: Vec::new(),
                     element_states: Vec::new(),
@@ -281,15 +282,14 @@ impl Codegen<'_> {
         {
             if let Some(descriptor) = self.query_descriptor(node).cloned() {
                 if let Some(width) = fixed_width(&descriptor) {
-                    let mut parts = Vec::new();
-                    let mut values = Vec::new();
+                    let mut cells = Vec::new();
                     let arr = self.reference_array(array.ir);
                     for coordinates in port_array_index_vectors(&array.dims) {
                         let indices = coordinates
                             .into_iter()
                             .map(|index| lhs_integer_expr(i128::from(index)))
                             .collect::<Vec<_>>();
-                        values.push(IrExpr::new(
+                        let read = IrExpr::new(
                             IrExprKind::ArrayRead {
                                 arr,
                                 indices: indices.clone(),
@@ -298,26 +298,16 @@ impl Codegen<'_> {
                             array.elem_width,
                             array.signed,
                             None,
-                        ));
-                        parts.push((
-                            self.reference_lhs(IrLhs::ArrayElem {
-                                arr,
-                                indices,
-                                elem_sel: IrElemSel::Whole,
-                            })?,
-                            array.elem_width,
-                        ));
+                        );
+                        let target = self.reference_lhs(IrLhs::ArrayElem {
+                            arr,
+                            indices,
+                            elem_sel: IrElemSel::Whole,
+                        })?;
+                        cells.push((read, target, array.elem_width));
                     }
                     return Ok(Some(Projection {
-                        root: FixedRoot::Cell {
-                            read: Self::join_bitstream_parts(path, values)?,
-                            target: IrLhs::Stream {
-                                parts,
-                                width,
-                                slice: 1,
-                                direction: IrStreamDirection::LeftToRight,
-                            },
-                        },
+                        root: Self::cells_root(path, cells, width)?,
                         descriptor,
                         signed: false,
                         steps: Vec::new(),
@@ -1375,6 +1365,105 @@ impl Codegen<'_> {
         }
     }
 
+    /// The root of a value held as `cells` of `width` bits in all, most
+    /// significant first.
+    fn cells_root(
+        path: &str,
+        cells: Vec<(IrExpr, IrLhs, u32)>,
+        width: u32,
+    ) -> Result<FixedRoot, String> {
+        let read = Self::join_bitstream_parts(
+            path,
+            cells.iter().map(|(read, ..)| read.clone()).collect(),
+        )?;
+        let target = IrLhs::Stream {
+            parts: cells
+                .iter()
+                .map(|(_, target, width)| (target.clone(), *width))
+                .collect(),
+            width,
+            slice: 1,
+            direction: IrStreamDirection::LeftToRight,
+        };
+        Ok(FixedRoot::Cells {
+            read,
+            target,
+            cells,
+        })
+    }
+
+    /// The cell a constant selection `steps` of a value held as `cells` lies
+    /// in, with the selection's offset in that cell and its width. `None`
+    /// for a run-time, out-of-range, tagged or multi-cell selection.
+    fn selected_cell(
+        cells: &[(IrExpr, IrLhs, u32)],
+        steps: &[(IrPackedSelect, bool, Option<TaggedMemberGuard>)],
+    ) -> Option<(usize, u64, u32)> {
+        if steps.is_empty() || steps.iter().any(|(_, _, guard)| guard.is_some()) {
+            return None;
+        }
+        let total = cells
+            .iter()
+            .try_fold(0u64, |sum, (.., width)| sum.checked_add(u64::from(*width)))?;
+        let (mut lsb, mut width) = (0u64, total);
+        for (step, ..) in steps {
+            let base = super::super::statements::force_constant_i64(&step.base)
+                .and_then(|base| u64::try_from(base).ok())?;
+            let step_width = u64::from(step.width);
+            if step_width == 0 || base.checked_add(step_width).is_none_or(|end| end > width) {
+                return None;
+            }
+            lsb += base;
+            width = step_width;
+        }
+        let width = u32::try_from(width).ok()?;
+        let mut cell_lsb = total;
+        cells
+            .iter()
+            .enumerate()
+            .find_map(|(index, (.., cell_width))| {
+                cell_lsb -= u64::from(*cell_width);
+                (lsb >= cell_lsb && lsb + u64::from(width) <= cell_lsb + u64::from(*cell_width))
+                    .then(|| (index, lsb - cell_lsb, width))
+            })
+    }
+
+    /// Read a constant selection of a value held as cells from the one cell
+    /// it lies in, rebased onto that cell, instead of joining every cell.
+    /// The cells are the value's own storage, so the selected bits and their
+    /// states are the same. Other selections keep the joined value.
+    fn narrow_to_cell(projection: &mut Projection) {
+        if !projection.element_states.is_empty() {
+            return;
+        }
+        let FixedRoot::Cells { cells, .. } = &mut projection.root else {
+            return;
+        };
+        let Some((index, offset, width)) = Self::selected_cell(cells, &projection.steps) else {
+            return;
+        };
+        // A two-state step converts the bits it selects; converting the
+        // narrowed bits once gives the same value.
+        let state = projection.steps.iter().any(|(_, state, _)| *state);
+        let (mut read, target, cell_width) = cells.swap_remove(index);
+        projection.steps = if offset == 0 && width == cell_width {
+            if state {
+                read = IrExpr::to_two_state(read);
+            }
+            Vec::new()
+        } else {
+            vec![(
+                IrPackedSelect {
+                    base: lhs_integer_expr(i128::from(offset)),
+                    width,
+                },
+                state,
+                None,
+            )]
+        };
+        projection.root = FixedRoot::Cell { read, target };
+    }
+
     fn fixed_member(projection: &mut Projection, name: &str) -> Result<(), String> {
         let TypeShape::Aggregate(layout) = &projection.descriptor.shape else {
             return Err("member of non-aggregate fixed value".into());
@@ -1512,11 +1601,14 @@ impl Codegen<'_> {
         if matches!(self.kind(node), NodeKind::Expr(ExprKind::Cast { .. })) {
             return Ok(None);
         }
-        let Some(projection) = self.fixed_projection(path, node)? else {
+        let Some(mut projection) = self.fixed_projection(path, node)? else {
             return Ok(None);
         };
+        Self::narrow_to_cell(&mut projection);
         let mut value = match &projection.root {
-            FixedRoot::Cell { read, .. } | FixedRoot::ReadOnly(read) => read.clone(),
+            FixedRoot::Cell { read, .. }
+            | FixedRoot::Cells { read, .. }
+            | FixedRoot::ReadOnly(read) => read.clone(),
             FixedRoot::Activation(root) => {
                 let function = self.func.as_ref().ok_or("fixed value outside activation")?;
                 if let Some(value) = function.arg_ir.get(root) {
@@ -1633,11 +1725,31 @@ impl Codegen<'_> {
         let Some(projection) = self.fixed_projection(path, node)? else {
             return Ok(None);
         };
+        // A constant selection inside one cell of a value held as cells, as
+        // a constant part of that cell's signal.
+        let cell_part = match &projection.root {
+            FixedRoot::Cells { cells, .. } => Self::selected_cell(cells, &projection.steps)
+                .and_then(|(index, offset, width)| match &cells[index].1 {
+                    IrLhs::Part(signal, left, right, state) if left >= right => {
+                        let low = right.checked_add(i64::try_from(offset).ok()?)?;
+                        let high = low.checked_add(i64::from(width) - 1)?;
+                        (high <= *left).then_some(IrLhs::Part(
+                            *signal,
+                            high,
+                            low,
+                            *state || two_state(&projection.descriptor),
+                        ))
+                    }
+                    _ => None,
+                }),
+            _ => None,
+        };
+        let cells = matches!(projection.root, FixedRoot::Cells { .. });
         let target = match projection.root {
             FixedRoot::ReadOnly(_) => {
                 return Err("fixed-array reduction iterator is read-only".into())
             }
-            FixedRoot::Cell { target, .. } => target,
+            FixedRoot::Cell { target, .. } | FixedRoot::Cells { target, .. } => target,
             FixedRoot::Activation(root) => {
                 if allow_const
                     && self
@@ -1707,7 +1819,7 @@ impl Codegen<'_> {
                 }));
             }
         }
-        Ok(Some(IrLhs::PackedSelect {
+        let lhs = IrLhs::PackedSelect {
             target: Box::new(target),
             steps: projection
                 .steps
@@ -1716,6 +1828,21 @@ impl Codegen<'_> {
                 .collect(),
             signed: projection.signed,
             two_state: two_state(&projection.descriptor),
+        };
+        // A constant selection inside one cell of a value held as cells
+        // writes that cell alone, not every cell through a composite
+        // reference of the whole value. The shared rule comes first: other
+        // lowering classifies a target by the form it gives (a whole leaf is
+        // a whole variable, decision AB-O3), so a selection it leaves alone
+        // becomes a part of the cell's signal, never a whole one.
+        let lhs = if cells {
+            self.collapse_concat_reference(lhs)
+        } else {
+            lhs
+        };
+        Ok(Some(match (lhs, cell_part) {
+            (IrLhs::PackedSelect { .. }, Some(part)) => part,
+            (lhs, _) => lhs,
         }))
     }
 }

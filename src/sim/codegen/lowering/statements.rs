@@ -598,11 +598,16 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
             }
             Ok(false)
         }
-        IrLhs::Part(index, ..) => {
+        IrLhs::Part(index, left, right, _) => {
             let signal = model.signals.get(*index).ok_or_else(|| {
                 format!("force target signal {index} is out of bounds in `{path}`")
             })?;
-            if signal.net_driver.is_none() && signal.net_alias.is_empty() {
+            // A part covering all of a variable is that variable: a constant
+            // element of a record member array held as its own leaf
+            // (`r.a[1]`) is a singular variable (SV 6.4, 10.6.2).
+            let whole = *right == 0
+                && u64::try_from(*left).is_ok_and(|left| left + 1 == u64::from(signal.ty.width()));
+            if signal.net_driver.is_none() && signal.net_alias.is_empty() && !whole {
                 return Err(format!(
                     "force/release of a variable part-select in `{path}` is not supported"
                 ));

@@ -423,9 +423,88 @@ static void check_time_and_io(void) {
     CHECK(probe_live_values() == 0);
 }
 
+/* The descriptor address index deletes by moving the rest of a cluster back,
+ * never by leaving a tombstone: after removals in any order every occupied
+ * slot holds a live entry, each live descriptor is found, and a global
+ * target, which is never indexed, is not. */
+/* Live entries plus tombstones stay within the load limit, so a miss (a
+ * global target) ends within a short walk; live entries all stay findable. */
+static void check_value_scope_index_state(const sv4_t* global, llg_value_scope_t* const* scopes,
+                                          const sv4_t* const* keys, const int* live,
+                                          unsigned count) {
+    size_t used = 0, indexed = 0;
+    for (size_t slot = 0; slot < value_scope_capacity; ++slot) {
+        used += value_scope_index[slot].target != NULL;
+        indexed += value_scope_index[slot].scope != NULL;
+    }
+    CHECK(indexed == value_scope_count && used == value_scope_used);
+    CHECK(!value_scope_capacity ||
+          used <= value_scope_capacity / LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR);
+    CHECK(value_scope_index_find(global) == NULL);
+    for (unsigned i = 0; i < count; ++i)
+        if (live[i]) CHECK(value_scope_index_find(keys[i]) == scopes[i]);
+}
+
+static void check_value_scope_index(void) {
+    enum { COUNT = 300, KEPT = 100, CHURN = 3000 };
+    llg_rt_init();
+    llg_value_scope_t* scopes[COUNT];
+    const sv4_t* keys[COUNT];
+    unsigned order[COUNT];
+    int live[COUNT];
+    for (unsigned i = 0; i < COUNT; ++i) {
+        scopes[i] = llg_value_scope_begin(1);
+        keys[i] = llg_value_scope_values(scopes[i]);
+        order[i] = i;
+        live[i] = 1;
+    }
+    uint32_t state = 12345u;
+    for (unsigned i = COUNT - 1u; i > 0; --i) {
+        state = state * 1103515245u + 12345u;
+        unsigned j = (state >> 8) % (i + 1u);
+        unsigned swap = order[i];
+        order[i] = order[j];
+        order[j] = swap;
+    }
+    sv4_t global = sv4_zero(8, 0);
+    check_value_scope_index_state(&global, scopes, keys, live, COUNT);
+    /* Random removals down to KEPT live scopes. */
+    for (unsigned removed = 0; removed < COUNT - KEPT; ++removed) {
+        llg_value_scope_end(scopes[order[removed]]);
+        live[order[removed]] = 0;
+        CHECK(value_scope_count == COUNT - 1u - removed);
+        check_value_scope_index_state(&global, scopes, keys, live, COUNT);
+    }
+    /* Churn: replace a random dead scope's slot while KEPT stay live, so
+     * tombstones keep accumulating and must be reclaimed without growing. */
+    size_t capacity = value_scope_capacity;
+    for (unsigned step = 0; step < CHURN; ++step) {
+        state = state * 1103515245u + 12345u;
+        unsigned slot = order[(state >> 8) % (COUNT - KEPT)];
+        scopes[slot] = llg_value_scope_begin(1);
+        keys[slot] = llg_value_scope_values(scopes[slot]);
+        live[slot] = 1;
+        check_value_scope_index_state(&global, scopes, keys, live, COUNT);
+        llg_value_scope_end(scopes[slot]);
+        live[slot] = 0;
+        check_value_scope_index_state(&global, scopes, keys, live, COUNT);
+    }
+    CHECK(value_scope_capacity <= capacity);
+    for (unsigned removed = COUNT - KEPT; removed < COUNT; ++removed) {
+        llg_value_scope_end(scopes[order[removed]]);
+        live[order[removed]] = 0;
+        check_value_scope_index_state(&global, scopes, keys, live, COUNT);
+    }
+    CHECK(value_scope_index == NULL && all_value_scopes == NULL);
+    sv4_destroy(&global);
+    llg_rt_cleanup();
+    CHECK(probe_live_values() == 0);
+}
+
 int main(void) {
     check_file_messages();
     check_time_and_io();
+    check_value_scope_index();
     check_nba_and_scopes();
     check_nba_fifo_and_cancellation();
     check_narrow_selected_nbas();
