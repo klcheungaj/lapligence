@@ -498,6 +498,24 @@ impl Codegen<'_> {
         Some(selects)
     }
 
+    /// Whether `root` is a module-level unpacked structure stored as one
+    /// signal per leaf (no columns, no subroutine or procedural-block
+    /// storage).
+    fn module_leaf_record(&self, root: NodeId, descriptor: &TypeDescriptor) -> bool {
+        matches!(
+            &descriptor.shape,
+            TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct
+        ) && self.enclosing_func_task(root).is_none()
+            && self.proc_local_info(root).is_none()
+            && self.unpacked_aggregates.get(&root).is_some_and(|storage| {
+                !storage.columns
+                    && storage
+                        .leaves
+                        .iter()
+                        .all(|leaf| leaf.signal.is_some() && leaf.array.is_none())
+            })
+    }
+
     /// `r.a[k]` with a non-constant `k`, and any selection that has such an
     /// index above one leaf of a native record: one leaf, or a select inside
     /// a packed leaf.
@@ -579,11 +597,17 @@ impl Codegen<'_> {
                 )
             }
             SelectRoot::Module(root) => {
-                if Self::fixed_descriptor_width_bits(
-                    self.query_descriptor(root)
-                        .ok_or("native record has no type")?,
-                )
-                .is_some()
+                let descriptor = self
+                    .query_descriptor(root)
+                    .ok_or("native record has no type")?;
+                // A module record of integral members held as one signal per
+                // leaf selects its leaf the same way: its joined value would
+                // cost a composite reference and a merge of every leaf per
+                // access. Other integral aggregates (arrays, and records of
+                // subroutines and procedural blocks, whose storage is their
+                // activation's) keep their packed form.
+                if Self::fixed_descriptor_width_bits(descriptor).is_some()
+                    && !self.module_leaf_record(root, descriptor)
                 {
                     return Ok(None);
                 }

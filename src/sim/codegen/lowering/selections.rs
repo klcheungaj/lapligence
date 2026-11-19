@@ -638,8 +638,13 @@ impl<'a> Codegen<'a> {
     }
 
     fn unpacked_array_base_path(&self, array: NodeId) -> Option<(NodeId, Vec<AggregatePathPart>)> {
-        // A declared array is its own storage, whatever members share its name.
-        if self.array_globals.contains_key(&array) {
+        // A declared array is its own storage, whatever members share its name:
+        // a module array, or a subroutine or block variable (an activation's
+        // `cells` is not a module record's member `cells`). Only the detached
+        // node of a member array, which declares no variable, names a member.
+        if self.array_globals.contains_key(&array)
+            || self.db.variable_lifetime(array) != VariableLifetime::Unavailable
+        {
             return None;
         }
         let name = self.node(array).name.as_str();

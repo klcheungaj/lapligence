@@ -185,6 +185,9 @@ mod ki_pattern_rows;
 #[path = "sim_feature_completion/ki_select_bugs.rs"]
 mod ki_select_bugs;
 
+#[path = "sim_feature_completion/small_record_selects.rs"]
+mod small_record_selects;
+
 #[path = "sim_feature_completion/ki_lrm_audit_b.rs"]
 mod ki_lrm_audit_b;
 #[path = "sim_feature_completion/ki_uvm_cast.rs"]
