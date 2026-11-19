@@ -413,7 +413,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Module records of integral members held as one signal per leaf select a
   run-time element the same way, and a constant selection of such a record
   reads and writes its one leaf
-  ([small_record_selects](../tests/fixtures/sim/feature_completion/small_record_selects/readme.md)). A selection of whole records (`r.e[k]`, `r.e[k].inner`) below 16 cells uses that
+  ([ki_small_record_selects](../tests/fixtures/sim/feature_completion/ki_small_record_selects/readme.md)). A selection of whole records (`r.e[k]`, `r.e[k].inner`) below 16 cells uses that
   tree, for at most 256 elements; in a column or container it is one cell; an index with side effects is evaluated once; packed members of module native records take
   bit/part selects ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)).
   Patterns that read their own destination see the old string and handle

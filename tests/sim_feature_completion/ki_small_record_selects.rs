@@ -1,5 +1,5 @@
 //! Selections of records of integral members held as one signal per leaf
-//! ([readme](../fixtures/sim/feature_completion/small_record_selects/readme.md)):
+//! ([readme](../fixtures/sim/feature_completion/ki_small_record_selects/readme.md)):
 //! each constant or run-time selection reads and writes its own leaf.
 
 use super::sim_cli;
@@ -8,14 +8,14 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-const SUITE: &str = "feature_completion/small_record_selects";
+const SUITE: &str = "feature_completion/ki_small_record_selects";
 
 #[test]
 fn constant_and_run_time_selections_of_leaf_records() {
     sim_cli::run_case(
         SUITE,
         "leaf_selects",
-        include_str!("../fixtures/sim/feature_completion/small_record_selects/leaf_selects.out"),
+        include_str!("../fixtures/sim/feature_completion/ki_small_record_selects/leaf_selects.out"),
         "",
         &[],
     );
@@ -27,7 +27,7 @@ fn invalid_indices_into_leaf_record_members_read_defaults_and_drop_writes() {
         SUITE,
         "leaf_selects_invalid",
         include_str!(
-            "../fixtures/sim/feature_completion/small_record_selects/leaf_selects_invalid.out"
+            "../fixtures/sim/feature_completion/ki_small_record_selects/leaf_selects_invalid.out"
         ),
         "",
         &[],
@@ -41,7 +41,7 @@ fn forced_constant_element_of_a_leaf_record_member_array() {
         SUITE,
         "leaf_selects_force",
         include_str!(
-            "../fixtures/sim/feature_completion/small_record_selects/leaf_selects_force.out"
+            "../fixtures/sim/feature_completion/ki_small_record_selects/leaf_selects_force.out"
         ),
         "",
         &[],
@@ -50,22 +50,31 @@ fn forced_constant_element_of_a_leaf_record_member_array() {
 
 #[test]
 fn subroutine_arrays_named_like_record_members_are_their_own_storage() {
-    for fixture in ["member_name_alias", "member_name_alias_packed"] {
-        let expected = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/sim")
-                .join(SUITE)
-                .join(format!("{fixture}.out")),
-        )
-        .expect("expected output");
-        sim_cli::run_case(SUITE, fixture, &expected, "", &[]);
-    }
+    sim_cli::run_case(
+        SUITE,
+        "member_name_alias",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_small_record_selects/member_name_alias.out"
+        ),
+        "",
+        &[],
+    );
+    sim_cli::run_case(
+        SUITE,
+        "member_name_alias_packed",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_small_record_selects/member_name_alias_packed.out"
+        ),
+        "",
+        &[],
+    );
 }
 
 #[test]
 fn leaf_record_selections_name_their_leaf_in_the_model() {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim/feature_completion/small_record_selects/leaf_selects_shape.sv");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "tests/fixtures/sim/feature_completion/ki_small_record_selects/leaf_selects_shape.sv",
+    );
     for optimized in [true, false] {
         let directory = sim_harness::TempDir::new("small-record-shape").expect("scratch");
         let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
@@ -99,7 +108,7 @@ fn leaf_record_selections_name_their_leaf_in_the_model() {
         SUITE,
         "leaf_selects_shape",
         include_str!(
-            "../fixtures/sim/feature_completion/small_record_selects/leaf_selects_shape.out"
+            "../fixtures/sim/feature_completion/ki_small_record_selects/leaf_selects_shape.out"
         ),
         "",
         &[],
