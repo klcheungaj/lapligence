@@ -308,7 +308,8 @@ fn blocking_delayed_native_record_with_a_conditional_source_is_a_located_limit()
 
 #[test]
 fn dense_member_record_forms_are_located_limits() {
-    sim_cli::reject_case_with_id(
+    // The whole text: the message names the select, not lowering internals.
+    sim_cli::reject_case_with_id_exact(
         SUITE,
         "neg_record_call_member_select",
         "CODEGEN-002",
