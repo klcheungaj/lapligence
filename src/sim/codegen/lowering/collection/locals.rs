@@ -673,6 +673,24 @@ impl<'a> Codegen<'a> {
             }
             parent = self.node(scope).parent;
         }
+        // A string a fork branch captured: the branch of a function has no
+        // enclosing function context to read it from, so it names the
+        // capture local the branch binds. Other branches name it through
+        // their subroutine's string maps.
+        if let (
+            None,
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }),
+        ) = (&self.func, self.kind(reference))
+        {
+            if let Some(binding) = self
+                .capture_binding(*target)
+                .filter(|binding| binding.storage.kind() == StorageKind::String)
+            {
+                return Some((*target, binding.local.c_name.as_str()));
+            }
+        }
         None
     }
 

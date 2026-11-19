@@ -647,7 +647,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index: yes | `ref`/`const ref` actual, whole record and members: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | scope exit, cancel, close |
 | Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal: a whole subroutine record passes by address, a module, static or block record (or a constant selection of one) binds a specialization of the callee: yes; fixed-array or container element actual, and members of one: a retained reference shares the element ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); class methods take them too, a virtual call through one family per binding; a virtual-interface method through one dispatch entry per binding | scope exit, cancel, close |
 | NBA target or source | module record and static subroutine root: yes (untimed and `#delay`), members of fixed-array elements and container members too; automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
-| Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
+| Fork branch capture | automatic locals and by-value formals: one shared value for the subroutine and the branches of every join kind, outputs copied out at return ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)) | shared, not copied | n/a | n/a | n/a | with the last of the activation and its branches |
 | Unpacked array element, slice | fixed arrays of any dimension: yes, elements and rows ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); row equality and rows as `ref` actuals: rejected | yes, elements, rows, constant/indexed slices, patterns, conditional merges, untimed and `#delay` NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
 | Queue/dynamic/associative element | yes (missing: default), including queue and dynamic-array members ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); associative members: rejected | yes, whole element and push/insert/pop | yes, element-wise, including container members (whole associative arrays of records: rejected, [known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes; container members in assignment, call and system-task statements | SIM-008 | delete, resize, container close |
 | Class property | instance property: yes, one value per object with member defaults and a per-object initializer, through `this`, handles and handle chains ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)); static, or with container members: rejected | yes | yes | constant: yes | SIM-011 | with its object, when the collector reclaims it or at model close ([sim_018](../tests/fixtures/sim/feature_completion/sim_018/readme.md)) |
@@ -1977,12 +1977,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   locals takes the typed call path (native formals, recursion). By-value
   packed, real and string input formals and packed and real output and inout
   formals are shared like locals (outputs are copied out at return), and so
-  are string outputs, native records with their companion containers and
-  container formals, with branches of every fork kind and nested forks (a
-  `join` branch reading a string input formal fails:
-  [known issue](known_issues.md#a-string-input-formal-read-in-a-fork-join-branch)).
+  are string outputs, native records with their companion containers (locals
+  and by-value formals) and container formals, with branches of every fork
+  kind and nested forks; a function's `join_none` branches read its strings
+  through their captures
+  ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)
+  `joined_formals`, `function_branch_formals`).
   Semaphore, mailbox, chandle and class-handle variables and by-value handle
-  formals are shared through an opaque frame slot
+  formals (inputs, and outputs copied out at return) are shared through an
+  opaque frame slot
   ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)); a
   class method's branches use its receiver, implicitly or as `this`
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).

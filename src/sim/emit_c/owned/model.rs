@@ -414,6 +414,31 @@ pub(in crate::sim::emit_c) fn vpi_automatic_tables(model: &IrModel, out: &mut St
 /// array (`LLG_VPI_AUTOS_FIRST`); entry 0 holds the descriptor table.
 pub(in crate::sim::emit_c) const VPI_AUTOS_FIRST: usize = 1;
 
+/// Declare by-value native record formal `value` in a new shared frame (see
+/// `Frame::shared_native_value`) and copy the caller's value and companion
+/// containers, bound at `parameter`, into it.
+fn shared_record_formal(
+    frame: &mut Frame<'_, '_>,
+    value: usize,
+    formal: &IrFormal,
+    parameter: &str,
+) -> Result<(), String> {
+    frame.shared_native_value(value)?;
+    let target = frame.native_value_read(value)?;
+    frame.line(format!("llg_native_value_copy({target}, {parameter});"));
+    for (position, container) in formal.native_companions.iter().enumerate() {
+        let storage = &frame.ctx.model.containers[*container];
+        let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
+        let copy = super::containers::copy_function(storage);
+        let target = frame.container_name(*container)?;
+        frame.line(format!(
+            "{copy}(&{target}, ({ty}*){});",
+            super::super::model::native_companion_param(parameter, position)
+        ));
+    }
+    Ok(())
+}
+
 /// The address of formal `position` the activation's address array holds.
 fn vpi_formal_address(frame: &Frame<'_, '_>, function: &IrFunc, position: usize) -> Option<String> {
     let formal = function.formals.get(position)?;
@@ -647,6 +672,12 @@ fn render_function(
         }
         if let Some(value) = formal.native_value {
             let parameter = format!("{}{index}", if formal.is_address() { "o" } else { "a" });
+            if ctx.model.native_values[value].activation && formal.shared_local.is_some() {
+                // Shared with fork branches: a copy in a function-scope
+                // shared frame, copied back to an output at return.
+                shared_record_formal(&mut frame, value, formal, &parameter)?;
+                continue;
+            }
             // Companion containers bind like container formals (SIM-007).
             for (position, container) in formal.native_companions.iter().enumerate() {
                 let storage = &ctx.model.containers[*container];
@@ -818,10 +849,19 @@ fn render_function(
             })?;
             continue;
         }
+        if let Some(local) = formal.shared_local.as_ref().filter(|_| formal.chandle) {
+            frame.statement(&IrStmt::Object(Box::new(
+                crate::sim::ir::IrObjectStmt::ChandleDeclareShared(
+                    local.clone(),
+                    Some(IrChandleExpr::FormalRead(index)),
+                ),
+            )))?;
+            continue;
+        }
         if let Some(local) = formal
             .shared_local
             .as_ref()
-            .filter(|_| formal.container.is_none())
+            .filter(|_| formal.container.is_none() && formal.native_value.is_none())
         {
             let width = if formal.real { 0 } else { formal.width };
             let initial = IrExpr::new(IrExprKind::FormalRead(index), width, formal.signed, None);
@@ -884,6 +924,28 @@ fn render_function(
                 "{}(({ty}*)o{index}, &{target});",
                 super::containers::copy_function(storage)
             ));
+        }
+        if let Some(value) = formal
+            .native_value
+            .filter(|_| formal.shared_local.is_some() && formal.is_out)
+        {
+            let parameter = format!("o{index}");
+            let source = frame.native_value_read(value)?;
+            frame.line(format!("llg_native_value_copy({parameter}, {source});"));
+            for (position, container) in formal.native_companions.iter().enumerate() {
+                let storage = &ctx.model.containers[*container];
+                let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
+                let source = frame.container_name(*container)?;
+                frame.line(format!(
+                    "{}(({ty}*){}, &{source});",
+                    super::containers::copy_function(storage),
+                    super::super::model::native_companion_param(&parameter, position)
+                ));
+            }
+        }
+        if let Some(local) = formal.shared_local.as_ref().filter(|_| formal.chandle) {
+            let value = frame.chandle(&IrChandleExpr::LocalRead(local.clone()))?;
+            frame.line(format!("*o{index} = {value};"));
         }
         if let Some(local) = formal.shared_local.as_ref().filter(|_| formal.string) {
             frame.string_assign(

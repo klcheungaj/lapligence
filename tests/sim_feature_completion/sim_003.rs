@@ -110,12 +110,3 @@ fn native_ref_formal_binds_a_module_record() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_003/native_ref_formal.out");
     sim_cli::run_case_backend_parity(SUITE, "native_ref_formal", expected, &[], &[]);
 }
-
-#[test]
-fn unsupported_native_record_boundaries_are_explicit() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_native_fork_capture",
-        "capturing native subroutine storage in a fork is not supported",
-    );
-}

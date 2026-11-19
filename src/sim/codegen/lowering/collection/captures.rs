@@ -435,7 +435,11 @@ impl<'a> Codegen<'a> {
                             {
                                 visible.insert(*target);
                                 if detached
-                                    || matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "string")
+                                    || matches!(
+                                        self.kind(*target),
+                                        NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
+                                            if ty.kind == "string"
+                                    )
                                     || self.subroutine_container_meta(*target).is_some()
                                     || self.native_value_type(*target).is_some()
                                     || matches!(

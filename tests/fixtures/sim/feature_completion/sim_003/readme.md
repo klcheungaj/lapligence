@@ -27,7 +27,9 @@ registered as explicit native roots; see `src/sim/rt/value/ownership.md`.
 | --- | --- |
 | `neg_chandle_packed` | §§6.14, 7.2.1: chandles are not integral, so no packed containment (Slang). The string case is `rtl_001/neg_packed_native`. |
 | `neg_chandle_arithmetic` | §6.14: chandles admit only equality, inequality and boolean tests (Slang). |
-| `neg_native_fork_capture` | Legal by §9.3.2; capture of automatic native storage by a forked process is SIM-010 work. |
+
+A fork branch capturing a task's by-value record formal (formerly the negative
+`neg_native_fork_capture`) runs: [sim_010](../sim_010/readme.md) `joined_formals`.
 
 Descriptor validation, recursion bounds, overflow and atomic allocation failure
 are component checks in `tests/runtime_value_storage/native_value_descriptors_probe.c`
