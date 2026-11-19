@@ -3559,8 +3559,8 @@ int llg_sampled_domain_register(uint64_t identity, uint64_t clock,
 sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
 /// Compare the Preponed value of the calling time step with the value of the
 /// most recent strictly earlier tick (or the initial value). `kind`: 0 rose,
-/// 1 fell, 2 stable, 3 changed; 4 stable and 5 changed compare 64-bit real
-/// images numerically (`==` on the decoded reals).
+/// 1 fell, 2 stable, 3 changed. A real argument's history holds its 64-bit
+/// IEEE image, so stable and changed compare reals bit for bit.
 int llg_sampled_domain_status(uint64_t identity, int kind);
 // Clocking input copies. Each publishes a changed sample to its waiters.
 // llg_clocking_sample copies the Preponed (#1step) value; observed copies are

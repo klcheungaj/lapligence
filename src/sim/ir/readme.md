@@ -364,9 +364,11 @@ an activation declared by `FixedArrayDeclare` and emitted as a lexical
 `ref`), `RealArrayValues` (declaration-order element values for an input) and
 `RealArrayCall` (a nested real-array result, like `NativeCall`).
 `IrStmt::RealArrayOrder` reorders stored real cells numerically.
-`IrSampledFunc::RealStable/RealChanged` and `$past` over a real keep the
-argument's exact 64-bit IEEE image in the history domain and compare or decode
-it as a real; `$sampled` of a real reads a numeric Preponed snapshot.
+`$past`, `$stable` and `$changed` over a real (decision AA-D8) keep the
+argument's exact 64-bit IEEE image (`IrSysFunc::RealToBits`) in a packed
+history domain: `$past` decodes it with `BitsToReal`, and the status functions
+compare the images bit for bit like any packed sample; `$sampled` of a real
+reads a numeric Preponed snapshot.
 A procedural `$sampled` registers every signal its argument reads: reals
 through `IrInitStep::RegisterSampled`, packed signals through
 `IrInitStep::RegisterSampledValue`, which keeps the Preponed value without the

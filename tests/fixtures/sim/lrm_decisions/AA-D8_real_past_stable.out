@@ -1,0 +1,6 @@
+5 past=0.25 past2=0.25 cell=0.50 stable=1 changed=0 zstable=1 nstable=1
+5 a_inc fail
+15 past=0.25 past2=0.25 cell=0.50 stable=0 changed=1 zstable=0 nstable=0
+25 past=0.75 past2=0.25 cell=1.50 stable=0 changed=1 zstable=0 nstable=1
+35 past=1.25 past2=0.75 cell=2.50 stable=0 changed=1 zstable=0 nstable=1
+45 past=1.75 past2=1.25 cell=0.00 stable=0 changed=1 zstable=0 nstable=1

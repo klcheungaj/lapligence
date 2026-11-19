@@ -65,7 +65,7 @@ at 14 it is 6.
 
 | Clock | Ticks | Printed values at 14 |
 | --- | --- | --- |
-| `posedge a or negedge b` | 2, 4 | `$past` 1..3: 2 1 0; changed (6 against 2): 1 |
+| `posedge a or negedge b` | 2, 4 | `$past` 1..3: 2 1 0; changed (6 against 2): 1; real `r` at 4: 2.50, at 2: 0.25, stable (Preponed 2.5 at 14 against 2.5): 1 |
 | `posedge (a \| ~b)` | 2 (0 to 1; it stays 1 at 4 and 7) | 1 0 |
 | `@(c)` | 5 | 2 0 |
 | `edge a` | 2, 7 | 3 1 |
@@ -84,8 +84,8 @@ separately: at 16, ticks 12 and 10 give 5 4.
 
 ### `assertion_history` (A01, overlapping assertions and actions)
 
-`clk` rises at 5, 15, 25, 35, 45; each edge's NBA increments `v`, so Preponed
-`v` is 0, 1, 2, 3, 4. All
+`clk` rises at 5, 15, 25, 35, 45; each edge's NBA increments `v` and adds 0.5
+to `r`, so Preponed `v` is 0, 1, 2, 3, 4 and `r` 0.0, 0.5, 1.0, 1.5, 2.0. All
 `$past(v, ...)` calls in the five assertions and their actions share one
 history of depth 3.
 
@@ -96,6 +96,7 @@ history of depth 3.
   25's 2) = 1.
 - `a3`: `$past(v,3)` is 0 until 45, where it is tick 15's 1; the action prints
   `past3 = 1`, `past1 = 3`.
+- `a4`: `$changed(r)` compares 0.0 with the initial 0.0 at 5 and fails once.
 - `a5` is disabled while `rst` is 1 (until 12) and passes afterwards.
 
 ### `event_gate_instant` (`$past` gate of a waiting-process clock)
@@ -192,6 +193,55 @@ is 1, 1, 3, 3 and `a2` (`st[k] != D`) fails at 15 and 25. `pr[1]` is 34 until
 7, then 39; its member `lo` 4, then 9. Each process line prints in the Active
 region of the tick and each action in the Reactive region after it.
 
+### Real values (`real_past`, `real_element_past`, `real_past_shortreal`)
+
+§16.6.1 (`SystemVerilog-1800-2009.txt` L21575-21576): "The following types
+are not allowed: — Noninteger types (shortreal, real, and realtime)". By user
+decision AA-D8 llg serves `$past`, `$stable` and `$changed` of real values as
+industry-standard behaviour does; the samples follow §16.9.3 (L22767-22772):
+"$past returns the value of expression1 that was sampled in the Preponed region
+of a particular time step strictly prior to the one in which $past is
+evaluated. [...] the value returned from the $past function is the result of
+evaluating expression1 using the initial values of the variables comprising
+it." `$stable` and `$changed` compare the samples bit for bit. `real_past` and
+`real_element_past` were also confirmed on an industry-standard simulator;
+`real_past_shortreal` was not, because that simulator stops with an internal
+error on any sampled value function of a shortreal.
+
+`real_past`: `clk` rises at 5, 15, 25, 35, 45; each edge's NBA adds 0.5 to `r`,
+1.0 to `a` and `t`, 1 to `i` and toggles `en`. Preponed `r` is 0.25, 0.75,
+1.25, 1.75, 2.25, so `$past(r, 1..3)` is the 1st..3rd strictly prior sample or
+the declaration value 0.25. The gate `en` is 0, 1, 0, 1, 0 when each edge
+occurs (current value), so only 15 and 35 are gated ticks: `g` = 0.25, 0.25,
+0.75, 0.75, 1.75. `u` has no initializer: 0.0 (Table 6-7). `a * 1.5` samples
+1.5, 3.0, ...: its `$past` is 1.5, 1.5, 3.0, 4.5, 6.0. The process reads the
+current `r` before the NBA, which equals its sample: `eq` 1 only at 5, `lt` 0
+only at 5. `t` (realtime) samples 2..6: `$past` 2, 2, 3, 4, 5. Packed
+arguments that read reals keep packed histories: `int'(r)` samples 0, 1, 1, 2,
+2 (rounded): `ci` 0, 0, 1, 1, 2; `i + r` samples 3.25, 4.75, ...: `sum` 3.25,
+3.25, 4.75, 6.25, 7.75; `r > 1.0` samples 0, 0, 1, 1, 1: `cmp` 0, 0, 0, 1, 1 and
+`$stable` 1, 1, 0, 1, 1. At 5 the immediate `a_proc` (`$past(r) != r`), `a_mod`
+(`$past(r) < r`), `a_eq` (`$past(r, 2) + 1.0 == r`) and `a_t` (`$changed(t)`
+against the initial 2.0) fail; `a_eq` also fails at 15 (1.25 against 0.75);
+its action prints the current `r` after the NBA. At each negedge the
+explicit-clock `$past(r, 1, , @(posedge clk))` returns the previous posedge's
+sample: 0.25, 0.75, 1.25, 1.75.
+
+`real_element_past`: ticks 5, 15, ..., 75. Preponed `i` is 1..7, then 0; each
+tick adds 10.0 to `ra[i]` (no write for 4..7, out of range). Preponed `ra[i]`
+is 1.5, 2.5, 3.5, then 0.0 (§7.4.6 L8235-8237: an invalid index reads the
+default) from 35 to 65 and `ra[0]` = 0.5 at 75; `c1..c3` are its 1st..3rd prior
+samples or the initial 1.5. `ix` = `x1` is always invalid: 0.00. `rz` has no
+initializer; `rz[1]` is written 1 at 15 and 4 at 45, so its `$past` is 0, 0, 0,
+1, 1, 1, 4, 4. `j` samples 0, 0, 1, 1, ...; `rs[1]` becomes 7.0 at 25, so
+`rs[j]` samples 0.5, 0.5, 1.5, 7.0, 7.0, ...: `$stable` 1, 1, 0, 0, 1, ... and
+`$stable(rs[1])` is 0 only at 35. `a_cell` and `a_ch` never fail.
+
+`real_past_shortreal`: `s` doubles at each edge from 1.5: samples 1.5, 3, 6, 12,
+`$past` 1.5, 1.5, 3, 6; `$stable` 1 only at 5, where `a_s` fails. `sa[1]` is
+written 4.5 at 15: samples 0.75, 0.75, 4.5, 4.5, `$past` 0.75, 0.75, 0.75, 4.5,
+`$changed` 1 only at 25.
+
 ### `element_burst` (descriptor-form cells)
 
 The same §16.5 and §16.6.1 lines apply to a 5000-cell array, which llg keeps
@@ -220,11 +270,10 @@ and f2 at 25, 35 and 45.
 
 | Fixture | Rule | Diagnostic |
 | --- | --- | --- |
-| `neg_rose_real`, `neg_fell_shortreal`, `neg_real_assertion`, `neg_real_past`, `neg_stable_realtime` | §16.6.1 (`SystemVerilog-1800-2009.txt` L21575-21576): "The following types are not allowed: — Noninteger types (shortreal, real, and realtime)" | llg: "of a real expression is illegal" |
+| `neg_rose_real`, `neg_fell_shortreal`, `neg_rose_real_compare`, `neg_past_gclk_real`, `neg_stable_gclk_real` | §16.6.1 (`SystemVerilog-1800-2009.txt` L21575-21576): "The following types are not allowed: — Noninteger types (shortreal, real, and realtime)". A real anywhere in a `$rose`/`$fell` argument and in a global clocking function stays illegal (AA-D7); industry-standard tools reject `$rose`/`$fell` of a real (they cannot compile any sampled value function of a shortreal) and accept the global clocking forms with values that do not follow §16.9.4 | llg: "of a real expression is illegal" |
 | `neg_string_arg`, `neg_sampled_string`, `neg_class_arg`, `neg_event_arg`, `neg_dynamic_arg`, `neg_assoc_arg` | §16.6.1 excludes these operand types | llg: illegal operand type |
 | `neg_automatic_arg` | §16.9.3: argument variables shall be static | llg |
 | `neg_past_zero`, `neg_past_negative`, `neg_past_nonconst`, `neg_past_unknown_ticks` | §16.9.3: `number_of_ticks` is a constant of at least 1 | frontend |
 | `neg_no_clock` | §16.9.3: a clock must be explicit or inferred | frontend |
 | `neg_unpacked_arg`, `neg_unpacked_struct_arg`, `neg_queue_arg` | legal or non-excluded types without sampled storage | llg: explicit unsupported |
 | `neg_queue_element`, `neg_dynamic_element_operand`, `neg_assoc_element` | §16.6.1 (`SystemVerilog-1800-2009.txt` L21576, L21592-21593): "The following types are not allowed: [...] — Associative arrays — Dynamic arrays"; container elements have no Preponed image (industry-standard tools reject them too) | llg: located unsupported, at the selection |
-| `neg_real_element_past` | §16.6.1 (L21576-21577): "The following types are not allowed: — Noninteger types (shortreal, real, and realtime)"; a real cell is a real operand (AA-D7) | llg: "of a real expression is illegal" |

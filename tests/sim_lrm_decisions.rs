@@ -378,7 +378,15 @@ fn aa_d7_real_sampled_illegal() {
     sim_cli::reject_case(
         SUITE,
         "AA-D7_real_sampled_illegal",
-        "$past of a real expression is illegal",
+        "AA-D7_real_sampled_illegal.sv:28:43 $rose of a real expression is illegal",
+    );
+}
+
+#[test]
+fn aa_d8_real_past_stable() {
+    run_decision(
+        "AA-D8_real_past_stable",
+        include_str!("fixtures/sim/lrm_decisions/AA-D8_real_past_stable.out"),
     );
 }
 
