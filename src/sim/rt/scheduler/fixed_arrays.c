@@ -350,6 +350,10 @@ struct llg_fixed_sampled {
     uint64_t time;
     size_t count, capacity;
     struct llg_fixed_sampled_entry* entries;
+    /* Positions of the `count` filled entries. The table keeps the capacity a
+     * burst of writes grew it to, so the reset at the next slot, and growth,
+     * walk these instead of the whole table: a slot costs what it saved. */
+    size_t* used;
     llg_fixed_array_t whole;
     int has_whole;
 };
@@ -363,10 +367,10 @@ void llg_fixed_array_sampled(llg_fixed_array_t* array) {
 }
 
 static void fixed_sampled_clear(struct llg_fixed_sampled* sampled) {
-    for (size_t i = 0; i < sampled->capacity; ++i) {
-        if (sampled->entries[i].index == LLG_FIXED_SAMPLED_FREE) continue;
-        sampled->entries[i].index = LLG_FIXED_SAMPLED_FREE;
-        sv4_destroy(&sampled->entries[i].old);
+    for (size_t i = 0; i < sampled->count; ++i) {
+        struct llg_fixed_sampled_entry* entry = &sampled->entries[sampled->used[i]];
+        entry->index = LLG_FIXED_SAMPLED_FREE;
+        sv4_destroy(&entry->old);
     }
     sampled->count = 0;
     if (sampled->has_whole) llg_fixed_array_destroy(&sampled->whole);
@@ -400,12 +404,19 @@ static void fixed_sampled_reserve(struct llg_fixed_sampled* sampled) {
     sampled->capacity = fixed_grow(previous.capacity);
     sampled->entries = llg_checked_calloc(sampled->capacity, sizeof(*sampled->entries),
                                           "fixed sampled values");
+    /* At most half the table is filled after an insertion. */
+    sampled->used = llg_checked_calloc(sampled->capacity / 2, sizeof(*sampled->used),
+                                       "fixed sampled values");
     for (size_t i = 0; i < sampled->capacity; ++i)
         sampled->entries[i].index = LLG_FIXED_SAMPLED_FREE;
-    for (size_t i = 0; i < previous.capacity; ++i)
-        if (previous.entries[i].index != LLG_FIXED_SAMPLED_FREE)
-            *fixed_sampled_slot_of(sampled, previous.entries[i].index) = previous.entries[i];
+    for (size_t i = 0; i < previous.count; ++i) {
+        const struct llg_fixed_sampled_entry* moved = &previous.entries[previous.used[i]];
+        struct llg_fixed_sampled_entry* entry = fixed_sampled_slot_of(sampled, moved->index);
+        *entry = *moved;
+        sampled->used[i] = (size_t)(entry - sampled->entries);
+    }
     free(previous.entries);
+    free(previous.used);
 }
 
 static LLG_OUTLYING void fixed_sampled_record(llg_fixed_array_t* array, uint64_t index,
@@ -417,7 +428,7 @@ static LLG_OUTLYING void fixed_sampled_record(llg_fixed_array_t* array, uint64_t
     if (entry->index == index) return;
     entry->index = index;
     entry->old = sv4_clone(&old);
-    ++sampled->count;
+    sampled->used[sampled->count++] = (size_t)(entry - sampled->entries);
 }
 
 /* Called before a change that replaces the default, while `array` still holds
@@ -541,6 +552,7 @@ void llg_fixed_array_destroy(void* object) {
     if (array->sampled) {
         fixed_sampled_clear(array->sampled);
         free(array->sampled->entries);
+        free(array->sampled->used);
         free(array->sampled);
         --fixed_marked_arrays;
     }
