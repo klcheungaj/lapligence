@@ -1054,6 +1054,61 @@ processes or clock edges, at the cost of a few bytes per object.
   coverage 1409 ms). Start-up peak RSS: `many-registers-10k --vpi` 50.9 to
   46.3 MB (plain 46.6), with `$coverage_get` 56.7 to 47.5 MB.
 
+### Preponed images of sampled array cells
+
+- **Trade-off:** a sampled read of `arr[i]` (S35-D1) needs the cell's
+  Preponed value. Arrays at or below the descriptor size are plain C cell
+  arrays without a write hook. A snapshot per cell in the packed-signal list
+  would add a linked-list address search to every sampled read in the
+  design. Saving each cell before its first write in a time slot (as the
+  descriptor form does) would put a test into every write site of the array:
+  procedural, nonblocking, port, force and VPI writes. A full copy of the
+  array at each Preponed region needs no write hook and no lookup, but costs
+  one cell copy per cell per time slot.
+- **Decision:** lowering marks each static dense array that a sampled
+  expression selects (`IrArray::sampled_image`: domain samples, assertion
+  expressions and `$sampled` arguments). Startup registers a runtime-owned
+  image of its cells (`llg_sampled_cells`, `llg_sampled_real_cells`), copied
+  in each Preponed region with the packed snapshots. Sampled reads index the
+  image directly. Descriptor arrays keep their saved cells. Arrays that no
+  sampled expression selects, and models without such reads, generate the
+  same C as before. The runtime code is out of line, and its context field
+  comes last, so that no hot field moves. The only shared-path addition is
+  one null test in `sample_preponed_values`, which runs only when the model
+  keeps any sampled value.
+- **Evidence:** fixture tree, base against tip with `--gen-only` in both
+  optimizer modes: every model without a sampled cell read generates
+  identical C. Micro designs: one 9-bit cell written per cycle by a
+  nonblocking assignment, read by `$past(arr[i])` and by a concurrent
+  assertion on a cell bit; the packed-vector design holds the same fields
+  in one vector, and the plain design makes the same writes without
+  sampled array reads. CPU seconds, 30 alternating pairs from one fixed
+  path, pinned to one CPU, medians, in both orders (quiet host, load 3-5);
+  instructions from callgrind without cache simulation.
+
+  | Design | Seconds | Instructions |
+  | --- | ---: | ---: |
+  | 16 cells, 1M cycles: sampled cells | 1.47 | 20.30 G |
+  | 16 cells: packed vector | 1.62 (cells −9.3% / −10.8%, 30/30) | 22.02 G |
+  | 16 cells: no sampled array read | | 20.75 G |
+  | 4096 cells, 100k cycles: sampled cells | 0.83 | 15.93 G |
+  | 4096 cells: packed vector | 0.21 | 2.99 G |
+  | 4096 cells: no sampled array read | 0.15 | 2.07 G |
+  | 4097 cells (descriptor form): sampled cells | 1.01 | 15.01 G |
+  | 4097 cells: no sampled array read | 0.14 | 1.95 G |
+
+  The image copy costs 17 instructions per 4-state cell per time slot (0.8
+  ns here): 13.9 G of the 4096-cell row, over two slots per cycle. Small
+  arrays read in assertions pay less than the packed equivalent, whose
+  sampled part selects are wider. For a large array written in few cells per
+  slot, the copy dominates; the descriptor form's saved cells cost the same
+  there, because their per-slot reset walks the whole save table after the
+  initial writes. Shared runtime rows, 100 pairs in both orders on a quiet
+  host: `k1_onestep` +0.41% / +0.43% (instructions +0.20%: an address-hashed
+  index probing longer after data moved, and the new null test), every
+  other row from −0.13% to +0.40%, and `m_glitch` with `--wave` +0.15% /
+  +2.15% (spread 22%, instructions −0.01%).
+
 ## Rejected or deferred
 
 | Option | Effect | Decision |
