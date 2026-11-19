@@ -3438,6 +3438,14 @@ int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
 // unregistered real reports the same controlled diagnostic and yields 0.0.
 void llg_sampled_register_real(double* signal);
 double llg_sampled_real(const double* signal);
+// Keep a Preponed image of the `count` cells of a dense unpacked array that a
+// sampled expression selects (IEEE 1800-2009 16.5.1, 16.9.3): every cell is
+// copied at the beginning of each time slot, so a sampled read indexes the
+// returned image directly. The image is runtime-owned, starts from the
+// cells' current values and stays valid until llg_rt_cleanup; NULL reports
+// an invalid registration.
+const sv4_t* llg_sampled_cells(const sv4_t* cells, uint64_t count);
+const double* llg_sampled_real_cells(const double* cells, uint64_t count);
 /// Sampled-value clocks (IEEE 1800-2009 16.9.3). A clock owns the ticks
 /// shared by every history domain sampled on it; identities are dense small
 /// integers assigned by the generated model. An edge clock ticks when

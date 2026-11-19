@@ -151,6 +151,18 @@ typedef struct llg_sampled_real {
     double value;
 } llg_sampled_real_t;
 
+// The Preponed image of the cells of one dense unpacked array that a sampled
+// expression selects (sampling.c). Exactly one of `cells` and `real_cells`
+// is set; the image is runtime-owned and copied with the packed snapshots.
+typedef struct llg_sampled_cells {
+    struct llg_sampled_cells* next;
+    const sv4_t* cells;
+    sv4_t* image;
+    const double* real_cells;
+    double* real_image;
+    size_t count;
+} llg_sampled_cells_t;
+
 typedef struct llg_sampled_history {
     struct llg_sampled_history* next; // older
     struct llg_sampled_history* prev; // newer
@@ -923,6 +935,8 @@ typedef struct {
     llg_frame_t* assertion_values;
     // The time + 1 of the step whose asynchronous aborts were last checked.
     uint64_t property_async_step;
+    // Dense array cell images; last so that no hot field moves.
+    llg_sampled_cells_t* sampled_cells;
 } llg_rt_ctx_t;
 
 static llg_rt_ctx_t g;
