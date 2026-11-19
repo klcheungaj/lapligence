@@ -1125,8 +1125,14 @@ processes or clock edges, at the cost of a few bytes per object.
   table now also lists the positions it filled, and the reset at a slot's
   first save and the growth rehash walk only those: one `size_t` per entry
   of half the table capacity. The 4097-cell row fell to 1.91 G instructions
-  (`fixed_sampled_record` 13.12 G to 0.011 G); every other row has identical
-  generated C and runtime paths. Shared runtime rows, 100 pairs in both orders on a quiet
+  (`fixed_sampled_record` 13.12 G to 0.011 G) and its time from 1.01 s to
+  0.143 s (−85.8% in both orders, 100 pairs). Every other row has identical
+  generated C and runtime paths. The changed text moves later runtime code
+  and data, which costs `m_assert` +2.0% / +2.5% with identical
+  instructions (its hottest function starts 0xe0 bytes later) and gives
+  `m_clocking` 0.4% more instructions through address-hashed indexes after
+  data moved by 4 KiB; its time stayed within +0.24% / −0.19%. Moving the new
+  code out of line or onto the outlying section did not restore the offsets. Shared runtime rows, 100 pairs in both orders on a quiet
   host: `k1_onestep` +0.41% / +0.43% (instructions +0.20%: an address-hashed
   index probing longer after data moved, and the new null test), every
   other row from −0.13% to +0.40%, and `m_glitch` with `--wave` +0.15% /
