@@ -211,11 +211,11 @@
 //!   backend's exclusive `1 << 20` limit). Division/modulo/power preserve that
 //!   model-sized limb width; backend and runtime checks reject malformed or
 //!   over-capacity values defensively.
-//! - Timescale is honored per file: `#N` delays scale by the calling module's
-//!   time unit (`timescale unit/precision`, parsed from the first directive
-//!   of the source file; modules without a directive default to 1ns/1ps with
-//!   a TIMESCALEMOD-style warning), and `$time` returns the current time in
-//!   the calling module's unit.  The scheduler runs in design-precision ticks
+//! - Time scales are the frontend's per design element: `#N` delays scale by
+//!   the calling module's time unit, and elements that declare none take the
+//!   compilation's default (`--timescale`, else 1ns/1ps; the
+//!   `missing-timescale` lint rule reports them), and `$time` returns the
+//!   current time in the calling module's unit.  The scheduler runs in design-precision ticks
 //!   (the finest precision across the design), so the runtime itself is
 //!   timescale-agnostic. Procedural delay expressions first round to local
 //!   module precision before conversion to design ticks.
@@ -930,7 +930,7 @@ fn lower_model_with(
     let sampled_clock_processes = cg.emit_sampled_clock_processes();
     let mut model = std::mem::replace(
         &mut cg.model,
-        IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
+        IrModel::new(String::new(), cg.default_timescale.precision_fs)
             .expect("the default timescale has non-zero precision"),
     );
     assertions::mark_sampled_cell_arrays(&mut model, &cg.sampled_cell_arrays);
@@ -2287,6 +2287,9 @@ struct Codegen<'a> {
     /// Scale of `$unit` code when the compilation unit declares no
     /// `timeunit`/`timeprecision` (see `collect_timescales`).
     unit_default_timescale: Timescale,
+    /// The compilation's default time scale (`--timescale`, else 1ns/1ps),
+    /// which design elements that declare none take (F2-D3).
+    default_timescale: Timescale,
     /// Whole-net continuous assignment node -> synthetic signal index carrying
     /// that wired net driver's distinct runtime slot.
     wired_driver_sites: HashMap<NodeId, usize>,
@@ -2557,6 +2560,7 @@ struct AssertionLocalBinding {
 impl<'a> Codegen<'a> {
     fn new(semantic: &crate::sim::semantic::SemanticModel<'a>) -> Codegen<'a> {
         let db = semantic.db();
+        let default_timescale = Timescale::of(db.default_time_scale());
         Codegen {
             origins: semantic.origins().to_vec(),
             db: semantic.db(),
@@ -2566,7 +2570,7 @@ impl<'a> Codegen<'a> {
             comb_excludes_class_references: std::cell::Cell::new(false),
             native_value_markers: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             warnings: Vec::new(),
-            model: IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
+            model: IrModel::new(String::new(), default_timescale.precision_fs)
                 .expect("the default timescale has non-zero precision"),
             cur_fn_ir: None,
             func_meta: HashMap::new(),
@@ -2780,8 +2784,9 @@ impl<'a> Codegen<'a> {
             design_name: String::new(),
             proc_seq: 0,
             frame_seq: 0,
-            design_precision_fs: Timescale::DEFAULT.precision_fs,
-            unit_default_timescale: Timescale::DEFAULT,
+            design_precision_fs: default_timescale.precision_fs,
+            unit_default_timescale: default_timescale,
+            default_timescale,
             wired_driver_sites: HashMap::new(),
             clocking_net_drivers: HashMap::new(),
             feedback_storage: None,

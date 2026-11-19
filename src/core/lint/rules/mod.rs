@@ -17,6 +17,7 @@ pub mod empty_sensitivity;
 pub mod if_latch;
 pub mod implicit_net;
 pub mod latch;
+pub mod missing_timescale;
 pub mod mixed_assign;
 pub mod multidriver;
 pub mod nba_in_comb;
@@ -43,6 +44,7 @@ pub use empty_sensitivity::EmptyImplicitSensitivityRule;
 pub use if_latch::IfLatchRule;
 pub use implicit_net::ImplicitNetRule;
 pub use latch::IncompleteCaseRule;
+pub use missing_timescale::MissingTimescaleRule;
 pub use mixed_assign::MixedAssignRule;
 pub use multidriver::MultiDriverRule;
 pub use nba_in_comb::NbaInCombRule;
@@ -89,6 +91,7 @@ pub fn default_rules() -> Vec<Box<dyn crate::core::lint::LintRule>> {
         Box::new(AssignmentInConditionRule),
         Box::new(CasexStatementRule),
         Box::new(WideIndexRule),
+        Box::new(MissingTimescaleRule),
     ]
 }
 

@@ -2219,3 +2219,78 @@ fn attribute_records_decode_owner_value_and_string_flag() {
         invalid_native_message(stream(&tables(vec![record])));
     }
 }
+
+#[test]
+fn time_scale_parses_the_timescale_directive_syntax() {
+    let scale = |unit, magnitude, precision_unit, precision_magnitude| SemanticTimeScale {
+        unit,
+        magnitude,
+        precision_unit,
+        precision_magnitude,
+    };
+    use SemanticTimeUnit::*;
+    for (text, expected, display) in [
+        ("1ns/1ps", scale(Nanoseconds, 1, Picoseconds, 1), "1ns/1ps"),
+        (
+            "10us/1ns",
+            scale(Microseconds, 10, Nanoseconds, 1),
+            "10us/1ns",
+        ),
+        (
+            " 100 ms / 10 ms ",
+            scale(Milliseconds, 100, Milliseconds, 10),
+            "100ms/10ms",
+        ),
+        ("1s/1fs", scale(Seconds, 1, Femtoseconds, 1), "1s/1fs"),
+        ("1ps/1ps", scale(Picoseconds, 1, Picoseconds, 1), "1ps/1ps"),
+    ] {
+        assert_eq!(text.parse::<SemanticTimeScale>(), Ok(expected), "{text}");
+        assert_eq!(expected.to_string(), display);
+    }
+    assert_eq!(SemanticTimeScale::DEFAULT.to_string(), "1ns/1ps");
+    assert_eq!(SemanticTimeScale::DEFAULT.exponent(false), -9);
+    assert_eq!(SemanticTimeScale::DEFAULT.exponent(true), -12);
+    assert_eq!(
+        scale(Microseconds, 100, Picoseconds, 10).exponent(false),
+        -4
+    );
+    assert_eq!(
+        scale(Microseconds, 100, Picoseconds, 10).exponent(true),
+        -11
+    );
+    for rejected in [
+        "",
+        "1ns",
+        "1ns/",
+        "/1ps",
+        "2ns/1ps",
+        "1ns/1000ps",
+        "01ns/1ps",
+        "1NS/1PS",
+        "1 n s/1ps",
+        "1ns/1ps/1fs",
+        "1xs/1ps",
+        "ns/ps",
+    ] {
+        let error = rejected.parse::<SemanticTimeScale>().expect_err(rejected);
+        assert!(
+            error.starts_with(&format!("invalid time scale `{rejected}` (expected")),
+            "{error}"
+        );
+    }
+    assert_eq!(
+        "1ps/1ns".parse::<SemanticTimeScale>(),
+        Err("invalid time scale `1ps/1ns`: the precision 1ns is coarser than the unit 1ps".into())
+    );
+    assert_eq!(
+        "10ns/100ns".parse::<SemanticTimeScale>(),
+        Err(
+            "invalid time scale `10ns/100ns`: the precision 100ns is coarser than the unit 10ns"
+                .into()
+        )
+    );
+    assert_eq!(
+        scale(Microseconds, 10, Nanoseconds, 1).raw_codes(),
+        [3, 10, 4, 1]
+    );
+}

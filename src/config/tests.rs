@@ -969,3 +969,30 @@ fn pulse_controls_parse_and_round_trip() {
         assert!(parse_pulse_percent(rejected).is_err(), "{rejected}");
     }
 }
+
+#[test]
+fn compile_timescale_is_parsed_and_validated() {
+    let parsed = parse("schema_version = 1\n[compile]\ntimescale = \"10us/1ns\"\n").expect("valid");
+    assert_eq!(
+        parsed.config.compile.timescale,
+        Some("10us/1ns".parse().expect("time scale"))
+    );
+    assert_eq!(
+        parse("schema_version = 1\n")
+            .expect("valid")
+            .config
+            .compile
+            .timescale,
+        None
+    );
+    let error = parse_err("schema_version = 1\n[compile]\ntimescale = \"1ps/1ns\"\n");
+    assert!(
+        error.contains("compile.timescale: invalid time scale `1ps/1ns`: the precision 1ns is coarser than the unit 1ps"),
+        "{error}"
+    );
+    let error = parse_err("schema_version = 1\n[compile]\ntimescale = \"1ns\"\n");
+    assert!(
+        error.contains("compile.timescale: invalid time scale `1ns`"),
+        "{error}"
+    );
+}

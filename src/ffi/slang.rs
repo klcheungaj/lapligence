@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 75;
+const ABI_VERSION: u32 = 76;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -474,6 +474,10 @@ pub struct CompileOptions {
     pub compilation_unit_mode: CompilationUnitMode,
     /// The operand of every `min:typ:max` expression; typical by default.
     pub delay_selection: DelaySelection,
+    /// The time scale of design elements that declare none (`--timescale`);
+    /// `None` is the built-in [`SemanticTimeScale::DEFAULT`]. `Some` records
+    /// that the user chose it, even when it equals the built-in one.
+    pub default_time_scale: Option<SemanticTimeScale>,
     pub limits: Limits,
 }
 
@@ -939,6 +943,10 @@ pub(crate) const UNCONNECTED_PULL1: u64 = 1 << 17;
 /// definition's `` `default_nettype`` in bits 20-27 (0 for `none`).
 pub(crate) const INSTANCE_CELL_DEFINE: u64 = 1 << 18;
 pub(crate) const INSTANCE_AUTOMATIC: u64 = 1 << 19;
+/// On a plain instance or a package (ABI v76): its definition, declared in
+/// a compilation unit, declares no time scale, so the compilation's default
+/// time scale applies (IEEE 1800-2009 3.14.2.3).
+pub(crate) const INSTANCE_DEFAULT_TIME_SCALE: u64 = 1 << 28;
 pub(crate) const INSTANCE_NET_TYPE_SHIFT: u32 = 20;
 pub(crate) const INSTANCE_NET_TYPE_MASK: u64 = 0xff;
 /// On a typedef node: the typedef renames a built-in type keyword
@@ -1173,13 +1181,130 @@ pub enum SemanticOperation {
     OverloadPostUpdate,
 }
 
-/// Exact source time scale attached by Slang to a definition or instance.
+/// Exact source time scale attached by Slang to a definition or instance,
+/// or the default time scale of a compilation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SemanticTimeScale {
     pub unit: SemanticTimeUnit,
     pub magnitude: u32,
     pub precision_unit: SemanticTimeUnit,
     pub precision_magnitude: u32,
+}
+
+impl SemanticTimeScale {
+    /// llg's time scale for design elements that declare none when no
+    /// `--timescale` is given: 1ns/1ps (IEEE 1800-2009 3.14.2.3 leaves the
+    /// default to the tool; decision F2-D3).
+    pub const DEFAULT: Self = Self {
+        unit: SemanticTimeUnit::Nanoseconds,
+        magnitude: 1,
+        precision_unit: SemanticTimeUnit::Picoseconds,
+        precision_magnitude: 1,
+    };
+
+    /// The power of ten, in seconds, of the unit (`false`) or the
+    /// precision (`true`); `1ns` is -9, `100ps` is -10.
+    pub fn exponent(self, precision: bool) -> i32 {
+        let (unit, magnitude) = if precision {
+            (self.precision_unit, self.precision_magnitude)
+        } else {
+            (self.unit, self.magnitude)
+        };
+        unit.exponent()
+            + match magnitude {
+                10 => 1,
+                100 => 2,
+                _ => 0,
+            }
+    }
+
+    #[cfg(test)]
+    fn raw_codes(self) -> [u32; 4] {
+        let raw = self.raw();
+        [
+            raw.unit,
+            raw.magnitude,
+            raw.precision_unit,
+            raw.precision_magnitude,
+        ]
+    }
+
+    fn raw(self) -> RawTimeScale {
+        RawTimeScale {
+            unit: self.unit.code(),
+            magnitude: self.magnitude,
+            precision_unit: self.precision_unit.code(),
+            precision_magnitude: self.precision_magnitude,
+        }
+    }
+}
+
+impl fmt::Display for SemanticTimeScale {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}{}/{}{}",
+            self.magnitude,
+            self.unit.suffix(),
+            self.precision_magnitude,
+            self.precision_unit.suffix()
+        )
+    }
+}
+
+impl str::FromStr for SemanticTimeScale {
+    type Err = String;
+
+    /// Parse `<unit>/<precision>` as the arguments of a `` `timescale``
+    /// directive (IEEE 1800-2009 22.7): each an integer 1, 10 or 100 and a
+    /// unit s, ms, us, ns, ps or fs, with optional blanks between the parts,
+    /// and a precision not coarser than the unit (3.14).
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let invalid = || {
+            format!(
+                "invalid time scale `{value}` (expected <unit>/<precision>, each 1, 10 or 100 \
+                 followed by s, ms, us, ns, ps or fs, e.g. 1ns/1ps)"
+            )
+        };
+        let (unit_text, precision_text) = value.split_once('/').ok_or_else(invalid)?;
+        let part = |text: &str| -> Option<(SemanticTimeUnit, u32)> {
+            let text = text.trim_matches([' ', '\t']);
+            let digits = text.find(|c: char| !c.is_ascii_digit())?;
+            let magnitude = match &text[..digits] {
+                "1" => 1,
+                "10" => 10,
+                "100" => 100,
+                _ => return None,
+            };
+            let unit = match text[digits..].trim_start_matches([' ', '\t']) {
+                "s" => SemanticTimeUnit::Seconds,
+                "ms" => SemanticTimeUnit::Milliseconds,
+                "us" => SemanticTimeUnit::Microseconds,
+                "ns" => SemanticTimeUnit::Nanoseconds,
+                "ps" => SemanticTimeUnit::Picoseconds,
+                "fs" => SemanticTimeUnit::Femtoseconds,
+                _ => return None,
+            };
+            Some((unit, magnitude))
+        };
+        let (unit, magnitude) = part(unit_text).ok_or_else(invalid)?;
+        let (precision_unit, precision_magnitude) = part(precision_text).ok_or_else(invalid)?;
+        let scale = Self {
+            unit,
+            magnitude,
+            precision_unit,
+            precision_magnitude,
+        };
+        if scale.exponent(true) > scale.exponent(false) {
+            return Err(format!(
+                "invalid time scale `{value}`: the precision {precision_magnitude}{} is coarser \
+                 than the unit {magnitude}{}",
+                precision_unit.suffix(),
+                unit.suffix()
+            ));
+        }
+        Ok(scale)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1190,6 +1315,44 @@ pub enum SemanticTimeUnit {
     Nanoseconds,
     Picoseconds,
     Femtoseconds,
+}
+
+impl SemanticTimeUnit {
+    /// The power of ten of the unit in seconds.
+    pub fn exponent(self) -> i32 {
+        match self {
+            Self::Seconds => 0,
+            Self::Milliseconds => -3,
+            Self::Microseconds => -6,
+            Self::Nanoseconds => -9,
+            Self::Picoseconds => -12,
+            Self::Femtoseconds => -15,
+        }
+    }
+
+    /// The unit as written in a time literal (IEEE 1800-2009 3.14.1).
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Self::Seconds => "s",
+            Self::Milliseconds => "ms",
+            Self::Microseconds => "us",
+            Self::Nanoseconds => "ns",
+            Self::Picoseconds => "ps",
+            Self::Femtoseconds => "fs",
+        }
+    }
+
+    /// The `LLG_SLANG_TIME_UNIT_*` code.
+    fn code(self) -> u32 {
+        match self {
+            Self::Seconds => 1,
+            Self::Milliseconds => 2,
+            Self::Microseconds => 3,
+            Self::Nanoseconds => 4,
+            Self::Picoseconds => 5,
+            Self::Femtoseconds => 6,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1828,6 +1991,9 @@ pub struct Snapshot {
     pub compilation_unit_mode: CompilationUnitMode,
     /// The `min:typ:max` selection the frontend evaluated with.
     pub delay_selection: DelaySelection,
+    /// The default time scale the compile request gave the frontend; `None`
+    /// is the built-in [`SemanticTimeScale::DEFAULT`].
+    pub default_time_scale: Option<SemanticTimeScale>,
     pub files: Vec<File>,
     pub diagnostics: Vec<Diagnostic>,
     pub instances: Vec<Instance>,
@@ -1967,6 +2133,16 @@ struct RawCompileRequest {
     default_library_present: u32,
     default_library_reserved: u32,
     limits: RawLimits,
+    default_time_scale: RawTimeScale,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawTimeScale {
+    unit: u32,
+    magnitude: u32,
+    precision_unit: u32,
+    precision_magnitude: u32,
 }
 
 #[repr(C)]
@@ -2351,6 +2527,7 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
             "native snapshot language edition does not match the compile request",
         ));
     }
+    decoded.default_time_scale = request.options.default_time_scale;
     for file in &mut decoded.files {
         let source_text = request
             .sources
@@ -2517,6 +2694,11 @@ fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner
             max_type_members: limits.max_type_members,
             max_constants: limits.max_constants,
         },
+        default_time_scale: request
+            .options
+            .default_time_scale
+            .unwrap_or(SemanticTimeScale::DEFAULT)
+            .raw(),
     };
 
     let mut error = ptr::null_mut();

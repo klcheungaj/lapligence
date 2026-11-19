@@ -335,6 +335,9 @@ mod ki_static_init_errors;
 #[path = "sim_feature_completion/ki_initializer_order.rs"]
 mod ki_initializer_order;
 
+#[path = "sim_feature_completion/ki_timescale_option.rs"]
+mod ki_timescale_option;
+
 #[test]
 fn component_fixture_integrity() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

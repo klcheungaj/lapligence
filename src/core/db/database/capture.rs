@@ -327,6 +327,9 @@ impl Db {
             .filter_map(|binding| Some((binding.semantic_id, binding.config.clone()?)))
             .collect::<HashMap<_, _>>();
         let mut declaration_time_scales = HashMap::new();
+        let default_time_scale = snapshot
+            .default_time_scale
+            .unwrap_or(SemanticTimeScale::DEFAULT);
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
             let namespace = |node: &crate::ffi::slang::SemanticNode| {
                 node.kind == SemanticKind::Package || node.detail == "CompilationUnit"
@@ -361,7 +364,10 @@ impl Db {
             if scale.is_some() {
                 declaration_time_scales.insert(
                     NodeId::from_index(index),
-                    (time_exponent(scale, false)?, time_exponent(scale, true)?),
+                    (
+                        time_exponent(scale, default_time_scale, false)?,
+                        time_exponent(scale, default_time_scale, true)?,
+                    ),
                 );
             }
         }
@@ -427,6 +433,8 @@ impl Db {
             .collect();
         let instance_definitions =
             instance_definitions(snapshot, &ids, &mut source_positions, &instance_configs)?;
+        let default_time_scale_elements =
+            default_time_scale_elements(snapshot, &mut source_positions)?;
         let attributes = attribute_instances(snapshot, &ids, &mut source_positions)?;
         let primitive_array_positions = primitive_array_positions(snapshot);
         let instance_array_ranges = instance_array_ranges(snapshot);
@@ -1642,6 +1650,8 @@ impl Db {
             nodes,
             edition: snapshot.edition(),
             delay_selection: snapshot.delay_selection,
+            default_time_scale: snapshot.default_time_scale,
+            default_time_scale_elements,
             overridden_parameters,
             semantic_kinds,
             semantic_details,
@@ -1845,6 +1855,62 @@ fn instance_definitions(
         );
     }
     Ok(definitions)
+}
+
+/// The design elements that take the default time scale, each once, in
+/// source order (file, then offset): the definitions of plain instances and
+/// the packages whose node carries `INSTANCE_DEFAULT_TIME_SCALE`.
+fn default_time_scale_elements(
+    snapshot: &SlangSnapshot,
+    positions: &mut SourcePositions<'_>,
+) -> Result<Vec<super::DefaultTimeScaleElement>, DbError> {
+    use crate::ffi::slang::INSTANCE_DEFAULT_TIME_SCALE;
+    let mut found = Vec::new();
+    let mut seen = HashSet::new();
+    for semantic in snapshot.semantic_nodes.iter() {
+        if semantic.auxiliary & INSTANCE_DEFAULT_TIME_SCALE == 0 {
+            continue;
+        }
+        let (element, kind) = match semantic.kind {
+            SemanticKind::Package => (semantic, "package"),
+            SemanticKind::Instance
+                if semantic.subkind == crate::ffi::slang::SEMANTIC_INSTANCE_SINGLE =>
+            {
+                let Some(definition) = semantic
+                    .target_id()
+                    .and_then(|target| snapshot.semantic_nodes.get(target as usize))
+                else {
+                    continue;
+                };
+                let kind = match semantic.definition_kind {
+                    Some(SemanticDefinitionKind::Interface) => "interface",
+                    Some(SemanticDefinitionKind::Program) => "program",
+                    _ => "module",
+                };
+                (definition, kind)
+            }
+            _ => continue,
+        };
+        if !seen.insert(element.id) {
+            continue;
+        }
+        let order = element
+            .range
+            .map_or((u64::MAX, u64::MAX), |range| (range.file_id, range.start));
+        let (file, line, col, _, _) = positions.position(element)?;
+        found.push((
+            order,
+            super::DefaultTimeScaleElement {
+                kind,
+                name: element.name.to_string(),
+                file,
+                line,
+                col,
+            },
+        ));
+    }
+    found.sort_by_key(|(order, _)| *order);
+    Ok(found.into_iter().map(|(_, element)| element).collect())
 }
 
 /// The attribute instances of every owner. A single instance lists its own

@@ -399,14 +399,17 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
             let allowed = drive
                 | super::INSTANCE_CELL_DEFINE
                 | super::INSTANCE_AUTOMATIC
+                | super::INSTANCE_DEFAULT_TIME_SCALE
                 | super::INSTANCE_NET_TYPE_MASK << super::INSTANCE_NET_TYPE_SHIFT;
             node.auxiliary & !allowed == 0 && (node.auxiliary & drive).count_ones() <= 1
         }
         // A package carries its default lifetime and net type in the
-        // instance layout (ABI v68).
+        // instance layout (ABI v68), and whether it takes the default time
+        // scale (ABI v76).
         (2, _, _) => {
             node.auxiliary
                 & !(super::INSTANCE_AUTOMATIC
+                    | super::INSTANCE_DEFAULT_TIME_SCALE
                     | super::INSTANCE_NET_TYPE_MASK << super::INSTANCE_NET_TYPE_SHIFT)
                 == 0
         }

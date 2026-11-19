@@ -1,0 +1,4 @@
+tb unit=-5 precision=-9
+simulation unit=-9 precision=-9
+sim time=10000
+tb time=1.000

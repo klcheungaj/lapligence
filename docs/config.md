@@ -153,6 +153,7 @@ server, accepted and ignored by `llg`.
 | `compile.edition` | `"v2001"` \| `"sv2009"` | llg | `--edition`; the server compiles sv2009 |
 | `compile.compilation_units` | `"separate"` \| `"merged"` | llg | `--compilation-units`; the server always separates |
 | `compile.delay_select` | `"min"` \| `"typ"` \| `"max"` | llg | `--delay-select`; the server uses `typ` |
+| `compile.timescale` | `"<unit>/<precision>"` | both | `--timescale`; default time scale of elements without one |
 | `compile.include_dirs` | strings | both | `-I` |
 | `compile.defines` | `NAME[=VALUE]` strings | both | `-D` |
 | `compile.param_overrides` | table | both | `--param-override`/`-G`; string, integer, float or boolean values |
@@ -264,6 +265,16 @@ Required integer; must be `1`.
   continuous-assignment and procedural delays, specify paths, specparams,
   parameters and other constant or run-time expressions. It is fixed when the
   design is compiled, so the model has no run-time cost. `llg_ls` uses `typ`.
+- `timescale` (string `"<unit>/<precision>"`, e.g. `"10us/1ns"`) — the time
+  scale of every module, interface, program and package that has no
+  `` `timescale `` directive, `timeunit` or `timeprecision`, and the time unit
+  of `$unit` (`--timescale`; IEEE 1800-2009 3.14.2.3 leaves the default to
+  the tool). Each part is 1, 10 or 100 followed by `s`, `ms`, `us`, `ns`,
+  `ps` or `fs`, blanks allowed as in a `` `timescale `` directive; a
+  precision coarser than the unit is an error. Without it the default is
+  1ns/1ps and the `missing-timescale` lint rule warns once, at the first
+  element that uses it; with it (even `"1ns/1ps"`) the choice is explicit and
+  the rule is quiet. `llg_ls` applies it too.
 - `include_dirs` (array of strings) — additional include-search directories
   (may be external); source directories are already include dirs. In `llg`
   they are also searched for module definitions: a module, interface, program
@@ -360,6 +371,7 @@ Default rules (enabled; find `[lint.rules.<id>]` snippets below):
 | `assignment-in-condition` | assignment expressions used as truth predicates |
 | `casex-statement` | `casex` statements, which can hide X/Z selector mistakes |
 | `wide-index` | element, bit, part-select and queue/string method indices wider than 32 bits (never truncated; an out-of-range one is invalid), and constant indices no queue, dynamic array or string accepts |
+| `missing-timescale` | modules, interfaces, programs and packages without `` `timescale ``, `timeunit` or `timeprecision` that take the default 1ns/1ps; one finding per design, quiet with `--timescale`/`compile.timescale` |
 
 ```toml
 schema_version = 1

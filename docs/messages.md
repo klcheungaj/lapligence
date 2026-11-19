@@ -127,6 +127,7 @@ The hint is the rule name. Disable or re-grade a rule with `[lint.rules.<rule>] 
 | `LINT-023` | `assignment-in-condition` | warning |
 | `LINT-024` | `casex-statement` | warning |
 | `LINT-025` | `wide-index` | warning |
+| `LINT-026` | `missing-timescale` | warning |
 
 | Id | Severity | Meaning | Disable |
 |---|---|---|---|

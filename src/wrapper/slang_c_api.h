@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 75u
+#define LLG_SLANG_ABI_VERSION 76u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -115,6 +115,14 @@ enum {
   LLG_SLANG_COMPILE_DELAY_SELECT_MAX = 1u << 5
 };
 
+/* A time unit and precision: LLG_SLANG_TIME_UNIT_* codes and magnitudes. */
+typedef struct {
+  uint32_t unit;
+  uint32_t magnitude;
+  uint32_t precision_unit;
+  uint32_t precision_magnitude;
+} LlgSlangTimeScale;
+
 typedef struct {
   uint32_t abi_version;
   uint32_t flags;
@@ -141,6 +149,11 @@ typedef struct {
   uint32_t default_library_present;
   uint32_t default_library_reserved;
   LlgSlangLimits limits;
+  /* (ABI v76) The time scale of every design element that declares none
+   * (IEEE 1800-2009 3.14.2.3: the default is implementation-specific). Units
+   * are LLG_SLANG_TIME_UNIT_* codes other than NONE, magnitudes 1, 10 or 100,
+   * and the precision is not coarser than the unit. */
+  LlgSlangTimeScale default_time_scale;
 } LlgSlangCompileRequest;
 
 enum {
@@ -787,7 +800,13 @@ enum {
  * and has no ports to pull (22.9). */
 enum {
   LLG_SLANG_INSTANCE_CELL_DEFINE = 1ull << 18,
-  LLG_SLANG_INSTANCE_AUTOMATIC = 1ull << 19
+  LLG_SLANG_INSTANCE_AUTOMATIC = 1ull << 19,
+  /* (ABI v76) The definition of a plain instance, or a package, declares no
+   * time scale (no timeunit or timeprecision, no `timescale directive in
+   * effect, no compilation-unit timeunit; IEEE 1800-2009 3.14.2.3), so the
+   * request's default_time_scale applies. Only set for definitions declared
+   * outside every other definition: a nested one inherits (rule a). */
+  LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE = 1ull << 28
 };
 #define LLG_SLANG_INSTANCE_NET_TYPE_SHIFT 20u
 #define LLG_SLANG_INSTANCE_NET_TYPE_MASK 0xffull

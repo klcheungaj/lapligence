@@ -300,6 +300,8 @@ impl StreamBuilder {
             edition: LanguageEdition::from_snapshot_flags(header.flags)?,
             compilation_unit_mode: CompilationUnitMode::from_snapshot_flags(header.flags),
             delay_selection: DelaySelection::from_snapshot_flags(header.flags)?,
+            // `compile` records the requested default after the stream.
+            default_time_scale: None,
             files: self.files,
             diagnostics: self.diagnostics,
             instances: self.instances,
