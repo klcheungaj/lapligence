@@ -2447,7 +2447,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   variables are not dumped and naming one in `$dumpvars` is an error. A block,
   task or function may name a `$dumpvars` scope, the depth counting from it.
   `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
-  `$dumpflush` follow the dump state; an output error is reported, stops the
+  `$dumpflush` follow the dump state; the `$dumpon`, `$dumpoff` and
+  `$dumpall` checkpoints are written at the end of their time step, after its
+  records and with its final values, also with `--wave-deltas` (S47-D5); an
+  output error is reported, stops the
   dump and fails the run (decisions S47-D1..D15; [SIM-047
   fixtures](../tests/fixtures/sim/feature_completion/sim_047/readme.md), read
   by an independent VCD reader and GTKWave's FST reader). Remaining gaps are

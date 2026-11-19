@@ -478,7 +478,9 @@ optional process-wide guard.
   mode is compiled into the model and links its own runtime archive, so a
   model without it pays nothing. By default a variable gets at most one
   record per step, none when its end-of-step value equals its last record
-  (S47-D2, S47-D14).
+  (S47-D2, S47-D14). In both modes the `$dumpon`, `$dumpoff` and `$dumpall`
+  checkpoints are written at the end of their time step, after its records
+  (S47-D5).
 
 ## `[build]` — model build (`llg` only)
 

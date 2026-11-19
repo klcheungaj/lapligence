@@ -815,8 +815,10 @@ fn dump_controls_record_end_of_step_values() {
         let mut expected = vec![
             checkpoint(&[(&cv, "0001"), (&cs, "0"), (&cr, "0")]),
             checkpoint(&[(&cv, "xxxx"), (&cs, "x"), (&cr, "NaN")]),
-            checkpoint(&[(&cv, "0111"), (&cs, "1"), (&cr, "2.5")]),
+            // The final values of step 4, written after its `$dumpon`.
             checkpoint(&[(&cv, "1000"), (&cs, "1"), (&cr, "2.5")]),
+            // At the end of step 5, after the `$dumpflush` wrote s=0.
+            checkpoint(&[(&cv, "1000"), (&cs, "0"), (&cr, "2.5")]),
         ];
         for values in &mut expected {
             values.sort();
@@ -839,8 +841,8 @@ fn dump_controls_record_end_of_step_values() {
         );
         assert_eq!(
             vcd.changes_of("tb.v")[2..4],
-            [(2, "0100".to_owned()), (2, "xxxx".to_owned())],
-            "{label}: the step's value precedes the $dumpoff checkpoint"
+            [(2, "0101".to_owned()), (2, "xxxx".to_owned())],
+            "{label}: the step's end value precedes the $dumpoff checkpoint"
         );
         assert_steps(
             &label,
@@ -1216,9 +1218,10 @@ fn fst_values_activity_and_size_limit_through_the_official_reader() {
         assert_eq!(full.end, 206, "{label}");
         // $dumpvars at 0, $dumpoff at 2, $dumpon at 4.
         assert_eq!(full.activity, [(0, 1), (2, 0), (4, 1)], "{label}");
-        // End-of-step values; the $dumpon checkpoint at 4 holds 04 and the
-        // step ends with 05; from 6 on the value counts up once per step.
-        let mut v = vec![(0, 0x01u32), (1, 0x03), (4, 0x04), (4, 0x05)];
+        // End-of-step values: the step of the $dumpoff records 04 first, and
+        // the $dumpon checkpoint at 4 holds the step's final 05 (S47-D5);
+        // from 6 on the value counts up once per step.
+        let mut v = vec![(0, 0x01u32), (1, 0x03), (2, 0x04), (4, 0x05)];
         v.extend((6..=205).map(|time| (time, time as u32)));
         let v: Vec<(u64, String)> = v
             .into_iter()
@@ -1618,7 +1621,7 @@ fn the_per_delta_dump_records_every_change_in_order() {
             records(&[("tick", "x"), ("tick", "x")]),
             "{label}"
         );
-        // After the $dumpall checkpoint at 7.
+        // Before the $dumpall checkpoint, which ends step 7 (S47-D5).
         assert_eq!(
             vcd.plain_records_at(7),
             records(&[("v", "0001"), ("v", "1111")]),
@@ -1648,6 +1651,184 @@ fn the_per_delta_dump_records_every_change_in_order() {
                 (2, "0011".to_owned()),
                 (2, "0010".to_owned())
             ],
+            "{label}"
+        );
+    }
+}
+
+/// The file in order: one `"<time> $<checkpoint>"` line per checkpoint and
+/// one `"<time> <path>=<value>"` line per ordinary record.
+fn file_order(vcd: &vcd::Vcd) -> Vec<String> {
+    let path_of = |code: &str| {
+        vcd.vars
+            .iter()
+            .find(|var| var.code == code)
+            .map(|var| var.path.clone())
+            .unwrap_or_default()
+    };
+    let mut lines = Vec::new();
+    let mut last_checkpoint = None;
+    for change in &vcd.changes {
+        match change.checkpoint {
+            Some(index) if last_checkpoint != Some(index) => {
+                last_checkpoint = Some(index);
+                lines.push(format!("{} ${:?}", change.time, change.section));
+            }
+            Some(_) => {}
+            None => lines.push(format!(
+                "{} {}={}",
+                change.time,
+                path_of(&change.code),
+                change.value
+            )),
+        }
+    }
+    lines
+}
+
+/// $dumpon, $dumpoff and $dumpall write their checkpoint at the end of the
+/// time step, after the step's records and with its final values (S47-D5):
+/// a change after `$dumpoff` in its step is recorded before the checkpoint,
+/// an on-off or off-on pair within a step writes none, two `$dumpall` calls
+/// write one, and a `$dumpall` in the `$dumpvars` step follows its
+/// checkpoint. VCD, FST and the per-delta dump agree.
+#[test]
+fn checkpoints_follow_the_records_of_their_step() {
+    let stdout = include_str!("../fixtures/sim/feature_completion/sim_047/checkpoint_timing.out");
+    let lines = |text: &[&str]| {
+        text.iter()
+            .map(|line| (*line).to_owned())
+            .collect::<Vec<_>>()
+    };
+    for optimized in [true, false] {
+        let label = format!("checkpoint_timing, optimized={optimized}");
+        let (dir, output) =
+            sim_cli::run_case_keeping_dir(SUITE, "checkpoint_timing", optimized, &[], &[]);
+        assert_success(&label, &output, stdout);
+        let vcd = read_vcd(&label, &dir, "timing.vcd");
+        assert_eq!(
+            file_order(&vcd),
+            lines(&[
+                "0 $DumpVars",
+                "0 $DumpAll",
+                "1 tb.v=0100",
+                "1 $DumpOff",
+                "3 $DumpOn",
+                "4 tb.s=1",
+                "4 tb.v=1000",
+                "4 $DumpOff",
+                "6 $DumpOn",
+                "6 $DumpAll",
+                "7 tb.v=1011",
+                "8 tb.r=1.5",
+                "8 tb.e=x",
+                "8 $DumpAll",
+                "9 $DumpAll",
+            ]),
+            "{label}"
+        );
+        let v = vcd.var("tb.v").code.clone();
+        let v_in = |kind: Section| {
+            vcd.checkpoints(kind)
+                .into_iter()
+                .map(|(time, values)| {
+                    let value = values
+                        .into_iter()
+                        .find(|(code, _)| *code == v)
+                        .map(|(_, value)| value)
+                        .unwrap_or_default();
+                    (time, value)
+                })
+                .collect::<Vec<_>>()
+        };
+        let at = |pairs: &[(u64, &str)]| {
+            pairs
+                .iter()
+                .map(|(time, value)| (*time, (*value).to_owned()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(v_in(Section::DumpVars), at(&[(0, "0010")]), "{label}");
+        assert_eq!(
+            v_in(Section::DumpAll),
+            at(&[(0, "0010"), (6, "1010"), (8, "1011"), (9, "1011")]),
+            "{label}"
+        );
+        assert_eq!(
+            v_in(Section::DumpOn),
+            at(&[(3, "0111"), (6, "1010")]),
+            "{label}"
+        );
+        assert_eq!(
+            v_in(Section::DumpOff),
+            at(&[(1, "xxxx"), (4, "xxxx")]),
+            "{label}"
+        );
+
+        let (dir, output) = sim_cli::run_case_keeping_dir(
+            SUITE,
+            "checkpoint_timing",
+            optimized,
+            &["--define", "FILE=\"timing.fst\""],
+            &[],
+        );
+        assert_success(&label, &output, stdout);
+        let fst =
+            fst_dump(dir.path(), "timing.fst").unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert_eq!(
+            fst.activity,
+            [(0, 1), (1, 0), (3, 1), (4, 0), (6, 1)],
+            "{label}"
+        );
+        // FST marks `$dumpoff` as dump activity, without x values.
+        assert_eq!(
+            fst.changes_of("tb.v"),
+            at(&[
+                (0, "0010"),
+                (0, "0010"),
+                (1, "0100"),
+                (3, "0111"),
+                (4, "1000"),
+                (6, "1010"),
+                (6, "1010"),
+                (7, "1011"),
+                (8, "1011"),
+                (9, "1011"),
+            ]),
+            "{label}"
+        );
+
+        let label = format!("checkpoint_timing --wave-deltas, optimized={optimized}");
+        let (dir, output) = sim_cli::run_case_keeping_dir(
+            SUITE,
+            "checkpoint_timing",
+            optimized,
+            &["--wave-deltas"],
+            &[],
+        );
+        assert_success(&label, &output, stdout);
+        let vcd = read_vcd(&label, &dir, "timing.vcd");
+        assert_eq!(
+            file_order(&vcd),
+            lines(&[
+                "0 $DumpVars",
+                "0 $DumpAll",
+                "1 tb.v=0011",
+                "1 tb.v=0100",
+                "1 $DumpOff",
+                "3 $DumpOn",
+                "4 tb.v=1000",
+                "4 tb.s=1",
+                "4 $DumpOff",
+                "6 $DumpOn",
+                "6 $DumpAll",
+                "7 tb.v=1011",
+                "8 tb.r=1.5",
+                "8 tb.e=x",
+                "8 $DumpAll",
+                "9 tb.v=1100",
+                "9 tb.v=1011",
+                "9 $DumpAll",
+            ]),
             "{label}"
         );
     }
