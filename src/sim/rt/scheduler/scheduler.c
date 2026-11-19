@@ -253,7 +253,14 @@ static int run_observed_set(void) {
     if (!run_region_queue(LLG_REGION_PRE_OBSERVED_PLI)) return 0;
     if (!run_region_queue(LLG_REGION_PRE_OBSERVED)) return 0;
     if (!run_region_queue(LLG_REGION_OBSERVED)) return 0;
-    if (!run_concurrent_assertions()) return 0;
+    // Without a registered concurrent assertion the pass has no work: its
+    // procedural instances, property programs and clock edges all belong to
+    // registered assertions, and its event queue flushes only when non-empty.
+    if (LLG_CO_UNLIKELY(g.assertions != NULL || g.assertion_events.count)) {
+        if (!run_concurrent_assertions()) return 0;
+    } else if (g.finish) {
+        return 0;
+    }
     flush_deferred_assertions();
     if (g.finish) return 0;
     if (!run_region_queue(LLG_REGION_POST_OBSERVED)) return 0;
