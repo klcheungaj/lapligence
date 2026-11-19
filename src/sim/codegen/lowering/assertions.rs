@@ -2668,21 +2668,21 @@ fn is_sequence_local_lhs(lhs: &IrLhs) -> bool {
 }
 
 impl Codegen<'_> {
-    /// Whether `expression` selects a cell of an unpacked array that keeps
-    /// no Preponed image (only descriptor arrays do; see `sampled_compatible`).
-    pub(super) fn selects_unsampled_array_cell(&self, expression: &IrExpr) -> bool {
-        let mut found = false;
+    /// Why `expression` has no sampled value although its operands are legal
+    /// (SV 16.6.1): the contents of a queue, dynamic or associative array
+    /// have no Preponed image. `None` when nothing it reads explains it.
+    pub(super) fn unsampled_element_cause(expression: &IrExpr) -> Option<&'static str> {
+        let mut container = false;
         crate::sim::opt::walk_expr_mut(&mut expression.clone(), &mut |part| {
-            if let IrExprKind::ArrayRead { arr, .. } = part.kind() {
-                found |= !self.model.arrays[*arr].sparse();
-            }
+            container |= matches!(part.kind(), IrExprKind::Container(_));
         });
-        found
+        container.then_some(
+            "llg keeps no sampled value of queue, dynamic array or associative array elements",
+        )
     }
 
     /// The located rejection of an assertion operand with no sampled value.
-    /// Element selections of unpacked arrays below the descriptor size are
-    /// named: those arrays keep no Preponed image of their cells.
+    /// Container elements are named: they keep no Preponed image.
     fn unsupported_sampled_expression(
         &self,
         path: &str,
@@ -2690,11 +2690,9 @@ impl Codegen<'_> {
         role: &str,
         expression: &IrExpr,
     ) -> String {
-        let detail = if self.selects_unsampled_array_cell(expression) {
-            ": llg keeps no sampled value of unpacked array cells it selects"
-        } else {
-            ""
-        };
+        let detail = Self::unsampled_element_cause(expression)
+            .map(|cause| format!(": {cause}"))
+            .unwrap_or_default();
         let location = self.source_location(node);
         crate::sim::codegen::error::located(
             &location,
@@ -2789,14 +2787,14 @@ impl Codegen<'_> {
             IrExprKind::RealUn { a, .. } | IrExprKind::CastToReal { a, .. } => {
                 self.sampled_compatible(a)
             }
-            // A descriptor array keeps its cells' Preponed values itself; direct
-            // arrays have no sampled image.
+            // A descriptor array keeps its cells' Preponed values itself; a
+            // static dense array gets an image (`mark_sampled_cell_arrays`).
             IrExprKind::ArrayRead {
                 arr,
                 indices,
                 elem_sel,
             } => {
-                let mut admitted = self.model.arrays[*arr].sparse()
+                let mut admitted = self.model.arrays[*arr].sampleable_cells()
                     && indices.iter().all(|index| self.sampled_compatible(index));
                 elem_sel.expressions(&mut |select| admitted &= self.sampled_compatible(select));
                 admitted
@@ -2861,6 +2859,51 @@ fn property_truth(value: IrExpr) -> IrExpr {
         false,
         None,
     )
+}
+
+/// Add the arrays whose cells `expression` selects to `arrays`.
+pub(super) fn note_sampled_cell_reads(
+    expression: &IrExpr,
+    arrays: &mut std::collections::BTreeSet<usize>,
+) {
+    crate::sim::opt::walk_expr_mut(&mut expression.clone(), &mut |part| {
+        if let IrExprKind::ArrayRead { arr, .. } = part.kind() {
+            arrays.insert(*arr);
+        }
+    });
+}
+
+/// Give every static dense array whose cells a sampled expression selects a
+/// Preponed cell image: the cells history domains sample, those any
+/// concurrent assertion or end point reads (operands, locals, match items,
+/// abort conditions) and those `$sampled` arguments select (`procedural`).
+/// Generated C reads only images in sampled contexts, so an array another
+/// optimization pass later stops reading keeps a harmless image; no other
+/// array pays anything.
+pub(super) fn mark_sampled_cell_arrays(
+    model: &mut IrModel,
+    procedural: &std::collections::BTreeSet<usize>,
+) {
+    let mut arrays = procedural.clone();
+    let mut note = |expression: &mut IrExpr| {
+        crate::sim::opt::walk_expr_mut(expression, &mut |part| {
+            if let IrExprKind::ArrayRead { arr, .. } = part.kind() {
+                arrays.insert(*arr);
+            }
+        });
+    };
+    for domain in &mut model.sampled_domains {
+        note(&mut domain.sample);
+    }
+    for assertion in &mut model.assertions {
+        for expression in assertion.expressions_mut() {
+            note(expression);
+        }
+    }
+    for index in arrays {
+        let array = &mut model.arrays[index];
+        array.sampled_image = !array.sparse() && !array.activation;
+    }
 }
 
 /// Signals a sampled expression reads (the forms [`sampled_compatible`]

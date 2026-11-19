@@ -1945,9 +1945,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   to an element or member of an element of a subroutine record, or of a
   queue element, wakes at every store into what it binds: the owner's,
   a sibling branch's and those through other `ref` formals (decision S09-D4,
-  `record_ref_subroutine_element_wake`, `record_ref_container_member_wake`);
-  a run-time index of a subroutine record that selects no element stops at
-  the actual (S07-D15, `record_ref_subroutine_unselected`). A run-time record
+  `record_ref_subroutine_element_wake`, `record_ref_container_member_wake`),
+  also when a task forwards a member of its record `ref` formal to the waiter,
+  at any depth (`record_ref_forwarded_member_wake`); fork branches use the
+  owner's record whole as a call operand or copy source. A run-time index of
+  a subroutine record that selects no element stops at the actual (S07-D15,
+  `record_ref_subroutine_unselected`, `record_ref_forwarded_member_unselected`);
+  a `ref` stop ends the run at the call, and no caller runs on
+  (`S07-D15_ref_stop_nested_call`). A run-time record
   element (`o.m[1].a[k]`, `t.e[k]`) compares with `==`, `!=` and `===`, and a
   subroutine record's `t.m[1].a[k]` is an assignment source and target
   (`record_element_select_equality`). At 16 or more cells a subroutine
@@ -1977,7 +1982,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   packed, real and string input formals and packed and real output and inout
   formals are shared like locals (outputs are copied out at return), and so
   are string outputs, native records with their companion containers and
-  container formals, with branches of every fork kind and nested forks.
+  container formals, with branches of every fork kind and nested forks (a
+  `join` branch reading a string input formal fails:
+  [known issue](known_issues.md#a-string-input-formal-read-in-a-fork-join-branch)).
   Semaphore, mailbox, chandle and class-handle variables and by-value handle
   formals are shared through an opaque frame slot
   ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)); a
@@ -2420,8 +2427,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **VCD/FST** — `$dumpfile` names the file (`.fst` selects FST, any other
   name VCD; default `dump.vcd`); `$dumpvars` calls of one time step combine
   their depth, scope and variable selections, and the dump starts at the end
-  of that step. Each changed variable is recorded once per time step with its
-  end-of-step value. Packed values, array elements with declared bounds, real
+  of that step. Each changed variable is recorded at most once per time step
+  with its end-of-step value, and not at all when that value equals its last
+  record (a value restored within the step), in registration order, so
+  lowering's merge of overridden nonblocking updates leaves the file
+  unchanged. `--wave-deltas` (`waveform.deltas`) instead records every change
+  in execution order, several per step, which makes dumps larger and slower;
+  it is compiled in, so other models pay nothing for it. Packed values, array elements with declared bounds, real
   values, X/Z, aliases (one identifier code per merged net), hierarchy with
   `g[i]` loop generate scopes and femtosecond timestamps are represented, and
   so are the static variables of blocks, tasks and functions (their scopes,
@@ -2433,7 +2445,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   task or function may name a `$dumpvars` scope, the depth counting from it.
   `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
   `$dumpflush` follow the dump state; an output error is reported, stops the
-  dump and fails the run (decisions S47-D1..D13; [SIM-047
+  dump and fails the run (decisions S47-D1..D15; [SIM-047
   fixtures](../tests/fixtures/sim/feature_completion/sim_047/readme.md), read
   by an independent VCD reader and GTKWave's FST reader). Remaining gaps are
   listed in [known issues](known_issues.md#waveform-dump-coverage-limits-sim-047).
@@ -2623,6 +2635,15 @@ These are bounded implementations, not full verification-infrastructure support.
   directly as a value outside virtual-interface assignments (a mailbox
   message) reject
   ([known issue](known_issues.md#modport-expression-ports-through-virtual-interfaces)).
+  Interface instances declared in an interface, at any depth and as elements
+  of instance arrays, are selected through a handle (`v.tx`, `v.a.l`,
+  `v.ls[1]`) as values (assignments, also to a modport view, actual
+  arguments, comparisons), and member reads, writes, waits and method calls
+  go through the whole path (`v.tx.x`, `v.a.l.f()`) to the nested instance of
+  the instance bound when the access executes; a null handle is the same
+  fatal run-time error. A member of a generate block inside an interface
+  through a handle (`v.g.x`) is a located error
+  ([virtual interfaces](../tests/sim_virtual_interfaces.rs)).
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Named, nested (implicitly instantiated) and bound
   programs with module-style, interface and modport ports, package imports,
@@ -2820,12 +2841,21 @@ recent strictly earlier tick, also between edges; a `vpiAssertionReset`
 keeps the history (A17-D8). `iff` and the `$past` gate
 read current values when the clock occurs. Outside any assertion, a
 procedural `$sampled` returns the Preponed value of every packed or real signal
-it reads, registered without per-slot history. Real, shortreal and realtime
+it reads, registered without per-slot history. A selection of a cell of a
+static fixed unpacked array (multidimensional, packed selections of the cell,
+real, net, enum and packed structure elements) is sampled with its index, as
+an argument and as a concurrent assertion operand: an X, Z or out-of-range
+sampled index reads the element default (§§16.5, 16.6.1, 7.4.6,
+[S35-D1](lrm_decisions.md#sampled-values-of-array-cells-sampled-array-cells)).
+Arrays below the descriptor size that a sampled expression selects keep a
+Preponed image of their cells; no other array pays anything
+([trade-off](sim_performance_tradeoffs.md#preponed-images-of-sampled-array-cells)).
+Real, shortreal and realtime
 operands of `$past`, `$rose`, `$fell`, `$stable`, `$changed` and the global
 clocking functions, string, event, chandle, class, dynamic and associative
-array arguments are diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
-queues and unpacked element selections (also element operands of concurrent
-assertions, for arrays below the descriptor size) are located unsupported
+array arguments are diagnosed as illegal (§16.6.1); whole fixed unpacked arrays, unpacked structures,
+queues, and elements of queues, dynamic and associative arrays (also as
+concurrent assertion operands) are located unsupported
 rejections ([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
 [SIM-035 fixtures](../tests/fixtures/sim/feature_completion/sim_035/readme.md)).
 The future global functions `$future_gclk`, `$rising_gclk`, `$falling_gclk`,

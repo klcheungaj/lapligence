@@ -114,6 +114,24 @@ impl<'a, 'm> Frame<'a, 'm> {
         Ok(result)
     }
 
+    /// The Preponed cell image a sampled read of a static dense array
+    /// indexes instead of the live cells (`IrArray::sampled_image`), or
+    /// `None` outside sampled reads. Descriptor arrays peek their own saved
+    /// cells.
+    fn sampled_image_read(&self, array: usize, writable: bool) -> Result<Option<String>, String> {
+        let info = self.ctx.model.array(array);
+        if !self.sampled_reads || writable || info.sparse() || info.activation {
+            return Ok(None);
+        }
+        if !info.sampled_image {
+            return Err(format!(
+                "array `{}` is read in a sampled context but keeps no sampled cell image",
+                info.hdl_name
+            ));
+        }
+        Ok(Some(info.sampled_image_name()))
+    }
+
     pub(super) fn array_cell(
         &mut self,
         array: usize,
@@ -146,15 +164,25 @@ impl<'a, 'm> Frame<'a, 'm> {
                 ));
             }
         }
+        let image = self.sampled_image_read(array_index, writable)?;
         if array.real {
             if let Some(offset) = self.constant_cell_offset(array_index, indices) {
                 let offset = format!("{offset}ULL");
                 let address = if array.activation {
                     format!("&({})[{offset}]", self.fixed_array_address(array_index)?)
+                } else if let Some(image) = &image {
+                    format!("&{image}[{offset}]")
                 } else {
                     array.cell_address(&offset)
                 };
-                let pointer = self.scalar("double*", address);
+                let pointer = self.scalar(
+                    if image.is_some() {
+                        "const double*"
+                    } else {
+                        "double*"
+                    },
+                    address,
+                );
                 return Ok((
                     Binding {
                         address: pointer,
@@ -206,7 +234,9 @@ impl<'a, 'm> Frame<'a, 'm> {
             conditions.join(" && ")
         };
         let pointer = self.scalar(
-            if array.real {
+            if array.real && image.is_some() {
+                "const double*"
+            } else if array.real {
                 "double*"
             } else if writable {
                 "sv4_t*"
@@ -217,6 +247,8 @@ impl<'a, 'm> Frame<'a, 'm> {
                 "({valid}) ? {} : NULL",
                 if array.real && array.activation {
                     format!("&({})[{linear}]", self.fixed_array_address(array_index)?)
+                } else if let Some(image) = &image {
+                    format!("&{image}[{linear}]")
                 } else if array.sparse() {
                     format!(
                         "{}({}, {linear})",

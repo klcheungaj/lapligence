@@ -122,6 +122,7 @@ pub(super) struct RawSimulator {
 pub(super) struct RawWaveform {
     pub file: Option<String>,
     pub depth: Option<u64>,
+    pub deltas: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]

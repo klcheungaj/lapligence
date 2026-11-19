@@ -21,9 +21,13 @@ impl Codegen<'_> {
         }) else {
             return Ok(None);
         };
+        if let Some(scope) = self.virtual_interface_generate_scope(parts, refs, position) {
+            return Err(Self::virtual_interface_generate_scope_error(scope, path));
+        }
+        let steps = self.virtual_interface_nested_steps(parts, refs, position);
         let mut member = parts
             .iter()
-            .skip(position + 1)
+            .skip(position + 1 + steps.len())
             .filter(|part| !part.is_empty())
             .cloned()
             .collect::<Vec<_>>()
@@ -58,14 +62,7 @@ impl Codegen<'_> {
         let spelling = self
             .virtual_interface_spelling(handle)
             .ok_or_else(|| format!("virtual interface handle has no type in `{path}`"))?;
-        let identity = Codegen::normalize_virtual_interface_identity(
-            &Codegen::virtual_interface_identity_from_spelling(&spelling),
-        );
-        let descriptor = self
-            .virtual_interface_types
-            .get(&identity)
-            .copied()
-            .ok_or_else(|| format!("virtual interface type `{identity}` has no descriptor"))?;
+        let (descriptor, nested) = self.virtual_interface_nested_path(path, &spelling, &steps)?;
         let mut view_port = false;
         if let Some(view) = Codegen::virtual_interface_view_from_spelling(&spelling) {
             let direction = self
@@ -90,9 +87,111 @@ impl Codegen<'_> {
             handle,
             member,
             descriptor,
+            nested,
             spelling,
             view_port,
         }))
+    }
+
+    /// The descriptor reached from a handle of type `spelling` through the
+    /// nested interface instances `steps` (`v.a.l`), and the `(descriptor,
+    /// nested slot)` of each step. A view restricts the handle to the
+    /// modport's ports (SV 25.5), which name no nested instance.
+    pub(in super::super) fn virtual_interface_nested_path(
+        &self,
+        path: &str,
+        spelling: &str,
+        steps: &[String],
+    ) -> Result<(usize, Vec<(usize, usize)>), String> {
+        let identity = Codegen::normalize_virtual_interface_identity(
+            &Codegen::virtual_interface_identity_from_spelling(spelling),
+        );
+        let mut descriptor = self
+            .virtual_interface_types
+            .get(&identity)
+            .copied()
+            .ok_or_else(|| format!("virtual interface type `{identity}` has no descriptor"))?;
+        let context = if path.is_empty() {
+            String::new()
+        } else {
+            format!(" in `{path}`")
+        };
+        if let (Some(view), Some(step)) = (
+            Codegen::virtual_interface_view_from_spelling(spelling),
+            steps.first(),
+        ) {
+            return Err(format!(
+                "nested interface instance `{step}` is not available through virtual interface view `{view}`{context}"
+            ));
+        }
+        let mut nested = Vec::with_capacity(steps.len());
+        for step in steps {
+            let slot = self
+                .virtual_interface_nested
+                .get(&(descriptor, step.clone()))
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "nested interface instance `{step}` through virtual interface `{spelling}` \
+                         is not declared, as an instance of one interface type, in every \
+                         elaborated instance the handle can bind{context}"
+                    )
+                })?;
+            nested.push((descriptor, slot));
+            descriptor = self.model.virtual_interfaces[descriptor].nested[slot].interface;
+        }
+        Ok((descriptor, nested))
+    }
+
+    fn virtual_interface_generate_scope_error(scope: &str, path: &str) -> String {
+        format!(
+            "generate block `{scope}` of an interface is not supported through a virtual \
+             interface in `{path}`; select the interface's own members or the interface \
+             instances declared in it directly"
+        )
+    }
+
+    /// Lower a nested interface instance selected through a handle as a
+    /// value (`vif = top.tx`, an actual argument `top.rx`; SV 25.9): the
+    /// handle of the nested instance of the instance the handle binds.
+    pub(in super::super) fn virtual_interface_nested_value(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrChandleExpr>, String> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return Ok(None);
+        };
+        let Some((position, handle)) = refs.iter().enumerate().find_map(|(position, target)| {
+            let target = (*target)?;
+            self.virtual_interface_spelling(target)
+                .map(|_| (position, target))
+        }) else {
+            return Ok(None);
+        };
+        if let Some(scope) = self.virtual_interface_generate_scope(parts, refs, position) {
+            return Err(Self::virtual_interface_generate_scope_error(scope, path));
+        }
+        let steps = self.virtual_interface_nested_steps(parts, refs, position);
+        if steps.is_empty() || position + 1 + steps.len() != parts.len() {
+            return Ok(None);
+        }
+        let spelling = self
+            .virtual_interface_spelling(handle)
+            .ok_or_else(|| format!("virtual interface handle has no type in `{path}`"))?;
+        let (_, nested) = self
+            .virtual_interface_nested_path(path, &spelling, &steps)
+            .map_err(|error| self.locate_error(node, error))?;
+        let target = VirtualInterfaceMemberPath {
+            position,
+            handle,
+            member: String::new(),
+            descriptor: 0,
+            nested,
+            spelling,
+            view_port: false,
+        };
+        self.virtual_interface_handle(path, node, &target).map(Some)
     }
 
     /// The lowered handle of a member path: a handle held in a record or
@@ -110,7 +209,55 @@ impl Codegen<'_> {
         } else {
             target.handle
         };
-        self.lower_chandle(path, handle)
+        let handle = self.lower_chandle(path, handle)?;
+        Ok(self.wrap_virtual_interface_nested(path, node, handle, &target.nested))
+    }
+
+    /// The handle of the nested instance `nested` selects from the
+    /// instance `handle` binds, one lookup per step.
+    fn wrap_virtual_interface_nested(
+        &self,
+        path: &str,
+        node: NodeId,
+        mut handle: IrChandleExpr,
+        nested: &[(usize, usize)],
+    ) -> IrChandleExpr {
+        for (interface, slot) in nested {
+            let name = &self.model.virtual_interfaces[*interface].nested[*slot].name;
+            let site = self.source_site(
+                &format!("virtual interface nested instance `{name}`"),
+                path,
+                node,
+            );
+            handle = IrChandleExpr::VirtualInterfaceNested {
+                handle: Box::new(handle),
+                interface: *interface,
+                slot: *slot,
+                site,
+            };
+        }
+        handle
+    }
+
+    /// The receiver of a method call through a virtual interface: the
+    /// handle, or the nested instance whose method the call names
+    /// (`v.tx.f()`).
+    pub(in super::super) fn lower_virtual_interface_receiver(
+        &mut self,
+        path: &str,
+        call: NodeId,
+        receiver: NodeId,
+    ) -> Result<IrChandleExpr, String> {
+        let handle = self.lower_chandle(path, receiver)?;
+        let steps = self.db.virtual_interface_call_scopes(call).to_vec();
+        if steps.is_empty() {
+            return Ok(handle);
+        }
+        let spelling = self
+            .virtual_interface_spelling(receiver)
+            .ok_or_else(|| format!("virtual interface receiver has no type in `{path}`"))?;
+        let (_, nested) = self.virtual_interface_nested_path(path, &spelling, &steps)?;
+        Ok(self.wrap_virtual_interface_nested(path, call, handle, &nested))
     }
 
     fn virtual_interface_access(
@@ -219,7 +366,20 @@ impl Codegen<'_> {
     ) -> Result<Option<(NodeId, String)>, String> {
         Ok(self
             .virtual_interface_member_path(path, node, false)?
-            .map(|target| (target.handle, target.member)))
+            .map(|target| (target.handle, self.virtual_interface_key_member(&target))))
+    }
+
+    /// The member path after the handle, nested instances included
+    /// (`tx.x`), which with the handle identifies the selected storage in
+    /// the source text.
+    fn virtual_interface_key_member(&self, target: &VirtualInterfaceMemberPath) -> String {
+        let mut key = String::new();
+        for (interface, slot) in &target.nested {
+            key.push_str(&self.model.virtual_interfaces[*interface].nested[*slot].name);
+            key.push('.');
+        }
+        key.push_str(&target.member);
+        key
     }
 
     /// Lower a member path rooted at a virtual-interface handle. The runtime
@@ -287,9 +447,15 @@ pub(in super::super) struct VirtualInterfaceMemberPath {
     pub(in super::super) position: usize,
     /// The handle declaration.
     pub(in super::super) handle: NodeId,
-    /// The member name after the handle (`cb.x` for a clockvar).
+    /// The member name after the handle and its nested instances (`cb.x`
+    /// for a clockvar).
     pub(in super::super) member: String,
+    /// The descriptor of the instance that declares the member: the
+    /// handle's, or that of the last nested instance.
     pub(in super::super) descriptor: usize,
+    /// `(descriptor, nested slot)` of each nested interface instance between
+    /// the handle and the member (`tx` in `v.tx.x`), outermost first.
+    nested: Vec<(usize, usize)>,
     spelling: String,
     view_port: bool,
 }
@@ -481,6 +647,7 @@ impl Codegen<'_> {
         }
         let handle = self.virtual_interface_handle(path, base, &target)?;
         let site = self.source_site("virtual interface member access", path, node);
+        let key = (target.handle, self.virtual_interface_key_member(&target));
         Ok(Some(VirtualInterfaceArrayElement {
             handle,
             descriptor: target.descriptor,
@@ -490,7 +657,7 @@ impl Codegen<'_> {
             select,
             declaration,
             member_path: base,
-            key: (target.handle, target.member),
+            key,
         }))
     }
 

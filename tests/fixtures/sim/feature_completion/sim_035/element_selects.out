@@ -1,0 +1,10 @@
+5 m=5 ps=8 bs=0 ip=4 r=0 f=0 s=1 c=0 smp=33
+5 sampled=22 current=23
+15 m=5 ps=8 bs=0 ip=4 r=1 f=0 s=0 c=0 smp=33
+15 sampled=23 current=24
+25 m=a ps=8 bs=1 ip=4 r=0 f=1 s=0 c=1 smp=24
+25 sampled=11 current=12
+35 m=1 ps=4 bs=1 ip=4 r=0 f=0 s=1 c=0 smp=00
+35 sampled=12 current=13
+45 m=1 ps=4 bs=0 ip=0 r=1 f=0 s=0 c=0 smp=00
+45 sampled=13 current=14

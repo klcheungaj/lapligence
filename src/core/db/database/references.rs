@@ -399,6 +399,27 @@ pub(super) fn member_path_from_slang(
     let Some(member_name) = member_name else {
         return Ok(None);
     };
+    // A member through a virtual interface that lies in a nested interface
+    // instance (`v.a.l.x`): the frontend keeps only the handle and the
+    // member, and capture names the scopes between them.
+    let mut scopes = edges
+        .iter()
+        .filter(|edge| edge.role == SemanticEdgeRole::VirtualInterfaceScope)
+        .collect::<Vec<_>>();
+    scopes.sort_by_key(|edge| edge.index);
+    for edge in scopes {
+        let scope = semantic_id(ids, edge.target_id)?;
+        let name = snapshot
+            .semantic_nodes
+            .get(scope.index())
+            .map(|scope| scope.name.to_string())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                DbError::InvalidSnapshot("virtual interface scope has no name".into())
+            })?;
+        parts.push(name);
+        refs.push(Some(scope));
+    }
     parts.push(member_name);
     refs.push(member);
     Ok(Some((parts, refs)))

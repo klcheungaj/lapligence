@@ -3,13 +3,18 @@
 
 static void llg_kill_proc_tree(llg_proc_t* p); // mutual recursion below
 
-static void process_handle_terminal(llg_proc_t* proc, int status) {
+// `hold`: the process finished with live descendants and keeps its handle
+// linked, with the process-owned reference, until they end (see "Holding
+// descendants" below).
+static void process_handle_terminal(llg_proc_t* proc, int status, int hold) {
     llg_process_handle_t* handle = proc ? proc->handle : NULL;
     if (!handle) return;
-    proc->handle = NULL;
     proc->status = status;
-    handle->proc = NULL;
     handle->status = status;
+    if (!hold) {
+        proc->handle = NULL;
+        handle->proc = NULL;
+    }
     // Process-await registrations use the same address index as signal waits.
     // Head insertion retains the previous global-list wake order.
     llg_wait_source_t* source = wait_source_find(handle);
@@ -24,7 +29,40 @@ static void process_handle_terminal(llg_proc_t* proc, int status) {
     }
     // Drop the process-owned reference after all awaiters have been woken;
     // each awaiter holds its own reference until wake/cancellation.
+    if (!hold) llg_process_release(handle);
+}
+
+// The process a handle controls, or NULL once it has terminated. A finished
+// process that still holds live descendants keeps its handle linked for
+// kill() alone (see "Holding descendants" below); every other method sees it
+// terminated.
+static llg_proc_t* process_handle_live(const llg_process_handle_t* handle) {
+    llg_proc_t* proc = handle->proc;
+    return proc && !proc->completed ? proc : NULL;
+}
+
+// Holding descendants (SV 9.6.3, 9.7): a finished process whose fork groups
+// or held groups still contain live descendants stays reachable, so kill and
+// disable fork of an ancestor, and kill() through its handle, reach them.
+// Its handle stays linked (process_handle_terminal); as a fork child it
+// counts in its group's `holding`, and a group that ends with a nonzero
+// count moves to the parent's `held_groups` instead of the zombie list.
+
+// End the handle link of a finished process; return whether it held.
+static int proc_tree_unlink_handle(llg_proc_t* proc) {
+    llg_process_handle_t* handle = proc->handle;
+    if (!proc->completed || !handle) return 0;
+    proc->handle = NULL;
+    handle->proc = NULL;
     llg_process_release(handle);
+    return 1;
+}
+
+static void held_group_unlink(llg_fork_group_t* grp) {
+    if (grp->prev_g) grp->prev_g->next_g = grp->next_g;
+    else grp->parent->held_groups = grp->next_g;
+    if (grp->next_g) grp->next_g->prev_g = grp->prev_g;
+    grp->prev_g = NULL;
 }
 
 static void process_handle_shutdown(llg_proc_t* proc) {
@@ -56,6 +94,9 @@ static void release_killed_proc_resources(llg_proc_t* proc) {
 static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
     if (!p || p->killed) return;
     p->killed = 1;
+    // A finished process reached through an ancestor keeps FINISHED; its
+    // descendants are already gone (llg_kill_proc_tree_internal).
+    proc_tree_unlink_handle(p);
     release_program_process(p);
     p->suspended = 0;
     p->wake_pending = 0;
@@ -101,8 +142,9 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
     // program origin. Keep its live owners intact until generated code has
     // returned through the active C call chain; the scheduler reaps them at
     // the first safe boundary below.
-    if (p != llg_current()) release_killed_proc_resources(p);
-    process_handle_terminal(p, LLG_PROCESS_KILLED);
+    // A finished process released these at completion (proc_complete).
+    if (p != llg_current() && !p->completed) release_killed_proc_resources(p);
+    process_handle_terminal(p, LLG_PROCESS_KILLED, 0);
     if (notify_parent && parent_group && !parent_group->terminal)
         llg_fork_group_child_done(parent_group);
     unregister_proc(p);
@@ -147,17 +189,36 @@ static void proc_retire_completed(llg_proc_t* proc) {
     // carriers, which retire here like any completed top-level process.
     if (proc->registry_slot < 0 && !proc_is_delayed_call(proc)) return;
     nba_owner_release_all(proc);
-    if (proc->fork_groups) return;
+    if (proc->fork_groups || proc->held_groups) return;
     unregister_proc(proc);
     proc->next_retired = g.retired_procs;
     g.retired_procs = proc;
 }
 
-// Kill every group spawned by `p`: each child (and its descendants) is freed
-// recursively, the group structs go onto the zombie list for teardown.  `p`
-// itself is untouched — used by disable_fork, which kills only descendants.
-static void llg_kill_proc_groups(llg_proc_t* p) {
-    llg_fork_group_t* grp = p->fork_groups;
+// A fork group of `p` ended or left its held list. Once a finished `p`
+// holds no live descendant, unlink its handle and retire it or, as a fork
+// child, release its hold on its group; a group that ended while held then
+// leaves the parent's held list, which can end the parent's hold in turn.
+// Natural completion paths only: kill paths detach whole subtrees instead.
+static void proc_tree_released(llg_proc_t* p) {
+    while (p && p->completed && !p->killed && !p->fork_groups && !p->held_groups) {
+        int held = proc_tree_unlink_handle(p);
+        llg_fork_group_t* grp = p->grp;
+        if (!grp) {
+            proc_retire_completed(p);
+            return;
+        }
+        if (!held || --grp->holding > 0 || !grp->terminal) return;
+        p = grp->parent;
+        held_group_unlink(grp);
+        grp->next_g = g.zombie_groups;
+        g.zombie_groups = grp;
+    }
+}
+
+// Kill every child of the groups in list `grp` (and its descendants); the
+// group structs go onto the zombie list.
+static void llg_kill_group_list(llg_fork_group_t* grp) {
     while (grp) {
         llg_fork_group_t* next_g = grp->next_g;
         llg_fork_child_t* c = grp->children;
@@ -176,9 +237,21 @@ static void llg_kill_proc_groups(llg_proc_t* p) {
         g.zombie_groups = grp;
         grp = next_g;
     }
+}
+
+// Kill every descendant of `p` (SV 9.6.3, 9.7): the children of its live
+// groups and of the ended groups it holds for finished children with live
+// descendants. `p` itself is untouched — used by disable_fork, which kills
+// only descendants. A killed `p` has none left, and its held-list slot may
+// already link the retired list.
+static void llg_kill_proc_groups(llg_proc_t* p) {
+    if (p->killed) return;
+    llg_kill_group_list(p->fork_groups);
+    llg_kill_group_list(p->held_groups);
     p->fork_groups = NULL;
     p->fork_groups_tail = NULL;
     p->pending_fork_groups = NULL;
+    p->held_groups = NULL;
 }
 
 // Kill `p` and all of its descendants.
@@ -323,7 +396,14 @@ void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle) {
     if (init_process_control(handle, "kill")) return;
     if (!handle->proc || !region_can_mutate("process control")) return;
     llg_proc_t* target = handle->proc;
-    llg_kill_proc_tree(target);
+    if (target->completed) {
+        // SV 9.7: kill() ends the subprocesses a finished process left
+        // running; the process itself stays FINISHED.
+        llg_kill_proc_groups(target);
+        proc_tree_released(target);
+    } else {
+        llg_kill_proc_tree(target);
+    }
     service_program_completions();
     reap_retired_procs();
     if (self && self->killed)
@@ -340,9 +420,9 @@ llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
         return self && self->chain.exiting ? LLG_CO_ARM_EXIT : LLG_CO_ARM_READY;
     }
     if (init_process_control(handle, "suspend")) return LLG_CO_ARM_READY;
-    if (!handle->proc || !region_can_mutate("process suspension"))
+    llg_proc_t* target = process_handle_live(handle);
+    if (!target || !region_can_mutate("process suspension"))
         return LLG_CO_ARM_READY;
-    llg_proc_t* target = handle->proc;
     if (target->suspended || target->killed || target->completed)
         return LLG_CO_ARM_READY;
     target->suspended = 1;
@@ -369,8 +449,8 @@ void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle) {
         return;
     }
     if (init_process_control(handle, "resume")) return;
-    if (!handle->proc || !region_can_mutate("process resumption")) return;
-    llg_proc_t* target = handle->proc;
+    llg_proc_t* target = process_handle_live(handle);
+    if (!target || !region_can_mutate("process resumption")) return;
     if (!target->suspended || target->killed || target->completed) return;
     target->suspended = 0;
     if (target->wait.kind != W_NONE) {
@@ -408,7 +488,7 @@ llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
                            NULL, 0, "", "process::await");
         return self->chain.exiting ? LLG_CO_ARM_EXIT : LLG_CO_ARM_READY;
     }
-    if (!handle->proc) return LLG_CO_ARM_READY;
+    if (!process_handle_live(handle)) return LLG_CO_ARM_READY;
     llg_wait_t* wait = &self->wait;
     wait->kind = W_PROCESS;
     wait->resume_region = region_is_reactive(self->region)
@@ -431,12 +511,13 @@ static llg_rng_state_t* process_handle_rng(const llg_process_handle_t* handle,
         return NULL;
     }
     if (handle->init_rng) return handle->init_rng;
-    if (!handle->proc) {
+    llg_proc_t* proc = process_handle_live(handle);
+    if (!proc) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "random runtime: process::%s on a terminated process", method);
         llg_last_failure = 1;
         return NULL;
     }
-    return &handle->proc->rng;
+    return &proc->rng;
 }
 
 void llg_process_handle_srandom(llg_process_handle_t* handle, sv4_t seed) {

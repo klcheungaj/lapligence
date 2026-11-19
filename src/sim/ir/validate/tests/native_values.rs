@@ -649,3 +649,74 @@ fn record_marker_dependencies_name_observed_records() {
         .detail()
         .contains("class record reference is not a native record property"));
 }
+
+/// A fork branch binds a shared subroutine record (SIM-010) through its
+/// native capture, so it may use the record whole as its declaring scope does;
+/// the capture must name a shared activation value visible at the fork.
+#[test]
+fn fork_branches_use_captured_native_records_whole() {
+    let frame = FrameId::new(0);
+    let capture = |name: &str| {
+        IrCapture::new(
+            StorageRef::new(
+                frame,
+                0,
+                StorageLifetime::Automatic,
+                StorageOwnership::Shared,
+            )
+            .with_kind(StorageKind::Native),
+            IrExpr::new(IrExprKind::LocalRead(name.into()), 0, false, None),
+        )
+    };
+    let fork = |captures: Vec<IrCapture>| IrStmt::CapturedFork {
+        join_kind: IrJoinKind::None,
+        branches: vec![IrCapturedBranch::new(
+            "branch".into(),
+            "tb.br0".into(),
+            frame,
+            captures,
+        )],
+        target: None,
+    };
+    let branch = |captures: Vec<IrCapture>| IrPreFn::CapturedBranch {
+        c_name: "branch".into(),
+        frame,
+        captures,
+        body: vec![IrStmt::NativeValueCopy { dst: 0, src: 1 }],
+    };
+    let build = |declared: bool, fork_captures: Vec<IrCapture>, branch_captures: Vec<IrCapture>| {
+        let mut model = native_model();
+        let mut body = Vec::new();
+        if declared {
+            body.push(IrStmt::NativeValueSharedDeclare(1));
+        }
+        body.push(fork(fork_captures));
+        let mut function = function(body, vec![]);
+        function.pre_fns.push(branch(branch_captures));
+        model.funcs.push(function);
+        model
+    };
+    let shared = || vec![capture(&shared_native_capture_name(1))];
+    build(true, shared(), shared()).validate().unwrap();
+    assert!(
+        build(true, shared(), vec![]).validate().is_err(),
+        "a branch without the capture names a value outside its scope"
+    );
+    assert!(
+        build(false, shared(), shared()).validate().is_err(),
+        "the fork captures a record its scope does not declare"
+    );
+    for name in [
+        shared_native_capture_name(0),
+        shared_native_capture_name(9),
+        "_llg_shared_native_01".to_owned(),
+        "t".to_owned(),
+    ] {
+        assert!(
+            build(true, shared(), vec![capture(&name)])
+                .validate()
+                .is_err(),
+            "`{name}` names no shared activation record"
+        );
+    }
+}

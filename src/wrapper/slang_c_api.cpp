@@ -2708,6 +2708,27 @@ bool isCoverOptionWriteRejection(const Diagnostic& diagnostic) {
   return name && *name == "auto_bin_max";
 }
 
+// The name of an instance array element with every declared index
+// (`ls[1][0]`). arrayPath is canonical, ascending storage order; this is the
+// same mapping Slang's hierarchical path printer uses.
+std::string indexedInstanceName(const InstanceSymbol& symbol) {
+  SmallVector<ConstantRange, 8> dimensions;
+  symbol.getArrayDimensions(dimensions);
+  if (dimensions.size() != symbol.arrayPath.size())
+    throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                        "instance array path and dimensions disagree");
+  std::string indexedName(symbol.getArrayName());
+  for (size_t i = 0; i < dimensions.size(); ++i) {
+    if (symbol.arrayPath[i] >= dimensions[i].width())
+      throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                          "instance array position is outside its dimension");
+    const int64_t index = int64_t(dimensions[i].lower()) +
+                          int64_t(symbol.arrayPath[i]);
+    indexedName += "[" + std::to_string(index) + "]";
+  }
+  return indexedName;
+}
+
 class SemanticCapture final
     : public ASTVisitor<SemanticCapture, VisitFlags::AllGood | VisitFlags::Bad> {
 public:
@@ -3073,26 +3094,10 @@ public:
     }
     if constexpr (std::same_as<T, InstanceSymbol>) {
       result.subkind = LLG_SLANG_INSTANCE_SINGLE;
-      if (!symbol.arrayPath.empty()) {
-        // arrayPath is canonical, ascending storage order. Preserve each
-        // declared logical index before array containers are flattened by Db.
-        // This is the same mapping used by Slang's hierarchical path printer.
-        SmallVector<ConstantRange, 8> dimensions;
-        symbol.getArrayDimensions(dimensions);
-        if (dimensions.size() != symbol.arrayPath.size())
-          throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
-                              "instance array path and dimensions disagree");
-        std::string indexedName(symbol.getArrayName());
-        for (size_t i = 0; i < dimensions.size(); ++i) {
-          if (symbol.arrayPath[i] >= dimensions[i].width())
-            throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
-                                "instance array position is outside its dimension");
-          const int64_t index = int64_t(dimensions[i].lower()) +
-                                int64_t(symbol.arrayPath[i]);
-          indexedName += "[" + std::to_string(index) + "]";
-        }
-        result.name = storeString(capture.output, indexedName);
-      }
+      // Preserve each declared logical index before array containers are
+      // flattened by Db.
+      if (!symbol.arrayPath.empty())
+        result.name = storeString(capture.output, indexedInstanceName(symbol));
       result.definition_name = storeString(capture.output,
                                            symbol.getDefinition().name);
       addDefinitionKind(result, symbol.getDefinition().definitionKind);
@@ -4583,6 +4588,73 @@ private:
     if (token.valueText() == named->name)
       capture.lexicalBinding(token, captureReferenceTarget(*named),
                              LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+  }
+
+  // A member Slang reached through a virtual interface (IEEE 1800-2009 25.9)
+  // keeps only the handle and the member symbol (for a method call, the
+  // callee), which lies in the handle type's interface instance. When the
+  // member is an interface instance nested in it, or lies in one or in a
+  // generate block (`v.tx`, `v.tx.x`, `v.a.l.f()`, `v.g.x`), record the
+  // scopes between them (LLG_SLANG_EDGE_VIRTUAL_INTERFACE_SCOPE) so the path
+  // can be rebuilt; other members (`v.x`, `v.cb.x`) get no edge. A member
+  // outside the handle's interface records nothing.
+  void captureVirtualInterfaceScopes(uint64_t id, const Expression& value,
+                                     const Symbol& member) {
+    const Type* valueType = value.type;
+    if (!valueType || !valueType->isVirtualInterface())
+      return;
+    const InstanceSymbol& root =
+        valueType->getCanonicalType().as<VirtualInterfaceType>().iface;
+    SmallVector<const Symbol*, 4> scopes;
+    bool nestedInstance = member.kind == SymbolKind::Instance;
+    const Symbol* current = &member;
+    // Parent scopes end at the root, so the walk is finite.
+    while (true) {
+      const Scope* scope = current->getParentScope();
+      if (!scope)
+        return;
+      const Symbol& owner = scope->asSymbol();
+      if (owner.kind == SymbolKind::InstanceBody) {
+        const InstanceSymbol* instance = owner.as<InstanceBodySymbol>().parentInstance;
+        if (!instance)
+          return;
+        if (instance == &root)
+          break;
+        scopes.push_back(instance);
+        nestedInstance = true;
+        current = instance;
+        continue;
+      }
+      // An element instance's name carries its indices. A member of a
+      // generate block is recorded too, so it is never taken for a member
+      // of the interface itself; a clocking block alone is not (Slang binds
+      // `v.cb.x` to the clockvar, which names its block).
+      if (owner.kind == SymbolKind::GenerateBlock ||
+          owner.kind == SymbolKind::GenerateBlockArray)
+        nestedInstance = true;
+      if (owner.kind != SymbolKind::InstanceArray)
+        scopes.push_back(&owner);
+      current = &owner;
+    }
+    if (!nestedInstance)
+      return;
+    nameVirtualInterfaceScope(member);
+    uint32_t index = 0;
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
+      capture.semanticEdge(id, LLG_SLANG_EDGE_VIRTUAL_INTERFACE_SCOPE,
+                           nameVirtualInterfaceScope(**it), index++);
+  }
+
+  // The reference node of a scope on a virtual-interface member path, named
+  // as written: an instance array element with its indices.
+  uint64_t nameVirtualInterfaceScope(const Symbol& symbol) {
+    const uint64_t targetId = describeReferenceTarget(symbol);
+    auto& node = capture.output.semantic_nodes[static_cast<size_t>(targetId)];
+    if (node.name.len == 0 && symbol.kind == SymbolKind::Instance &&
+        !symbol.as<InstanceSymbol>().arrayPath.empty())
+      node.name = storeString(capture.output,
+                              indexedInstanceName(symbol.as<InstanceSymbol>()));
+    return targetId;
   }
 
   // The node of a symbol an expression references (getSymbolReference),
@@ -7318,6 +7390,8 @@ private:
     else if constexpr (std::same_as<T, MemberAccessExpression>) {
       capture.semanticRole(id, &expression.value(), LLG_SLANG_EDGE_BASE);
       capture.semanticRole(id, &expression.member, LLG_SLANG_EDGE_REFERENCE);
+      if (!capture.declarationOnly)
+        captureVirtualInterfaceScopes(id, expression.value(), expression.member);
     }
     else if constexpr (std::same_as<T, TaggedUnionExpression>) {
       if (expression.valueExpr)
@@ -7429,8 +7503,13 @@ private:
     }
     else if constexpr (std::same_as<T, CallExpression>) {
       const bool systemMethod = isSystemMethodCall(expression);
-      if (expression.thisClass())
+      if (expression.thisClass()) {
         capture.semanticRole(id, expression.thisClass(), LLG_SLANG_EDGE_RECEIVER);
+        const SubroutineSymbol* callee =
+            expression.isSystemCall() ? nullptr : std::get<0>(expression.subroutine);
+        if (callee && !capture.declarationOnly)
+          captureVirtualInterfaceScopes(id, *expression.thisClass(), *callee);
+      }
       uint32_t index = 0;
       auto arguments = expression.arguments();
       if (systemMethod) {

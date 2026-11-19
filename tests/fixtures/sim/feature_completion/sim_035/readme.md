@@ -114,6 +114,84 @@ waiting process can run.
   cleared) are both ticks; the sample of `v` at 6 is 5. `N 5 5`.
 - `G` at 10: `->ev` at 9 after `g = 1` ticks with the sample 7. `G 7`.
 
+### Array cells (`element_past`, `element_assertion`, `element_selects`, `element_types`)
+
+§16.5 (`SystemVerilog-1800-2009.txt` L21447): "All variables in a concurrent
+assertion use the value sampled in the Preponed region of a time slot";
+§16.6.1 (L21595-21596): "Fixed-size arrays, packed or unpacked, can be used as
+a whole or as part-selects or as indexed bit-selects or part-selects. The
+indices can be constants, parameters, or variables."; §7.4.6 (L8235-8237): "If
+an index expression is out of the address bounds or if any bit in the address
+is X or Z, then the index shall be invalid. The result of reading from an
+array with an invalid index shall return the default uninitialized value for
+the array element type." A cell selection is therefore evaluated on the
+Preponed values of the cell and of its index expressions (decision S35-D1).
+Every expected line below was also confirmed on an industry-standard
+simulator.
+
+`element_past`: `clk` rises at 5, 15, ..., 65 and falls at 10, ..., 60.
+Writes: 7 `arr[1] = 9`; 17 `i = 2`, `en = 0`; 27 `arr[2] = c`, `en = 1`,
+`ix = x`; 37 `ix = 7`; 47 `ix = z`; 57 `ix = 3`.
+
+| Tick | sampled `arr[i]` | sampled `arr[ix]` | `en` at the edge |
+| --- | --- | --- | --- |
+| 5 | `arr[1]` = 2 | 2 | 1 |
+| 15 | 9 | 9 | 1 |
+| 25 | `arr[2]` = 3 | 9 (`ix` still 1) | 0 |
+| 35 | c | x (X index) | 1 |
+| 45 | c | x (7 is out of range) | 1 |
+| 55 | c | x (Z index) | 1 |
+| 65 | c | `arr[3]` = 4 | 1 |
+
+Both expressions start from the initial value 2 (`arr[1]` with `i = ix = 1`).
+`p1`/`p2`/`p3` are the 1st/2nd/3rd strictly prior samples of `arr[i]`, or 2;
+the gated `pg` skips tick 25, where the current `en` is 0 (§16.9.3); `px` is
+the prior sample of `arr[ix]`. At 60 (a negedge step): `e` = the posedge tick
+55's c; `n` = the second strictly prior negedge (40), where `ix` = 7: x; the
+Preponed `arr[2]` = c against tick 55's c gives `$rose` of bit 0 0, `$fell` of
+bit 2 0 and `$changed` 0; `$stable(arr[ix])` compares Preponed `arr[3]` = 4
+with tick 55's x: 0. `plain[1]` = 6 is read procedurally and keeps no image
+(`component_only_sampled_arrays_keep_a_cell_image`).
+
+`element_assertion`: Preponed values at the ticks 5, 15, 25, 35, 45, 55: `i` =
+1, 2, 2, 2, 2, 2 (written at 12); `arr[i]` = 2, 3, 4, 3, 3, 4 (writes of
+`arr[2]` at 22, 32 and 48); `arr[3]` = 4, 5, 6, 7, 8, 9 (each tick's
+blocking increment comes after the Preponed sample); `arr[0]` = 1, 2, 3, 4,
+5, 6 (NBA increments). `a1` (`arr[i] == 2`) passes only at 5. `a3`
+(`$rose(arr[i][0])`, bit 0 = 0, 1, 0, 1, 1, 0 against the initial 0) passes at
+15 and 35. `a4`, a procedural assertion after the write of `arr[3]`, fails at
+25 only. `a5` fails at 25 (attempt 15: 2 < 4, then 3) and at 35, 45 and 55
+(`arr[0]` not below 4). `a2`'s antecedent holds at 15, 35 and 45; the attempts
+of 15 and 45 see 4 at the next tick and pass, and the attempt of 35 is
+disabled by `dis[1]` (1 from 32 to 38; §16.6 L21561: "The expressions in a
+disable condition are evaluated using the current values of variables (not
+sampled)"), so `a2` never fails. Each line prints at the following negedge (1 = pass
+action, 2 = fail action, 0 = none in that cycle; `a2` and `a5` have fail
+actions only).
+
+`element_selects`: ticks 5, 15, 25, 35, 45. Preponed values: `arr` = {11, 22,
+33, 44}, {11, 23, 33, 44}, {11, 24, 33, 44}, {12, 00, 33, 44}, {13, 00, 33,
+44} (each tick increments `arr[i]`; `arr[1] = 00` at 32); `i, j` = 1, 2 until
+22, then 0, 1; `b` = 4 until 12, then 0; `m[1][2]` = a from 12, `m[0][1]` = f
+from 42. Samples of `m[i][j]`: 5, a, 1, 1, f; `arr[i][5:2]`: 8, 8, 4, 4;
+`arr[i][b]`: 0, 1, 1, 0; `arr[j][i*2 +: 3]`: 4, 4, 4, 0; bit 0 of `arr[i]`:
+0, 1, 1, 0, 1; bit 1 of `arr[j]`: 1, 1, 0, 0, 0; `arr[i][7:4]`: 2, 2, 1, 1, 1,
+each with the time-0 value as its initial value (5, 8, 0, 4, 0, 1, 2). `$past`
+prints the previous sample; the value change functions compare the current
+sample with the previous one. `$sampled(arr[j])` is the Preponed cell (33, 33,
+24, 00, 00); after the blocking increment `$sampled(arr[i])` is still the
+Preponed cell and the live cell is one more.
+
+`element_types`: ticks 5, 15, 25, 35. `ra[0]` is Preponed 0.5, 1.5, 2.5 and
+0.25 (written at 32) and is incremented after the sample; `i` is 1 until 12,
+then 0, so `$sampled(ra[i])` is 1.5, 1.5, 2.5, 0.25 and `a1` (`ra[i] > 1.0`)
+fails only at 35. `w[1]` is a net driven by `src[1] ^ f`: it holds X until its
+driver first evaluates (T0-D3), so its time-0 initial value is x, then d, and
+f from 7. `st[1]` is B (1) until 7, D (3) until 27, then B, so `$past(st[k])`
+is 1, 1, 3, 3 and `a2` (`st[k] != D`) fails at 15 and 25. `pr[1]` is 34 until
+7, then 39; its member `lo` 4, then 9. Each process line prints in the Active
+region of the tick and each action in the Reactive region after it.
+
 ### Witnesses
 
 - `expression_clock_witness` (FND-002 L-F12-11-02, source unchanged except
@@ -134,4 +212,5 @@ waiting process can run.
 | `neg_past_zero`, `neg_past_negative`, `neg_past_nonconst`, `neg_past_unknown_ticks` | §16.9.3: `number_of_ticks` is a constant of at least 1 | frontend |
 | `neg_no_clock` | §16.9.3: a clock must be explicit or inferred | frontend |
 | `neg_unpacked_arg`, `neg_unpacked_struct_arg`, `neg_queue_arg` | legal or non-excluded types without sampled storage | llg: explicit unsupported |
-| `neg_element_past`, `neg_element_assertion`, `neg_element_operand` | §16.6.1 (`SystemVerilog-1800-2009.txt` L21595-21596): "Fixed-size arrays, packed or unpacked, can be used as a whole or as part-selects or as indexed bit-selects or part-selects. The indices can be constants, parameters, or variables." Element selections of arrays below the descriptor size have no sampled image (FIN-001 A3) | llg: located unsupported, at the selection |
+| `neg_queue_element`, `neg_dynamic_element_operand`, `neg_assoc_element` | §16.6.1 (`SystemVerilog-1800-2009.txt` L21576, L21592-21593): "The following types are not allowed: [...] — Associative arrays — Dynamic arrays"; container elements have no Preponed image (industry-standard tools reject them too) | llg: located unsupported, at the selection |
+| `neg_real_element_past` | §16.6.1 (L21576-21577): "The following types are not allowed: — Noninteger types (shortreal, real, and realtime)"; a real cell is a real operand (AA-D7) | llg: "of a real expression is illegal" |

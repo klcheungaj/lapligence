@@ -869,7 +869,12 @@ fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
         .semantic_edges;
     assert_eq!(decoded[0].role, SemanticEdgeRole::Imported);
     assert_eq!(decoded[0].index, 3);
-    let message = invalid_native_message(stream(&tables(edge(46, 2, 0))));
+    let decoded = stream(&tables(edge(46, 1, 0)))
+        .expect("virtual interface scope role (ABI 75)")
+        .semantic_edges;
+    assert_eq!(decoded[0].role, SemanticEdgeRole::VirtualInterfaceScope);
+    assert_eq!(decoded[0].index, 1);
+    let message = invalid_native_message(stream(&tables(edge(47, 2, 0))));
     assert!(message.contains("unknown role"), "{message}");
 }
 

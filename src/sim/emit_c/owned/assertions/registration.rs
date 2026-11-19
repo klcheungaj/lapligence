@@ -35,6 +35,21 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
             }
         }
     }
+    // Cell images precede the domains, whose initial values read them.
+    for array in model.arrays.iter().filter(|array| array.sampled_image) {
+        out.push_str(&format!(
+            "    {} = {}({}, {}ULL);\n    if (!{}) return 0;\n",
+            array.sampled_image_name(),
+            if array.real {
+                "llg_sampled_real_cells"
+            } else {
+                "llg_sampled_cells"
+            },
+            array.c_name,
+            array.total,
+            array.sampled_image_name()
+        ));
+    }
     // Clocks precede the domains sampled on them; identities are IR indices.
     for (index, clock) in model.sampled_clocks().iter().enumerate() {
         let gate = if clock.gate.is_some() {

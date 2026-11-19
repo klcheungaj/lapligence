@@ -30,7 +30,7 @@ macro_rules! usage_error {
 pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
 generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --vpi-port-delays
 lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error  # lint always runs
-wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
+wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave  --wave-deltas  --no-wave-deltas
 build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 output:   --out-dir <dir>  --runtime-cache <dir>
 append:   --append-<list> <value>  # adds to the list instead of replacing it; see --help
@@ -87,6 +87,8 @@ pub(crate) struct Cli {
     /// `Some(None)` after `--no-wave`, which cancels a configured waveform.
     pub wave_file: Option<Option<PathBuf>>,
     pub wave_depth: Option<u32>,
+    /// `--wave-deltas` / `--no-wave-deltas`.
+    pub wave_deltas: Option<bool>,
     pub generator: Option<String>,
     pub dpi_libraries: Vec<PathBuf>,
     /// `--dpi-import-lib <path>`: write the model executable's import
@@ -162,6 +164,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut lint_json_path: Option<PathBuf> = None;
     let mut wave_file: Option<Option<PathBuf>> = None;
     let mut wave_depth: Option<u32> = None;
+    let mut wave_deltas: Option<bool> = None;
     let mut generator: Option<String> = None;
     let mut dpi_libraries: Vec<PathBuf> = Vec::new();
     let mut dpi_import_lib: Option<PathBuf> = None;
@@ -255,6 +258,11 @@ Options:
                               selection
       --wave-depth <N>       Dump N hierarchy levels below each top (default: 0, all)
       --no-wave              Do not dump (overrides llg.toml [waveform])
+      --wave-deltas          Record every value change of a dumped variable, in
+                              execution order, instead of its end-of-step value
+                              (several records per time step; larger and slower
+                              dumps; also for $dumpvars)
+      --no-wave-deltas       Record end-of-step values (overrides llg.toml)
       --gen-only             Emit C model sources without building
       --no-gen-only          Build and run (overrides llg.toml gen_only)
       --no-opt               Disable simulator optimization passes
@@ -626,6 +634,8 @@ Options:
                 }
             },
             "--no-wave" => wave_file = Some(None),
+            "--wave-deltas" => wave_deltas = Some(true),
+            "--no-wave-deltas" => wave_deltas = Some(false),
             "--gen-only" | "-gen-only" => gen_only = Some(true),
             "--no-gen-only" => gen_only = Some(false),
             "--no-opt" => optimize = Some(false),
@@ -767,6 +777,7 @@ Options:
         lint_json_path,
         wave_file,
         wave_depth,
+        wave_deltas,
         generator,
         dpi_libraries,
         dpi_import_lib,

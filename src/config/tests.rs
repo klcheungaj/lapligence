@@ -650,6 +650,7 @@ plusargs = ["+seed=1"]
 [waveform]
 file = "waves/run.FST"
 depth = 2
+deltas = true
 [build]
 gen_only = true
 generator = "Ninja"
@@ -711,6 +712,7 @@ runtime_cache = "../cache"
         WaveformConfig {
             file: Some(native(&base, "waves/run.FST")),
             depth: Some(2),
+            deltas: Some(true),
         }
     );
     assert_eq!(config.simulator.optimize, Some(false));
@@ -760,6 +762,22 @@ fn unset_driver_keys_stay_none_so_precedence_can_fall_through() {
     assert_eq!(config.waveform, WaveformConfig::default());
     assert!(!config.sources.directories_configured);
     assert_eq!(config.sources.directories, vec![base()]);
+}
+
+#[test]
+fn the_per_delta_dump_mode_needs_no_waveform_file() {
+    // It also applies to the design's own `$dumpvars` dumps.
+    let config = parse("schema_version = 1\n[waveform]\ndeltas = true\n")
+        .unwrap()
+        .config;
+    assert_eq!(
+        config.waveform,
+        WaveformConfig {
+            file: None,
+            depth: None,
+            deltas: Some(true),
+        }
+    );
 }
 
 #[test]
@@ -838,6 +856,7 @@ fn invalid_driver_values_name_their_key() {
         ("[waveform]\nfile = \"dump.txt\"\n", "waveform.file"),
         ("[waveform]\nfile = \"\"\n", "waveform.file"),
         ("[waveform]\ndepth = 1\n", "waveform.depth"),
+        ("[waveform]\ndeltas = \"yes\"\n", "waveform.deltas"),
         (
             "[waveform]\nfile = \"d.vcd\"\ndepth = 4294967296\n",
             "waveform.depth",

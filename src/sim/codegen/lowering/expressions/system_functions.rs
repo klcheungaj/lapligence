@@ -4,36 +4,40 @@ use super::*;
 use crate::sim::legacy_unsupported::{self, LegacyFamily};
 
 /// Explain why a lowered sampled-value argument has no sampled storage. A
-/// read of automatic storage (a procedural local or formal) is illegal (SV
-/// 16.9.3: argument variables shall be static); other forms, such as element
-/// selections of unpacked arrays below the descriptor size, are legal but
-/// unsupported. `location` is the argument's source position; `element` says
-/// whether it selects a cell of an unpacked array without a sampled image.
+/// read of automatic storage (a procedural local, formal or automatic array)
+/// is illegal (SV 16.9.3: argument variables shall be static); other forms,
+/// such as elements of queues, dynamic and associative arrays, are legal or
+/// left to the type check but unsupported. `location` is the argument's
+/// source position; `cause` names a container element read.
 fn sampled_argument_error(
+    model: &IrModel,
     name: &str,
     scope_path: &str,
     location: &str,
     argument: &IrExpr,
-    element: bool,
+    cause: Option<&str>,
 ) -> String {
     let mut automatic = false;
     let mut probe = argument.clone();
     crate::sim::opt::walk_expr_mut(&mut probe, &mut |expression| {
-        automatic |= matches!(expression.kind(), IrExprKind::FormalRead(_))
-            || matches!(expression.kind(), IrExprKind::LocalRead(name)
-                if !name.starts_with("llg_sequence_local_read("));
+        automatic |= match expression.kind() {
+            IrExprKind::FormalRead(_) => true,
+            IrExprKind::LocalRead(name) => !name.starts_with("llg_sequence_local_read("),
+            IrExprKind::ArrayRead { arr, .. } => !model.arrays[*arr].sampleable_cells(),
+            _ => false,
+        };
     });
     if automatic {
         format!(
             "{name} argument reads an automatic variable in `{scope_path}`: variables in \
              sampled-value arguments shall be static (SV 16.9.3)"
         )
-    } else if element {
+    } else if let Some(cause) = cause {
         crate::sim::codegen::error::located(
             location,
             format!(
-                "{name} argument selecting an unpacked array element in `{scope_path}` is not \
-                 supported: llg keeps no sampled value of the array's cells"
+                "{name} argument selecting a container element in `{scope_path}` is not \
+                 supported: {cause}"
             ),
         )
     } else {
@@ -171,13 +175,19 @@ impl<'a> Codegen<'a> {
             let argument = self.lower_expr(scope_path, *argument)?;
             if !self.sampled_compatible(&argument) {
                 return Err(sampled_argument_error(
+                    &self.model,
                     name,
                     scope_path,
                     &location,
                     &argument,
-                    self.selects_unsampled_array_cell(&argument),
+                    Self::unsampled_element_cause(&argument),
                 ));
             }
+            // Wherever the call is, its argument reads Preponed values.
+            super::super::assertions::note_sampled_cell_reads(
+                &argument,
+                &mut self.sampled_cell_arrays,
+            );
             // Outside an assertion `$sampled` still returns the Preponed
             // value (SV 16.9.3): register every signal it reads. A real keeps
             // its numeric snapshot; a packed value needs no history.
@@ -239,11 +249,12 @@ impl<'a> Codegen<'a> {
         if !self.sampled_compatible(&argument) {
             let location = self.source_location(args[0]);
             return Err(sampled_argument_error(
+                &self.model,
                 name,
                 scope_path,
                 &location,
                 &argument,
-                self.selects_unsampled_array_cell(&argument),
+                Self::unsampled_element_cause(&argument),
             ));
         }
         // An active free checker variable is read with its current value,

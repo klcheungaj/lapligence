@@ -296,7 +296,11 @@ static void proc_complete(llg_proc_t* self) {
     int terminal =
         self->disabled_whole ? LLG_PROCESS_KILLED : LLG_PROCESS_FINISHED;
     process_status_set(self, terminal);
-    process_handle_terminal(self, terminal);
+    // Live descendants keep this process reachable (see "Holding
+    // descendants" in process_control.c).
+    int holds = self->fork_groups || self->held_groups;
+    if (holds && self->grp) self->grp->holding++;
+    process_handle_terminal(self, terminal, holds);
     thread_event(self, LLG_RT_THREAD_END);
     if (process_end_hook) process_end_hook(self, 0);
     value_scopes_unwind(self);

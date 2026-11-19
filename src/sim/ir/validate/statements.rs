@@ -1453,6 +1453,15 @@ impl Validator<'_> {
                             &format!("{capture_path}.initial"),
                         )?;
                     }
+                    // A shared record is captured where the fork can name it.
+                    for value in self
+                        .captured_native_values(branch.captures(), &format!("{path}.branches[{branch_idx}]"))?
+                    {
+                        self.validate_native_value_use(
+                            value,
+                            &format!("{path}.branches[{branch_idx}]"),
+                        )?;
+                    }
                 }
             }
             IrStmt::Force {

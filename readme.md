@@ -243,6 +243,11 @@ Common options:
   `$dumpon`/`$dumpoff`/`$dumpall`/`$dumpflush`/`$dumplimit` still apply.
 - `--wave-depth <N>`: dump only N hierarchy levels below each top (default 0,
   every level); requires `--wave` or a configured `[waveform]` file.
+- `--wave-deltas`: record every value change of a dumped variable in
+  execution order (several records per time step), for `--wave` and
+  `$dumpvars` dumps; by default a dump records each variable's end-of-step
+  value once, and not at all when it equals the last record. Dumps are larger
+  and slower in this mode; `--no-wave-deltas` undoes `waveform.deltas`.
 - `--gen-only`: generate C11 sources and `CMakeLists.txt` without building.
   The frontend has no export budget: elaboration may use all available memory
   (`LLG_MEMORY_LIMIT_MB` is the optional process-wide guard).

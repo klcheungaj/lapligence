@@ -504,6 +504,7 @@ impl Codegen<'_> {
             shortreal: shortreal == Some(true),
             dims: dimensions.clone(),
             total,
+            sampled_image: false,
         });
         self.record_columns = true;
         Ok(AggregateMemberInfo {
@@ -588,6 +589,7 @@ impl Codegen<'_> {
             shortreal: false,
             dims: vec![(0, 0)],
             total: 1,
+            sampled_image: false,
         });
         self.record_columns = true;
         Ok(AggregateMemberInfo {
@@ -666,6 +668,7 @@ impl Codegen<'_> {
             shortreal: false,
             dims: vec![(0, 0)],
             total: 1,
+            sampled_image: false,
         });
         let mut tag = member.clone();
         tag.descriptor = TypeDescriptor {
@@ -799,6 +802,7 @@ impl Codegen<'_> {
             shortreal: false,
             dims: dimensions.clone(),
             total,
+            sampled_image: false,
         });
         Ok(ir)
     }
@@ -870,6 +874,7 @@ impl Codegen<'_> {
             shortreal: false,
             dims: vec![(0, 0)],
             total: 1,
+            sampled_image: false,
         });
         ir
     }

@@ -117,6 +117,7 @@ impl Codegen<'_> {
             shortreal: false,
             dims: dimensions.clone(),
             total,
+            sampled_image: false,
         });
         Ok(info)
     }

@@ -1,0 +1,7 @@
+5 rs=0.50 rc=1.50 ri=1.50 w=x st=1 pr=34 lo=4
+15 rs=1.50 rc=2.50 ri=1.50 w=d st=1 pr=34 lo=4
+15 a2 fail
+25 rs=2.50 rc=3.50 ri=2.50 w=f st=3 pr=39 lo=9
+25 a2 fail
+35 rs=0.25 rc=1.25 ri=0.25 w=f st=3 pr=39 lo=9
+35 a1 fail

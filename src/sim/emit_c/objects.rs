@@ -295,7 +295,8 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::RandInstance { .. }
         | IrChandleExpr::Required { .. }
         | IrChandleExpr::ClassFromKey(_)
-        | IrChandleExpr::InterfaceInstance { .. } => {
+        | IrChandleExpr::InterfaceInstance { .. }
+        | IrChandleExpr::VirtualInterfaceNested { .. } => {
             return Err("typed native operations require whole-model ownership emission".to_owned())
         }
         IrChandleExpr::Null => "NULL".to_owned(),

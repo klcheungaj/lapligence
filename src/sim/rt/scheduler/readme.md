@@ -111,7 +111,13 @@ Fork children are freed with their zombie groups; finals never retire.
 Creators release frame references after spawn; children release on completion,
 cancellation and teardown. Joined children may borrow live parent cells; cancel
 children before releasing parent storage. Completed parents remain alive for
-detached descendants. Process handles retain terminal identity separately from
+detached descendants. A process that finishes while its fork groups still
+hold live descendants keeps its handle linked (for `kill()` alone; other
+methods see it terminated) and counts in its own group's `holding`; a group
+that ends with a nonzero count moves to the parent's `held_groups` instead of
+the zombie list. Kill and `disable fork` walk live and held groups, so they
+reach descendants below finished processes (SV 9.6.3, 9.7); when the last of
+them ends, the hold is released up the tree and the records are reclaimed. Process handles retain terminal identity separately from
 coroutine storage: counted storage (process variables, by-value formals,
 container elements) retains and releases; plain handle storage (class
 properties, record leaves, non-input formals, results, fork-shared slots)
@@ -185,7 +191,10 @@ from `sig_settle` and counting what it observes in `wait_source_observed`.
 Lowering drops a nonblocking update that a later one in the same process
 turn overrides only where none of these per-write consumers can see it
 (`codegen/lowering/statements/nba_merge.rs`), so a new per-write consumer
-must be added to its exclusions. Ordered change logs (`llg_wait_changes`) also log per write.
+must be added to its exclusions. Waveforms are not excluded by default: the
+writer compares each end-of-step value with the last record (S47-D14), so
+the dropped write leaves no trace; only the per-delta dump (`--wave-deltas`,
+S47-D15) records each write and keeps every update. Ordered change logs (`llg_wait_changes`) also log per write.
 Strings, container cells and reference markers publish per write, and so do
 markers bound to an unwaited marker. The contents marker of a native record
 (`llg_record_changed`, called after each statement that stores into a record a

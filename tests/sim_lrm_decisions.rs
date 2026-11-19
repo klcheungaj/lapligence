@@ -43,6 +43,21 @@ fn k1_d1_string_clockvar_rejected() {
 }
 
 #[test]
+fn uvb_d1_derived_handle_array_to_base_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/UVB-D1_derived_handle_array_to_base_rejected.out"
+    )
+    .is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "UVB-D1_derived_handle_array_to_base_rejected",
+        "UVB-D1_derived_handle_array_to_base_rejected.sv:32:7 value of type 'derived$[2]' \
+         cannot be assigned to type 'base$[]'",
+    );
+}
+
+#[test]
 fn k1_d2_edge_skew_sample_at_edge() {
     run_decision(
         "K1-D2_edge_skew_sample_at_edge",
@@ -349,6 +364,14 @@ fn aa_d6_event_clock_gate_instant() {
 }
 
 #[test]
+fn s35_d1_sampled_array_cells() {
+    run_decision(
+        "S35-D1_sampled_array_cells",
+        include_str!("fixtures/sim/lrm_decisions/S35-D1_sampled_array_cells.out"),
+    );
+}
+
+#[test]
 fn aa_d7_real_sampled_illegal() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(include_str!("fixtures/sim/lrm_decisions/AA-D7_real_sampled_illegal.out").is_empty());
@@ -459,6 +482,14 @@ fn ab_n2_always_comb_class_reference() {
     run_decision(
         "AB-N2_always_comb_class_reference",
         include_str!("fixtures/sim/lrm_decisions/AB-N2_always_comb_class_reference.out"),
+    );
+}
+
+#[test]
+fn ko_d1_kill_reaches_finished_subtrees() {
+    run_decision(
+        "KO-D1_kill_reaches_finished_subtrees",
+        include_str!("fixtures/sim/lrm_decisions/KO-D1_kill_reaches_finished_subtrees.out"),
     );
 }
 
@@ -3945,6 +3976,22 @@ fn s47_d13_catalog_encoding() {
 }
 
 #[test]
+fn s47_d14_restored_value_no_record() {
+    run_decision(
+        "S47-D14_restored_value_no_record",
+        include_str!("fixtures/sim/lrm_decisions/S47-D14_restored_value_no_record.out"),
+    );
+}
+
+#[test]
+fn s47_d15_per_delta_dump() {
+    run_decision(
+        "S47-D15_per_delta_dump",
+        include_str!("fixtures/sim/lrm_decisions/S47-D15_per_delta_dump.out"),
+    );
+}
+
+#[test]
 fn s47_d9_named_string_rejected() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(include_str!("fixtures/sim/lrm_decisions/S47-D9_named_string_rejected.out").is_empty());
@@ -4922,6 +4969,19 @@ fn s13_d6_ref_wait_nonexistent_element() {
         &[],
         include_str!("fixtures/sim/lrm_decisions/S13-D6_ref_wait_nonexistent_element.out"),
         "index of a `ref` actual selects no element of a task that waits on the formal",
+    );
+}
+
+#[test]
+fn s07_d15_ref_stop_nested_call() {
+    // The run stops at the call two subroutines below the process, so stdout
+    // holds the line before it and the final procedure's line.
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "S07-D15_ref_stop_nested_call",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S07-D15_ref_stop_nested_call.out"),
+        "S07-D15_ref_stop_nested_call.sv:29:5: [SIM-009] (tb @ 0 ps) index of a `ref` actual selects no element (run with --no-index-checks",
     );
 }
 

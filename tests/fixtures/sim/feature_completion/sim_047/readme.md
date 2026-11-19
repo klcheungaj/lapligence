@@ -73,7 +73,7 @@ wording for the VCD tasks.
   “genblk<n>” where <n> is the number assigned to its enclosing generate
   construct."
 
-llg decisions are S47-D1..D13 in `docs/lrm_decisions.md`, each with a
+llg decisions are S47-D1..D15 in `docs/lrm_decisions.md`, each with a
 portable case in `tests/fixtures/sim/lrm_decisions/`.
 
 ## Fixtures and independent traces
@@ -82,7 +82,8 @@ Times below are VCD ticks: `trace_values.sv` has 1 ps precision (`#1` is
 1000), the others 1 ns (`#1` is 1). The `$unit` class of `excluded.sv` does not
 make the precision finer (decision F2-D2). A trace lists the
 end-of-step value of each step with a record; the reader also checks that no
-variable has two ordinary records in one step (S47-D2).
+variable has two ordinary records in one step (S47-D2) and that no ordinary
+record repeats the value last written for its code (S47-D14).
 
 - `trace_values.sv` (A01): ports, nets, a real, a two-element array, an inout
   net shared by two stages and generate scopes. Paths: `tb.g[0].first.s` and
@@ -105,8 +106,8 @@ variable has two ordinary records in one step (S47-D2).
     `q1`/stage 1 `q`: xxxx@0, 1100@1000, 0x1x@3000.
   - `shared`: stage 0 drives `q[0]`, stage 1 drives z, so x@0, 1@1000,
     z@3000.
-  - `glitch` is set to 1 and back to 0 within step 1000: 0@0, 0@1000 (one
-    record of the final value, S47-D2).
+  - `glitch` is set to 1 and back to 0 within step 1000: 0@0 only (the
+    step ends at the value last written, so it has no record, S47-D14).
   - `level`: 0.5@0, 0.33333333333333331@2000 (1.0/3.0 written with `%.17g`,
     S47-D12); `mem[0]` 00000000@0; `mem[1]` 11111111@0, 01011010@2000.
 - `targets.sv` (step 2): three `$dumpvars` calls at step 0 add up (S47-D3):
@@ -198,6 +199,28 @@ variable has two ordinary records in one step (S47-D2).
   6..205; `s` 0@0, 1@1, 1@4; `r` 0.25@0, 0.5@4. With `--define LIMIT=400`
   libfst stops at a block boundary: the file still opens, has the same
   hierarchy, an earlier end time and a prefix of the changes.
+- `restored.sv` (S47-D14, S47-D15, FIN-001 O2): SV L37887-37888 (21.7.1.4)
+  "When dumping is enabled, the value change dumper records the values of the
+  variables that change during each time increment. Values of variables that
+  do not change during a time increment are not dumped." 1 ns steps; `clk`
+  rises at 1 and falls at 2. At 1 the clock process queues `q <= 1`,
+  `r <= r + 5`, `q <= q + 2` (q 0 → 2, r 0 → 5); at 2 it queues `q <= 3`,
+  `q <= q`, so q returns to 2 within the batch. Lowering drops the overridden
+  `q` updates of the plain source (2 `llg_nba_after` calls for `q`); with
+  `--define KEEP` their values come from a function call, which it never
+  merges (4 calls). Default dump, both variants, both optimizer modes:
+  `clk` 0@0, 1@1, 0@2; `q` 0000@0, 0010@1; `r` 0000@0, 0101@1 (records of
+  step 1 in registration order `clk`, `q`, `r`, although the merged model
+  writes `r` first); `v` x01z@0, then nothing at 3 (changed and restored in
+  one turn) or 4 (restored in a later delta), 1111@6; `g` and `level` only
+  @0; `tick` @0 and once @5 (two triggers); the `$dumpall` checkpoint @7
+  holds every value, and `v`, set to 0001 and back after it, has no record.
+  Times 0, 1, 2, 5, 6, 7, 8 (the end). The merged and kept VCD files are
+  byte-identical and their FST records equal. With `--wave-deltas` every
+  change is recorded in execution order: @1 `clk` 1, `q` 0001, `r` 0101,
+  `q` 0010; @2 `clk` 0, `q` 0011, `q` 0010; @3 `v` 0000, `v` x01z,
+  `level` 1.5, 0.5, `g` 1, 0; @4 `v` 0110, x01z; @5 `tick` twice; @7 after
+  the checkpoint `v` 0001, 1111; lowering keeps all 4 updates of `q`.
 - `pruning.sv` (step 6): storage no process reads or writes is dumped:
   `never_used` xxxx, `written_only` xxxx then 0001..0011, `read_only` 0101,
   `undriven` zzzz, `from_sink`/`u.constant_out` 1010, `unused_real` 0,

@@ -350,6 +350,11 @@ pub struct IrArray {
     pub(in crate::sim) dims: Vec<(i32, i32)>,
     /// Total element count (product of dimension sizes).
     pub(in crate::sim) total: u64,
+    /// A static dense array whose cells a sampled expression selects keeps
+    /// a runtime Preponed image of every cell (IEEE 1800-2009 16.5.1);
+    /// sampled reads index the image. Descriptor arrays keep their own
+    /// saved cells instead, and every other array pays nothing.
+    pub(in crate::sim) sampled_image: bool,
 }
 
 impl IrArray {
@@ -411,6 +416,7 @@ impl IrArray {
             shortreal: false,
             dims,
             total,
+            sampled_image: false,
         })
     }
 
@@ -439,6 +445,18 @@ impl IrArray {
                     .total
                     .checked_mul(u64::from(self.elem_width))
                     .is_none_or(|width| width > u64::from(crate::sim::emit_c::LLG_MAX_WIDTH)))
+    }
+
+    /// Whether a sampled expression may select a cell: descriptor arrays
+    /// keep their cells' Preponed values, and any other static array can
+    /// keep an image. Automatic arrays are not sampled (16.9.3).
+    pub(in crate::sim) fn sampleable_cells(&self) -> bool {
+        self.sparse() || !self.activation
+    }
+
+    /// The C name of the Preponed cell image of a `sampled_image` array.
+    pub(in crate::sim) fn sampled_image_name(&self) -> String {
+        format!("{}_llg_sampled", self.c_name)
     }
 
     pub(in crate::sim) fn cell_address(&self, index: &str) -> String {

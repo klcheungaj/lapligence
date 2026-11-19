@@ -2555,43 +2555,41 @@ virtual-interface drive selects its instance.
 
 ## Sampled-value arguments without sampled storage
 
-**Status:** open (SIM-035 boundary; kept by FIN-001 A3, see Intended
-direction).
+**Status:** open (SIM-035 boundary; element selections of fixed unpacked
+arrays are served since sampled-array-cells, see Intended direction).
 
 ### Symptom
 
-Sampled-value functions keep a history of packed integral values. Fixed
-unpacked arrays, unpacked structures and unions, queues and unpacked array
-element selections (`$past(arr[i])`) are legal arguments (SV 16.6.1, L21575
-onward: "The following types are not allowed: — Noninteger types (shortreal,
-real, and realtime)", then string, event, chandle, class, associative and
-dynamic arrays; "Fixed-size arrays, packed or unpacked, can be used as a
-whole") but reject explicitly ("sampled histories hold packed integral and
-real values" or "must be a static packed or real expression") instead of being
-flattened. An element selection of a fixed unpacked array below the
-descriptor size (`LLG_DENSE_FIXED_ARRAY_CELLS`, 4096 cells), such as
-`$past(arr[i])` or `$stable(arr[1])`, and a concurrent assertion operand that
-reads such an element (`arr[i] == 2`) are rejected at the selection ("...
-selecting an unpacked array element ... is not supported" and "unsupported
-sampled ... expression ...: llg keeps no sampled value of unpacked array
-cells it selects"). Larger (descriptor) arrays keep their cells' Preponed
-values and are accepted.
+Sampled-value functions keep a history of packed integral values. Whole fixed
+unpacked arrays, unpacked structures and unions, and queues are legal
+arguments (SV 16.6.1, L21575 onward: "The following types are not allowed: —
+Noninteger types (shortreal, real, and realtime)", then string, event,
+chandle, class, associative and dynamic arrays; "Fixed-size arrays, packed or
+unpacked, can be used as a whole") but reject explicitly ("sampled histories
+hold packed integral and real values" or "must be a static packed or real
+expression") instead of being flattened. An element of a queue, dynamic array
+or associative array, as a sampled-value argument (`$past(q[i])`) or as a
+concurrent assertion operand (`da[i] == 2`), is rejected at the selection
+("... selecting a container element ... is not supported" and "unsupported
+sampled ... expression ...: llg keeps no sampled value of queue, dynamic array
+or associative array elements"). Industry-standard tools reject these element
+forms too. Element selections of fixed unpacked arrays (`$past(arr[i])`,
+`arr[i] == 2` in an assertion) are served (decision S35-D1).
 
 ### Cause
 
-Sampling them needs Preponed snapshots of unpacked storage. Dense arrays are
-plain C cell arrays with no write hook, and the sampled-value registry is a
-per-signal list searched by address, so registering every cell would slow
-each sampled read of the design.
+Sampling them needs Preponed snapshots of unpacked or container storage. Fixed
+arrays keep one now: descriptor arrays save a cell's old value on its first
+change in a time slot, and dense arrays that a sampled expression selects keep
+a cell image copied in each Preponed region. Containers grow and shrink and
+have no such image, and whole unpacked values have no packed sample form.
 
 ### Intended direction
 
-Industry-standard behaviour serves `$past(arr[i])`, `$stable(arr[i])` and
-element operands (the selected cell's value at each clock tick, index
-included), so this is a common form left rejected: give arrays read in
-sampled expressions a sampled image, either by choosing the descriptor form
-for them before lowering or by a per-array saved-cell table like the
-descriptor one, and sample whole unpacked values the same way.
+Sample whole unpacked values from the same cell images (a whole-array
+comparison or `$stable(arr)` reads every cell), and give containers a
+Preponed snapshot if element sampling becomes common; until then the
+rejections stay explicit.
 
 ### Reproduce
 
@@ -2599,10 +2597,10 @@ Reproduce with
 [`neg_unpacked_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_arg.sv),
 [`neg_unpacked_struct_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_struct_arg.sv) and
 [`neg_queue_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_arg.sv),
-and the element forms
-[`neg_element_past.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_past.sv),
-[`neg_element_assertion.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_assertion.sv) and
-[`neg_element_operand.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_operand.sv).
+and the container element forms
+[`neg_queue_element.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_element.sv),
+[`neg_dynamic_element_operand.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_dynamic_element_operand.sv) and
+[`neg_assoc_element.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_assoc_element.sv).
 
 ## Concurrent property limits after SIM-038
 
@@ -3396,58 +3394,30 @@ pin collectable targets in the handle slot, and turn the catalog row from
 plugin that asks for one of the objects above, or with the ADV-019 catalog
 walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
 
-## A `ref` actual stop inside a nested call lets the callers run on
-
-**Status:** open.
-
-### Symptom
-
-With index checks on, a `ref` actual whose index selects no element stops the
-run at the call (S07-D15, S13-D6) with exit status 1. When the call sits in a
-task or function that another subroutine or a process called, only the
-subroutine holding the call ends: its callers keep running until the process
-suspends or ends, so a `$display` after the outer call still prints before the
-run ends. Some simulators end the run at the call.
-
-### Cause
-
-The stop marks the run failed and leaves the subroutine through its exit path
-after the call; the calling frames are not told to unwind.
-
-### Intended direction
-
-Unwind every frame of the process at the stop.
-
-### Reproduce
-
-A task `body` calling `tr(q[k])` with `k` past the end of `q`, called from an
-`initial` block followed by `$display("after")`.
-
-## Forwarding a member of a record `ref` formal to a waiting task
+## A string input formal read in a `fork`-`join` branch
 
 **Status:** open; an internal error, not a located rejection.
 
 ### Symptom
 
-`task automatic f(ref rec_t x); waitn(x.e[1]); endtask`, where `waitn` waits
-on its record `ref` formal, stops compilation with an internal error ("invalid
-simulator IR at funcs[..].pre_fns[..]...: native value is used outside its
-declaration scope") instead of running or rejecting at the call.
+`task automatic f(input string tag); fork $display("%s", tag); join endtask`
+stops generation with an internal error ("string formal outside a
+function", or "unresolved native storage a1" when the branch passes `tag` to
+a call) instead of running. The same branch under `join_none` runs.
 
 ### Cause
 
-Not analysed: the validator finds a pre-function of `f` naming `f`'s native
-record formal outside the scope that declares it.
+Not analysed: the `join` branch reads the formal as the subroutine's
+parameter (`FormalRead`), which the branch callback has no binding for.
 
 ### Intended direction
 
-Find which lowering hoists the formal into the pre-function; serve the form,
-or reject it at the call with its location.
+Read the formal in a `join` branch through its capture, as `join_none`
+branches do.
 
 ### Reproduce
 
-The task above, called as `fork f(t, "fwd"); join_none` with an automatic
-`rec_t t`.
+The task above, called from an `initial` block.
 
 ## Container index-check stops name no array or source line
 
@@ -3761,26 +3731,23 @@ with "cannot resolve array base of select `count`". The statement forms
 **Intended direction.** Lower the prefix-increment expression through the
 same element reference as the statement form.
 
-### Interface instance inside an interface, through a virtual interface
+### Array of derived-class handles assigned to an array of the base class
 
-**Symptom.** `vif = agent.vif.tx;`, where `agent.vif` is a virtual interface
-whose interface instantiates interface `tx`, stops generation with "chandle
-values can only be copied from chandle or null". The UVM 1.2
-`integrated/codec` example's driver selects its transmit interface this way;
-the industry-standard simulator runs it.
+**Symptom.** The UVM 1.1d and 1.2 `registers/primer` example passes
+`TABLES`, a fixed array of `reg_slave_TABLES` handles, to the `uvm_reg reg_a[]`
+formal of `uvm_reg_indirect_data::configure`; the frontend rejects the call
+with a located `SLANG-BadAssignment` error. The industry-standard simulator
+accepts it and copies each handle. The example's own comment notes the
+question and keeps an element-by-element copy for another tool.
 
-**Cause.** A virtual interface value designates one interface instance;
-codegen has no mapping from an instance to the interface instances declared
-inside it (25.9 allows a virtual interface to be assigned "An interface
-instance of the same type", which includes a nested one).
+**Cause.** By decision UVB-D1 llg follows 7.6: unpacked arrays are assignment
+compatible only when their element types are equivalent, and a derived class
+type is not equivalent to its base class (6.22.2); 7.7 applies the same rule
+to an array argument passed by value.
 
-**Intended direction.** Give each interface type with nested interface
-instances a per-instance table of its children, and lower a member select of
-a virtual interface that names one to a lookup in it.
-
-**Reproduce.** A driver class holding `virtual top_if top` assigns
-`vif = top.tx` and drives `vif.Tx` on a clock edge; the industry-standard
-simulator prints `15 Tx=1`.
+**Intended direction.** None while UVB-D1 stands. The example runs when its
+element-by-element branch is selected
+([decision UVB-D1](lrm_decisions.md#arrays-of-class-handles-u2)).
 
 ### Sequence declared in a clocking block
 
@@ -3801,6 +3768,31 @@ on the sequence itself.
 
 **Intended direction.** Infer a sequence's clock from its enclosing clocking
 block.
+
+### The codec example's reset-jump run stalls after the jump (UVM 1.2)
+
+**Symptom.** The UVM 1.2 `integrated/codec` `hw_reset_test` run (main phase
+jumps back to reset) does not finish its second main phase: the objections
+of `env` and the transmit sequence stay raised until the test's own
+2 000 000 ns watchdog calls `$finish`. The industry-standard simulator ends
+the phase, with one error of its own (a request of a killed register access
+left on the bus sequencer). The other codec runs (1.1d both, 1.2 `test`)
+pass; they report up to 11 more register-model race warnings
+(`UVM/FLD/SET/BSY`) than the industry-standard simulator.
+
+**Cause.** Not the process control. The bus driver
+(`integrated/apb/apb_master.sv`) waits one more clock per transfer unless
+a tool-specific macro is defined, so each transfer takes 300 ns instead of 200 ns
+and the transmit and receive interrupt threads of `tb_env` interleave
+differently from the first main phase on: at the jump the industry-standard
+simulator's transmit thread waits for a bus grant, while llg's threads are
+idle. In the second main phase the receive thread clears its bit of `m_isr`
+and sets it again in one process turn (`wait` statements that do not block
+lie between the writes), so by decision T1-D11 the transmit thread's
+`wait (!m_isr)` never sees zero.
+
+**Intended direction.** None while T1-D11 stands; the example's timing
+follows the tool-specific macro.
 
 ### The bus example's run diverges after its first transfer
 

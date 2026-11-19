@@ -95,6 +95,16 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   (26.6) also marks the import the exporting package declares. The cost is
   one pass over the import declarations; declaration-only capture (the
   language server) emits none.
+- Simulation capture names the path of a member access or method call
+  through a virtual interface (IEEE 1800-2009 25.9) whose member or callee
+  is, or lies in, an interface instance nested in the handle's interface, or
+  lies in a generate block there (`v.tx`, `v.a.l.x`, `v.tx.f()`, `v.g.x`):
+  Slang keeps only the handle and the member, so
+  `captureVirtualInterfaceScopes` walks the member's parent scopes up to the
+  handle type's interface instance and emits one
+  `LLG_SLANG_EDGE_VIRTUAL_INTERFACE_SCOPE` edge per scope, outermost first,
+  each target named as written (an instance array element with its indices).
+  A member of the interface itself or a clockvar (`v.x`, `v.cb.x`) gets none.
 - An instance array node stores its declared range in `auxiliary` (left in
   bits 0-31, right in bits 32-63); the instances it holds keep their indexed
   names.

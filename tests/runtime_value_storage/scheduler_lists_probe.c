@@ -271,7 +271,7 @@ static void process_await_order(void) {
         CHECK(llg_arm_process_await(waiters[i], target->handle) == LLG_CO_ARM_SUSPEND);
     }
     g.current = NULL;
-    process_handle_terminal(target, LLG_PROCESS_FINISHED);
+    process_handle_terminal(target, LLG_PROCESS_FINISHED, 0);
     CHECK(g.n_wait_sources == 0);
     for (int i = 2; i >= 0; i--)
         CHECK(dequeue_region(LLG_REGION_ACTIVE) == waiters[i]);

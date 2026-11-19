@@ -53,7 +53,21 @@ static void free_region_callbacks(void) {
     }
 }
 
+// Out of line, like the rest of the cell images (sampling.c).
+static LLG_OUTLYING void free_sampled_cells(void) {
+    while (g.sampled_cells) {
+        llg_sampled_cells_t* next = g.sampled_cells->next;
+        if (g.sampled_cells->image)
+            sv4_destroy_array(g.sampled_cells->image, g.sampled_cells->count);
+        free(g.sampled_cells->image);
+        free(g.sampled_cells->real_image);
+        free(g.sampled_cells);
+        g.sampled_cells = next;
+    }
+}
+
 static void free_sampled_values(void) {
+    if (g.sampled_cells) free_sampled_cells();
     while (g.sampled_reals) {
         llg_sampled_real_t* next = g.sampled_reals->next;
         free(g.sampled_reals);
@@ -422,6 +436,10 @@ void llg_rt_cleanup(void) {
             p->fork_groups = NULL;
             p->fork_groups_tail = NULL;
             p->pending_fork_groups = NULL;
+        }
+        if (p && p->held_groups) {
+            free_group_storage(p->held_groups);
+            p->held_groups = NULL;
         }
     }
     free_group_storage(g.zombie_groups);

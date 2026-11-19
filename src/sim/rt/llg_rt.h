@@ -2820,6 +2820,9 @@ void llg_process_handle_srandom(llg_process_handle_t* handle, sv4_t seed);
 llg_string_t llg_process_handle_get_randstate(llg_process_handle_t* handle);
 int llg_process_handle_set_randstate(llg_process_handle_t* handle,
                                      llg_string_t state);
+// Kill the target and every descendant, including those whose parent has
+// finished (SV 9.7). A finished target stays FINISHED; its live descendants
+// end.
 void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle);
 void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle);
 
@@ -3011,7 +3014,8 @@ void llg_frame_write_value(llg_frame_t* frame, size_t slot, sv4_t value);
 double llg_frame_read_real(const llg_frame_t* frame, size_t slot);
 void* llg_frame_read_opaque(const llg_frame_t* frame, size_t slot);
 void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value);
-// Kill every descendant of the current process (immediate NBA lists are discarded).
+// Kill every descendant of the current process, including those whose parent
+// has finished (SV 9.6.3; immediate NBA lists are discarded).
 void llg_disable_fork(llg_proc_t* self);
 
 // Named block/task activation registry. Declaration and instance identities
@@ -3438,6 +3442,14 @@ int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
 // unregistered real reports the same controlled diagnostic and yields 0.0.
 void llg_sampled_register_real(double* signal);
 double llg_sampled_real(const double* signal);
+// Keep a Preponed image of the `count` cells of a dense unpacked array that a
+// sampled expression selects (IEEE 1800-2009 16.5.1, 16.9.3): every cell is
+// copied at the beginning of each time slot, so a sampled read indexes the
+// returned image directly. The image is runtime-owned, starts from the
+// cells' current values and stays valid until llg_rt_cleanup; NULL reports
+// an invalid registration.
+const sv4_t* llg_sampled_cells(const sv4_t* cells, uint64_t count);
+const double* llg_sampled_real_cells(const double* cells, uint64_t count);
 /// Sampled-value clocks (IEEE 1800-2009 16.9.3). A clock owns the ticks
 /// shared by every history domain sampled on it; identities are dense small
 /// integers assigned by the generated model. An edge clock ticks when

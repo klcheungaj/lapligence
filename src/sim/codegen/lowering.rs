@@ -401,6 +401,10 @@ pub struct CodegenOptions {
     pub value_config: crate::sim::value_backend::ValueConfig,
     /// Dump waveforms from time zero without design system tasks.
     pub waveform: Option<WaveformOptions>,
+    /// Record every change of a dumped variable, in execution order, instead
+    /// of its end-of-step value (`--wave-deltas`, decision S47-D15). Applies
+    /// to `$dumpvars` dumps too; a model without dumping ignores it.
+    pub wave_deltas: bool,
     /// Emit the VPI object catalog even when the design calls no user system
     /// task or function. A VPI application loaded at run time
     /// (`LLG_VPI_PLUGIN`) or linked with `--dpi-lib` reaches design objects
@@ -837,6 +841,7 @@ fn lower_model_with(
             crate::sim::ir::IrWaveDumpVars::new(waveform.depth, scopes),
         ));
     }
+    cg.model.wave_deltas = options.wave_deltas;
     let compilation_units = cg.compilation_unit_scopes();
     lower_timing_metadata(&mut cg, &tops, options)?;
     cg.collapse_variable_ports()?;
@@ -928,6 +933,7 @@ fn lower_model_with(
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
             .expect("the default timescale has non-zero precision"),
     );
+    assertions::mark_sampled_cell_arrays(&mut model, &cg.sampled_cell_arrays);
     let first_declaration_init = model.processes.len();
     cg.build_init_steps(&mut model)?;
     // Every driver site and delayed-driver start now exists.
@@ -2120,6 +2126,10 @@ struct Codegen<'a> {
     /// Packed signals a procedural `$sampled` reads, registered for their
     /// Preponed value without clocking history.
     sampled_value_signals: std::collections::BTreeSet<usize>,
+    /// Arrays whose cells a `$sampled` argument selects; with the arrays
+    /// that history domains and assertions select, they keep a Preponed
+    /// cell image (`assertions::mark_sampled_cell_arrays`).
+    sampled_cell_arrays: std::collections::BTreeSet<usize>,
     /// Lexical bindings for fixed-array reduction maps, keyed by declaration
     /// identity so nested `with` expressions can retain outer iterators.
     fixed_method_iterators: HashMap<NodeId, FixedMethodIterator>,
@@ -2486,6 +2496,9 @@ struct Codegen<'a> {
     virtual_interface_views: HashMap<(usize, String), HashMap<String, DbDirection>>,
     /// Methods explicitly imported/exported by each modport view.
     virtual_interface_view_methods: HashMap<(usize, String), HashSet<String>>,
+    /// `(descriptor, nested instance name)` → nested slot, for the nested
+    /// interface instances a path selects through a handle (`v.tx`).
+    virtual_interface_nested: HashMap<(usize, String), usize>,
     /// Hidden `rand_mode` off bit of each `rand`/`randc` class property
     /// (IEEE 1800-2009 18.8), by declaration.
     rand_mode_bits: HashMap<NodeId, randomization::ModeBit>,
@@ -2712,6 +2725,7 @@ impl<'a> Codegen<'a> {
             inline_fixed_ranges: HashMap::new(),
             sampled_real_signals: std::collections::BTreeSet::new(),
             sampled_value_signals: std::collections::BTreeSet::new(),
+            sampled_cell_arrays: std::collections::BTreeSet::new(),
             fixed_method_iterators: HashMap::new(),
             pending_container_pre_fns: Vec::new(),
             array_initializers: Vec::new(),
@@ -2835,6 +2849,7 @@ impl<'a> Codegen<'a> {
             virtual_interface_methods: HashMap::new(),
             virtual_interface_views: HashMap::new(),
             virtual_interface_view_methods: HashMap::new(),
+            virtual_interface_nested: HashMap::new(),
             rand_mode_bits: HashMap::new(),
             rand_cell_modes: HashMap::new(),
             rand_mode_elements: None,

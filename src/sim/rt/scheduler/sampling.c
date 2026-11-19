@@ -156,6 +156,56 @@ double llg_sampled_real(const double* signal) {
     return 0.0;
 }
 
+static LLG_OUTLYING llg_sampled_cells_t* sampled_cells_new(const void* cells, uint64_t count) {
+    if (!cells || count == 0 || count > SIZE_MAX / sizeof(sv4_t)) {
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "cannot register invalid sampled array cells");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    llg_sampled_cells_t* item = (llg_sampled_cells_t*)llg_checked_calloc(
+        1, sizeof(*item), "sampled array cells");
+    item->count = (size_t)count;
+    item->next = g.sampled_cells;
+    g.sampled_cells = item;
+    return item;
+}
+
+// Registration precedes process startup, so the image starts from the
+// declaration and default values, as the packed snapshots do. Cell images
+// are out of line: designs without them keep the step loop's layout.
+LLG_OUTLYING const sv4_t* llg_sampled_cells(const sv4_t* cells, uint64_t count) {
+    llg_sampled_cells_t* item = sampled_cells_new(cells, count);
+    if (!item) return NULL;
+    item->cells = cells;
+    item->image = (sv4_t*)llg_checked_malloc(item->count, sizeof(sv4_t),
+                                             "sampled array cells");
+    for (size_t index = 0; index < item->count; index++)
+        item->image[index] = sv4_clone(&cells[index]);
+    return item->image;
+}
+
+LLG_OUTLYING const double* llg_sampled_real_cells(const double* cells, uint64_t count) {
+    llg_sampled_cells_t* item = sampled_cells_new(cells, count);
+    if (!item) return NULL;
+    item->real_cells = cells;
+    item->real_image = (double*)llg_checked_malloc(item->count, sizeof(double),
+                                                   "sampled array cells");
+    memcpy(item->real_image, cells, item->count * sizeof(double));
+    return item->real_image;
+}
+
+static LLG_OUTLYING void sample_preponed_cells(void) {
+    for (llg_sampled_cells_t* item = g.sampled_cells; item; item = item->next) {
+        if (item->real_image) {
+            memcpy(item->real_image, item->real_cells, item->count * sizeof(double));
+            continue;
+        }
+        for (size_t index = 0; index < item->count; index++)
+            sv4_copy(&item->image[index], &item->cells[index]);
+    }
+}
+
 static int sampled_real_image_equal(sv4_t left, sv4_t right) {
     if (llg_sv4_width(left) != 64 || llg_sv4_width(right) != 64) return 0;
     return sv4_bitstoreal(left) == sv4_bitstoreal(right);
@@ -478,7 +528,10 @@ static void sample_preponed_values(void) {
     if (g.sampled_time_valid && g.sampled_time == g.now) return;
     g.sampled_time = g.now;
     g.sampled_time_valid = 1;
-    if (LLG_CO_LIKELY(!g.sampled_reals && !g.sampled_values && !g.sampled)) return;
+    if (LLG_CO_LIKELY(!g.sampled_reals && !g.sampled_values && !g.sampled &&
+                      !g.sampled_cells))
+        return;
+    if (LLG_CO_UNLIKELY(g.sampled_cells != NULL)) sample_preponed_cells();
     for (llg_sampled_real_t* item = g.sampled_reals; item; item = item->next)
         item->value = *item->signal;
     for (llg_sampled_value_t* item = g.sampled_values; item; item = item->next)

@@ -94,7 +94,9 @@ impl EmitCtx<'_, '_> {
             Some(crate::sim::ir::IrVirtualCall {
                 interface: descriptor,
                 method,
-                receiver: self.cg.lower_chandle(&self.path, receiver)?,
+                receiver: self
+                    .cg
+                    .lower_virtual_interface_receiver(&self.path, h, receiver)?,
                 site: self
                     .cg
                     .source_site("virtual interface method call", &self.path, h),

@@ -1,0 +1,6 @@
+5 past=2 pastx=2 stable=1
+15 past=2 pastx=2 stable=0
+25 past=9 pastx=9 stable=0
+25 a1 fail
+35 past=3 pastx=9 stable=1
+45 past=3 pastx=x stable=1

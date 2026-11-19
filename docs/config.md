@@ -102,13 +102,16 @@ option or key, so no precedence applies to it.
   replaces only `compile.include_dirs`, not the source directories.
 - Booleans have explicit opposites so the command line can override either
   value: `--gen-only`/`--no-gen-only`, `--no-opt`/`--opt`,
-  `--lint-only`/`--no-lint-only`, `-Werror`/`-Wno-error`. `--no-lint-only` also
+  `--lint-only`/`--no-lint-only`, `-Werror`/`-Wno-error`,
+  `--wave-deltas`/`--no-wave-deltas`. `--no-lint-only` also
   cancels `lint.json`. `--lint-json [<path>]` chooses its own destination
   (stdout without a path) instead of the file's `lint.json_file`.
 - `--code-coverage[=<kinds>]` replaces `simulator.code_coverage` and
   `--no-code-coverage` cancels it.
 - `--wave <file>` replaces `waveform.file` and `--no-wave` cancels it;
   `--wave-depth` replaces `waveform.depth` and needs a file from either layer.
+  `--no-wave` leaves `waveform.deltas` in effect for the design's own
+  `$dumpvars` dumps.
 - Every `llg` run lints. The `[lint]` rule settings (`enabled`, `rules.<id>`)
   of the `--config` file apply to it; without `--config` every rule runs with
   its default severity.
@@ -176,6 +179,7 @@ server, accepted and ignored by `llg`.
 | `simulator.plusargs` | strings | llg | arguments after `--` (they replace; `--append-plusarg` adds) |
 | `waveform.file` | `.vcd`/`.fst` path | llg | `--wave` |
 | `waveform.depth` | integer 0 to 4294967295 | llg | `--wave-depth`; requires `file` |
+| `waveform.deltas` | bool | llg | `--wave-deltas` / `--no-wave-deltas` |
 | `build.gen_only` | bool | llg | `--gen-only` |
 | `build.generator`, `build.launcher`, `build.cc`, `build.cmake` | strings | llg | `--generator`, `--launcher`, `--cc`, `--cmake` |
 | `build.cflags` | string | llg | `--cflags` (an empty value means no flags) |
@@ -188,7 +192,7 @@ server, accepted and ignored by `llg`.
 Command-line-only: `--config`, `--help`, `--version`, `--vpi`,
 `--vpi-port-delays`, `--dpi-import-lib`, and the negations
 `--no-gen-only`, `--opt`, `--no-lint-only`, `-Wno-error`, `--no-wave`,
-`--no-code-coverage`.
+`--no-wave-deltas`, `--no-code-coverage`.
 
 ```toml
 schema_version = 1
@@ -462,6 +466,17 @@ optional process-wide guard.
   built model is rerun.
 - `depth` (integer, default 0) — hierarchy levels dumped below each top
   instance, as `$dumpvars(depth, top)`; 0 dumps every level (`--wave-depth`).
+- `deltas` (bool, default false) — record every value change of a dumped
+  variable, in execution order, instead of its end-of-step value
+  (`--wave-deltas`, decision S47-D15). A time step can then hold several
+  records of one variable, which shows delta-cycle activity, and lowering
+  keeps every overridden nonblocking update of the model so none is hidden.
+  It applies to `--wave` and to the design's `$dumpvars` dumps alike and
+  needs no `file`. Dumps grow and simulation slows by the extra records; the
+  mode is compiled into the model and links its own runtime archive, so a
+  model without it pays nothing. By default a variable gets at most one
+  record per step, none when its end-of-step value equals its last record
+  (S47-D2, S47-D14).
 
 ## `[build]` — model build (`llg` only)
 
