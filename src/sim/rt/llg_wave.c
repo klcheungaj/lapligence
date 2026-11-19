@@ -15,7 +15,7 @@
 // checkpoint holds the step's final values. The producer-side dump state
 // (`dump_state`) decides which controls take effect; their checkpoints are
 // written at the end of the step too, after the step's records and with its
-// final values (S47-D5), from the state the step started in (`recording`)
+// final values (S47-D5), from the state the step started in (`step_state`)
 // to the state it ends in.
 //
 // The writer thread keeps the last value it wrote for each identifier code
@@ -183,10 +183,12 @@ typedef struct {
     // A $dumpoff executed while the start is pending: the dump starts in the
     // off state (S47-D5).
     int pending_off;
-    // Whether the file records value changes in this time step: the dump
-    // state the step started in. Controls change `dump_state` at once and
-    // the file at the end of the step.
-    int recording;
+    // The dump state this time step started in: the file records value
+    // changes in the step when it is DUMP_ON. Controls change `dump_state`
+    // at once and the file at the end of the step. An enum compared with
+    // DUMP_ON, like the test it replaces, keeps the per-change check one
+    // compare.
+    dump_state_t step_state;
     // The end of this time step has work besides the dirty records: the
     // pending start of the dump, or a $dumpon, $dumpoff or $dumpall. One
     // flag keeps the end-of-step check of a step without either as cheap as
@@ -1463,12 +1465,12 @@ static void start_dump(uint64_t now) {
                                                            : LLG_WAVE_NO_REG;
     }
     g_wave.dump_state = DUMP_ON;
-    g_wave.recording = 1;
+    g_wave.step_state = DUMP_ON;
     enqueue_snapshot(now, SNAP_DUMPVARS);
     if (g_wave.pending_off) {
         g_wave.pending_off = 0;
         g_wave.dump_state = DUMP_OFF;
-        g_wave.recording = 0;
+        g_wave.step_state = DUMP_OFF;
         enqueue_simple(EV_OFF, now, 0);
     } else if (g_wave.pending_all) {
         enqueue_snapshot(now, SNAP_ALL);
@@ -1483,7 +1485,7 @@ static void start_dump(uint64_t now) {
 // within the step (or the reverse) writes no checkpoint for it.
 static void apply_controls(uint64_t now) {
     int on = g_wave.dump_state == DUMP_ON;
-    if (g_wave.recording) {
+    if (g_wave.step_state == DUMP_ON) {
         flush_dirty(now);
         if (!on) enqueue_simple(EV_OFF, now, 0);
         else if (g_wave.pending_all) enqueue_snapshot(now, SNAP_ALL);
@@ -1492,7 +1494,7 @@ static void apply_controls(uint64_t now) {
         enqueue_snapshot(now, SNAP_ON);
         if (g_wave.pending_all) enqueue_snapshot(now, SNAP_ALL);
     }
-    g_wave.recording = on;
+    g_wave.step_state = g_wave.dump_state;
     g_wave.pending_all = 0;
     g_wave.slot_work = 0;
 }
@@ -1738,7 +1740,7 @@ void llg_wave_dumpall(uint64_t now) {
 
 void llg_wave_flush(uint64_t now) {
     if (!require_producer("$dumpflush")) return;
-    if (g_wave.recording) flush_dirty(now);
+    if (g_wave.step_state == DUMP_ON) flush_dirty(now);
     if (!g_wave.worker_started) return;
     uint64_t sequence = llg_atomic_u64_load(&g_wave.ack) + 1u;
     enqueue_simple(EV_FLUSH, now, sequence);
@@ -1765,7 +1767,7 @@ void llg_wave_slot_end(uint64_t now) {
 }
 
 static void mark_changed(const void* ptr) {
-    if (!g_wave.recording || !require_producer("signal change")) return;
+    if (g_wave.step_state != DUMP_ON || !require_producer("signal change")) return;
     uint32_t first = lookup_registration(ptr);
     if (first == LLG_WAVE_NO_REG) return;
     registration_t* reg = &g_wave.regs[first];
