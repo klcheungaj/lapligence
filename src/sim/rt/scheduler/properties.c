@@ -219,8 +219,8 @@ static void property_node_clock(const llg_property_ctx_t* ctx, const llg_propert
         *clock = entry->signal;
         *edge = entry->edge;
     } else {
-        *clock = ctx->assertion->clock;
-        *edge = ctx->assertion->edge;
+        *clock = ctx->assertion->hot->clock;
+        *edge = ctx->assertion->hot->edge;
     }
 }
 
@@ -836,8 +836,8 @@ static LLG_OUTLYING void property_report_values(llg_concurrent_assertion_t* asse
  * S38-D10); assert and assume keep the 16.15.8 vacuity. */
 static void property_report(llg_concurrent_assertion_t* assertion, llg_property_inst_t* root) {
     int pass = root->status == LLG_PROP_TRUE;
-    int vacuous = pass && (assertion->kind == LLG_ASSERTION_COVER ? root->cover_vacuous
-                                                                  : !root->nonvacuous);
+    int vacuous = pass && (assertion->hot->kind == LLG_ASSERTION_COVER ? root->cover_vacuous
+                                                                       : !root->nonvacuous);
     uint64_t start = root->launch.time;
     // The action of an instance that saved values reads them (16.15.6.1).
     llg_frame_t* values = root->values;
@@ -886,14 +886,14 @@ static void run_property_assertion(llg_concurrent_assertion_t* assertion,
         }
         property_unlink_attempt(assertion, link, previous);
         property_report(assertion, attempt);
-        if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active) return;
+        if (assertion->hot->kind == LLG_ASSERTION_EXPECT && !assertion->hot->expect_active) return;
         if (g.finish) return;
     }
     for (uint64_t starts = root_event ? assertion_root_starts(assertion) : 0; starts;
          starts--) {
         property_attempt_begin(assertion, event, queued_values_take(assertion));
         if (g.finish) return;
-        if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active) return;
+        if (assertion->hot->kind == LLG_ASSERTION_EXPECT && !assertion->hot->expect_active) return;
     }
 }
 
@@ -943,7 +943,8 @@ static void property_assertions_async_pass(void) {
             }
             property_unlink_attempt(assertion, link, previous);
             property_report(assertion, attempt);
-            if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active) break;
+            if (assertion->hot->kind == LLG_ASSERTION_EXPECT && !assertion->hot->expect_active)
+                break;
         }
     }
 }
@@ -976,8 +977,8 @@ static int settle_property_attempts_at_end(void) {
         llg_property_inst_t* attempts = assertion->property_attempts;
         assertion->property_attempts = assertion->property_attempts_tail = NULL;
         // A blocked expect never resumes after the end of simulation.
-        int settled = attempts && assertion->kind != LLG_ASSERTION_EXPECT &&
-                      assertion->kind != LLG_ASSERTION_COVER;
+        int settled = attempts && assertion->hot->kind != LLG_ASSERTION_EXPECT &&
+                      assertion->hot->kind != LLG_ASSERTION_COVER;
         uint8_t* eventuality = settled ? property_eventuality_table(assertion->property) : NULL;
         while (attempts) {
             llg_property_inst_t* attempt = attempts;
@@ -1141,24 +1142,17 @@ int llg_assertion_register_property(
         return 0;
     }
     llg_concurrent_assertion_t* assertion =
-        (llg_concurrent_assertion_t*)llg_checked_calloc(
-            1, sizeof(*assertion), "concurrent property assertion");
-    assertion->clock = clock;
-    assertion->edge = edge;
-    assertion->disable = disable;
+        assertion_record_new(clock, edge, disable, kind, "concurrent property assertion");
     assertion_disable_watch(disable);
     assertion->pass_desc = pass_desc;
     assertion->fail_desc = fail_desc;
     assertion->data = data;
-    assertion->kind = kind;
     assertion->overlapped = 1;
     assertion->identity = identity;
-    assertion->acov =
-        assertion->kind == LLG_ASSERTION_EXPECT ? NULL : llg_acov_find(identity);
+    assertion->acov = kind == LLG_ASSERTION_EXPECT ? NULL : llg_acov_find(identity);
     assertion->label = label;
     assertion->location = location;
     assertion->scope = scope;
-    assertion->enabled = 1;
     assertion->property = program;
     if (program->sequence_count) {
         assertion->property_ranks = llg_checked_calloc(
@@ -1177,10 +1171,5 @@ int llg_assertion_register_property(
     for (uint32_t index = 1; index < program->clock_count; index++)
         assertion_add_extra_clock(assertion, program->clocks[index].signal,
                                   program->clocks[index].edge);
-    if (g.assertion_tail)
-        g.assertion_tail->next = assertion;
-    else
-        g.assertions = assertion;
-    g.assertion_tail = assertion;
     return 1;
 }

@@ -171,7 +171,7 @@ static uint64_t future_root_starts(llg_concurrent_assertion_t* assertion) {
         assertion->procedural_matured = 0;
         return starts;
     }
-    if (!assertion->enabled) return 0;
+    if (!assertion->hot->enabled) return 0;
     if (assertion->single_attempt) {
         if (assertion->single_attempt_started) return 0;
         assertion->single_attempt_started = 1;
@@ -244,7 +244,8 @@ static void future_assertion_replay(llg_concurrent_assertion_t* assertion) {
             assertion->fail_action_off = entry->fail_action_off;
             for (const llg_assertion_clock_event_t* event = entry->events; event && !g.finish;
                  event = event->next) {
-                int root_event = event->signal == assertion->clock && event->edge == assertion->edge;
+                int root_event = event->signal == assertion->hot->clock &&
+                                 event->edge == assertion->hot->edge;
                 future_event_step(assertion, event, root_event);
             }
             assertion->pass_action_off = pass_off;
@@ -274,19 +275,20 @@ static void future_assertion_observed(llg_concurrent_assertion_t* assertion) {
         future_assertion_replay(assertion);
         if (g.finish) return;
     }
-    if (!assertion_clock_live(assertion)) {
+    if (!assertion_clock_live(assertion->hot)) {
         assertion->edge_pending = 0;
         free_assertion_clock_events(assertion);
         return;
     }
-    if (assertion->disable && sv4_to_bool(*assertion->disable)) {
+    if (assertion->hot->disable && sv4_to_bool(*assertion->hot->disable)) {
         // As without delay: a leading-clock event recorded before disable
         // iff became true starts an attempt that is disabled at once
         // (40.5.3), and the running attempts end at this point.
         int root_event = 0;
         for (const llg_assertion_clock_event_t* event = assertion->clock_events;
              event && !root_event; event = event->next)
-            root_event = event->signal == assertion->clock && event->edge == assertion->edge;
+            root_event = event->signal == assertion->hot->clock &&
+                         event->edge == assertion->hot->edge;
         end_assertion_attempts(assertion, 0);
         free_assertion_clock_events(assertion);
         if (root_event && assertion_would_start(assertion)) assertion_disabled_start(assertion);
@@ -298,7 +300,7 @@ static void future_assertion_observed(llg_concurrent_assertion_t* assertion) {
     entry->events = assertion->clock_events;
     assertion->clock_events = assertion->clock_events_tail = NULL;
     for (const llg_assertion_clock_event_t* event = entry->events; event; event = event->next) {
-        if (event->signal != assertion->clock || event->edge != assertion->edge) continue;
+        if (event->signal != assertion->hot->clock || event->edge != assertion->hot->edge) continue;
         procedural_note_tick(assertion, event, 0);
         entry->has_root = 1;
         entry->starts += future_root_starts(assertion);
@@ -306,7 +308,7 @@ static void future_assertion_observed(llg_concurrent_assertion_t* assertion) {
     entry->pass_action_off = assertion->pass_action_off;
     entry->vacuous_action_off = assertion->vacuous_action_off;
     entry->fail_action_off = assertion->fail_action_off;
-    if (assertion->extra_clock_count)
+    if (assertion->hot->extra_clock_count)
         entry->history = future_event_list_clone(assertion->clock_history);
     if (assertion->future_slots) {
         if (!entry->slots) {
@@ -329,8 +331,9 @@ int llg_assertion_future(uint64_t identity, uint64_t global_clock, uint32_t slot
     // blocks its caller; the generated model rejects both before this.
     if (!g.initialized || g.running || g.config_error || !assertion || !clock ||
         assertion->identity != identity || assertion->future_clock ||
-        assertion->kind == LLG_ASSERTION_EXPECT || assertion->endpoint_event ||
-        (assertion->abort_condition && !assertion->abort_sync) || assertion->property_async ||
+        assertion->hot->kind == LLG_ASSERTION_EXPECT || assertion->endpoint_event ||
+        (assertion->hot->abort_condition && !assertion->hot->abort_sync) ||
+        assertion->property_async ||
         (slots && !capture)) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid future global sampled-value assertion");
         llg_last_failure = 1;

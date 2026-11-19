@@ -302,21 +302,21 @@ static void llg_acov_discard_record(llg_concurrent_assertion_t* assertion) {
 static void llg_acov_record_control(llg_concurrent_assertion_t* assertion, int operation,
                                     uint64_t start) {
     switch (operation) {
-        case LLG_ACOV_OP_DISABLE: assertion->enabled = 0; break;
-        case LLG_ACOV_OP_ENABLE: assertion->enabled = !g.assertions_ended; break;
+        case LLG_ACOV_OP_DISABLE: assertion->hot->enabled = 0; break;
+        case LLG_ACOV_OP_ENABLE: assertion->hot->enabled = (uint8_t)!g.assertions_ended; break;
         case LLG_ACOV_OP_KILL:
             if (assertion->future_clock) future_assertion_kill_at(assertion, start);
             else assertion_kill_attempts_at(assertion, start);
             break;
         case LLG_ACOV_OP_KILL_ALL:
-            assertion->enabled = 0;
+            assertion->hot->enabled = 0;
             llg_acov_discard_record(assertion);
             break;
         case LLG_ACOV_OP_RESET:
             llg_acov_reset_quiet = 1;
             llg_acov_discard_record(assertion);
             llg_acov_reset_quiet = 0;
-            assertion->enabled = !g.assertions_ended;
+            assertion->hot->enabled = (uint8_t)!g.assertions_ended;
             assertion->pass_action_off = 0;
             assertion->vacuous_action_off = 0;
             assertion->fail_action_off = 0;

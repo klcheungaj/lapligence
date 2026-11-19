@@ -488,30 +488,54 @@ typedef struct {
     size_t capacity;
 } llg_acov_event_queue_t;
 
-typedef struct llg_concurrent_assertion {
-    struct llg_concurrent_assertion* next;
+/* The part of a concurrent assertion that the walks over every assertion on
+ * each publication read before they act (assertion_clock_signal_changed,
+ * assertion_abort_condition_changed): one 64-byte line. The hot parts of all
+ * assertions are one array in registration order (g.assertion_hot), so such
+ * a walk reads one line per assertion where the whole record took 6-8, and
+ * the address of the next entry does not wait for a load. `record` is the
+ * rest of the assertion, whose `hot` points back here. Narrow fields hold
+ * the registration's validated values (kind, edge) and 0/1 flags. */
+typedef struct llg_assertion_hot {
     sv4_t* clock;
-    int edge;
+    sv4_t* disable;
     /* `iff` condition of the leading clocking event, or NULL. A gated clock
      * counts its own ticks: an edge with the condition false is no tick, so
      * `##n` delays count only gated edges. */
     llg_sampled_gate_fn clock_gate;
+    llg_concurrent_assertion_predicate_fn abort_condition;
+    /* Clock edges other than the leading one that advance the assertion's
+     * sequences or property nodes, collected at registration. */
+    llg_property_clock_t* extra_clocks;
+    struct llg_concurrent_assertion* record;
+    uint32_t extra_clock_count;
+    uint8_t edge;
+    uint8_t kind;
+    uint8_t enabled;
+    uint8_t expect_active;
+    uint8_t abort_sync;
+} llg_assertion_hot_t;
+
+// The cache-line size the hot parts are laid out for (assertion_record_new).
+#define LLG_ASSERTION_HOT_ALIGN 64u
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(sizeof(llg_assertion_hot_t) == LLG_ASSERTION_HOT_ALIGN,
+               "the hot part of a concurrent assertion fills one 64-byte line");
+#endif
+
+typedef struct llg_concurrent_assertion {
+    struct llg_concurrent_assertion* next;
+    llg_assertion_hot_t* hot;
     uint64_t gated_ticks;
-    sv4_t* disable;
     llg_concurrent_assertion_predicate_fn antecedent;
     llg_concurrent_assertion_predicate_fn consequent;
-    llg_concurrent_assertion_predicate_fn abort_condition;
     const llg_co_desc_t* pass_desc;
     const llg_co_desc_t* fail_desc;
     void* data;
-    int kind;
     /* `cover sequence`: report every match, never a failure. */
     int cover_sequence;
     int overlapped;
     int abort_reject;
-    int abort_sync;
-    int enabled;
-    int expect_active;
     /* An armed expect starts exactly one attempt (IEEE 1800-2009 16.18). */
     int expect_started;
     /* An initial-procedure assertion starts one attempt (16.15.6). */
@@ -574,10 +598,6 @@ typedef struct llg_concurrent_assertion {
     llg_assertion_clock_event_t* clock_history;
     llg_assertion_clock_event_t* clock_history_tail;
     uint64_t sequence_cycle;
-    /* Clock edges other than the leading one that advance the assertion's
-     * sequences or property nodes, collected at registration. */
-    uint32_t extra_clock_count;
-    llg_property_clock_t* extra_clocks;
     /* Property-engine assertion: its program, the per-sequence ranks, and
      * the live attempts in start order. */
     const llg_property_program_t* property;
@@ -800,6 +820,13 @@ typedef struct {
     // from an earlier slot, and those commit as their own batch.
     uint64_t nba_slot_sequence;
     llg_concurrent_assertion_t* assertions;
+    // The hot parts of `assertions`, in the same order, on line boundaries
+    // inside `assertion_hot_block` (assertion_record_new). Registration
+    // precedes execution, so the array never moves while a walk runs.
+    llg_assertion_hot_t* assertion_hot;
+    void* assertion_hot_block;
+    size_t assertion_count;
+    size_t assertion_hot_capacity;
     // Set when a clock edge reaches a concurrent assertion and cleared when
     // the Observed region evaluates them. An edge enabled by the reactive
     // set sends the time slot back around through Observed (SV 24.3.1).

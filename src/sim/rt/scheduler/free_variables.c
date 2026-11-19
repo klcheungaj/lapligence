@@ -62,7 +62,7 @@ static int free_sets_resolve(void) {
                 else high = mid;
             }
             if (low < total && sorted[low]->identity == set->identities[k] &&
-                sorted[low]->kind == LLG_ASSERTION_ASSUME)
+                sorted[low]->hot->kind == LLG_ASSERTION_ASSUME)
                 found = sorted[low];
             if (!found) {
                 llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "free variable set names unknown assume %llu", (unsigned long long)set->identities[k]);
@@ -126,8 +126,8 @@ static int free_set_events(llg_free_set_t* set) {
     int any = 0;
     for (uint32_t k = 0; k < set->count; ++k) {
         llg_concurrent_assertion_t* assume = set->assumes[k];
-        int event = assertion_root_event_pending(assume) && assertion_clock_live(assume) &&
-                    !(assume->disable && sv4_to_bool(*assume->disable));
+        int event = assertion_root_event_pending(assume) && assertion_clock_live(assume->hot) &&
+                    !(assume->hot->disable && sv4_to_bool(*assume->hot->disable));
         int due = event && !assume->property && !assume->consequent_sequence &&
                   !assume->overlapped && assume->attempts != NULL;
         set->flags[k] = (unsigned char)(event | (due << 1));

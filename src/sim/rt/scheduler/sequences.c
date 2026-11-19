@@ -512,8 +512,8 @@ static int sequence_choose_event(const llg_concurrent_assertion_t* assertion,
                                   const llg_assertion_clock_event_t* current,
                                   llg_assertion_clock_event_t* selected,
                                   uint64_t* elapsed) {
-    sv4_t* clock = transition->clock ? transition->clock : assertion->clock;
-    int edge = transition->clock ? transition->edge : assertion->edge;
+    sv4_t* clock = transition->clock ? transition->clock : assertion->hot->clock;
+    int edge = transition->clock ? transition->edge : assertion->hot->edge;
     int same = clock == token->entered_clock && edge == token->entered_edge;
     if (same) {
         if (!token->checked && transition->min_delay == 0 && token->entered_time == current->time) {

@@ -109,8 +109,8 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
             for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
                  assertion = assertion->next) {
                 if (assertion->identity == w->payload.rare->assertion.identity &&
-                    assertion->kind == LLG_ASSERTION_EXPECT)
-                    assertion->expect_active = 0;
+                    assertion->hot->kind == LLG_ASSERTION_EXPECT)
+                    assertion->hot->expect_active = 0;
             }
         }
         remove_waiters_entry(w);

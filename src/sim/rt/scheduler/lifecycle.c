@@ -304,7 +304,7 @@ static void free_assertions(void) {
             free(g.assertions->property_ranks);
         }
         free(g.assertions->endpoint_slots);
-        free(g.assertions->extra_clocks);
+        free(g.assertions->hot->extra_clocks);
         queued_values_clear(g.assertions);
         free(g.assertions->queued_values);
         llg_frame_release(g.assertions->expect_values);
@@ -312,6 +312,11 @@ static void free_assertions(void) {
         g.assertions = next;
     }
     g.assertion_tail = NULL;
+    free(g.assertion_hot_block);
+    g.assertion_hot_block = NULL;
+    g.assertion_hot = NULL;
+    g.assertion_count = 0;
+    g.assertion_hot_capacity = 0;
     // The condition watches end with the other watches (free_value_watches).
     value_watch_disable = 0;
     free(g.sequence_endpoints);

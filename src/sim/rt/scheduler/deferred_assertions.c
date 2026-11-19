@@ -197,7 +197,7 @@ void llg_assertion_queue(uint32_t index) {
         abort();
     }
     llg_concurrent_assertion_t* assertion = g.procedural_assertions[index];
-    if (!assertion->enabled) return;
+    if (!assertion->hot->enabled) return;
     llg_deferred_assertion_report_t* report =
         deferred_pending_append(assertion->identity);
     report->label = assertion->label;
@@ -216,7 +216,7 @@ LLG_INTERNAL LLG_OUTLYING void llg_assertion_queue_values(uint32_t index, llg_fr
         abort();
     }
     llg_concurrent_assertion_t* assertion = g.procedural_assertions[index];
-    if (!assertion->enabled) {
+    if (!assertion->hot->enabled) {
         llg_frame_release(frame);
         return;
     }

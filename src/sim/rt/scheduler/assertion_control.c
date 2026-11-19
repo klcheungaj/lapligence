@@ -243,11 +243,11 @@ static int assertion_matches_type(const llg_concurrent_assertion_t* assertion,
     // Table 20-6: concurrent assertions use bit 1 and expect uses bit 16.
     // Immediate/unique report classes are intentionally ignored because this
     // runtime registry owns only sampled concurrent instances.
-    uint64_t type_bit = assertion->kind == LLG_ASSERTION_EXPECT ? 16u : 1u;
+    uint64_t type_bit = assertion->hot->kind == LLG_ASSERTION_EXPECT ? 16u : 1u;
     if ((assertion_type & type_bit) == 0) return 0;
-    uint64_t directive_bit = assertion->kind == LLG_ASSERTION_COVER
+    uint64_t directive_bit = assertion->hot->kind == LLG_ASSERTION_COVER
                                  ? 2u
-                                 : assertion->kind == LLG_ASSERTION_ASSUME ? 4u : 1u;
+                                 : assertion->hot->kind == LLG_ASSERTION_ASSUME ? 4u : 1u;
     return (directive_type & directive_bit) != 0;
 }
 
@@ -549,17 +549,17 @@ static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
         switch (operation) {
             case LLG_ASSERTION_CONTROL_ON:
                 // After vpiAssertionSysEnd no assertion starts again (39.5.1).
-                assertion->enabled = !g.assertions_ended;
+                assertion->hot->enabled = (uint8_t)!g.assertions_ended;
                 // A control task raises cbAssertionEnable/cbAssertionDisable
                 // like the VPI control of the same effect (decision A17-D2).
                 llg_acov_notify(assertion->acov, LLG_ACOV_EVENT_CONTROL_ON, g.now);
                 break;
             case LLG_ASSERTION_CONTROL_OFF:
-                assertion->enabled = 0;
+                assertion->hot->enabled = 0;
                 llg_acov_notify(assertion->acov, LLG_ACOV_EVENT_CONTROL_OFF, g.now);
                 break;
             case LLG_ASSERTION_CONTROL_KILL:
-                assertion->enabled = 0;
+                assertion->hot->enabled = 0;
                 assertion_kill_actions(assertion);
                 end_assertion_attempts(assertion, 1);
                 assertion->edge_pending = 0;
@@ -571,9 +571,9 @@ static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
                     assertion->procedural_matured = 0;
                     if (assertion->queued_count) queued_values_clear(assertion);
                 }
-                if (assertion->kind == LLG_ASSERTION_EXPECT &&
-                    assertion->expect_active) {
-                    assertion->expect_active = 0;
+                if (assertion->hot->kind == LLG_ASSERTION_EXPECT &&
+                    assertion->hot->expect_active) {
+                    assertion->hot->expect_active = 0;
                     wake_assertion_waiter(assertion->identity);
                 }
                 llg_acov_notify(assertion->acov, LLG_ACOV_EVENT_CONTROL_OFF, g.now);
@@ -615,7 +615,7 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
 LLG_INTERNAL LLG_OUTLYING void llg_assertion_expect_values(uint64_t identity,
                                                           llg_frame_t* frame) {
     llg_concurrent_assertion_t* assertion = find_assertion(identity);
-    if (!assertion || assertion->kind != LLG_ASSERTION_EXPECT) {
+    if (!assertion || assertion->hot->kind != LLG_ASSERTION_EXPECT) {
         llg_frame_release(frame);
         return;
     }
@@ -633,12 +633,12 @@ int llg_assertion_expect_start(uint64_t identity, int has_fail_action) {
     if (!region_can_mutate("expect scheduling")) return 0;
     llg_concurrent_assertion_t* assertion = find_assertion(identity);
     llg_proc_t* current = llg_current();
-    if (!assertion || assertion->kind != LLG_ASSERTION_EXPECT || !current ||
-        assertion->expect_active)
+    if (!assertion || assertion->hot->kind != LLG_ASSERTION_EXPECT || !current ||
+        assertion->hot->expect_active)
         return assertion_control_failure("expect has no unique inactive assertion instance");
     free_assertion_attempts(assertion);
     if (assertion->expect_values) expect_values_arm(assertion);
-    assertion->expect_active = 1;
+    assertion->hot->expect_active = 1;
     assertion->expect_started = 0;
     assertion->expect_outcome = 0;
     assertion->expect_has_fail = has_fail_action ? 1 : 0;
@@ -649,7 +649,8 @@ int llg_assertion_expect_start(uint64_t identity, int has_fail_action) {
 
 int llg_assertion_expect_outcome(uint64_t identity) {
     llg_concurrent_assertion_t* assertion = find_assertion(identity);
-    return assertion && assertion->kind == LLG_ASSERTION_EXPECT ? assertion->expect_outcome : 0;
+    return assertion && assertion->hot->kind == LLG_ASSERTION_EXPECT ? assertion->expect_outcome
+                                                                     : 0;
 }
 
 static void assertion_attempt_enqueue(llg_concurrent_assertion_t* assertion) {
