@@ -324,234 +324,474 @@ impl<'a> Codegen<'a> {
             .collect::<Vec<_>>();
 
         for identity in identities {
-            let descriptor_index = self.model.virtual_interfaces.len();
-            self.virtual_interface_types
-                .insert(identity.clone(), descriptor_index);
-            let identity_base = identity.split("#(").next().unwrap_or(&identity);
-            let concrete = interfaces
-                .iter()
-                .copied()
-                .filter(|interface| {
-                    self.concrete_virtual_interface_identity(*interface)
-                        .as_deref()
-                        == Some(identity.as_str())
+            self.add_virtual_interface_descriptor(identity, &interfaces)?;
+        }
+        self.collect_virtual_interface_nesting(&interfaces)?;
+        Ok(())
+    }
+
+    /// Add a nested slot for each nested interface instance a member path
+    /// selects through a handle (`v.tx`, `v.tx.x`, `v.a.l.x`; SV 25.9), with
+    /// a descriptor for each nested type that has none yet. Paths are
+    /// scanned once, in node order, so slots and added descriptors follow
+    /// the source. A step that no bound instance resolves adds nothing; its
+    /// lowering reports it.
+    fn collect_virtual_interface_nesting(&mut self, interfaces: &[NodeId]) -> Result<(), String> {
+        let mut paths = Vec::new();
+        for node in self.db.node_ids() {
+            if let NodeKind::MethodCall {
+                receiver: Some(receiver),
+                ..
+            } = self.kind(node)
+            {
+                let steps = self.db.virtual_interface_call_scopes(node);
+                if let (false, Some(spelling)) =
+                    (steps.is_empty(), self.virtual_interface_spelling(*receiver))
+                {
+                    paths.push((spelling, steps.to_vec(), None));
+                }
+                continue;
+            }
+            let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+                continue;
+            };
+            let Some((position, spelling)) =
+                refs.iter().enumerate().find_map(|(position, target)| {
+                    self.virtual_interface_spelling((*target)?)
+                        .map(|spelling| (position, spelling))
                 })
-                .collect::<Vec<_>>();
-            // The owned interface definitions are distinct from the
-            // elaborated instance tree. Include a matching definition as a
-            // metadata template so a type with no concrete instance (notably
-            // a null-handle-only design) still has its member widths and
-            // modport restrictions available to codegen.
-            let templates = self
-                .db
-                .node_ids()
-                .filter(|interface| {
-                    let NodeKind::ModuleInst {
-                        def_name,
-                        is_interface: true,
-                        ..
-                    } = self.kind(*interface)
-                    else {
-                        return false;
-                    };
-                    let Some(parent) = self.node(*interface).parent else {
-                        return false;
-                    };
-                    if self.node(parent).parent.is_some()
-                        || self.node(*interface).children.is_empty()
-                    {
-                        return false;
-                    }
-                    Self::normalize_virtual_interface_identity(&strip_lib(def_name))
-                        == identity_base
-                })
-                .collect::<Vec<_>>();
-            let mut member_names = Vec::<String>::new();
-            let mut method_names = Vec::<String>::new();
-            let mut member_info = HashMap::<String, SignalInfo>::new();
-            let mut method_info = HashMap::<String, usize>::new();
-            let mut view_members = HashMap::<String, HashMap<String, DbDirection>>::new();
-            let mut view_methods = HashMap::<String, HashSet<String>>::new();
-            let mut entries = Vec::new();
-            let mut metadata_interfaces = Vec::new();
-            let mut seen_metadata = HashSet::new();
-            for interface in templates.iter().chain(concrete.iter()) {
-                if seen_metadata.insert(*interface) {
-                    metadata_interfaces.push(*interface);
+            else {
+                continue;
+            };
+            let steps = self.virtual_interface_nested_steps(parts, refs, position);
+            if !steps.is_empty() {
+                // A path that ends at a nested instance is a value of its
+                // virtual-interface type.
+                let value_type = (position + 1 + steps.len() == parts.len())
+                    .then(|| self.virtual_interface_spelling(node))
+                    .flatten();
+                paths.push((spelling, steps, value_type));
+            }
+        }
+        for (spelling, steps, value_type) in paths {
+            let identity = Self::normalize_virtual_interface_identity(
+                &Self::virtual_interface_identity_from_spelling(&spelling),
+            );
+            let Some(mut descriptor) = self.virtual_interface_types.get(&identity).copied() else {
+                continue;
+            };
+            let last = steps.len() - 1;
+            for (step, name) in steps.iter().enumerate() {
+                let value_type = value_type.as_deref().filter(|_| step == last);
+                match self.add_virtual_interface_nested(descriptor, name, value_type, interfaces)? {
+                    Some(child) => descriptor = child,
+                    None => break,
                 }
-            }
-            for interface in metadata_interfaces {
-                for child in self.node(interface).children.iter().copied() {
-                    let NodeKind::ModPort = self.kind(child) else {
-                        continue;
-                    };
-                    let view_name = self.node(child).name.clone();
-                    let members = view_members.entry(view_name.clone()).or_default();
-                    let methods = view_methods.entry(view_name).or_default();
-                    for port in self.node(child).children.iter().copied() {
-                        match self.kind(port) {
-                            NodeKind::ModPort => {
-                                if let Some(direction) = self.db.modport_port_direction(port) {
-                                    members.insert(self.node(port).name.clone(), direction);
-                                }
-                            }
-                            NodeKind::FuncTask { .. } => {
-                                methods.insert(self.node(port).name.clone());
-                            }
-                            _ if self.db.semantic_detail(port) == Some("ModportClocking") => {
-                                // `modport m(clocking cb)` exports every
-                                // clockvar of the interface's block `cb`
-                                // with its clocking direction (SV §25.5).
-                                let name = &self.node(port).name;
-                                let block =
-                                    self.node(interface).children.iter().copied().find(|block| {
-                                        self.db.is_clocking_block(*block)
-                                            && self.node(*block).name == *name
-                                    });
-                                // The block event itself is read-only.
-                                members.insert(name.clone(), DbDirection::Input);
-                                for variable in block
-                                    .map(|block| self.node(block).children.clone())
-                                    .unwrap_or_default()
-                                {
-                                    if let Some(info) = self.db.clocking_var(variable) {
-                                        members.insert(
-                                            format!("{name}.{}", self.node(variable).name),
-                                            info.direction,
-                                        );
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                let (template_members, _) = self.virtual_interface_template_entries(interface);
-                for (name, signal) in template_members {
-                    member_info.entry(name.clone()).or_insert_with(|| {
-                        member_names.push(name);
-                        signal
-                    });
-                }
-            }
-            for interface in &concrete {
-                let (members, methods) = self.concrete_virtual_interface_entries(*interface);
-                for (name, signal) in members {
-                    if let Some(existing) = member_info.get_mut(&name) {
-                        // Concrete storage supplies the slot used by runtime
-                        // entries; retain the template's name/order.
-                        *existing = signal;
-                    } else {
-                        member_names.push(name.clone());
-                        member_info.insert(name, signal);
-                    }
-                }
-                for (name, function) in methods {
-                    if let std::collections::hash_map::Entry::Vacant(entry) =
-                        method_info.entry(name.clone())
-                    {
-                        entry.insert(function);
-                        if !method_names.contains(&name) {
-                            method_names.push(name);
-                        }
-                    }
-                }
-            }
-            let members = member_names
-                .iter()
-                .enumerate()
-                .map(|(member_index, name)| {
-                    let signal = member_info.get(name).ok_or_else(|| {
-                        format!("virtual interface member `{name}` has no signal metadata")
-                    })?;
-                    if !signal.real && (signal.width == 0 || signal.width > LLG_MAX_WIDTH) {
-                        return Err(format!(
-                            "virtual interface member `{name}` must be a real or packed signal within the runtime width limit"
-                        ));
-                    }
-                    self.virtual_interface_members
-                        .insert((descriptor_index, name.clone()), member_index);
-                    Ok(IrVirtualInterfaceMember {
-                        name: name.clone(),
-                        width: if signal.real { 0 } else { signal.width },
-                        signed: signal.signed && !signal.real,
-                        two_state: signal.two_state,
-                        real: signal.real,
-                        shortreal: signal.shortreal,
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            let methods = method_names
-                .iter()
-                .enumerate()
-                .map(|(method_index, name)| {
-                    let function = *method_info.get(name).ok_or_else(|| {
-                        format!("virtual interface method `{name}` has no function metadata")
-                    })?;
-                    self.virtual_interface_methods
-                        .insert((descriptor_index, name.clone()), method_index);
-                    Ok(IrVirtualInterfaceMethod {
-                        name: name.clone(),
-                        function,
-                        instances: vec![None; concrete.len()],
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            for (instance_index, interface) in concrete.iter().copied().enumerate() {
-                let (concrete_members, concrete_methods) =
-                    self.concrete_virtual_interface_entries(interface);
-                let concrete_members = concrete_members.into_iter().collect::<HashMap<_, _>>();
-                let concrete_methods = concrete_methods.into_iter().collect::<HashMap<_, _>>();
-                let member_slots = members
-                    .iter()
-                    .map(|member| concrete_members.get(&member.name).map(|signal| signal.ir))
-                    .collect::<Vec<_>>();
-                let method_slots = methods
-                    .iter()
-                    .map(|method| concrete_methods.get(&method.name).copied())
-                    .collect::<Vec<_>>();
-                entries.push(IrVirtualInterfaceInstance {
-                    c_name: format!(
-                        "llg_vif_env_{}",
-                        path_ident(
-                            &self
-                                .waveform_name(interface)
-                                .split('\u{1f}')
-                                .collect::<Vec<_>>()
-                        )
-                    ),
-                    path: self.vpi_full_name(interface),
-                    members: member_slots,
-                    methods: method_slots,
-                    events: Vec::new(),
-                });
-                self.virtual_interface_instances
-                    .insert(interface, (descriptor_index, instance_index));
-            }
-            let mut methods = methods;
-            for (method_index, method) in methods.iter_mut().enumerate() {
-                method.instances = entries
-                    .iter()
-                    .map(|instance| instance.methods.get(method_index).copied().flatten())
-                    .collect();
-            }
-            self.model.virtual_interfaces.push(IrVirtualInterface {
-                identity,
-                members,
-                instances: entries,
-                methods,
-                events: Vec::new(),
-            });
-            for (view, members) in view_members {
-                self.virtual_interface_views
-                    .insert((descriptor_index, view), members);
-            }
-            for (view, methods) in view_methods {
-                self.virtual_interface_view_methods
-                    .insert((descriptor_index, view), methods);
             }
         }
         Ok(())
+    }
+
+    /// The names of the nested interface instances a member path selects
+    /// after its handle at `position`: the components the frontend binds to
+    /// an instance (`tx` in `v.tx.x`, `ls[1]` in `v.ls[1]`).
+    pub(in super::super) fn virtual_interface_nested_steps(
+        &self,
+        parts: &[String],
+        refs: &[Option<NodeId>],
+        position: usize,
+    ) -> Vec<String> {
+        parts
+            .iter()
+            .zip(refs)
+            .skip(position + 1)
+            .take_while(|(_, target)| {
+                target
+                    .is_some_and(|target| matches!(self.kind(target), NodeKind::ModuleInst { .. }))
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// The generate block a member path names after its handle at
+    /// `position` (`g` in `v.g.l`): its scopes are not reached through a
+    /// handle, which binds the interface's own members and the interface
+    /// instances nested in it.
+    pub(in super::super) fn virtual_interface_generate_scope<'p>(
+        &self,
+        parts: &'p [String],
+        refs: &[Option<NodeId>],
+        position: usize,
+    ) -> Option<&'p str> {
+        parts
+            .iter()
+            .zip(refs)
+            .skip(position + 1)
+            .find(|(_, target)| {
+                target.is_some_and(|target| {
+                    matches!(
+                        self.kind(target),
+                        NodeKind::GenScope | NodeKind::GenScopeArray
+                    )
+                })
+            })
+            .map(|(name, _)| name.as_str())
+    }
+
+    /// The interface instance named `name` declared directly in interface
+    /// instance `parent`, or as an element of an instance array there.
+    fn nested_interface_instance(&self, parent: NodeId, name: &str) -> Option<NodeId> {
+        let mut pending = self.node(parent).children.clone();
+        while let Some(child) = pending.pop() {
+            match self.kind(child) {
+                NodeKind::ModuleInst {
+                    is_interface: true, ..
+                } if self.node(child).name == name => return Some(child),
+                NodeKind::InstanceArray => pending.extend(self.node(child).children.iter()),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// The descriptor of nested instance `name` of `descriptor`, adding its
+    /// nested slot (and the nested type's descriptor) on first use. `None`
+    /// when the descriptor has no bound instance, or its bound instances do
+    /// not all declare an interface instance `name` of one type identity.
+    fn add_virtual_interface_nested(
+        &mut self,
+        descriptor: usize,
+        name: &str,
+        value_type: Option<&str>,
+        interfaces: &[NodeId],
+    ) -> Result<Option<usize>, String> {
+        if let Some(slot) = self
+            .virtual_interface_nested
+            .get(&(descriptor, name.to_owned()))
+        {
+            return Ok(Some(
+                self.model.virtual_interfaces[descriptor].nested[*slot].interface,
+            ));
+        }
+        let mut bound = self
+            .virtual_interface_instances
+            .iter()
+            .filter(|(_, (owner, _))| *owner == descriptor)
+            .map(|(interface, (_, instance))| (*instance, *interface))
+            .collect::<Vec<_>>();
+        bound.sort_unstable_by_key(|(instance, _)| *instance);
+        if bound.is_empty() {
+            // No instance can be bound, so the handle is null whenever the
+            // selection executes. A selection of the nested instance as a
+            // value names its type (`value_type`); a member path through it
+            // names none and is reported by its lowering.
+            let Some(child_descriptor) = value_type.and_then(|spelling| {
+                self.virtual_interface_types
+                    .get(&Self::normalize_virtual_interface_identity(
+                        &Self::virtual_interface_identity_from_spelling(spelling),
+                    ))
+                    .copied()
+            }) else {
+                return Ok(None);
+            };
+            let interface = &mut self.model.virtual_interfaces[descriptor];
+            let slot = interface.nested.len();
+            interface.nested.push(IrVirtualInterfaceNested {
+                name: name.to_owned(),
+                interface: child_descriptor,
+            });
+            self.virtual_interface_nested
+                .insert((descriptor, name.to_owned()), slot);
+            return Ok(Some(child_descriptor));
+        }
+        let mut children = Vec::with_capacity(bound.len());
+        let mut identity = None;
+        for (_, parent) in &bound {
+            let Some(child) = self.nested_interface_instance(*parent, name) else {
+                return Ok(None);
+            };
+            let child_identity = self.concrete_virtual_interface_identity(child);
+            if child_identity.is_none() || (identity.is_some() && identity != child_identity) {
+                return Ok(None);
+            }
+            identity = child_identity;
+            children.push(child);
+        }
+        let Some(identity) = identity else {
+            return Ok(None);
+        };
+        let child_descriptor = match self.virtual_interface_types.get(&identity) {
+            Some(child_descriptor) => *child_descriptor,
+            None => self.add_virtual_interface_descriptor(identity, interfaces)?,
+        };
+        let instances = children
+            .iter()
+            .map(|child| {
+                self.virtual_interface_instances
+                    .get(child)
+                    .filter(|(owner, _)| *owner == child_descriptor)
+                    .map(|(_, instance)| *instance)
+                    .ok_or_else(|| {
+                        format!(
+                            "nested interface instance `{}` has no runtime environment",
+                            self.node(*child).full_name
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let interface = &mut self.model.virtual_interfaces[descriptor];
+        let slot = interface.nested.len();
+        interface.nested.push(IrVirtualInterfaceNested {
+            name: name.to_owned(),
+            interface: child_descriptor,
+        });
+        let mut instances = instances.into_iter();
+        for instance in interface.instances.iter_mut() {
+            instance.nested.push(instances.next());
+        }
+        self.virtual_interface_nested
+            .insert((descriptor, name.to_owned()), slot);
+        Ok(Some(child_descriptor))
+    }
+
+    /// The owned interface definitions of type `identity_base` (an identity
+    /// without parameters), kept as uninstantiated instances under the root.
+    fn virtual_interface_templates(&self, identity_base: &str) -> Vec<NodeId> {
+        self.db
+            .node_ids()
+            .filter(|interface| {
+                let NodeKind::ModuleInst {
+                    def_name,
+                    is_interface: true,
+                    ..
+                } = self.kind(*interface)
+                else {
+                    return false;
+                };
+                let Some(parent) = self.node(*interface).parent else {
+                    return false;
+                };
+                if self.node(parent).parent.is_some() || self.node(*interface).children.is_empty() {
+                    return false;
+                }
+                Self::normalize_virtual_interface_identity(&strip_lib(def_name)) == identity_base
+            })
+            .collect()
+    }
+
+    /// Add the descriptor of one elaborated virtual-interface type identity,
+    /// with every design instance of that identity as a concrete instance.
+    fn add_virtual_interface_descriptor(
+        &mut self,
+        identity: String,
+        interfaces: &[NodeId],
+    ) -> Result<usize, String> {
+        let descriptor_index = self.model.virtual_interfaces.len();
+        self.virtual_interface_types
+            .insert(identity.clone(), descriptor_index);
+        let identity_base = identity.split("#(").next().unwrap_or(&identity);
+        let concrete = interfaces
+            .iter()
+            .copied()
+            .filter(|interface| {
+                self.concrete_virtual_interface_identity(*interface)
+                    .as_deref()
+                    == Some(identity.as_str())
+            })
+            .collect::<Vec<_>>();
+        // The owned interface definitions are distinct from the
+        // elaborated instance tree. Include a matching definition as a
+        // metadata template so a type with no concrete instance (notably
+        // a null-handle-only design) still has its member widths and
+        // modport restrictions available to codegen.
+        let templates = self.virtual_interface_templates(identity_base);
+        let mut member_names = Vec::<String>::new();
+        let mut method_names = Vec::<String>::new();
+        let mut member_info = HashMap::<String, SignalInfo>::new();
+        let mut method_info = HashMap::<String, usize>::new();
+        let mut view_members = HashMap::<String, HashMap<String, DbDirection>>::new();
+        let mut view_methods = HashMap::<String, HashSet<String>>::new();
+        let mut entries = Vec::new();
+        let mut metadata_interfaces = Vec::new();
+        let mut seen_metadata = HashSet::new();
+        for interface in templates.iter().chain(concrete.iter()) {
+            if seen_metadata.insert(*interface) {
+                metadata_interfaces.push(*interface);
+            }
+        }
+        for interface in metadata_interfaces {
+            for child in self.node(interface).children.iter().copied() {
+                let NodeKind::ModPort = self.kind(child) else {
+                    continue;
+                };
+                let view_name = self.node(child).name.clone();
+                let members = view_members.entry(view_name.clone()).or_default();
+                let methods = view_methods.entry(view_name).or_default();
+                for port in self.node(child).children.iter().copied() {
+                    match self.kind(port) {
+                        NodeKind::ModPort => {
+                            if let Some(direction) = self.db.modport_port_direction(port) {
+                                members.insert(self.node(port).name.clone(), direction);
+                            }
+                        }
+                        NodeKind::FuncTask { .. } => {
+                            methods.insert(self.node(port).name.clone());
+                        }
+                        _ if self.db.semantic_detail(port) == Some("ModportClocking") => {
+                            // `modport m(clocking cb)` exports every
+                            // clockvar of the interface's block `cb`
+                            // with its clocking direction (SV §25.5).
+                            let name = &self.node(port).name;
+                            let block =
+                                self.node(interface).children.iter().copied().find(|block| {
+                                    self.db.is_clocking_block(*block)
+                                        && self.node(*block).name == *name
+                                });
+                            // The block event itself is read-only.
+                            members.insert(name.clone(), DbDirection::Input);
+                            for variable in block
+                                .map(|block| self.node(block).children.clone())
+                                .unwrap_or_default()
+                            {
+                                if let Some(info) = self.db.clocking_var(variable) {
+                                    members.insert(
+                                        format!("{name}.{}", self.node(variable).name),
+                                        info.direction,
+                                    );
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let (template_members, _) = self.virtual_interface_template_entries(interface);
+            for (name, signal) in template_members {
+                member_info.entry(name.clone()).or_insert_with(|| {
+                    member_names.push(name);
+                    signal
+                });
+            }
+        }
+        for interface in &concrete {
+            let (members, methods) = self.concrete_virtual_interface_entries(*interface);
+            for (name, signal) in members {
+                if let Some(existing) = member_info.get_mut(&name) {
+                    // Concrete storage supplies the slot used by runtime
+                    // entries; retain the template's name/order.
+                    *existing = signal;
+                } else {
+                    member_names.push(name.clone());
+                    member_info.insert(name, signal);
+                }
+            }
+            for (name, function) in methods {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    method_info.entry(name.clone())
+                {
+                    entry.insert(function);
+                    if !method_names.contains(&name) {
+                        method_names.push(name);
+                    }
+                }
+            }
+        }
+        let members = member_names
+            .iter()
+            .enumerate()
+            .map(|(member_index, name)| {
+                let signal = member_info.get(name).ok_or_else(|| {
+                    format!("virtual interface member `{name}` has no signal metadata")
+                })?;
+                if !signal.real && (signal.width == 0 || signal.width > LLG_MAX_WIDTH) {
+                    return Err(format!(
+                        "virtual interface member `{name}` must be a real or packed signal within the runtime width limit"
+                    ));
+                }
+                self.virtual_interface_members
+                    .insert((descriptor_index, name.clone()), member_index);
+                Ok(IrVirtualInterfaceMember {
+                    name: name.clone(),
+                    width: if signal.real { 0 } else { signal.width },
+                    signed: signal.signed && !signal.real,
+                    two_state: signal.two_state,
+                    real: signal.real,
+                    shortreal: signal.shortreal,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let methods = method_names
+            .iter()
+            .enumerate()
+            .map(|(method_index, name)| {
+                let function = *method_info.get(name).ok_or_else(|| {
+                    format!("virtual interface method `{name}` has no function metadata")
+                })?;
+                self.virtual_interface_methods
+                    .insert((descriptor_index, name.clone()), method_index);
+                Ok(IrVirtualInterfaceMethod {
+                    name: name.clone(),
+                    function,
+                    instances: vec![None; concrete.len()],
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        for (instance_index, interface) in concrete.iter().copied().enumerate() {
+            let (concrete_members, concrete_methods) =
+                self.concrete_virtual_interface_entries(interface);
+            let concrete_members = concrete_members.into_iter().collect::<HashMap<_, _>>();
+            let concrete_methods = concrete_methods.into_iter().collect::<HashMap<_, _>>();
+            let member_slots = members
+                .iter()
+                .map(|member| concrete_members.get(&member.name).map(|signal| signal.ir))
+                .collect::<Vec<_>>();
+            let method_slots = methods
+                .iter()
+                .map(|method| concrete_methods.get(&method.name).copied())
+                .collect::<Vec<_>>();
+            entries.push(IrVirtualInterfaceInstance {
+                c_name: format!(
+                    "llg_vif_env_{}",
+                    path_ident(
+                        &self
+                            .waveform_name(interface)
+                            .split('\u{1f}')
+                            .collect::<Vec<_>>()
+                    )
+                ),
+                path: self.vpi_full_name(interface),
+                members: member_slots,
+                methods: method_slots,
+                events: Vec::new(),
+                nested: Vec::new(),
+            });
+            self.virtual_interface_instances
+                .insert(interface, (descriptor_index, instance_index));
+        }
+        let mut methods = methods;
+        for (method_index, method) in methods.iter_mut().enumerate() {
+            method.instances = entries
+                .iter()
+                .map(|instance| instance.methods.get(method_index).copied().flatten())
+                .collect();
+        }
+        self.model.virtual_interfaces.push(IrVirtualInterface {
+            identity,
+            members,
+            instances: entries,
+            methods,
+            events: Vec::new(),
+            nested: Vec::new(),
+        });
+        for (view, members) in view_members {
+            self.virtual_interface_views
+                .insert((descriptor_index, view), members);
+        }
+        for (view, methods) in view_methods {
+            self.virtual_interface_view_methods
+                .insert((descriptor_index, view), methods);
+        }
+        Ok(descriptor_index)
     }
 
     /// Resolve a method call whose receiver is a virtual-interface view to a
@@ -577,11 +817,18 @@ impl<'a> Codegen<'a> {
         let identity = Self::normalize_virtual_interface_identity(
             &Self::virtual_interface_identity_from_spelling(&spelling),
         );
-        let Some(&descriptor) = self.virtual_interface_types.get(&identity) else {
+        if !self.virtual_interface_types.contains_key(&identity) {
             return Err(format!(
                 "virtual interface type `{identity}` has no descriptor for method `{name}`"
             ));
-        };
+        }
+        // A method of a nested instance (`v.tx.f()`) dispatches on the
+        // nested instance's descriptor.
+        let (descriptor, _) = self.virtual_interface_nested_path(
+            "",
+            &spelling,
+            self.db.virtual_interface_call_scopes(node),
+        )?;
         let Some(&method) = self
             .virtual_interface_methods
             .get(&(descriptor, name.clone()))

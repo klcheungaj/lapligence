@@ -70,7 +70,16 @@ name on the first such wait (`IrVirtualInterface::events`, each instance's
 block event in `IrVirtualInterfaceInstance::events`), and the wait reads the
 bound instance's event object through an `IrNativeAccessKind::InterfaceEvent`
 access when it arms; a null handle is the S99-D8 failure. Descriptors no wait
-names this way keep their layout. `->>` captures delay at issue and queues NBA;
+names this way keep their layout. An interface instance nested in the
+handle's interface (`v.tx`, `v.a.l`, `v.ls[1]`) is a nested slot of the
+descriptor, added during collection for each nested instance some member
+path or method call selects (`IrVirtualInterface::nested`, each instance's
+nested instance in `IrVirtualInterfaceInstance::nested`, with a descriptor
+for the nested type when it had none): `IrChandleExpr::VirtualInterfaceNested`
+reads the bound instance's slot, so every member read, write, wait, drive and
+method call through the path (`v.tx.x`) uses the nested instance's
+descriptor; a null handle is the same failure, reported quietly for a wait's
+receiver. `->>` captures delay at issue and queues NBA;
 event/repeat timing uses an independent detached waiter, whose final trigger is
 still NBA. Every repeat count (loop, intra-assignment, `->>`) goes through
 `lower_repeat_count`: real counts convert by rounding (SV 6.12.2) and the

@@ -2491,6 +2491,9 @@ struct Codegen<'a> {
     virtual_interface_views: HashMap<(usize, String), HashMap<String, DbDirection>>,
     /// Methods explicitly imported/exported by each modport view.
     virtual_interface_view_methods: HashMap<(usize, String), HashSet<String>>,
+    /// `(descriptor, nested instance name)` → nested slot, for the nested
+    /// interface instances a path selects through a handle (`v.tx`).
+    virtual_interface_nested: HashMap<(usize, String), usize>,
     /// Hidden `rand_mode` off bit of each `rand`/`randc` class property
     /// (IEEE 1800-2009 18.8), by declaration.
     rand_mode_bits: HashMap<NodeId, randomization::ModeBit>,
@@ -2840,6 +2843,7 @@ impl<'a> Codegen<'a> {
             virtual_interface_methods: HashMap::new(),
             virtual_interface_views: HashMap::new(),
             virtual_interface_view_methods: HashMap::new(),
+            virtual_interface_nested: HashMap::new(),
             rand_mode_bits: HashMap::new(),
             rand_cell_modes: HashMap::new(),
             rand_mode_elements: None,

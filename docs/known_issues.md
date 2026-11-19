@@ -3733,26 +3733,29 @@ with "cannot resolve array base of select `count`". The statement forms
 **Intended direction.** Lower the prefix-increment expression through the
 same element reference as the statement form.
 
-### Interface instance inside an interface, through a virtual interface
+### `kill` and `disable fork` miss a process whose parent has finished
 
-**Symptom.** `vif = agent.vif.tx;`, where `agent.vif` is a virtual interface
-whose interface instantiates interface `tx`, stops generation with "chandle
-values can only be copied from chandle or null". The UVM 1.2
-`integrated/codec` example's driver selects its transmit interface this way;
-the industry-standard simulator runs it.
+**Symptom.** Both runs of the UVM 1.1d and 1.2 `integrated/codec` example
+end with `UVM_FATAL [TB/TIMEOUT] VIP and/or DUT failed to acquire syncs`:
+the timeout branch `pre_main_phase` starts with `fork ... join_none` keeps
+running after the phase ends, while the industry-standard simulator ends it.
+The phase task runs in a process `uvm_task_phase::execute` forks from a
+function; when that process returns, its `join_none` child survives the
+phase's `m_phase_proc.kill()`.
 
-**Cause.** A virtual interface value designates one interface instance;
-codegen has no mapping from an instance to the interface instances declared
-inside it (25.9 allows a virtual interface to be assigned "An interface
-instance of the same type", which includes a nested one).
+**Cause.** `kill()` terminates "the given process and all its subprocesses"
+(9.7) and `disable fork` "all active descendants (subprocesses) of the
+calling process" (9.6.3); the runtime finds subprocesses through the fork
+groups of processes that are still running, so a child whose parent has
+already finished is no longer reached from the ancestor.
 
-**Intended direction.** Give each interface type with nested interface
-instances a per-instance table of its children, and lower a member select of
-a virtual interface that names one to a lookup in it.
+**Intended direction.** Keep a finished process's live fork groups reachable
+from its parent, so `kill` and `disable fork` of an ancestor reach them.
 
-**Reproduce.** A driver class holding `virtual top_if top` assigns
-`vif = top.tx` and drives `vif.Tx` on a clock edge; the industry-standard
-simulator prints `15 Tx=1`.
+**Reproduce.** A process forks a branch that calls a task; the task starts
+`fork #50 $display("fired"); join_none` and returns at time 5; the outer
+process is killed at time 20 (or the initial process runs `disable fork`).
+The industry-standard simulator prints nothing at 50; llg prints `fired`.
 
 ### Sequence declared in a clocking block
 

@@ -92,6 +92,31 @@ impl Frame<'_, '_> {
                     self.ctx.model.virtual_interfaces[*interface].instances[*instance].c_name
                 )
             }
+            // A wait's receiver resolves without reporting: arming a wait on
+            // an unbound handle is not an access.
+            IrChandleExpr::VirtualInterfaceNested {
+                handle,
+                interface,
+                slot,
+                site,
+            } => {
+                let handle = self.chandle(handle)?;
+                if self.quiet_receivers {
+                    return Ok(self.scalar(
+                        "void*",
+                        format!("llg_vif_nested_quiet({handle}, {interface}, {slot})"),
+                    ));
+                }
+                let nested = self.scalar(
+                    "void*",
+                    format!(
+                        "llg_vif_nested({handle}, {interface}, {slot}, {})",
+                        c_string_literal(site)
+                    ),
+                );
+                self.exit_on_failed_access(&format!("!{nested}"));
+                return Ok(nested);
+            }
             IrChandleExpr::LocalRead(name)
                 if name == "_this" && self.ctx.func.is_some_and(|f| f.receiver_class.is_some()) =>
             {

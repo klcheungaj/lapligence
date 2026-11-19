@@ -67,6 +67,7 @@ pub(super) fn decode_semantic_edge(
         43 => SemanticEdgeRole::CheckerActual,
         44 => SemanticEdgeRole::ProceduralChecker,
         45 => SemanticEdgeRole::Imported,
+        46 => SemanticEdgeRole::VirtualInterfaceScope,
         _ => return Err(invalid_native("semantic edge has an unknown role")),
     };
     Ok(SemanticEdge {

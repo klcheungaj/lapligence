@@ -1,0 +1,3 @@
+15 tx=1
+20 tx_mon rx=1
+30 rx_mon rx=0

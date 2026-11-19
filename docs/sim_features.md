@@ -2631,6 +2631,15 @@ These are bounded implementations, not full verification-infrastructure support.
   directly as a value outside virtual-interface assignments (a mailbox
   message) reject
   ([known issue](known_issues.md#modport-expression-ports-through-virtual-interfaces)).
+  Interface instances declared in an interface, at any depth and as elements
+  of instance arrays, are selected through a handle (`v.tx`, `v.a.l`,
+  `v.ls[1]`) as values (assignments, also to a modport view, actual
+  arguments, comparisons), and member reads, writes, waits and method calls
+  go through the whole path (`v.tx.x`, `v.a.l.f()`) to the nested instance of
+  the instance bound when the access executes; a null handle is the same
+  fatal run-time error. A member of a generate block inside an interface
+  through a handle (`v.g.x`) is a located error
+  ([virtual interfaces](../tests/sim_virtual_interfaces.rs)).
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Named, nested (implicitly instantiated) and bound
   programs with module-style, interface and modport ports, package imports,

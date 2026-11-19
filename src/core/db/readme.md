@@ -57,6 +57,12 @@ declared above it, for VPI typespec names (IEEE 1800-2009 37.23).
 `ExplicitImport` or `WildcardImport`), the package items name references
 reached through it (`LLG_SLANG_EDGE_IMPORTED`), for VPI `vpiImport` (IEEE
 1800-2009 37.12 detail 4); those edges are metadata, never children.
+A member path through a virtual interface lists every scope named by
+`LLG_SLANG_EDGE_VIRTUAL_INTERFACE_SCOPE` between the handle and the member
+(`ExprKind::HierPath` parts `v`, `a`, `l`, `x` for `v.a.l.x`, each nested
+scope a reference node of its own), and
+`Db::virtual_interface_call_scopes` keeps the same names for a method call
+through one (`v.tx.f()`); those edges are metadata, never children.
 `Db::instance_array_range` keeps the declared `(left, right)` of every
 instance array level (`NodeKind::InstanceArray`), for VPI instance array
 objects (37.11).

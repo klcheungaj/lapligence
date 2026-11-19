@@ -23,6 +23,21 @@ fn unused_locals() {
     );
 }
 
+/// A driver selects the interface nested in its agent's interface through the
+/// agent's virtual interface (`vif = agent.vif.tx`), and the agent passes two
+/// more to a parameterized configuration class, as a library's codec example
+/// does.
+#[test]
+fn nested_virtual_interface() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "nested_virtual_interface",
+        include_str!("../fixtures/sim/feature_completion/ki_uvm_run/nested_virtual_interface.out"),
+        &[],
+        &[],
+    );
+}
+
 /// A type reaches the specializations of a generic class through two
 /// spellings, as a library's `uvm_typeid #(CB)` and `uvm_typeid #(T)` do;
 /// both name one specialization. `generated_c_determinism` generates the same

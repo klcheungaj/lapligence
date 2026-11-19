@@ -32,6 +32,22 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
             "void *events[LLG_VIF_MAX_EVENTS];\n",
         )
     };
+    // Nested-instance slots exist only when a selection names one through a
+    // handle (`v.tx`), so other models keep the environment layout unchanged.
+    let max_nested = model
+        .virtual_interfaces
+        .iter()
+        .map(|interface| interface.nested.len())
+        .max()
+        .unwrap_or(0);
+    let (event_define, event_field) = if max_nested == 0 {
+        (event_define, event_field.to_owned())
+    } else {
+        (
+            format!("{event_define}#define LLG_VIF_MAX_NESTED {max_nested}\n"),
+            format!("{event_field}void *nested[LLG_VIF_MAX_NESTED];\n"),
+        )
+    };
     out.push_str(&format!(
         "#define LLG_VIF_MAX_MEMBERS {max_members}\n{event_define}\n\
          typedef struct {{\n\
@@ -100,6 +116,25 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
                                width, is_signed);\n\
          }}\n\n"
     ));
+    if max_nested > 0 {
+        out.push_str(
+            "/* The nested interface instance `slot` of the bound instance (SV\n\
+             * 25.9); a failed access reports at `site` and yields NULL. */\n\
+             static void *llg_vif_nested_quiet(void *raw, uint32_t interface_id,\n\
+                                               uint32_t slot) {\n\
+                 llg_vif_env_t *env = (llg_vif_env_t *)raw;\n\
+                 if (!env || env->interface_id != interface_id || slot >= LLG_VIF_MAX_NESTED)\n\
+                     return NULL;\n\
+                 return env->nested[slot];\n\
+             }\n\n\
+             static void *llg_vif_nested(void *raw, uint32_t interface_id, uint32_t slot,\n\
+                                         const char *site) {\n\
+                 void *nested = llg_vif_nested_quiet(raw, interface_id, slot);\n\
+                 if (!nested) llg_vif_fail(site);\n\
+                 return nested;\n\
+             }\n\n",
+        );
+    }
     if max_events > 0 {
         out.push_str(
             "/* The event object of a clocking block of the bound instance; a\n\
@@ -121,50 +156,111 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
              }\n\n",
         );
     }
-    for (interface_id, interface) in model.virtual_interfaces.iter().enumerate() {
-        for (instance_id, instance) in interface.instances.iter().enumerate() {
-            let mut members = instance
-                .members
+    for (interface_id, instance_id) in environment_order(model) {
+        let interface = &model.virtual_interfaces[interface_id];
+        let instance = &interface.instances[instance_id];
+        let mut members = instance
+            .members
+            .iter()
+            .map(|signal| {
+                signal
+                    .map(|index| {
+                        if matches!(model.signals[index].ty, IrType::Real { .. }) {
+                            format!("(sv4_t *)(void *)&{}", signal_storage_name(model, index))
+                        } else {
+                            format!("&{}", signal_storage_name(model, index))
+                        }
+                    })
+                    .unwrap_or_else(|| "NULL".to_owned())
+            })
+            .collect::<Vec<_>>();
+        members.resize(max_members, "NULL".to_owned());
+        let events = if max_events == 0 {
+            String::new()
+        } else {
+            let mut events = instance
+                .events
                 .iter()
-                .map(|signal| {
-                    signal
-                        .map(|index| {
-                            if matches!(model.signals[index].ty, IrType::Real { .. }) {
-                                format!("(sv4_t *)(void *)&{}", signal_storage_name(model, index))
-                            } else {
-                                format!("&{}", signal_storage_name(model, index))
-                            }
+                .map(|event| {
+                    event
+                        .map(|index| format!("&{}__object", model.events[index].c_name()))
+                        .unwrap_or_else(|| "NULL".to_owned())
+                })
+                .collect::<Vec<_>>();
+            events.resize(max_events, "NULL".to_owned());
+            format!(", {{ {} }}", events.join(", "))
+        };
+        let nested = if max_nested == 0 {
+            String::new()
+        } else {
+            let mut nested = instance
+                .nested
+                .iter()
+                .zip(&interface.nested)
+                .map(|(child, slot)| {
+                    child
+                        .map(|child| {
+                            format!(
+                                "(void *)&{}",
+                                model.virtual_interfaces[slot.interface].instances[child].c_name
+                            )
                         })
                         .unwrap_or_else(|| "NULL".to_owned())
                 })
                 .collect::<Vec<_>>();
-            members.resize(max_members, "NULL".to_owned());
-            let events = if max_events == 0 {
-                String::new()
-            } else {
-                let mut events = instance
-                    .events
-                    .iter()
-                    .map(|event| {
-                        event
-                            .map(|index| format!("&{}__object", model.events[index].c_name()))
-                            .unwrap_or_else(|| "NULL".to_owned())
-                    })
-                    .collect::<Vec<_>>();
-                events.resize(max_events, "NULL".to_owned());
-                format!(", {{ {} }}", events.join(", "))
-            };
-            out.push_str(&format!(
-                "static llg_vif_env_t {} = {{ {}, {}, {}, {{ {} }}{events} }};\n",
-                instance.c_name,
-                interface_id,
-                instance_id,
-                interface.members.len(),
-                members.join(", ")
-            ));
-        }
+            nested.resize(max_nested, "NULL".to_owned());
+            format!(", {{ {} }}", nested.join(", "))
+        };
+        out.push_str(&format!(
+            "static llg_vif_env_t {} = {{ {}, {}, {}, {{ {} }}{events}{nested} }};\n",
+            instance.c_name,
+            interface_id,
+            instance_id,
+            interface.members.len(),
+            members.join(", ")
+        ));
     }
     out.push('\n');
+}
+
+/// The emission order of the instance environments: descriptor order, with
+/// each environment after the nested-instance environments it points at, so
+/// every initializer names only environments defined before it. Without
+/// nested slots this is plain descriptor order.
+fn environment_order(model: &IrModel) -> Vec<(usize, usize)> {
+    let mut order = Vec::new();
+    let mut emitted = model
+        .virtual_interfaces
+        .iter()
+        .map(|interface| vec![false; interface.instances.len()])
+        .collect::<Vec<_>>();
+    for (interface_id, interface) in model.virtual_interfaces.iter().enumerate() {
+        for instance_id in 0..interface.instances.len() {
+            // An explicit stack: nesting follows the instance tree, which
+            // has no cycles, but may be deep.
+            let mut stack = vec![(interface_id, instance_id, false)];
+            while let Some((interface, instance, expanded)) = stack.pop() {
+                if emitted[interface][instance] {
+                    continue;
+                }
+                if expanded {
+                    emitted[interface][instance] = true;
+                    order.push((interface, instance));
+                    continue;
+                }
+                stack.push((interface, instance, true));
+                let descriptor = &model.virtual_interfaces[interface];
+                for (slot, child) in descriptor.instances[instance].nested.iter().enumerate() {
+                    if let (Some(child), Some(nested)) = (child, descriptor.nested.get(slot)) {
+                        if !emitted[nested.interface][*child] {
+                            stack.push((nested.interface, *child, false));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    order
 }
 
 fn signal_storage_name(model: &IrModel, index: usize) -> String {

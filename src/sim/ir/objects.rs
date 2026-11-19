@@ -78,6 +78,20 @@ pub struct IrVirtualInterfaceInstance {
     /// The [`IrModel::events`] index of each clocking-block event the
     /// descriptor exposes, by `IrVirtualInterface::events` slot.
     pub(in crate::sim) events: Vec<Option<usize>>,
+    /// The instance, among the instances of the slot's descriptor, of each
+    /// nested interface instance the descriptor exposes, by
+    /// `IrVirtualInterface::nested` slot.
+    pub(in crate::sim) nested: Vec<Option<usize>>,
+}
+
+/// An interface instance declared inside the descriptor's interface (`tx`
+/// in `interface top_if; tx_if tx(...); endinterface`), selected through a
+/// handle as `v.tx` (SV 25.9). `interface` is the nested instance's own
+/// descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrVirtualInterfaceNested {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) interface: usize,
 }
 
 /// One interface method dispatch entry. The first function is the signature
@@ -104,6 +118,10 @@ pub struct IrVirtualInterface {
     /// wait names the block, so descriptors without such waits are
     /// unchanged.
     pub(in crate::sim) events: Vec<String>,
+    /// The nested interface instances selected through a handle
+    /// (`v.tx`, `v.tx.x`). A slot is added only when a selection names
+    /// one, so descriptors without such selections are unchanged.
+    pub(in crate::sim) nested: Vec<IrVirtualInterfaceNested>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -352,6 +370,15 @@ pub enum IrChandleExpr {
     InterfaceInstance {
         interface: usize,
         instance: usize,
+    },
+    /// The nested interface instance in `slot` of descriptor `interface`
+    /// of the instance `handle` binds (`v.tx`, SV 25.9). A null or
+    /// mismatched handle is a run-time error reported at `site`.
+    VirtualInterfaceNested {
+        handle: Box<IrChandleExpr>,
+        interface: usize,
+        slot: usize,
+        site: String,
     },
     /// Legacy fragment retained for explicit rejection. New allocation and
     /// member lowering use typed recipes, never executable strings.
@@ -2187,6 +2214,15 @@ impl IrChandleExpr {
         match self {
             Self::FormalRead(_) => Ok(()),
             Self::Required { handle, .. } => handle.validate_shape(model, chandle_return),
+            Self::VirtualInterfaceNested {
+                handle,
+                interface,
+                slot,
+                ..
+            } => {
+                Self::validate_nested_slot(model, *interface, *slot)?;
+                handle.validate_shape(model, chandle_return)
+            }
             _ => self.validate(model, &[], chandle_return),
         }
     }
@@ -2252,6 +2288,42 @@ impl IrChandleExpr {
         }
     }
 
+    /// Whether `slot` names a nested interface instance of descriptor
+    /// `interface` whose entries select instances of its own descriptor.
+    fn validate_nested_slot(
+        model: &super::IrModel,
+        interface: usize,
+        slot: usize,
+    ) -> Result<(), super::IrValidationError> {
+        let invalid = || {
+            super::IrValidationError::new(
+                "virtual interface",
+                "nested interface instance slot is out of bounds",
+            )
+        };
+        let descriptor = model
+            .virtual_interfaces
+            .get(interface)
+            .ok_or_else(invalid)?;
+        let nested = descriptor.nested.get(slot).ok_or_else(invalid)?;
+        let child = model
+            .virtual_interfaces
+            .get(nested.interface)
+            .ok_or_else(invalid)?;
+        if descriptor.instances.iter().any(|instance| {
+            instance.nested.len() != descriptor.nested.len()
+                || instance
+                    .nested
+                    .get(slot)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|index| index >= child.instances.len())
+        }) {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
     /// A side-effect-free read of handle storage, possibly null-checked:
     /// a receiver that may be evaluated again at every use.
     pub(in crate::sim) fn is_plain_receiver(&self) -> bool {
@@ -2305,6 +2377,15 @@ impl IrChandleExpr {
                         "instance index is out of bounds",
                     ))
                 }
+            }
+            Self::VirtualInterfaceNested {
+                handle,
+                interface,
+                slot,
+                ..
+            } => {
+                Self::validate_nested_slot(model, *interface, *slot)?;
+                handle.validate(model, formals, chandle_return)
             }
             Self::Conditional {
                 predicate,
@@ -2702,9 +2783,9 @@ impl IrChandleExpr {
             }
             Self::EventObject(event) => event.expressions(visit),
             Self::ClassFromKey(key) => visit(key),
-            Self::Required { handle, .. } | Self::CopyClass { source: handle, .. } => {
-                handle.expressions(visit)
-            }
+            Self::Required { handle, .. }
+            | Self::CopyClass { source: handle, .. }
+            | Self::VirtualInterfaceNested { handle, .. } => handle.expressions(visit),
             Self::Mailbox(mailbox) => mailbox.expressions(visit),
             Self::Process(process) | Self::PinnedProcess(process) => process.expressions(visit),
             Self::ContainerElement { indices, key, .. } => {
@@ -2764,9 +2845,9 @@ impl IrChandleExpr {
             }
             Self::EventObject(event) => event.expressions_mut(visit),
             Self::ClassFromKey(key) => visit(key),
-            Self::Required { handle, .. } | Self::CopyClass { source: handle, .. } => {
-                handle.expressions_mut(visit)
-            }
+            Self::Required { handle, .. }
+            | Self::CopyClass { source: handle, .. }
+            | Self::VirtualInterfaceNested { handle, .. } => handle.expressions_mut(visit),
             Self::Mailbox(mailbox) => mailbox.expressions_mut(visit),
             Self::Process(process) | Self::PinnedProcess(process) => process.expressions_mut(visit),
             Self::ContainerElement { indices, key, .. } => {
