@@ -255,10 +255,10 @@ index e283d6d2c..29f8a9b16 100644
      static bool isPossibleExpression(TokenKind kind);
  
 diff --git a/scripts/diagnostics.txt b/scripts/diagnostics.txt
-index 670b3f2ab..4932a043f 100644
+index 670b3f2ab..a25869f39 100644
 --- a/scripts/diagnostics.txt
 +++ b/scripts/diagnostics.txt
-@@ -813,6 +813,11 @@ warning nonstandard-string-concat NonstandardStringConcat "string concatenation
+@@ -813,6 +813,12 @@ warning nonstandard-string-concat NonstandardStringConcat "string concatenation
  warning inc-dec-bit IncDecBit "increment/decrement of a 1-bit operand"
  warning string-int-concat ConcatWithStringInt "cannot mix strings and integers in a concatenation (use a cast if this is desired)"
  warning range-select-reversed RangeSelectReversed "range of selection [{}:{}] from {} is reversed"
@@ -267,6 +267,7 @@ index 670b3f2ab..4932a043f 100644
 +error OverloadPrototypeMismatch "function '{}' does not match its operator overload prototype"
 +error OverloadAmbiguous "ambiguous overload of operator '{}'; use a cast to select the result type"
 +error OverloadBuiltinLegal "operator '{}' is already legal for the types of this overload prototype and cannot be overloaded"
++error DerivedClassArrayAssignment "unpacked array of type {} is assigned to unpacked array of type {}, whose element class is a base class of the source's; IEEE 1800-2009 7.6 requires equivalent element types"
  
  subsystem Statements
  error ReturnNotInSubroutine "return statement is only valid inside task and function blocks"
@@ -1105,7 +1106,7 @@ index 18ed6845d..5901945ee 100644
 +
  } // namespace slang::ast
 diff --git a/source/ast/expressions/ConversionExpression.cpp b/source/ast/expressions/ConversionExpression.cpp
-index 019ef7596..aedc1d2da 100644
+index 019ef7596..b568f77a7 100644
 --- a/source/ast/expressions/ConversionExpression.cpp
 +++ b/source/ast/expressions/ConversionExpression.cpp
 @@ -11,6 +11,7 @@
@@ -1116,7 +1117,68 @@ index 019ef7596..aedc1d2da 100644
  #include "slang/ast/expressions/LiteralExpressions.h"
  #include "slang/ast/expressions/MiscExpressions.h"
  #include "slang/ast/expressions/OperatorExpressions.h"
-@@ -193,6 +194,15 @@ Expression& Expression::convertAssignment(const ASTContext& context, const Type&
+@@ -43,6 +44,60 @@ bool isSameEnum(const Expression& expr, const Type& enumType) {
+     return expr.type->isMatching(enumType);
+ }
+ 
++// The element types of unpacked arrays `target` and `source` are equivalent
++// or, at the innermost level, `source`'s element class derives from
++// `target`'s. Inner dimensions match in kind and size.
++bool isUpcastElementType(const Type& target, const Type& source) {
++    const Type& lt = target.getCanonicalType();
++    const Type& rt = source.getCanonicalType();
++    if (lt.isEquivalent(rt))
++        return true;
++    if (lt.isClass() && rt.isClass())
++        return rt.isDerivedFrom(lt);
++    if (!lt.isUnpackedArray() || !rt.isUnpackedArray() || lt.kind != rt.kind)
++        return false;
++    if (lt.kind == SymbolKind::FixedSizeUnpackedArrayType &&
++        lt.getFixedRange().width() != rt.getFixedRange().width()) {
++        return false;
++    }
++    if (lt.kind == SymbolKind::AssociativeArrayType) {
++        auto li = lt.getAssociativeIndexType();
++        auto ri = rt.getAssociativeIndexType();
++        if (bool(li) != bool(ri) || (li && !li->isEquivalent(*ri)))
++            return false;
++    }
++    return isUpcastElementType(*lt.getArrayElementType(), *rt.getArrayElementType());
++}
++
++// An unpacked array of derived-class handles assigned to an unpacked array of
++// base-class handles: IEEE 1800-2009 7.6 requires equivalent element types,
++// so this is not assignment compatible, but each element is (8.15). Decision
++// UVB-D1 accepts it with a warning, for the container pairs 7.6 admits
++// (fixed-size, dynamic and queue among themselves, associative only with
++// associative of an equivalent index type). The reverse stays an error.
++bool isDerivedClassArrayAssignment(const Type& target, const Type& source) {
++    const Type& lt = target.getCanonicalType();
++    const Type& rt = source.getCanonicalType();
++    if (!lt.isUnpackedArray() || !rt.isUnpackedArray())
++        return false;
++    bool lAssoc = lt.kind == SymbolKind::AssociativeArrayType;
++    bool rAssoc = rt.kind == SymbolKind::AssociativeArrayType;
++    if (lAssoc != rAssoc)
++        return false;
++    if (lAssoc) {
++        auto li = lt.getAssociativeIndexType();
++        auto ri = rt.getAssociativeIndexType();
++        if (bool(li) != bool(ri) || (li && !li->isEquivalent(*ri)))
++            return false;
++    }
++    else if (lt.kind == SymbolKind::FixedSizeUnpackedArrayType &&
++             rt.kind == SymbolKind::FixedSizeUnpackedArrayType &&
++             lt.getFixedRange().width() != rt.getFixedRange().width()) {
++        return false;
++    }
++    return isUpcastElementType(*lt.getArrayElementType(), *rt.getArrayElementType());
++}
++
+ bool isUnionMemberType(const Type& left, const Type& right) {
+     const Type& lt = left.getCanonicalType();
+     const Type& rt = right.getCanonicalType();
+@@ -193,6 +248,29 @@ Expression& Expression::convertAssignment(const ASTContext& context, const Type&
              return *result;
          }
  
@@ -1129,10 +1191,24 @@ index 019ef7596..aedc1d2da 100644
 +            }
 +        }
 +
++        if (isDerivedClassArrayAssignment(type, *rt)) {
++            auto& diag = context.addDiag(diag::DerivedClassArrayAssignment, assignmentRange);
++            diag << *rt << type;
++            if (lhsExpr)
++                diag << (*lhsExpr)->sourceRange;
++            diag << expr.sourceRange;
++
++            // Each element converts as a handle; makeImplicit would assert
++            // assignment compatibility, which the arrays lack.
++            selfDetermined(context, result);
++            return *comp.emplace<ConversionExpression>(type, ConversionKind::Implicit, *result,
++                                                       result->sourceRange);
++        }
++
          DiagCode code = diag::BadAssignment;
          if (!context.flags.has(ASTFlags::OutputArg) &&
              (type.isCastCompatible(*rt) || type.isBitstreamCastable(*rt))) {
-@@ -336,6 +346,13 @@ Expression& ConversionExpression::fromSyntax(Compilation& comp, const CastExpres
+@@ -336,6 +414,13 @@ Expression& ConversionExpression::fromSyntax(Compilation& comp, const CastExpres
              }
          }
          else if (!type->isBitstreamCastable(*operand->type)) {

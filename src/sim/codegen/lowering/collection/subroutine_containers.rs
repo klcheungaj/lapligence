@@ -324,6 +324,24 @@ impl Codegen<'_> {
             // selected when the write-back runs (as element actuals are,
             // decision S13-D1); an inout copies it in first.
             if let (Some(prelude), Some(after)) = (prelude, after) {
+                // An output formal of derived-class handles copies out to an
+                // array of base-class handles (decision UVB-D1), element by
+                // element like any whole-array assignment.
+                if let Some(target) = self
+                    .container_of(actual)
+                    .filter(|_| direction == DbDirection::Output)
+                    .filter(|_| self.class_array_upcasts(actual, formal))
+                {
+                    let temporary = self.container_temporary_like(like);
+                    prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                        temporary,
+                    ))));
+                    after.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+                        dst: target.ir,
+                        src: temporary,
+                    })));
+                    return Ok(IrCallArg::Container(temporary));
+                }
                 if self.fixed_view_slice(path, actual)?.is_some() {
                     let temporary = self.container_temporary_like(like);
                     prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(

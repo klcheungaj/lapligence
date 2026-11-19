@@ -8,6 +8,7 @@ use crate::sim::ir::{
 
 mod assignments;
 mod callbacks;
+mod class_upcast;
 mod equality;
 mod fixed_arrays;
 mod fixed_cells;

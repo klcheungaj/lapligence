@@ -183,9 +183,14 @@ static int llg_value_desc_compatible(const llg_value_desc_t* dst,
         case LLG_VALUE_EVENT:
         case LLG_VALUE_PROCESS:
             return 1;
+        case LLG_VALUE_OPAQUE:
+            /* An object handle is the object's identity whatever the class
+             * of its variable: an array of derived-class handles copies into
+             * an array of base-class handles (decision UVB-D1). The IR
+             * validator admits only class handles there. */
+            return dst->type_id != 0 && src->type_id != 0;
         case LLG_VALUE_AGGREGATE:
         case LLG_VALUE_CONTAINER:
-        case LLG_VALUE_OPAQUE:
             return dst->type_id != 0 && dst->type_id == src->type_id;
         case LLG_VALUE_ASSOC:
             return dst->type_id != 0 && dst->type_id == src->type_id &&

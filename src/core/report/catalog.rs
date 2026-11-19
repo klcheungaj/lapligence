@@ -782,9 +782,11 @@ pub fn markdown() -> String {
                  Slang notes print as `INFO`. A frontend warning is disabled in the \
                  source with `` `pragma diagnostic ignore=\"-W<option>\"`` (IEEE 1800-2009 \
                  22.11 leaves pragma meaning to the tool). `SLANG-VirtualVisibilityMismatch`, \
-                 a virtual-method override that changes the method's visibility, is a \
-                 warning (decision S08-D1); `-Werror` reports it as an error, which stops \
-                 the run.\n\n",
+                 a virtual-method override that changes the method's visibility, and \
+                 `SLANG-DerivedClassArrayAssignment`, an unpacked array of derived-class \
+                 handles assigned to an unpacked array of base-class handles (IEEE \
+                 1800-2009 7.6), are warnings (decisions S08-D1, UVB-D1); `-Werror` \
+                 reports them as errors, which stop the run.\n\n",
             ),
             Tool::Lint => {
                 out.push_str(

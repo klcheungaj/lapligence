@@ -1,0 +1,18 @@
+dyn->dyn 3 10 12 same=1
+after src change bd[0]=10 dd[0]=99
+dyn->queue 3 99
+fixed->queue 3 22
+queue->queue 2 12
+queue->dyn 2 12
+dyn->fixed 99 12
+fixed->fixed 21
+assoc->assoc 2 11 10
+assoc str 1 12
+2d 31 32
+grand->base 2 41
+return 3 99
+output formal 3 11
+t_in size 3 first 99
+t_in size 3 first 20
+t_in size 2 first 10
+slice 2 21

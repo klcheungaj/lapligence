@@ -9705,7 +9705,8 @@ public:
     rootIndex = LLG_SLANG_INVALID_ID;
     if (diagnostic.isError() && diagnostic.code != diag::AlwaysWithoutTimingControl &&
         diagnostic.code != diag::AlwaysInChecker &&
-        diagnostic.code != diag::VirtualVisibilityMismatch)
+        diagnostic.code != diag::VirtualVisibilityMismatch &&
+        diagnostic.code != diag::DerivedClassArrayAssignment)
       capture.output.flags |= LLG_SLANG_SNAPSHOT_HAS_ERRORS;
     diagnosticEngine.issue(diagnostic);
     root = nullptr;
@@ -10671,6 +10672,12 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   // makes it a warning (`-Werror` restores the error): the override still
   // overrides, and each call keeps the visibility its handle's class declares.
   engine.setSeverity(diag::VirtualVisibilityMismatch, DiagnosticSeverity::Warning);
+  // IEEE 1800-2009 7.6 requires equivalent element types for unpacked array
+  // assignment; an array of derived-class handles assigned to an array of
+  // base-class handles is accepted with a warning (decision UVB-D1, the
+  // frontend patch): each element is a handle upcast (8.15). `-Werror`
+  // restores the error.
+  engine.setSeverity(diag::DerivedClassArrayAssignment, DiagnosticSeverity::Warning);
   Diagnostics pragmaDiagnostics = engine.setMappingsFromPragmas();
   for (const Diagnostic& diagnostic : pragmaDiagnostics)
     compilationClient->issue(engine, diagnostic);

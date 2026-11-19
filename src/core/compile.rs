@@ -634,8 +634,12 @@ impl CompileOut {
 
 /// Frontend errors that llg reports as warnings by decision, which `-Werror`
 /// reports as errors again: an override that changes a virtual method's
-/// visibility (S08-D1).
-pub const WERROR_FRONTEND_WARNINGS: &[&str] = &["SLANG-VirtualVisibilityMismatch"];
+/// visibility (S08-D1) and an unpacked array of derived-class handles
+/// assigned to one of base-class handles (UVB-D1).
+pub const WERROR_FRONTEND_WARNINGS: &[&str] = &[
+    "SLANG-VirtualVisibilityMismatch",
+    "SLANG-DerivedClassArrayAssignment",
+];
 
 /// [`CompileOut::retain_frontend_diagnostics`] over a compile projection,
 /// whose leading entries are the non-ignored frontend diagnostics in order

@@ -370,6 +370,7 @@ impl<'a> Codegen<'a> {
         rhs: NodeId,
     ) -> Result<IrStmt, String> {
         let dst = ContainerInfo { ir: dst };
+        let rhs = self.class_array_upcast_operand(rhs).unwrap_or(rhs);
         if let Some(statement) = self.lower_container_result_into(path, rhs, dst.ir)? {
             return Ok(statement);
         }
