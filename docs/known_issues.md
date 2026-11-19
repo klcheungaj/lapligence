@@ -3764,10 +3764,14 @@ simulator's transmit thread waits for a bus grant, while llg's threads are
 idle. In the second main phase the receive thread clears its bit of `m_isr`
 and sets it again in one process turn (`wait` statements that do not block
 lie between the writes), so by decision T1-D11 the transmit thread's
-`wait (!m_isr)` never sees zero.
+`wait (!m_isr)` never sees zero. Under that decision's glitch coalescing a
+level-sensitive `wait (expr)` is woken only at a check, which compares the
+value with the one at the last check: a flag cleared and set again within one
+process turn is no change, so a waiter for the cleared value misses it.
 
-**Intended direction.** None while T1-D11 stands; the example's timing
-follows the tool-specific macro.
+**Intended direction.** None: user decision 2026-11-19 keeps glitch
+coalescing (T1-D11) with this consequence; the example's timing follows the
+tool-specific macro.
 
 ### The bus example's run diverges after its first transfer
 
