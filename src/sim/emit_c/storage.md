@@ -103,8 +103,14 @@ A sampled expression selects a descriptor cell through
 `llg_fixed_array_sampled_peek`, and `llg_model_unobserved_contents` flags each
 array the rendered model reads that way (`llg_fixed_array_sampled`). A flagged
 array saves a cell's old value on its first change of a time slot, keyed by
-index, and keeps one whole image if the slot replaces its default. Arrays with
-no such read pay nothing, and direct arrays stay outside sampled expressions.
+index, and keeps one whole image if the slot replaces its default. A direct
+(dense) array that a sampled expression selects carries `IrArray::sampled_image`
+(set by `assertions::mark_sampled_cell_arrays` after lowering): the model
+declares `<array>_llg_sampled`, `llg_model_assertions_init` points it at the
+runtime image `llg_sampled_cells` returns, before any history domain reads its
+initial value, and a sampled read indexes that image (`Frame::array_cell`).
+The runtime copies every cell of the image in each Preponed region. Arrays with
+no such read pay nothing.
 
 ## Native boundaries
 

@@ -87,6 +87,7 @@ impl Codegen<'_> {
             shortreal,
             dims: dims.clone(),
             total,
+            sampled_image: false,
         });
         self.array_globals.insert(
             node,

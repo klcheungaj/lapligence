@@ -141,6 +141,12 @@ the portable part, and the llg-specific cases are in
 | AA-I1 | **Nested programs and modules.** A portless program or module nested in a module, and not instantiated explicitly, runs as one implicit instance named after its declaration, and shares the enclosing scope's variables. | 24.3 L43207-43210; 23.4 L41758-41760 | `AA-I1_nested_program` | LRM text |
 | — | **`expect` starts one attempt.** An `initial` block that holds only `expect` runs, and an armed `expect` starts exactly one attempt rather than one per clock. | 16.18 L27950-27951 | covered by the assertion suites, no separate case | LRM text |
 
+## Sampled values of array cells (sampled-array-cells)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S35-D1 | **Sampled array cells.** A selection of a cell of a static fixed unpacked array in a sampled-value function argument or a concurrent assertion operand reads the cell's Preponed value at the Preponed value of its index expressions; packed selections of the cell and multidimensional cells follow the same rule, and an X, Z or out-of-range sampled index reads the element's default uninitialized value. Elements of queues, dynamic and associative arrays stay rejected. llg formerly rejected cells of arrays below the descriptor size. | 16.5 L21447; 16.6.1 L21595-21596; 7.4.6 L8235-8237 | `S35-D1_sampled_array_cells` | LRM text |
+
 ## Processes, waits and built-in classes (audit B)
 
 | ID | Decision | Clause (SV) | Case | Kind |

@@ -188,6 +188,11 @@ before other time-zero processes. `iff` and the `$past` gate read current
 values. Classify argument types from the Db before lowering: §16.6.1-excluded
 types are illegal, unpacked/queue values are explicit unsupported; never coerce
 a non-integral value into packed bits (reals use their exact 64-bit image).
+A selection of a static fixed-array cell is sampled with its index: after
+lowering, `mark_sampled_cell_arrays` gives each dense array that a history
+domain, an assertion expression or a `$sampled` argument selects a Preponed
+cell image (`IrArray::sampled_image`); descriptor arrays keep their own saved
+cells. Container elements stay explicit unsupported.
 
 Concurrent assertions use dedicated instances, immutable sampled predicates,
 explicit clocks/disable/control metadata, per-attempt/thread locals and ordered

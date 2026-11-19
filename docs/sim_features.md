@@ -2816,12 +2816,21 @@ recent strictly earlier tick, also between edges; a `vpiAssertionReset`
 keeps the history (A17-D8). `iff` and the `$past` gate
 read current values when the clock occurs. Outside any assertion, a
 procedural `$sampled` returns the Preponed value of every packed or real signal
-it reads, registered without per-slot history. Real, shortreal and realtime
+it reads, registered without per-slot history. A selection of a cell of a
+static fixed unpacked array (multidimensional, packed selections of the cell,
+real, net, enum and packed structure elements) is sampled with its index, as
+an argument and as a concurrent assertion operand: an X, Z or out-of-range
+sampled index reads the element default (§§16.5, 16.6.1, 7.4.6,
+[S35-D1](lrm_decisions.md#sampled-values-of-array-cells-sampled-array-cells)).
+Arrays below the descriptor size that a sampled expression selects keep a
+Preponed image of their cells; no other array pays anything
+([trade-off](sim_performance_tradeoffs.md#preponed-images-of-sampled-array-cells)).
+Real, shortreal and realtime
 operands of `$past`, `$rose`, `$fell`, `$stable`, `$changed` and the global
 clocking functions, string, event, chandle, class, dynamic and associative
-array arguments are diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
-queues and unpacked element selections (also element operands of concurrent
-assertions, for arrays below the descriptor size) are located unsupported
+array arguments are diagnosed as illegal (§16.6.1); whole fixed unpacked arrays, unpacked structures,
+queues, and elements of queues, dynamic and associative arrays (also as
+concurrent assertion operands) are located unsupported
 rejections ([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
 [SIM-035 fixtures](../tests/fixtures/sim/feature_completion/sim_035/readme.md)).
 The future global functions `$future_gclk`, `$rising_gclk`, `$falling_gclk`,

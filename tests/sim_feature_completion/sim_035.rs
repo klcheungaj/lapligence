@@ -257,35 +257,92 @@ fn neg_queue_arg() {
     );
 }
 
-// FIN-001 A3: element selections of fixed unpacked arrays are legal sampled
-// operands (SV 16.6.1) that llg rejects at the selection.
+// sampled-array-cells: cells of fixed unpacked arrays below the descriptor
+// size are sampled with their indices (SV 16.5, 16.6.1); container elements
+// are rejected at the selection.
 
 #[test]
-fn neg_element_past() {
+fn element_histories_sample_the_cell_and_its_index() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_035/element_past.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_past", expected, &[], &[]);
+}
+
+#[test]
+fn element_assertion_operands_read_sampled_cells() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_035/element_assertion.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_assertion", expected, &[], &[]);
+}
+
+#[test]
+fn element_selections_and_multidimensional_cells_are_sampled() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_035/element_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_selects", expected, &[], &[]);
+}
+
+#[test]
+fn real_net_enum_and_structure_cells_are_sampled() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_035/element_types.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_types", expected, &[], &[]);
+}
+
+/// Only arrays a sampled expression selects keep a Preponed image, and it is
+/// registered before the history domains whose initial values read it.
+#[test]
+fn component_only_sampled_arrays_keep_a_cell_image() {
+    for optimized in [true, false] {
+        let (directory, output) =
+            sim_cli::run_case_keeping_dir(SUITE, "element_past", optimized, &["--gen-only"], &[]);
+        assert!(output.status.success(), "{output:?}");
+        let model = std::fs::read_to_string(directory.path().join("build/sim/tb/model.c"))
+            .expect("generated model");
+        assert_eq!(model.matches("llg_sampled_cells(").count(), 1, "{model}");
+        assert!(!model.contains("G_tb_plain_llg_sampled"), "{model}");
+        let image = model
+            .find("G_tb_arr_llg_sampled = llg_sampled_cells(G_tb_arr, 4ULL);")
+            .expect("image registration");
+        let domain = model
+            .find("llg_sampled_domain_register(")
+            .expect("domain registration");
+        assert!(image < domain, "{model}");
+    }
+}
+
+#[test]
+fn neg_queue_element() {
     sim_cli::reject_case(
         SUITE,
-        "neg_element_past",
-        "neg_element_past.sv:11:64 $past argument selecting an unpacked array element in `tb` \
-         is not supported: llg keeps no sampled value of the array's cells",
+        "neg_queue_element",
+        "neg_queue_element.sv:10:47 $past argument selecting a container element in `tb` is not \
+         supported: llg keeps no sampled value of queue, dynamic array or associative array \
+         elements",
     );
 }
 
 #[test]
-fn neg_element_assertion() {
+fn neg_dynamic_element_operand() {
     sim_cli::reject_case(
         SUITE,
-        "neg_element_assertion",
-        "neg_element_assertion.sv:9:47 $stable argument selecting an unpacked array element in \
-         `tb` is not supported",
+        "neg_dynamic_element_operand",
+        "neg_dynamic_element_operand.sv:9:39 unsupported sampled consequent expression in \
+         concurrent assertion (tb): llg keeps no sampled value of queue, dynamic array or \
+         associative array elements",
     );
 }
 
 #[test]
-fn neg_element_operand() {
+fn neg_assoc_element() {
     sim_cli::reject_case(
         SUITE,
-        "neg_element_operand",
-        "neg_element_operand.sv:10:39 unsupported sampled consequent expression in concurrent \
-         assertion (tb): llg keeps no sampled value of unpacked array cells it selects",
+        "neg_assoc_element",
+        "neg_assoc_element.sv:9:47 $past argument selecting a container element in `tb`",
+    );
+}
+
+#[test]
+fn neg_real_element_past() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_element_past",
+        "neg_real_element_past.sv:11:42 $past of a real expression is illegal",
     );
 }

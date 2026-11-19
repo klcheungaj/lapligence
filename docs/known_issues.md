@@ -2555,43 +2555,41 @@ virtual-interface drive selects its instance.
 
 ## Sampled-value arguments without sampled storage
 
-**Status:** open (SIM-035 boundary; kept by FIN-001 A3, see Intended
-direction).
+**Status:** open (SIM-035 boundary; element selections of fixed unpacked
+arrays are served since sampled-array-cells, see Intended direction).
 
 ### Symptom
 
-Sampled-value functions keep a history of packed integral values. Fixed
-unpacked arrays, unpacked structures and unions, queues and unpacked array
-element selections (`$past(arr[i])`) are legal arguments (SV 16.6.1, L21575
-onward: "The following types are not allowed: — Noninteger types (shortreal,
-real, and realtime)", then string, event, chandle, class, associative and
-dynamic arrays; "Fixed-size arrays, packed or unpacked, can be used as a
-whole") but reject explicitly ("sampled histories hold packed integral and
-real values" or "must be a static packed or real expression") instead of being
-flattened. An element selection of a fixed unpacked array below the
-descriptor size (`LLG_DENSE_FIXED_ARRAY_CELLS`, 4096 cells), such as
-`$past(arr[i])` or `$stable(arr[1])`, and a concurrent assertion operand that
-reads such an element (`arr[i] == 2`) are rejected at the selection ("...
-selecting an unpacked array element ... is not supported" and "unsupported
-sampled ... expression ...: llg keeps no sampled value of unpacked array
-cells it selects"). Larger (descriptor) arrays keep their cells' Preponed
-values and are accepted.
+Sampled-value functions keep a history of packed integral values. Whole fixed
+unpacked arrays, unpacked structures and unions, and queues are legal
+arguments (SV 16.6.1, L21575 onward: "The following types are not allowed: —
+Noninteger types (shortreal, real, and realtime)", then string, event,
+chandle, class, associative and dynamic arrays; "Fixed-size arrays, packed or
+unpacked, can be used as a whole") but reject explicitly ("sampled histories
+hold packed integral and real values" or "must be a static packed or real
+expression") instead of being flattened. An element of a queue, dynamic array
+or associative array, as a sampled-value argument (`$past(q[i])`) or as a
+concurrent assertion operand (`da[i] == 2`), is rejected at the selection
+("... selecting a container element ... is not supported" and "unsupported
+sampled ... expression ...: llg keeps no sampled value of queue, dynamic array
+or associative array elements"). Industry-standard tools reject these element
+forms too. Element selections of fixed unpacked arrays (`$past(arr[i])`,
+`arr[i] == 2` in an assertion) are served (decision S35-D1).
 
 ### Cause
 
-Sampling them needs Preponed snapshots of unpacked storage. Dense arrays are
-plain C cell arrays with no write hook, and the sampled-value registry is a
-per-signal list searched by address, so registering every cell would slow
-each sampled read of the design.
+Sampling them needs Preponed snapshots of unpacked or container storage. Fixed
+arrays keep one now: descriptor arrays save a cell's old value on its first
+change in a time slot, and dense arrays that a sampled expression selects keep
+a cell image copied in each Preponed region. Containers grow and shrink and
+have no such image, and whole unpacked values have no packed sample form.
 
 ### Intended direction
 
-Industry-standard behaviour serves `$past(arr[i])`, `$stable(arr[i])` and
-element operands (the selected cell's value at each clock tick, index
-included), so this is a common form left rejected: give arrays read in
-sampled expressions a sampled image, either by choosing the descriptor form
-for them before lowering or by a per-array saved-cell table like the
-descriptor one, and sample whole unpacked values the same way.
+Sample whole unpacked values from the same cell images (a whole-array
+comparison or `$stable(arr)` reads every cell), and give containers a
+Preponed snapshot if element sampling becomes common; until then the
+rejections stay explicit.
 
 ### Reproduce
 
@@ -2599,10 +2597,10 @@ Reproduce with
 [`neg_unpacked_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_arg.sv),
 [`neg_unpacked_struct_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_struct_arg.sv) and
 [`neg_queue_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_arg.sv),
-and the element forms
-[`neg_element_past.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_past.sv),
-[`neg_element_assertion.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_assertion.sv) and
-[`neg_element_operand.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_element_operand.sv).
+and the container element forms
+[`neg_queue_element.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_element.sv),
+[`neg_dynamic_element_operand.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_dynamic_element_operand.sv) and
+[`neg_assoc_element.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_assoc_element.sv).
 
 ## Concurrent property limits after SIM-038
 

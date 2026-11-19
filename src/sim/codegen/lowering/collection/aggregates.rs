@@ -1197,6 +1197,7 @@ impl<'a> Codegen<'a> {
             shortreal,
             dims: dims.clone(),
             total,
+            sampled_image: false,
         });
         Ok(ArrayInfo {
             global: self.global_name(path, name),

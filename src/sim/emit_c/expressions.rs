@@ -681,6 +681,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                     "fixed-array descriptor reads require owned whole-model emission".into(),
                 );
             }
+            if ctx.sampled {
+                return Err("sampled array cell reads require owned whole-model emission".into());
+            }
             let mut index_codes = Vec::with_capacity(indices.len());
             for i in indices {
                 index_codes.push(w(i)?.code);

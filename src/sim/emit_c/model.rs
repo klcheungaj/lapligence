@@ -1504,6 +1504,14 @@ fn render_model(
              static sv4_t {}_llg_element_deps[{}];\n",
             a.c_name, a.c_name, a.total
         ));
+        if a.sampled_image {
+            // Runtime-owned Preponed cells, set by llg_model_assertions_init.
+            out.push_str(&format!(
+                "static const {}* {};\n",
+                if a.real { "double" } else { "sv4_t" },
+                a.sampled_image_name()
+            ));
+        }
     }
     for (array_index, array) in model.arrays.iter().enumerate() {
         for (index, signal) in &array.net_elements {

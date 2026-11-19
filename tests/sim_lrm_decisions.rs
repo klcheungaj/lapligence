@@ -349,6 +349,14 @@ fn aa_d6_event_clock_gate_instant() {
 }
 
 #[test]
+fn s35_d1_sampled_array_cells() {
+    run_decision(
+        "S35-D1_sampled_array_cells",
+        include_str!("fixtures/sim/lrm_decisions/S35-D1_sampled_array_cells.out"),
+    );
+}
+
+#[test]
 fn aa_d7_real_sampled_illegal() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(include_str!("fixtures/sim/lrm_decisions/AA-D7_real_sampled_illegal.out").is_empty());

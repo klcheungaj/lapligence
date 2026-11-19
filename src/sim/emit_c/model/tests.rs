@@ -420,6 +420,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         shortreal: false,
         dims: vec![(3, 2)],
         total: 2,
+        sampled_image: false,
     }];
     model.processes = vec![IrProcess {
         c_name: "p_top_initial_0".to_string(),

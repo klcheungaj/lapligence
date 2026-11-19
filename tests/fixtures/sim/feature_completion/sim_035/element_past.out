@@ -1,0 +1,8 @@
+5 p1=2 p2=2 p3=2 pg=2 px=2
+15 p1=2 p2=2 p3=2 pg=2 px=2
+25 p1=9 p2=2 p3=2 pg=9 px=9
+35 p1=3 p2=9 p3=2 pg=9 px=9
+45 p1=c p2=3 p3=9 pg=c px=x
+55 p1=c p2=c p3=3 pg=c px=x
+60 e=c n=x r=0 f=0 s=0 c=0 q=6
+65 p1=c p2=c p3=c pg=c px=x
