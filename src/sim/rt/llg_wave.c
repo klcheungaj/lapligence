@@ -1758,7 +1758,9 @@ void llg_wave_limit(uint64_t bytes, uint64_t now) {
 
 void llg_wave_slot_end(uint64_t now) {
     print_deferred_report();
-    if (g_wave.slot_work) {
+    // `slot_work` is only ever 0 or 1; comparing with 1 keeps the test of a
+    // step without controls one compare against memory.
+    if (g_wave.slot_work == 1) {
         if (g_wave.dump_state == DUMP_PENDING) start_dump(now);
         else apply_controls(now);
     } else if (g_wave.dirty_count) {
