@@ -206,11 +206,6 @@ static LLG_OUTLYING void sample_preponed_cells(void) {
     }
 }
 
-static int sampled_real_image_equal(sv4_t left, sv4_t right) {
-    if (llg_sv4_width(left) != 64 || llg_sv4_width(right) != 64) return 0;
-    return sv4_bitstoreal(left) == sv4_bitstoreal(right);
-}
-
 static void report_sampled_failure(const char* message, uint64_t identity) {
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s %llu", message, (unsigned long long)identity);
     llg_last_failure = 1;
@@ -501,8 +496,6 @@ int llg_sampled_domain_status(uint64_t identity, int kind) {
         case 1: return sampled_domain_lsb_zero(current) && !sampled_domain_lsb_zero(previous);
         case 2: return sv4_same(current, previous);
         case 3: return !sv4_same(current, previous);
-        case 4: return sampled_real_image_equal(current, previous);
-        case 5: return !sampled_real_image_equal(current, previous);
         default:
             llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sampled-value status kind %d", kind);
             llg_last_failure = 1;

@@ -199,9 +199,11 @@ fn cli_disabled_rule_suppresses_finding() {
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");
     assert!(!err.contains("unused-signal"), "finding suppressed: {err}");
-    assert!(
-        lint_summary(&err).is_none(),
-        "a clean run prints no lint summary: {err}"
+    // The design has no time scale, so `missing-timescale` remains.
+    assert_eq!(
+        lint_summary(&err).as_deref(),
+        Some("0 error(s), 1 warning(s)"),
+        "only the missing-timescale warning remains: {err}"
     );
 }
 
@@ -323,9 +325,14 @@ fn cli_lint_json_stdout_emits_json() {
         stdout.contains("\"severity\": \"warning\""),
         "stdout: {stdout}"
     );
+    // unused-signal and missing-timescale (the design has no time scale).
+    assert!(
+        stdout.contains("\"rule\": \"missing-timescale\""),
+        "stdout: {stdout}"
+    );
     assert!(stdout.contains("\"errors\": 0"), "stdout: {stdout}");
-    assert!(stdout.contains("\"warnings\": 1"), "stdout: {stdout}");
-    assert!(stdout.contains("\"total\": 1"), "stdout: {stdout}");
+    assert!(stdout.contains("\"warnings\": 2"), "stdout: {stdout}");
+    assert!(stdout.contains("\"total\": 2"), "stdout: {stdout}");
     assert!(
         !has_lint(&err, Severity::Warning, None),
         "human lint lines suppressed: {err}"
@@ -361,9 +368,10 @@ fn cli_lint_json_severity_override_exits_1() {
         stdout.contains("\"severity\": \"error\""),
         "stdout: {stdout}"
     );
+    // missing-timescale stays a warning.
     assert!(stdout.contains("\"errors\": 1"), "stdout: {stdout}");
-    assert!(stdout.contains("\"warnings\": 0"), "stdout: {stdout}");
-    assert!(stdout.contains("\"total\": 1"), "stdout: {stdout}");
+    assert!(stdout.contains("\"warnings\": 1"), "stdout: {stdout}");
+    assert!(stdout.contains("\"total\": 2"), "stdout: {stdout}");
     assert!(
         !has_lint(&err, Severity::Error, None),
         "human lint lines suppressed: {err}"
@@ -564,8 +572,9 @@ fn lint_runs_without_an_option_and_warnings_do_not_stop_the_run() {
         has_lint(&err, Severity::Warning, Some("unused-signal")),
         "lint ran without an option: {err}"
     );
+    // unused-signal and missing-timescale (the design has no time scale).
     assert!(
-        lint_summary(&err).as_deref() == Some("0 error(s), 1 warning(s)"),
+        lint_summary(&err).as_deref() == Some("0 error(s), 2 warning(s)"),
         "{err}"
     );
     assert!(err.contains("$finish"), "the model ran: {err}");
@@ -584,8 +593,9 @@ fn werror_turns_lint_warnings_into_errors() {
         has_lint(&err, Severity::Error, Some("unused-signal")),
         "{err}"
     );
+    // unused-signal and missing-timescale (the design has no time scale).
     assert!(
-        lint_summary(&err).as_deref() == Some("1 error(s), 0 warning(s)"),
+        lint_summary(&err).as_deref() == Some("2 error(s), 0 warning(s)"),
         "{err}"
     );
     assert!(!err.contains("$finish"), "no model ran: {err}");
@@ -600,7 +610,7 @@ fn werror_turns_lint_warnings_into_errors() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     assert_eq!(out.status.code(), Some(1), "stdout: {stdout}");
-    assert!(stdout.contains("\"errors\": 1"), "stdout: {stdout}");
+    assert!(stdout.contains("\"errors\": 2"), "stdout: {stdout}");
 
     let cfg = dir.write(
         "llg.toml",
@@ -649,7 +659,18 @@ fn lint_only_stops_before_code_generation() {
     assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
 
     dir.write("clean.sv", DELAYED_SV);
-    let out = run_llg(&dir.path, &["--lint-only", "--top", "delayed", "clean.sv"]);
+    // An explicit default time scale keeps the design free of findings.
+    let out = run_llg(
+        &dir.path,
+        &[
+            "--lint-only",
+            "--timescale",
+            "1ns/1ps",
+            "--top",
+            "delayed",
+            "clean.sv",
+        ],
+    );
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");
     assert_eq!(
@@ -773,6 +794,8 @@ fn wide_index_warns_and_honors_config_and_werror() {
         &dir.path,
         &[
             "-Werror",
+            "--timescale",
+            "1ns/1ps",
             "--config",
             cfg.to_str().unwrap(),
             "--top",

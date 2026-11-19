@@ -224,6 +224,10 @@ Common options:
   expression is used (gate, net, continuous-assignment, procedural and
   specify-path delays, specparams and parameters; default `typ`). The choice
   is made at compile time.
+- `--timescale <unit>/<precision>`: the time scale of the design elements
+  that have no `` `timescale ``, `timeunit` or `timeprecision` (for example
+  `10us/1ns`; integers 1, 10 or 100 and s, ms, us, ns, ps or fs). Without it
+  they use 1ns/1ps and the `missing-timescale` lint warning names them.
 - `--include-dir <path>` / `-I <path>`: add a search directory for both
   `` `include `` files and module definitions. Pass only the top-level source:
   a module, interface, program or package the given sources use but do not

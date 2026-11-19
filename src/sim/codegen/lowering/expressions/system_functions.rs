@@ -76,8 +76,8 @@ impl<'a> Codegen<'a> {
     /// Classify a sampled-value argument by its declared type before it is
     /// lowered, so a non-integral operand gets a specific diagnostic instead
     /// of being coerced or failing in a generic reference path. SV 16.6.1
-    /// excludes noninteger (checked after lowering, for `$past` and the
-    /// functions derived from it), string, event, chandle, class, associative
+    /// excludes noninteger (checked after lowering; llg serves real `$past`,
+    /// `$stable` and `$changed`, AA-D8), string, event, chandle, class, associative
     /// and dynamic array operands from sampled expressions; fixed unpacked
     /// arrays and unpacked structures are legal but have no sampled storage
     /// yet.
@@ -282,19 +282,44 @@ impl<'a> Codegen<'a> {
         }
         // SV 16.9.3: "expression1 and expression2 may be any expression
         // allowed in assertions", and 16.6.1 excludes noninteger operands
-        // there; F.3.4.4 derives `$rose/$fell/$stable/$changed` from `$past`.
-        // A real anywhere in the argument is therefore illegal. (`$sampled(e)`
-        // is `e` itself and keeps real operands.)
-        let mut has_real = false;
-        crate::sim::opt::walk_expr_mut(&mut argument.clone(), &mut |expression| {
-            has_real |= expression.is_real();
-        });
-        if has_real {
-            return Err(format!(
-                "{name} of a real expression is illegal in `{scope_path}`: sampled-value functions \
-                 exclude noninteger (shortreal, real, realtime) operands (SV 16.6.1)"
-            ));
+        // there. By user decision (AA-D8) llg serves `$past`, `$stable` and
+        // `$changed` of real values as industry-standard behaviour does; a
+        // real anywhere in the argument of `$rose`/`$fell` (whose LSB a real
+        // lacks) or of a global clocking function stays illegal (AA-D7).
+        // (`$sampled(e)` is `e` itself and keeps real operands.)
+        let real_served = !global
+            && matches!(
+                kind,
+                IrSampledFunc::Past | IrSampledFunc::Stable | IrSampledFunc::Changed
+            );
+        if !real_served {
+            let mut has_real = false;
+            crate::sim::opt::walk_expr_mut(&mut argument.clone(), &mut |expression| {
+                has_real |= expression.is_real();
+            });
+            if has_real {
+                return Err(format!(
+                    "{name} of a real expression is illegal in `{scope_path}`: sampled-value \
+                     functions exclude noninteger (shortreal, real, realtime) operands (SV 16.6.1)"
+                ));
+            }
         }
+        // A real argument's history holds its exact 64-bit IEEE image:
+        // `$past` decodes it, and `$stable`/`$changed` compare the images bit
+        // for bit (AA-D8), so -0.0 differs from 0.0 and a NaN equals the same
+        // NaN. A packed argument that reads reals (`$past(int'(r))`) keeps its
+        // packed history.
+        let real = argument.is_real();
+        let argument = if real {
+            IrExpr::new(
+                IrExprKind::SysFunc(Box::new(IrSysFunc::RealToBits(Box::new(argument)))),
+                64,
+                false,
+                None,
+            )
+        } else {
+            argument
+        };
 
         let mut ticks = 0;
         let mut gate = None;
@@ -384,7 +409,7 @@ impl<'a> Codegen<'a> {
         } else {
             (1, false)
         };
-        Ok(IrExpr::new(
+        let call = IrExpr::new(
             IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
                 kind,
                 argument,
@@ -394,7 +419,17 @@ impl<'a> Codegen<'a> {
             width,
             signed,
             None,
-        ))
+        );
+        Ok(if real && kind == IrSampledFunc::Past {
+            IrExpr::new(
+                IrExprKind::SysFunc(Box::new(IrSysFunc::BitsToReal(Box::new(call)))),
+                0,
+                false,
+                None,
+            )
+        } else {
+            call
+        })
     }
 
     /// Lower system-function expressions ($system/$clog2/$time/$stime/$bits/

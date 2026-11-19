@@ -77,8 +77,7 @@ fn action_retention_processes(cycles: u64) -> std::collections::BTreeMap<String,
         "action_retention",
         &["--define", &define],
         &|label, output| {
-            let stderr =
-                crate::sim_harness::canonical_messages(&String::from_utf8_lossy(&output.stderr));
+            let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
             assert!(output.status.success(), "{label}: {stderr}");
             assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
             let rest = stderr

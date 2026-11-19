@@ -15,7 +15,9 @@ use super::{
     WaveformConfig, DEFAULT_EXCLUDE_GLOBS, DEFAULT_INCLUDE_GLOBS, DEFAULT_MAX_FILE_BYTES,
     DEFAULT_MAX_TOTAL_INPUT_BYTES, SCHEMA_VERSION,
 };
-use crate::core::compile::{CompilationUnitMode, DelaySelection, LanguageEdition};
+use crate::core::compile::{
+    CompilationUnitMode, DelaySelection, LanguageEdition, SemanticTimeScale,
+};
 use crate::core::lint::{LintConfig, LintSeverity, RuleConfig};
 use crate::sim::build::ModelOptLevel;
 
@@ -156,6 +158,15 @@ fn resolve_compile(
                 .map_err(|error| ConfigError::new(format!("compile.delay_select: {error}")))
         })
         .transpose()?;
+    let timescale = raw
+        .timescale
+        .as_deref()
+        .map(|value| {
+            value
+                .parse::<SemanticTimeScale>()
+                .map_err(|error| ConfigError::new(format!("compile.timescale: {error}")))
+        })
+        .transpose()?;
     let (defines, mut warnings) = validate_defines(&raw.defines);
     let (param_overrides, mut override_warnings) = resolve_param_overrides(raw)?;
     warnings.append(&mut override_warnings);
@@ -172,6 +183,7 @@ fn resolve_compile(
             edition,
             compilation_units,
             delay_select,
+            timescale,
             include_dirs,
             defines,
             param_overrides,

@@ -1,0 +1,5 @@
+5 s=1.50 st=1 cell=0.75 ch=0
+5 a_s fail
+15 s=1.50 st=0 cell=0.75 ch=0
+25 s=3.00 st=0 cell=0.75 ch=1
+35 s=6.00 st=0 cell=4.50 ch=0

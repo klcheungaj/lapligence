@@ -363,9 +363,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   select a real fixed-array element freeze their selectors before the call and
   copy back into that cell (an out-of-range index reads 0.0 and copies
   nowhere; `real_element_copyout`). Real arrays sort, reverse
-  and locate numerically (NaN keys keep their positions) and `$sampled`,
-  `$past`, `$stable` and `$changed` keep real samples numeric
-  ([sim_005](../tests/fixtures/sim/feature_completion/sim_005/readme.md)).
+  and locate numerically (NaN keys keep their positions); `$sampled` and
+  `$past` return exact real samples and `$stable`/`$changed` compare them bit
+  for bit (AA-D8,
+  [sim_005](../tests/fixtures/sim/feature_completion/sim_005/readme.md)).
   Generic containers support real/shortreal leaves; automatic real storage
   survives admitted blocking mailbox delivery; `with`-keyed `min/max/unique`
   and sorts of real container elements run in the calling frame (SIM-019,
@@ -2472,7 +2473,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   22.11, 22.13–22.14 **[2001/SV-2009]**.
 - 🟦 **`` `timescale ``** — Resolved module, package, `$unit` and class
   declaration inheritance scales delays and time reporting; local `timeunit/timeprecision` and rounding are covered in
-  §§1 and 6. V §19.8 **[1995]**.
+  §§1 and 6. Elements without a time scale take 1ns/1ps or the
+  `--timescale`/`compile.timescale` value, which delays, time reporting,
+  `$timeformat` defaults, VPI time properties and waveform headers follow;
+  the `missing-timescale` lint warning reports the built-in default (F2-D3,
+  F2-D4). V §19.8; SV §§3.14.2.3, 22.7 **[1995/SV-2009]**.
 - 🟦 **`` `default_nettype `` / `` `resetall ``** — Control implicit-net admission
   and reset later directive state; `none` rejects undeclared nets, `wire`
   restores them, and separate/merged units retain their specified boundaries.
@@ -2853,10 +2858,15 @@ sampled index reads the element default (§§16.5, 16.6.1, 7.4.6,
 Arrays below the descriptor size that a sampled expression selects keep a
 Preponed image of their cells; no other array pays anything
 ([trade-off](sim_performance_tradeoffs.md#preponed-images-of-sampled-array-cells)).
-Real, shortreal and realtime
-operands of `$past`, `$rose`, `$fell`, `$stable`, `$changed` and the global
-clocking functions, string, event, chandle, class, dynamic and associative
-array arguments are diagnosed as illegal (§16.6.1); whole fixed unpacked arrays, unpacked structures,
+Real, shortreal and realtime arguments of `$past`, `$stable` and `$changed`
+(variables, real cells and real expressions, with any depth, gate or clock)
+keep a history of their exact 64-bit images: `$past` returns the sampled real
+and the value change functions compare the images bit for bit (user decision
+[AA-D8](lrm_decisions.md#concurrent-assertions-and-sampled-values-audit-a),
+as industry-standard behaviour does, although §16.6.1 excludes noninteger
+operands). Real operands anywhere in `$rose`, `$fell` and the global clocking
+functions (AA-D7), and string, event, chandle, class, dynamic and associative
+array arguments, are diagnosed as illegal (§16.6.1); whole fixed unpacked arrays, unpacked structures,
 queues, and elements of queues, dynamic and associative arrays (also as
 concurrent assertion operands) are located unsupported
 rejections ([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),

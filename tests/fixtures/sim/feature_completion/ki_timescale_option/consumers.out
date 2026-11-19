@@ -1,0 +1,8 @@
+Time scale of (tb) is 1ns / 1ps
+Time scale of (tb.u) is 1ns / 1ps
+tf0=                1000|
+t=1000 time=1 real=1.000000
+sub t=2000 T=                2000 time=2
+t=3000 time=3 real=2.600000
+pkg t=3600 real=3.600000
+tf=      3.6 ns|

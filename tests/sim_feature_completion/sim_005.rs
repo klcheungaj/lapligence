@@ -44,7 +44,7 @@ fn real_array_case_equality_compares_element_bit_patterns() {
 }
 
 #[test]
-fn real_sampled_values_stay_numeric() {
+fn real_sampled_values_stay_exact() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_005/real_sampled.out");
     sim_cli::run_case_backend_parity(SUITE, "real_sampled", expected, &[], &[]);
     sim_cli::run_case_after_db_drop(SUITE, "real_sampled", expected);

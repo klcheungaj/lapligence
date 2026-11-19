@@ -561,6 +561,7 @@ pub const LINT_RULES: &[LintEntry] = &[
     lint("assignment-in-condition", 23, Severity::Warning),
     lint("casex-statement", 24, Severity::Warning),
     lint("wide-index", 25, Severity::Warning),
+    lint("missing-timescale", 26, Severity::Warning),
 ];
 
 /// The id of lint rule `rule`, or `LINT-999` for a rule missing from

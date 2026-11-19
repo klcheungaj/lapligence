@@ -165,7 +165,7 @@ fn plain_function_loop_exhausts_the_process_step_budget() {
         assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
         assert!(output.stdout.is_empty(), "{label}: {output:?}");
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            crate::sim_harness::strip_lint_reports(&output.stderr),
             "ERROR: [SIM-010] nonconvergent zero-time execution in process `tb.spin` at time 0 (process step limit 8)\nINFO: [SIM-000] 1 error(s), 0 warning(s)\n",
             "{label}"
         );
@@ -190,7 +190,7 @@ fn escaped_function_budget_message_keeps_source_name() {
         assert_eq!(output.status.code(), Some(1), "{output:?}");
         assert!(output.stdout.is_empty(), "{output:?}");
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            crate::sim_harness::strip_lint_reports(&output.stderr),
             "ERROR: [SIM-010] nonconvergent zero-time execution in process `tb.spin+loop` at time 0 (process step limit 8)\nINFO: [SIM-000] 1 error(s), 0 warning(s)\n",
         );
     }

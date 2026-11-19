@@ -923,9 +923,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                     IrSampledFunc::Rose
                     | IrSampledFunc::Fell
                     | IrSampledFunc::Stable
-                    | IrSampledFunc::Changed
-                    | IrSampledFunc::RealStable
-                    | IrSampledFunc::RealChanged => {
+                    | IrSampledFunc::Changed => {
                         let domain = call
                             .domain
                             .ok_or_else(|| "sampled status call has no domain".to_string())?;
@@ -934,8 +932,6 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                             IrSampledFunc::Fell => 1,
                             IrSampledFunc::Stable => 2,
                             IrSampledFunc::Changed => 3,
-                            IrSampledFunc::RealStable => 4,
-                            IrSampledFunc::RealChanged => 5,
                             _ => unreachable!(),
                         };
                         RenderedExpr {

@@ -55,8 +55,9 @@ fn system_task_function_and_empty_forms_run_once_in_both_optimizer_modes() {
             lines.next().is_none(),
             "{label}: unexpected trailing output"
         );
+        // Only the compile-time lint report may precede the run.
         assert!(
-            output.stderr.is_empty(),
+            crate::sim_harness::strip_lint_reports(&output.stderr).is_empty(),
             "{label}: {}",
             normalized(&output.stderr)
         );

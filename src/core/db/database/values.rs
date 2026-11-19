@@ -138,13 +138,14 @@ pub(super) fn operation_from_slang(operation: SemanticOperation, unary: bool) ->
     }
 }
 
+/// The unit (`precision == false`) or precision exponent of `scale`, or of
+/// the compilation's default time scale for a node without one.
 pub(super) fn time_exponent(
     scale: Option<SemanticTimeScale>,
+    default: SemanticTimeScale,
     precision: bool,
 ) -> Result<i32, DbError> {
-    let Some(scale) = scale else {
-        return Ok(if precision { -12 } else { -9 });
-    };
+    let scale = scale.unwrap_or(default);
     let (unit, magnitude) = if precision {
         (scale.precision_unit, scale.precision_magnitude)
     } else {
