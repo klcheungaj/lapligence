@@ -3394,58 +3394,30 @@ pin collectable targets in the handle slot, and turn the catalog row from
 plugin that asks for one of the objects above, or with the ADV-019 catalog
 walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
 
-## A `ref` actual stop inside a nested call lets the callers run on
-
-**Status:** open.
-
-### Symptom
-
-With index checks on, a `ref` actual whose index selects no element stops the
-run at the call (S07-D15, S13-D6) with exit status 1. When the call sits in a
-task or function that another subroutine or a process called, only the
-subroutine holding the call ends: its callers keep running until the process
-suspends or ends, so a `$display` after the outer call still prints before the
-run ends. Some simulators end the run at the call.
-
-### Cause
-
-The stop marks the run failed and leaves the subroutine through its exit path
-after the call; the calling frames are not told to unwind.
-
-### Intended direction
-
-Unwind every frame of the process at the stop.
-
-### Reproduce
-
-A task `body` calling `tr(q[k])` with `k` past the end of `q`, called from an
-`initial` block followed by `$display("after")`.
-
-## Forwarding a member of a record `ref` formal to a waiting task
+## A string input formal read in a `fork`-`join` branch
 
 **Status:** open; an internal error, not a located rejection.
 
 ### Symptom
 
-`task automatic f(ref rec_t x); waitn(x.e[1]); endtask`, where `waitn` waits
-on its record `ref` formal, stops compilation with an internal error ("invalid
-simulator IR at funcs[..].pre_fns[..]...: native value is used outside its
-declaration scope") instead of running or rejecting at the call.
+`task automatic f(input string tag); fork $display("%s", tag); join endtask`
+stops generation with an internal error ("string formal outside a
+function", or "unresolved native storage a1" when the branch passes `tag` to
+a call) instead of running. The same branch under `join_none` runs.
 
 ### Cause
 
-Not analysed: the validator finds a pre-function of `f` naming `f`'s native
-record formal outside the scope that declares it.
+Not analysed: the `join` branch reads the formal as the subroutine's
+parameter (`FormalRead`), which the branch callback has no binding for.
 
 ### Intended direction
 
-Find which lowering hoists the formal into the pre-function; serve the form,
-or reject it at the call with its location.
+Read the formal in a `join` branch through its capture, as `join_none`
+branches do.
 
 ### Reproduce
 
-The task above, called as `fork f(t, "fwd"); join_none` with an automatic
-`rec_t t`.
+The task above, called from an `initial` block.
 
 ## Container index-check stops name no array or source line
 

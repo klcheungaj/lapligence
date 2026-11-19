@@ -35,7 +35,8 @@
 //! [`CmakeBuildOpts::runtime_cache_dir`]) and
 //! link each generated model against the cached static archive. The cache key
 //! covers the packed-value ABI, sources, compiler-reported target, toolchain,
-//! flags, generator, launcher, platform, and waveform support. `--gen-only`
+//! flags, generator, launcher, platform, and waveform support (none,
+//! end-of-step records, or the per-delta mode `LLG_WAVE_DELTAS`). `--gen-only`
 //! output remains self-contained.
 //! [`CmakeBuildOpts::model_opt_level`] selects optimization for both model and
 //! runtime sources. Generated projects prefix compiler-specific level and
@@ -342,6 +343,41 @@ const RUNTIME_WAVE_DEFINITION: &str = concat!(
     "target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\\\"fst_config.h\\\")\n",
     zlib_cmake!("llg_runtime")
 );
+/// The per-delta dump mode (`llg --wave-deltas`) is a separate runtime
+/// archive: only its waveform unit records every change, so other models pay
+/// nothing for the mode.
+const WAVE_DELTAS_CMAKE: &str = "
+if(NOT LLG_RUNTIME_LIBRARY)
+target_compile_definitions(llg_runtime PRIVATE LLG_WAVE_DELTAS=1)
+endif()
+";
+const RUNTIME_WAVE_DELTAS_DEFINITION: &str =
+    "target_compile_definitions(llg_runtime PRIVATE LLG_WAVE_DELTAS=1)\n";
+
+/// Waveform support a model and its runtime archive are built with, read
+/// from the generated model's header lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WaveSupport {
+    None,
+    /// End-of-step records (the default dump).
+    Steps,
+    /// Every change in execution order (`LLG_WAVE_DELTAS`).
+    Deltas,
+}
+
+impl WaveSupport {
+    fn enabled(self) -> bool {
+        self != Self::None
+    }
+
+    fn key(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::Steps => 1,
+            Self::Deltas => 2,
+        }
+    }
+}
 
 const RUNTIME_CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
 const RUNTIME_CACHE_LOCK_POLL: Duration = Duration::from_millis(25);
@@ -712,7 +748,7 @@ fn build_model_cmake_timed(
     let flags = c_flags(opts)?;
     let build_dir = out_dir.join("build");
     let cmake_prog = resolve_cmake(opts);
-    let waveform = waveform_enabled(extra);
+    let wave = wave_support(extra);
     let jobs = build_jobs_for(opts);
     let generator = generator_for(opts);
     let launcher = resolve_launcher(opts);
@@ -730,7 +766,7 @@ fn build_model_cmake_timed(
         compiler_target: &compiler.target,
     };
     let phase = Instant::now();
-    let runtime_library = prepare_runtime_cache(waveform, &toolchain, jobs, opts, timings)?;
+    let runtime_library = prepare_runtime_cache(wave, &toolchain, jobs, opts, timings)?;
     timings.record("runtime", phase);
 
     // Drop an incompatible CMake build tree so configure starts clean: no
@@ -878,7 +914,8 @@ fn generate_model_sources_timed(
     let mut writer = super::SourceWriter::default();
     super::write_sim_sources(out_dir, extra, opts.value_config, &mut writer)?;
     writer.write(&out_dir.join("llg_value_build.h"), guard)?;
-    let waveform = waveform_enabled(extra);
+    let wave = wave_support(extra);
+    let waveform = wave.enabled();
     if waveform {
         super::rt::write_waveform_sources(out_dir, &mut writer)?;
     }
@@ -887,7 +924,7 @@ fn generate_model_sources_timed(
     if bundled_gmp {
         super::rt::write_bundled_gmp_sources(out_dir, &mut writer)?;
     }
-    write_cmakelists(out_dir, extra, waveform, opts, &mut writer)?;
+    write_cmakelists(out_dir, extra, wave, opts, &mut writer)?;
     timings.record("gen_write", phase);
     timings.count("gen_files", writer.files);
     timings.count("gen_bytes", writer.bytes);
@@ -1235,7 +1272,7 @@ fn remove_dir_all_quiet(dir: &Path) {
 fn write_cmakelists(
     out_dir: &Path,
     extra: &[(&str, &str)],
-    waveform: bool,
+    wave: WaveSupport,
     opts: &CmakeBuildOpts,
     writer: &mut super::SourceWriter,
 ) -> Result<(), BuildError> {
@@ -1258,9 +1295,16 @@ fn write_cmakelists(
         .replace("{MODEL_SOURCES}", &model_sources.join(" "))
         .replace(
             "{RUNTIME_SOURCES}",
-            &runtime_source_names_for(waveform, opts.value_config.backend).join(" "),
+            &runtime_source_names_for(wave.enabled(), opts.value_config.backend).join(" "),
         )
-        .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" })
+        .replace(
+            "{WAVE_SETUP}",
+            &match wave {
+                WaveSupport::None => String::new(),
+                WaveSupport::Steps => WAVE_CMAKE.to_owned(),
+                WaveSupport::Deltas => format!("{WAVE_CMAKE}{WAVE_DELTAS_CMAKE}"),
+            },
+        )
         .replace("{IMPORT_LIBRARY}", import_library::CMAKE)
         .replace(
             "{DPI_LINK}",
@@ -1493,7 +1537,7 @@ fn static_vpi_application(opts: &CmakeBuildOpts) -> Result<bool, BuildError> {
 /// Packed widths and host-stack headroom do not affect the dynamic value
 /// layout or the cache key.
 fn prepare_runtime_cache(
-    waveform: bool,
+    wave: WaveSupport,
     toolchain: &toolchain_seed::Toolchain<'_>,
     jobs: usize,
     opts: &CmakeBuildOpts,
@@ -1503,7 +1547,7 @@ fn prepare_runtime_cache(
     let key = format!(
         "{}-{}",
         runtime_cache_key_with_compiler(
-            waveform,
+            wave,
             toolchain.cc,
             toolchain.flags,
             cmake_prog,
@@ -1552,6 +1596,7 @@ fn prepare_runtime_cache(
     let mut writer = super::SourceWriter::default();
     super::write_sim_sources(&entry, &[], opts.value_config, &mut writer)?;
     writer.write(&entry.join("llg_value_build.h"), value::guard_header(opts)?)?;
+    let waveform = wave.enabled();
     if waveform {
         super::rt::write_waveform_sources(&entry, &mut writer)?;
     }
@@ -1567,10 +1612,12 @@ fn prepare_runtime_cache(
         .replace("{RUNTIME_SOURCES}", &runtime_sources)
         .replace(
             "{WAVE_DEFINITION}",
-            if waveform {
-                RUNTIME_WAVE_DEFINITION
-            } else {
-                ""
+            &match wave {
+                WaveSupport::None => String::new(),
+                WaveSupport::Steps => RUNTIME_WAVE_DEFINITION.to_owned(),
+                WaveSupport::Deltas => {
+                    format!("{RUNTIME_WAVE_DEFINITION}\n{RUNTIME_WAVE_DELTAS_DEFINITION}")
+                }
             },
         )
         + &value::cmake_setup(opts, "llg_runtime")?;
@@ -1677,7 +1724,7 @@ fn runtime_cache_root_with_override(base: &Path, override_root: Option<PathBuf>)
 
 #[cfg(test)]
 fn runtime_cache_key(
-    waveform: bool,
+    wave: WaveSupport,
     cc: &str,
     flags: &str,
     cmake_prog: &str,
@@ -1685,7 +1732,7 @@ fn runtime_cache_key(
 ) -> String {
     let compiler = compiler_probe::facts(cc, &std::env::temp_dir());
     runtime_cache_key_with_compiler(
-        waveform,
+        wave,
         cc,
         flags,
         cmake_prog,
@@ -1696,7 +1743,7 @@ fn runtime_cache_key(
 }
 
 fn runtime_cache_key_with_compiler(
-    waveform: bool,
+    wave: WaveSupport,
     cc: &str,
     flags: &str,
     cmake_prog: &str,
@@ -1715,6 +1762,7 @@ fn runtime_cache_key_with_compiler(
         opts.model_opt_level.gnu_flag(),
         opts.model_opt_level.msvc_flag(),
         RUNTIME_WAVE_DEFINITION,
+        RUNTIME_WAVE_DELTAS_DEFINITION,
         super::rt::runtime_sources().0,
         super::rt::runtime_sources().1,
         super::rt::value_sources_for(opts.value_config.backend).0,
@@ -1762,7 +1810,7 @@ fn runtime_cache_key_with_compiler(
         }
     }
     hash = (hash ^ u64::from(opts.value_config.kernel.selector())).wrapping_mul(0x100000001b3);
-    if waveform {
+    if wave.enabled() {
         for (_, source) in super::rt::waveform_sources() {
             for byte in source.as_bytes() {
                 hash ^= u64::from(*byte);
@@ -1773,7 +1821,7 @@ fn runtime_cache_key_with_compiler(
     format!(
         "owned-v{}-wave{}-{hash:016x}",
         opts.value_config.backend.abi(),
-        u8::from(waveform)
+        wave.key()
     )
 }
 
@@ -1923,11 +1971,19 @@ fn validate_model_abi_for(
     Ok(())
 }
 
-fn waveform_enabled(extra: &[(&str, &str)]) -> bool {
-    extra.iter().any(|(_, text)| {
-        text.lines()
-            .any(|line| line.trim_end() == "#define LLG_WAVEFORM 1")
-    })
+fn wave_support(extra: &[(&str, &str)]) -> WaveSupport {
+    let defines = |wanted: &str| {
+        extra
+            .iter()
+            .any(|(_, text)| text.lines().any(|line| line.trim_end() == wanted))
+    };
+    if !defines("#define LLG_WAVEFORM 1") {
+        WaveSupport::None
+    } else if defines("#define LLG_WAVE_DELTAS 1") {
+        WaveSupport::Deltas
+    } else {
+        WaveSupport::Steps
+    }
 }
 
 /// Whether a usable cmake exists (`$LLG_CMAKE` or `cmake --version`).
@@ -2213,7 +2269,7 @@ mod tests {
         use crate::sim::value_backend::{CompactKernel, ValueBackend, ValueConfig};
         let key = |config| {
             runtime_cache_key_with_compiler(
-                false,
+                WaveSupport::None,
                 "cc",
                 "",
                 "cmake",
@@ -2408,7 +2464,15 @@ mod tests {
     fn runtime_cache_separates_model_optimization_levels_and_user_flags() {
         let opts = CmakeBuildOpts::default();
         let key = |opts: &CmakeBuildOpts, flags| {
-            runtime_cache_key_with_compiler(false, "cc", flags, "cmake", opts, "cc", "target")
+            runtime_cache_key_with_compiler(
+                WaveSupport::None,
+                "cc",
+                flags,
+                "cmake",
+                opts,
+                "cc",
+                "target",
+            )
         };
         let o1 = CmakeBuildOpts {
             model_opt_level: ModelOptLevel::O1,
@@ -2727,23 +2791,32 @@ mod tests {
             launcher: Some(String::new()),
             ..Default::default()
         };
-        let base = runtime_cache_key(false, "cc", "-O2", "cmake", &defaults);
+        let base = runtime_cache_key(WaveSupport::None, "cc", "-O2", "cmake", &defaults);
         assert_eq!(
             base,
-            runtime_cache_key(false, "cc", "-O2", "cmake", &defaults)
+            runtime_cache_key(WaveSupport::None, "cc", "-O2", "cmake", &defaults)
         );
         assert!(base.starts_with("owned-v"));
+        let steps = runtime_cache_key(WaveSupport::Steps, "cc", "-O2", "cmake", &defaults);
+        let deltas = runtime_cache_key(WaveSupport::Deltas, "cc", "-O2", "cmake", &defaults);
+        assert_ne!(base, steps);
         assert_ne!(
-            base,
-            runtime_cache_key(true, "cc", "-O2", "cmake", &defaults)
+            steps, deltas,
+            "the per-delta dump mode links its own runtime archive"
         );
         let generator = |name: &str| CmakeBuildOpts {
             generator: Some(name.to_owned()),
             ..Default::default()
         };
         assert_ne!(
-            runtime_cache_key(false, "cc", "-O2", "cmake", &generator("Ninja")),
-            runtime_cache_key(false, "cc", "-O2", "cmake", &generator("Unix Makefiles")),
+            runtime_cache_key(WaveSupport::None, "cc", "-O2", "cmake", &generator("Ninja")),
+            runtime_cache_key(
+                WaveSupport::None,
+                "cc",
+                "-O2",
+                "cmake",
+                &generator("Unix Makefiles")
+            ),
             "the effective generator selects distinct runtime archives"
         );
         let launched = CmakeBuildOpts {
@@ -2752,11 +2825,11 @@ mod tests {
         };
         assert_ne!(
             base,
-            runtime_cache_key(false, "cc", "-O2", "cmake", &launched)
+            runtime_cache_key(WaveSupport::None, "cc", "-O2", "cmake", &launched)
         );
         assert_ne!(
             runtime_cache_key_with_compiler(
-                false,
+                WaveSupport::None,
                 "cc",
                 "-O2",
                 "cmake",
@@ -2765,7 +2838,7 @@ mod tests {
                 "x86_64-pc-linux-gnu",
             ),
             runtime_cache_key_with_compiler(
-                false,
+                WaveSupport::None,
                 "cc",
                 "-O2",
                 "cmake",
@@ -2778,9 +2851,36 @@ mod tests {
     }
 
     #[test]
+    fn wave_support_follows_the_model_header_and_defines_the_delta_runtime() {
+        let model = |text: &'static str| [("model.c", text)];
+        assert_eq!(wave_support(&model("int x;\n")), WaveSupport::None);
+        assert_eq!(
+            wave_support(&model("#define LLG_WAVEFORM 1\n")),
+            WaveSupport::Steps
+        );
+        assert_eq!(
+            wave_support(&model(
+                "#define LLG_WAVEFORM 1\n#define LLG_WAVE_DELTAS 1\n"
+            )),
+            WaveSupport::Deltas
+        );
+        // Without a dump there is nothing to record per delta.
+        assert_eq!(
+            wave_support(&model("#define LLG_WAVE_DELTAS 1\n")),
+            WaveSupport::None
+        );
+        assert!(WAVE_DELTAS_CMAKE.contains("LLG_WAVE_DELTAS=1"));
+        assert!(RUNTIME_WAVE_DELTAS_DEFINITION.contains("llg_runtime PRIVATE LLG_WAVE_DELTAS=1"));
+        assert!(
+            !WAVE_CMAKE.contains("LLG_WAVE_DELTAS")
+                && !RUNTIME_WAVE_DEFINITION.contains("LLG_WAVE_DELTAS")
+        );
+    }
+
+    #[test]
     fn runtime_cache_key_fences_the_value_ownership_abi() {
         let defaults = CmakeBuildOpts::default();
-        let key = runtime_cache_key(false, "cc", "-O2", "cmake", &defaults);
+        let key = runtime_cache_key(WaveSupport::None, "cc", "-O2", "cmake", &defaults);
         assert!(
             key.starts_with(&format!(
                 "owned-v{}-wave0-",

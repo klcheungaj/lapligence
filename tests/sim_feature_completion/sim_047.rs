@@ -52,11 +52,20 @@ fn runtime_stderr(output: &Output) -> Vec<String> {
     sim_harness::runtime_messages(&String::from_utf8_lossy(&output.stderr))
 }
 
+/// Read and check a VCD file: no ordinary record repeats the value last
+/// written for its code (S47-D14).
 fn read_vcd(label: &str, dir: &sim_harness::TempDir, file: &str) -> vcd::Vcd {
     let path = dir.path().join(file);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{label}: read {}: {error}", path.display()));
-    vcd::parse(&text).unwrap_or_else(|error| panic!("{label}: malformed VCD: {error}\n{text}"))
+    let vcd =
+        vcd::parse(&text).unwrap_or_else(|error| panic!("{label}: malformed VCD: {error}\n{text}"));
+    assert_eq!(
+        vcd.repeated_records(),
+        [],
+        "{label}: records repeating the last written value\n{text}"
+    );
+    vcd
 }
 
 /// The end-of-step values of `name` and at most one ordinary record per
@@ -100,6 +109,14 @@ fn vcd_reader_accepts_aliases_and_rejects_malformed_files() {
     );
     assert_eq!(vcd.checkpoints(Section::DumpOff)[0].0, 7);
     assert_eq!(vcd.checkpoints(Section::DumpVars)[0].1.len(), 3);
+    assert_eq!(vcd.repeated_records(), []);
+    assert_eq!(vcd.plain_records_at(5).len(), 2);
+    // `b` is 0 at the checkpoint, so a plain `0` at 5 repeats it.
+    let repeated = vcd::parse(&SAMPLE.replace("1\"\n#7", "0\"\n#7")).expect("parses");
+    assert_eq!(
+        repeated.repeated_records(),
+        [(5, "\"".to_owned(), "0".to_owned())]
+    );
     for (label, text) in [
         ("repeated time", SAMPLE.replace("#7", "#5")),
         ("undeclared code", SAMPLE.replace("1\"\n#7", "1$\n#7")),
@@ -282,13 +299,9 @@ fn check_trace_values(label: &str, dir: &sim_harness::TempDir, output: &Output) 
         &path(&["tb", "g[1]", "second", "s", "drive"]),
         &[(0, "0")],
     );
-    // The glitch returns to 0 within step 1000: one record of the final 0.
-    assert_steps(
-        label,
-        &vcd,
-        &path(&["tb", "glitch"]),
-        &[(0, "0"), (1000, "0")],
-    );
+    // The glitch returns to 0 within step 1000, the value last written: no
+    // record (S47-D14).
+    assert_steps(label, &vcd, &path(&["tb", "glitch"]), &[(0, "0")]);
     assert_steps(
         label,
         &vcd,
@@ -1417,4 +1430,225 @@ fn the_storage_pass_never_changes_a_dump() {
         "storage-pass differential: {differing} of {} models differ",
         sources.len()
     );
+}
+
+/// The `llg_nba_after` updates of `target` in the generated `model.c` under
+/// `dir`: fewer when lowering merged an overridden update (FIN-001 O2).
+fn nba_updates_of(dir: &Path, target: &str) -> usize {
+    fn find(dir: &Path) -> Option<std::path::PathBuf> {
+        for entry in std::fs::read_dir(dir).ok()? {
+            let path = entry.ok()?.path();
+            if path.is_dir() {
+                if let Some(found) = find(&path) {
+                    return Some(found);
+                }
+            } else if path.file_name().is_some_and(|name| name == "model.c") {
+                return Some(path);
+            }
+        }
+        None
+    }
+    let model = find(dir).unwrap_or_else(|| panic!("no model.c under {}", dir.display()));
+    let text = std::fs::read_to_string(&model).expect("read model.c");
+    text.matches(&format!("llg_nba_after(&{target},")).count()
+}
+
+/// `restored.sv` with the default dump (fixture readme): a value that ends
+/// its step at the value last written has no record (S47-D14), and the
+/// records of a step follow registration order, so the merged model and the
+/// one that commits every overridden update (`KEEP`) write the same file.
+#[test]
+fn values_restored_within_a_step_write_no_record_with_or_without_the_merge() {
+    let stdout = include_str!("../fixtures/sim/feature_completion/sim_047/restored.out");
+    for optimized in [true, false] {
+        let mut files = Vec::new();
+        for (variant, define) in [("merged", None), ("kept", Some("KEEP"))] {
+            let label = format!("restored {variant}, optimized={optimized}");
+            let mut args = Vec::new();
+            if let Some(define) = define {
+                args.extend(["--define", define]);
+            }
+            let (dir, output) =
+                sim_cli::run_case_keeping_dir(SUITE, "restored", optimized, &args, &[]);
+            assert_success(&label, &output, stdout);
+            assert!(runtime_stderr(&output).is_empty(), "{label}: {output:?}");
+            let updates = nba_updates_of(dir.path(), "G_tb_q");
+            assert_eq!(updates, if define.is_some() { 4 } else { 2 }, "{label}");
+            let vcd = read_vcd(&label, &dir, "restored.vcd");
+            assert_eq!(vcd.times, [0, 1, 2, 5, 6, 7, 8], "{label}");
+            let steps = |name: &str| vcd.changes_of(&path(&["tb", name]));
+            let owned = |values: &[(u64, &str)]| {
+                values
+                    .iter()
+                    .map(|(time, value)| (*time, (*value).to_owned()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                steps("clk"),
+                owned(&[(0, "0"), (1, "1"), (2, "0"), (7, "0")]),
+                "{label}"
+            );
+            // q: 2 at step 1, and 3 then back to 2 within the step-2 batch.
+            assert_eq!(
+                steps("q"),
+                owned(&[(0, "0000"), (1, "0010"), (7, "0010")]),
+                "{label}"
+            );
+            assert_eq!(
+                steps("r"),
+                owned(&[(0, "0000"), (1, "0101"), (7, "0101")]),
+                "{label}"
+            );
+            // Undone within a turn (3), in a later delta (4) and after the
+            // $dumpall checkpoint (7).
+            assert_eq!(
+                steps("v"),
+                owned(&[(0, "x01z"), (6, "1111"), (7, "1111")]),
+                "{label}"
+            );
+            assert_eq!(steps("g"), owned(&[(0, "0"), (7, "0")]), "{label}");
+            assert_eq!(steps("level"), owned(&[(0, "0.5"), (7, "0.5")]), "{label}");
+            assert_eq!(
+                steps("tick"),
+                owned(&[(0, "x"), (5, "x"), (7, "x")]),
+                "{label}"
+            );
+            // Registration order (identifier codes ascend), whatever the order
+            // of the writes: the merged model writes r before q.
+            let code = |name: &str| vcd.var(&path(&["tb", name])).code.clone();
+            assert_eq!(
+                vcd.plain_records_at(1),
+                [
+                    (code("clk"), "1".to_owned()),
+                    (code("q"), "0010".to_owned()),
+                    (code("r"), "0101".to_owned())
+                ],
+                "{label}"
+            );
+            files.push(std::fs::read_to_string(dir.path().join("restored.vcd")).expect("read VCD"));
+        }
+        assert_eq!(
+            files[0], files[1],
+            "optimized={optimized}: the merge changed the VCD"
+        );
+
+        let mut dumps = Vec::new();
+        for (variant, define) in [("merged", None), ("kept", Some("KEEP"))] {
+            let label = format!("restored {variant} FST, optimized={optimized}");
+            let mut args = vec!["--define", "FILE=\"restored.fst\""];
+            if let Some(define) = define {
+                args.extend(["--define", define]);
+            }
+            let (dir, output) =
+                sim_cli::run_case_keeping_dir(SUITE, "restored", optimized, &args, &[]);
+            assert_success(&label, &output, stdout);
+            let dump = fst_dump(dir.path(), "restored.fst")
+                .unwrap_or_else(|error| panic!("{label}: {error}"));
+            for (name, restored) in [("q", 2), ("v", 3), ("v", 4), ("g", 3), ("level", 3)] {
+                assert!(
+                    dump.changes_of(&format!("tb.{name}"))
+                        .iter()
+                        .all(|(time, _)| *time != restored),
+                    "{label}: {name} has a record at {restored}: {:?}",
+                    dump.changes_of(&format!("tb.{name}"))
+                );
+            }
+            dumps.push(dump);
+        }
+        assert_eq!(dumps[0].vars, dumps[1].vars, "optimized={optimized}");
+        assert_eq!(
+            dumps[0].changes, dumps[1].changes,
+            "optimized={optimized}: the merge changed the FST records"
+        );
+    }
+}
+
+/// `restored.sv` with `--wave-deltas` (S47-D15): every change is a record,
+/// in execution order, several in one time step, and lowering keeps every
+/// overridden update of a dumped model.
+#[test]
+fn the_per_delta_dump_records_every_change_in_order() {
+    let stdout = include_str!("../fixtures/sim/feature_completion/sim_047/restored.out");
+    for optimized in [true, false] {
+        let label = format!("restored --wave-deltas, optimized={optimized}");
+        let (dir, output) =
+            sim_cli::run_case_keeping_dir(SUITE, "restored", optimized, &["--wave-deltas"], &[]);
+        assert_success(&label, &output, stdout);
+        assert!(runtime_stderr(&output).is_empty(), "{label}: {output:?}");
+        assert_eq!(nba_updates_of(dir.path(), "G_tb_q"), 4, "{label}");
+        let vcd = read_vcd(&label, &dir, "restored.vcd");
+        let code = |name: &str| vcd.var(&path(&["tb", name])).code.clone();
+        let records = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(name, value)| (code(name), (*value).to_owned()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(vcd.times, [0, 1, 2, 3, 4, 5, 6, 7, 8], "{label}");
+        // The NBA batch commits q, r, q in statement order.
+        assert_eq!(
+            vcd.plain_records_at(1),
+            records(&[("clk", "1"), ("q", "0001"), ("r", "0101"), ("q", "0010")]),
+            "{label}"
+        );
+        assert_eq!(
+            vcd.plain_records_at(2),
+            records(&[("clk", "0"), ("q", "0011"), ("q", "0010")]),
+            "{label}"
+        );
+        assert_eq!(
+            vcd.plain_records_at(3),
+            records(&[
+                ("v", "0000"),
+                ("v", "x01z"),
+                ("level", "1.5"),
+                ("level", "0.5"),
+                ("g", "1"),
+                ("g", "0")
+            ]),
+            "{label}"
+        );
+        assert_eq!(
+            vcd.plain_records_at(4),
+            records(&[("v", "0110"), ("v", "x01z")]),
+            "{label}"
+        );
+        assert_eq!(
+            vcd.plain_records_at(5),
+            records(&[("tick", "x"), ("tick", "x")]),
+            "{label}"
+        );
+        // After the $dumpall checkpoint at 7.
+        assert_eq!(
+            vcd.plain_records_at(7),
+            records(&[("v", "0001"), ("v", "1111")]),
+            "{label}"
+        );
+
+        let (dir, output) = sim_cli::run_case_keeping_dir(
+            SUITE,
+            "restored",
+            optimized,
+            &["--wave-deltas", "--define", "FILE=\"restored.fst\""],
+            &[],
+        );
+        assert_success(&label, &output, stdout);
+        let dump =
+            fst_dump(dir.path(), "restored.fst").unwrap_or_else(|error| panic!("{label}: {error}"));
+        let q: Vec<(u64, String)> = dump
+            .changes_of("tb.q")
+            .into_iter()
+            .filter(|(time, _)| (1..=2).contains(time))
+            .collect();
+        assert_eq!(
+            q,
+            [
+                (1, "0001".to_owned()),
+                (1, "0010".to_owned()),
+                (2, "0011".to_owned()),
+                (2, "0010".to_owned())
+            ],
+            "{label}"
+        );
+    }
 }

@@ -1291,6 +1291,11 @@ fn render_model(
     out.push_str("#define LLG_MODEL_PROCESS_ABI 3\n");
     if model.waveform {
         out.push_str("#define LLG_WAVEFORM 1\n");
+        // The model build reads this line: the per-delta dump mode links its
+        // own runtime archive (`sim::build`).
+        if model.wave_deltas {
+            out.push_str("#define LLG_WAVE_DELTAS 1\n");
+        }
     }
     // The model build reads this header line: a catalog holds hundreds of
     // thousands of pointers, which a position-independent executable

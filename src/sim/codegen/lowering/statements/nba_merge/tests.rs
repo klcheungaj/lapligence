@@ -3,6 +3,10 @@ use crate::core::db::Db;
 
 /// Lower `source` (top `tb`) and run the merge on the lowered model.
 fn merged(source: &str) -> (IrModel, usize) {
+    merged_with(source, &Default::default())
+}
+
+fn merged_with(source: &str, options: &super::super::super::CodegenOptions) -> (IrModel, usize) {
     let compiled = crate::core::compile::compile_sources_checked(
         &[crate::core::compile::OwnedSource::compilation_unit(
             "nba_merge.sv",
@@ -15,7 +19,7 @@ fn merged(source: &str) -> (IrModel, usize) {
     )
     .unwrap();
     let database = Db::from_slang(&compiled.snapshot).unwrap();
-    let mut lowered = super::super::super::lower_model(&database, &Default::default()).unwrap();
+    let mut lowered = super::super::super::lower_model(&database, options).unwrap();
     let count = merge_overridden_nbas(&mut lowered.model, &lowered.monitor_reads);
     (lowered.model, count)
 }
@@ -201,15 +205,50 @@ fn a_strobe_does_not_observe_writes() {
     assert_eq!(count, 1);
 }
 
+/// The default dump writes end-of-step values that differ from the last
+/// value written (S47-D14), which the merge does not change.
 #[test]
-fn a_model_with_waveforms_keeps_each_update() {
-    let (_, count) = merged(
-        "module tb; logic clk; logic [3:0] q;
+fn a_model_with_waveforms_merges() {
+    let source = "module tb; logic clk; logic [3:0] q;
            initial $dumpvars;
            always @(posedge clk) begin q <= 4'd1; q <= 4'd2; end
-         endmodule",
+         endmodule";
+    let (_, count) = merged(source);
+    assert_eq!(count, 1);
+    let (_, count) = merged_with(
+        source,
+        &super::super::super::CodegenOptions {
+            waveform: Some(super::super::super::WaveformOptions {
+                file: "w.vcd".to_owned(),
+                depth: 0,
+            }),
+            ..Default::default()
+        },
     );
+    assert_eq!(count, 1);
+}
+
+/// The per-delta dump records every write (S47-D15).
+#[test]
+fn the_per_delta_dump_keeps_each_update() {
+    let source = "module tb; logic clk; logic [3:0] q;
+           initial $dumpvars;
+           always @(posedge clk) begin q <= 4'd1; q <= 4'd2; end
+         endmodule";
+    let deltas = super::super::super::CodegenOptions {
+        wave_deltas: true,
+        ..Default::default()
+    };
+    let (_, count) = merged_with(source, &deltas);
     assert_eq!(count, 0);
+    // Without dumping the mode has no record to keep.
+    let (_, count) = merged_with(
+        "module tb; logic clk; logic [3:0] q;
+           always @(posedge clk) begin q <= 4'd1; q <= 4'd2; end
+         endmodule",
+        &deltas,
+    );
+    assert_eq!(count, 1);
 }
 
 #[test]

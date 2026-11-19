@@ -377,6 +377,40 @@ impl Vcd {
         counts.into_values().max().unwrap_or(0)
     }
 
+    /// Ordinary records that repeat the value last written for their code
+    /// (by a record or a checkpoint), as `(time, code, value)`. Events are
+    /// left out: every event record is the same mark.
+    pub(crate) fn repeated_records(&self) -> Vec<(u64, String, String)> {
+        let events: Vec<&str> = self
+            .vars
+            .iter()
+            .filter(|var| var.kind == "event")
+            .map(|var| var.code.as_str())
+            .collect();
+        let mut last: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut repeated = Vec::new();
+        for change in &self.changes {
+            if events.contains(&change.code.as_str()) {
+                continue;
+            }
+            let previous = last.insert(change.code.as_str(), change.value.as_str());
+            if change.section == Section::Plain && previous == Some(change.value.as_str()) {
+                repeated.push((change.time, change.code.clone(), change.value.clone()));
+            }
+        }
+        repeated
+    }
+
+    /// The ordinary records of one time step in file order, as
+    /// `(code, value)`.
+    pub(crate) fn plain_records_at(&self, time: u64) -> Vec<(String, String)> {
+        self.changes
+            .iter()
+            .filter(|change| change.time == time && change.section == Section::Plain)
+            .map(|change| (change.code.clone(), change.value.clone()))
+            .collect()
+    }
+
     /// The checkpoints of one kind in file order, as `(time, [(code, value)])`.
     pub(crate) fn checkpoints(&self, kind: Section) -> Vec<(u64, Vec<(String, String)>)> {
         self.sections

@@ -1,7 +1,8 @@
 // Decision S47-D2: while dumping is on, a variable that changed during a time
-// step is recorded once, with its value at the end of the step. A variable
-// that changed and returned to its earlier value is still recorded (once);
-// values written by final procedures are recorded at the end time.
+// step is recorded at most once, with its value at the end of the step. A
+// variable that changed and returned to the value last written for it has no
+// record (S47-D14); values written by final procedures are recorded at the
+// end time.
 //
 // IEEE 1800-2009 21.7.1.4 (SystemVerilog-1800-2009.txt L37887-37888): "When
 // dumping is enabled, the value change dumper records the values of the
@@ -9,9 +10,8 @@
 // do not change during a time increment are not dumped." The text does not
 // say whether several changes in one increment give several records; llg
 // records the end-of-step value once.
-// Compare S47-D2.vcd: at `#1` one record each of g = 0 and b = 1 (both
-// returned to their earlier values), `#2 1!` for g, then `#3 0!` from the
-// final procedure.
+// Compare S47-D2.vcd: no record at `#1` (g and b both returned to the value
+// last written), `#2 1!` for g, then `#3 0!` from the final procedure.
 module tb;
   logic g;
   logic b;

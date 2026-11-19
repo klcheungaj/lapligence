@@ -185,7 +185,10 @@ from `sig_settle` and counting what it observes in `wait_source_observed`.
 Lowering drops a nonblocking update that a later one in the same process
 turn overrides only where none of these per-write consumers can see it
 (`codegen/lowering/statements/nba_merge.rs`), so a new per-write consumer
-must be added to its exclusions. Ordered change logs (`llg_wait_changes`) also log per write.
+must be added to its exclusions. Waveforms are not excluded by default: the
+writer compares each end-of-step value with the last record (S47-D14), so
+the dropped write leaves no trace; only the per-delta dump (`--wave-deltas`,
+S47-D15) records each write and keeps every update. Ordered change logs (`llg_wait_changes`) also log per write.
 Strings, container cells and reference markers publish per write, and so do
 markers bound to an unwaited marker. The contents marker of a native record
 (`llg_record_changed`, called after each statement that stores into a record a

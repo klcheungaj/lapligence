@@ -3953,6 +3953,22 @@ fn s47_d13_catalog_encoding() {
 }
 
 #[test]
+fn s47_d14_restored_value_no_record() {
+    run_decision(
+        "S47-D14_restored_value_no_record",
+        include_str!("fixtures/sim/lrm_decisions/S47-D14_restored_value_no_record.out"),
+    );
+}
+
+#[test]
+fn s47_d15_per_delta_dump() {
+    run_decision(
+        "S47-D15_per_delta_dump",
+        include_str!("fixtures/sim/lrm_decisions/S47-D15_per_delta_dump.out"),
+    );
+}
+
+#[test]
 fn s47_d9_named_string_rejected() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(include_str!("fixtures/sim/lrm_decisions/S47-D9_named_string_rejected.out").is_empty());
@@ -4930,6 +4946,19 @@ fn s13_d6_ref_wait_nonexistent_element() {
         &[],
         include_str!("fixtures/sim/lrm_decisions/S13-D6_ref_wait_nonexistent_element.out"),
         "index of a `ref` actual selects no element of a task that waits on the formal",
+    );
+}
+
+#[test]
+fn s07_d15_ref_stop_nested_call() {
+    // The run stops at the call two subroutines below the process, so stdout
+    // holds the line before it and the final procedure's line.
+    sim_cli::run_case_failing_at_runtime(
+        SUITE,
+        "S07-D15_ref_stop_nested_call",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S07-D15_ref_stop_nested_call.out"),
+        "S07-D15_ref_stop_nested_call.sv:29:5: [SIM-009] (tb @ 0 ps) index of a `ref` actual selects no element (run with --no-index-checks",
     );
 }
 

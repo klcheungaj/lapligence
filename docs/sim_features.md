@@ -1941,9 +1941,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   to an element or member of an element of a subroutine record, or of a
   queue element, wakes at every store into what it binds: the owner's,
   a sibling branch's and those through other `ref` formals (decision S09-D4,
-  `record_ref_subroutine_element_wake`, `record_ref_container_member_wake`);
-  a run-time index of a subroutine record that selects no element stops at
-  the actual (S07-D15, `record_ref_subroutine_unselected`). A run-time record
+  `record_ref_subroutine_element_wake`, `record_ref_container_member_wake`),
+  also when a task forwards a member of its record `ref` formal to the waiter,
+  at any depth (`record_ref_forwarded_member_wake`); fork branches use the
+  owner's record whole as a call operand or copy source. A run-time index of
+  a subroutine record that selects no element stops at the actual (S07-D15,
+  `record_ref_subroutine_unselected`, `record_ref_forwarded_member_unselected`);
+  a `ref` stop ends the run at the call, and no caller runs on
+  (`S07-D15_ref_stop_nested_call`). A run-time record
   element (`o.m[1].a[k]`, `t.e[k]`) compares with `==`, `!=` and `===`, and a
   subroutine record's `t.m[1].a[k]` is an assignment source and target
   (`record_element_select_equality`). At 16 or more cells a subroutine
@@ -1973,7 +1978,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   packed, real and string input formals and packed and real output and inout
   formals are shared like locals (outputs are copied out at return), and so
   are string outputs, native records with their companion containers and
-  container formals, with branches of every fork kind and nested forks.
+  container formals, with branches of every fork kind and nested forks (a
+  `join` branch reading a string input formal fails:
+  [known issue](known_issues.md#a-string-input-formal-read-in-a-fork-join-branch)).
   Semaphore, mailbox, chandle and class-handle variables and by-value handle
   formals are shared through an opaque frame slot
   ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)); a
@@ -2416,8 +2423,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **VCD/FST** — `$dumpfile` names the file (`.fst` selects FST, any other
   name VCD; default `dump.vcd`); `$dumpvars` calls of one time step combine
   their depth, scope and variable selections, and the dump starts at the end
-  of that step. Each changed variable is recorded once per time step with its
-  end-of-step value. Packed values, array elements with declared bounds, real
+  of that step. Each changed variable is recorded at most once per time step
+  with its end-of-step value, and not at all when that value equals its last
+  record (a value restored within the step), in registration order, so
+  lowering's merge of overridden nonblocking updates leaves the file
+  unchanged. `--wave-deltas` (`waveform.deltas`) instead records every change
+  in execution order, several per step, which makes dumps larger and slower;
+  it is compiled in, so other models pay nothing for it. Packed values, array elements with declared bounds, real
   values, X/Z, aliases (one identifier code per merged net), hierarchy with
   `g[i]` loop generate scopes and femtosecond timestamps are represented, and
   so are the static variables of blocks, tasks and functions (their scopes,
@@ -2429,7 +2441,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   task or function may name a `$dumpvars` scope, the depth counting from it.
   `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
   `$dumpflush` follow the dump state; an output error is reported, stops the
-  dump and fails the run (decisions S47-D1..D13; [SIM-047
+  dump and fails the run (decisions S47-D1..D15; [SIM-047
   fixtures](../tests/fixtures/sim/feature_completion/sim_047/readme.md), read
   by an independent VCD reader and GTKWave's FST reader). Remaining gaps are
   listed in [known issues](known_issues.md#waveform-dump-coverage-limits-sim-047).

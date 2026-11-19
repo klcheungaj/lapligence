@@ -79,10 +79,16 @@ impl Validator<'_> {
                     let ref_formals = captures.iter().any(|capture| {
                         matches!(capture.initial().kind(), IrExprKind::FormalRead(_))
                     });
-                    self.validate_stmts(
-                        body,
-                        if ref_formals { formals } else { branch_formals },
-                        &format!("{path}.pre_fns[{idx}].body"),
+                    self.with_captured_native_values(
+                        captures,
+                        &format!("{path}.pre_fns[{idx}]"),
+                        || {
+                            self.validate_stmts(
+                                body,
+                                if ref_formals { formals } else { branch_formals },
+                                &format!("{path}.pre_fns[{idx}].body"),
+                            )
+                        },
                     )?;
                 }
                 IrPreFn::MonEval { args, context, .. } => {
@@ -130,8 +136,22 @@ impl Validator<'_> {
                             &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
                         )?;
                     }
-                    self.validate_lhs(lhs, branch_formals, &format!("{path}.pre_fns[{idx}].lhs"))?;
-                    self.validate_expr(rhs, branch_formals, &format!("{path}.pre_fns[{idx}].rhs"))?;
+                    self.with_captured_native_values(
+                        captures,
+                        &format!("{path}.pre_fns[{idx}]"),
+                        || {
+                            self.validate_lhs(
+                                lhs,
+                                branch_formals,
+                                &format!("{path}.pre_fns[{idx}].lhs"),
+                            )?;
+                            self.validate_expr(
+                                rhs,
+                                branch_formals,
+                                &format!("{path}.pre_fns[{idx}].rhs"),
+                            )
+                        },
+                    )?;
                 }
                 IrPreFn::DeferredAssertion {
                     frame: pre_frame,
@@ -156,10 +176,16 @@ impl Validator<'_> {
                             &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
                         )?;
                     }
-                    self.validate_stmts(
-                        body,
-                        branch_formals,
-                        &format!("{path}.pre_fns[{idx}].body"),
+                    self.with_captured_native_values(
+                        captures,
+                        &format!("{path}.pre_fns[{idx}]"),
+                        || {
+                            self.validate_stmts(
+                                body,
+                                branch_formals,
+                                &format!("{path}.pre_fns[{idx}].body"),
+                            )
+                        },
                     )?;
                 }
                 IrPreFn::MonitorReads { reads, .. } => {

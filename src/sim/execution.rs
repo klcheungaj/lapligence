@@ -1746,6 +1746,11 @@ fn collect_argument_effects(
             collect_native_access_effects(ir, address, effects, visited_calls)
         }
         IrCallArg::ElementRef(reference) => {
+            // An actual no index selects stops the run at the call, so the
+            // callers of the calling subroutine must leave after it too.
+            if reference.stop_unselected.is_some() {
+                effects.push(ExecutionEffect::Terminate);
+            }
             reference.expressions(&mut |child| {
                 collect_expression_effects(ir, child, effects, visited_calls)
             });
@@ -1762,7 +1767,18 @@ fn collect_argument_effects(
                 }
             }
         }
-        IrCallArg::RefAddr { lhs, read, .. } => {
+        IrCallArg::RefAddr {
+            lhs,
+            read,
+            stop_unselected,
+            ..
+        } => {
+            // A forwarded whole `ref` formal names what its own actual
+            // selected: an unselected index already stopped there, or binds
+            // the default with index checks off, so its stop never fires.
+            if stop_unselected.is_some() && !matches!(lhs.as_ref(), IrLhs::Ref { bit: None, .. }) {
+                effects.push(ExecutionEffect::Terminate);
+            }
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
             collect_expression_effects(ir, read, effects, visited_calls);
         }
@@ -3411,6 +3427,81 @@ mod tests {
         );
         assert!(!dpi_effects.contains(&ExecutionEffect::Suspend));
         assert!(dpi_effects.contains(&ExecutionEffect::Terminate));
+    }
+
+    /// A `ref` actual whose index can select no element stops the run at the
+    /// call, so a subroutine holding such a call terminates for its callers,
+    /// who then leave after calling it instead of running on. A forwarded
+    /// whole `ref` formal cannot stop there.
+    #[test]
+    fn ref_actuals_that_can_stop_the_run_terminate_their_callers() {
+        use crate::sim::ir::{IrCall, IrCallArg, IrDepth, IrFunc, IrRefStop};
+
+        let read = IrExpr::new(
+            IrExprKind::Const(
+                crate::sim::ir::IrConst::packed(vec![0], vec![], vec![], 1, false, None).unwrap(),
+            ),
+            1,
+            false,
+            None,
+        );
+        let stop = IrRefStop {
+            scope: "tb".into(),
+            location: "t.sv:1:1".into(),
+            waited: false,
+        };
+        let element = IrLhs::Bit(0, Box::new(read.clone()), false);
+        let forwarded = IrLhs::Ref {
+            addr: "r0".into(),
+            width: 1,
+            signed: false,
+            two_state: false,
+            const_ref: false,
+            bit: None,
+        };
+        for (lhs, stop_unselected, stops) in [
+            (element.clone(), None, false),
+            (element, Some(stop.clone()), true),
+            (forwarded, Some(stop), false),
+        ] {
+            let actual = IrCallArg::RefAddr {
+                addr: "reference".into(),
+                width: 1,
+                signed: false,
+                two_state: false,
+                const_ref: false,
+                lhs: Box::new(lhs),
+                read: Box::new(read.clone()),
+                stop_unselected,
+            };
+            let mut ir = IrModel::new("stops".into(), 1).unwrap();
+            ir.funcs.push(IrFunc::new(
+                "callee".into(),
+                None,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            ));
+            ir.funcs.push(IrFunc::new(
+                "holder".into(),
+                None,
+                vec![],
+                vec![],
+                vec![],
+                vec![IrStmt::Call(Box::new(IrCall::new(
+                    0,
+                    vec![actual],
+                    IrDepth::PROC,
+                    vec![],
+                    vec![],
+                )))],
+            ));
+            assert_eq!(
+                effects_for_function(&ir, 1).contains(&ExecutionEffect::Terminate),
+                stops
+            );
+        }
     }
 
     #[test]
