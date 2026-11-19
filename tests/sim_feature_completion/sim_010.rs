@@ -112,6 +112,19 @@ fn process_ref_formals_reach_the_actual_from_fork_join_branches() {
 }
 
 #[test]
+fn fork_branches_of_every_join_kind_share_by_value_formals() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/joined_formals.out");
+    sim_cli::run_case_backend_parity(SUITE, "joined_formals", expected, &[], &[]);
+}
+
+#[test]
+fn function_branches_keep_string_and_record_formals() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_010/function_branch_formals.out");
+    sim_cli::run_case_backend_parity(SUITE, "function_branch_formals", expected, &[], &[]);
+}
+
+#[test]
 fn neg_ref_formals_in_fork_branches() {
     sim_cli::reject_case(
         SUITE,

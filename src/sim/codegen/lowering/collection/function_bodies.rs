@@ -646,6 +646,20 @@ impl<'a> Codegen<'a> {
                     ));
                 }
             }
+            // A by-value native record formal that a fork branch names is
+            // copied into a shared frame at entry the same way, so branches
+            // alias it like a shared record local (SIM-010).
+            if automatic && self.fork_shared(*io) {
+                if let Some(value) = self
+                    .native_roots
+                    .get(io)
+                    .copied()
+                    .filter(|value| self.model.native_values[*value].activation)
+                {
+                    self.shared_locals.insert(*io);
+                    shared_outputs.push((idx, crate::sim::ir::shared_native_capture_name(value)));
+                }
+            }
             if self.fixed_formal_array(*io).is_some()
                 || self.is_native_declaration(*io)
                 || self.is_subroutine_container(*io)
@@ -719,6 +733,20 @@ impl<'a> Codegen<'a> {
                     if !const_ref {
                         process_write.insert(*io, ProcessTarget::Local(format!("*r{idx}")));
                     }
+                    continue;
+                }
+                if !is_ref && *is_out && self.fork_shared(*io) {
+                    // A shared handle output: the emitter creates the cell
+                    // from `*o{idx}` and copies it back at return, as for a
+                    // shared string output. A process output is a pinned
+                    // identity like any handle output. A static subroutine's
+                    // handle output is its `*o{idx}` parameter too, so it
+                    // shares the same way.
+                    let name = format!("_llg_shared_formal_{idx}");
+                    self.shared_locals.insert(*io);
+                    chandle_read.insert(*io, IrChandleExpr::LocalRead(name.clone()));
+                    chandle_write.insert(*io, ChandleTarget::Local(name.clone()));
+                    shared_outputs.push((idx, name));
                     continue;
                 }
                 if !is_ref && !*is_out && automatic && self.fork_shared(*io) {

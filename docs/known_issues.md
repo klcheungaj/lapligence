@@ -3394,31 +3394,6 @@ pin collectable targets in the handle slot, and turn the catalog row from
 plugin that asks for one of the objects above, or with the ADV-019 catalog
 walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
 
-## A string input formal read in a `fork`-`join` branch
-
-**Status:** open; an internal error, not a located rejection.
-
-### Symptom
-
-`task automatic f(input string tag); fork $display("%s", tag); join endtask`
-stops generation with an internal error ("string formal outside a
-function", or "unresolved native storage a1" when the branch passes `tag` to
-a call) instead of running. The same branch under `join_none` runs.
-
-### Cause
-
-Not analysed: the `join` branch reads the formal as the subroutine's
-parameter (`FormalRead`), which the branch callback has no binding for.
-
-### Intended direction
-
-Read the formal in a `join` branch through its capture, as `join_none`
-branches do.
-
-### Reproduce
-
-The task above, called from an `initial` block.
-
 ## Container index-check stops name no array or source line
 
 **Status:** open by cost (S07-D15 stops are served).

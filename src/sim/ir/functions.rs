@@ -76,12 +76,14 @@ pub struct IrFormal {
     /// `llg_string_t` values/pointers rather than packed storage.
     pub(in crate::sim) string: bool,
     /// For a packed or real output/inout formal that a detached fork branch
-    /// shares: the local naming the shared frame cell that holds its value
+    /// shares, or a string or handle output/inout formal that any fork branch
+    /// names: the local naming the shared frame cell that holds its value
     /// during the activation. The callee creates the cell from `o{idx}` at
     /// entry, outside the body's scopes, and copies it back at return. For a
-    /// container formal that any fork branch names: its shared capture name;
-    /// the callee copies the caller's container into a shared frame the same
-    /// way.
+    /// container or by-value native record formal that any fork branch
+    /// names: its shared capture name; the callee copies the caller's value
+    /// (and a record's companion containers) into a shared frame the same
+    /// way, and copies an output back at return.
     pub(in crate::sim) shared_local: Option<String>,
     /// For a shared string formal: a wait can observe it, so its shared
     /// frame owns a change marker (see [`super::IrStmt::SharedString`]).

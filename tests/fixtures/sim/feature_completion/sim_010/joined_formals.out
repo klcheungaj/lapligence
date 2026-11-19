@@ -1,0 +1,28 @@
+join x
+shs x
+join done x
+any y
+any done y
+shs y-late
+write done call+b0+b1 10
+inner n
+outer n
+nested done changed
+wait go
+detached changed!
+outs in o a+io 4 11 1.50 4.00
+outs o a+io 4 11 1.50 4.00 1
+ins 11 1 2.50
+event
+ins done 7 5.00
+caller 11
+show rr 1
+r_join rr+ 2 5
+r_join out out 1 ii+io 2 9 1
+r_none changed 1 2
+r_nested inner rr
+r_nested 2
+st t
+st out t-o 8 sr 3
+m done 2
+m out krr k
