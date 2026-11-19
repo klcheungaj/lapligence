@@ -868,6 +868,83 @@ processes or clock edges, at the cost of a few bytes per object.
   by 0.3% on the new one, every-write-waited by 1.0% and 0.6%, and the
   `#1step` rows by under 1% on either.
 
+### Concurrent assertion hot parts
+
+- **Trade-off:** every publication of a model with concurrent assertions walks
+  all of them to find those its signal clocks
+  (`assertion_clock_signal_changed`), and it also walked all of them for
+  asynchronous `accept_on`/`reject_on` controls
+  (`assertion_abort_condition_changed`). The fields the clock walk reads
+  before it acts lay on 6-8 of the 9-10 lines of the 584-byte record, so 100
+  assertions took about 40 KiB per walk, more than a 32 KiB first-level data
+  cache. Removing the abort walk alone cut the 100-assertion row's
+  instructions by 35% but made it 12% slower: the abort walk read the same
+  lines and kept part of them in the cache for the clock walk. A record
+  allocated per assertion cannot be made smaller than those lines without
+  moving the fields the walk reads.
+- **Decision:** the fields the per-publication walks read before they act
+  (leading clock and edge, `disable iff` signal, clock gate, extra clocks,
+  kind, enable and expect state, accept/reject control) form a 64-byte hot
+  part, `llg_assertion_hot_t`. The hot parts of all assertions are one
+  cache-line-aligned array in registration order (`g.assertion_hot`). The
+  clock walk steps through that array, so the address of the next entry does
+  not depend on a load, and it reads one line per assertion: 6.4 KiB for 100.
+  It tests the leading clock and the extra-clock count first, since an
+  assertion that the signal cannot clock needs no other test. The record
+  keeps the other 528 bytes (including the abort-list link) and points at its
+  hot part. Only registration grows the array: it doubles and fixes the
+  records' pointers. Assertions with an asynchronous control are linked into
+  `g.async_aborts` at registration, and a write walks only that list (none in
+  most designs). The Observed set enters the assertion pass only while an
+  assertion is registered or assertion events are queued. The walk order and
+  the actions are unchanged, so outputs and generated C are unchanged.
+  Memory per assertion is 64 + 528 = 592 bytes against 584, plus the array's
+  spare capacity (at most half of it after a doubling) and one line of
+  alignment slack.
+- **Evidence:** the dev tip against each step, cachegrind (32 KiB 8-way
+  first-level data cache, 64-byte lines) on 100 assertions on one clock with
+  1,000 writes per cycle. The outputs of all 46 timing rows are identical, and
+  so is the generated C over the fixture tree (both optimizer modes).
+
+  | Step | Instructions | D1 read misses | Clock walk | Abort walk |
+  | --- | ---: | ---: | ---: | ---: |
+  | dev tip | 28.30 G | 225.0 M | 10.99 G, 61.1 M misses | 9.99 G, 56.9 M misses |
+  | hot array | 30.83 G | 68.8 M | 11.61 G, 0.71 M | 11.85 G, 0.90 M |
+  | + abort list | 18.90 G | 68.9 M | 11.61 G, 1.59 M | none |
+  | + clock first | 12.91 G | 68.9 M | 5.61 G, 1.59 M | none |
+
+  The hot array alone executes 9% more instructions. Narrow fields and the
+  index loop add two instructions per visit (19 against 17 when the
+  assertion is not clocked), and the abort walk now also starts from the
+  array. The clock-first test cuts that visit to 9 instructions. On the rows
+  with one assertion (sampled array cells), the steps together remove
+  0.1-0.9% of instructions, all of it in the two walks.
+
+  The Observed-set test came last. With every assertion change before it,
+  two clocking-input rows without assertions were 1-2% slower. A pure shift
+  of the runtime by 64 or 192 bytes moved them on the dev tip by only
+  -0.6% to +0.6%, while the changed runtime was 1.0-2.3% slower at all three
+  shifts. These rows never execute the changed code, but every Observed set
+  entered the assertion pass: 45 instructions over several distant blocks of
+  a large function whose layout the record change had moved. The inline test
+  costs 4 instructions. Rows without assertions now execute up to 0.9% fewer
+  instructions. The only rows above the dev tip in instructions are a
+  clocking row and the waveform rows. Their count moves with heap addresses
+  (the value-scope address index) or with the timing of the waveform writer
+  thread, not with this code. A 48 B to 64 KiB heap shift moves the
+  clocking row by up to 4% in either direction, and its mean over five shifts
+  is within 0.03% of the dev tip's.
+
+  Wall clock: 100 alternating pairs in both orders on pinned idle cores,
+  over all micro, wave and corpus rows. On 100 assertions, steps 1, 1+2 and
+  1-3 cut the run time by 35%, 54% and 68%; the hot array alone is 35%
+  faster although it executes 9% more instructions. The final change is
+  67.5% faster there (2.80 s to 0.91 s). One assertion on a sampled array
+  cell (16 or 4,096 cells, packed or not) runs 0.4-3.0% faster, and the
+  clocking-input rows without assertions 1.7-2.8% faster. 25 rows are faster
+  in both orders, and every other row is within +0.5%. A 0.13 s corpus row
+  measured +0.8% in the first pass and +0.2% in a 200-pair rerun.
+
 ### Bounded retention of finished work
 
 - **Trade-off:** keeping completed process records and every sampled slot until

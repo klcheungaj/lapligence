@@ -229,6 +229,23 @@ out-of-line functions. A new consumer on these paths follows the same rule:
 its test inline and predicted absent, its body out of line
 ([trade-offs](../../../../docs/sim_performance_tradeoffs.md#hot-paths-on-few-cache-lines)).
 
+Every publication of a model with concurrent assertions walks all of them
+for its clocks (`assertion_clock_signal_changed`). The fields that walk reads
+before it acts form a 64-byte hot part per assertion (`llg_assertion_hot_t`:
+leading clock and edge, `disable iff` signal, clock gate, extra clocks, kind,
+enable and expect state, accept/reject control), and the hot parts of all
+assertions are one cache-line-aligned array in registration order
+(`g.assertion_hot`) that only registration grows; the record keeps the rest
+and points at its hot part, so code that holds a record reads a moved field
+through `assertion->hot`. The walk tests the leading clock and the extra-clock
+count first: an assertion that the signal cannot clock needs no other test. A
+write evaluates asynchronous `accept_on`/`reject_on` controls
+(`assertion_abort_condition_changed`) only of the assertions linked into
+`g.async_aborts` at registration, and the Observed set enters the assertion
+pass (`run_concurrent_assertions`) only while an assertion is registered or
+assertion events are queued
+([trade-offs](../../../../docs/sim_performance_tradeoffs.md#concurrent-assertion-hot-parts)).
+
 A force part's target may be an array cell (a dense element, a lazily
 allocated cell of a sparse array, a record leaf or a column cell) that the
 generated code finds when the force or release executes; an invalid index
