@@ -40,6 +40,8 @@ pub(crate) struct DriverOptions {
     pub edition: compile::LanguageEdition,
     pub compilation_unit_mode: compile::CompilationUnitMode,
     pub delay_selection: compile::DelaySelection,
+    /// `None` keeps the built-in default (and its lint warning).
+    pub default_time_scale: Option<compile::SemanticTimeScale>,
     pub include_dirs: Vec<String>,
     pub defines: Vec<String>,
     pub param_overrides: Vec<String>,
@@ -456,6 +458,7 @@ pub(crate) fn resolve(
             .delay_selection
             .or(config.compile.delay_select)
             .unwrap_or_default(),
+        default_time_scale: cli.default_time_scale.or(config.compile.timescale),
         include_dirs,
         defines,
         param_overrides,
@@ -1857,5 +1860,33 @@ runtime_cache = "cfgcache"
             );
         }
         assert!(parse_args(vec!["-G".to_owned(), "W=8".to_owned()]).is_ok());
+    }
+
+    #[test]
+    fn timescale_command_line_replaces_the_config() {
+        let dir = temp("timescale");
+        let configured = config(
+            &dir,
+            "schema_version = 1\n[compile]\ntimescale = \"10us/1ns\"\n",
+        );
+        let parsed = |text: &str| Some(text.parse::<compile::SemanticTimeScale>().unwrap());
+        let options = resolve_no_env(cli(&["x.sv"]), None).unwrap();
+        assert_eq!(options.default_time_scale, None);
+        let options = resolve_no_env(cli(&["x.sv"]), Some(&configured)).unwrap();
+        assert_eq!(options.default_time_scale, parsed("10us/1ns"));
+        let options =
+            resolve_no_env(cli(&["--timescale", "1ns/1ps", "x.sv"]), Some(&configured)).unwrap();
+        assert_eq!(options.default_time_scale, parsed("1ns/1ps"));
+        for bad in [
+            &["--timescale", "1ps/1ns", "x.sv"][..],
+            &["--timescale"][..],
+        ] {
+            assert_eq!(
+                parse_args(bad.iter().map(|arg| (*arg).to_owned()).collect()).err(),
+                Some(2),
+                "{bad:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

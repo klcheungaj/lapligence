@@ -199,6 +199,23 @@ pub struct LegacyDirective {
     pub column: u32,
 }
 
+/// A design element of the elaborated design that takes the compilation's
+/// default time scale: no `` `timescale`` directive, `timeunit`,
+/// `timeprecision` or compilation-unit time unit applies to it
+/// (IEEE 1800-2009 3.14.2.3 d). Modules, interfaces and programs instantiated
+/// in the design and packages count once each; nested definitions inherit
+/// their parent's scale and `$unit` is not one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DefaultTimeScaleElement {
+    /// `module`, `interface`, `program` or `package`.
+    pub kind: &'static str,
+    pub name: String,
+    /// Source location of the element's name.
+    pub file: Option<std::sync::Arc<str>>,
+    pub line: u32,
+    pub col: u32,
+}
+
 /// What an elaborated module, interface or program instance knows of the
 /// definition it instantiates (IEEE 1800-2009 37.10, 22.8, 22.10, 33.7).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,6 +282,11 @@ pub struct Db {
     edition: LanguageEdition,
     /// The `min:typ:max` operand the frontend evaluated constants with.
     delay_selection: DelaySelection,
+    /// The time scale of design elements that declare none, `None` for the
+    /// built-in default (see [`Db::default_time_scale`]).
+    default_time_scale: Option<SemanticTimeScale>,
+    /// Design elements that take the default time scale, in source order.
+    default_time_scale_elements: Vec<DefaultTimeScaleElement>,
     overridden_parameters: HashSet<NodeId>,
     /// Native semantic categories retained for coverage checks when the
     /// frontend-neutral [`NodeKind`] intentionally has no direct variant.
@@ -515,6 +537,8 @@ impl Db {
             nodes: Vec::new(),
             edition: LanguageEdition::SystemVerilog2009,
             delay_selection: DelaySelection::Typical,
+            default_time_scale: None,
+            default_time_scale_elements: Vec::new(),
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
@@ -621,6 +645,8 @@ impl Db {
             nodes,
             edition: LanguageEdition::SystemVerilog2009,
             delay_selection: DelaySelection::Typical,
+            default_time_scale: None,
+            default_time_scale_elements: Vec::new(),
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
@@ -1644,6 +1670,25 @@ impl Db {
     /// evaluation and every consumer of the owned database.
     pub fn delay_selection(&self) -> DelaySelection {
         self.delay_selection
+    }
+
+    /// The time scale of every design element that declares none
+    /// (IEEE 1800-2009 3.14.2.3 leaves it to the tool): `--timescale`, else
+    /// [`SemanticTimeScale::DEFAULT`]. The frontend applied it to the
+    /// elements; consumers that need it for `$unit` read it here.
+    pub fn default_time_scale(&self) -> SemanticTimeScale {
+        self.default_time_scale
+            .unwrap_or(SemanticTimeScale::DEFAULT)
+    }
+
+    /// Whether the user chose the default time scale (`--timescale`).
+    pub fn default_time_scale_is_explicit(&self) -> bool {
+        self.default_time_scale.is_some()
+    }
+
+    /// Design elements that take the default time scale, in source order.
+    pub fn default_time_scale_elements(&self) -> &[DefaultTimeScaleElement] {
+        &self.default_time_scale_elements
     }
 
     /// Whether Slang replaced this parameter's declaration initializer with

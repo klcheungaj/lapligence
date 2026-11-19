@@ -14,7 +14,7 @@ use std::sync::Arc;
 pub use crate::ffi::slang::{
     CompilationUnitMode, DelaySelection, Diagnostic as SlangDiagnostic, DiagnosticProvider,
     DiagnosticSeverity, DiagnosticSubsystem, LanguageEdition, ProtectedEnvelope,
-    ProtectedEnvelopeKind, Snapshot, Source, SourceRange,
+    ProtectedEnvelopeKind, SemanticTimeScale, Snapshot, Source, SourceRange,
 };
 mod definition_search;
 mod editions;
@@ -214,6 +214,10 @@ pub struct CompileOpts {
     /// The operand of every `min:typ:max` expression (`--delay-select`);
     /// typical by default.
     pub delay_selection: DelaySelection,
+    /// The time scale of design elements that declare none (`--timescale`);
+    /// `None` is the built-in [`SemanticTimeScale::DEFAULT`], which the
+    /// `missing-timescale` lint rule reports.
+    pub default_time_scale: Option<SemanticTimeScale>,
     pub limits: Limits,
 }
 
@@ -1251,6 +1255,7 @@ fn compile_source_groups(
         default_library: opts.default_library.clone(),
         compilation_unit_mode: opts.compilation_unit_mode,
         delay_selection: opts.delay_selection,
+        default_time_scale: opts.default_time_scale,
         edition: opts.edition,
         limits: opts.limits,
     };

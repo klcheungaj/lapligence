@@ -5,7 +5,7 @@
 //! access, no raw FFI, no LSP dependencies.
 //!
 //! The default rule set lives in [`rules::default_rules`] and currently runs
-//! 25 rules in a stable order (`unused-signal`, `width-mismatch`,
+//! 26 rules in a stable order (`unused-signal`, `width-mismatch`,
 //! `incomplete-case`, `combinational-loop`, `multi-driver`, `casez-misuse`,
 //! `if-latch`, `naming-style`, `blocking-in-always_ff`, `nba-in-always_comb`,
 //! `unused-parameter`, `implicit-net`, `case-default-missing`,
@@ -13,7 +13,7 @@
 //! `undriven-signal`, `incomplete-sensitivity-list`, `out-of-range-select`,
 //! `xz-logical-equality`, `duplicate-case-item`,
 //! `empty-implicit-sensitivity`, `assignment-in-condition`,
-//! `casex-statement`, `wide-index`);
+//! `casex-statement`, `wide-index`, `missing-timescale`);
 //! treat that registry as the source of truth rather than this list.
 
 pub mod rules;
@@ -459,8 +459,10 @@ mod tests {
                 "module tiny;\n  logic a;\n  assign a = 1'b0;\nendmodule\n",
             )
             .expect("write design");
+            // An explicit default time scale: `missing-timescale` stays quiet.
             let out = compile::compile_checked(&compile::CompileOpts {
                 files: vec![sv.to_string_lossy().into_owned()],
+                default_time_scale: Some(compile::SemanticTimeScale::DEFAULT),
                 ..Default::default()
             })
             .expect("compile should start");
@@ -505,6 +507,7 @@ mod tests {
                 "assignment-in-condition",
                 "casex-statement",
                 "wide-index",
+                "missing-timescale",
             ]
         );
         for rule in registry.all() {

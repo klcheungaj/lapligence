@@ -49,6 +49,7 @@ pub(super) struct RawCompile {
     pub edition: Option<String>,
     pub compilation_units: Option<String>,
     pub delay_select: Option<String>,
+    pub timescale: Option<String>,
     #[serde(default)]
     pub include_dirs: Vec<String>,
     #[serde(default)]

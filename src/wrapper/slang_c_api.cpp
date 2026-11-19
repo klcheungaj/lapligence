@@ -500,6 +500,11 @@ struct Capture {
   std::unordered_map<const syntax::SyntaxNode*,
                      std::vector<std::pair<std::string_view, std::string_view>>>
       dpiExportDirectives;
+  // Design elements parsed while a `timescale directive was in effect
+  // (IEEE 1800-2009 3.14.2.1), from the parser metadata of every syntax tree;
+  // filled on first use. The syntax outlives capture.
+  std::unordered_set<const syntax::ModuleDeclarationSyntax*> directiveTimeScaled;
+  bool directiveTimeScaledReady = false;
   std::vector<std::vector<LlgSlangSemanticEdge>> pendingEdges;
   // Small nodes retain cheap scans. Only high-fanout parents pay for indexes;
   // positions refer to the authoritative ordered edge vector, never its memory.
@@ -2490,6 +2495,36 @@ void addTimeScale(LlgSlangSemanticNode& node,
       static_cast<uint32_t>(timeScale->precision.magnitude);
 }
 
+// The Slang time scale of a request's LLG_SLANG_TIME_UNIT_* codes and
+// magnitudes; anything else, or a precision coarser than the unit (IEEE
+// 1800-2009 3.14), is an invalid argument.
+TimeScale requestTimeScale(const LlgSlangTimeScale& input) {
+  auto value = [](uint32_t unit, uint32_t magnitude) {
+    TimeUnit slangUnit = TimeUnit::Seconds;
+    switch (unit) {
+      case LLG_SLANG_TIME_UNIT_SECONDS: slangUnit = TimeUnit::Seconds; break;
+      case LLG_SLANG_TIME_UNIT_MILLISECONDS: slangUnit = TimeUnit::Milliseconds; break;
+      case LLG_SLANG_TIME_UNIT_MICROSECONDS: slangUnit = TimeUnit::Microseconds; break;
+      case LLG_SLANG_TIME_UNIT_NANOSECONDS: slangUnit = TimeUnit::Nanoseconds; break;
+      case LLG_SLANG_TIME_UNIT_PICOSECONDS: slangUnit = TimeUnit::Picoseconds; break;
+      case LLG_SLANG_TIME_UNIT_FEMTOSECONDS: slangUnit = TimeUnit::Femtoseconds; break;
+      default:
+        throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                            "invalid default time unit");
+    }
+    if (magnitude != 1 && magnitude != 10 && magnitude != 100)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "invalid default time scale magnitude");
+    return TimeScaleValue(slangUnit, static_cast<TimeScaleMagnitude>(magnitude));
+  };
+  TimeScale scale(value(input.unit, input.magnitude),
+                  value(input.precision_unit, input.precision_magnitude));
+  if (scale.precision > scale.base)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "default time precision is coarser than its unit");
+  return scale;
+}
+
 // Whether the compilation unit `unit` declares its time unit or precision
 // (`timeunit`/`timeprecision` outside all other declarations). Slang otherwise
 // reports the compilation default for it, which consumers must be able to tell
@@ -2506,6 +2541,38 @@ bool compilationUnitDeclaresTimeScale(const CompilationUnitSymbol& unit) {
       return true;
   }
   return false;
+}
+
+// Whether the design element `element` (a definition or a package) takes the
+// compilation's default time scale (IEEE 1800-2009 3.14.2.3 d): it declares
+// no timeunit or timeprecision, no `timescale directive was in effect where
+// it was parsed (b) and its compilation unit declares no time unit (c). Slang
+// reports the default as the element's own scale, so it cannot tell. Only
+// elements declared in a compilation unit count: a nested definition
+// inherits its parent's scale (a) and is never reported.
+bool takesDefaultTimeScale(Capture& capture, const Symbol& element) {
+  const Scope* parent = element.getParentScope();
+  const syntax::SyntaxNode* node = element.getSyntax();
+  if (!parent || parent->asSymbol().kind != SymbolKind::CompilationUnit || !node ||
+      !syntax::ModuleDeclarationSyntax::isKind(node->kind))
+    return false;
+  const auto& declaration = node->as<syntax::ModuleDeclarationSyntax>();
+  for (const syntax::MemberSyntax* member : declaration.members) {
+    if (member->kind == syntax::SyntaxKind::TimeUnitsDeclaration)
+      return false;
+  }
+  if (compilationUnitDeclaresTimeScale(parent->asSymbol().as<CompilationUnitSymbol>()))
+    return false;
+  if (!capture.directiveTimeScaledReady) {
+    capture.directiveTimeScaledReady = true;
+    for (const auto& tree : parent->getCompilation().getSyntaxTrees()) {
+      for (const auto& [parsed, metadata] : tree->getMetadata().nodeMeta) {
+        if (metadata.timeScale)
+          capture.directiveTimeScaled.insert(parsed);
+      }
+    }
+  }
+  return !capture.directiveTimeScaled.contains(&declaration);
 }
 
 uint32_t semanticDriveStrength(const std::optional<DriveStrength>& strength) {
@@ -3194,6 +3261,8 @@ public:
         result.auxiliary |= LLG_SLANG_INSTANCE_CELL_DEFINE;
       if (definition.defaultLifetime == VariableLifetime::Automatic)
         result.auxiliary |= LLG_SLANG_INSTANCE_AUTOMATIC;
+      if (takesDefaultTimeScale(capture, definition))
+        result.auxiliary |= LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE;
       result.auxiliary |=
           (uint64_t(semanticNetKind(definition.defaultNetType.netKind)) &
            LLG_SLANG_INSTANCE_NET_TYPE_MASK)
@@ -3202,6 +3271,8 @@ public:
     if constexpr (std::same_as<T, PackageSymbol>) {
       addTimeScale(result, symbol.timeScale);
       addPackageDefinition(result, symbol);
+      if (takesDefaultTimeScale(capture, symbol))
+        result.auxiliary |= LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE;
     }
     // An undeclared `$unit` scale is left unset rather than reporting the
     // compilation default as if it were declared.
@@ -10304,9 +10375,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     compilationOptions.minTypMax = MinTypMax::Max;
   if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
     compilationOptions.flags |= CompilationFlags::IgnoreUninstantiatedModules;
-  compilationOptions.defaultTimeScale = TimeScale(
-      TimeScaleValue(TimeUnit::Nanoseconds, TimeScaleMagnitude::One),
-      TimeScaleValue(TimeUnit::Picoseconds, TimeScaleMagnitude::One));
+  compilationOptions.defaultTimeScale = requestTimeScale(request.default_time_scale);
   compilationOptions.errorLimit = static_cast<uint32_t>(std::min<uint64_t>(
       effectiveLimit(request.limits.max_diagnostics, kDefaultMaxDiagnostics,
                      kHardMaxDiagnostics),
