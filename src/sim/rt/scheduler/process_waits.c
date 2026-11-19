@@ -299,6 +299,7 @@ static void proc_complete(llg_proc_t* self) {
     // Live descendants keep this process reachable (see "Holding
     // descendants" in process_control.c).
     int holds = self->fork_groups || self->held_groups;
+    if (holds && self->grp) self->grp->holding++;
     process_handle_terminal(self, terminal, holds);
     thread_event(self, LLG_RT_THREAD_END);
     if (process_end_hook) process_end_hook(self, 0);
@@ -307,10 +308,7 @@ static void proc_complete(llg_proc_t* self) {
     llg_frame_release(self->frame);
     self->frame = NULL;
     process_local_release_all(self);
-    if (self->grp) {
-        if (holds) self->grp->holding++;
-        llg_fork_group_child_done(self->grp);
-    }
+    if (self->grp) llg_fork_group_child_done(self->grp);
     release_program_process(self);
     service_program_completions();
 }

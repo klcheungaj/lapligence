@@ -696,13 +696,18 @@ struct llg_proc {
     uint8_t wait_ordered;
     llg_process_handle_t* handle;
     llg_process_local_ref_t* process_locals;
-    llg_proc_t* next_retired;
+    union {
+        // Retired-list link: set only once the record is unregistered and
+        // has no fork or held groups left (proc_retire_completed,
+        // llg_kill_proc), so it never overlaps a held list.
+        llg_proc_t* next_retired;
+        // Ended groups kept while a finished child still holds live
+        // descendants ("Holding descendants", process_control.c), so kill
+        // and disable fork of this process or an ancestor reach them (SV
+        // 9.6.3, 9.7). Linked through next_g/prev_g.
+        llg_fork_group_t* held_groups;
+    };
     llg_fork_group_t* fork_groups; // live groups spawned by this proc
-    // Ended groups kept while a finished child still holds live descendants
-    // ("Holding descendants", process_control.c), so kill and disable fork of
-    // this process or an ancestor reach them (SV 9.6.3, 9.7). Linked through
-    // next_g/prev_g.
-    llg_fork_group_t* held_groups;
     llg_fork_group_t* fork_groups_tail; // source-order O(1) append
     llg_fork_group_t* pending_fork_groups; // first group not yet checked for start
     llg_fork_group_t* grp;         // group this proc belongs to (NULL top-level)
@@ -773,7 +778,7 @@ _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) -
 _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) ==
                    sizeof(llg_proc_t),
                "coroutine chain must remain the process record's last member");
-_Static_assert(sizeof(llg_proc_t) == 448,
+_Static_assert(sizeof(llg_proc_t) == 440,
                "64-bit process record size changed; update the layout contract");
 #endif
 

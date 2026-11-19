@@ -242,8 +242,10 @@ static void llg_kill_group_list(llg_fork_group_t* grp) {
 // Kill every descendant of `p` (SV 9.6.3, 9.7): the children of its live
 // groups and of the ended groups it holds for finished children with live
 // descendants. `p` itself is untouched — used by disable_fork, which kills
-// only descendants.
+// only descendants. A killed `p` has none left, and its held-list slot may
+// already link the retired list.
 static void llg_kill_proc_groups(llg_proc_t* p) {
+    if (p->killed) return;
     llg_kill_group_list(p->fork_groups);
     llg_kill_group_list(p->held_groups);
     p->fork_groups = NULL;
