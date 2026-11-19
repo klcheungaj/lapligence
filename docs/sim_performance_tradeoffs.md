@@ -1094,16 +1094,24 @@ processes or clock edges, at the cost of a few bytes per object.
   | 4096 cells, 100k cycles: sampled cells | 0.83 | 15.93 G |
   | 4096 cells: packed vector | 0.21 | 2.99 G |
   | 4096 cells: no sampled array read | 0.15 | 2.07 G |
-  | 4097 cells (descriptor form): sampled cells | 1.01 | 15.01 G |
+  | 4097 cells (descriptor form): sampled cells | 1.01 (before the reset fix below) | 15.01 G; 1.91 G after it |
   | 4097 cells: no sampled array read | 0.14 | 1.95 G |
 
   The image copy costs 17 instructions per 4-state cell per time slot (0.8
   ns here): 13.9 G of the 4096-cell row, over two slots per cycle. Small
   arrays read in assertions pay less than the packed equivalent, whose
   sampled part selects are wider. For a large array written in few cells per
-  slot, the copy dominates; the descriptor form's saved cells cost the same
-  there, because their per-slot reset walks the whole save table after the
-  initial writes. Shared runtime rows, 100 pairs in both orders on a quiet
+  slot, the copy dominates; the descriptor form's saved cells cost only what
+  the slot writes (see the next paragraph).
+- **Descriptor saved cells reset by what was saved:** the save table of a
+  descriptor array keeps the capacity its largest slot grew it to, so a
+  reset that walked the table cost every later slot about 16k entries after
+  one 4097-cell initialisation (13.1 G of the 15.0 G instructions above). The
+  table now also lists the positions it filled, and the reset at a slot's
+  first save and the growth rehash walk only those: one `size_t` per entry
+  of half the table capacity. The 4097-cell row fell to 1.91 G instructions
+  (`fixed_sampled_record` 13.12 G to 0.011 G); every other row has identical
+  generated C and runtime paths. Shared runtime rows, 100 pairs in both orders on a quiet
   host: `k1_onestep` +0.41% / +0.43% (instructions +0.20%: an address-hashed
   index probing longer after data moved, and the new null test), every
   other row from −0.13% to +0.40%, and `m_glitch` with `--wave` +0.15% /
