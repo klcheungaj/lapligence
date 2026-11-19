@@ -1,6 +1,10 @@
 /* Exact descriptor identity lookup. Hash integer representations, but compare
  * pointers only for equality; never order/subtract unrelated C pointers.
- * Entries outlive lexical scope exit when an NBA retains the scope. */
+ * Entries outlive lexical scope exit when an NBA retains the scope.
+ * Linear probing with backward-shift deletion: a removal moves the rest of
+ * its cluster back instead of leaving a tombstone, so a probe only ever walks
+ * live entries: a global target, which never has an entry, stops at the
+ * first empty slot instead of walking every deleted one. */
 typedef struct {
     const void* target;
     llg_value_scope_t* scope;
@@ -9,9 +13,12 @@ typedef struct {
 static llg_value_scope_entry_t* value_scope_index;
 static size_t value_scope_capacity;
 static size_t value_scope_count;
-static size_t value_scope_used;
-/* A real, private object is a portable tombstone, not a fabricated pointer. */
-static sv4_t value_scope_deleted_key = SV4_EMPTY;
+/* The index grows before it is more than 1/N full. The common lookup misses
+ * (a global target never has an entry), and a miss walks its whole cluster:
+ * on 1,000 flops with NBAs a miss probed 1.5 slots on average at half full
+ * against 5.4 at three quarters. The index then costs 32 to 64 bytes per
+ * entry instead of 21 to 43. */
+#define LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR 2u
 
 static size_t value_scope_hash(const void* target) {
     uint64_t hash = (uint64_t)(uintptr_t)target;
@@ -36,7 +43,6 @@ static void value_scope_index_rebuild(size_t capacity) {
     free(value_scope_index);
     value_scope_index = entries;
     value_scope_capacity = capacity;
-    value_scope_used = value_scope_count;
 }
 
 /* Marks a runtime-private scope (value_scope_begin_private). */
@@ -66,23 +72,19 @@ static void value_scope_index_add(llg_value_scope_t* scope) {
     }
     size_t needed = value_scope_count + count;
     size_t capacity = value_scope_capacity ? value_scope_capacity : 16;
-    while (needed > capacity - capacity / 4) {
+    while (needed > capacity / LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR) {
         if (capacity > SIZE_MAX / 2) {
             llg_msg(LLG_MSG_INTERNAL, NULL, "value scope index capacity overflow");
             abort();
         }
         capacity *= 2;
     }
-    /* Reclaim tombstones before they can force a full-table probe. */
-    if (capacity != value_scope_capacity ||
-        count > capacity - capacity / 4 - value_scope_used)
-        value_scope_index_rebuild(capacity);
+    if (capacity != value_scope_capacity) value_scope_index_rebuild(capacity);
     for (size_t i = 0; i < count; ++i) {
         const void* target = value_scope_key(scope, i);
         size_t slot = value_scope_hash(target) & (capacity - 1);
-        while (value_scope_index[slot].scope)
+        while (value_scope_index[slot].target)
             slot = (slot + 1) & (capacity - 1);
-        if (!value_scope_index[slot].target) ++value_scope_used;
         value_scope_index[slot] = (llg_value_scope_entry_t){target, scope};
         ++value_scope_count;
     }
@@ -101,25 +103,34 @@ static llg_value_scope_t* value_scope_index_find(const void* target) {
 
 static void value_scope_index_remove(llg_value_scope_t* scope) {
     size_t count = value_scope_key_count(scope);
+    size_t mask = value_scope_capacity - 1;
     for (size_t i = 0; i < count; ++i) {
         const void* target = value_scope_key(scope, i);
-        size_t slot = value_scope_hash(target) & (value_scope_capacity - 1);
-        while (value_scope_index[slot].target != target) {
-            if (!value_scope_index[slot].target) {
+        size_t hole = value_scope_hash(target) & mask;
+        while (value_scope_index[hole].target != target ||
+               value_scope_index[hole].scope != scope) {
+            if (!value_scope_index[hole].target) {
                 llg_msg(LLG_MSG_INTERNAL, NULL, "value scope index entry missing");
                 abort();
             }
-            slot = (slot + 1) & (value_scope_capacity - 1);
+            hole = (hole + 1) & mask;
         }
-        value_scope_index[slot] =
-            (llg_value_scope_entry_t){&value_scope_deleted_key, NULL};
+        /* Move back each later entry of the cluster whose home slot does not
+         * lie cyclically in (hole, slot]: its probe would cross the hole. */
+        for (size_t slot = (hole + 1) & mask; value_scope_index[slot].target;
+             slot = (slot + 1) & mask) {
+            size_t home = value_scope_hash(value_scope_index[slot].target) & mask;
+            if (((slot - home) & mask) < ((slot - hole) & mask)) continue;
+            value_scope_index[hole] = value_scope_index[slot];
+            hole = slot;
+        }
+        value_scope_index[hole] = (llg_value_scope_entry_t){NULL, NULL};
         --value_scope_count;
     }
     if (!value_scope_count) {
         free(value_scope_index);
         value_scope_index = NULL;
         value_scope_capacity = 0;
-        value_scope_used = 0;
     }
 }
 
