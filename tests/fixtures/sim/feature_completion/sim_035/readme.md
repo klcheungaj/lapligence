@@ -192,6 +192,20 @@ is 1, 1, 3, 3 and `a2` (`st[k] != D`) fails at 15 and 25. `pr[1]` is 34 until
 7, then 39; its member `lo` 4, then 9. Each process line prints in the Active
 region of the tick and each action in the Reactive region after it.
 
+### `element_burst` (descriptor-form cells)
+
+The same §16.5 and §16.6.1 lines apply to a 5000-cell array, which llg keeps
+in descriptor form and samples by saving each cell's old value at its first
+change in a time slot. `clk` rises at 5, 15, 25, 35 and 45; the tick at 5 sets
+`arr[k]` to `k` mod 256. At 15 a blocking loop increments every cell after the Preponed
+sample, so the sampled cells are still 00, 64 (100) and 87 (4999 mod 256 =
+135) while the live cells are 01 and 88. At 25 the Preponed values are the
+incremented ones (`arr[2]` = 03, `arr[0]` = 01, `arr[4999]` = 88), not the
+values saved at 15; `arr[2]` becomes f2 after the sample. At 35 the sample of
+`arr[2]` is f2 and it becomes f3; at 45 its sample is f3. `$past` returns the
+sample of the previous tick: `arr[0]` 00 at 25 and 01 at 35; `arr[2]` 02, 03
+and f2 at 25, 35 and 45.
+
 ### Witnesses
 
 - `expression_clock_witness` (FND-002 L-F12-11-02, source unchanged except

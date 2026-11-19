@@ -285,6 +285,14 @@ fn real_net_enum_and_structure_cells_are_sampled() {
     sim_cli::run_case_backend_parity(SUITE, "element_types", expected, &[], &[]);
 }
 
+/// Descriptor-form cells (above 4096) keep saved Preponed values per slot: a
+/// burst that changes every cell, then single writes, reads no stale value.
+#[test]
+fn descriptor_cells_sampled_after_a_burst_of_writes() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_035/element_burst.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_burst", expected, &[], &[]);
+}
+
 /// Only arrays a sampled expression selects keep a Preponed image, and it is
 /// registered before the history domains whose initial values read it.
 #[test]
