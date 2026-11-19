@@ -1,8 +1,10 @@
-//! FIN-001 X1: legal forms `docs/known_issues.md` lists as rejected that had no
-//! test. Each stays a compile-time limit; the tests pin its id family and,
-//! where lowering has a node, its location. See the fixture readme.
+//! FIN-001 X1: forms `docs/known_issues.md` lists that had no test. A form
+//! that stays a compile-time limit is pinned by its id family and, where
+//! lowering has a node, its location; a form llg now serves runs against a
+//! hand-derived output; a known difference in output is pinned so that its
+//! fix updates the test. See the fixture readme.
 
-use super::sim_cli;
+use super::{sim_cli, sim_harness};
 
 const SUITE: &str = "feature_completion/ki_audit";
 
@@ -494,4 +496,33 @@ fn typename_of_a_type_parameter_prints_the_first_spelling() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/ki_audit/typename_type_parameter.out");
     sim_cli::run_case(SUITE, "typename_type_parameter", expected, "", &[]);
+}
+
+/// A known issue, pinned: a user VPI system function called from a static
+/// declaration initializer runs before the application registers it, so the
+/// call fails as an uncompiled call site and nothing runs. A fix (static
+/// initializers after VPI startup) updates this test.
+#[test]
+fn vpi_function_called_from_a_static_initializer_is_not_registered_yet() {
+    let directory = sim_harness::TempDir::new("ki-audit-vpi").expect("temporary directory");
+    let Some(library) =
+        super::sim_040::plugin_library(SUITE, &directory, "vpi_static_initializer", &[])
+    else {
+        return;
+    };
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "vpi_static_initializer",
+        &["--define-system-task", "function int $sched()"],
+        &[("LLG_VPI_PLUGIN", &library)],
+        &|label, output| {
+            let seen = sim_cli::observed_output(output);
+            assert!(output.stdout.is_empty(), "{label}: {seen}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("VPI error: uncompiled or inconsistent VPI call site"),
+                "{label}: {seen}"
+            );
+        },
+    );
 }

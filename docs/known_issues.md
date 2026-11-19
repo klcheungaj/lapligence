@@ -3461,30 +3461,39 @@ name the array and line, if the cost measures as zero.
 
 ### Symptom
 
-A user VPI system function called from a static declaration initializer runs
-before any process exists. Work its calltf schedules there, such as a
-`vpi_put_value` with a delay, is not reported as the S13-D5 error that SV
-13.4.4 requires for deferred work outside a procedure's thread. A call from it
-into a DPI-C export stops the run as a call outside a DPI-C import (SV
-35.5.3).
+A user VPI system function called from a static declaration initializer
+fails: the model runs the initializers before it loads the VPI application
+and runs its startup routines, so the function is not registered yet. The
+call reports "VPI error: uncompiled or inconsistent VPI call site", the
+run stops at time 0, and the model still exits with status 0. Once such a call
+runs, work its calltf schedules there, such as a `vpi_put_value` with a
+delay, also needs the S13-D5 error that SV 13.4.4 requires for deferred work
+outside a procedure's thread, and a call from it into a DPI-C export is a
+call outside a DPI-C import (SV 35.5.3).
 
 ### Cause
 
-The static-initializer walk of S13-D5 follows SystemVerilog calls,
-constructors, virtual overrides and, from a context DPI-C import, every
-export. Foreign VPI code is opaque to it, and the run-time check for a
-process spawned with no parent covers only a `fork`.
+`llg_model_start` runs the static initializers right after the storage
+defaults, before `llg_vpi_model_init`, `llg_vpi_startup` (the startup routines
+and their registrations) and the call-site compilation. The static-initializer
+walk of S13-D5 follows SystemVerilog calls, constructors, virtual overrides
+and, from a context DPI-C import, every export; foreign VPI code is opaque to
+it, and the run-time check for a process spawned with no parent covers only a
+`fork`.
 
 ### Intended direction
 
-Check the VPI routines that schedule work against the static-initialization
+Run the static initializers after VPI startup and call-site compilation
+(deciding whether start-of-simulation callbacks see initialized values), and
+check the VPI routines that schedule work against the static-initialization
 phase at run time, as a parentless fork is.
 
 ### Reproduce
 
-`int x = $sched();` at module scope, where the calltf of `$sched` calls
-`vpi_put_value` on a variable with `vpiInertialDelay`: the run starts
-without the S13-D5 error.
+`tests/fixtures/sim/feature_completion/ki_audit/vpi_static_initializer.sv`
+with `vpi_static_initializer.c`: `int y = $sched();` at module scope, where
+the calltf of `$sched` calls `vpi_put_value` on a variable with
+`vpiInertialDelay` (`ki_audit::vpi_function_called_from_a_static_initializer_is_not_registered_yet`).
 
 ## Functional coverage limits (SIM-044, SIM-045)
 

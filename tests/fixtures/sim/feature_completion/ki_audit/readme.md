@@ -101,3 +101,14 @@ represents the resolved type of its argument.") asks for the resolved type,
 which the industry-standard behaviour prints as `class tb.mine`; llg prints the
 spelling where the frontend first met the type, `lib::registry::T`. A fix of
 the known issue updates the expected output.
+
+`vpi_static_initializer` (with `vpi_static_initializer.c`) pins a known
+issue: 36.9.1 L56584 ("The registration of system tasks shall occur prior to
+elaboration or the resolution of references.") puts the registration of a
+user system function before any use, but the model runs static declaration
+initializers before the application's startup routines, so `int y =
+$sched();` stops the run with "VPI error: uncompiled or inconsistent VPI call
+site" and prints nothing. Once the call runs, its delayed put needs the error
+of 13.4.4 L18996-18997 ("Implementations shall issue an error either at
+compile time or run time when these provisions have not been met."), as for
+S13-D5.
