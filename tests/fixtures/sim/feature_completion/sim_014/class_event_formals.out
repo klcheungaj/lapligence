@@ -1,4 +1,4 @@
-1 out g 1 h 0
-2 woke on c.ev
-3 inout g 0 h 1
-4 method d.ev==c.ev 1
+1 out g 0 h 0
+3 woke on c.ev
+4 inout g 0 h 1
+5 method d.ev==c.ev 0 d.ev==null 1

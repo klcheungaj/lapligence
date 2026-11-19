@@ -1,26 +1,26 @@
-int output 0 1
-int inout 11 1 0
+int output 0 0
+int inout 10 1 0
 1 c.ev woke
-moved 0 1
-string a! 1
-string b! 1
+moved 0 0
+string a! 0
+string b! 0
 string c? 1
 string d? 1
 string io 0 1
-string io 1
+string io 0
 2 g woke
 3 g woke
+handle 1 0
 handle 1 1
+handle 1 0
 handle 1 1
-handle 1 1
-handle 1 1
-chandle 1 1
-real 1.5 1
+chandle 1 0
+real 1.5 0
 real 2.5 1
-record x 3 1
+record x 3 0
 record y 4 1
-queue 2 1
+queue 2 0
 queue 1 1
 method m 0 1
-virtual 1 1
-virtual 1 1
+virtual 1 0
+virtual 1 0

@@ -704,10 +704,10 @@ fn s13_d4_ref_record_store_wakes_readers() {
 }
 
 #[test]
-fn s13_d3_output_event_merges_actual() {
+fn s13_d3_output_event_not_copied_out() {
     run_decision(
-        "S13-D3_output_event_merges_actual",
-        include_str!("fixtures/sim/lrm_decisions/S13-D3_output_event_merges_actual.out"),
+        "S13-D3_output_event_not_copied_out",
+        include_str!("fixtures/sim/lrm_decisions/S13-D3_output_event_not_copied_out.out"),
     );
 }
 

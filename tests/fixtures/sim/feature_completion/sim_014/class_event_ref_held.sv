@@ -72,8 +72,8 @@ module tb;
     #1 $display("%0t in_branch returns", $time);
   endtask
 
-  // An output formal assigns its handle back at its own return, which is
-  // where a `ref` formal forwarding to it rebinds the property.
+  // An output event formal is never copied out (decision S13-D3), so a `ref`
+  // formal forwarded to it does not rebind the property.
   task automatic out_set(output event e, input event to);
     #1 e = to;
     #2 $display("%0t out_set returns", $time);
@@ -119,12 +119,12 @@ module tb;
       in_branch(b2.ev, g);
     join
     fork
-      begin wait (o2.ev == g) $display("%0t o2 is g", $time); end
       via_output(o2.ev, g);
+      begin #6 $display("%0t o2 is g %0d", $time, o2.ev == g); end
     join
     fork
-      begin wait (o3.ev == g) $display("%0t o3 is g", $time); end
       via_branch_output(o3.ev, g);
+      begin #6 $display("%0t o3 is g %0d", $time, o3.ev == g); end
     join
     reader(f.ev);
     $finish;
