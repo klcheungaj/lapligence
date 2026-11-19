@@ -96,8 +96,10 @@ ordinary slot removal uses the process's stored position. Cancellation traversal
 that can remove other records restart as before.
 
 On 64-bit hosts the process record is 440 bytes, including a 128-byte wait
-record and the pointer to a mailbox delivery it has not resumed to take (the
-message returns to its mailbox if the process is killed first). Heap-path dependency memberships add 32 bytes each; a single narrow
+record, the pointer to a mailbox delivery it has not resumed to take (the
+message returns to its mailbox if the process is killed first) and the head
+of its held fork groups (kill and `disable fork` below finished processes),
+which shares its slot with the retired-list link. Heap-path dependency memberships add 32 bytes each; a single narrow
 signal wait embeds its membership. Each live source row adds 32 bytes, and each
 hash bucket 8 bytes (geometric capacity at 75% load). Temporary key sorting uses
 pointer integer representations, while

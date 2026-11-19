@@ -1,0 +1,4 @@
+20 disable fork
+21 leaf_a KILLED leaf_b KILLED leaf_c KILLED leaf_o WAITING
+50 leaf 9 fired
+121 end

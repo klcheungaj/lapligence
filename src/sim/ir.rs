@@ -54,6 +54,7 @@ pub use objects::{
     IrMailboxValue, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrProcessControl,
     IrProcessExpr, IrProcessRandom, IrStringExpr, IrStringInsideItem, IrVirtualInterface,
     IrVirtualInterfaceInstance, IrVirtualInterfaceMember, IrVirtualInterfaceMethod,
+    IrVirtualInterfaceNested,
 };
 
 pub use validate::IrValidationError;

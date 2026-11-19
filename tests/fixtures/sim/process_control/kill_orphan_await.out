@@ -1,0 +1,5 @@
+5 mid await returned FINISHED
+10 before kill root WAITING mid FINISHED leaf WAITING
+20 after kill root KILLED mid FINISHED leaf KILLED
+20 leaf await returned KILLED
+120 end

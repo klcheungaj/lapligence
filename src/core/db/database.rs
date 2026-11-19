@@ -439,6 +439,10 @@ pub struct Db {
     /// reference (IEEE 1800-2009 26.3, 37.12 detail 4), in declaration
     /// order. Import declarations no reference used have no entry.
     imported_items: HashMap<NodeId, Box<[NodeId]>>,
+    /// The nested interface instances a method call through a virtual
+    /// interface passes to reach its callee (`v.tx.f()`, IEEE 1800-2009
+    /// 25.9), outermost first, by call node. Other calls have no entry.
+    virtual_interface_call_scopes: HashMap<NodeId, Box<[String]>>,
     /// Clocking block declarations and their resolved clock events/skews.
     clocking_blocks: HashMap<NodeId, ClockingBlockInfo>,
     /// Functional-coverage declarations (IEEE 1800-2009 19).
@@ -572,6 +576,7 @@ impl Db {
             assertion_local_initializers: HashMap::new(),
             source_identities: HashMap::new(),
             imported_items: HashMap::new(),
+            virtual_interface_call_scopes: HashMap::new(),
             clocking_blocks: HashMap::new(),
             coverage: CoverageTables::default(),
             clocking_vars: HashMap::new(),
@@ -677,6 +682,7 @@ impl Db {
             assertion_local_initializers: HashMap::new(),
             source_identities: HashMap::new(),
             imported_items: HashMap::new(),
+            virtual_interface_call_scopes: HashMap::new(),
             clocking_blocks: HashMap::new(),
             coverage: CoverageTables::default(),
             clocking_vars: HashMap::new(),
@@ -1514,6 +1520,16 @@ impl Db {
     /// Empty for any other node or an unused import.
     pub fn imported_items(&self, import: NodeId) -> &[NodeId] {
         self.imported_items.get(&import).map_or(&[], |items| items)
+    }
+
+    /// The names of the nested interface instances, outermost first, that
+    /// method call `call` passes through its virtual-interface receiver to
+    /// reach the callee (`tx` in `v.tx.f()`, IEEE 1800-2009 25.9). Empty for
+    /// a callee of the receiver's own interface and for any other node.
+    pub fn virtual_interface_call_scopes(&self, call: NodeId) -> &[String] {
+        self.virtual_interface_call_scopes
+            .get(&call)
+            .map_or(&[], |scopes| scopes)
     }
 
     pub fn is_implicit_net(&self, id: NodeId) -> bool {

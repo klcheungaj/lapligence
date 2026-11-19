@@ -1,0 +1,6 @@
+3 join_any fast branch done
+5 joined branch done
+5 body done
+20 kill root
+21 root KILLED any_slow KILLED inner_leaf KILLED sib KILLED
+121 end

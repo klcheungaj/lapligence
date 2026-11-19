@@ -1,0 +1,4 @@
+10 leaf 2 kills its root
+20 root a kills itself
+30 a KILLED b KILLED
+130 end

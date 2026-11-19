@@ -33,6 +33,7 @@ impl Db {
         // IEEE 1800-2009 37.12 detail 4: the package items each import
         // declaration supplied to a name reference, in edge-index order.
         let mut imported_items = HashMap::<NodeId, Vec<(u32, NodeId)>>::new();
+        let mut virtual_interface_call_scopes = HashMap::<NodeId, Vec<(u32, String)>>::new();
         for semantic in &snapshot.semantic_nodes {
             let id = NodeId::from_index(semantic.id as usize);
             if semantic.detail.as_str() == "TypeAlias"
@@ -49,6 +50,24 @@ impl Db {
                         .entry(id)
                         .or_default()
                         .push((edge.index, semantic_id(&ids, edge.target_id)?));
+                }
+                // A member access consumes its scopes in its member path.
+                if edge.role == SemanticEdgeRole::VirtualInterfaceScope
+                    && semantic.kind == SemanticKind::MethodCall
+                {
+                    let scope = semantic_id(&ids, edge.target_id)?;
+                    let name = snapshot
+                        .semantic_nodes
+                        .get(scope.index())
+                        .map(|scope| scope.name.to_string())
+                        .filter(|name| !name.is_empty())
+                        .ok_or_else(|| {
+                            DbError::InvalidSnapshot("virtual interface scope has no name".into())
+                        })?;
+                    virtual_interface_call_scopes
+                        .entry(id)
+                        .or_default()
+                        .push((edge.index, name));
                 }
                 if edge.role == SemanticEdgeRole::Typedef {
                     if let Some(typedef) = typedef_target(edge.target_id)? {
@@ -594,6 +613,7 @@ impl Db {
                         | SemanticEdgeRole::CheckerActual
                         | SemanticEdgeRole::ProceduralChecker
                         | SemanticEdgeRole::Imported
+                        | SemanticEdgeRole::VirtualInterfaceScope
                 ) {
                     children.push(semantic_id(&ids, edge.target_id)?);
                 }
@@ -1687,6 +1707,13 @@ impl Db {
                 .map(|(import, mut items)| {
                     items.sort_unstable_by_key(|(index, _)| *index);
                     (import, items.into_iter().map(|(_, item)| item).collect())
+                })
+                .collect(),
+            virtual_interface_call_scopes: virtual_interface_call_scopes
+                .into_iter()
+                .map(|(call, mut scopes)| {
+                    scopes.sort_unstable_by_key(|(index, _)| *index);
+                    (call, scopes.into_iter().map(|(_, name)| name).collect())
                 })
                 .collect(),
             clocking_blocks,

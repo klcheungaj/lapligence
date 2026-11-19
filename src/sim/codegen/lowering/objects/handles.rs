@@ -734,6 +734,9 @@ impl Codegen<'_> {
                 otherwise: Box::new(IrChandleExpr::Null),
             });
         }
+        if let Some(nested) = self.virtual_interface_nested_value(path, node)? {
+            return Ok(nested);
+        }
         Err(format!(
             "chandle values can only be copied from chandle or null (node {:?} `{}` in `{path}`)",
             self.kind(node),

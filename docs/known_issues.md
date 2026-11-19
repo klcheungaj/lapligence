@@ -3731,26 +3731,23 @@ with "cannot resolve array base of select `count`". The statement forms
 **Intended direction.** Lower the prefix-increment expression through the
 same element reference as the statement form.
 
-### Interface instance inside an interface, through a virtual interface
+### Array of derived-class handles assigned to an array of the base class
 
-**Symptom.** `vif = agent.vif.tx;`, where `agent.vif` is a virtual interface
-whose interface instantiates interface `tx`, stops generation with "chandle
-values can only be copied from chandle or null". The UVM 1.2
-`integrated/codec` example's driver selects its transmit interface this way;
-the industry-standard simulator runs it.
+**Symptom.** The UVM 1.1d and 1.2 `registers/primer` example passes
+`TABLES`, a fixed array of `reg_slave_TABLES` handles, to the `uvm_reg reg_a[]`
+formal of `uvm_reg_indirect_data::configure`; the frontend rejects the call
+with a located `SLANG-BadAssignment` error. The industry-standard simulator
+accepts it and copies each handle. The example's own comment notes the
+question and keeps an element-by-element copy for another tool.
 
-**Cause.** A virtual interface value designates one interface instance;
-codegen has no mapping from an instance to the interface instances declared
-inside it (25.9 allows a virtual interface to be assigned "An interface
-instance of the same type", which includes a nested one).
+**Cause.** By decision UVB-D1 llg follows 7.6: unpacked arrays are assignment
+compatible only when their element types are equivalent, and a derived class
+type is not equivalent to its base class (6.22.2); 7.7 applies the same rule
+to an array argument passed by value.
 
-**Intended direction.** Give each interface type with nested interface
-instances a per-instance table of its children, and lower a member select of
-a virtual interface that names one to a lookup in it.
-
-**Reproduce.** A driver class holding `virtual top_if top` assigns
-`vif = top.tx` and drives `vif.Tx` on a clock edge; the industry-standard
-simulator prints `15 Tx=1`.
+**Intended direction.** None while UVB-D1 stands. The example runs when its
+element-by-element branch is selected
+([decision UVB-D1](lrm_decisions.md#arrays-of-class-handles-u2)).
 
 ### Sequence declared in a clocking block
 
@@ -3771,6 +3768,31 @@ on the sequence itself.
 
 **Intended direction.** Infer a sequence's clock from its enclosing clocking
 block.
+
+### The codec example's reset-jump run stalls after the jump (UVM 1.2)
+
+**Symptom.** The UVM 1.2 `integrated/codec` `hw_reset_test` run (main phase
+jumps back to reset) does not finish its second main phase: the objections
+of `env` and the transmit sequence stay raised until the test's own
+2 000 000 ns watchdog calls `$finish`. The industry-standard simulator ends
+the phase, with one error of its own (a request of a killed register access
+left on the bus sequencer). The other codec runs (1.1d both, 1.2 `test`)
+pass; they report up to 11 more register-model race warnings
+(`UVM/FLD/SET/BSY`) than the industry-standard simulator.
+
+**Cause.** Not the process control. The bus driver
+(`integrated/apb/apb_master.sv`) waits one more clock per transfer unless
+a tool-specific macro is defined, so each transfer takes 300 ns instead of 200 ns
+and the transmit and receive interrupt threads of `tb_env` interleave
+differently from the first main phase on: at the jump the industry-standard
+simulator's transmit thread waits for a bus grant, while llg's threads are
+idle. In the second main phase the receive thread clears its bit of `m_isr`
+and sets it again in one process turn (`wait` statements that do not block
+lie between the writes), so by decision T1-D11 the transmit thread's
+`wait (!m_isr)` never sees zero.
+
+**Intended direction.** None while T1-D11 stands; the example's timing
+follows the tool-specific macro.
 
 ### The bus example's run diverges after its first transfer
 

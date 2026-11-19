@@ -279,7 +279,7 @@ impl<'a> Codegen<'a> {
                     Some(crate::sim::ir::IrVirtualCall {
                         interface: descriptor,
                         method,
-                        receiver: self.lower_chandle(scope_path, receiver)?,
+                        receiver: self.lower_virtual_interface_receiver(scope_path, h, receiver)?,
                         site: self.source_site("virtual interface method call", scope_path, h),
                     }),
                 )

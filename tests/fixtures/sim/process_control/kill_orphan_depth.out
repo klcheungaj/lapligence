@@ -1,0 +1,7 @@
+20 killed roots 2..4
+21 root 2 KILLED leaf KILLED
+21 root 3 KILLED leaf KILLED
+21 root 4 KILLED leaf KILLED
+21 root 5 WAITING leaf WAITING
+50 leaf 5 fired
+121 end

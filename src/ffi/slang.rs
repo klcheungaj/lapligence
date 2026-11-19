@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 74;
+const ABI_VERSION: u32 = 75;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1263,6 +1263,11 @@ pub enum SemanticEdgeRole {
     /// resolved through it (IEEE 1800-2009 26.3, 37.12 detail 4); the index
     /// is the ordinal.
     Imported,
+    /// From a member access through a virtual interface (IEEE 1800-2009
+    /// 25.9) to each scope between the handle's interface and a member that
+    /// is, or lies in, a nested interface instance, outermost first; the
+    /// index is the ordinal.
+    VirtualInterfaceScope,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

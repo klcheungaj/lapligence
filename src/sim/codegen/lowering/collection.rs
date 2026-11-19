@@ -5,7 +5,7 @@ use crate::core::db::ConcurrentAssertionKind;
 use crate::sim::ir::{
     IrChandleExpr, IrClass, IrClassField, IrClassFieldType, IrContainerElement, IrContainerMember,
     IrObjectStmt, IrObjectType, IrStringExpr, IrVirtualInterface, IrVirtualInterfaceInstance,
-    IrVirtualInterfaceMember, IrVirtualInterfaceMethod,
+    IrVirtualInterfaceMember, IrVirtualInterfaceMethod, IrVirtualInterfaceNested,
 };
 use std::collections::BTreeSet;
 

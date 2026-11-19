@@ -43,6 +43,21 @@ fn k1_d1_string_clockvar_rejected() {
 }
 
 #[test]
+fn uvb_d1_derived_handle_array_to_base_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/UVB-D1_derived_handle_array_to_base_rejected.out"
+    )
+    .is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "UVB-D1_derived_handle_array_to_base_rejected",
+        "UVB-D1_derived_handle_array_to_base_rejected.sv:32:7 value of type 'derived$[2]' \
+         cannot be assigned to type 'base$[]'",
+    );
+}
+
+#[test]
 fn k1_d2_edge_skew_sample_at_edge() {
     run_decision(
         "K1-D2_edge_skew_sample_at_edge",
@@ -467,6 +482,14 @@ fn ab_n2_always_comb_class_reference() {
     run_decision(
         "AB-N2_always_comb_class_reference",
         include_str!("fixtures/sim/lrm_decisions/AB-N2_always_comb_class_reference.out"),
+    );
+}
+
+#[test]
+fn ko_d1_kill_reaches_finished_subtrees() {
+    run_decision(
+        "KO-D1_kill_reaches_finished_subtrees",
+        include_str!("fixtures/sim/lrm_decisions/KO-D1_kill_reaches_finished_subtrees.out"),
     );
 }
 

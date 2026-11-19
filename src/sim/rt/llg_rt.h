@@ -2820,6 +2820,9 @@ void llg_process_handle_srandom(llg_process_handle_t* handle, sv4_t seed);
 llg_string_t llg_process_handle_get_randstate(llg_process_handle_t* handle);
 int llg_process_handle_set_randstate(llg_process_handle_t* handle,
                                      llg_string_t state);
+// Kill the target and every descendant, including those whose parent has
+// finished (SV 9.7). A finished target stays FINISHED; its live descendants
+// end.
 void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle);
 void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle);
 
@@ -3011,7 +3014,8 @@ void llg_frame_write_value(llg_frame_t* frame, size_t slot, sv4_t value);
 double llg_frame_read_real(const llg_frame_t* frame, size_t slot);
 void* llg_frame_read_opaque(const llg_frame_t* frame, size_t slot);
 void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value);
-// Kill every descendant of the current process (immediate NBA lists are discarded).
+// Kill every descendant of the current process, including those whose parent
+// has finished (SV 9.6.3; immediate NBA lists are discarded).
 void llg_disable_fork(llg_proc_t* self);
 
 // Named block/task activation registry. Declaration and instance identities

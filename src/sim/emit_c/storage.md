@@ -247,7 +247,7 @@ Fixed-array properties allocate their elements when the object is created.
 Activation containers have no change dependencies, so waits and monitors on them
 reject; a monitor leaves out a helper's container formals, whose actuals it reads. An `IrDependency::NativeAccess` renders its receiver
 with `quiet_receivers` (no null report: `llg_class_field_quiet`,
-`llg_vif_member_quiet`) and arms on the field/member storage or, for a handle
+`llg_vif_member_quiet`, `llg_vif_nested_quiet`) and arms on the field/member storage or, for a handle
 property, on the object's lazily allocated `handle_dependency`, which
 `llg_class_handle_store` toggles on a changed blocking store (in-place writers
 — task output copy-out, mailbox `get`/`peek`, task-form `$cast` — compare

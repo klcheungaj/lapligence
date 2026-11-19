@@ -1,6 +1,6 @@
 
 // Detach a live group without changing the order of surviving siblings.
-static void fork_group_unlink(llg_fork_group_t* grp) {
+static void fork_group_detach(llg_fork_group_t* grp) {
     llg_proc_t* parent = grp->parent;
     if (grp->prev_g) grp->prev_g->next_g = grp->next_g;
     else parent->fork_groups = grp->next_g;
@@ -9,7 +9,12 @@ static void fork_group_unlink(llg_fork_group_t* grp) {
     if (parent->pending_fork_groups == grp)
         parent->pending_fork_groups = grp->next_g;
     grp->prev_g = NULL;
-    if (!parent->fork_groups) proc_retire_completed(parent);
+}
+
+static void fork_group_unlink(llg_fork_group_t* grp) {
+    fork_group_detach(grp);
+    llg_proc_t* parent = grp->parent;
+    if (!parent->fork_groups && parent->completed) proc_tree_released(parent);
 }
 
 // One child of `grp` finished. Decrement the live count,
@@ -37,13 +42,22 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
         // Unlink from the parent's live-group list; the group and its child
         // list are freed by process_zombie_groups at the next safe point.
         // join_any / join_none groups stay live until the last child finishes
-        // so wait_fork still works.
-        fork_group_unlink(grp);
-        grp->next_g = g.zombie_groups;
-        g.zombie_groups = grp;
+        // so wait_fork still works. A group whose finished children still
+        // hold live descendants is held instead (see "Holding descendants" in
+        // process_control.c).
+        fork_group_detach(grp);
+        if (grp->holding) {
+            grp->next_g = parent->held_groups;
+            if (grp->next_g) grp->next_g->prev_g = grp;
+            parent->held_groups = grp;
+        } else {
+            grp->next_g = g.zombie_groups;
+            g.zombie_groups = grp;
+        }
         // wait fork observes only the groups spawned by its own process.
         if (parent->wait.kind == W_FORK_ALL && !parent->fork_groups)
             wake_proc(parent);
+        if (!parent->fork_groups && parent->completed) proc_tree_released(parent);
     }
 }
 
@@ -415,7 +429,7 @@ static void process_zombie_groups(void) {
             // A completed child can still own live join_none descendants.
             // Keep its process object until those groups unlink themselves;
             // their completion path dereferences the parent pointer.
-            if (c->proc->fork_groups || c->proc->nba_head) {
+            if (c->proc->fork_groups || c->proc->held_groups || c->proc->nba_head) {
                 deferred = 1;
                 continue;
             }

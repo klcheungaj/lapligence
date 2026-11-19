@@ -835,7 +835,11 @@ impl Codegen<'_> {
                 return;
             };
             let mut receiver = &access.receiver;
-            while let IrChandleExpr::Required { handle, .. } = receiver {
+            // A nested interface instance (`v.tx.x`) is selected through
+            // the handle, so rebinding the handle moves the access too.
+            while let IrChandleExpr::Required { handle, .. }
+            | IrChandleExpr::VirtualInterfaceNested { handle, .. } = receiver
+            {
                 receiver = handle;
             }
             match receiver {
@@ -865,7 +869,10 @@ impl Codegen<'_> {
             | IrChandleExpr::LocalRead(_)
             | IrChandleExpr::FormalRead(_)
             | IrChandleExpr::InterfaceInstance { .. } => true,
-            IrChandleExpr::Required { handle, .. } => Self::rearmable_handle(handle),
+            IrChandleExpr::Required { handle, .. }
+            | IrChandleExpr::VirtualInterfaceNested { handle, .. } => {
+                Self::rearmable_handle(handle)
+            }
             _ => false,
         }
     }
@@ -1605,7 +1612,11 @@ impl Codegen<'_> {
             .find(|access| access.name == current)
         {
             let mut receiver = &access.receiver;
-            while let IrChandleExpr::Required { handle, .. } = receiver {
+            // A nested interface instance (`v.tx.x`) is selected through
+            // the handle, so rebinding the handle moves the access too.
+            while let IrChandleExpr::Required { handle, .. }
+            | IrChandleExpr::VirtualInterfaceNested { handle, .. } = receiver
+            {
                 receiver = handle;
             }
             let IrChandleExpr::LocalRead(inner) = receiver else {

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 74u
+#define LLG_SLANG_ABI_VERSION 75u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1327,7 +1327,17 @@ enum {
    * package re-exports (26.6) when a reference through the exporting
    * package reached it. Items are ordered by declaration position; the
    * index is the ordinal. Simulation captures only. Not a child edge. */
-  LLG_SLANG_EDGE_IMPORTED = 45
+  LLG_SLANG_EDGE_IMPORTED = 45,
+  /* (ABI v75) From a member access or method call through a virtual
+   * interface (IEEE 1800-2009 25.9) whose member or callee lies in an
+   * interface instance nested in the handle's interface (`v.tx.x`,
+   * `v.tx.f()`, or `v.tx` itself) to each scope between the handle's
+   * interface and the member, outermost first; the index is the ordinal.
+   * Slang keeps only the handle and the member, so these name the path a
+   * consumer rebuilds. An instance array element is
+   * named with its indices (`ls[1]`), as the member is when it is one.
+   * Simulation captures only. Not a child edge. */
+  LLG_SLANG_EDGE_VIRTUAL_INTERFACE_SCOPE = 46
 };
 
 /* Checker instance auxiliary bits and CHECKER_ACTUAL index flag. */

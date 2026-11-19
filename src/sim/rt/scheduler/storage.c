@@ -546,6 +546,7 @@ struct llg_fork_group {
     int resumed;                  // join_any: parent already woken
     int terminal;                 // group was moved to the zombie list
     int started;                  // join_none children became eligible to run
+    int holding;                  // finished children still holding live descendants
     llg_proc_t* parent;          // spawning proc
     llg_fork_child_t* children;  // for disable_fork
     llg_fork_child_t* children_tail; // source-order O(1) append
@@ -695,7 +696,17 @@ struct llg_proc {
     uint8_t wait_ordered;
     llg_process_handle_t* handle;
     llg_process_local_ref_t* process_locals;
-    llg_proc_t* next_retired;
+    union {
+        // Retired-list link: set only once the record is unregistered and
+        // has no fork or held groups left (proc_retire_completed,
+        // llg_kill_proc), so it never overlaps a held list.
+        llg_proc_t* next_retired;
+        // Ended groups kept while a finished child still holds live
+        // descendants ("Holding descendants", process_control.c), so kill
+        // and disable fork of this process or an ancestor reach them (SV
+        // 9.6.3, 9.7). Linked through next_g/prev_g.
+        llg_fork_group_t* held_groups;
+    };
     llg_fork_group_t* fork_groups; // live groups spawned by this proc
     llg_fork_group_t* fork_groups_tail; // source-order O(1) append
     llg_fork_group_t* pending_fork_groups; // first group not yet checked for start
