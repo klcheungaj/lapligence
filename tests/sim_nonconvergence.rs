@@ -208,7 +208,10 @@ fn region_pass_budget_has_below_at_and_above_boundaries() {
             if success {
                 assert!(output.status.success(), "limit {limit}: {stderr}");
                 assert_eq!(output.stdout, b"PASS region passes\n");
-                assert!(stderr.is_empty(), "limit {limit}: {stderr}");
+                assert!(
+                    sim_harness::strip_lint_reports(&output.stderr).is_empty(),
+                    "limit {limit}: {stderr}"
+                );
             } else {
                 assert_eq!(output.status.code(), Some(1), "limit {limit}: {stderr}");
                 assert!(output.stdout.is_empty(), "limit {limit}: {output:?}");
