@@ -15,34 +15,37 @@ static size_t value_scope_capacity;
 static size_t value_scope_count;
 /* The index grows before it is more than 1/N full. The common lookup misses
  * (a global target never has an entry), and a miss walks its whole cluster:
- * on 1,000 flops with NBAs a miss probed 1.5 slots on average at half full
- * against 5.4 at three quarters. The index then costs 32 to 64 bytes per
+ * on 1,000 flops with NBAs a miss probed 1.4 slots on average at half full
+ * against 3.8 at three quarters. The index then costs 32 to 64 bytes per
  * entry instead of 21 to 43. */
 #define LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR 2u
 
-static size_t value_scope_hash(const void* target) {
-    uint64_t hash = (uint64_t)(uintptr_t)target;
-    hash ^= hash >> 30;
-    hash *= UINT64_C(0xbf58476d1ce4e5b9);
-    hash ^= hash >> 27;
-    hash *= UINT64_C(0x94d049bb133111eb);
-    hash ^= hash >> 31;
-    return (size_t)hash;
+/* 64 - log2(value_scope_capacity) while the index exists. */
+static unsigned value_scope_shift;
+
+/* Home slot: the top bits of a multiplicative (Fibonacci) hash, which depend
+ * on every bit of the address. It runs on every lookup and on each entry a
+ * removal moves past, so it is one multiply rather than a full mixer. */
+static size_t value_scope_home(const void* target, unsigned shift) {
+    return (size_t)(((uint64_t)(uintptr_t)target * UINT64_C(0x9e3779b97f4a7c15)) >> shift);
 }
 
 static void value_scope_index_rebuild(size_t capacity) {
     llg_value_scope_entry_t* entries = (llg_value_scope_entry_t*)llg_checked_calloc(
         capacity, sizeof(*entries), "value scope address index");
+    unsigned shift = 64;
+    for (size_t size = capacity; size > 1; size >>= 1) --shift;
     for (size_t i = 0; i < value_scope_capacity; ++i) {
         llg_value_scope_entry_t entry = value_scope_index[i];
         if (!entry.scope) continue;
-        size_t slot = value_scope_hash(entry.target) & (capacity - 1);
+        size_t slot = value_scope_home(entry.target, shift);
         while (entries[slot].target) slot = (slot + 1) & (capacity - 1);
         entries[slot] = entry;
     }
     free(value_scope_index);
     value_scope_index = entries;
     value_scope_capacity = capacity;
+    value_scope_shift = shift;
 }
 
 /* Marks a runtime-private scope (value_scope_begin_private). */
@@ -82,7 +85,7 @@ static void value_scope_index_add(llg_value_scope_t* scope) {
     if (capacity != value_scope_capacity) value_scope_index_rebuild(capacity);
     for (size_t i = 0; i < count; ++i) {
         const void* target = value_scope_key(scope, i);
-        size_t slot = value_scope_hash(target) & (capacity - 1);
+        size_t slot = value_scope_home(target, value_scope_shift);
         while (value_scope_index[slot].target)
             slot = (slot + 1) & (capacity - 1);
         value_scope_index[slot] = (llg_value_scope_entry_t){target, scope};
@@ -92,7 +95,7 @@ static void value_scope_index_add(llg_value_scope_t* scope) {
 
 static llg_value_scope_t* value_scope_index_find(const void* target) {
     if (!value_scope_count) return NULL;
-    size_t slot = value_scope_hash(target) & (value_scope_capacity - 1);
+    size_t slot = value_scope_home(target, value_scope_shift);
     while (value_scope_index[slot].target) {
         if (value_scope_index[slot].target == target)
             return value_scope_index[slot].scope;
@@ -106,7 +109,7 @@ static void value_scope_index_remove(llg_value_scope_t* scope) {
     size_t mask = value_scope_capacity - 1;
     for (size_t i = 0; i < count; ++i) {
         const void* target = value_scope_key(scope, i);
-        size_t hole = value_scope_hash(target) & mask;
+        size_t hole = value_scope_home(target, value_scope_shift);
         while (value_scope_index[hole].target != target ||
                value_scope_index[hole].scope != scope) {
             if (!value_scope_index[hole].target) {
@@ -119,7 +122,7 @@ static void value_scope_index_remove(llg_value_scope_t* scope) {
          * lie cyclically in (hole, slot]: its probe would cross the hole. */
         for (size_t slot = (hole + 1) & mask; value_scope_index[slot].target;
              slot = (slot + 1) & mask) {
-            size_t home = value_scope_hash(value_scope_index[slot].target) & mask;
+            size_t home = value_scope_home(value_scope_index[slot].target, value_scope_shift);
             if (((slot - home) & mask) < ((slot - hole) & mask)) continue;
             value_scope_index[hole] = value_scope_index[slot];
             hole = slot;
