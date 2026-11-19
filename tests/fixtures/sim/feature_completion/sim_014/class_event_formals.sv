@@ -1,9 +1,10 @@
 // FIN-001 G3 (F06-06): output and inout event formals bound to class event
-// properties. The property holds the event object's identity; the formal
-// starts from it at the call and its final handle is assigned back to the
-// property of the object the actual names when the task returns (SV 13.5,
-// 15.5.5). Covers task outputs, an inout that waits on its formal and a
-// class method's output.
+// properties. The property holds the event object's identity; an inout
+// formal starts from it at the call and its final handle is assigned back to
+// the property of the object the actual names when the task returns (SV 13.5,
+// 15.5.5). An output event formal is a new event that is never copied out
+// (decision S13-D3), so the property keeps its object. Covers task outputs,
+// an inout that waits on its formal and a class method's output.
 `timescale 1ns / 1ns
 module tb;
   class C;
@@ -26,8 +27,9 @@ module tb;
     $display("%0t out g %0d h %0d", $time, c.ev == g, c.ev == h);
     fork
       begin @(c.ev); $display("%0t woke on c.ev", $time); end
-      #1 -> g;
+      begin #1 -> g; #1 -> c.ev; end
     join
+    c.ev = g;
     fork
       swap(c.ev);
       #1 -> g;
@@ -35,7 +37,7 @@ module tb;
     $display("%0t inout g %0d h %0d", $time, c.ev == g, c.ev == h);
     d.ev = null;
     c.relay(d.ev);
-    $display("%0t method d.ev==c.ev %0d", $time, d.ev == c.ev);
+    $display("%0t method d.ev==c.ev %0d d.ev==null %0d", $time, d.ev == c.ev, d.ev == null);
     $finish;
   end
 endmodule

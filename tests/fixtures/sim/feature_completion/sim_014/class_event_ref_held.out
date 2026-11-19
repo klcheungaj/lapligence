@@ -12,8 +12,8 @@
 21 b2 is g
 22 in_branch returns
 25 out_set returns
-25 o2 is g
 27 via_output returns
-30 out_set returns
-30 o3 is g
-32 via_branch_output returns
+28 o2 is g 0
+31 out_set returns
+33 via_branch_output returns
+34 o3 is g 0

@@ -172,12 +172,26 @@ record repeats the value last written for its code (S47-D14).
   `$dumpvars` fails compilation with "has no VCD/FST representation".
 - `controls.sv` (step 3): `$dumpfile("ignored.vcd")` is replaced by
   `trace.vcd` before the dump starts; the later `$dumpfile("late.vcd")` warns
-  (S47-D7). Checkpoints: `$dumpvars`@0 {v=0001, s=0, r=0}; `$dumpoff`@2
-  {x, x, NaN} after the step's v=0100 record (S47-D6); no checkpoint for the
-  repeated `$dumpoff` or the `$dumpall` at 3 while off (S47-D5); `$dumpon`@4
-  {0111, 1, 2.5} then v=1000 at the end of the step; `$dumpall`@5
-  {1000, 1, 2.5} then s=0. The `$dumpon` at 0 has no effect (L37961). The
-  final procedure's v=9 is recorded at the end time 6.
+  (S47-D7). Checkpoints, each at the end of its step after the step's
+  records (S47-D5): `$dumpvars`@0 {v=0001, s=0, r=0}; `$dumpoff`@2
+  {x, x, NaN} after the step's v=0101 record, the value written after the
+  call (S47-D6); no checkpoint for the repeated `$dumpoff` or the `$dumpall`
+  at 3 while off (S47-D5); `$dumpon`@4 {1000, 1, 2.5}, the step's final
+  values; the `$dumpflush` at 5 writes s=0, then `$dumpall`@5
+  {1000, 0, 2.5}. The `$dumpon` at 0 has no effect (L37961). The final
+  procedure's v=9 is recorded at the end time 6.
+- `checkpoint_timing.sv` (S47-D5): checkpoints follow the records of their
+  step and hold its final values. `$dumpvars`@0 then `$dumpall`@0 {v=0010};
+  v=0100 then `$dumpoff`@1 (the change after the call is recorded first);
+  `$dumpon`@3 {0111}, the value of a later delta; s=1, v=1000 (a later delta)
+  then `$dumpoff`@4; nothing at 5 (`$dumpon; $dumpoff;`); `$dumpon`@6 then
+  `$dumpall`@6 {1010}; only the record v=1011 at 7 (`$dumpoff; $dumpon;`);
+  r=1.5 and the event record, then one `$dumpall`@8 for two calls; only
+  `$dumpall`@9 {1011} at 9, where v ends at the value last written. The FST
+  dump has activity on@0, off@1, on@3, off@4, on@6 and the same values
+  (FST marks `$dumpoff` as activity, without x values);
+  `--wave-deltas` keeps every change in execution order before the
+  checkpoints (1: 0011, 0100; 9: 1100, 1011).
 - `pending.sv` (step 3): controls before the first `$dumpvars` do nothing;
   `$dumpvars` then `$dumpoff` at step 1 start the dump off: `$dumpvars`@1
   {0011} then `$dumpoff`@1 {xxxx}; `$dumpon`@2 {0100}.
@@ -194,8 +208,9 @@ record repeats the value last written for its code (S47-D14).
   of the file: the VCD copy holds every change up to time 2. FST keeps its
   hierarchy and block index until close, so only the final FST is read.
 - `fst_trace.sv` (step 4): GTKWave's reader sees `tb.r`, `tb.s`, `tb.v`, end
-  time 206, dump activity on@0, off@2, on@4; `v` 01@0, 03@1, 04 and 05@4 (the
-  `$dumpon` checkpoint value, then the end of the step), then `t`@t for t =
+  time 206, dump activity on@0, off@2, on@4; `v` 01@0, 03@1, 04@2 (written
+  after the `$dumpoff` in its step, recorded before it), 05@4 (the `$dumpon`
+  checkpoint holds the step's final value, S47-D5), then `t`@t for t =
   6..205; `s` 0@0, 1@1, 1@4; `r` 0.25@0, 0.5@4. With `--define LIMIT=400`
   libfst stops at a block boundary: the file still opens, has the same
   hierarchy, an earlier end time and a prefix of the changes.
@@ -219,8 +234,9 @@ record repeats the value last written for its code (S47-D14).
   byte-identical and their FST records equal. With `--wave-deltas` every
   change is recorded in execution order: @1 `clk` 1, `q` 0001, `r` 0101,
   `q` 0010; @2 `clk` 0, `q` 0011, `q` 0010; @3 `v` 0000, `v` x01z,
-  `level` 1.5, 0.5, `g` 1, 0; @4 `v` 0110, x01z; @5 `tick` twice; @7 after
-  the checkpoint `v` 0001, 1111; lowering keeps all 4 updates of `q`.
+  `level` 1.5, 0.5, `g` 1, 0; @4 `v` 0110, x01z; @5 `tick` twice; @7 `v`
+  0001, 1111, then the checkpoint at the end of the step (S47-D5); lowering
+  keeps all 4 updates of `q`.
 - `pruning.sv` (step 6): storage no process reads or writes is dumped:
   `never_used` xxxx, `written_only` xxxx then 0001..0011, `read_only` 0101,
   `undriven` zzzz, `from_sink`/`u.constant_out` 1010, `unused_real` 0,

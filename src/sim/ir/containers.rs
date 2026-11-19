@@ -199,6 +199,18 @@ impl IrContainerElement {
         matches!(self, Self::Chandle | Self::Event | Self::Opaque { .. })
     }
 
+    /// Whether a whole-container or range copy may take `source`'s elements:
+    /// compatible elements, or class handles of different classes. Codegen
+    /// emits the latter only for an array of derived-class handles assigned
+    /// to an array of base-class handles, which the frontend checked
+    /// (decision UVB-D1); a class handle is the object's identity whatever
+    /// the class of the variable holding it, so the copy keeps each handle.
+    pub fn copies_from(&self, source: &Self) -> bool {
+        let class_handle =
+            |element: &Self| matches!(element, Self::Opaque { kind, .. } if kind == "Class");
+        self.compatible_with(source) || (class_handle(self) && class_handle(source))
+    }
+
     /// Assignment compatibility for container element values. Integral
     /// packed values use the normal assignment conversion at the runtime;
     /// nominal recursive values retain their frontend type identity.
@@ -1942,7 +1954,7 @@ impl IrContainerStmt {
                         IrContainerKind::Associative { key: src }
                     ) if dst == src
                 );
-                if !dst.element.compatible_with(&src.element) || !compatible_kind {
+                if !dst.element.copies_from(&src.element) || !compatible_kind {
                     return Err(IrValidationError::new(
                         "container",
                         "container copy type mismatch",
@@ -2212,7 +2224,7 @@ impl IrContainerStmt {
                 let src = container_kind(model, *src, None)?;
                 if !matches!(dst.kind, IrContainerKind::Dynamic)
                     || !matches!(src.kind, IrContainerKind::Dynamic)
-                    || !dst.element.compatible_with(&src.element)
+                    || !dst.element.copies_from(&src.element)
                     || dst.element.is_packed() != src.element.is_packed()
                     || dst.element.width() != src.element.width()
                 {
@@ -2491,7 +2503,7 @@ impl IrContainerStmt {
                         } => (*container, Some((left, right))),
                     };
                     let source = container_kind(model, source_index, Some("queue"))?;
-                    if !destination.element.compatible_with(&source.element) {
+                    if !destination.element.copies_from(&source.element) {
                         return Err(IrValidationError::new(
                             "container",
                             "queue assignment source element type mismatch",

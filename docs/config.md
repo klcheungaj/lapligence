@@ -333,10 +333,12 @@ lint errors stop the run (exit 1), warnings are printed and the run continues.
 - `only` (bool, `llg` only) — lint and exit without generating the model
   (`--lint-only`).
 - `warnings_as_errors` (bool, `llg` only) — report lint warnings as errors,
-  which stop the run (`-Werror`). It also reports the frontend's warning for
+  which stop the run (`-Werror`). It also reports the frontend's warnings for
   a virtual-method override that changes visibility
-  (`SLANG-VirtualVisibilityMismatch`, decision S08-D1) as the error it is by
-  default in the frontend; other frontend warnings stay warnings.
+  (`SLANG-VirtualVisibilityMismatch`, decision S08-D1) and for an unpacked
+  array of derived-class handles assigned to one of base-class handles
+  (`SLANG-DerivedClassArrayAssignment`, decision UVB-D1) as errors; other
+  frontend warnings stay warnings.
 - `json` (bool, `llg` only) — report lint as JSON on stdout and exit
   (`--lint-json`); implies `only`.
 - `json_file` (string, `llg` only) — write the JSON report to this file
@@ -488,7 +490,9 @@ optional process-wide guard.
   mode is compiled into the model and links its own runtime archive, so a
   model without it pays nothing. By default a variable gets at most one
   record per step, none when its end-of-step value equals its last record
-  (S47-D2, S47-D14).
+  (S47-D2, S47-D14). In both modes the `$dumpon`, `$dumpoff` and `$dumpall`
+  checkpoints are written at the end of their time step, after its records
+  (S47-D5).
 
 ## `[build]` — model build (`llg` only)
 

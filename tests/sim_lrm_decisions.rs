@@ -43,17 +43,25 @@ fn k1_d1_string_clockvar_rejected() {
 }
 
 #[test]
-fn uvb_d1_derived_handle_array_to_base_rejected() {
+fn uvb_d1_derived_handle_array_to_base() {
+    run_decision(
+        "UVB-D1_derived_handle_array_to_base",
+        include_str!("fixtures/sim/lrm_decisions/UVB-D1_derived_handle_array_to_base.out"),
+    );
+}
+
+#[test]
+fn uvb_d1_base_handle_array_to_derived_rejected() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(include_str!(
-        "fixtures/sim/lrm_decisions/UVB-D1_derived_handle_array_to_base_rejected.out"
+        "fixtures/sim/lrm_decisions/UVB-D1_base_handle_array_to_derived_rejected.out"
     )
     .is_empty());
     sim_cli::reject_case(
         SUITE,
-        "UVB-D1_derived_handle_array_to_base_rejected",
-        "UVB-D1_derived_handle_array_to_base_rejected.sv:32:7 value of type 'derived$[2]' \
-         cannot be assigned to type 'base$[]'",
+        "UVB-D1_base_handle_array_to_derived_rejected",
+        "UVB-D1_base_handle_array_to_derived_rejected.sv:27:7 value of type 'base$[2]' \
+         cannot be assigned to type 'derived$[]'",
     );
 }
 
@@ -712,10 +720,10 @@ fn s13_d4_ref_record_store_wakes_readers() {
 }
 
 #[test]
-fn s13_d3_output_event_merges_actual() {
+fn s13_d3_output_event_not_copied_out() {
     run_decision(
-        "S13-D3_output_event_merges_actual",
-        include_str!("fixtures/sim/lrm_decisions/S13-D3_output_event_merges_actual.out"),
+        "S13-D3_output_event_not_copied_out",
+        include_str!("fixtures/sim/lrm_decisions/S13-D3_output_event_not_copied_out.out"),
     );
 }
 

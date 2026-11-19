@@ -1,7 +1,8 @@
 // SIM-012 A02: event formals of every direction pass through virtual
 // interface dispatch with their identity: an input names the caller's event,
-// an output and an inout return the interface's event, a ref triggers the
-// caller's event (SV 25.9, 13.5, 15.5).
+// an inout returns the interface's event, a ref triggers the caller's event
+// (SV 25.9, 13.5, 15.5). An output event formal is a new event that is not
+// copied out (decision S13-D3): the caller's event keeps its object.
 interface ifc;
   event done;
   task automatic waiter(input event e, output event o); @(e); o = done; endtask
@@ -20,8 +21,8 @@ module tb;
       begin v.fire(go); $display("fired %0d", $time); end
     join
     fork
-      begin @(got); $display("got a.done %0d", $time); end
-      begin #1 -> a.done; end
+      begin @(got); $display("got woke on itself %0d", $time); end
+      begin #1 -> a.done; #1 -> got; end
     join
     v = b;
     h = go;

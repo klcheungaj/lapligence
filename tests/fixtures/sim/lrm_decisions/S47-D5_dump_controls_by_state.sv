@@ -12,8 +12,10 @@
 // between $dumpoff and $dumpon, no value changes are dumped." 21.7.1.6
 // Example 2 (L37961): "$dumpon; //no effect the first time through". The
 // text does not cover controls before $dumpvars or repeated controls.
-// Compare S47-D5.vcd: `#1 $dumpvars`, `#2 $dumpoff`, `#4 $dumpon b0100`;
-// nothing at time 0 or 3.
+// A checkpoint is written at the end of its time step, after the step's
+// records and with its final values (user decision 2026-11-19).
+// Compare S47-D5.vcd: `#1 $dumpvars b0010`, `#2 b0011` then `$dumpoff`,
+// `#4 $dumpon b0100`; nothing at time 0 or 3.
 module tb;
   logic [3:0] v;
   initial begin

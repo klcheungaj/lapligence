@@ -161,6 +161,7 @@ static void check_fst_snapshots(void) {
     llg_wave_slot_end(7);
     probe_set_bits(&packed, 0, 0x5a);
     llg_wave_off(8);
+    llg_wave_slot_end(8);
     llg_wave_on(9);
     CHECK(llg_wave_close(9) == 0);
     sv4_destroy(&packed);

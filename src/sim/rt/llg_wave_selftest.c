@@ -224,6 +224,7 @@ int main(void) {
     llg_wave_changed_sv4(&packed);
     llg_wave_slot_end(7);
     llg_wave_off(8);
+    llg_wave_slot_end(8);
     llg_wave_on(9);
     CHECK(llg_wave_close(9) == 0);
 

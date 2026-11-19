@@ -752,15 +752,18 @@ fn render_function(
         }
 
         if formal.event && formal.is_address() {
-            // A `ref` event formal is the caller's handle; an output or inout
-            // works on its own handle, assigned back at return.
+            // A `ref` event formal is the caller's handle; an inout works on
+            // its own handle, assigned back at return. An output starts as a
+            // new synchronization object, like an automatic event
+            // declaration, and is never copied out (decision EVF-D1).
             let handle = if formal.is_ref() {
                 format!("r{index}")
             } else {
                 let initial = if formal.mode == IrFormalMode::Inout {
                     format!("o{index} ? o{index}->object : NULL")
                 } else {
-                    "NULL".to_owned()
+                    frame.line(format!("(void)o{index};"));
+                    "llg_event_object_new()".to_owned()
                 };
                 let local =
                     frame.declare("llg_event_t", "event_formal", format!("{{ {initial} }}"));
@@ -960,7 +963,7 @@ fn render_function(
                 format!("sv4_copy(o{index}, {cell});")
             });
         }
-        if formal.event && formal.is_out {
+        if formal.event && formal.mode == IrFormalMode::Inout {
             let handle = frame
                 .event_bindings
                 .first()

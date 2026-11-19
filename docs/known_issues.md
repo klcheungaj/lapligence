@@ -3708,24 +3708,6 @@ with "cannot resolve array base of select `count`". The statement forms
 **Intended direction.** Lower the prefix-increment expression through the
 same element reference as the statement form.
 
-### Array of derived-class handles assigned to an array of the base class
-
-**Symptom.** The UVM 1.1d and 1.2 `registers/primer` example passes
-`TABLES`, a fixed array of `reg_slave_TABLES` handles, to the `uvm_reg reg_a[]`
-formal of `uvm_reg_indirect_data::configure`; the frontend rejects the call
-with a located `SLANG-BadAssignment` error. The industry-standard simulator
-accepts it and copies each handle. The example's own comment notes the
-question and keeps an element-by-element copy for another tool.
-
-**Cause.** By decision UVB-D1 llg follows 7.6: unpacked arrays are assignment
-compatible only when their element types are equivalent, and a derived class
-type is not equivalent to its base class (6.22.2); 7.7 applies the same rule
-to an array argument passed by value.
-
-**Intended direction.** None while UVB-D1 stands. The example runs when its
-element-by-element branch is selected
-([decision UVB-D1](lrm_decisions.md#arrays-of-class-handles-u2)).
-
 ### Sequence declared in a clocking block
 
 **Symptom.** `if (!sigs.mck.at_posedge.triggered) @(sigs.mck);`, where
@@ -3766,10 +3748,14 @@ simulator's transmit thread waits for a bus grant, while llg's threads are
 idle. In the second main phase the receive thread clears its bit of `m_isr`
 and sets it again in one process turn (`wait` statements that do not block
 lie between the writes), so by decision T1-D11 the transmit thread's
-`wait (!m_isr)` never sees zero.
+`wait (!m_isr)` never sees zero. Under that decision's glitch coalescing a
+level-sensitive `wait (expr)` is woken only at a check, which compares the
+value with the one at the last check: a flag cleared and set again within one
+process turn is no change, so a waiter for the cleared value misses it.
 
-**Intended direction.** None while T1-D11 stands; the example's timing
-follows the tool-specific macro.
+**Intended direction.** None: user decision 2026-11-19 keeps glitch
+coalescing (T1-D11) with this consequence; the example's timing follows the
+tool-specific macro.
 
 ### The bus example's run diverges after its first transfer
 

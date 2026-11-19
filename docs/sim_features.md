@@ -1203,14 +1203,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `event` class properties execute: each object gets its own synchronization
   object at construction and a shallow copy shares the original's
   ([class-defects](../tests/fixtures/sim/feature_completion/ki_class_defects/readme.md)).
-  Output and inout event formals bound to class event properties copy the
-  property's handle in at the call and back at return
-  (`class_event_formals`), and a `ref` event formal rebinds the property's
-  slot at once (`class_event_ref_formal`), also from a fork-join branch or
-  through an output event formal it is forwarded to, at that formal's return
-  (`class_event_ref_held`). Function calls in expressions take
-  output, inout and `ref` event formals for any result type
-  (`event_formals_value_calls`, decision S13-D3).
+  Inout event formals bound to class event properties copy the property's
+  handle in at the call and back at return (`class_event_formals`); an
+  output event formal starts as a new event and is never copied out
+  (decision S13-D3). A `ref` event formal rebinds the property's slot at
+  once (`class_event_ref_formal`), also from a fork-join branch
+  (`class_event_ref_held`). Function calls in expressions take output,
+  inout and `ref` event formals for any result type
+  (`event_formals_value_calls`).
   Event handles other than declared named events in process-evaluated lists
   reject.
   V §9.7.3; SV §15.5 **[1995/SV-2005]**.
@@ -2448,7 +2448,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   variables are not dumped and naming one in `$dumpvars` is an error. A block,
   task or function may name a `$dumpvars` scope, the depth counting from it.
   `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
-  `$dumpflush` follow the dump state; an output error is reported, stops the
+  `$dumpflush` follow the dump state; the `$dumpon`, `$dumpoff` and
+  `$dumpall` checkpoints are written at the end of their time step, after its
+  records and with its final values, also with `--wave-deltas` (S47-D5); an
+  output error is reported, stops the
   dump and fails the run (decisions S47-D1..D15; [SIM-047
   fixtures](../tests/fixtures/sim/feature_completion/sim_047/readme.md), read
   by an independent VCD reader and GTKWave's FST reader). Remaining gaps are

@@ -1,7 +1,8 @@
 // SIM-009: output, inout and ref named-event formals take the typed call path,
-// together with native record formals (SV 13.5, 15.5). An output assigns the
-// callee's handle back at return, an inout starts from the caller's handle,
-// and a ref rebinds the caller's handle while the task is suspended.
+// together with native record formals (SV 13.5, 15.5). An output is a new
+// event that is not copied out (decision S13-D3), an inout starts from the
+// caller's handle and assigns the callee's back at return, and a ref rebinds
+// the caller's handle while the task is suspended.
 module tb;
     event e1, e2, h;
     typedef struct { int a; string s; } r_t;
@@ -20,8 +21,11 @@ module tb;
         p.a = 1;
         p.s = "q";
         pick(h, p);
-        fork #2 ->e1; join_none
-        @h $display("h is e1 at %0d", $time);
+        fork
+            #2 ->e1;
+            #3 ->h;
+        join_none
+        @h $display("h is its own event at %0d", $time);
         fork alias_wait(h, 1); join_none
         #2 fork #1 ->e2; join_none
         @h $display("h is e2 at %0d", $time);

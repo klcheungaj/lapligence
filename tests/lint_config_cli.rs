@@ -885,3 +885,155 @@ endmodule
     );
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
 }
+
+/// An unpacked array of derived-class handles assigned to an array of
+/// base-class handles (decision UVB-D1): the frontend warns at the
+/// assignment, citing 7.6, and the model copies each handle; `-Werror`, or
+/// `warnings_as_errors = true` in `llg.toml`, reports the same diagnostic as
+/// an error, which stops the run before codegen.
+#[test]
+fn werror_restores_derived_class_array_error() {
+    const ARRAY_SV: &str = r#"class B;
+  int id;
+endclass
+class D extends B;
+endclass
+module tb;
+  D d[2];
+  B b[];
+  initial begin
+    foreach (d[i]) begin d[i] = new; d[i].id = i + 1; end
+    b = d;
+    $display("%0d %0d", b.size(), b[1].id);
+    $finish;
+  end
+endmodule
+"#;
+    fn array_assignment(err: &str, severity: Severity) -> Vec<String> {
+        err.lines()
+            .filter_map(report::parse)
+            .filter(|message| {
+                message.id == "SLANG-DerivedClassArrayAssignment" && message.severity == severity
+            })
+            .map(|message| {
+                let location = message.location.unwrap_or_default();
+                let file = location.rsplit(['/', '\\']).next().unwrap_or_default();
+                format!("{file}: {}", message.text)
+            })
+            .collect()
+    }
+    let expected = [
+        "design.sv:11:7: unpacked array of type 'D$[2]' is assigned to unpacked array of type \
+         'B$[]', whose element class is a base class of the source's; IEEE 1800-2009 7.6 \
+         requires equivalent element types",
+    ];
+    let dir = TempDir::new("derived_class_array");
+    dir.write("design.sv", ARRAY_SV);
+    let out = run_llg(&dir.path, &["--top", "tb", "design.sv"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "stderr: {err}");
+    assert_eq!(array_assignment(&err, Severity::Warning), expected, "{err}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "2 2\n", "{err}");
+
+    let cfg = dir.write(
+        "llg.toml",
+        "schema_version = 1\n[lint]\nwarnings_as_errors = true\n",
+    );
+    let cfg = cfg.to_str().unwrap();
+    for args in [
+        &["-Werror", "--top", "tb", "design.sv"][..],
+        &["--config", cfg, "--top", "tb", "design.sv"][..],
+    ] {
+        let _ = std::fs::remove_dir_all(dir.path.join("build"));
+        let out = run_llg(&dir.path, args);
+        let err = stderr(&out);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {err}");
+        assert_eq!(
+            array_assignment(&err, Severity::Error),
+            expected,
+            "{args:?}: {err}"
+        );
+        assert!(
+            array_assignment(&err, Severity::Warning).is_empty(),
+            "{err}"
+        );
+        assert!(out.stdout.is_empty(), "{args:?}: no model ran: {err}");
+        assert!(
+            !dir.path.join("build/sim").exists(),
+            "{args:?}: no model was generated"
+        );
+    }
+}
+
+/// The forms decision UVB-D1 does not accept stay located frontend errors:
+/// base to derived for each container kind, unrelated classes, an inout
+/// formal (its copy-out is base to derived), a `ref` formal and associative
+/// arrays of another index type. None is reported as the UVB-D1 warning.
+#[test]
+fn derived_class_array_reverse_forms_stay_errors() {
+    const REVERSE_SV: &str = r#"class B;
+  int id;
+endclass
+class D extends B;
+endclass
+class O extends B;
+endclass
+module tb;
+  B bd[];
+  B bq[$];
+  B bf[3];
+  B ba[int];
+  D dd[];
+  D dq[$];
+  D df[3];
+  D da[int];
+  D ds[string];
+  O od[];
+  task automatic t_in(input D i[]); endtask
+  task automatic t_io(inout B io[]); endtask
+  task automatic t_ref(ref B r[]); endtask
+  initial begin
+    dd = bd;
+    dq = bq;
+    df = bf;
+    da = ba;
+    dd = bq;
+    od = dd;
+    t_in(bd);
+    t_io(dd);
+    t_ref(dd);
+    ba = ds;
+  end
+endmodule
+"#;
+    let dir = TempDir::new("derived_class_array_reverse");
+    dir.write("design.sv", REVERSE_SV);
+    let out = run_llg(&dir.path, &["--top", "tb", "design.sv"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "stderr: {err}");
+    let errors: Vec<(String, String)> = err
+        .lines()
+        .filter_map(report::parse)
+        .filter(|message| message.severity == Severity::Error)
+        .map(|message| {
+            let location = message.location.unwrap_or_default();
+            let line = location
+                .split(':')
+                .rev()
+                .nth(1)
+                .unwrap_or_default()
+                .to_owned();
+            (line, message.id)
+        })
+        .collect();
+    let bad = "SLANG-BadAssignment".to_owned();
+    let expected: Vec<(String, String)> = (23..=30)
+        .map(|line| (line.to_string(), bad.clone()))
+        .chain([
+            ("31".to_owned(), "SLANG-RefTypeMismatch".to_owned()),
+            ("32".to_owned(), bad.clone()),
+        ])
+        .collect();
+    assert_eq!(errors, expected, "{err}");
+    assert!(!err.contains("SLANG-DerivedClassArrayAssignment"), "{err}");
+}
