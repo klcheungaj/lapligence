@@ -525,11 +525,13 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
     }
     uint64_t order = llg_assertion_event_order++;
     // Each assertion's tests read its hot part only; the rest of the record
-    // is read when the signal is one of its clocks.
-    llg_assertion_hot_t* const hots = g.assertion_hot;
-    const size_t count = g.assertion_count;
-    for (size_t index = 0; index < count; index++) {
-        llg_assertion_hot_t* hot = &hots[index];
+    // is read when the signal is one of its clocks. Most publications are of
+    // no clock of a given assertion, and nothing below acts then, so its
+    // leading clock and extra-clock count settle that first. The caller runs
+    // only with assertions registered, so the array exists.
+    llg_assertion_hot_t* const end = g.assertion_hot + g.assertion_count;
+    for (llg_assertion_hot_t* hot = g.assertion_hot; hot != end; hot++) {
+        if (hot->clock != signal && !hot->extra_clock_count) continue;
         if (!assertion_clock_live(hot) ||
             (hot->kind == LLG_ASSERTION_EXPECT && !hot->expect_active))
             continue;

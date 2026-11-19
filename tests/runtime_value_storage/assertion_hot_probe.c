@@ -33,11 +33,18 @@ static int disabled_by(unsigned index) { return index % 5u == 4u; }
  * one of those is synchronous. */
 static int has_abort(unsigned index) { return index % 4u == 1u; }
 static int abort_sync_of(unsigned index) { return index % 8u == 5u; }
-/* Every seventh assertion is a sequence assertion (indices 3, 10, 17, ...). */
+/* Every seventh assertion is a sequence assertion (indices 3, 10, 17, ...),
+ * whose one step is clocked by a posedge of clock 2: none of them has that
+ * leading clock edge, so each takes it as an extra clock. */
 static int sequence_of(unsigned index) { return index % 7u == 3u; }
+#define EXTRA_CLOCK 2u
 
-/* A one-state sequence that matches at once; registration only checks it. */
-static const llg_sequence_graph_t single_state = {.states = 1, .start = 0, .accept = 0};
+static sv4_t probe_clocks[CLOCKS];
+static const llg_sequence_transition_t extra_step = {
+    .from = 0, .to = 1, .min_delay = 1, .max_delay = 1, .atom = LLG_SEQUENCE_EPSILON,
+    .clock = &probe_clocks[EXTRA_CLOCK], .edge = LLG_EV_POSEDGE};
+static const llg_sequence_graph_t extra_clocked = {
+    .states = 2, .start = 0, .accept = 1, .transition_count = 1, .transitions = &extra_step};
 
 static void check_layout(size_t count) {
     CHECK(g.assertion_count == count);
@@ -76,16 +83,18 @@ static void check_fields(sv4_t* clocks, sv4_t* disable) {
         CHECK(hot->abort_condition == (has_abort(index) ? abort_holds : NULL));
         CHECK(hot->abort_sync == (has_abort(index) && abort_sync_of(index)));
         CHECK(hot->enabled == 1 && hot->expect_active == 0);
-        CHECK(hot->clock_gate == NULL && hot->extra_clock_count == 0);
+        CHECK(hot->clock_gate == NULL);
+        CHECK(hot->extra_clock_count == (sequence_of(index) ? 1u : 0u));
+        CHECK(!sequence_of(index) || hot->extra_clocks[0].signal == &clocks[EXTRA_CLOCK]);
         CHECK(hot->record->identity == 100u + index);
-        CHECK(hot->record->consequent_sequence == (sequence_of(index) ? &single_state : NULL));
+        CHECK(hot->record->consequent_sequence == (sequence_of(index) ? &extra_clocked : NULL));
     }
 }
 
-/* A posedge of clock 0 marks exactly the live assertions on that edge whose
- * disable iff does not hold: a pending edge, or a clock event of a sequence
- * assertion. */
-static void check_clock_walk(sv4_t* clocks, sv4_t* disable, unsigned off) {
+/* A posedge of clock `clock` marks exactly the live assertions with that
+ * leading or extra clock edge whose disable iff does not hold: a pending edge,
+ * or a clock event of a sequence assertion. */
+static void check_clock_walk(sv4_t* clocks, sv4_t* disable, unsigned off, unsigned clock) {
     sv4_t zero = sv4_zero(1, 0);
     sv4_t one = sv4_from_u64(1, 1, 0);
     for (int disabled = 0; disabled < 2; disabled++) {
@@ -95,11 +104,12 @@ static void check_clock_walk(sv4_t* clocks, sv4_t* disable, unsigned off) {
             free_assertion_clock_events(a);
         }
         g.assertion_edges_pending = 0;
-        assertion_clock_signal_changed(&clocks[0], zero, one);
+        assertion_clock_signal_changed(&clocks[clock], zero, one);
         unsigned marked = 0;
         for (unsigned index = 0; index < ASSERTIONS; index++) {
-            int expected = index % CLOCKS == 0 && edge_of(index) == LLG_EV_POSEDGE &&
-                           index != off && !(disabled && disabled_by(index));
+            int leading = index % CLOCKS == clock && edge_of(index) == LLG_EV_POSEDGE;
+            int extra = sequence_of(index) && clock == EXTRA_CLOCK;
+            int expected = (leading || extra) && index != off && !(disabled && disabled_by(index));
             const llg_concurrent_assertion_t* record = g.assertion_hot[index].record;
             CHECK(record->edge_pending == (expected && !sequence_of(index)));
             CHECK((record->clock_events != NULL) == (expected && sequence_of(index)));
@@ -125,7 +135,7 @@ static void check_abort_walk(unsigned off) {
 
 static void exercise(void) {
     llg_rt_init();
-    sv4_t clocks[CLOCKS];
+    sv4_t* clocks = probe_clocks;
     for (unsigned index = 0; index < CLOCKS; index++) clocks[index] = sv4_zero(1, 0);
     sv4_t disable = sv4_zero(1, 0);
     check_layout(0);
@@ -137,7 +147,7 @@ static void exercise(void) {
         int ok;
         if (sequence_of(index))
             ok = llg_assertion_register_sequence_control(
-                clock_of(clocks, index), edge_of(index), condition, NULL, &single_state, control,
+                clock_of(clocks, index), edge_of(index), condition, NULL, &extra_clocked, control,
                 NULL, NULL, NULL, kind_of(index), 1, 0, sync, 100u + index, "a", "l", "s");
         else
             ok = llg_assertion_register_control(
@@ -152,7 +162,8 @@ static void exercise(void) {
     }
     CHECK(g.assertion_hot_capacity == 64);
     check_fields(clocks, &disable);
-    check_clock_walk(clocks, &disable, ASSERTIONS);
+    for (unsigned clock = 0; clock < CLOCKS; clock++)
+        check_clock_walk(clocks, &disable, ASSERTIONS, clock);
     check_abort_walk(ASSERTIONS);
     /* A disabled assertion without attempts takes no part in either walk. */
     const unsigned abort_off = 9, clock_off = 12;
@@ -162,7 +173,7 @@ static void exercise(void) {
     g.assertion_hot[abort_off].enabled = 1;
     CHECK(clock_off % CLOCKS == 0 && edge_of(clock_off) == LLG_EV_POSEDGE);
     g.assertion_hot[clock_off].enabled = 0;
-    check_clock_walk(clocks, &disable, clock_off);
+    check_clock_walk(clocks, &disable, clock_off, 0);
     llg_rt_cleanup();
     CHECK(g.assertions == NULL && g.assertion_tail == NULL);
     CHECK(g.assertion_hot == NULL && g.assertion_hot_block == NULL);
