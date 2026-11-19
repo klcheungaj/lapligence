@@ -28,7 +28,7 @@ macro_rules! usage_error {
 /// Usage printed when `llg` is run without arguments. `llg` never discovers
 /// `llg.toml`, so there is nothing else to run from.
 pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --vpi-port-delays
+generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --timescale <unit>/<precision>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --vpi-port-delays
 lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error  # lint always runs
 wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave  --wave-deltas  --no-wave-deltas
 build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
@@ -66,6 +66,9 @@ pub(crate) struct Cli {
     pub edition: Option<compile::LanguageEdition>,
     pub compilation_unit_mode: Option<compile::CompilationUnitMode>,
     pub delay_selection: Option<compile::DelaySelection>,
+    /// `--timescale <unit>/<precision>`: the time scale of design elements
+    /// that declare none.
+    pub default_time_scale: Option<compile::SemanticTimeScale>,
     pub include_dirs: Vec<String>,
     pub defines: Vec<String>,
     pub param_overrides: Vec<String>,
@@ -146,6 +149,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut edition: Option<compile::LanguageEdition> = None;
     let mut compilation_unit_mode: Option<compile::CompilationUnitMode> = None;
     let mut delay_selection: Option<compile::DelaySelection> = None;
+    let mut default_time_scale: Option<compile::SemanticTimeScale> = None;
     let mut include_dirs: Vec<String> = Vec::new();
     let mut defines: Vec<String> = Vec::new();
     let mut system_subroutines: Vec<String> = Vec::new();
@@ -232,6 +236,10 @@ Options:
       --delay-select <min|typ|max>
                               Use this value of every min:typ:max expression
                               (default: typ)
+      --timescale <unit>/<precision>
+                              Time scale of design elements without `timescale,
+                              timeunit or timeprecision, e.g. 10us/1ns (default:
+                              1ns/1ps, with a missing-timescale lint warning)
   -I, --include-dir <path>   Search directory for `include files and for the
                               definitions of modules the sources do not define
                               (repeatable)
@@ -408,6 +416,22 @@ Options:
                 },
                 None => {
                     usage_error!(CLI_OPTION_VALUE, "--delay-select requires min, typ or max");
+                    return Err(2);
+                }
+            },
+            "--timescale" => match it.next() {
+                Some(value) => match value.parse() {
+                    Ok(value) => default_time_scale = Some(value),
+                    Err(error) => {
+                        usage_error!(CLI_OPTION_VALUE, "--timescale: {error}");
+                        return Err(2);
+                    }
+                },
+                None => {
+                    usage_error!(
+                        CLI_OPTION_VALUE,
+                        "--timescale requires <unit>/<precision>, e.g. 1ns/1ps"
+                    );
                     return Err(2);
                 }
             },
@@ -760,6 +784,7 @@ Options:
         edition,
         compilation_unit_mode,
         delay_selection,
+        default_time_scale,
         include_dirs,
         defines,
         param_overrides,

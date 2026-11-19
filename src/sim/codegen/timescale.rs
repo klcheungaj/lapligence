@@ -6,11 +6,15 @@ pub(super) struct Timescale {
 }
 
 impl Timescale {
-    /// Default for a module without an explicit time scale (1ns/1ps).
-    pub(super) const DEFAULT: Self = Self {
-        unit_fs: 1_000_000,
-        precision_fs: 1_000,
-    };
+    /// The femtosecond form of a frontend time scale; every unit and
+    /// precision from 1fs to 100s is a power of ten femtoseconds.
+    pub(super) fn of(scale: crate::ffi::slang::SemanticTimeScale) -> Self {
+        let femtoseconds = |exponent: i32| 10_u64.pow((exponent + 15).clamp(0, 17) as u32);
+        Self {
+            unit_fs: femtoseconds(scale.exponent(false)),
+            precision_fs: femtoseconds(scale.exponent(true)),
+        }
+    }
 }
 
 /// Parse the first `` `timescale <unit>/<precision> `` directive.

@@ -13,6 +13,9 @@ pub(super) fn node_kind_from_slang(
     udp_tables: &HashMap<u64, Arc<UdpTable>>,
 ) -> Result<NodeKind, DbError> {
     let first = |role| edge_target(ids, edges, role);
+    let default_time_scale = snapshot
+        .default_time_scale
+        .unwrap_or(SemanticTimeScale::DEFAULT);
     Ok(match node.kind {
         SemanticKind::Instance if node.subkind == 193 => NodeKind::InstanceArray,
         SemanticKind::Instance | SemanticKind::Definition => NodeKind::ModuleInst {
@@ -23,8 +26,8 @@ pub(super) fn node_kind_from_slang(
             },
             is_top: node.is_top(),
             is_interface: node.definition_kind == Some(SemanticDefinitionKind::Interface),
-            timeunit: time_exponent(node.time_scale(), false)?,
-            timeprecision: time_exponent(node.time_scale(), true)?,
+            timeunit: time_exponent(node.time_scale(), default_time_scale, false)?,
+            timeprecision: time_exponent(node.time_scale(), default_time_scale, true)?,
         },
         SemanticKind::Package => NodeKind::Package,
         SemanticKind::Class => NodeKind::ClassDef,

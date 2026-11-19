@@ -8,7 +8,7 @@
 //! root's config (shadow include trees, admitted buffers).
 //!
 //! The language server uses `[sources]` (directories/include/exclude),
-//! `[compile]` (top, include_dirs, defines, param_overrides), `[lint]`
+//! `[compile]` (top, include_dirs, defines, param_overrides, timescale), `[lint]`
 //! (enabled, rules) and `[analysis]`. Driver-only keys (`sources.files`,
 //! `compile.edition`, `compile.compilation_units`, `compile.system_tasks`,
 //! `[libraries]`, `lint.run/json/json_file`, `[simulator]`, `[build]`,
@@ -65,6 +65,7 @@ pub fn compile_opts_sources(
         sources,
         top: config.compile.top.clone(),
         defines: config.compile.defines.clone(),
+        default_time_scale: config.compile.timescale,
         param_overrides: config
             .compile
             .param_overrides
@@ -104,6 +105,7 @@ fn compile_opts_with_include_dirs(
         files,
         top: config.compile.top.clone(),
         defines: config.compile.defines.clone(),
+        default_time_scale: config.compile.timescale,
         param_overrides: config
             .compile
             .param_overrides

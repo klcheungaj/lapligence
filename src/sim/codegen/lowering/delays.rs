@@ -446,7 +446,7 @@ impl<'a> Codegen<'a> {
             }
             current = self.node(id).parent;
         }
-        Timescale::DEFAULT
+        self.default_timescale
     }
 
     /// Hierarchical name of the module instance, package or `$unit` whose
@@ -536,20 +536,21 @@ impl<'a> Codegen<'a> {
             }
         }
         // A `$unit` without `timeunit`/`timeprecision` takes the default
-        // time unit; a `timescale directive does not set it (SV 3.14.2.3).
-        // Its precision is implementation-specific: llg uses the finest
-        // precision the design declares, but never one coarser than the
-        // default unit, so the design tick stays that of the declared
-        // scales (SV 3.14.3) while `$unit` delays keep whole-unit
-        // resolution. With nothing declared it is the default precision.
-        // Decision F2-D2.
+        // time unit (`--timescale`, else 1ns); a `timescale directive does
+        // not set it (SV 3.14.2.3). Its precision is implementation-specific:
+        // llg uses the finest precision the design declares, but never one
+        // coarser than the default unit, so the design tick stays that of
+        // the declared scales (SV 3.14.3) while `$unit` delays keep
+        // whole-unit resolution. With nothing declared it is the default
+        // precision. Decisions F2-D2 and F2-D3.
         let declared_precision = self.design_precision_fs;
+        let default = self.default_timescale;
         self.unit_default_timescale = Timescale {
-            unit_fs: Timescale::DEFAULT.unit_fs,
+            unit_fs: default.unit_fs,
             precision_fs: if declared_precision == u64::MAX {
-                Timescale::DEFAULT.precision_fs
+                default.precision_fs
             } else {
-                declared_precision.min(Timescale::DEFAULT.unit_fs)
+                declared_precision.min(default.unit_fs)
             },
         };
         if undeclared_unit {
@@ -559,7 +560,7 @@ impl<'a> Codegen<'a> {
         }
         if self.design_precision_fs == u64::MAX {
             // No source files at all (should not happen for a real design).
-            self.design_precision_fs = Timescale::DEFAULT.precision_fs;
+            self.design_precision_fs = default.precision_fs;
         }
         self.model.precision_fs = self.design_precision_fs;
     }

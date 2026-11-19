@@ -4312,6 +4312,14 @@ fn f2_d3_default_timescale() {
 }
 
 #[test]
+fn f2_d4_mixed_timescale() {
+    run_decision(
+        "F2-D4_mixed_timescale",
+        include_str!("fixtures/sim/lrm_decisions/F2-D4_mixed_timescale.out"),
+    );
+}
+
+#[test]
 fn s45_d20_option_unknown_value() {
     run_decision(
         "S45-D20_option_unknown_value",
