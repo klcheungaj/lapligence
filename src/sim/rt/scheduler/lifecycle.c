@@ -317,6 +317,8 @@ static void free_assertions(void) {
     g.assertion_hot = NULL;
     g.assertion_count = 0;
     g.assertion_hot_capacity = 0;
+    g.async_aborts = NULL;
+    g.async_aborts_tail = NULL;
     // The condition watches end with the other watches (free_value_watches).
     value_watch_disable = 0;
     free(g.sequence_endpoints);

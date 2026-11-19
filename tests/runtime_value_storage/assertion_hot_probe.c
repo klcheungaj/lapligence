@@ -4,7 +4,8 @@
 /* The hot parts of concurrent assertions (scheduler/state.c,
  * llg_assertion_hot_t): one line-aligned array in registration order whose
  * entries and records point at each other through every growth of the
- * array, and the per-publication walks that read them. */
+ * array, the per-publication walks that read them, and the list of the
+ * assertions with an asynchronous accept_on/reject_on (g.async_aborts). */
 
 #define CLOCKS 3u
 #define ASSERTIONS 37u
@@ -32,6 +33,11 @@ static int disabled_by(unsigned index) { return index % 5u == 4u; }
  * one of those is synchronous. */
 static int has_abort(unsigned index) { return index % 4u == 1u; }
 static int abort_sync_of(unsigned index) { return index % 8u == 5u; }
+/* Every seventh assertion is a sequence assertion (indices 3, 10, 17, ...). */
+static int sequence_of(unsigned index) { return index % 7u == 3u; }
+
+/* A one-state sequence that matches at once; registration only checks it. */
+static const llg_sequence_graph_t single_state = {.states = 1, .start = 0, .accept = 0};
 
 static void check_layout(size_t count) {
     CHECK(g.assertion_count == count);
@@ -46,6 +52,18 @@ static void check_layout(size_t count) {
     }
     CHECK(index == count);
     CHECK(count == 0 || g.assertion_tail->hot == &g.assertion_hot[count - 1u]);
+    /* The asynchronous-abort list holds exactly the assertions with an
+     * asynchronous control, in registration order. */
+    const llg_concurrent_assertion_t* next_async = g.async_aborts;
+    for (const llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next) {
+        if (!assertion->hot->abort_condition || assertion->hot->abort_sync) continue;
+        CHECK(next_async == assertion);
+        if (!assertion->async_abort_next) CHECK(g.async_aborts_tail == assertion);
+        next_async = assertion->async_abort_next;
+    }
+    CHECK(next_async == NULL);
+    CHECK((g.async_aborts == NULL) == (g.async_aborts_tail == NULL));
 }
 
 static void check_fields(sv4_t* clocks, sv4_t* disable) {
@@ -60,24 +78,31 @@ static void check_fields(sv4_t* clocks, sv4_t* disable) {
         CHECK(hot->enabled == 1 && hot->expect_active == 0);
         CHECK(hot->clock_gate == NULL && hot->extra_clock_count == 0);
         CHECK(hot->record->identity == 100u + index);
+        CHECK(hot->record->consequent_sequence == (sequence_of(index) ? &single_state : NULL));
     }
 }
 
 /* A posedge of clock 0 marks exactly the live assertions on that edge whose
- * disable iff does not hold. */
+ * disable iff does not hold: a pending edge, or a clock event of a sequence
+ * assertion. */
 static void check_clock_walk(sv4_t* clocks, sv4_t* disable, unsigned off) {
     sv4_t zero = sv4_zero(1, 0);
     sv4_t one = sv4_from_u64(1, 1, 0);
     for (int disabled = 0; disabled < 2; disabled++) {
         sv4_replace(disable, sv4_from_u64((uint64_t)disabled, 1, 0));
-        for (llg_concurrent_assertion_t* a = g.assertions; a; a = a->next) a->edge_pending = 0;
+        for (llg_concurrent_assertion_t* a = g.assertions; a; a = a->next) {
+            a->edge_pending = 0;
+            free_assertion_clock_events(a);
+        }
         g.assertion_edges_pending = 0;
         assertion_clock_signal_changed(&clocks[0], zero, one);
         unsigned marked = 0;
         for (unsigned index = 0; index < ASSERTIONS; index++) {
             int expected = index % CLOCKS == 0 && edge_of(index) == LLG_EV_POSEDGE &&
                            index != off && !(disabled && disabled_by(index));
-            CHECK(g.assertion_hot[index].record->edge_pending == expected);
+            const llg_concurrent_assertion_t* record = g.assertion_hot[index].record;
+            CHECK(record->edge_pending == (expected && !sequence_of(index)));
+            CHECK((record->clock_events != NULL) == (expected && sequence_of(index)));
             marked += (unsigned)expected;
         }
         CHECK(marked != 0 && g.assertion_edges_pending == 1);
@@ -106,17 +131,24 @@ static void exercise(void) {
     check_layout(0);
     for (unsigned index = 0; index < ASSERTIONS; index++) {
         sv4_t* condition = disabled_by(index) ? &disable : NULL;
-        int ok = has_abort(index)
-                     ? llg_assertion_register_control(
-                           clock_of(clocks, index), edge_of(index), condition, NULL,
-                           predicate_false, abort_holds, NULL, NULL, NULL, kind_of(index), 1,
-                           index % 3u == 0u, abort_sync_of(index), 100u + index, "a", "l", "s")
-                     : llg_assertion_register(clock_of(clocks, index), edge_of(index), condition,
-                                              NULL, predicate_false, NULL, NULL, NULL,
-                                              kind_of(index), 1, 100u + index, "a", "l", "s");
+        llg_concurrent_assertion_predicate_fn control = has_abort(index) ? abort_holds : NULL;
+        int sync = has_abort(index) && abort_sync_of(index);
+        int reject = has_abort(index) && index % 3u == 0u;
+        int ok;
+        if (sequence_of(index))
+            ok = llg_assertion_register_sequence_control(
+                clock_of(clocks, index), edge_of(index), condition, NULL, &single_state, control,
+                NULL, NULL, NULL, kind_of(index), 1, 0, sync, 100u + index, "a", "l", "s");
+        else
+            ok = llg_assertion_register_control(
+                clock_of(clocks, index), edge_of(index), condition, NULL, predicate_false,
+                control, NULL, NULL, NULL, kind_of(index), 1, reject, sync, 100u + index, "a",
+                "l", "s");
         CHECK(ok == 1);
         /* The array grows at 8, 16 and 32 entries and moves each time. */
         check_layout(index + 1u);
+        /* The first asynchronous control is the second assertion's. */
+        CHECK((g.async_aborts != NULL) == (index >= 1u));
     }
     CHECK(g.assertion_hot_capacity == 64);
     check_fields(clocks, &disable);
@@ -135,6 +167,7 @@ static void exercise(void) {
     CHECK(g.assertions == NULL && g.assertion_tail == NULL);
     CHECK(g.assertion_hot == NULL && g.assertion_hot_block == NULL);
     CHECK(g.assertion_count == 0 && g.assertion_hot_capacity == 0);
+    CHECK(g.async_aborts == NULL && g.async_aborts_tail == NULL);
     for (unsigned index = 0; index < CLOCKS; index++) sv4_destroy(&clocks[index]);
     sv4_destroy(&disable);
 }

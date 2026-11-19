@@ -422,26 +422,33 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
 }
 
 // Out of line, and called only when a property program or an assertion
-// exists: every publication runs the call site. The walk reads the hot
-// parts, whose array registration alone grows.
+// with an asynchronous abort exists: every publication runs the call site.
+// It walks only the assertions that a write can abort (g.async_aborts).
 static LLG_OUTLYING void assertion_abort_condition_changed(void) {
     // Asynchronous aborts of property programs read current values in the
     // next Observed pass (property_assertions_async).
     if (g.property_async_count) g.property_async_pending = 1;
-    llg_assertion_hot_t* const hots = g.assertion_hot;
-    const size_t count = g.assertion_count;
-    for (size_t index = 0; index < count; index++) {
-        const llg_assertion_hot_t* hot = &hots[index];
-        if ((hot->enabled || assertion_has_attempts(hot->record)) &&
+    for (llg_concurrent_assertion_t* assertion = g.async_aborts; assertion;
+         assertion = assertion->async_abort_next) {
+        const llg_assertion_hot_t* hot = assertion->hot;
+        if ((hot->enabled || assertion_has_attempts(assertion)) &&
             (hot->kind != LLG_ASSERTION_EXPECT || hot->expect_active) &&
-            hot->abort_condition && !hot->abort_sync &&
-            hot->abort_condition(hot->record->data)) {
+            hot->abort_condition(assertion->data)) {
             assertion_events_enter();
-            assertion_abort_attempts(hot->record);
+            assertion_abort_attempts(assertion);
             assertion_events_leave();
             if (g.finish) return;
         }
     }
+}
+
+/* Registration keeps the asynchronous-abort list in registration order, the
+ * order in which the walk over every assertion reported aborts. */
+static void assertion_async_abort_link(llg_concurrent_assertion_t* assertion) {
+    if (!assertion->hot->abort_condition || assertion->hot->abort_sync) return;
+    if (g.async_aborts_tail) g.async_aborts_tail->async_abort_next = assertion;
+    else g.async_aborts = assertion;
+    g.async_aborts_tail = assertion;
 }
 
 /* Record one more clock edge whose events the assertion consumes besides
@@ -1108,6 +1115,7 @@ int llg_assertion_register_control(
     assertion->label = label;
     assertion->location = location;
     assertion->scope = scope;
+    assertion_async_abort_link(assertion);
     return 1;
 }
 
@@ -1238,6 +1246,7 @@ int llg_assertion_register_sequence_control(
     clocking_edge_get(clock)->keep_ticks = 1;
     assertion_add_graph_clocks(assertion, antecedent);
     assertion_add_graph_clocks(assertion, consequent);
+    assertion_async_abort_link(assertion);
     return 1;
 }
 

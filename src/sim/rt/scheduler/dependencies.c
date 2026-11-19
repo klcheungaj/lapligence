@@ -1508,7 +1508,7 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
     // Ordinary accept_on/reject_on controls are also asynchronous. Their
     // predicate is evaluated only after the write is visible, while the
     // synchronous variants are checked at the sampled assertion edge below.
-    if (LLG_CO_UNLIKELY(g.property_async_count || g.assertions))
+    if (LLG_CO_UNLIKELY(g.property_async_count || g.async_aborts))
         assertion_abort_condition_changed();
     if (LLG_CO_UNLIKELY(g.monitors != NULL)) llg_monitor_target_changed(target, LLG_FMT_PACKED);
 #ifdef LLG_WAVEFORM

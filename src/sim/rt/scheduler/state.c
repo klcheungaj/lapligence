@@ -488,14 +488,15 @@ typedef struct {
     size_t capacity;
 } llg_acov_event_queue_t;
 
-/* The part of a concurrent assertion that the walks over every assertion on
- * each publication read before they act (assertion_clock_signal_changed,
- * assertion_abort_condition_changed): one 64-byte line. The hot parts of all
- * assertions are one array in registration order (g.assertion_hot), so such
- * a walk reads one line per assertion where the whole record took 6-8, and
- * the address of the next entry does not wait for a load. `record` is the
- * rest of the assertion, whose `hot` points back here. Narrow fields hold
- * the registration's validated values (kind, edge) and 0/1 flags. */
+/* The part of a concurrent assertion that the walk over every assertion on
+ * each publication reads before it acts (assertion_clock_signal_changed),
+ * as does the walk over the asynchronous accept_on/reject_on controls
+ * (assertion_abort_condition_changed): one 64-byte line. The hot parts of
+ * all assertions are one array in registration order (g.assertion_hot), so
+ * the clock walk reads one line per assertion where the whole record took
+ * 6-8, and the address of the next entry does not wait for a load. `record`
+ * is the rest of the assertion, whose `hot` points back here. Narrow fields
+ * hold the registration's validated values (kind, edge) and 0/1 flags. */
 typedef struct llg_assertion_hot {
     sv4_t* clock;
     sv4_t* disable;
@@ -629,6 +630,8 @@ typedef struct llg_concurrent_assertion {
     size_t queued_count;
     size_t queued_capacity;
     llg_frame_t* expect_values;
+    /* Next assertion with an asynchronous abort condition (g.async_aborts). */
+    struct llg_concurrent_assertion* async_abort_next;
 } llg_concurrent_assertion_t;
 
 /* Discard the running attempts of an assertion whose disable iff holds or
@@ -827,6 +830,11 @@ typedef struct {
     void* assertion_hot_block;
     size_t assertion_count;
     size_t assertion_hot_capacity;
+    // Assertions with an asynchronous abort condition (`abort_condition`
+    // without `abort_sync`), in registration order: the only ones a write
+    // can abort (assertion_abort_condition_changed).
+    llg_concurrent_assertion_t* async_aborts;
+    llg_concurrent_assertion_t* async_aborts_tail;
     // Set when a clock edge reaches a concurrent assertion and cleared when
     // the Observed region evaluates them. An edge enabled by the reactive
     // set sends the time slot back around through Observed (SV 24.3.1).
