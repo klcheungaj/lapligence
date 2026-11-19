@@ -3733,30 +3733,6 @@ with "cannot resolve array base of select `count`". The statement forms
 **Intended direction.** Lower the prefix-increment expression through the
 same element reference as the statement form.
 
-### `kill` and `disable fork` miss a process whose parent has finished
-
-**Symptom.** Both runs of the UVM 1.1d and 1.2 `integrated/codec` example
-end with `UVM_FATAL [TB/TIMEOUT] VIP and/or DUT failed to acquire syncs`:
-the timeout branch `pre_main_phase` starts with `fork ... join_none` keeps
-running after the phase ends, while the industry-standard simulator ends it.
-The phase task runs in a process `uvm_task_phase::execute` forks from a
-function; when that process returns, its `join_none` child survives the
-phase's `m_phase_proc.kill()`.
-
-**Cause.** `kill()` terminates "the given process and all its subprocesses"
-(9.7) and `disable fork` "all active descendants (subprocesses) of the
-calling process" (9.6.3); the runtime finds subprocesses through the fork
-groups of processes that are still running, so a child whose parent has
-already finished is no longer reached from the ancestor.
-
-**Intended direction.** Keep a finished process's live fork groups reachable
-from its parent, so `kill` and `disable fork` of an ancestor reach them.
-
-**Reproduce.** A process forks a branch that calls a task; the task starts
-`fork #50 $display("fired"); join_none` and returns at time 5; the outer
-process is killed at time 20 (or the initial process runs `disable fork`).
-The industry-standard simulator prints nothing at 50; llg prints `fired`.
-
 ### Array of derived-class handles assigned to an array of the base class
 
 **Symptom.** The UVM 1.1d and 1.2 `registers/primer` example passes
@@ -3794,6 +3770,31 @@ on the sequence itself.
 
 **Intended direction.** Infer a sequence's clock from its enclosing clocking
 block.
+
+### The codec example's reset-jump run stalls after the jump (UVM 1.2)
+
+**Symptom.** The UVM 1.2 `integrated/codec` `hw_reset_test` run (main phase
+jumps back to reset) does not finish its second main phase: the objections
+of `env` and the transmit sequence stay raised until the test's own
+2 000 000 ns watchdog calls `$finish`. The industry-standard simulator ends
+the phase, with one error of its own (a request of a killed register access
+left on the bus sequencer). The other codec runs (1.1d both, 1.2 `test`)
+pass; they report up to 11 more register-model race warnings
+(`UVM/FLD/SET/BSY`) than the industry-standard simulator.
+
+**Cause.** Not the process control. The bus driver
+(`integrated/apb/apb_master.sv`) waits one more clock per transfer unless
+a tool-specific macro is defined, so each transfer takes 300 ns instead of 200 ns
+and the transmit and receive interrupt threads of `tb_env` interleave
+differently from the first main phase on: at the jump the industry-standard
+simulator's transmit thread waits for a bus grant, while llg's threads are
+idle. In the second main phase the receive thread clears its bit of `m_isr`
+and sets it again in one process turn (`wait` statements that do not block
+lie between the writes), so by decision T1-D11 the transmit thread's
+`wait (!m_isr)` never sees zero.
+
+**Intended direction.** None while T1-D11 stands; the example's timing
+follows the tool-specific macro.
 
 ### The bus example's run diverges after its first transfer
 

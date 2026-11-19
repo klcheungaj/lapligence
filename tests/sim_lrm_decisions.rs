@@ -478,6 +478,14 @@ fn ab_n2_always_comb_class_reference() {
 }
 
 #[test]
+fn ko_d1_kill_reaches_finished_subtrees() {
+    run_decision(
+        "KO-D1_kill_reaches_finished_subtrees",
+        include_str!("fixtures/sim/lrm_decisions/KO-D1_kill_reaches_finished_subtrees.out"),
+    );
+}
+
+#[test]
 fn ab_n3_disable_branch_status() {
     run_decision(
         "AB-N3_disable_branch_status",

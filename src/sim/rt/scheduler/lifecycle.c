@@ -423,6 +423,10 @@ void llg_rt_cleanup(void) {
             p->fork_groups_tail = NULL;
             p->pending_fork_groups = NULL;
         }
+        if (p && p->held_groups) {
+            free_group_storage(p->held_groups);
+            p->held_groups = NULL;
+        }
     }
     free_group_storage(g.zombie_groups);
     g.zombie_groups = NULL;

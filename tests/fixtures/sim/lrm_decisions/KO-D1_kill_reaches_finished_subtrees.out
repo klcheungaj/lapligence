@@ -1,0 +1,4 @@
+kill: r KILLED z FINISHED w KILLED
+kill finished: p FINISHED leaf KILLED
+disable fork: x FINISHED y KILLED
+done
