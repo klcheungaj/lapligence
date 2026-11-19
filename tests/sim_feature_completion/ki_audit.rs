@@ -207,3 +207,290 @@ fn wait_on_a_property_a_callee_reads_through_a_container_element_is_a_located_li
         "class property `x` read by a called subroutine through a handle other than a class-handle input formal",
     );
 }
+
+#[test]
+fn process_handle_ref_output_and_status_forms_are_located_limits() {
+    let ref_actual = "ref actual of process formal `p` in `tb` must be a process variable";
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_process_ref_property",
+        "CODEGEN-009",
+        Some("12:5"),
+        ref_actual,
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_process_ref_member",
+        "CODEGEN-009",
+        Some("10:5"),
+        ref_actual,
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_process_output_expression",
+        "CODEGEN-001",
+        Some("11:9"),
+        "output or inout process formal `p` bound to a process variable in a call inside an expression in `tb` is not supported",
+    );
+    let status =
+        "process status() in a wait, event or sensitivity expression in `tb` is not supported";
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_process_status_event",
+        "CODEGEN-001",
+        Some("8:5"),
+        status,
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_process_status_implicit",
+        "CODEGEN-001",
+        Some("6:10"),
+        status,
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_process_status_continuous",
+        "CODEGEN-001",
+        Some("5:8"),
+        status,
+    );
+}
+
+/// Formerly listed as rejected: `ref` process formals bound to array and
+/// queue elements, `await()` in a fork-join_none branch of a function, and
+/// status() in an always_comb body, which (like a variable-only sensitivity)
+/// is not re-evaluated when the status changes.
+#[test]
+fn process_handle_element_ref_function_await_and_always_comb_status_execute() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_audit/process_handle_forms.out");
+    sim_cli::run_case(SUITE, "process_handle_forms", expected, "", &[]);
+}
+
+#[test]
+fn real_array_call_operands_and_oversized_elementwise_expressions_are_located_limits() {
+    let operand =
+        "real-array operand in `tb` must be a real array variable, row or assignment pattern";
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_real_array_call_equality",
+        "CODEGEN-009",
+        Some("14:10"),
+        operand,
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_real_array_call_arm",
+        "CODEGEN-009",
+        Some("14:9"),
+        operand,
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_real_array_elementwise_limit",
+        "CODEGEN-009",
+        Some("11:9"),
+        "real-array operand in `tb` has 5000 elements; element-wise real-array expressions support at most 4096",
+    );
+}
+
+#[test]
+fn blocking_delayed_native_record_with_a_conditional_source_is_a_located_limit() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_delayed_native_record_conditional",
+        "CODEGEN-001",
+        Some("12:5"),
+        "blocking delayed assignment of this native record shape in `tb` is not supported",
+    );
+}
+
+#[test]
+fn dense_member_record_forms_are_located_limits() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_record_call_member_select",
+        "CODEGEN-002",
+        Some("12:9"),
+        "cannot resolve array base of select `a` in `tb`",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_record_queue_row_select",
+        "CODEGEN-002",
+        Some("12:5"),
+        "cannot resolve array base of select `a` in `tb`",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_record_member_array_event_write",
+        "CODEGEN-002",
+        Some("12:5"),
+        "cannot resolve hierarchical assignment LHS `a` in `tb`",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_record_rows_runtime_index",
+        "CODEGEN-001",
+        Some("13:5"),
+        "a whole record with a member array selected at a run-time index is not supported below 16 cells",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_record_container_element_to_fixed",
+        "CODEGEN-009",
+        Some("10:13"),
+        "container element access in tb requires a scalar value",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_record_ref_member_wait_automatic",
+        "CODEGEN-009",
+        Some("13:7"),
+        "task `watch` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record",
+    );
+}
+
+/// Formerly listed as limits: see the fixture header and the readme.
+#[test]
+fn dense_member_record_forms_execute() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_audit/record_member_forms.out");
+    sim_cli::run_case(SUITE, "record_member_forms", expected, "", &[]);
+}
+
+#[test]
+fn deferred_action_with_an_associative_array_argument_is_a_located_limit() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_associative_array_action",
+        "CODEGEN-001",
+        Some("11:36"),
+        "unpacked aggregate, container and event arguments of deferred immediate assertion actions are not supported",
+    );
+}
+
+#[test]
+fn string_declared_in_a_function_fork_branch_is_a_located_limit() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_string_in_function_fork",
+        "CODEGEN-001",
+        Some("6:25"),
+        "string/class signals are not supported: `s` in `c`",
+    );
+}
+
+#[test]
+fn procedural_assertion_saved_values_outside_attempts_are_located_limits() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_checker_const_cast",
+        "CODEGEN-009",
+        Some("7:39"),
+        "a const cast in a procedural concurrent assertion takes its value when the assertion is queued",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_procedural_disable_iff_automatic",
+        "CODEGEN-009",
+        Some("9:5"),
+        "the `disable iff` condition of this procedural concurrent assertion reads an automatic variable or a const cast",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_procedural_clock_iff_const",
+        "CODEGEN-009",
+        Some("8:5"),
+        "the clock's `iff` condition of this procedural concurrent assertion reads an automatic variable or a const cast",
+    );
+}
+
+#[test]
+fn randomization_forms_are_located_limits() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_rand_assoc_handles",
+        "CODEGEN-001",
+        Some("12:21"),
+        "randomization: array `m` is not supported in constraints: associative arrays are not supported",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_rand_assoc_wide_key",
+        "CODEGEN-001",
+        Some("11:21"),
+        "randomization: array `m` is not supported in constraints: an associative array needs an integral index type of at most 64 bits",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_rand_assoc_class_key",
+        "CODEGEN-001",
+        Some("13:21"),
+        "randomization: array `m` is not supported in constraints: an associative array needs an integral index type of at most 64 bits",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_rand_nested_queue",
+        "CODEGEN-001",
+        Some("10:21"),
+        "randomization: array `q` is not supported in constraints: its elements are not packed integral values",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_rand_solve_element_index",
+        "CODEGEN-009",
+        Some("8:53"),
+        "randomization: a `solve...before` array element needs a constant index inside the array",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_rand_inside_row",
+        "CODEGEN-001",
+        Some("7:30"),
+        "this use of a row of a multidimensional class property in `tb` is not supported",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_rand_element_mode_packed",
+        "CODEGEN-001",
+        Some("9:5"),
+        "randomization: `rand_mode` of this member is not supported",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_randomize_event_control",
+        "CODEGEN-001",
+        Some("8:7"),
+        "function calls in evaluated event controls are not supported in `tb`: method call `randomize`",
+    );
+}
+
+#[test]
+fn uvm_example_difference_forms_are_located_limits() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_prefix_increment_container_member",
+        "CODEGEN-002",
+        Some("13:11"),
+        "cannot resolve array base of select `count` in `tb`",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_clocking_block_sequence",
+        "CODEGEN-009",
+        Some("13:10"),
+        "concurrent assertions require one explicit signal clock",
+    );
+}
+
+/// A known difference, pinned: the industry-standard behaviour prints the
+/// resolved type (`class tb.mine`); a fix of the known issue updates the
+/// expected output.
+#[test]
+fn typename_of_a_type_parameter_prints_the_first_spelling() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_audit/typename_type_parameter.out");
+    sim_cli::run_case(SUITE, "typename_type_parameter", expected, "", &[]);
+}

@@ -1296,14 +1296,19 @@ needs them.
 
 These legal forms are rejected with explicit diagnostics:
 
-- a `ref` process formal whose actual is a class property, a record member
-  or an array element;
+- a `ref` process formal whose actual is a class property or a record
+  member (elements of fixed arrays and queues are served);
 - an output or inout process formal bound to a process variable in a
   function call inside an expression;
 - `try_get`/`try_peek` of a mailbox into a process variable;
-- `status()` inside a `wait` condition, an event expression, an implicit
-  (`@*`, `always_comb`) sensitivity body or a continuous assignment;
-- `suspend()` or `await()` inside a function body.
+- `status()` inside a `wait` condition, an event expression, an `@*`
+  sensitivity body or a continuous assignment;
+- `suspend()` inside a function body.
+
+An `always_comb` body that reads `status()` runs: its sensitivity holds
+variables and selects (9.2.2.2.1), so a status change does not re-evaluate
+it, as with industry-standard behaviour. `await()` is a task, so a function
+may call it only in a `fork`-`join_none` branch (13.4.4), where it runs.
 
 ### Cause
 
@@ -1327,9 +1332,14 @@ process from a function with a run-time check for self-suspension.
 
 `task automatic t(ref process p); ... t(obj.p);`, `x = f(q) + 1;` with
 `function int f(output process p)`, `mb.try_get(q)` for a `process q`,
-`wait (p.status() == process::FINISHED);`. Fixtures:
-`tests/fixtures/sim/feature_completion/ki_audit/neg_process_status_wait.sv`,
-`neg_process_suspend_function.sv` and `neg_process_try_get.sv`.
+`wait (p.status() == process::FINISHED);`. Fixtures in
+`tests/fixtures/sim/feature_completion/ki_audit/`:
+`neg_process_ref_property.sv`, `neg_process_ref_member.sv`,
+`neg_process_output_expression.sv`, `neg_process_try_get.sv`,
+`neg_process_status_wait.sv`, `neg_process_status_event.sv`,
+`neg_process_status_implicit.sv`, `neg_process_status_continuous.sv` and
+`neg_process_suspend_function.sv`; the served forms are in
+`process_handle_forms.sv`.
 
 ## Real references and real-array expressions outside stable storage
 
@@ -1361,6 +1371,9 @@ element-wise expressions run as cell loops.
 ### Reproduce
 
 `x = (f() == g()) ? 1 : 0;` with `f` and `g` returning real arrays.
+Fixtures in `tests/fixtures/sim/feature_completion/ki_audit/`:
+`neg_real_array_call_equality.sv`, `neg_real_array_call_arm.sv` and
+`neg_real_array_elementwise_limit.sv`.
 
 ## Streaming `with` targets outside the direct assignment path
 
@@ -1442,7 +1455,8 @@ and handle targets (`s <= @(e) t;`, `s = repeat (2) @(e) t;`).
 
 These legal forms reject with explicit diagnostics: a delayed continuous
 assignment to a string or string record (`assign #1 s = t;`, SV 10.3.3), and
-a blocking `#delay` assignment of a record with a conditional source.
+a blocking `#delay` assignment of a record with a string member and a
+conditional source (`r = #1 (c ? x : y);`).
 
 ### Cause
 
@@ -1457,7 +1471,8 @@ path.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`.
+`tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`
+and `tests/fixtures/sim/feature_completion/ki_audit/neg_delayed_native_record_conditional.sv`.
 
 ## Class-keyed associative arrays have explicit gaps
 
@@ -2068,32 +2083,28 @@ Two shapes are not columns at this size:
   keeps the packed member in a container too: 40 bytes per declared cell instead
   of the sparse column's cost per written cell.
 
-Members held in a container (`string`, handles, records with such members) have
-these limits, each an error at its source location unless noted:
-
-- a nested record whose type has the column layout on its own, inside a record
-  that holds a native member array: `o.i = x` with `x` declared alone is not
-  resolved.
-- not an error: a dump omits their members
-  ([waveform dump coverage limits](#waveform-dump-coverage-limits-sim-047)).
+A waveform dump omits the members held in a container (`string`, handles,
+records with such members)
+([waveform dump coverage limits](#waveform-dump-coverage-limits-sim-047)).
 
 A use the column form cannot lower is an error at its source location. These
 limits apply to the form named:
 
-- both forms: a member array selected on a call result (`f().a[1]`), and a
-  row of a multidimensional member array of a queue element at a run-time index
-  (`q[0].a[k] = '{1, 2}`); assign through a record variable first. A whole member
-  array of an element written through an event control (`m.e[1].a <= @(e) v`).
+- both forms: a row of a multidimensional member array of a queue element at a
+  run-time index (`q[0].a[k] = '{1, 2}`); assign through a record variable
+  first. A whole member array of an element written through an event control
+  (`m.e[1].a <= @(e) v`).
+- per-cell form, below 16 cells: a member array selected on a call result
+  (`f().a[1]`); the column form serves it.
 - column form: a task or virtual-interface method that waits on a record `ref`
   formal bound to an element holding native members rejects
   ([waited `ref` formals](#waited-ref-formals-with-unobservable-actuals)).
-- per-cell form, below 16 cells: a whole record assigned to or read from an
-  element of a member array at a run-time index (`r.rows[i] = x`), and two
-  continuous assignments to separate bits of one member of an element of an
-  array of records. A record of packed members only, read whole from an element
-  into a fixed-array element, a class property, an output formal or an initializer
-  (`fa[2] = q[0]`), and a whole record read from a member array of an element
-  (`x = oq[0].e[1]`). The column form has none of these limits.
+- per-cell form, below 16 cells: a whole record of packed members assigned to
+  or read from an element of a member array at a run-time index
+  (`r.rows[i] = x`; a record with a string member works). A record of packed
+  members only, read whole from a container element into a fixed-array
+  element, a class property, an output formal or an initializer
+  (`fa[2] = q[0]`). The column form has none of these limits.
 - per-cell form, below 16 cells: a record element selected at run time as a `ref`
   actual lowers the call once per element, so only statement calls can take it and
   a call site has at most 256 branches (`neg_record_ref_element_select_value`,
@@ -2128,7 +2139,13 @@ it has none of the limit; give the two non-column shapes a column.
 The record above, `rec_t a, b; initial b = a;` and `--gen-only`, then measure
 `model.c`. The located limits:
 `tests/fixtures/sim/feature_completion/sim_008/neg_record_ref_element_select_value.sv`
-and `neg_record_ref_element_select_product.sv`.
+and `neg_record_ref_element_select_product.sv`; in
+`tests/fixtures/sim/feature_completion/ki_audit/`:
+`neg_record_call_member_select.sv`, `neg_record_queue_row_select.sv`,
+`neg_record_member_array_event_write.sv`, `neg_record_rows_runtime_index.sv`,
+`neg_record_container_element_to_fixed.sv` and
+`neg_record_ref_member_wait_automatic.sv`. Forms formerly listed here that
+run: `record_member_forms.sv`.
 
 ## Gate and UDP array elements emit one process function each
 
@@ -2319,7 +2336,8 @@ and
 the timing-control form is `sim_039/neg_match_call_timing.sv`; a dynamic array
 and a named event by value:
 `tests/fixtures/sim/feature_completion/ki_audit/neg_dynamic_array_action.sv`
-and `neg_event_action.sv`.
+and `neg_event_action.sv`; an associative array:
+`neg_associative_array_action.sv`.
 
 ## Assertion locals in join operands and end points
 
@@ -2639,6 +2657,9 @@ them.
 
 `neg_procedural_automatic_past.sv` in
 [sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md);
+`neg_procedural_disable_iff_automatic.sv` and
+`neg_procedural_clock_iff_const.sv` in
+`tests/fixtures/sim/feature_completion/ki_audit/`;
 `expect_disable_blocks.sv` in
 [sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md) for the
 blocked `expect` caller.
@@ -2820,7 +2841,9 @@ procedure that queues its assertions, so they can be saved per instance.
 
 `neg_free_history.sv`, `neg_free_unpacked.sv`, `neg_free_real.sv`,
 `neg_free_enum.sv` and `neg_procedural_automatic.sv` in
-[adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md).
+[adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md); a
+`const'` cast actual:
+`tests/fixtures/sim/feature_completion/ki_audit/neg_checker_const_cast.sv`.
 
 ## DPI-C import limits (SIM-040)
 
@@ -3024,6 +3047,8 @@ class c;
 endclass
 ```
 
+Fixture: `tests/fixtures/sim/feature_completion/ki_audit/neg_string_in_function_fork.sv`.
+
 ## Constrained randomization limits (SIM-029, SIM-030)
 
 **Status:** open. SIM-029 and SIM-030 solve packed integral and enum
@@ -3104,7 +3129,11 @@ Nested dynamic arrays and queues (each row an object of a row unit, row sizes in
 
 `tests/fixtures/sim/feature_completion/sim_029/neg_*.sv`,
 `tests/fixtures/sim/feature_completion/sim_030/neg_*.sv` and
-`search_fallback.sv`; `tests/fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.sv`.
+`search_fallback.sv`; `neg_rand_*.sv` and `neg_randomize_event_control.sv` in
+`tests/fixtures/sim/feature_completion/ki_audit/` (associative arrays of
+handles, with a class or wider index, nested queues, a non-constant
+`solve...before` index, an `inside` row, an element `rand_mode`, a call in an
+event control); `tests/fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.sv`.
 
 ## Legacy constructs unsupported by design
 
@@ -3698,6 +3727,9 @@ first reference's; `$typename` reads it.
 call, or a canonical spelling for every type kind as virtual interface types
 now have.
 
+**Reproduce.** `tests/fixtures/sim/feature_completion/ki_audit/typename_type_parameter.sv`
+(its expected output pins the current spelling).
+
 ### Prefix increment of a member of a container element's object
 
 **Symptom.** `v = ++t["a"].count["x"];`, where `t` is an associative array
@@ -3707,6 +3739,8 @@ with "cannot resolve array base of select `count`". The statement forms
 
 **Intended direction.** Lower the prefix-increment expression through the
 same element reference as the statement form.
+
+**Reproduce.** `tests/fixtures/sim/feature_completion/ki_audit/neg_prefix_increment_container_member.sv`.
 
 ### Sequence declared in a clocking block
 
@@ -3727,6 +3761,8 @@ on the sequence itself.
 
 **Intended direction.** Infer a sequence's clock from its enclosing clocking
 block.
+
+**Reproduce.** `tests/fixtures/sim/feature_completion/ki_audit/neg_clocking_block_sequence.sv`.
 
 ### The codec example's reset-jump run stalls after the jump (UVM 1.2)
 
