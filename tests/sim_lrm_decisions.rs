@@ -2720,6 +2720,15 @@ fn s43_d11_delayed_bits_one_change() {
 }
 
 #[test]
+fn s43_d12_startup_before_initializers() {
+    run_vpi_decision(
+        "S43-D12_startup_before_initializers",
+        &["function int $order(input int which)"],
+        include_str!("fixtures/sim/lrm_decisions/S43-D12_startup_before_initializers.out"),
+    );
+}
+
+#[test]
 fn s43_d9_postponed_systf_read_only() {
     run_vpi_decision(
         "S43-D9_postponed_systf_read_only",
