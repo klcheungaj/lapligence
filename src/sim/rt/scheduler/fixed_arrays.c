@@ -190,9 +190,9 @@ static void fixed_block_unfile(struct llg_fixed_block* block) {
     }
 }
 
-/* The filed block holding `address`, which lies within the filed bounds. */
-static struct llg_fixed_block* fixed_block_find(uintptr_t address) {
-    uintptr_t granule = address >> LLG_FIXED_ADDRESS_SHIFT;
+static struct llg_fixed_block* fixed_block_of(const sv4_t* target) {
+    uintptr_t address = (uintptr_t)target, granule = address >> LLG_FIXED_ADDRESS_SHIFT;
+    if (address < fixed_address_low || address >= fixed_address_high) return NULL;
     for (int before = 0; before < 2; ++before, --granule) {
         size_t slot = fixed_hash((uint64_t)granule) & (fixed_address_capacity - 1);
         for (struct llg_fixed_block* block = fixed_addresses[slot]; block; block = block->address_next) {
@@ -201,12 +201,6 @@ static struct llg_fixed_block* fixed_block_find(uintptr_t address) {
         }
     }
     return NULL;
-}
-
-static struct llg_fixed_block* fixed_block_of(const sv4_t* target) {
-    uintptr_t address = (uintptr_t)target;
-    if (address < fixed_address_low || address >= fixed_address_high) return NULL;
-    return fixed_block_find(address);
 }
 
 static struct llg_fixed_block* fixed_block_new(llg_fixed_array_t* array, uint64_t first, uint32_t cells, size_t cell_bytes) {
@@ -417,11 +411,11 @@ struct llg_fixed_sampled {
      * burst of writes grew it to, so the reset at the next slot, and growth,
      * walk these instead of the whole table: a slot costs what it saved. */
     size_t* used;
-    /* Consecutive saving slots below the shrink fill, while the table is
-     * above its initial capacity. */
-    size_t sparse_slots;
     llg_fixed_array_t whole;
     int has_whole;
+    /* Consecutive saving slots below the shrink fill, while the table is
+     * above its initial capacity. Last, so that no earlier field moves. */
+    size_t sparse_slots;
 };
 #define LLG_FIXED_SAMPLED_FREE UINT64_MAX
 
