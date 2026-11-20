@@ -230,37 +230,52 @@ pub(in crate::sim::emit_c) fn callbacks(
         )?);
     }
     for (index, assertion) in model.assertions().iter().enumerate() {
-        for (role, expression, sampled) in [
-            ("antecedent", assertion.antecedent(), true),
-            ("consequent", assertion.consequent(), true),
-            ("abort", assertion.abort_condition(), assertion.abort_sync()),
-        ] {
-            if let Some(expression) = expression {
-                out.push_str(&predicate(
-                    model, constants, backend, index, role, expression, sampled,
-                )?);
-            }
-        }
-        if assertion.future().is_some_and(|future| future.slots() != 0) {
-            out.push_str(&future_capture(
-                model, constants, backend, index, assertion,
-            )?);
-        }
-        if let Some(property) = assertion.property() {
-            out.push_str(&property::render(
-                model, constants, backend, index, property,
-            )?);
-        }
-        for (role, graph) in [
-            ("antecedent", assertion.antecedent_sequence()),
-            ("consequent", assertion.consequent_sequence()),
-        ] {
-            if let Some(graph) = graph {
-                out.push_str(&sequence::render(
-                    model, constants, backend, index, role, graph,
-                )?);
-            }
-        }
+        assertion_callbacks(model, constants, backend, index, assertion, &mut out)
+            .map_err(|error| crate::sim::located::locate_at(assertion.location(), error))?;
     }
     Ok(out)
+}
+
+/// The predicate, future-capture, property and sequence callbacks of one
+/// concurrent assertion.
+fn assertion_callbacks(
+    model: &IrModel,
+    constants: &super::super::constants::PackedConstants,
+    backend: crate::sim::value_backend::ValueBackend,
+    index: usize,
+    assertion: &crate::sim::ir::IrAssertion,
+    out: &mut String,
+) -> Result<(), String> {
+    for (role, expression, sampled) in [
+        ("antecedent", assertion.antecedent(), true),
+        ("consequent", assertion.consequent(), true),
+        ("abort", assertion.abort_condition(), assertion.abort_sync()),
+    ] {
+        if let Some(expression) = expression {
+            out.push_str(&predicate(
+                model, constants, backend, index, role, expression, sampled,
+            )?);
+        }
+    }
+    if assertion.future().is_some_and(|future| future.slots() != 0) {
+        out.push_str(&future_capture(
+            model, constants, backend, index, assertion,
+        )?);
+    }
+    if let Some(property) = assertion.property() {
+        out.push_str(&property::render(
+            model, constants, backend, index, property,
+        )?);
+    }
+    for (role, graph) in [
+        ("antecedent", assertion.antecedent_sequence()),
+        ("consequent", assertion.consequent_sequence()),
+    ] {
+        if let Some(graph) = graph {
+            out.push_str(&sequence::render(
+                model, constants, backend, index, role, graph,
+            )?);
+        }
+    }
+    Ok(())
 }

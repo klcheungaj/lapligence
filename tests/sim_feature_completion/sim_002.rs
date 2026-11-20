@@ -124,7 +124,7 @@ fn illegal_arity_and_types_remain_diagnostics() {
     sim_cli::reject_case(
         SUITE,
         "neg_printtimescale_root",
-        "unsupported executable node `ArbitrarySymbol`",
+        "neg_printtimescale_root.sv:4:27 unsupported executable node `ArbitrarySymbol`",
     );
     let stdout =
         include_str!("../fixtures/sim/feature_completion/sim_002/neg_timeformat_units_range.out");

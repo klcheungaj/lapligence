@@ -45,14 +45,14 @@ fn deferred_report_limits_are_explicit() {
         SUITE,
         "neg_monitor_computed_handle",
         "CODEGEN-001",
-        None,
+        Some("7:3"),
         "native or impure calls in evaluator callbacks",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_strobe_printing_helper",
         "CODEGEN-001",
-        None,
+        Some("9:3"),
         "side-effect-capable evaluator expressions",
     );
     sim_cli::reject_case_with_id(

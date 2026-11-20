@@ -187,7 +187,10 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
             }
         } else {
             if assertion.consequent().is_none() {
-                return Err(format!("assertion {index} has no consequent"));
+                return Err(crate::sim::located::locate_at(
+                    assertion.location(),
+                    format!("assertion {index} has no consequent"),
+                ));
             }
             let consequent = assertion_predicate_name(index, "consequent");
             if assertion.abort_condition().is_some() {

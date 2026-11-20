@@ -547,7 +547,10 @@ pub(super) fn render_virtual_dispatch_bodies(
         ));
         // A null receiver was reported at the call site; the dispatcher
         // then returns the default result without selecting an override.
-        out.push_str("    if (!_this) { (void)llg_class_require(_this, \"virtual method call\"); goto _llg_dispatch_failed; }\n");
+        out.push_str(&format!(
+            "    if (!_this) {{ (void)llg_class_require(_this, {}); goto _llg_dispatch_failed; }}\n",
+            c_string_literal(&super::subroutine_null_site(f, "virtual method call"))
+        ));
         out.push_str("    switch (llg_class_id(_this)) {\n");
         for class in 0..model.classes.len() {
             let Some(implementation) = virtual_impl_for_class(model, class, slot) else {

@@ -244,8 +244,16 @@ fn neg_class_storage_limits_are_diagnosed() {
 #[test]
 fn neg_monitor_calls_the_postponed_evaluator_cannot_run() {
     const PENDING: &str = "P05 ownership emission is not yet implemented for side-effect-capable evaluator expressions";
-    sim_cli::reject_case(SUITE, "neg_monitor_virtual_method", PENDING);
-    sim_cli::reject_case(SUITE, "neg_monitor_handle_local_helper", PENDING);
+    sim_cli::reject_case(
+        SUITE,
+        "neg_monitor_virtual_method",
+        &format!("neg_monitor_virtual_method.sv:17:3 {PENDING}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_monitor_handle_local_helper",
+        &format!("neg_monitor_handle_local_helper.sv:13:3 {PENDING}"),
+    );
 }
 
 #[test]

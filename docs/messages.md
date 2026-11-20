@@ -135,7 +135,7 @@ The hint is the rule name. Disable or re-grade a rule with `[lint.rules.<rule>] 
 
 ## CODEGEN
 
-Lowering failures are grouped into families by their text. A failure is located at the construct that names it, else at the innermost statement, expression or declaration that contains it; failures of whole-design passes (no top module, internal invariants) have no location.
+Lowering and C emission failures are grouped into families by their text. A failure is located at the construct that names it, else at the innermost statement, expression or declaration that contains it; an emission failure, at the nearest construct the generated model keeps a position for (a statement that can suspend, an initializer, an assertion, or the procedure or subroutine being emitted). Failures of whole-design passes (no top module, model-wide tables and limits) have no location.
 
 | Id | Severity | Meaning | Disable |
 |---|---|---|---|

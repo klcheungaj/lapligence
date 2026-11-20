@@ -16,6 +16,7 @@ pub mod emit_c;
 pub mod execution;
 pub mod ir;
 pub mod legacy_unsupported;
+pub(crate) mod located;
 pub mod opt;
 pub mod rt;
 pub mod sdf;

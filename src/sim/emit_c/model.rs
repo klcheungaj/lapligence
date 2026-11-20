@@ -15,6 +15,7 @@ use crate::sim::execution::{
 use crate::sim::ir::{
     IrConcurrentAssertionKind, IrFunc, IrModel, IrProcessKind, IrSequence, IrType, IrVpiObjectKind,
 };
+use crate::sim::located::{locate_at, locate_at_origin};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -81,6 +82,23 @@ pub(super) fn recursive_result_field(function: &IrFunc) -> Option<(String, Strin
         }
     };
     Some((ty.to_owned(), "_llg_result".to_owned()))
+}
+/// The site a subroutine-level null-handle check reports at
+/// (`llg_class_require`): `what`, then the framed site the runtime reports
+/// (`llg_rt_null_handle`): the subroutine's name and its declaration.
+/// Callers check their receivers at the use (codegen's `required_site`), so
+/// these checks of a method entry or a virtual dispatcher only report a
+/// receiver that no use checked; the declaration is the position the
+/// emitter knows. A synthetic origin keeps the plain label.
+pub(super) fn subroutine_null_site(function: &IrFunc, what: &str) -> String {
+    match function.origin() {
+        origin @ crate::sim::semantic::Origin::Source { .. } => format!(
+            "{what}\u{1f}{}\u{1f}{}",
+            function.diagnostic_name(),
+            origin.location()
+        ),
+        crate::sim::semantic::Origin::Synthetic { .. } => what.to_owned(),
+    }
 }
 pub(super) fn owned_packed_result(function: &IrFunc) -> bool {
     functions::packed_result(function)
@@ -322,7 +340,9 @@ fn render_coroutine_functions(
             &names,
             policy.outlines(&location),
         )?;
-        let upper_bound = layout.upper_bound()?;
+        let upper_bound = layout
+            .upper_bound()
+            .map_err(|error| locate_at_origin(function.origin(), error))?;
         upper_bounds.insert(index, upper_bound);
         artifacts.insert(
             index,
@@ -614,7 +634,8 @@ fn render_coroutine_branches(
                 upper_bounds,
                 &names,
                 policy.outlines(&format!("f:{location}")),
-            )?;
+            )
+            .map_err(|error| locate_at_origin(definition.origin(), error))?;
             let name = pre_name(pre);
             artifacts.insert(
                 owner,
@@ -652,7 +673,8 @@ fn render_coroutine_branches(
                 upper_bounds,
                 &names,
                 policy.outlines(&format!("p:{location}")),
-            )?;
+            )
+            .map_err(|error| locate_at_origin(definition.origin(), error))?;
             let name = pre_name(pre);
             artifacts.insert(
                 owner,
@@ -718,6 +740,17 @@ fn frame_size_assertion(
 }
 
 fn render_coroutine_metadata(
+    artifact: &CoroutineArtifact,
+    analysis: &ExecutionAnalysis,
+    model: &IrModel,
+    host_descs: &BTreeSet<String>,
+    assertions: &mut HashSet<String>,
+) -> Result<String, String> {
+    render_coroutine_metadata_unlocated(artifact, analysis, model, host_descs, assertions)
+        .map_err(|error| locate_at(&artifact.location, error))
+}
+
+fn render_coroutine_metadata_unlocated(
     artifact: &CoroutineArtifact,
     analysis: &ExecutionAnalysis,
     model: &IrModel,
@@ -1578,10 +1611,13 @@ fn render_model(
             // A suspendable DPI-C import shim still calls its foreign
             // function (ADV-018).
             if f.dpi_import().is_some() {
-                out.push_str(&dpi_external_prototype(f)?);
+                out.push_str(
+                    &dpi_external_prototype(f)
+                        .map_err(|error| locate_at_origin(f.origin(), error))?,
+                );
             }
         } else {
-            out.push_str(&func_prototype(f)?);
+            out.push_str(&func_prototype(f).map_err(|error| locate_at_origin(f.origin(), error))?);
         }
     }
     out.push_str(&render_dpi_declarations(model)?);
@@ -1636,12 +1672,10 @@ fn render_model(
             if let Some(artifact) = coroutine_branches.get_mut(&owner) {
                 out.push_str(&std::mem::take(&mut artifact.source));
             } else {
-                out.push_str(&super::owned::model::pre_function(
-                    &ctx,
-                    pre,
-                    Some(f),
-                    &names,
-                )?);
+                out.push_str(
+                    &super::owned::model::pre_function(&ctx, pre, Some(f), &names)
+                        .map_err(|error| locate_at_origin(f.origin(), error))?,
+                );
             }
         }
         if let Some(artifact) = coroutine_functions.get_mut(&index) {
@@ -1678,7 +1712,10 @@ fn render_model(
             if let Some(artifact) = coroutine_branches.get_mut(&owner) {
                 out.push_str(&std::mem::take(&mut artifact.source));
             } else {
-                out.push_str(&super::owned::model::pre_function(&ctx, pre, None, &names)?);
+                out.push_str(
+                    &super::owned::model::pre_function(&ctx, pre, None, &names)
+                        .map_err(|error| locate_at_origin(p.origin(), error))?,
+                );
             }
         }
         if let Some(artifact) = &mut coroutine_processes[index] {

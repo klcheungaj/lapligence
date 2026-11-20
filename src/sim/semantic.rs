@@ -142,6 +142,32 @@ impl SimulationIssue {
     }
 }
 
+impl SimulationIssue {
+    /// The issue as a located lowering error: the text names the node kind
+    /// and its scope, and the location is the node's source position, or
+    /// that of the nearest enclosing node when the node has none (the
+    /// frontend's placeholder for an invalid expression, for example).
+    /// `None` when no enclosing node has a position either; the text is then
+    /// [`diagnostic`](Self::diagnostic), which names the synthetic origin.
+    pub fn located(&self, model: &SemanticModel<'_>) -> (String, Option<String>) {
+        let mut node = Some(self.node);
+        while let Some(id) = node {
+            let origin = model.origin_of(id).and_then(|origin| model.origin(origin));
+            if let Some(origin @ Origin::Source { .. }) = origin {
+                let path = model.db.node(self.node).full_name();
+                let text = if path.is_empty() {
+                    format!("unsupported executable node `{}`", self.detail)
+                } else {
+                    format!("unsupported executable node `{}` in `{path}`", self.detail)
+                };
+                return (text, Some(origin.location()));
+            }
+            node = model.db.node(id).parent();
+        }
+        (self.diagnostic(model), None)
+    }
+}
+
 impl<'db> SemanticModel<'db> {
     pub fn from_db(db: &'db Db) -> Self {
         let origins =
@@ -2037,6 +2063,43 @@ mod tests {
         assert_eq!(
             issues[0].diagnostic(&model),
             "unsupported executable node `owned node kind Other` at test.sv:1:1"
+        );
+        assert_eq!(
+            issues[0].located(&model),
+            (
+                "unsupported executable node `owned node kind Other`".to_owned(),
+                Some("test.sv:1:1".to_owned())
+            )
+        );
+    }
+
+    #[test]
+    fn issues_without_a_position_are_located_at_the_nearest_enclosing_node() {
+        let mut parent = node(NodeKind::Other, Some(NodeId(0)), vec![NodeId(2)]);
+        parent.line = 4;
+        parent.col = 7;
+        let mut unplaced = node(NodeKind::Other, Some(NodeId(1)), vec![]);
+        unplaced.file = None;
+        unplaced.full_name = "top".into();
+        let db = Db::from_test_nodes(
+            "top",
+            vec![top(vec![NodeId(1)]), parent, unplaced],
+            vec![NodeId(0)],
+            HashMap::new(),
+        )
+        .unwrap();
+        let model = SemanticModel::from_db(&db);
+        let issue = SimulationIssue {
+            node: NodeId(2),
+            origin: model.origin_of(NodeId(2)).unwrap(),
+            detail: "Invalid".to_owned(),
+        };
+        assert_eq!(
+            issue.located(&model),
+            (
+                "unsupported executable node `Invalid` in `top`".to_owned(),
+                Some("test.sv:4:7".to_owned())
+            )
         );
     }
 

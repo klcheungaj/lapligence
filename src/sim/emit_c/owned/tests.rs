@@ -286,6 +286,56 @@ fn unmigrated_opaque_expression_is_rejected_not_rendered() {
 }
 
 #[test]
+fn emission_failures_are_located_at_the_nearest_ir_position() {
+    let opaque = || IrStmt::Assign {
+        lhs: IrLhs::Whole(0),
+        nba: false,
+        rhs: IrExpr::new(
+            IrExprKind::Verbatim {
+                code: "old_untracked_result()".to_owned(),
+                width: 65,
+                signed: false,
+            },
+            65,
+            false,
+            None,
+        ),
+    };
+    let source = |line| crate::sim::semantic::Origin::Source {
+        path: "t.sv".into(),
+        line,
+        column: 3,
+        end_line: line,
+        end_column: 9,
+        logical: None,
+    };
+    let fail = |model: IrModel| {
+        super::super::model::render(&ExecutionModel::lower(model).unwrap()).unwrap_err()
+    };
+    // A synthetic process origin has no position.
+    let mut model = numeric_model();
+    model.processes[0].body = vec![opaque()];
+    assert_eq!(fail(model.clone()).location(), None);
+    // The procedure locates a failure in its body...
+    model.processes[0].origin = source(2);
+    let error = fail(model.clone());
+    assert_eq!(error.location(), Some("t.sv:2:3"));
+    assert!(error.detail().contains("opaque C expressions"), "{error}");
+    assert!(!crate::sim::located::is_located(error.detail()));
+    // ...unless a located statement inside it is nearer.
+    model.processes[0].body = vec![opaque().with_origin(source(5))];
+    let error = fail(model);
+    assert_eq!(error.location(), Some("t.sv:5:3"));
+    // The lowering driver receives the location framed for `CodegenError`.
+    let detail = error.detail().to_owned();
+    let framed: String = error.into();
+    assert_eq!(
+        crate::sim::located::take_location(framed),
+        (detail, Some("t.sv:5:3".to_owned()))
+    );
+}
+
+#[test]
 fn declaration_calls_remain_rejected_outside_coroutine_context() {
     let model = numeric_model();
     let ctx = RCtx {
