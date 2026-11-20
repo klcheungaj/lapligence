@@ -2639,6 +2639,11 @@ These are bounded implementations, not full verification-infrastructure support.
   VPI value-change callbacks whose value changed, and a view's input member
   stays read-only for selects
   ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
+  A member that an instance's output port also drives (illegal by SV
+  §23.3.3.2, but run, as a verification library's bus example needs) keeps
+  the port's continuous assignment when a handle writes it: the write holds
+  until the port's formal changes value (decision A21-D3,
+  [ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
   Elements of unpacked array members (`v.mem[i]`, `v.grid[i][j]`, and their
   bit, part and indexed part selects) are read and written with `=` or `<=`
   through a handle on the array of the instance bound when the access

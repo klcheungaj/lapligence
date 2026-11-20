@@ -38,6 +38,24 @@ fn nested_virtual_interface() {
     );
 }
 
+/// A bus model's arbiter rewrites the read line it drives through an output
+/// port at every clock edge, with an unchanged value, while a master's driver
+/// writes the same interface variable through a virtual interface, as a
+/// library's bus example does: the driver's value holds until the arbiter's
+/// output changes.
+#[test]
+fn port_actual_written_through_virtual_interface() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "port_actual_written_through_virtual_interface",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_uvm_run/port_actual_written_through_virtual_interface.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
 /// A type reaches the specializations of a generic class through two
 /// spellings, as a library's `uvm_typeid #(CB)` and `uvm_typeid #(T)` do;
 /// both name one specialization. `generated_c_determinism` generates the same

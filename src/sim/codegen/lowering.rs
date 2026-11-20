@@ -592,8 +592,9 @@ struct LoweredModel {
     /// a model that keeps the VPI catalog does not allow.
     shared_variable_ports: bool,
     /// Collapsed net ports whose sink a time-zero observer reads but whose
-    /// root net does not start at X on every bit: lowered again with these
-    /// ports kept as links (`collection/port_aliases.rs`).
+    /// root net does not start at X on every bit, and collapsed variable
+    /// ports whose sink a virtual-interface handle writes: lowered again
+    /// with these ports kept as links (`collection/port_aliases.rs`).
     retry_ports: Vec<NodeId>,
     /// Converting net ports whose sink a strength reader names: lowered
     /// again with their bits joined (`collection/nets/port_merges.rs`,
@@ -736,7 +737,9 @@ fn lower_model_with_ports(
 /// start the lowered model shows to differ from the link's is kept as a
 /// link in a further lowering; keeping a link only makes its sink a driven
 /// net that starts at X, so a second retry does not occur in practice, and
-/// storage sharing is switched off after it as a bound.
+/// storage sharing is switched off after it as a bound. A collapsed variable
+/// port whose sink a virtual-interface handle writes is kept as a link the
+/// same way; a kept link has no shared sink, so it adds no retry.
 fn lower_model_retrying(
     db: &Db,
     options: &CodegenOptions,
@@ -941,7 +944,8 @@ fn lower_model_with(
     cg.build_init_steps(&mut model)?;
     // Every driver site and delayed-driver start now exists.
     net_delay_layout::assign_net_delay_layouts(&mut model);
-    let retry_ports = cg.port_collapse_retries(&model);
+    let mut retry_ports = cg.port_collapse_retries(&model);
+    retry_ports.extend(cg.virtual_interface_written_ports());
     let strength_link_ports = cg.strength_link_retries();
     if model.waveform {
         cg.collect_wave_variables(&mut model);
@@ -1810,6 +1814,9 @@ struct Codegen<'a> {
     port_start_checks: Vec<(NodeId, usize)>,
     /// The sink declarations of the storage-sharing `port_aliases`.
     port_alias_sinks: HashSet<NodeId>,
+    /// The sink declaration of each collapsed variable port (A21-D1,
+    /// A21-D3) → its port.
+    variable_port_sinks: HashMap<NodeId, NodeId>,
     object_globals: HashMap<NodeId, usize>,
     scope_object_names: HashMap<String, HashMap<String, usize>>,
     /// Nominal class declaration → execution-IR layout index.
@@ -2495,6 +2502,12 @@ struct Codegen<'a> {
     virtual_interface_instances: HashMap<NodeId, (usize, usize)>,
     /// `(descriptor, member path)` → member slot.
     virtual_interface_members: HashMap<(usize, String), usize>,
+    /// `(descriptor, member path)` of every member written through a
+    /// virtual-interface handle (`v.x = ...`, `v.cb.x <= ...`, an output
+    /// actual): another writer of that member in every instance the handle
+    /// can bind, which the static writer scan of port collapse cannot see
+    /// (`collection/port_aliases.rs`).
+    virtual_interface_writes: HashSet<(usize, String)>,
     /// `(descriptor, method name)` → method slot.
     virtual_interface_methods: HashMap<(usize, String), usize>,
     /// Modport view restrictions keyed by descriptor and view name. Each
@@ -2623,6 +2636,7 @@ impl<'a> Codegen<'a> {
             pattern_stops: Vec::new(),
             port_start_checks: Vec::new(),
             port_alias_sinks: HashSet::new(),
+            variable_port_sinks: HashMap::new(),
             reference_arrays: HashMap::new(),
             reference_objects: HashMap::new(),
             object_globals: HashMap::new(),
@@ -2854,6 +2868,7 @@ impl<'a> Codegen<'a> {
             virtual_interface_types: HashMap::new(),
             virtual_interface_instances: HashMap::new(),
             virtual_interface_members: HashMap::new(),
+            virtual_interface_writes: HashSet::new(),
             virtual_interface_methods: HashMap::new(),
             virtual_interface_views: HashMap::new(),
             virtual_interface_view_methods: HashMap::new(),
