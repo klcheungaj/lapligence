@@ -1210,7 +1210,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   once (`class_event_ref_formal`), also from a fork-join branch
   (`class_event_ref_held`). Function calls in expressions take output,
   inout and `ref` event formals for any result type
-  (`event_formals_value_calls`).
+  (`event_formals_value_calls`). A function or class method returning an
+  `event` returns its result variable's handle, which starts as a new event
+  at each call (decision S13-D8); its call is an event handle in
+  assignments, comparisons, Boolean tests, event controls and input event
+  actuals (`event_function_results`). `.triggered` of such a call rejects
+  (SV 15.5.3).
   Event handles other than declared named events in process-evaluated lists
   reject.
   V §9.7.3; SV §15.5 **[1995/SV-2005]**.

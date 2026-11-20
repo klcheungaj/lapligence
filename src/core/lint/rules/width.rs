@@ -240,6 +240,50 @@ mod tests {
     }
 
     #[test]
+    fn unpacked_array_slices_are_quiet() {
+        let diags = lint_design(
+            "class base; int id; endclass\nmodule wu;\n  base f[3];\n  base a[];\n  \
+             base g[2];\n  int fi[4];\n  int ai[2];\n  int di[];\n  logic [7:0] m[4];\n  \
+             logic [7:0] n[2];\n  logic [7:0] w[];\n  initial begin\n    a = f[1:2];\n    \
+             g = f[0:1];\n    ai = fi[2:3];\n    di = fi[1:3];\n    n = m[2:3];\n    \
+             w = m[0:2];\n    n = m[1+:2];\n    n[0:1] = m[3-:2];\n  end\nendmodule\n",
+            "wu",
+        );
+        let got = rule_diags(&diags, "width-mismatch");
+        assert!(got.is_empty(), "no width finding: {:?}", got);
+    }
+
+    #[test]
+    fn packed_selects_near_unpacked_slices_still_warn() {
+        let diags = lint_design(
+            "module wp;\n  logic [7:0] m[4];\n  logic [3:0][7:0] pk;\n  logic [3:0] s;\n  \
+             logic [7:0] b;\n  logic [15:0] h;\n  initial begin\n    s = m[1][7:2];\n    \
+             b = pk[1+:2];\n    h = pk[2:1];\n  end\nendmodule\n",
+            "wp",
+        );
+        let mut got: Vec<_> = rule_diags(&diags, "width-mismatch")
+            .iter()
+            .map(|d| (d.severity, d.message.clone()))
+            .collect();
+        got.sort_by(|a, b| a.1.cmp(&b.1));
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(got[0].0, LintSeverity::Warning);
+        assert!(
+            got[0]
+                .1
+                .contains("`b` is 8 bits, RHS is 16 bits (truncation)"),
+            "{got:?}"
+        );
+        assert_eq!(got[1].0, LintSeverity::Warning);
+        assert!(
+            got[1]
+                .1
+                .contains("`s` is 4 bits, RHS is 6 bits (truncation)"),
+            "{got:?}"
+        );
+    }
+
+    #[test]
     fn truncation_is_a_warning() {
         let diags = lint_design(
             "module wm2;\n  logic [3:0] x;\n  assign x = 8'hff;\nendmodule\n",

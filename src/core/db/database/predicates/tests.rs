@@ -145,3 +145,46 @@ fn sequential_predicate_references_include_patterns_and_every_clause() {
         );
     }
 }
+
+/// A structure pattern naming one member twice (decision S12-D2) is a
+/// located frontend error at the repeated name; the owned import keeps one
+/// entry per field, so the database stays valid for the language server.
+#[test]
+fn structure_pattern_repeating_a_member_is_a_located_error() {
+    use crate::core::compile;
+    let sv = "module tb;\n  struct packed { logic [7:0] data; logic [3:0] tag; } v;\n  \
+              initial if (v matches '{data: 8'h5a, tag: 4'h3, data: .*}) $display(\"m\");\n\
+              endmodule\n";
+    let out = compile::compile(&compile::CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit("design.sv", sv)],
+        ..Default::default()
+    })
+    .expect("compile should start");
+    let errors = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == compile::Severity::Error)
+        .map(|d| (d.id.as_deref(), d.line, d.col, d.message.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        errors,
+        vec![(
+            Some("SLANG-PatternStructDuplicateMember"),
+            3,
+            51,
+            "structure pattern names member 'data' more than once"
+        )]
+    );
+    let db = Db::from_slang(&out.snapshot).expect("semantic capture");
+    let fields = db
+        .conditional_pattern_field_entries()
+        .values()
+        .map(|fields| {
+            fields
+                .iter()
+                .map(|f| db.node(f.field).name.clone())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(fields, vec![vec!["data".to_owned(), "tag".to_owned()]]);
+}

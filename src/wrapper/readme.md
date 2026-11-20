@@ -59,7 +59,9 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   one record per node), never inferred from file names.
 - Diagnostics go through `DiagnosticEngine` mappings; `ReportedDiagnostic`
   records are copied synchronously, keeping intrinsic errors despite suppression
-  and effective error severities.
+  and effective error severities. Capture adds one located error of its own:
+  a structure pattern naming a member twice (`PatternStructDuplicateMember`,
+  decision S12-D2) keeps only the first entry, so the owned import stays valid.
 - Library-unit recovery visits each module/generate body once, including
   referenced definitions and scopes, and captures declaration topology, direct
   references and named connections with exact type-dimension bindings.

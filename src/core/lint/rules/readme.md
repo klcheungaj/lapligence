@@ -24,6 +24,8 @@ See [shared lint](../readme.md).
   expression, against the sum of the slices its components connect. A select
   is as wide as its elaborated type: whole elements when it selects a dimension
   above the last packed one (`pk[i -: 2]` of `logic [0:3][7:0]` is 16 bits).
+  A slice of an unpacked dimension (`m[1:2]` of `logic [7:0] m[4]`) has no
+  packed width and is skipped; the frontend checks unpacked assignments.
 - `multi-driver` (`multidriver.rs`): writes resolve through unpacked element
   selects (`collect_element_writes`); a bit range inside an element still counts
   as disjoint. Each assignment of a checker procedure drives only its constant
