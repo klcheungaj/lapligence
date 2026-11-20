@@ -132,9 +132,27 @@ impl<'a> Codegen<'a> {
                 access: Some(node),
             });
         }
+        // A call of a function returning an event is a handle value: the
+        // operation that consumes it calls the function then.
+        if self.event_function_call(node) {
+            return Some(EventTarget {
+                declaration: node,
+                indices: Vec::new(),
+                access: None,
+            });
+        }
         match self.kind(node) {
             NodeKind::NamedEvent => Some(EventTarget {
                 declaration: node,
+                indices: Vec::new(),
+                access: None,
+            }),
+            // Inside a function returning an event, its name is the result
+            // variable (SV 13.4.1).
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if self.is_event_return(*target) => Some(EventTarget {
+                declaration: *target,
                 indices: Vec::new(),
                 access: None,
             }),
@@ -214,6 +232,42 @@ impl<'a> Codegen<'a> {
                 }),
             _ => None,
         }
+    }
+
+    /// Whether `node` calls a function that returns an event.
+    pub(in super::super) fn event_function_call(&self, node: NodeId) -> bool {
+        let (name, callee) = match self.kind(node) {
+            NodeKind::FuncCall {
+                is_task: false,
+                name,
+                callee,
+                ..
+            } => (name, *callee),
+            NodeKind::MethodCall { name, callee, .. } if self.is_class_method_call(node) => {
+                (name, *callee)
+            }
+            _ => return false,
+        };
+        self.resolve_callee_env(self.inst, name, false, callee)
+            .is_ok_and(|(function, _)| self.is_event_return(function))
+    }
+
+    /// The triggered property is invoked on a hierarchical event identifier
+    /// (SV 15.5.3), not on a function result; industry-standard behaviour
+    /// rejects `f().triggered` too.
+    pub(in super::super) fn reject_triggered_of_call(
+        &self,
+        path: &str,
+        receiver: NodeId,
+    ) -> Result<(), String> {
+        if self.event_function_call(receiver) {
+            let error = format!(
+                "the triggered property needs an event identifier, not the result of function `{}`, in `{path}`",
+                self.node(receiver).name
+            );
+            return Err(self.locate_error(receiver, error));
+        }
+        Ok(())
     }
 
     /// Whether `field` is an instance `event` property of a class.
@@ -460,6 +514,34 @@ impl<'a> Codegen<'a> {
         target: &EventTarget,
         scope_path: &str,
     ) -> Result<IrEventRef, String> {
+        if self.event_function_call(target.declaration) {
+            if !target.indices.is_empty() {
+                return Err(format!(
+                    "the event result of `{}` cannot be indexed in `{scope_path}`",
+                    self.node(target.declaration).name
+                ));
+            }
+            // The returned synchronization object, read where the operation
+            // is issued like a container element's.
+            return Ok(IrEventRef::Handle(Box::new(
+                self.lower_chandle(scope_path, target.declaration)?,
+            )));
+        }
+        if self.is_event_return(target.declaration) {
+            // The result variable is the function's native return slot.
+            if !target.indices.is_empty()
+                || self.func.as_ref().and_then(|function| function.ret_node)
+                    != Some(target.declaration)
+            {
+                return Err(format!(
+                    "the result variable of event function `{}` is only an event inside its body in `{scope_path}`",
+                    self.node(target.declaration).name
+                ));
+            }
+            return Ok(IrEventRef::Handle(Box::new(IrChandleExpr::LocalRead(
+                "_ret".to_owned(),
+            ))));
+        }
         if let Some(access) = target.access {
             if let Some(event) = self.virtual_clocking_event_ref(scope_path, access)? {
                 return Ok(event);

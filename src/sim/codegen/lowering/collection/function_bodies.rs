@@ -1198,6 +1198,18 @@ impl<'a> Codegen<'a> {
             );
             let mut body_stmts = pattern_decls;
             body_stmts.extend(static_input_copies);
+            if ctx.cg.is_event_return(ft) && ctx.cg.event_result_default_observable(ft, body) {
+                // The result variable is an event variable, which starts as
+                // a new synchronization object at each call (SV 6.17).
+                let fresh = "_llg_event_result".to_owned();
+                body_stmts.push(IrStmt::EventDeclare {
+                    name: fresh.clone(),
+                });
+                body_stmts.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleAssignLocal(
+                    "_ret".to_owned(),
+                    IrChandleExpr::EventObject(Box::new(IrEventRef::Captured(fresh))),
+                ))));
+            }
             if matches!(
                 ctx.cg.kind(ft),
                 NodeKind::FuncTask {

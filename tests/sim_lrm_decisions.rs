@@ -837,6 +837,14 @@ fn s12_d2_structure_pattern_duplicate_member_rejected() {
 }
 
 #[test]
+fn s13_d8_event_function_result_new_event() {
+    run_decision(
+        "S13-D8_event_function_result_new_event",
+        include_str!("fixtures/sim/lrm_decisions/S13-D8_event_function_result_new_event.out"),
+    );
+}
+
+#[test]
 fn s12_d1_foreach_array_each_bound_check() {
     run_decision(
         "S12-D1_foreach_array_each_bound_check",

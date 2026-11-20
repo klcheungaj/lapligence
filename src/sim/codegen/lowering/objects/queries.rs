@@ -480,7 +480,7 @@ impl Codegen<'_> {
     }
 
     /// The synchronization-object identity of an event operand or null.
-    pub(super) fn lower_event_identity(
+    pub(in super::super) fn lower_event_identity(
         &mut self,
         path: &str,
         node: NodeId,

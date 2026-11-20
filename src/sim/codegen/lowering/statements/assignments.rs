@@ -243,14 +243,19 @@ impl EmitCtx<'_, '_> {
                 ));
             }
             // An event property of a class object is a handle slot of the
-            // object: the assignment stores the source's synchronization
-            // object identity there (SV 15.5.5).
+            // object, and the result variable of a function returning an
+            // event is its native return slot: the assignment stores the
+            // source's synchronization object identity there (SV 15.5.5).
             let class_slot = match target.access {
                 Some(access) => Some(self.cg.class_event_slot(
                     &self.path,
                     access,
                     target.declaration,
                 )?),
+                None if self.cg.is_event_return(target.declaration) => {
+                    self.cg.event_ref_of(&target, &self.path)?;
+                    Some("_ret".to_owned())
+                }
                 None => None,
             };
             let target = match class_slot {

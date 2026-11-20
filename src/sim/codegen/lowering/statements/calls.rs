@@ -1558,6 +1558,25 @@ impl EmitCtx<'_, '_> {
                 None => Ok(IrStmt::Return { value: None }),
             };
         }
+        // A function returning an event stores the synchronization object
+        // its result names (SV 15.5.5) in its native return slot.
+        if self
+            .func
+            .as_ref()
+            .and_then(|function| function.ret_node)
+            .is_some_and(|node| self.cg.is_event_return(node))
+        {
+            let mut statements = Vec::new();
+            if let Some(value) = value {
+                let identity = self.cg.lower_event_identity(&self.path, value)?;
+                statements.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleAssignLocal(
+                    "_ret".to_owned(),
+                    identity,
+                ))));
+            }
+            statements.push(IrStmt::Return { value: None });
+            return Ok(IrStmt::Block(statements));
+        }
         let returns_chandle = self.func.as_ref().is_some_and(|function| {
             function.ret_node.is_some_and(|node| {
                 matches!(function.chandle_write.get(&node),

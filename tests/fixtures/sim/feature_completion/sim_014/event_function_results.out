@@ -1,0 +1,14 @@
+j==k 1 m==d 1 n==null 1 p==a 1
+pass(k)==k 1 pass(k)==null 0 fnull()==null 1 fdef()==null 0
+e1==e2 0 pick0==a 1 pick1==a 0
+x==c.ev 1 y==x 1 c.get()==c.ev 1
+pass(a) is true
+c.ev==s 1
+2 woke j
+3 woke m
+5 woke @pass(a)
+6 woke @(pick(1,a,b) or r)
+7 woke @(pick(1,a,b) or r)
+8 woke @c.get()
+10 t_wait woke
+11 woke @(pick(1,a,b) or r)
