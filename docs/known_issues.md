@@ -3700,9 +3700,13 @@ state vector), `relations.sv` (declarations without bodies).
 ## UVM example differences (U2)
 
 **Status:** open. The UVM 1.1d and 1.2 `simple` and `integrated` examples were
-run against the industry-standard simulator; the differences fixed then are in
+run against the industry-standard simulator (U2, run again in U3 with the
+recipe's `--timescale 1ns/1ns`); the differences fixed then are in
 the [ki_uvm_run readme](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md).
-These remain.
+In U3 every run of both versions reaches its end with the industry-standard
+simulator's verdict and error and fatal counts, except the UVM 1.2 codec
+`hw_reset_test` run below; information and warning counts differ only where
+random values (`ubus`) or the bus timing below (`codec`) differ. These remain.
 
 ### Mixed blocking and nonblocking assignments stop the run
 
@@ -3775,8 +3779,10 @@ of `env` and the transmit sequence stay raised until the test's own
 2 000 000 ns watchdog calls `$finish`. The industry-standard simulator ends
 the phase, with one error of its own (a request of a killed register access
 left on the bus sequencer). The other codec runs (1.1d both, 1.2 `test`)
-pass; they report up to 11 more register-model race warnings
-(`UVM/FLD/SET/BSY`) than the industry-standard simulator.
+pass; their counts of register-model race warnings (`UVM/FLD/SET/BSY`)
+differ from the industry-standard simulator's (11 against none in both
+`test` runs, 7 against 9 in the 1.1d `hw_reset_test` run), since the bus
+timing below moves the register accesses.
 
 **Cause.** Not the process control. The bus driver
 (`integrated/apb/apb_master.sv`) waits one more clock per transfer unless
