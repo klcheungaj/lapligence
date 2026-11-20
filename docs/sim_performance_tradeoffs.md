@@ -1167,8 +1167,9 @@ processes or clock edges, at the cost of a few bytes per object.
   image of its cells (`llg_sampled_cells`, `llg_sampled_real_cells`).
   Sampled reads index the image directly. A publication of one of its cells
   lists the cell, and each Preponed region copies only the listed cells (see
-  "Images copied per write" below); the first sample copies every cell. Descriptor arrays keep their saved cells. Arrays that no
-  sampled expression selects, and models without such reads, generate the
+  "Images copied per write" below); the first sample copies every cell.
+  Descriptor arrays keep their saved cells. Arrays that no sampled
+  expression selects, and models without such reads, generate the
   same C as before. The runtime code is out of line, and its context field
   comes last, so that no hot field moves. The only shared-path addition is
   one null test in `sample_preponed_values`, which runs only when the model
@@ -1228,9 +1229,15 @@ processes or clock edges, at the cost of a few bytes per object.
   (`fixed_marked_arrays`), so a model with neither runs the same single
   test; within the bounds the address resolves to a stand-in block, and the
   end of the publication finds the image by binary search over the images
-  ordered by address. The first shape of that lookup made GCC spill one value
-  on every publication of every model (+2 instructions each), so the
-  stand-in returns without a call. `LLG_CO_DEBUG` builds check at every
+  ordered by address. GCC's register allocation in `sig_publish` follows the
+  spelling of this test: a lookup with a call spilled one value on every
+  publication of every model (+2 instructions each), so the stand-in returns
+  without a call; and the count test through a helper or as an `if` added a
+  register copy and a jump on about a third of the publications, so it is one
+  conditional expression in `sig_publish`, whose instructions then match the
+  base on the record rows (`sig_publish` self count equal on `rl_st_3_rd_c`
+  and `m_nba2`). Check a record row's executed instructions after a change
+  there. `LLG_CO_DEBUG` builds check at every
   sample that each unlisted cell equals its image, which catches a store that
   bypasses the publication. A store before the first sample needs no hook,
   because that sample copies every cell. Instructions (callgrind, all 47 rows,
@@ -1241,8 +1248,7 @@ processes or clock edges, at the cost of a few bytes per object.
   page, and the address-hashed value-scope index then probes differently
   (for example `value_scope_retain_target` +520 M on `rl_st_3_rd_c`; the base
   runtime with its globals moved to the same address by a 4192-byte data pad
-  gives +520 M as well). A register move on one publication path remains (+1
-  to +2 instructions on about a third of the publications, 0.04-0.35%).
+  gives +520 M as well).
 - **Save tables shrink:** a descriptor array's table of saved cells kept the
   capacity of its largest slot. It now halves after
   `LLG_FIXED_SAMPLED_SHRINK_SLOTS` (64) consecutive saving slots each filled
