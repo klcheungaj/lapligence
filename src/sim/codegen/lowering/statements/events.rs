@@ -378,11 +378,12 @@ impl EmitCtx<'_, '_> {
             EventSpec::Named(_) => false,
             // An event property of a class object is a named event whose
             // handle the wait resolves when it arms (SV 9.4.2).
+            // So is the result of a function returning an event: the wait
+            // calls the function when it arms.
             EventSpec::AnyChange { sig }
-                if self
-                    .cg
-                    .event_target_of(*sig)
-                    .is_some_and(|target| target.access.is_some()) =>
+                if self.cg.event_target_of(*sig).is_some_and(|target| {
+                    target.access.is_some() || self.cg.event_function_call(target.declaration)
+                }) =>
             {
                 false
             }
@@ -958,6 +959,7 @@ impl EmitCtx<'_, '_> {
                 // `wait(seq.triggered)` waits on the endpoint's event (9.4.4).
                 self.cg.sequence_endpoint(&self.path, receiver, None)?;
             }
+            self.cg.reject_triggered_of_call(&self.path, receiver)?;
             let target = self.cg.event_target_of(receiver).ok_or_else(|| {
                 format!(
                     "event triggered property has an unresolved receiver in `{}`",

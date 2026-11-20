@@ -787,7 +787,10 @@ pub fn markdown() -> String {
                  `SLANG-DerivedClassArrayAssignment`, an unpacked array of derived-class \
                  handles assigned to an unpacked array of base-class handles (IEEE \
                  1800-2009 7.6), are warnings (decisions S08-D1, UVB-D1); `-Werror` \
-                 reports them as errors, which stop the run.\n\n",
+                 reports them as errors, which stop the run. \
+                 `SLANG-PatternStructDuplicateMember`, a structure pattern that names a \
+                 member more than once, is an error llg adds in the same form (decision \
+                 S12-D2).\n\n",
             ),
             Tool::Lint => {
                 out.push_str(

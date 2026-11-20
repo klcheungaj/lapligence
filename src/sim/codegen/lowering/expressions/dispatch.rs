@@ -1679,6 +1679,7 @@ impl<'a> Codegen<'a> {
                 receiver: Some(receiver),
                 ..
             } if name == "triggered" => {
+                self.reject_triggered_of_call(scope_path, *receiver)?;
                 let target = self.event_target_of(*receiver).ok_or_else(|| {
                     format!(
                         "sequence `.triggered` status is not supported for an unresolved receiver in `{scope_path}`"

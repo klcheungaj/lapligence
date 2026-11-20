@@ -23,6 +23,20 @@ forms as fail-closed controls; `bad_matches_out_of_scope.sv` checks the
 frontend binding boundary. These negatives must reject instead of becoming
 Boolean tests of the matched source or exposing a binding in the else arm.
 
+`bad_matches_if.sv` names the member `data` twice in one structure pattern.
+The text does not say whether that is legal; llg rejects it with a located
+frontend error (`SLANG-PatternStructDuplicateMember` at the repeated name,
+decision S12-D2), as an assignment pattern repeating a member and an array
+pattern repeating an index are rejected:
+
+> SystemVerilog-1800-2009.txt L17808-17810 (12.6): "A structure pattern
+> succeeds if, recursively, each of the nested member patterns matches the
+> corresponding member values in V. In structure patterns with named members,
+> the textual order of members does not matter, and members can be omitted."
+
+> SystemVerilog-1800-2009.txt L13676-13677 (10.9.1): "It shall be an error to
+> specify the same index more than once in a single array pattern expression."
+
 `syn_023_structure_patterns.sv` adds recursive fixed packed and unpacked
 structure patterns. Positional and named fields, omitted members, nested
 patterns, wildcard members, mixed signedness/state domains, and lexical

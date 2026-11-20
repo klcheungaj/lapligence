@@ -539,12 +539,7 @@ impl<'a> Codegen<'a> {
                     inline_expanded,
                     automatic,
                     is_task: is_task_f,
-                    ret_chandle: matches!(
-                        self.kind(*c),
-                        NodeKind::FuncTask {
-                            ret: Some(ty), ..
-                        } if is_handle_kind(&ty.kind)
-                    ),
+                    ret_chandle: self.is_chandle_return(*c),
                     ret_string: self.is_string_return(*c),
                     dpi: dpi_import,
                     dpi_export,
@@ -748,12 +743,30 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    /// Whether `ft` returns a native pointer: a chandle, class or virtual
+    /// interface handle, or an event's synchronization object
+    /// ([`Self::is_event_return`]).
     pub(super) fn is_chandle_return(&self, ft: NodeId) -> bool {
         matches!(
             self.kind(ft),
             NodeKind::FuncTask {
                 ret: Some(ty), ..
-            } if is_handle_kind(&ty.kind)
+            } if is_handle_kind(&ty.kind) || ty.kind == "event"
+        )
+    }
+
+    /// Whether function `ft` returns an `event`. The result is the
+    /// synchronization object the returned handle names (SV 6.17, 15.5.5),
+    /// passed as a native pointer like a chandle; its return variable starts
+    /// as a new event at each call.
+    pub(in super::super) fn is_event_return(&self, ft: NodeId) -> bool {
+        matches!(
+            self.kind(ft),
+            NodeKind::FuncTask {
+                is_task: false,
+                ret: Some(ty),
+                ..
+            } if ty.kind == "event"
         )
     }
 
@@ -840,7 +853,9 @@ impl<'a> Codegen<'a> {
             {
                 None
             }
-            Some(ty) if ty.kind == "string" || is_handle_kind(&ty.kind) => None,
+            Some(ty) if ty.kind == "string" || is_handle_kind(&ty.kind) || ty.kind == "event" => {
+                None
+            }
             Some(ty) => {
                 if is_real_kind(&ty.kind) {
                     Some((0, false, false, ty.kind == "shortreal"))
@@ -1022,6 +1037,45 @@ impl<'a> Codegen<'a> {
     }
 
     /// The body statement identified by Slang's semantic `Body` relationship.
+    /// Whether a call of event function `ft` can observe the initial value
+    /// of its result variable. It cannot when `body` never names the result
+    /// and ends in a `return` with a value: every path then leaves through
+    /// a `return` that sets it, since a `return` in a function with a return
+    /// type carries a value (SV 13.4.1). The new event is then not created.
+    pub(in super::super) fn event_result_default_observable(
+        &self,
+        ft: NodeId,
+        body: NodeId,
+    ) -> bool {
+        let mut last = body;
+        loop {
+            match self.kind(last) {
+                NodeKind::Stmt(StmtKind::Return { value: Some(_) }) => break,
+                NodeKind::Stmt(StmtKind::Begin) => match self.node(last).children.last() {
+                    Some(child) => last = *child,
+                    None => return true,
+                },
+                _ => return true,
+            }
+        }
+        let mut pending = vec![body];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !seen.insert(node) {
+                continue;
+            }
+            match self.kind(node) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) if *target == ft => return true,
+                // Declarations a body refers to are not part of it.
+                NodeKind::FuncTask { .. } | NodeKind::ModuleInst { .. } => continue,
+                _ => pending.extend(self.node(node).children.iter().copied()),
+            }
+        }
+        false
+    }
+
     pub(in super::super) fn func_body(&self, ft: NodeId) -> Option<NodeId> {
         self.db.subroutine_body(ft)
     }

@@ -933,6 +933,34 @@ struct Capture {
     output.flags |= LLG_SLANG_SNAPSHOT_HAS_ERRORS;
   }
 
+  // A structure pattern that names one member twice (`'{a: 1, a: 2}`).
+  // IEEE 1800-2009 12.6 does not say; the frontend accepts it, while it
+  // rejects the same repetition in an assignment pattern (10.9.2), and an
+  // array pattern key repeated is an error by 10.9.1. llg rejects it the
+  // same way (decision S12-D2), located at the repeated member name.
+  void addDuplicatePatternMember(SourceRange name, std::string_view member) {
+    if (output.diagnostics.size() >= maxDiagnostics())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "diagnostic limit exceeded");
+    chargeRecord(output, sizeof(LlgSlangDiagnostic));
+    std::string message = "structure pattern names member '";
+    message += member;
+    message += "' more than once";
+    output.diagnostics.push_back({
+        LLG_SLANG_DIAG_COMPILATION,
+        LLG_SLANG_SEVERITY_ERROR,
+        LLG_SLANG_DIAG_SUBSYSTEM_COMPILATION,
+        1,
+        storeString(output, "PatternStructDuplicateMember"),
+        {},
+        storeString(output, message),
+        span(name),
+        output.related.size(),
+        0,
+    });
+    output.flags |= LLG_SLANG_SNAPSHOT_HAS_ERRORS;
+  }
+
   void addIntegrationDiagnostic(std::string_view name, std::string message) {
     if (output.diagnostics.size() >= maxDiagnostics())
       throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
@@ -4603,8 +4631,21 @@ public:
       // recursive members without recovering source offsets.
       capture.removeChildEdges(id);
       uint32_t index = 0;
+      std::unordered_set<const FieldSymbol*> seen;
       for (const auto& fieldPattern : node.patterns) {
         const FieldSymbol* field = fieldPattern.field;
+        // Only a named member can repeat a field; the repetition is
+        // reported and left out, so the owned pattern keeps one entry per
+        // field.
+        if (!seen.insert(field).second) {
+          const syntax::SyntaxNode* member =
+              fieldPattern.pattern->syntax ? fieldPattern.pattern->syntax->parent : nullptr;
+          SourceRange name = fieldPattern.pattern->sourceRange;
+          if (member && member->kind == syntax::SyntaxKind::NamedStructurePatternMember)
+            name = member->as<syntax::NamedStructurePatternMemberSyntax>().name.range();
+          capture.addDuplicatePatternMember(name, field->name);
+          continue;
+        }
         const uint64_t fieldId = capture.ensureSemantic(field);
         auto& fieldNode =
             capture.output.semantic_nodes[static_cast<size_t>(fieldId)];

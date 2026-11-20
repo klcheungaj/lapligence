@@ -1,7 +1,13 @@
 # Lowering: events, predicates, aggregates and streams
 
 Register event or-lists atomically with `llg_wait_any_events`, never sequential
-waits. A value event on a net whose strength can change alone adds one source on
+waits. A call of a function returning an event is an `EventTarget` whose
+declaration is the call: `event_ref_of` lowers it to `IrEventRef::Handle` of
+the call's native pointer result, evaluated where the operation is issued (a
+wait calls it when it arms). Inside the function its result variable is the
+`_ret` slot; it starts as a new event only when a call can observe that value
+(`event_result_default_observable`), so a body that ends in `return e` and
+never names its result allocates nothing. A value event on a net whose strength can change alone adds one source on
 its strength view (`add_strength_events`, T1-D8, [nets](nets.md)); a dynamic
 select's source also reads its index, through an evaluator with the value
 event's context (T1-D12). True waits execute once immediately; false/X/Z constant waits suspend on

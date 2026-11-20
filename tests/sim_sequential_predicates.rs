@@ -172,11 +172,14 @@ fn syn_025_pattern_case_items_filters_and_qualifiers() {
 
 #[test]
 fn sequential_predicate_bad_matches_if() {
-    sim_cli::reject_case_with_args(
+    // A structure pattern naming one member twice is a located frontend
+    // error (decision S12-D2), not an owned-database failure.
+    sim_cli::reject_case_with_id(
         "sequential_predicates",
         "bad_matches_if",
-        "pattern",
-        &["--edition", "sv2009"],
+        "SLANG-PatternStructDuplicateMember",
+        Some("8:42"),
+        "structure pattern names member 'data' more than once",
     );
 }
 

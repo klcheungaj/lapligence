@@ -153,6 +153,69 @@ fn event_formals_of_value_calls() {
 }
 
 #[test]
+fn event_function_results_are_handles() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "event_function_results",
+        include_str!("../fixtures/sim/feature_completion/sim_014/event_function_results.out"),
+        &[],
+        &[],
+    );
+}
+
+/// A function whose body ends in `return e` and never names its result
+/// creates no event for it; one that can return its initial result does.
+#[test]
+fn event_function_results_allocate_only_an_observable_default() {
+    let directory = sim_harness::TempDir::new("event-function-results").expect("temp dir");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE)
+        .join("event_function_results.sv");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_llg"))
+        .args(["--top", "tb", "--gen-only", "-Wno-error", "--out-dir"])
+        .arg(directory.path())
+        .arg(&source)
+        .output()
+        .expect("run llg");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let model = std::fs::read_to_string(directory.path().join("sim/tb/model.c")).expect("model C");
+    let body = |function: &str| {
+        let start = model
+            .find(&format!("static void* {function}("))
+            .unwrap_or_else(|| panic!("no definition of {function}"));
+        let end = model[start..].find("\n}\n").expect("function end") + start;
+        model[start..end].to_owned()
+    };
+    for function in ["fn_tb_pass", "fn_tb_pick", "fn_tb_fnull", "fn_class_0_get"] {
+        assert!(
+            !body(function).contains("llg_event_object_new"),
+            "{function} allocates an unobservable result event"
+        );
+    }
+    for function in ["fn_tb_fdef", "fn_tb_fstat", "fn_tb_trig"] {
+        assert!(
+            body(function).contains("llg_event_object_new"),
+            "{function} has no new result event"
+        );
+    }
+}
+
+#[test]
+fn neg_event_function_triggered() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_event_function_triggered",
+        "neg_event_function_triggered.sv:11:13 the triggered property needs an event identifier, \
+         not the result of function `pass`",
+    );
+}
+
+#[test]
 fn triggered_state_identity_and_wait_order() {
     sim_cli::run_case_backend_parity(
         SUITE,
