@@ -1238,18 +1238,24 @@ processes or clock edges, at the cost of a few bytes per object.
   conditional expression in `sig_publish`, whose instructions then match the
   base on the record rows (`sig_publish` self count equal on `rl_st_3_rd_c`
   and `m_nba2`). Check a record row's executed instructions after a change
-  there. `LLG_CO_DEBUG` builds check at every
-  sample that each unlisted cell equals its image, which catches a store that
-  bypasses the publication. A store before the first sample needs no hook,
-  because that sample copies every cell. Instructions (callgrind, all 47 rows,
-  dev base against the merged tip): the 4096-cell row 15.89 G to 1.97 G
-  (−87.6%; `sample_preponed_cells` 13.93 G to 0.007 G), the 16-cell row
-  −1.7%, the descriptor rows −0.2%. The other rows change by placement: the
-  runtime text grew by about 2.5 KiB, which moved the model globals by one
-  page, and the address-hashed value-scope index then probes differently
-  (for example `value_scope_retain_target` +520 M on `rl_st_3_rd_c`; the base
-  runtime with its globals moved to the same address by a 4192-byte data pad
-  gives +520 M as well).
+  there. `LLG_CO_DEBUG` builds check at every sample that each unlisted cell
+  equals its image, which catches a store that bypasses the publication. A store before the first sample needs no hook,
+  because that sample copies every cell. Instructions (callgrind, 48 rows:
+  the 46 shared rows and two burst rows, dev base against the tip): the
+  4096-cell row 15.89 G to 1.97 G (−87.6%; `sample_preponed_cells` 13.93 G
+  to 0.007 G), the 16-cell row −1.8%, and `sig_publish` and `change_settle`
+  execute the base's instructions on every row without marked arrays. Every
+  other row above +0.05% changes by placement: the runtime text grew by
+  about 2.5 KiB, which moved the model globals by 96 B to a page plus 96 B,
+  and the address-hashed value-scope and dependency indexes then probe
+  differently (for example `value_scope_retain_target` +520 M on
+  `rl_st_3_rd_c`, +2.3%). The base runtime with its model's globals moved
+  to the tip's address by a data pad gives each such row's count to within
+  0.001% (`rl_*_3_*`, `rl_st_16_rmw_r`, `m_nba2`, `m_assert`,
+  `m_clocking`, `m_cells`, `plain4096`, `zero-delay-default`,
+  `many-masked-20k`). `m_glitch` keeps +0.03% from a loop-alignment
+  padding change in unchanged code. In models with marked descriptor arrays
+  a publication runs 3 to 4 more instructions for the image test.
 - **Save tables shrink:** a descriptor array's table of saved cells kept the
   capacity of its largest slot. It now halves after
   `LLG_FIXED_SAMPLED_SHRINK_SLOTS` (64) consecutive saving slots each filled
@@ -1258,8 +1264,13 @@ processes or clock edges, at the cost of a few bytes per object.
   limit of a half, so it cannot thrash. The test runs once per saving slot
   and only while the table is above its initial capacity. With 32 banks of
   5000 cells, each written everywhere in its own cycle 1000 cycles apart and
-  one cell per cycle otherwise, peak RSS fell from 33.3 MB to 15.0 MB (heap
+  one cell per cycle otherwise, peak RSS fell from 33.3 MB to 14.9 MB (heap
   peak with 8 banks 7.8 MB to 3.7 MB); arrays without bursts are unchanged.
+  Each burst after a shrink grows the table again, and the cleared
+  allocations of that growth cost these two burst rows +0.5% and +0.7%
+  instructions: memory at the peak of a burst is traded for re-growth time
+  after it. Wall clock (48 rows, 100 alternating pairs in both orders):
+  @@TIMING@@.
 
 ## Rejected or deferred
 
