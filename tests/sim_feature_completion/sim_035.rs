@@ -312,6 +312,35 @@ fn descriptor_cells_sampled_after_a_burst_of_writes() {
     sim_cli::run_case_backend_parity(SUITE, "element_burst", expected, &[], &[]);
 }
 
+/// Dense cells (4096) after a burst: the Preponed sample copies the cells
+/// written since the previous one, here every cell, then one per slot.
+#[test]
+fn dense_cells_sampled_after_a_burst_of_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_035/element_burst_dense.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_burst_dense", expected, &[], &[]);
+}
+
+/// Descriptor cells over 150 slots: the table of saved values shrinks after
+/// the burst and regrows at the next one without a stale or lost value.
+#[test]
+fn descriptor_cells_sampled_while_the_save_table_shrinks() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_035/element_burst_shrink.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_burst_shrink", expected, &[], &[]);
+}
+
+/// Every kind of write to a cell of a dense sampled array (blocking, selects,
+/// whole-array fill, nonblocking, force, release, ref argument, continuous
+/// assignment to a net cell, real cells) reaches the next Preponed sample,
+/// and a cell written in one slot keeps its value in the following ones.
+#[test]
+fn dense_cells_sampled_through_every_write_path() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_035/element_write_paths.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_write_paths", expected, &[], &[]);
+}
+
 /// Only arrays a sampled expression selects keep a Preponed image, and it is
 /// registered before the history domains whose initial values read it.
 #[test]

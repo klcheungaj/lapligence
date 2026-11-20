@@ -1,0 +1,5 @@
+495 c49 s=31 p=ef now=f1 s0=00
+995 c99 s=63 p=a1 now=a3 s0=00
+1495 c149 s=95 p=53 now=55 s0=00
+1505 burst s1=c1 s149=55 s4999=87 now1=3e now4999=78
+1515 after s1=3e s149=aa s4999=78 p1=c1

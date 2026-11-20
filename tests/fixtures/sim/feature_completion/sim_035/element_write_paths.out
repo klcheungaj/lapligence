@@ -1,0 +1,14 @@
+5 c0 s=00 01 02 03 04 05 06 07 o=10 11 w=ff 11 r=0.0 2.0
+5 after s2=02 s5=05 s7=07 now2=b2 now5=05 now7=07
+15 c1 s=00 a1 b2 03 04 05 06 07 o=10 11 w=ff 11 r=0.0 2.0
+15 after s2=b2 s5=05 s7=07 now2=b2 now5=05 now7=07
+25 c2 s=00 a1 b2 02 c4 05 06 07 o=10 99 w=ff 99 r=0.0 2.5
+25 after s2=b2 s5=05 s7=07 now2=55 now5=55 now7=55
+35 c3 s=55 55 55 55 55 55 55 55 o=10 99 w=aa 99 r=0.0 2.5
+35 after s2=55 s5=55 s7=55 now2=55 now5=ee now7=55
+45 c4 s=55 55 55 55 55 ee 66 55 o=10 99 w=aa 99 r=0.0 2.5
+45 after s2=55 s5=ee s7=55 now2=55 now5=ee now7=07
+55 c5 s=55 55 55 55 55 ee 66 07 o=10 99 w=aa 99 r=0.0 2.5
+55 after s2=55 s5=ee s7=07 now2=55 now5=ee now7=07
+65 c6 s=55 55 55 55 55 ee 66 07 o=10 99 w=aa 99 r=0.0 2.5
+65 after s2=55 s5=ee s7=07 now2=55 now5=ee now7=07

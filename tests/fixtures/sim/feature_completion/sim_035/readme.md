@@ -256,6 +256,56 @@ values saved at 15; `arr[2]` becomes f2 after the sample. At 35 the sample of
 sample of the previous tick: `arr[0]` 00 at 25 and 01 at 35; `arr[2]` 02, 03
 and f2 at 25, 35 and 45.
 
+### `element_burst_dense` (dense cells after a burst)
+
+The `element_burst` design and lines with a 4096-cell array, the largest that
+llg keeps in directly addressed storage with a Preponed cell image, which it
+updates at each Preponed sample from the cells written since the previous
+one. `arr[4095]` is 4095 mod 256 = ff at 15 (live 00 after the increment);
+00 at 25 and 35. The other values are those of `element_burst`.
+
+### `element_burst_shrink` (descriptor cells over many slots)
+
+The same §16.5 and §16.6.1 lines, and §16.9.3 (L22767-22768): "$past returns
+the value of expression1 that was sampled in the Preponed region of a
+particular time step strictly prior to the one in which $past is evaluated."
+The index is part of `expression1`, so `$past(arr[cyc - 1])` reads cell
+`cyc - 2` with the values of the previous tick. `clk` rises at 5 + 10c for
+tick c (`cyc` = c at its Preponed sample). Tick 0 sets `arr[k]` to `k` mod
+256; tick c in 1..149 sets `arr[c]` to c0 ^ c after the sample, so at tick c
+the sample of `arr[c]` is c mod 256 and `$past(arr[c - 1])` is c0 ^ (c - 2):
+c49 31, ef, live f1; c99 63, a1, live a3; c149 95, 53, live 55; `arr[0]`
+stays 00. Tick 150 inverts every cell after the sample: samples c1 (`arr[1]`
+= c0 ^ 01), 55 (`arr[149]`) and 87 (4999 mod 256), live 3e and 78. At 1515
+the samples are 3e, aa and 78 and `$past(arr[1])` is c1. Over ticks 1-149
+llg's table of saved values shrinks twice and regrows at tick 150.
+
+### `element_write_paths` (dense cells written every way)
+
+§16.5 and §16.6.1 as above, and §10.6.2 (L13390-13393): "When released, then
+if the variable is not driven by a continuous assignment and does not
+currently have an active assign procedural continuous assignment, the
+variable shall not immediately change value and shall maintain its current
+value until the next procedural assignment to the variable is executed."
+Four arrays keep a cell image (`arr`, `other`, the net array `w` and the real
+array `ra`). Time 0: `arr[k]` = k, `other` = 10 11 12 13 (declaration),
+`ra[k]` = k, `w[0]` = `arr[0]` ^ ff = ff, `w[1]` = `other[1]` = 11. Each
+tick prints the samples, then (`after`) the samples and live values of
+`arr[2]`, `arr[5]`, `arr[7]` once its writes are done, so the samples stay
+the Preponed values within the tick.
+
+- 5 (c0): initial values; then `arr[1]` = a1, `arr[2]` = b2.
+- 15 (c1): a1 and b2 sampled; then bit 0 of `arr[3]` cleared (02), bits 7:4
+  of `arr[4]` set to c (c4), `ra[2]` = 2.5, and `other[1] <= 99` from the
+  second process (so `w[1]` = 99).
+- 25 (c2): 02, c4, 99 and 2.5 sampled, `arr[2]` still b2 (written two slots
+  earlier); then every cell of `arr` is 55, so `w[0]` = aa.
+- 35 (c3): every `arr` sample 55, `w[0]` aa; then `force arr[5] = ee`,
+  `put(arr[6], 66)` through a `ref` argument.
+- 45 (c4): ee and 66 sampled; then `release arr[5]` keeps ee (§10.6.2),
+  `arr[7]` = 77 and then 07 in the same slot.
+- 55 (c5) and 65 (c6): `arr[7]` samples 07; nothing else changes.
+
 ### Witnesses
 
 - `expression_clock_witness` (FND-002 L-F12-11-02, source unchanged except
