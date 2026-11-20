@@ -613,7 +613,10 @@ fn checked_semantic(db: &Db) -> Result<crate::sim::semantic::SemanticModel<'_>, 
     }
     if let Err(issues) = semantic.validate_simulation() {
         if let Some(issue) = issues.into_iter().next() {
-            return Err(issue.diagnostic(&semantic));
+            return Err(match issue.located(&semantic) {
+                (text, Some(location)) => super::error::located(&location, text),
+                (text, None) => text,
+            });
         }
         return Err("simulation validation failed without an issue".to_owned());
     }
