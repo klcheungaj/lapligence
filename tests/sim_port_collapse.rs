@@ -859,9 +859,9 @@ endmodule
 }
 
 /// A write through a virtual interface is another writer of a port's sink
-/// that only the lowered bodies show: an output actual or an input formal of
-/// an interface written through a handle keeps its link (decision A21-D3),
-/// while a member the handle only reads still shares its source.
+/// that the instance tree does not show: an output actual or an input formal
+/// of an interface written through a handle keeps its link (decision
+/// A21-D3), while a member the handle only reads still shares its source.
 #[test]
 fn ports_written_through_a_virtual_interface_keep_their_link() {
     let design = |access: &str| {
@@ -897,6 +897,102 @@ endmodule
         assert_eq!(
             links_named(&model, "\"tb.i.link\""),
             input_links,
+            "{access}: {model}"
+        );
+    }
+}
+
+/// Every write form through a handle names the member it stores to, found
+/// before lowering: selects, concatenation members, increments, compound
+/// assignments and output or `ref` actuals keep the link, while a member
+/// read in a selector, a value or another member's write does not.
+#[test]
+fn every_write_form_through_a_virtual_interface_keeps_the_link() {
+    let design = |access: &str| {
+        format!(
+            "module child(input logic c, output logic [1:0] q);
+  always @(posedge c) q <= 2'b00;
+endmodule
+interface ifc(input logic a);
+  logic c;
+  logic [1:0] q;
+endinterface
+class D;
+  virtual ifc v;
+  logic [3:0] r;
+  task set(output logic [1:0] o); o = 2'b11; endtask
+  task bump(ref logic [1:0] o); o = 2'b01; endtask
+  task run(); #1 {access}; endtask
+endclass
+module tb;
+  logic a;
+  ifc i(a);
+  child u(.c(i.c), .q(i.q));
+  initial begin static D d = new; d.v = i; a = 0; d.run(); #2 $display(\"%b\", i.q); $finish; end
+endmodule
+"
+        )
+    };
+    for (access, output_links) in [
+        ("v.q[0] = 1'b1", 1),
+        ("v.q[1:0] <= 2'b10", 1),
+        ("{v.c, v.q} = 3'b101", 1),
+        ("v.q++", 1),
+        ("v.q += 2'b01", 1),
+        ("set(v.q)", 1),
+        ("bump(v.q)", 1),
+        ("r[v.q] = 1'b1", 0),
+        ("r = {2'b00, v.q}", 0),
+        ("v.c = 1'b1", 0),
+    ] {
+        let model = render(&design(access));
+        assert_eq!(links(&model), output_links, "{access}: {model}");
+    }
+}
+
+/// A clocking drive through a handle writes the variable its clockvar
+/// names, and a member of a nested interface instance is written in the
+/// nested instance only.
+#[test]
+fn clocking_drives_and_nested_members_through_a_virtual_interface_keep_their_link() {
+    let design = |access: &str| {
+        format!(
+            "module child(input logic c, output logic q);
+  always @(posedge c) q <= 1'b0;
+endmodule
+interface inner;
+  logic q;
+endinterface
+interface ifc(input logic a);
+  logic c;
+  logic q;
+  inner n();
+  clocking cb @(posedge a); output q; endclocking
+endinterface
+class D;
+  virtual ifc v;
+  task run(); #1 {access}; endtask
+endclass
+module tb;
+  logic a;
+  ifc i(a);
+  child u(.c(i.c), .q(i.q));
+  child w(.c(i.c), .q(i.n.q));
+  initial begin static D d = new; d.v = i; a = 0; d.run(); #2 $display(\"%b%b\", i.q, i.n.q); $finish; end
+endmodule
+"
+        )
+    };
+    for (access, u_links, w_links) in [
+        ("v.cb.q <= 1'b1", 1, 0),
+        ("v.n.q = 1'b1", 0, 1),
+        ("$display(\"%b\", v.n.q)", 0, 0),
+    ] {
+        let model = render(&design(access));
+        assert_eq!(links(&model), u_links, "{access}: {model}");
+        assert_eq!(
+            links_named(&model, "\"tb.w.link\""),
+            w_links,
             "{access}: {model}"
         );
     }

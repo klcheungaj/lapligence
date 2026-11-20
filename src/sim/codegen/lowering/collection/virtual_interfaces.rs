@@ -454,6 +454,271 @@ impl<'a> Codegen<'a> {
         None
     }
 
+    /// The variables of design interface instances that a write through a
+    /// virtual-interface handle can store to: for every assignment target,
+    /// output or inout actual and non-`const` `ref` actual in the owned
+    /// database that names a member through a handle (`v.x`, `v.x[i]`,
+    /// `{v.x, y}`, `v.tx.x`, a clocking drive `v.cb.x <= ...`), the member
+    /// variable of each instance of the type the handle (or its last nested
+    /// instance) selects or, for a clockvar, each variable its clocking
+    /// expression names. Port collapse keeps the link of such a sink
+    /// (`port_aliases.rs`). It runs before the descriptors exist, so it
+    /// groups the instances by the type identity the descriptors use; a
+    /// path the descriptors cannot resolve fails its own lowering.
+    pub(super) fn virtual_interface_written_variables(&self, nodes: &[NodeId]) -> HashSet<NodeId> {
+        let mut paths = Vec::new();
+        let mut targets = Vec::new();
+        for id in self.db.node_ids() {
+            targets.clear();
+            self.written_targets(id, &mut targets);
+            for target in &targets {
+                self.handle_member_writes(*target, &mut paths);
+            }
+        }
+        let mut written = HashSet::new();
+        if paths.is_empty() {
+            return written;
+        }
+        let mut instances: HashMap<String, Vec<NodeId>> = HashMap::new();
+        for node in nodes {
+            if let Some(identity) = self.concrete_virtual_interface_identity(*node) {
+                instances.entry(identity).or_default().push(*node);
+            }
+        }
+        let mut seen = HashSet::new();
+        for path in paths {
+            let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(path) else {
+                continue;
+            };
+            let Some((position, spelling)) =
+                refs.iter().enumerate().find_map(|(position, target)| {
+                    self.virtual_interface_spelling((*target)?)
+                        .map(|spelling| (position, spelling))
+                })
+            else {
+                continue;
+            };
+            if self
+                .virtual_interface_generate_scope(parts, refs, position)
+                .is_some()
+            {
+                continue;
+            }
+            let steps = self.virtual_interface_nested_steps(parts, refs, position);
+            let member =
+                self.virtual_interface_member_name(path, parts, refs, position + steps.len());
+            if member.is_empty() {
+                continue;
+            }
+            let identity = Self::normalize_virtual_interface_identity(
+                &Self::virtual_interface_identity_from_spelling(&spelling),
+            );
+            if !seen.insert((identity.clone(), steps.clone(), member.clone())) {
+                continue;
+            }
+            let Some(bound) = self.nested_identity(&identity, &steps, &instances) else {
+                continue;
+            };
+            for interface in instances.get(&bound).into_iter().flatten() {
+                written.extend(self.interface_member_variables(*interface, &member));
+            }
+        }
+        written
+    }
+
+    /// The type identity of the nested instances `steps` select from every
+    /// instance of type `identity`, as the nested descriptor slots resolve
+    /// them (`add_virtual_interface_nested`): `None` when there is no such
+    /// instance or the instances do not all declare `steps` with one type.
+    fn nested_identity(
+        &self,
+        identity: &str,
+        steps: &[String],
+        instances: &HashMap<String, Vec<NodeId>>,
+    ) -> Option<String> {
+        let mut identity = identity.to_owned();
+        for step in steps {
+            let mut child_identity = None;
+            for parent in instances.get(&identity)? {
+                let child = self.nested_interface_instance(*parent, step)?;
+                let found = self.concrete_virtual_interface_identity(child)?;
+                if child_identity.as_ref().is_some_and(|known| *known != found) {
+                    return None;
+                }
+                child_identity = Some(found);
+            }
+            identity = child_identity?;
+        }
+        Some(identity)
+    }
+
+    /// The assignment targets node `id` writes: the target of an assignment
+    /// statement, continuous or procedural continuous assignment, force,
+    /// release or deassign; the first operand of an assignment, compound
+    /// assignment, increment or decrement operation (the frontend wraps an
+    /// output or inout actual in an assignment whose first operand is the
+    /// actual); and the actuals of a call's non-`const` `ref` formals.
+    fn written_targets(&self, id: NodeId, out: &mut Vec<NodeId>) {
+        match self.kind(id) {
+            NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
+                out.extend(self.node(id).children.first().copied());
+            }
+            NodeKind::Stmt(
+                StmtKind::Force { lhs, .. }
+                | StmtKind::Release { lhs }
+                | StmtKind::Deassign { lhs }
+                | StmtKind::ProcContAssign { lhs, .. },
+            ) => out.push(*lhs),
+            NodeKind::Expr(ExprKind::Operation {
+                op,
+                assignment,
+                operands,
+                ..
+            }) if *assignment
+                || matches!(
+                    op,
+                    Operation::Assignment
+                        | Operation::PostIncrement
+                        | Operation::PreIncrement
+                        | Operation::PostDecrement
+                        | Operation::PreDecrement
+                        | Operation::OverloadUpdate
+                        | Operation::OverloadPostUpdate
+                ) =>
+            {
+                out.extend(operands.first().copied());
+            }
+            NodeKind::FuncCall {
+                callee: Some(callee),
+                ..
+            } => self.ref_actuals(self.node(id).children.as_slice(), *callee, out),
+            NodeKind::MethodCall {
+                receiver,
+                callee: Some(callee),
+                ..
+            } => {
+                let children = self.node(id).children.as_slice();
+                let actuals = match children.split_first() {
+                    Some((first, rest)) if receiver.as_ref() == Some(first) => rest,
+                    _ => children,
+                };
+                self.ref_actuals(actuals, *callee, out);
+            }
+            _ => {}
+        }
+    }
+
+    /// The actuals among `actuals` bound to a non-`const` `ref` formal of
+    /// subroutine `callee`.
+    fn ref_actuals(&self, actuals: &[NodeId], callee: NodeId, out: &mut Vec<NodeId>) {
+        if !matches!(self.kind(callee), NodeKind::FuncTask { .. }) {
+            return;
+        }
+        let formals = self
+            .node(callee)
+            .children
+            .iter()
+            .filter(|child| matches!(self.kind(**child), NodeKind::FuncArg { .. }));
+        for (actual, formal) in actuals.iter().zip(formals) {
+            if matches!(
+                self.kind(*formal),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    const_ref: false,
+                    ..
+                }
+            ) {
+                out.push(*actual);
+            }
+        }
+    }
+
+    /// The member paths through a virtual-interface handle that the
+    /// assignment target `target` writes: the path itself, the base of a
+    /// select of it, and each member of a concatenation, assignment pattern
+    /// or streaming target. Selector expressions are reads, not followed.
+    fn handle_member_writes(&self, target: NodeId, out: &mut Vec<NodeId>) {
+        match self.kind(target) {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                if refs
+                    .iter()
+                    .flatten()
+                    .any(|target| self.virtual_interface_spelling(*target).is_some())
+                {
+                    out.push(target);
+                }
+            }
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. }
+                | ExprKind::ArraySelect { base, .. },
+            ) => self.handle_member_writes(*base, out),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat | Operation::AssignmentPattern,
+                operands,
+                ..
+            }) => {
+                for operand in operands {
+                    self.handle_member_writes(*operand, out);
+                }
+            }
+            NodeKind::Expr(ExprKind::Streaming { streams, .. }) => {
+                for stream in streams {
+                    self.handle_member_writes(stream.value, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The variables of interface instance `interface` that a write of its
+    /// member `member` (`x`, or `cb.x` for a clockvar) stores to.
+    fn interface_member_variables(&self, interface: NodeId, member: &str) -> Vec<NodeId> {
+        let children = &self.node(interface).children;
+        let Some((block, variable)) = member.split_once('.') else {
+            return children
+                .iter()
+                .copied()
+                .filter(|child| {
+                    matches!(self.kind(*child), NodeKind::Var { .. })
+                        && !self.db.is_clocking_var(*child)
+                        && self.node(*child).name == member
+                })
+                .collect();
+        };
+        let Some(clockvar) = children
+            .iter()
+            .copied()
+            .find(|child| self.db.is_clocking_block(*child) && self.node(*child).name == block)
+            .and_then(|block| {
+                self.node(block).children.iter().copied().find(|child| {
+                    self.db.is_clocking_var(*child) && self.node(*child).name == variable
+                })
+            })
+        else {
+            return Vec::new();
+        };
+        let Some(info) = self.db.clocking_var(clockvar) else {
+            return Vec::new();
+        };
+        let mut declarations = Vec::new();
+        let mut stack = vec![info.expression];
+        while let Some(node) = stack.pop() {
+            match self.kind(node) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => declarations.push(*target),
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                    declarations.extend(refs.iter().flatten().copied());
+                }
+                _ => {}
+            }
+            stack.extend(self.node(node).children.iter().copied());
+        }
+        declarations
+    }
+
     /// The descriptor of nested instance `name` of `descriptor`, adding its
     /// nested slot (and the nested type's descriptor) on first use. `None`
     /// when the descriptor has no bound instance, or its bound instances do
