@@ -1156,13 +1156,17 @@ processes or clock edges, at the cost of a few bytes per object.
   descriptor form does) would put a test into every write site of the array:
   procedural, nonblocking, port, force and VPI writes. A full copy of the
   array at each Preponed region needs no write hook and no lookup, but costs
-  one cell copy per cell per time slot.
+  one cell copy per cell per time slot. Every one of those writes already
+  reaches the runtime's publication (or, unpublished, a private Postponed
+  store or a quiet VPI put), so the runtime can note the written cells there
+  without a test at any write site.
 - **Decision:** lowering marks each static dense array that a sampled
   expression selects (`IrArray::sampled_image`: domain samples, assertion
   expressions and `$sampled` arguments). Startup registers a runtime-owned
-  image of its cells (`llg_sampled_cells`, `llg_sampled_real_cells`), copied
-  in each Preponed region with the packed snapshots. Sampled reads index the
-  image directly. Descriptor arrays keep their saved cells. Arrays that no
+  image of its cells (`llg_sampled_cells`, `llg_sampled_real_cells`).
+  Sampled reads index the image directly. A publication of one of its cells
+  lists the cell, and each Preponed region copies only the listed cells (see
+  "Images copied per write" below); the first sample copies every cell. Descriptor arrays keep their saved cells. Arrays that no
   sampled expression selects, and models without such reads, generate the
   same C as before. The runtime code is out of line, and its context field
   comes last, so that no hot field moves. The only shared-path addition is
@@ -1214,6 +1218,37 @@ processes or clock edges, at the cost of a few bytes per object.
   index probing longer after data moved, and the new null test), every
   other row from −0.13% to +0.40%, and `m_glitch` with `--wave` +0.15% /
   +2.15% (spread 22%, instructions −0.01%).
+- **Images copied per write:** the full copy made the 4096-cell row cost
+  13.9 G instructions in `sample_preponed_cells`. Now the packed publication
+  (`sig_publish`), the real store and the unpublished stores look a written
+  address up against the bounds of the image cells and list the cell once per
+  sample (`listed` byte and `changed` positions: 9 bytes per cell). The test
+  is the word that already gates marked descriptor arrays
+  (`fixed_marked_arrays`), so a model with neither runs the same single
+  test; within the bounds the address resolves to a stand-in block, and the
+  end of the publication finds the image by binary search over the images
+  ordered by address. The first shape of that lookup made GCC spill one value
+  on every publication of every model (+2 instructions each), so the
+  stand-in returns without a call. `LLG_CO_DEBUG` builds check at every
+  sample that each unlisted cell equals its image, which catches a store that
+  bypasses the publication. A store before the first sample needs no hook,
+  because that sample copies every cell. Instructions (callgrind, all 47 rows,
+  dev base against the merged tip): the 4096-cell row 15.89 G to 1.97 G
+  (−87.6%; `sample_preponed_cells` 13.93 G to 0.007 G), the 16-cell row
+  −1.7%, the descriptor rows −0.2%. The other rows change by placement: the
+  runtime text grew by about 2.5 KiB, which moved the model globals by one
+  page, and the address-hashed value-scope index then probes differently
+  (for example `value_scope_retain_target` +520 M on `rl_st_3_rd_c`; the base
+  runtime with its globals moved to the same address by a 4192-byte data pad
+  gives +520 M as well). A register move on one publication path remains (+1
+  to +2 instructions on about a third of the publications, 0.04-0.35%).
+- **Save tables shrink:** a descriptor array's table of saved cells kept the
+  capacity of its largest slot. It now halves after
+  `LLG_FIXED_SAMPLED_SHRINK_SLOTS` (64) consecutive saving slots each filled
+  below `1/LLG_FIXED_SAMPLED_SHRINK_FILL` (1/8) of it, down to its initial
+  16 entries; halving leaves such a slot below a quarter, under the growth
+  limit of a half, so it cannot thrash. The test runs once per saving slot
+  and only while the table is above its initial capacity.
 
 ## Rejected or deferred
 
