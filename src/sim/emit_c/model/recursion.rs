@@ -48,7 +48,10 @@ pub(super) fn render_arena_dispatch(
             "static llg_co_anchor_t* llg_class_co_enter_{slot}({}) {{\n",
             helper_params(f)
         ));
-        out.push_str(&format!("    if (!_this) {{ (void)llg_class_require(_this, \"virtual method call\"); {default} return NULL; }}\n"));
+        out.push_str(&format!(
+            "    if (!_this) {{ (void)llg_class_require(_this, {}); {default} return NULL; }}\n",
+            c_string_literal(&super::subroutine_null_site(f, "virtual method call"))
+        ));
         out.push_str("    switch (llg_class_id(_this)) {\n");
         for class in 0..model.classes.len() {
             if let Some(implementation) = classes::virtual_impl_for_class(model, class, slot) {

@@ -594,7 +594,13 @@ fn render_function(
     };
     frame.cancellation_return = true;
     if function.receiver_class.is_some() {
-        frame.line("(void)llg_class_require(_this, \"method call\");");
+        frame.line(format!(
+            "(void)llg_class_require(_this, {});",
+            c_string_literal(&super::super::model::subroutine_null_site(
+                function,
+                "method call"
+            ))
+        ));
     }
     if function.ret_string || function.ret_chandle {
         let kind = if function.ret_string {
