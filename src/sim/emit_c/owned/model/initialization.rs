@@ -2,6 +2,7 @@
 use super::*;
 use crate::sim::emit_c::constants::hoist_const_limbs;
 use crate::sim::emit_c::destinations::assign;
+use crate::sim::located::{locate_at, locate_at_origin};
 use std::collections::{HashMap, HashSet};
 
 mod instance_tables;
@@ -825,8 +826,22 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     // Temporaries live in a block that closes before `_llg_return`, so a
     // jump there never skips an initialization.
     frame.line("{");
+    // A failing step is located at its declaration: an initializer's own
+    // origin, or the variable whose static initialization scope holds it.
+    let mut scope_location = None;
     for step in &model.init_steps {
-        initialization_step(&mut frame, step)?;
+        match step {
+            IrInitStep::StaticScopeEnter { location, .. } => scope_location = Some(location),
+            IrInitStep::StaticScopeLeave => scope_location = None,
+            _ => {}
+        }
+        initialization_step(&mut frame, step).map_err(|error| match (step, scope_location) {
+            (IrInitStep::Initialize(initialization), _) => {
+                locate_at_origin(initialization.origin(), error)
+            }
+            (_, Some(location)) => locate_at(location, error),
+            (_, None) => error,
+        })?;
     }
     for object in &model.objects {
         if let Some(initial) = &object.initial {

@@ -9,53 +9,11 @@ pub struct CodegenError {
     legacy_unsupported: bool,
 }
 
-/// Frames the source location a lowering failure string carries
-/// ([`located`]); never part of a message text.
-const LOCATION_MARK: char = '\u{1}';
-
-/// A lowering failure located at `location` (`file:line:col`, from
-/// `source_location`). Lowering returns plain strings, so the location rides
-/// framed inside the string and [`CodegenError`] takes it out again; a
-/// caller that wraps the string with more context keeps it. A message that
-/// already carries a location keeps it: the innermost construct names the
-/// failure most precisely.
-pub(crate) fn located(location: &str, message: impl fmt::Display) -> String {
-    let message = message.to_string();
-    if is_located(&message) {
-        message
-    } else {
-        format!("{LOCATION_MARK}{location}{LOCATION_MARK}{message}")
-    }
-}
-
-/// Whether `message` already carries a framed location ([`located`]).
-pub(crate) fn is_located(message: &str) -> bool {
-    message.contains(LOCATION_MARK)
-}
-
-/// Split the framed locations out of `detail`: the first is the location
-/// (the innermost construct, since every wrapper keeps an existing one); a
-/// later one, left by text that joins two located failures, is dropped so
-/// no frame reaches the message text.
-fn take_location(detail: String) -> (String, Option<String>) {
-    if !detail.contains(LOCATION_MARK) {
-        return (detail, None);
-    }
-    let mut text = String::with_capacity(detail.len());
-    let mut location = None;
-    let mut rest = detail.as_str();
-    while let Some(start) = rest.find(LOCATION_MARK) {
-        let after = start + LOCATION_MARK.len_utf8();
-        let Some(length) = rest[after..].find(LOCATION_MARK) else {
-            break;
-        };
-        text.push_str(&rest[..start]);
-        location.get_or_insert_with(|| rest[after..after + length].to_owned());
-        rest = &rest[after + length + LOCATION_MARK.len_utf8()..];
-    }
-    text.push_str(rest);
-    (text, location)
-}
+// Lowering returns plain strings, so a failure's location rides framed
+// inside the string (`located`) and `CodegenError` takes it out again; a
+// caller that wraps the string with more context keeps it.
+use crate::sim::located::take_location;
+pub(crate) use crate::sim::located::{is_located, located};
 
 impl CodegenError {
     pub(super) fn new(detail: impl Into<String>) -> Self {

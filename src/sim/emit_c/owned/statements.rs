@@ -130,7 +130,11 @@ impl Frame<'_, '_> {
     fn statement_body(&mut self, statement: &IrStmt) -> Result<(), String> {
         let cancellation_mark = self.cancellation_mark();
         match statement {
-            IrStmt::Located { statement, .. } => return self.statement(statement),
+            IrStmt::Located { origin, statement } => {
+                return self
+                    .statement(statement)
+                    .map_err(|error| crate::sim::located::locate_at_origin(origin, error))
+            }
             IrStmt::Nop => self.line(";"),
             IrStmt::FixedArrayDeclare(index) => {
                 let pointer = if self.ctx.model.array(*index).real {

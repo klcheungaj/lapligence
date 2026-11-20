@@ -31,7 +31,7 @@ Component map and pipeline contracts: [readme](readme.md).
 | `rt/` | [guide](rt/AGENTS.md) |
 | `build/`, `build.rs` | [readme](build/readme.md) |
 | `sdf/` | module docs in `sdf/mod.rs` |
-| `legacy_unsupported.rs`, `value_backend.rs`, `mod.rs` | module docs |
+| `legacy_unsupported.rs`, `located.rs`, `value_backend.rs`, `mod.rs` | module docs |
 
 ## Conventions and pitfalls
 

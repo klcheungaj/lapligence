@@ -41,6 +41,10 @@ the embedded [runtime](../rt/AGENTS.md). Applies to `emit_c.rs`, `emit_c/` and
   `model.c` header line.
 - Unrepresented storage, captures or callbacks fail with specific errors;
   never add a legacy-fragment or `Verbatim` fallback.
+- An emission error is plain text without a source path: the entry points
+  locate it at the nearest IR position (`IrStmt::Located`, an initializer,
+  an assertion, the procedure or subroutine; `sim::located`). A model-wide
+  table or limit failure stays unlocated.
 - Declare all typed procedure storage through `Frame::declare` and emit every
   body brace through `Frame::line`; never keep an overlaid field access after
   its block closes.

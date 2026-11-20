@@ -27,7 +27,8 @@ Lowers a validated `SemanticModel` and the owned DB into typed IR and an
   `expressions/`, `containers/`, `objects/`, `randomization/`, `coverage/`,
   `assertions/`, `initialization/`, `net_delay_layout/`, `packed_geometry/`.
 - `timescale.rs` — checked femtosecond ticks.
-- `error.rs` — `CodegenError` and the framed location (`located`).
+- `error.rs` — `CodegenError`; the framed location (`located`) is shared
+  with the emitter in `sim::located`.
 
 ## Conventions and pitfalls
 

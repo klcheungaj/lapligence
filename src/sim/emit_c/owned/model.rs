@@ -6,6 +6,7 @@ use crate::sim::execution::{
     TriggerPlan,
 };
 use crate::sim::ir::{IrVpiAutoStorage, IrVpiAutomatic};
+use crate::sim::located::locate_at_origin;
 use std::collections::BTreeMap;
 
 type ProcessBody = (
@@ -67,13 +68,26 @@ pub(in crate::sim::emit_c) fn function<'a, 'm>(
     if outline {
         frame.enable_outlining(&function.c_name, true);
     }
-    render_function(ctx, function, frame, false).map(|(source, _, _)| source)
+    render_function(ctx, function, frame, false)
+        .map(|(source, _, _)| source)
+        .map_err(|error| locate_at_origin(function.origin(), error))
 }
 
 /// A recursive subprogram's coroutine `<fn>_co` followed by its plain-ABI
 /// entry `<fn>`, which runs the coroutine on a synchronous driver. Returns
 /// the source, the frame layout and the number of resume points.
 pub(in crate::sim::emit_c) fn recursive_function<'a, 'm>(
+    ctx: &'a RCtx<'m>,
+    function: &IrFunc,
+    function_index: usize,
+    analysis: &ExecutionAnalysis,
+    names: &'a StorageNames<'m>,
+) -> Result<(String, super::super::frame_layout::FrameLayout, usize), String> {
+    recursive_function_unlocated(ctx, function, function_index, analysis, names)
+        .map_err(|error| locate_at_origin(function.origin(), error))
+}
+
+fn recursive_function_unlocated<'a, 'm>(
     ctx: &'a RCtx<'m>,
     function: &IrFunc,
     function_index: usize,
@@ -146,6 +160,27 @@ fn recursive_entry(function: &IrFunc) -> String {
 }
 
 pub(in crate::sim::emit_c) fn coroutine_function<'a, 'm>(
+    ctx: &'a RCtx<'m>,
+    function: &IrFunc,
+    function_index: usize,
+    analysis: &ExecutionAnalysis,
+    frame_upper_bounds: &BTreeMap<usize, usize>,
+    names: &'a StorageNames<'m>,
+    outline: bool,
+) -> Result<(String, super::super::frame_layout::FrameLayout), String> {
+    coroutine_function_unlocated(
+        ctx,
+        function,
+        function_index,
+        analysis,
+        frame_upper_bounds,
+        names,
+        outline,
+    )
+    .map_err(|error| locate_at_origin(function.origin(), error))
+}
+
+fn coroutine_function_unlocated<'a, 'm>(
     ctx: &'a RCtx<'m>,
     function: &IrFunc,
     function_index: usize,
@@ -1213,6 +1248,30 @@ pub(in crate::sim::emit_c) fn coroutine_process<'a, 'm>(
     names: &'a StorageNames<'m>,
     outline: bool,
 ) -> Result<CoroutineProcessBody, String> {
+    coroutine_process_unlocated(
+        ctx,
+        process,
+        process_index,
+        execution,
+        analysis,
+        frame_upper_bounds,
+        names,
+        outline,
+    )
+    .map_err(|error| locate_at_origin(process.origin(), error))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn coroutine_process_unlocated<'a, 'm>(
+    ctx: &'a RCtx<'m>,
+    process: &IrProcess,
+    process_index: usize,
+    execution: &ExecutionProcess,
+    analysis: &ExecutionAnalysis,
+    frame_upper_bounds: &BTreeMap<usize, usize>,
+    names: &'a StorageNames<'m>,
+    outline: bool,
+) -> Result<CoroutineProcessBody, String> {
     let mut frame = Frame::new_coframe(
         ctx,
         analysis,
@@ -1242,7 +1301,9 @@ pub(in crate::sim::emit_c) fn process<'a, 'm>(
     frame.storage_names = Some(names);
     // A final procedure is never shared between instances.
     frame.enable_outlining(&process.c_name, false);
-    render_process(ctx, process, execution, frame, false).map(|(source, _, _)| source)
+    render_process(ctx, process, execution, frame, false)
+        .map(|(source, _, _)| source)
+        .map_err(|error| locate_at_origin(process.origin(), error))
 }
 
 fn render_process(

@@ -274,7 +274,10 @@ fn render_stmt_scoped(
         Ok(out)
     }
     let out = match st {
-        IrStmt::Located { statement, .. } => return render_stmt_scoped(ctx, statement, scopes),
+        IrStmt::Located { origin, statement } => {
+            return render_stmt_scoped(ctx, statement, scopes)
+                .map_err(|error| crate::sim::located::locate_at_origin(origin, error))
+        }
         IrStmt::System(command) => {
             let (command, has_command) = match command.as_ref() {
                 Some(command) => (super::objects::string(ctx, command)?, 1),

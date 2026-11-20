@@ -20,6 +20,7 @@ use super::dpi::{
 };
 use super::*;
 use crate::sim::ir::{IrDpiExport, IrDpiType, IrFormalMode, IrModel};
+use crate::sim::located::locate_at_origin;
 
 /// Exported C identifiers in ascending order; the position is the id the
 /// scope tables and entry points use.
@@ -129,11 +130,10 @@ pub(super) fn render_dpi_declarations(model: &IrModel) -> Result<String, String>
     let mut slots: Vec<Vec<(usize, String)>> = vec![Vec::new(); model.dpi_scopes.len()];
     out.push_str("\n/* DPI-C context scopes and exports (SV 35.5.3, Annex H.9) */\n");
     for f in model.funcs.iter().filter(|f| f.dpi_export().is_some()) {
-        let export = export_of(f)?;
-        let params = foreign_params(f, export)?;
+        let (export, params, ret) = export_signature(f)?;
         out.push_str(&format!(
             "static {} {}({});\n",
-            foreign_return_type(f, export)?,
+            ret,
             thunk_name(f),
             param_list(&params)
         ));
@@ -216,7 +216,10 @@ pub(super) fn render_dpi_export_bodies(
         .filter(|(_, f)| f.dpi_export().is_some())
     {
         let frame = coroutine_frame(index).filter(|_| f.is_task);
-        out.push_str(&render_export_thunk(model, f, frame.as_deref())?);
+        out.push_str(
+            &render_export_thunk(model, f, frame.as_deref())
+                .map_err(|error| locate_at_origin(f.origin(), error))?,
+        );
     }
     for (id, c_name) in ids.iter().enumerate() {
         // Every scope exporting one C identifier has the same signature
@@ -229,9 +232,7 @@ pub(super) fn render_dpi_export_bodies(
                     .is_some_and(|export| export.c_name() == *c_name)
             })
             .ok_or("exported C identifier without a subroutine")?;
-        let export = export_of(f)?;
-        let params = foreign_params(f, export)?;
-        let ret = foreign_return_type(f, export)?;
+        let (_, params, ret) = export_signature(f)?;
         let list = param_list(&params);
         let types = if params.is_empty() {
             "void".to_owned()
@@ -265,6 +266,24 @@ pub(super) fn render_dpi_export_bodies(
 /// task that can consume time (a coroutine whose frame type is
 /// `coroutine_frame`) runs on a foreign call context:
 /// it fills the task's coroutine frame on the calling chain's arena and
+/// An export, its foreign `(type, name)` parameters and its foreign return
+/// type.
+type ExportSignature<'f> = (&'f IrDpiExport, Vec<(String, String)>, &'static str);
+
+/// The signature of exported subroutine `f`; a failure is located at the
+/// subroutine.
+fn export_signature(f: &IrFunc) -> Result<ExportSignature<'_>, String> {
+    let signature = || {
+        let export = export_of(f)?;
+        Ok((
+            export,
+            foreign_params(f, export)?,
+            foreign_return_type(f, export)?,
+        ))
+    };
+    signature().map_err(|error| locate_at_origin(f.origin(), error))
+}
+
 /// waits while the scheduler thread runs it (ADV-018); the outputs live in
 /// the thunk's value scopes and C locals until it returns.
 fn render_export_thunk(
@@ -272,9 +291,7 @@ fn render_export_thunk(
     f: &IrFunc,
     coroutine_frame: Option<&str>,
 ) -> Result<String, String> {
-    let export = export_of(f)?;
-    let params = foreign_params(f, export)?;
-    let ret = foreign_return_type(f, export)?;
+    let (export, params, ret) = export_signature(f)?;
     let name = thunk_name(f);
     let mut tables = LayoutTables {
         prefix: format!("llg_dpix_{}_", f.c_name),

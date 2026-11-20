@@ -1640,8 +1640,8 @@ it evaluates its list after a store into any member of that record and prints
 when a listed value changed. What is left:
 
 - **`$monitor` through a computed handle** (`f().v`) rejects before C
-  compilation with an unlocated "native or impure calls in evaluator
-  callbacks" error: nothing can name the storage without calling the function
+  compilation with a "native or impure calls in evaluator callbacks" error,
+  located at the procedure that issues it: nothing can name the storage without calling the function
   again.
 - **Some reads are not exact**: such a `$monitor` re-evaluates at every settled
   slot, which costs one evaluation per slot. These are a virtual-interface member,
@@ -1656,8 +1656,8 @@ when a listed value changed. What is left:
   ([`monitor_method_calls.sv`](../tests/fixtures/sim/feature_completion/sim_025/monitor_method_calls.sv)).
 - **A virtual method call, or a statement-bodied function with a class-handle
   local in a list with no argument that has private effects**, rejects before C
-  compilation with an unlocated "side-effect-capable evaluator expressions"
-  error: the read-only Postponed evaluator does not dispatch virtual methods or
+  compilation with a "side-effect-capable evaluator expressions" error,
+  located at the procedure that issues it: the read-only Postponed evaluator does not dispatch virtual methods or
   run such a body yet
   ([`neg_monitor_virtual_method.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_monitor_virtual_method.sv),
   [`neg_monitor_handle_local_helper.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_monitor_handle_local_helper.sv)).
@@ -1670,8 +1670,9 @@ neighbouring form still rejects at the call:
   ([`neg_strobe_container_conversion.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_strobe_container_conversion.sv)):
   the Postponed region writes nothing.
 - **A `$strobe` helper that prints** (`$display` inside the function): it has
-  output effects, which the private evaluator refuses with the unlocated
-  "side-effect-capable evaluator expressions" error; about a day.
+  output effects, which the private evaluator refuses with the
+  "side-effect-capable evaluator expressions" error, located at the procedure
+  that issues it; about a day.
 
 `$finish` also drops the reports still pending in its own slot
 ([S25-D5](lrm_decisions.md)); a `$strobe` in a `final` block rejects because no
