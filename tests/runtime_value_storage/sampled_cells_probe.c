@@ -97,7 +97,6 @@ static void dense_images(void) {
     CHECK(g.sampled_cells == NULL && g.sampled_cell_index == NULL &&
           g.sampled_cell_index_count == 0);
     CHECK(fixed_marked_arrays == 0 && fixed_dense_low == UINTPTR_MAX && fixed_dense_high == 0);
-    CHECK(fixed_written_low == UINTPTR_MAX && fixed_written_high == 0);
     for (unsigned i = 0; i < CELLS; i++) {
         sv4_destroy(&first[i]);
         sv4_destroy(&second[i]);

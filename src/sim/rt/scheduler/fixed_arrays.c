@@ -53,10 +53,9 @@ static uintptr_t fixed_address_low = UINTPTR_MAX, fixed_address_high;
 /* Arrays with a contents marker or sampled cells, and dense arrays with a
  * sampled cell image (sampling.c): with none, a write has no array to tell. */
 static size_t fixed_marked_arrays;
-/* Bounds of the cells of the dense arrays with an image, and their union with
- * the filed blocks: a publication outside the union tells no array. */
+/* Bounds of the cells of the dense arrays with an image; high is 0 without
+ * images. */
 static uintptr_t fixed_dense_low = UINTPTR_MAX, fixed_dense_high;
-static uintptr_t fixed_written_low = UINTPTR_MAX, fixed_written_high;
 
 /* Cells driven through an inertial delay, by address. Few cells ever are. */
 struct llg_fixed_inertial {
@@ -151,23 +150,16 @@ static size_t fixed_block_bytes(const struct llg_fixed_block* block) {
     return sizeof(*block) + block->cells * (fixed_direct(block->array) ? sizeof(sv4_t) : sizeof(llg_fixed_cell_t));
 }
 
-static void fixed_written_bounds(void) {
-    fixed_written_low = fixed_address_low < fixed_dense_low ? fixed_address_low : fixed_dense_low;
-    fixed_written_high = fixed_address_high > fixed_dense_high ? fixed_address_high : fixed_dense_high;
-}
-
 static void fixed_marked_dense_add(uintptr_t low, uintptr_t high) {
     ++fixed_marked_arrays;
     if (low < fixed_dense_low) fixed_dense_low = low;
     if (high > fixed_dense_high) fixed_dense_high = high;
-    fixed_written_bounds();
 }
 
 static void fixed_marked_dense_clear(size_t arrays) {
     fixed_marked_arrays -= arrays;
     fixed_dense_low = UINTPTR_MAX;
     fixed_dense_high = 0;
-    fixed_written_bounds();
 }
 
 static void fixed_block_file(struct llg_fixed_block* block) {
@@ -181,7 +173,6 @@ static void fixed_block_file(struct llg_fixed_block* block) {
     uintptr_t start = (uintptr_t)block;
     if (start < fixed_address_low) fixed_address_low = start;
     if (start + fixed_block_bytes(block) > fixed_address_high) fixed_address_high = start + fixed_block_bytes(block);
-    fixed_written_bounds();
 }
 
 static void fixed_block_unfile(struct llg_fixed_block* block) {
@@ -196,7 +187,6 @@ static void fixed_block_unfile(struct llg_fixed_block* block) {
         fixed_address_capacity = 0;
         fixed_address_low = UINTPTR_MAX;
         fixed_address_high = 0;
-        fixed_written_bounds();
     }
 }
 
@@ -244,28 +234,34 @@ static struct llg_fixed_block* fixed_array_block(const sv4_t* target) {
     return fixed_block_of(target);
 }
 
-/* A published write inside the union bounds. Without images the union is
- * the filed bounds, so the block index exists. A dense cell is listed for the
- * next Preponed sample; images are statics and blocks heap memory, but a
- * miss between images still looks for a block. */
-static struct llg_fixed_block* fixed_marked_written(uintptr_t address) {
-    if (LLG_CO_LIKELY(!g.sampled_cell_index_count)) return fixed_block_find(address);
-    if (address >= fixed_dense_low && address < fixed_dense_high &&
-        sampled_cells_written(address))
-        return NULL;
-    if (address < fixed_address_low || address >= fixed_address_high) return NULL;
-    return fixed_block_find(address);
+/* Stands for the cells of the dense arrays with an image in a publication:
+ * no contents marker and no saved cells, so only the end of the publication
+ * (fixed_block_sampled_changed) tells it apart and lists the cell. */
+static llg_fixed_array_t fixed_dense_array;
+static struct llg_fixed_block fixed_dense_block = {.array = &fixed_dense_array};
+
+/* Nothing here calls out, and without images it is the block lookup alone:
+ * the publication then keeps its values in the same registers (a call or a
+ * different branch shape made GCC spill one on every publication). */
+static struct llg_fixed_block* fixed_marked_written(const sv4_t* target) {
+    if (LLG_CO_LIKELY(!fixed_dense_high))
+        return fixed_address_capacity ? fixed_block_of(target) : NULL;
+    if (fixed_address_capacity) {
+        struct llg_fixed_block* block = fixed_block_of(target);
+        if (block) return block;
+    }
+    uintptr_t address = (uintptr_t)target;
+    return address >= fixed_dense_low && address < fixed_dense_high ? &fixed_dense_block : NULL;
 }
 
 // Every packed publication calls this once. It returns the block holding
-// `target` when that is a cell of a marked descriptor array, else NULL, and
-// lists a cell of a dense array with a sampled image on the way.
+// `target` when that is a cell of a marked descriptor array,
+// `fixed_dense_block` when it lies within the cells of the dense arrays with
+// an image, else NULL.
 static struct llg_fixed_block* fixed_array_written(const sv4_t* target) {
     // Predicted unmarked: a publication's hot path keeps only this test.
     if (LLG_CO_LIKELY(!fixed_marked_arrays)) return NULL;
-    uintptr_t address = (uintptr_t)target;
-    if (address < fixed_written_low || address >= fixed_written_high) return NULL;
-    return fixed_marked_written(address);
+    return fixed_marked_written(target);
 }
 
 // A real publication, or a store that publishes nothing (a private store, a
@@ -284,6 +280,10 @@ static sv4_t* fixed_block_contents(const struct llg_fixed_block* block) {
 static void fixed_block_sampled_changed(struct llg_fixed_block* block,
                                         sv4_t* target, sv4_t old) {
     if (!block) return;
+    if (LLG_CO_UNLIKELY(block == &fixed_dense_block)) {
+        (void)sampled_cells_written((uintptr_t)target);
+        return;
+    }
     llg_fixed_array_t* array = block->array;
     if (LLG_CO_UNLIKELY(array->sampled != NULL)) {
         uint64_t index;
