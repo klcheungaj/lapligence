@@ -931,6 +931,28 @@ pub(crate) fn reject_case_with_id(
     at: Option<&str>,
     text: &str,
 ) {
+    reject_case_with_id_text(suite, fixture, id, at, text, false);
+}
+
+/// [`reject_case_with_id`] whose error text must equal `text`.
+pub(crate) fn reject_case_with_id_exact(
+    suite: &str,
+    fixture: &str,
+    id: &str,
+    at: Option<&str>,
+    text: &str,
+) {
+    reject_case_with_id_text(suite, fixture, id, at, text, true);
+}
+
+fn reject_case_with_id_text(
+    suite: &str,
+    fixture: &str,
+    id: &str,
+    at: Option<&str>,
+    text: &str,
+    exact: bool,
+) {
     let source = fixture_path(suite, fixture);
     let file = source
         .file_name()
@@ -951,7 +973,11 @@ pub(crate) fn reject_case_with_id(
             .collect();
         assert_eq!(errors.len(), 1, "{label}: {seen}");
         assert_eq!(errors[0].id, id, "{label}: {seen}");
-        assert!(errors[0].text.contains(text), "{label}: {seen}");
+        if exact {
+            assert_eq!(errors[0].text, text, "{label}: {seen}");
+        } else {
+            assert!(errors[0].text.contains(text), "{label}: {seen}");
+        }
         let location = errors[0]
             .location
             .as_deref()
