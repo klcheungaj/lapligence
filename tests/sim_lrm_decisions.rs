@@ -821,6 +821,22 @@ fn s08_d1_override_visibility_calls_rejected() {
 }
 
 #[test]
+fn s12_d2_structure_pattern_duplicate_member_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/S12-D2_structure_pattern_duplicate_member_rejected.out"
+    )
+    .is_empty());
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "S12-D2_structure_pattern_duplicate_member_rejected",
+        "SLANG-PatternStructDuplicateMember",
+        Some("18:49"),
+        "structure pattern names member 'data' more than once",
+    );
+}
+
+#[test]
 fn s12_d1_foreach_array_each_bound_check() {
     run_decision(
         "S12-D1_foreach_array_each_bound_check",
