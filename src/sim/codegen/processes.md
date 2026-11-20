@@ -110,10 +110,11 @@ sink has an initializer, a net delay, or another driver or type of its own
 that no merge covers (a variable), either
 instance owns specify paths or timing checks, the design reads
 SDF, the model keeps the VPI catalog and the source is a variable, the model
-is generated with `--vpi-port-delays`, the sink is a ref-port target, or a source that does not start at X has
-a time-0 observer of the sink. For a net source that start is known only
-after lowering: `lower_model` lowers again with those ports kept
-(`port_collapse_retries`), with converting net ports whose sink a strength
+is generated with `--vpi-port-delays`, the sink is a ref-port target, a source that does not start at X has
+a time-0 observer of the sink, or a virtual-interface handle writes a
+variable sink. For a net source that start, and the members such handles
+write, are known only after lowering: `lower_model` lowers again with those
+ports kept (`port_collapse_retries`, `virtual_interface_written_ports`), with converting net ports whose sink a strength
 reader names joined (`strength_link_retries`, T1-D13), and again as a VPI
 model (variable sinks keep their links, net ports merge; A21-D6) when the
 lowered model keeps the VPI catalog (known only after the bodies).

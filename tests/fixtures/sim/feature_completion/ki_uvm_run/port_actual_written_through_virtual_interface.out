@@ -1,0 +1,7 @@
+10 read=z write=0 grant=0 arb.read=z arb.write=0
+20 read=1 write=0 grant=0 arb.read=z arb.write=0
+30 read=0 write=1 grant=0 arb.read=z arb.write=0
+40 read=z write=1 grant=0 arb.read=z arb.write=0
+50 read=1 write=1 grant=0 arb.read=z arb.write=0
+60 read=0 write=0 grant=0 arb.read=0 arb.write=0
+70 read=z write=0 grant=0 arb.read=z arb.write=0

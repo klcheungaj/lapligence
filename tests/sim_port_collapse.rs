@@ -858,6 +858,50 @@ endmodule
     }
 }
 
+/// A write through a virtual interface is another writer of a port's sink
+/// that only the lowered bodies show: an output actual or an input formal of
+/// an interface written through a handle keeps its link (decision A21-D3),
+/// while a member the handle only reads still shares its source.
+#[test]
+fn ports_written_through_a_virtual_interface_keep_their_link() {
+    let design = |access: &str| {
+        format!(
+            "module child(input logic c, output logic q);
+  always @(posedge c) q <= 1'b0;
+endmodule
+interface ifc(input logic a);
+  logic c;
+  logic q;
+endinterface
+class D;
+  virtual ifc v;
+  task run(); #1 {access}; endtask
+endclass
+module tb;
+  logic a;
+  ifc i(a);
+  child u(.c(i.c), .q(i.q));
+  initial begin static D d = new; d.v = i; a = 0; d.run(); #2 $display(\"%b\", i.q); $finish; end
+endmodule
+"
+        )
+    };
+    for (access, output_links, input_links) in [
+        ("v.q <= 1'b1", 1, 0),
+        ("$display(\"%b\", v.q)", 0, 0),
+        ("v.a = 1'b1", 0, 1),
+        ("$display(\"%b\", v.a)", 0, 0),
+    ] {
+        let model = render(&design(access));
+        assert_eq!(links(&model), output_links, "{access}: {model}");
+        assert_eq!(
+            links_named(&model, "\"tb.i.link\""),
+            input_links,
+            "{access}: {model}"
+        );
+    }
+}
+
 #[test]
 fn a_forced_formal_keeps_its_link() {
     let model = render(&with_child(

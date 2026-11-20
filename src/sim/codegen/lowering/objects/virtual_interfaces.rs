@@ -269,6 +269,10 @@ impl Codegen<'_> {
         let Some(target) = self.virtual_interface_member_path(path, node, write)? else {
             return Ok(None);
         };
+        if write {
+            self.virtual_interface_writes
+                .insert((target.descriptor, target.member.clone()));
+        }
         let descriptor = target.descriptor;
         let member = target.member.clone();
         let spelling = target.spelling.clone();
@@ -594,6 +598,10 @@ impl Codegen<'_> {
         let Some(target) = self.virtual_interface_member_path(path, base, write)? else {
             return Ok(None);
         };
+        if write {
+            self.virtual_interface_writes
+                .insert((target.descriptor, target.member.clone()));
+        }
         if self
             .virtual_interface_members
             .contains_key(&(target.descriptor, target.member.clone()))

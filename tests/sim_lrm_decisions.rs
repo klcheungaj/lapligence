@@ -3737,6 +3737,16 @@ fn a21_d3_output_port_shares_actual_variable() {
 }
 
 #[test]
+fn a21_d3_actual_written_through_virtual_interface() {
+    run_decision(
+        "A21-D3_actual_written_through_virtual_interface",
+        include_str!(
+            "fixtures/sim/lrm_decisions/A21-D3_actual_written_through_virtual_interface.out"
+        ),
+    );
+}
+
+#[test]
 fn a21_d4_port_nets_merge_like_inout() {
     run_decision(
         "A21-D4_port_nets_merge_like_inout",
