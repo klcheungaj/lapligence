@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 use crate::core::db::Operation;
 use crate::core::db::{
     AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind, ProductionKind, StmtKind,
+    TypeShape,
 };
 use crate::core::value::ValueData;
 
@@ -157,7 +158,8 @@ pub fn object_width(db: &Db, id: NodeId) -> Option<u32> {
 /// - `Ref` → width of the referenced object (signal or parameter).
 /// - `BitSelect`, `PartSelect`, `IndexedPartSelect` → the width of the
 ///   select's elaborated type; without one, the selected element count (1,
-///   `|left - right| + 1` or the width expression).
+///   `|left - right| + 1` or the width expression). A select of an unpacked
+///   dimension (a slice of an unpacked array) has no packed width: `None`.
 /// - `Cast` → the cast target type width.
 /// - `Operation` → per-op rule (see [`op_width`]).
 /// - Anything else (calls, hier paths, unknown) → `None`.
@@ -183,7 +185,9 @@ pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
             ExprKind::BitSelect { .. }
             | ExprKind::PartSelect { .. }
             | ExprKind::IndexedPartSelect { .. },
-        ) => select_type_width(db, id).or_else(|| select_count_width(db, id)),
+        ) if !selects_unpacked(db, id) => {
+            select_type_width(db, id).or_else(|| select_count_width(db, id))
+        }
         NodeKind::Expr(ExprKind::Cast { ty, .. }) => ty.width,
         NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => op_width(db, *op, operands),
         NodeKind::Expr(ExprKind::Conditional {
@@ -193,6 +197,32 @@ pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
             .map(|(a, b)| a.max(b)),
         _ => None,
     }
+}
+
+/// Whether select `id` selects elements of an unpacked dimension, judged by
+/// its own or its base's elaborated type. Such a slice is an unpacked array
+/// (SV 7.4.3): its element count is not a bit width, and its total bits are
+/// not comparable with [`object_width`], which gives an unpacked array's
+/// element width. The frontend checks unpacked assignment compatibility
+/// (SV 7.6), so the rule has nothing to add.
+fn selects_unpacked(db: &Db, id: NodeId) -> bool {
+    let base = match db.node_kind(id) {
+        NodeKind::Expr(
+            ExprKind::BitSelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. },
+        ) => Some(*base),
+        _ => None,
+    };
+    let unpacked = |node: NodeId| {
+        db.type_descriptor(node).is_some_and(|descriptor| {
+            matches!(
+                descriptor.shape,
+                TypeShape::FixedArray { .. } | TypeShape::Container { .. }
+            )
+        })
+    };
+    unpacked(id) || base.is_some_and(unpacked)
 }
 
 /// The width of a select's elaborated type. A select of a dimension above
