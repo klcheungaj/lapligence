@@ -3168,7 +3168,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   events of the target slot in scheduling order, decision S42-D5),
   `vpiReturnEvent`/`vpiCancelEvent`, force and release. User system tasks and
   functions run compiletf, sizetf (once per registration) and calltf with the
-  38.34 return conventions and per-call-site user data. Handles are
+  38.34 return conventions and per-call-site user data; the values compiletf,
+  calltf and callback routines return are ignored (decision S43-D13). Handles are
   generation-checked: stale, released or invalid handles give a
   `vpi_chk_error` level, never a use-after-free. Applications load from
   `LLG_VPI_PLUGIN` (a Windows DLL links against the model's import library,

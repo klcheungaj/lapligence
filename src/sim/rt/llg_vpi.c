@@ -12807,14 +12807,10 @@ static p_vpi_time callback_time(int type, const llg_vpi_model_object_t* scope, u
     return out;
 }
 
-/* Run one callback routine. A nonzero return marks the VPI application
- * failed and ends the simulation, as for the start/end reasons. */
+/* Run one callback routine. Its return value is ignored (decision
+ * S43-D13): 38.36 gives it no meaning. */
 static void invoke_cb(llg_vpi_cb_t* cb, s_cb_data* data) {
-    if (data->cb_rtn(data) != 0) {
-        g_vpi.failed = 1;
-        vpi_set_error(vpi_state(), vpiError, "LLG_VPI_CALLBACK", "VPI callback returned failure");
-        llg_rt_request_finish();
-    }
+    (void)data->cb_rtn(data);
     (void)cb;
     svc_safe_point();
 }
@@ -14168,16 +14164,13 @@ static int compile_site(llg_vpi_callsite_t* site) {
         llg_vpi_call_t* previous = g_vpi.active_call;
         g_vpi.active_call = &call;
         site->active = &call;
-        PLI_INT32 result = site->registration->data.compiletf(site->registration->data.user_data);
+        /* The return value is ignored (decision S43-D13): 36.8.2 gives it
+         * no meaning; a compiletf reports a problem through vpi_printf or
+         * vpi_control. */
+        (void)site->registration->data.compiletf(site->registration->data.user_data);
         site->active = NULL;
         release_call_slots(&call);
         g_vpi.active_call = previous;
-        if (result != 0) {
-            vpi_set_errorf(vpiCompile, vpiError, "LLG_VPI_COMPILETF", "compiletf rejected `%s`",
-                           site->name);
-            llg_msg(LLG_MSG_VPI_ERROR, NULL, "VPI error: compiletf rejected `%s`", site->name);
-            ok = 0;
-        }
     }
     for (int i = 0; i < call.arg_count; ++i) sv4_destroy(&call.args[i].packed);
     free(call.args);
@@ -14305,25 +14298,22 @@ static int begin_call(llg_vpi_call_t* call, llg_vpi_callsite_t* site, llg_vpi_ar
     return 1;
 }
 
-static int invoke_calltf(llg_vpi_call_t* call) {
+static void invoke_calltf(llg_vpi_call_t* call) {
     llg_vpi_callsite_t* site = call->site;
     PLI_INT32 (*calltf)(PLI_BYTE8*) = site->registration->data.calltf;
-    if (!calltf) return 1;
+    if (!calltf) return;
     call->previous = g_vpi.active_call;
     g_vpi.active_call = call;
     site->active = call;
     ++g_vpi.call_depth;
-    PLI_INT32 result = calltf(site->registration->data.user_data);
+    /* The return value is ignored (decision S43-D13): 36.8.3 gives it no
+     * meaning. */
+    (void)calltf(site->registration->data.user_data);
     --g_vpi.call_depth;
     svc_safe_point();
     site->active = NULL;
     release_call_slots(call);
     g_vpi.active_call = call->previous;
-    if (result != 0) {
-        vpi_fail_runtime("VPI calltf returned failure");
-        return 0;
-    }
-    return 1;
 }
 
 static llg_vpi_callsite_t* site_by_id(uint64_t id) {
@@ -14358,7 +14348,7 @@ int llg_vpi_call_task_site(uint64_t id, const char* name, llg_vpi_arg_t* args, i
     llg_vpi_callsite_t* site = id == UINT64_MAX ? transient_site(name, args, count) : site_by_id(id);
     llg_vpi_call_t call;
     int result = begin_call(&call, site, args, count, 0);
-    if (result) result = invoke_calltf(&call);
+    if (result) invoke_calltf(&call);
     sv4_destroy(&call.return_value);
     if (id == UINT64_MAX) free_transient_site(site);
     return result;
@@ -14375,7 +14365,7 @@ sv4_t llg_vpi_call_function_site(uint64_t id, const char* name, llg_vpi_arg_t* a
         sv4_destroy(&call.return_value);
         result = sv4_x(fallback_width ? fallback_width : 1, fallback_signed);
     } else {
-        (void)invoke_calltf(&call);
+        invoke_calltf(&call);
         sv4_move(&result, &call.return_value);
     }
     if (id == UINT64_MAX) free_transient_site(site);
@@ -14388,7 +14378,10 @@ double llg_vpi_call_real_function_site(uint64_t id, const char* name, llg_vpi_ar
     double result = 0.0;
     if (begin_call(&call, site, args, count, 1)) {
         if (!call.has_real_return) vpi_fail_runtime("VPI packed function used in a real expression");
-        else if (invoke_calltf(&call)) result = call.real_return;
+        else {
+            invoke_calltf(&call);
+            result = call.real_return;
+        }
     }
     sv4_destroy(&call.return_value);
     if (id == UINT64_MAX) free_transient_site(site);

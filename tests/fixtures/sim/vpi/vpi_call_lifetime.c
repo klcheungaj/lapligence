@@ -45,7 +45,9 @@ static int stale(const borrowed_handles *handles) {
 static PLI_INT32 compile_call(PLI_BYTE8 *data) {
     (void)data;
     persistent_scope = vpi_handle_by_name((PLI_BYTE8 *)"tb", NULL);
-    return persistent_scope && capture(&compiled) ? 0 : 1;
+    /* A compiletf's return value is ignored (S43-D13): report instead. */
+    if (!persistent_scope || !capture(&compiled)) vpi_printf("vpi lifetime compiletf failed\n");
+    return 0;
 }
 
 static PLI_INT32 size_call(PLI_BYTE8 *data) {

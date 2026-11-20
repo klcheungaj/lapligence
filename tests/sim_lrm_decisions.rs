@@ -2729,6 +2729,15 @@ fn s43_d12_startup_before_initializers() {
 }
 
 #[test]
+fn s43_d13_routine_results_ignored() {
+    run_vpi_decision(
+        "S43-D13_routine_results_ignored",
+        &["task $ret1()"],
+        include_str!("fixtures/sim/lrm_decisions/S43-D13_routine_results_ignored.out"),
+    );
+}
+
+#[test]
 fn s43_d9_postponed_systf_read_only() {
     run_vpi_decision(
         "S43-D9_postponed_systf_read_only",
