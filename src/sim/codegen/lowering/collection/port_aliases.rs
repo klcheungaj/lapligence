@@ -21,14 +21,13 @@
 //! side is a resolved net, the sink has its own initializer, or an output
 //! sink has another writer (a process, continuous assignment, gate or port;
 //! 6.5 then reports the conflict on the copy). A write through a virtual
-//! interface handle is such a writer too, of an output or an input sink,
-//! but only the lowered bodies show which members those writes name: a
-//! collapsed port whose sink one names is listed by
-//! [`Codegen::virtual_interface_written_ports`] and the design is lowered
-//! again with that port kept as a link, so the write holds until the
-//! source next changes instead of until the source is next written (a
-//! source rewritten with its own value would overwrite it through the
-//! shared storage). Time zero is the last case:
+//! interface handle is such a writer too, of an output or an input sink:
+//! the sinks such writes can store to are found from the owned assignment
+//! targets before any body is lowered
+//! ([`Codegen::virtual_interface_written_variables`]) and keep their link,
+//! so the write holds until the source next changes instead of until the
+//! source is next written (a source rewritten with its own value would
+//! overwrite it through the shared storage). Time zero is the last case:
 //! the sink starts at its type's default and the copy gives it the source's
 //! value when the link first runs, which an event control already waiting
 //! on the sink observes. When the source starts at that same default nothing
@@ -128,6 +127,19 @@ impl Codegen<'_> {
                 outputs.push(candidate.port);
             }
             candidates.push(candidate);
+        }
+        // A sink written through a virtual-interface handle keeps its link
+        // (module docs). The scan runs only when some port may collapse.
+        if !candidates.is_empty() {
+            let written = self.virtual_interface_written_variables(&nodes);
+            if !written.is_empty() {
+                candidates.retain(|candidate| !written.contains(&candidate.formal));
+                let kept = candidates
+                    .iter()
+                    .map(|candidate| candidate.port)
+                    .collect::<HashSet<_>>();
+                outputs.retain(|port| kept.contains(port));
+            }
         }
         // An output sink keeps its link when anything else writes it: the
         // link's ownership checks (6.5, 23.3.3.2) must still report it.
@@ -242,96 +254,8 @@ impl Codegen<'_> {
             .extend(candidates.iter().map(|candidate| candidate.port));
         self.port_alias_sinks
             .extend(candidates.iter().map(|candidate| candidate.formal));
-        self.variable_port_sinks.extend(
-            candidates
-                .iter()
-                .map(|candidate| (candidate.formal, candidate.port)),
-        );
         self.finish_port_aliases();
         Ok(())
-    }
-
-    /// Collapsed variable ports whose sink a virtual-interface handle
-    /// writes, once every body is lowered: in each instance a written
-    /// member's handle type can bind, the member variable or, for a clockvar
-    /// drive (`v.cb.x <= ...`), each variable its clocking expression names.
-    /// Such a write is another writer of the sink that the static scan of
-    /// [`Codegen::collapse_variable_ports`] cannot see, so the port is
-    /// lowered again as a link (module docs).
-    pub(in super::super) fn virtual_interface_written_ports(&self) -> Vec<NodeId> {
-        if self.variable_port_sinks.is_empty() || self.virtual_interface_writes.is_empty() {
-            return Vec::new();
-        }
-        let mut written: HashMap<usize, Vec<&str>> = HashMap::new();
-        for (descriptor, member) in &self.virtual_interface_writes {
-            written
-                .entry(*descriptor)
-                .or_default()
-                .push(member.as_str());
-        }
-        let mut ports = Vec::new();
-        for (interface, (descriptor, _)) in &self.virtual_interface_instances {
-            let Some(members) = written.get(descriptor) else {
-                continue;
-            };
-            for member in members {
-                for declaration in self.interface_member_variables(*interface, member) {
-                    if let Some(port) = self.variable_port_sinks.get(&declaration) {
-                        ports.push(*port);
-                    }
-                }
-            }
-        }
-        ports.sort_unstable_by_key(|port| port.index());
-        ports.dedup();
-        ports
-    }
-
-    /// The variables of interface instance `interface` that a write of its
-    /// member `member` (`x`, or `cb.x` for a clockvar) stores to.
-    fn interface_member_variables(&self, interface: NodeId, member: &str) -> Vec<NodeId> {
-        let children = &self.node(interface).children;
-        let Some((block, variable)) = member.split_once('.') else {
-            return children
-                .iter()
-                .copied()
-                .filter(|child| {
-                    matches!(self.kind(*child), NodeKind::Var { .. })
-                        && !self.db.is_clocking_var(*child)
-                        && self.node(*child).name == member
-                })
-                .collect();
-        };
-        let Some(clockvar) = children
-            .iter()
-            .copied()
-            .find(|child| self.db.is_clocking_block(*child) && self.node(*child).name == block)
-            .and_then(|block| {
-                self.node(block).children.iter().copied().find(|child| {
-                    self.db.is_clocking_var(*child) && self.node(*child).name == variable
-                })
-            })
-        else {
-            return Vec::new();
-        };
-        let Some(info) = self.db.clocking_var(clockvar) else {
-            return Vec::new();
-        };
-        let mut declarations = Vec::new();
-        let mut stack = vec![info.expression];
-        while let Some(node) = stack.pop() {
-            match self.kind(node) {
-                NodeKind::Expr(ExprKind::Ref {
-                    target: Some(target),
-                }) => declarations.push(*target),
-                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
-                    declarations.extend(refs.iter().flatten().copied());
-                }
-                _ => {}
-            }
-            stack.extend(self.node(node).children.iter().copied());
-        }
-        declarations
     }
 
     /// After new port aliases: point every alias at its final storage (a

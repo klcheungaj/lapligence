@@ -25,37 +25,7 @@ impl Codegen<'_> {
             return Err(Self::virtual_interface_generate_scope_error(scope, path));
         }
         let steps = self.virtual_interface_nested_steps(parts, refs, position);
-        let mut member = parts
-            .iter()
-            .skip(position + 1 + steps.len())
-            .filter(|part| !part.is_empty())
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(".");
-        if let Some(clock_target) = self.db.resolve_clocking_member(node) {
-            if let Some(clock_var) = self.db.clocking_var(clock_target) {
-                member = format!(
-                    "{}.{}",
-                    self.node(clock_var.block).name,
-                    self.node(clock_target).name
-                );
-            }
-        }
-        // Slang omits the clocking-block segment from a virtual-interface
-        // member path (`vif.cb.data`) and binds the final reference directly
-        // to the clocking variable. Recover the declaration-owned block name
-        // so the runtime handle selects sampled storage, not the raw signal.
-        if let Some(clock_var) = refs
-            .iter()
-            .rev()
-            .skip_while(|target| target.is_none_or(|target| !self.db.is_clocking_var(target)))
-            .flatten()
-            .next()
-        {
-            if let Some(block) = self.db.clocking_var(*clock_var).map(|info| info.block) {
-                member = format!("{}.{}", self.node(block).name, self.node(*clock_var).name);
-            }
-        }
+        let member = self.virtual_interface_member_name(node, parts, refs, position + steps.len());
         if member.is_empty() {
             return Ok(None);
         }
@@ -91,6 +61,51 @@ impl Codegen<'_> {
             spelling,
             view_port,
         }))
+    }
+
+    /// The member a member path `node` rooted at a virtual-interface handle
+    /// names after its component `last_scope` (the handle, or the last
+    /// nested interface instance): `x`, or `cb.x` for a clockvar. Empty when
+    /// the path ends at that component.
+    pub(in super::super) fn virtual_interface_member_name(
+        &self,
+        node: NodeId,
+        parts: &[String],
+        refs: &[Option<NodeId>],
+        last_scope: usize,
+    ) -> String {
+        let mut member = parts
+            .iter()
+            .skip(last_scope + 1)
+            .filter(|part| !part.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(".");
+        if let Some(clock_target) = self.db.resolve_clocking_member(node) {
+            if let Some(clock_var) = self.db.clocking_var(clock_target) {
+                member = format!(
+                    "{}.{}",
+                    self.node(clock_var.block).name,
+                    self.node(clock_target).name
+                );
+            }
+        }
+        // Slang omits the clocking-block segment from a virtual-interface
+        // member path (`vif.cb.data`) and binds the final reference directly
+        // to the clocking variable. Recover the declaration-owned block name
+        // so the runtime handle selects sampled storage, not the raw signal.
+        if let Some(clock_var) = refs
+            .iter()
+            .rev()
+            .skip_while(|target| target.is_none_or(|target| !self.db.is_clocking_var(target)))
+            .flatten()
+            .next()
+        {
+            if let Some(block) = self.db.clocking_var(*clock_var).map(|info| info.block) {
+                member = format!("{}.{}", self.node(block).name, self.node(*clock_var).name);
+            }
+        }
+        member
     }
 
     /// The descriptor reached from a handle of type `spelling` through the
@@ -269,10 +284,6 @@ impl Codegen<'_> {
         let Some(target) = self.virtual_interface_member_path(path, node, write)? else {
             return Ok(None);
         };
-        if write {
-            self.virtual_interface_writes
-                .insert((target.descriptor, target.member.clone()));
-        }
         let descriptor = target.descriptor;
         let member = target.member.clone();
         let spelling = target.spelling.clone();
@@ -598,10 +609,6 @@ impl Codegen<'_> {
         let Some(target) = self.virtual_interface_member_path(path, base, write)? else {
             return Ok(None);
         };
-        if write {
-            self.virtual_interface_writes
-                .insert((target.descriptor, target.member.clone()));
-        }
         if self
             .virtual_interface_members
             .contains_key(&(target.descriptor, target.member.clone()))

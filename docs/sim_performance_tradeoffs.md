@@ -113,7 +113,8 @@ those scripts. Differences within the observed spread are reported as noise.
   checks, SDF, a variable source in a VPI model (A21-D6),
   `--vpi-port-delays`, a time-0 observer of a source
   that does not start at X, a variable sink a virtual-interface handle
-  writes, found only by lowering, which then lowers the design again), in
+  writes, found by one scan of the owned assignment targets before
+  lowering), in
   [`collection/port_aliases.rs`](../src/sim/codegen/lowering/collection/port_aliases.rs),
   [`collection/nets/port_sinks.rs`](../src/sim/codegen/lowering/collection/nets/port_sinks.rs)
   and [`collection/nets/port_merges.rs`](../src/sim/codegen/lowering/collection/nets/port_merges.rs).
