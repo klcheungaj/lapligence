@@ -61,10 +61,19 @@ copies; `llg_sampled_register_history` keeps the slots the deepest declared inpu
 skew can select (the newest at or before `now - ticks` and everything newer),
 promoting an earlier value-only entry. `llg_sampled_cells` and
 `llg_sampled_real_cells` keep a runtime-owned image of every cell of a dense
-array that a sampled expression selects, copied in each Preponed region; the
-model indexes the image directly, so a sampled cell read needs no lookup and
-no write hook. The code is out of line, and designs without images run only
-the step loop's empty-list test. Sampled-value clocks and domains use
+array that a sampled expression selects; the model indexes the image
+directly, so a sampled cell read needs no lookup. Every publication of a cell
+of such an array (and a store that publishes nothing: a private Postponed
+store, a quiet VPI put) lists the cell, found by address within the images'
+bounds, and each Preponed sample copies only the listed cells; the first
+sample copies every cell, so unpublished initializers need no hook. The
+publication test is the one word that already gates descriptor arrays with
+markers or saved cells (`fixed_array_written`); models without either pay
+nothing more. `LLG_CO_DEBUG` builds check at each sample that every unlisted
+cell still equals its image. A descriptor array's table of saved cells halves
+after 64 saving slots each filled below an eighth of it. The code is out of
+line, and designs without images run only the step loop's empty-list test.
+Sampled-value clocks and domains use
 dense model-assigned identities (O(1) lookup). An edge clock is matched at the
 signal write, its gate read with current values; an event clock ticks only
 through `llg_sampled_clock_tick` from a generated waiting process. Each domain

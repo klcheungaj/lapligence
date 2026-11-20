@@ -156,8 +156,26 @@ double llg_sampled_real(const double* signal) {
     return 0.0;
 }
 
-static LLG_OUTLYING llg_sampled_cells_t* sampled_cells_new(const void* cells, uint64_t count) {
-    if (!cells || count == 0 || count > SIZE_MAX / sizeof(sv4_t)) {
+// Defined in fixed_arrays.c: publications test one word for every kind of
+// marked storage, and the bounds of the image cells pass a write on to
+// sampled_cells_written.
+static void fixed_marked_dense_add(uintptr_t low, uintptr_t high);
+
+// The image already registered for the cells at `base`, or NULL.
+static llg_sampled_cells_t* sampled_cells_registered(uintptr_t base) {
+    for (size_t i = 0; i < g.sampled_cell_index_count; i++) {
+        if (g.sampled_cell_index[i]->base == base) return g.sampled_cell_index[i];
+    }
+    return NULL;
+}
+
+// Registration precedes process startup, so the image starts from the
+// declaration and default values, as the packed snapshots do. Cell images
+// are out of line: designs without them keep the step loop's layout.
+static LLG_OUTLYING llg_sampled_cells_t* sampled_cells_new(const void* cells, uint64_t count,
+                                                           size_t cell_bytes) {
+    if (!cells || count == 0 || count > SIZE_MAX / sizeof(sv4_t) ||
+        count > SIZE_MAX / cell_bytes) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "cannot register invalid sampled array cells");
         llg_last_failure = 1;
         g.finish = 1;
@@ -166,16 +184,43 @@ static LLG_OUTLYING llg_sampled_cells_t* sampled_cells_new(const void* cells, ui
     llg_sampled_cells_t* item = (llg_sampled_cells_t*)llg_checked_calloc(
         1, sizeof(*item), "sampled array cells");
     item->count = (size_t)count;
+    item->base = (uintptr_t)cells;
+    item->bytes = item->count * cell_bytes;
+    item->listed = (uint8_t*)llg_checked_calloc(item->count, 1, "sampled array cells");
+    item->changed = (size_t*)llg_checked_malloc(item->count, sizeof(size_t),
+                                                "sampled array cells");
+    // Writes before the first sample may be initializers that publish
+    // nothing, so that sample copies every cell.
+    item->whole = 1;
     item->next = g.sampled_cells;
     g.sampled_cells = item;
+    size_t position = g.sampled_cell_index_count;
+    llg_sampled_cells_t** index = (llg_sampled_cells_t**)llg_checked_malloc(
+        position + 1, sizeof(*index), "sampled array cells");
+    if (position) memcpy(index, g.sampled_cell_index, position * sizeof(*index));
+    while (position && index[position - 1]->base > item->base) {
+        index[position] = index[position - 1];
+        position--;
+    }
+    index[position] = item;
+    free(g.sampled_cell_index);
+    g.sampled_cell_index = index;
+    g.sampled_cell_index_count++;
+    fixed_marked_dense_add(item->base, item->base + item->bytes);
     return item;
 }
 
-// Registration precedes process startup, so the image starts from the
-// declaration and default values, as the packed snapshots do. Cell images
-// are out of line: designs without them keep the step loop's layout.
+// One image per array: a second registration of the same cells shares it.
 LLG_OUTLYING const sv4_t* llg_sampled_cells(const sv4_t* cells, uint64_t count) {
-    llg_sampled_cells_t* item = sampled_cells_new(cells, count);
+    llg_sampled_cells_t* item = sampled_cells_registered((uintptr_t)cells);
+    if (item && item->image && item->count == count) return item->image;
+    if (item) {
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "conflicting sampled array cell registrations");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    item = sampled_cells_new(cells, count, sizeof(sv4_t));
     if (!item) return NULL;
     item->cells = cells;
     item->image = (sv4_t*)llg_checked_malloc(item->count, sizeof(sv4_t),
@@ -186,7 +231,15 @@ LLG_OUTLYING const sv4_t* llg_sampled_cells(const sv4_t* cells, uint64_t count) 
 }
 
 LLG_OUTLYING const double* llg_sampled_real_cells(const double* cells, uint64_t count) {
-    llg_sampled_cells_t* item = sampled_cells_new(cells, count);
+    llg_sampled_cells_t* item = sampled_cells_registered((uintptr_t)cells);
+    if (item && item->real_image && item->count == count) return item->real_image;
+    if (item) {
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "conflicting sampled array cell registrations");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    item = sampled_cells_new(cells, count, sizeof(double));
     if (!item) return NULL;
     item->real_cells = cells;
     item->real_image = (double*)llg_checked_malloc(item->count, sizeof(double),
@@ -195,8 +248,73 @@ LLG_OUTLYING const double* llg_sampled_real_cells(const double* cells, uint64_t 
     return item->real_image;
 }
 
+// A write to `address`, which lies within the bounds of the image cells:
+// lists the cell it hits for the next Preponed sample and returns 1, or
+// returns 0 between images. Each cell is listed at most once per sample, so
+// `changed` never exceeds `count`.
+static LLG_OUTLYING int sampled_cells_written(uintptr_t address) {
+    size_t low = 0, high = g.sampled_cell_index_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        llg_sampled_cells_t* item = g.sampled_cell_index[middle];
+        if (address < item->base) {
+            high = middle;
+        } else if (address - item->base >= item->bytes) {
+            low = middle + 1;
+        } else {
+            size_t index = (address - item->base) /
+                           (item->real_image ? sizeof(double) : sizeof(sv4_t));
+            if (!item->listed[index]) {
+                item->listed[index] = 1;
+                item->changed[item->changed_count++] = index;
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+#ifdef LLG_CO_DEBUG
+// Every cell no write listed still equals its image: a store that bypasses
+// the publications would otherwise leave a stale sampled value unnoticed.
+static void sampled_cells_check(const llg_sampled_cells_t* item) {
+    for (size_t index = 0; index < item->count; index++) {
+        if (item->listed[index]) continue;
+        int same = item->real_image
+                       ? memcmp(&item->real_image[index], &item->real_cells[index],
+                                sizeof(double)) == 0
+                       : llg_sv4_width(item->image[index]) ==
+                                 llg_sv4_width(item->cells[index]) &&
+                             sv4_same(item->image[index], item->cells[index]);
+        if (!same) {
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL,
+                    "sampled array cell %llu changed without a publication",
+                    (unsigned long long)index);
+            llg_last_failure = 1;
+            g.finish = 1;
+            return;
+        }
+    }
+}
+#endif
+
+// Copies the cells written since the last sample: every other cell already
+// equals its image.
 static LLG_OUTLYING void sample_preponed_cells(void) {
     for (llg_sampled_cells_t* item = g.sampled_cells; item; item = item->next) {
+#ifdef LLG_CO_DEBUG
+        if (!item->whole) sampled_cells_check(item);
+#endif
+        for (size_t listed = 0; listed < item->changed_count; listed++) {
+            size_t index = item->changed[listed];
+            item->listed[index] = 0;
+            if (item->whole) continue;
+            if (item->real_image) item->real_image[index] = item->real_cells[index];
+            else sv4_copy(&item->image[index], &item->cells[index]);
+        }
+        item->changed_count = 0;
+        if (!item->whole) continue;
+        item->whole = 0;
         if (item->real_image) {
             memcpy(item->real_image, item->real_cells, item->count * sizeof(double));
             continue;

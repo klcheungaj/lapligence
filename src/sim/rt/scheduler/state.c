@@ -153,7 +153,9 @@ typedef struct llg_sampled_real {
 
 // The Preponed image of the cells of one dense unpacked array that a sampled
 // expression selects (sampling.c). Exactly one of `cells` and `real_cells`
-// is set; the image is runtime-owned and copied with the packed snapshots.
+// is set; the image is runtime-owned. A publication of a cell lists it in
+// `changed`, and a Preponed sample copies only the listed cells, so a time
+// slot costs what was written, not the array size.
 typedef struct llg_sampled_cells {
     struct llg_sampled_cells* next;
     const sv4_t* cells;
@@ -161,6 +163,12 @@ typedef struct llg_sampled_cells {
     const double* real_cells;
     double* real_image;
     size_t count;
+    uintptr_t base;        // address of the first live cell
+    size_t bytes;          // bytes of live cells from `base`
+    uint8_t* listed;       // 1 while the cell is in `changed`
+    size_t* changed;       // cells written since the last sample, at most `count`
+    size_t changed_count;
+    int whole;             // the next sample copies every cell
 } llg_sampled_cells_t;
 
 typedef struct llg_sampled_history {
@@ -972,6 +980,9 @@ typedef struct {
     uint64_t property_async_step;
     // Dense array cell images; last so that no hot field moves.
     llg_sampled_cells_t* sampled_cells;
+    // The same images ordered by `base`, for the address lookup of a write.
+    llg_sampled_cells_t** sampled_cell_index;
+    size_t sampled_cell_index_count;
 } llg_rt_ctx_t;
 
 static llg_rt_ctx_t g;

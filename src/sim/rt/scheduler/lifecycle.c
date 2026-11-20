@@ -53,14 +53,23 @@ static void free_region_callbacks(void) {
     }
 }
 
+// Defined in fixed_arrays.c with the rest of the marked storage.
+static void fixed_marked_dense_clear(size_t arrays);
+
 // Out of line, like the rest of the cell images (sampling.c).
 static LLG_OUTLYING void free_sampled_cells(void) {
+    fixed_marked_dense_clear(g.sampled_cell_index_count);
+    free(g.sampled_cell_index);
+    g.sampled_cell_index = NULL;
+    g.sampled_cell_index_count = 0;
     while (g.sampled_cells) {
         llg_sampled_cells_t* next = g.sampled_cells->next;
         if (g.sampled_cells->image)
             sv4_destroy_array(g.sampled_cells->image, g.sampled_cells->count);
         free(g.sampled_cells->image);
         free(g.sampled_cells->real_image);
+        free(g.sampled_cells->listed);
+        free(g.sampled_cells->changed);
         free(g.sampled_cells);
         g.sampled_cells = next;
     }

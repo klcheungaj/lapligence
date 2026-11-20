@@ -13,6 +13,8 @@ static int marker_flip(sv4_t* marker, int rowless);
 static llg_wait_source_t wait_source_absent;
 struct llg_fixed_block;
 static struct llg_fixed_block* fixed_array_block(const sv4_t* target);
+static struct llg_fixed_block* fixed_array_written(const sv4_t* target);
+static void fixed_dense_written(const void* target);
 static sv4_t* fixed_block_contents(const struct llg_fixed_block* block);
 static void fixed_block_sampled_changed(struct llg_fixed_block* block,
                                         sv4_t* target, sv4_t old);
@@ -1514,7 +1516,7 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
 #ifdef LLG_WAVEFORM
     llg_wave_changed_sv4(target);
 #endif
-    struct llg_fixed_block* block = fixed_array_block(target);
+    struct llg_fixed_block* block = fixed_array_written(target);
     sv4_t* contents = fixed_block_contents(block);
     // Consumers above can drop a row no record keeps alive.
     if (cursor) source = cursor->source;
@@ -1576,7 +1578,10 @@ static int clocking_sample_publication;
 
 static void sig_write_as(sv4_t* target, sv4_t value, int deferred) {
     if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
-        if (region_private_store("signal write")) sv4_copy(target, &value);
+        if (region_private_store("signal write")) {
+            sv4_copy(target, &value);
+            fixed_dense_written(target);
+        }
         return;
     }
     if (llg_sv4_width(*target) == llg_sv4_width(value) && sv4_same(*target, value)) return;
@@ -1683,6 +1688,7 @@ static int sig_write_ranges(sv4_t* target,
     if (private_store) {
         if (first_changed) sig_range_copy(target, first_offset, &first);
         if (second_changed) sig_range_copy(target, second_offset, &second);
+        fixed_dense_written(target);
         return 0;
     }
     llg_value_scope_t* target_pin = value_target_pin(target);
@@ -1761,7 +1767,10 @@ static LLG_NOINLINE void real_settle(double* target, llg_wait_source_t* source,
 // suppressed, while changes in NaN payload and signed zero are observable.
 static void real_write(double* target, double value) {
     if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
-        if (region_private_store("real write")) *target = value;
+        if (region_private_store("real write")) {
+            *target = value;
+            fixed_dense_written(target);
+        }
         return;
     }
     double old = *target;
@@ -1772,6 +1781,7 @@ static void real_write(double* target, double value) {
     int deferred = change_defer_active;
     llg_wait_source_t* source = deferred ? change_begin_real(target, old) : NULL;
     *target = value;
+    fixed_dense_written(target);
     if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_REAL);
 #ifdef LLG_WAVEFORM
     llg_wave_changed_real(target);

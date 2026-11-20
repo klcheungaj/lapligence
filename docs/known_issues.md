@@ -2602,7 +2602,8 @@ forms too. Element selections of fixed unpacked arrays (`$past(arr[i])`,
 Sampling them needs Preponed snapshots of unpacked or container storage. Fixed
 arrays keep one now: descriptor arrays save a cell's old value on its first
 change in a time slot, and dense arrays that a sampled expression selects keep
-a cell image copied in each Preponed region. Containers grow and shrink and
+a cell image that each Preponed region updates from the cells written since
+the previous one. Containers grow and shrink and
 have no such image, and whole unpacked values have no packed sample form.
 
 ### Intended direction

@@ -267,11 +267,14 @@ void llg_store_unpublished(sv4_t* target, sv4_t value) {
         force_keep_forced_bits(target, &value);
     }
     sv4_replace(target, value);
+    // Unpublished, but still a change the next Preponed sample must copy.
+    fixed_dense_written(target);
 }
 
 void llg_store_unpublished_d(double* target, double value) {
     if (!target || llg_is_real_forced(target)) return;
     *target = value;
+    fixed_dense_written(target);
 }
 
 /* Wait sources of `ref` descriptors. Every store publishes at its variable,

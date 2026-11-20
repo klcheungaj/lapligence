@@ -35,6 +35,11 @@ static _Noreturn void fixed_bad_state(const char* reason) {
 /* The address table files a block under the 4 KiB granule of its start. No
  * block is larger, so a cell's block starts in its granule or the one before. */
 #define LLG_FIXED_ADDRESS_SHIFT 12u
+/* A sampled save table halves after this many consecutive saving slots each
+ * filled below 1/LLG_FIXED_SAMPLED_SHRINK_FILL of it. Halving leaves such a
+ * slot below a quarter, under the growth limit of a half: no thrashing. */
+#define LLG_FIXED_SAMPLED_SHRINK_SLOTS 64u
+#define LLG_FIXED_SAMPLED_SHRINK_FILL 8u
 _Static_assert(sizeof(struct llg_fixed_block) + LLG_FIXED_PAGE_CELLS * sizeof(sv4_t) <= 1u << LLG_FIXED_ADDRESS_SHIFT,
                "a page fits an address granule");
 _Static_assert(sizeof(struct llg_fixed_block) + LLG_FIXED_SPARSE_BLOCK_CELLS * sizeof(struct llg_fixed_cell)
@@ -45,9 +50,13 @@ static struct llg_fixed_block** fixed_addresses;
 static size_t fixed_address_capacity, fixed_address_count;
 /* Bounds of the filed blocks: most writes are to signals outside them. */
 static uintptr_t fixed_address_low = UINTPTR_MAX, fixed_address_high;
-/* Arrays with a contents marker or sampled cells: with none, a write has no
- * array to tell. */
+/* Arrays with a contents marker or sampled cells, and dense arrays with a
+ * sampled cell image (sampling.c): with none, a write has no array to tell. */
 static size_t fixed_marked_arrays;
+/* Bounds of the cells of the dense arrays with an image, and their union with
+ * the filed blocks: a publication outside the union tells no array. */
+static uintptr_t fixed_dense_low = UINTPTR_MAX, fixed_dense_high;
+static uintptr_t fixed_written_low = UINTPTR_MAX, fixed_written_high;
 
 /* Cells driven through an inertial delay, by address. Few cells ever are. */
 struct llg_fixed_inertial {
@@ -142,6 +151,25 @@ static size_t fixed_block_bytes(const struct llg_fixed_block* block) {
     return sizeof(*block) + block->cells * (fixed_direct(block->array) ? sizeof(sv4_t) : sizeof(llg_fixed_cell_t));
 }
 
+static void fixed_written_bounds(void) {
+    fixed_written_low = fixed_address_low < fixed_dense_low ? fixed_address_low : fixed_dense_low;
+    fixed_written_high = fixed_address_high > fixed_dense_high ? fixed_address_high : fixed_dense_high;
+}
+
+static void fixed_marked_dense_add(uintptr_t low, uintptr_t high) {
+    ++fixed_marked_arrays;
+    if (low < fixed_dense_low) fixed_dense_low = low;
+    if (high > fixed_dense_high) fixed_dense_high = high;
+    fixed_written_bounds();
+}
+
+static void fixed_marked_dense_clear(size_t arrays) {
+    fixed_marked_arrays -= arrays;
+    fixed_dense_low = UINTPTR_MAX;
+    fixed_dense_high = 0;
+    fixed_written_bounds();
+}
+
 static void fixed_block_file(struct llg_fixed_block* block) {
     if (block->registered) return;
     fixed_address_reserve();
@@ -153,6 +181,7 @@ static void fixed_block_file(struct llg_fixed_block* block) {
     uintptr_t start = (uintptr_t)block;
     if (start < fixed_address_low) fixed_address_low = start;
     if (start + fixed_block_bytes(block) > fixed_address_high) fixed_address_high = start + fixed_block_bytes(block);
+    fixed_written_bounds();
 }
 
 static void fixed_block_unfile(struct llg_fixed_block* block) {
@@ -167,12 +196,13 @@ static void fixed_block_unfile(struct llg_fixed_block* block) {
         fixed_address_capacity = 0;
         fixed_address_low = UINTPTR_MAX;
         fixed_address_high = 0;
+        fixed_written_bounds();
     }
 }
 
-static struct llg_fixed_block* fixed_block_of(const sv4_t* target) {
-    uintptr_t address = (uintptr_t)target, granule = address >> LLG_FIXED_ADDRESS_SHIFT;
-    if (address < fixed_address_low || address >= fixed_address_high) return NULL;
+/* The filed block holding `address`, which lies within the filed bounds. */
+static struct llg_fixed_block* fixed_block_find(uintptr_t address) {
+    uintptr_t granule = address >> LLG_FIXED_ADDRESS_SHIFT;
     for (int before = 0; before < 2; ++before, --granule) {
         size_t slot = fixed_hash((uint64_t)granule) & (fixed_address_capacity - 1);
         for (struct llg_fixed_block* block = fixed_addresses[slot]; block; block = block->address_next) {
@@ -181,6 +211,12 @@ static struct llg_fixed_block* fixed_block_of(const sv4_t* target) {
         }
     }
     return NULL;
+}
+
+static struct llg_fixed_block* fixed_block_of(const sv4_t* target) {
+    uintptr_t address = (uintptr_t)target;
+    if (address < fixed_address_low || address >= fixed_address_high) return NULL;
+    return fixed_block_find(address);
 }
 
 static struct llg_fixed_block* fixed_block_new(llg_fixed_array_t* array, uint64_t first, uint32_t cells, size_t cell_bytes) {
@@ -206,6 +242,39 @@ static struct llg_fixed_block* fixed_array_block(const sv4_t* target) {
     // Predicted unmarked: a publication's hot path keeps only this test.
     if (LLG_CO_LIKELY(!fixed_marked_arrays || !fixed_address_capacity)) return NULL;
     return fixed_block_of(target);
+}
+
+/* A published write inside the union bounds. Without images the union is
+ * the filed bounds, so the block index exists. A dense cell is listed for the
+ * next Preponed sample; images are statics and blocks heap memory, but a
+ * miss between images still looks for a block. */
+static struct llg_fixed_block* fixed_marked_written(uintptr_t address) {
+    if (LLG_CO_LIKELY(!g.sampled_cell_index_count)) return fixed_block_find(address);
+    if (address >= fixed_dense_low && address < fixed_dense_high &&
+        sampled_cells_written(address))
+        return NULL;
+    if (address < fixed_address_low || address >= fixed_address_high) return NULL;
+    return fixed_block_find(address);
+}
+
+// Every packed publication calls this once. It returns the block holding
+// `target` when that is a cell of a marked descriptor array, else NULL, and
+// lists a cell of a dense array with a sampled image on the way.
+static struct llg_fixed_block* fixed_array_written(const sv4_t* target) {
+    // Predicted unmarked: a publication's hot path keeps only this test.
+    if (LLG_CO_LIKELY(!fixed_marked_arrays)) return NULL;
+    uintptr_t address = (uintptr_t)target;
+    if (address < fixed_written_low || address >= fixed_written_high) return NULL;
+    return fixed_marked_written(address);
+}
+
+// A real publication, or a store that publishes nothing (a private store, a
+// quiet VPI put): only dense images can hold it.
+static void fixed_dense_written(const void* target) {
+    if (LLG_CO_LIKELY(!fixed_marked_arrays)) return;
+    uintptr_t address = (uintptr_t)target;
+    if (address >= fixed_dense_low && address < fixed_dense_high)
+        (void)sampled_cells_written(address);
 }
 
 static sv4_t* fixed_block_contents(const struct llg_fixed_block* block) {
@@ -354,6 +423,9 @@ struct llg_fixed_sampled {
      * burst of writes grew it to, so the reset at the next slot, and growth,
      * walk these instead of the whole table: a slot costs what it saved. */
     size_t* used;
+    /* Consecutive saving slots below the shrink fill, while the table is
+     * above its initial capacity. */
+    size_t sparse_slots;
     llg_fixed_array_t whole;
     int has_whole;
 };
@@ -377,13 +449,37 @@ static void fixed_sampled_clear(struct llg_fixed_sampled* sampled) {
     sampled->has_whole = 0;
 }
 
+/* Called on an empty table after a slot that saved `saved` values: a table
+ * grown by a burst returns its memory once the bursts stop. */
+static LLG_OUTLYING void fixed_sampled_settle(struct llg_fixed_sampled* sampled, size_t saved) {
+    if (saved >= sampled->capacity / LLG_FIXED_SAMPLED_SHRINK_FILL) {
+        sampled->sparse_slots = 0;
+        return;
+    }
+    if (++sampled->sparse_slots < LLG_FIXED_SAMPLED_SHRINK_SLOTS) return;
+    sampled->sparse_slots = 0;
+    sampled->capacity /= 2;
+    free(sampled->entries);
+    free(sampled->used);
+    sampled->entries = llg_checked_calloc(sampled->capacity, sizeof(*sampled->entries),
+                                          "fixed sampled values");
+    sampled->used = llg_checked_calloc(sampled->capacity / 2, sizeof(*sampled->used),
+                                       "fixed sampled values");
+    for (size_t i = 0; i < sampled->capacity; ++i)
+        sampled->entries[i].index = LLG_FIXED_SAMPLED_FREE;
+}
+
 /* The saved values of the current slot, or NULL before its Preponed snapshot:
  * until then a write is itself what the snapshot will see. */
 static struct llg_fixed_sampled* fixed_sampled_slot(llg_fixed_array_t* array) {
     struct llg_fixed_sampled* sampled = array->sampled;
     if (!g.sampled_time_valid || g.sampled_time != g.now) return NULL;
     if (sampled->time != g.now) {
+        size_t saved = sampled->count;
         fixed_sampled_clear(sampled);
+        // A table at its initial capacity has nothing to return.
+        if (sampled->capacity > LLG_FIXED_INDEX_INITIAL_CAPACITY)
+            fixed_sampled_settle(sampled, saved);
         sampled->time = g.now;
     }
     return sampled;
