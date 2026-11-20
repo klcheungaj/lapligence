@@ -1,10 +1,12 @@
-//! Every negative simulation fixture (`neg_*` / `reject_*` under
-//! `tests/fixtures/sim`) is refused before a C model exists, in both
-//! optimizer modes. A fixture that generates C is accepted silently unless
-//! [`MANIFEST`] lists it with the reason the stop happens elsewhere: under the
-//! strict 2001 profile (checked here), or at link or run time, as a named
-//! test asserts. The manifest stays minimal: a row whose fixture is now
-//! refused under the default options fails as stale.
+//! Every negative simulation fixture is refused before a C model exists, in
+//! both optimizer modes. Negative fixtures are the `neg_*` / `reject_*` files
+//! under `tests/fixtures/sim` and the fixtures [`MANIFEST`] lists as `refused`
+//! because a named test asserts their compile failure under another name. A
+//! fixture that generates C is accepted silently unless [`MANIFEST`] lists it
+//! with the reason the stop happens elsewhere: under the strict 2001 profile
+//! (checked here), or at link or run time, as a named test asserts. The
+//! manifest stays minimal: a `v2001`, `runtime` or `link` row whose fixture is
+//! now refused under the default options fails as stale.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,16 +22,28 @@ const MANIFEST: &str = "tests/fixtures/sim/negative_sweep.tsv";
 /// Where a manifest row's stop happens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Stop {
+    /// Refused under the default options, like a `neg_*` fixture; only for
+    /// fixtures outside that naming.
+    Refused,
     /// Refused by the strict 2001 profile; the sweep rechecks it there.
     Verilog2001,
-    /// Refused outside in-process generation; `test` asserts the stop.
-    Elsewhere { kind: String, test: String },
+    /// Refused outside in-process generation; the row's test asserts the stop.
+    Elsewhere { kind: String },
+}
+
+/// A manifest row: the stop and, where one is required, the
+/// `<suite path>::<test fn>` that asserts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Row {
+    stop: Stop,
+    test: Option<String>,
 }
 
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// Named as a negative fixture (`neg_*` / `reject_*`).
 fn is_negative(path: &Path) -> bool {
     let stem = path
         .file_stem()
@@ -41,7 +55,8 @@ fn is_negative(path: &Path) -> bool {
     ) && (stem.starts_with("neg_") || stem.starts_with("reject_"))
 }
 
-fn negative_fixtures() -> Vec<PathBuf> {
+/// The named negative fixtures and every other fixture a manifest row lists.
+fn negative_fixtures(rows: &BTreeMap<String, Row>) -> Vec<PathBuf> {
     fn visit(path: &Path, paths: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(path) else {
             return;
@@ -57,12 +72,18 @@ fn negative_fixtures() -> Vec<PathBuf> {
     }
     let mut paths = Vec::new();
     visit(&root().join("tests/fixtures/sim"), &mut paths);
+    for name in rows.keys() {
+        let path = root().join("tests/fixtures/sim").join(name);
+        if path.is_file() && !is_negative(&path) {
+            paths.push(path);
+        }
+    }
     paths.sort();
     paths
 }
 
 /// Manifest rows keyed by the fixture path relative to `tests/fixtures/sim`.
-fn manifest() -> BTreeMap<String, Stop> {
+fn manifest() -> BTreeMap<String, Row> {
     let text = std::fs::read_to_string(root().join(MANIFEST)).expect("read the sweep manifest");
     let mut rows = BTreeMap::new();
     for (number, line) in text.lines().enumerate() {
@@ -70,16 +91,29 @@ fn manifest() -> BTreeMap<String, Stop> {
             continue;
         }
         let fields: Vec<&str> = line.split('\t').collect();
-        let stop = match fields.as_slice() {
-            [_, "v2001"] => Stop::Verilog2001,
-            [_, kind @ ("runtime" | "link"), test] => Stop::Elsewhere {
-                kind: (*kind).to_owned(),
-                test: (*test).to_owned(),
+        let row = match fields.as_slice() {
+            [_, "v2001"] => Row {
+                stop: Stop::Verilog2001,
+                test: None,
+            },
+            [_, "v2001", test] => Row {
+                stop: Stop::Verilog2001,
+                test: Some((*test).to_owned()),
+            },
+            [_, "refused", test] => Row {
+                stop: Stop::Refused,
+                test: Some((*test).to_owned()),
+            },
+            [_, kind @ ("runtime" | "link"), test] => Row {
+                stop: Stop::Elsewhere {
+                    kind: (*kind).to_owned(),
+                },
+                test: Some((*test).to_owned()),
             },
             _ => panic!("{MANIFEST}:{}: malformed row `{line}`", number + 1),
         };
         assert!(
-            rows.insert(fields[0].to_owned(), stop).is_none(),
+            rows.insert(fields[0].to_owned(), row).is_none(),
             "{MANIFEST}:{}: duplicate row for {}",
             number + 1,
             fields[0]
@@ -97,16 +131,15 @@ fn relative(path: &Path) -> String {
 
 /// The optimizer modes in which `path` reaches a generated C model.
 fn generating_modes(path: &Path, edition: LanguageEdition) -> Vec<&'static str> {
-    let Ok(compiled) = compile::compile(&CompileOpts {
+    // The checked compile of simulation: frontend errors and protected
+    // envelopes refuse the design.
+    let Ok(compiled) = compile::compile_checked(&CompileOpts {
         files: vec![path.to_string_lossy().into_owned()],
         edition,
         ..Default::default()
     }) else {
         return Vec::new();
     };
-    if !compiled.ok() {
-        return Vec::new();
-    }
     let Ok(database) = Db::from_slang(&compiled.snapshot) else {
         return Vec::new();
     };
@@ -124,20 +157,23 @@ fn sweep_shard(shard: usize) {
     let rows = manifest();
     let mut failures = Vec::new();
     let mut checked = 0usize;
-    for (index, path) in negative_fixtures().into_iter().enumerate() {
+    for (index, path) in negative_fixtures(&rows).into_iter().enumerate() {
         if index % SHARDS != shard {
             continue;
         }
         checked += 1;
         let name = relative(&path);
         let accepted = generating_modes(&path, LanguageEdition::SystemVerilog2009);
-        match (rows.get(&name), accepted.is_empty()) {
-            (None, true) => {}
+        match (rows.get(&name).map(|row| &row.stop), accepted.is_empty()) {
+            (None | Some(Stop::Refused), true) => {}
             (None, false) => failures.push(format!(
                 "{name}: generated C in {accepted:?} without a {MANIFEST} row"
             )),
+            (Some(Stop::Refused), false) => failures.push(format!(
+                "{name}: listed as refused but generated C in {accepted:?}"
+            )),
             (Some(_), true) => failures.push(format!(
-                "{name}: refused under the default options; remove its stale {MANIFEST} row"
+                "{name}: refused under the default options; its {MANIFEST} row is stale"
             )),
             (Some(Stop::Verilog2001), false) => {
                 let accepted = generating_modes(&path, LanguageEdition::Verilog2001);
@@ -191,19 +227,37 @@ fn negative_sweep_3() {
     run_shard(3);
 }
 
-/// Each manifest row names an existing negative fixture, and each row that
-/// stops outside generation names a test function, in the named suite file,
-/// that runs that fixture.
+/// Each manifest row names an existing fixture. A `refused` row names a
+/// fixture outside the negative naming, and each row that stops outside
+/// generation or lists such a fixture names a test function, in the named
+/// suite file, that runs that fixture.
 #[test]
 fn manifest_rows_name_fixtures_and_tests() {
     let mut failures = Vec::new();
-    for (name, stop) in manifest() {
+    for (name, row) in manifest() {
         let path = root().join("tests/fixtures/sim").join(&name);
-        if !path.is_file() || !is_negative(&path) {
-            failures.push(format!("{name}: no such negative fixture"));
+        if !path.is_file() {
+            failures.push(format!("{name}: no such fixture"));
             continue;
         }
-        let Stop::Elsewhere { kind, test } = stop else {
+        let named = is_negative(&path);
+        if named && row.stop == Stop::Refused {
+            failures.push(format!(
+                "{name}: a `neg_*` / `reject_*` fixture is swept without a `refused` row"
+            ));
+            continue;
+        }
+        let kind = match &row.stop {
+            Stop::Refused => "refused",
+            Stop::Verilog2001 => "v2001",
+            Stop::Elsewhere { kind } => kind.as_str(),
+        };
+        let Some(test) = row.test else {
+            if !named {
+                failures.push(format!(
+                    "{name}: a fixture outside the negative naming needs the test asserting its stop"
+                ));
+            }
             continue;
         };
         let Some((suite, function)) = test.split_once("::") else {

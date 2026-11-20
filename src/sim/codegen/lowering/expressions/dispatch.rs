@@ -1228,9 +1228,8 @@ impl<'a> Codegen<'a> {
                                 self.locate_error(
                                     h,
                                     format!(
-                                        "cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
-                                        self.node(*base).name,
-                                        self.kind(*base)
+                                        "cannot resolve array base of select `{}` in `{scope_path}`",
+                                        self.node(*base).name
                                     ),
                                 )
                             })
