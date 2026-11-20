@@ -1249,7 +1249,10 @@ processes or clock edges, at the cost of a few bytes per object.
   below `1/LLG_FIXED_SAMPLED_SHRINK_FILL` (1/8) of it, down to its initial
   16 entries; halving leaves such a slot below a quarter, under the growth
   limit of a half, so it cannot thrash. The test runs once per saving slot
-  and only while the table is above its initial capacity.
+  and only while the table is above its initial capacity. With 32 banks of
+  5000 cells, each written everywhere in its own cycle 1000 cycles apart and
+  one cell per cycle otherwise, peak RSS fell from 33.3 MB to 15.0 MB (heap
+  peak with 8 banks 7.8 MB to 3.7 MB); arrays without bursts are unchanged.
 
 ## Rejected or deferred
 
