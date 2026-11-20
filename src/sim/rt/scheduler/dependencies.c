@@ -13,7 +13,10 @@ static int marker_flip(sv4_t* marker, int rowless);
 static llg_wait_source_t wait_source_absent;
 struct llg_fixed_block;
 static struct llg_fixed_block* fixed_array_block(const sv4_t* target);
-static struct llg_fixed_block* fixed_array_written(const sv4_t* target);
+// Marked fixed arrays and dense sampled images (fixed_arrays.c); the packed
+// publication tests the count itself (sig_publish).
+static size_t fixed_marked_arrays;
+static struct llg_fixed_block* fixed_marked_written(const sv4_t* target);
 static void fixed_dense_written(const void* target);
 static sv4_t* fixed_block_contents(const struct llg_fixed_block* block);
 static void fixed_block_sampled_changed(struct llg_fixed_block* block,
@@ -1516,7 +1519,13 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
 #ifdef LLG_WAVEFORM
     llg_wave_changed_sv4(target);
 #endif
-    struct llg_fixed_block* block = fixed_array_written(target);
+    // The block holding `target` when that is a cell of a marked descriptor
+    // array, `fixed_dense_block` when it lies within the cells of the dense
+    // arrays with an image, else NULL. The gate is this one expression,
+    // predicted unmarked: through a helper or as an `if`, GCC kept `block` in
+    // another register and added a copy and a jump to the common write's path.
+    struct llg_fixed_block* block =
+        LLG_CO_LIKELY(!fixed_marked_arrays) ? NULL : fixed_marked_written(target);
     sv4_t* contents = fixed_block_contents(block);
     // Consumers above can drop a row no record keeps alive.
     if (cursor) source = cursor->source;

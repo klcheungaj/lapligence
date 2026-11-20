@@ -68,7 +68,7 @@ store, a quiet VPI put) lists the cell, found by address within the images'
 bounds, and each Preponed sample copies only the listed cells; the first
 sample copies every cell, so unpublished initializers need no hook. The
 publication test is the one word that already gates descriptor arrays with
-markers or saved cells (`fixed_array_written`); models without either pay
+markers or saved cells (`fixed_marked_arrays`); models without either pay
 nothing more. `LLG_CO_DEBUG` builds check at each sample that every unlisted
 cell still equals its image. A descriptor array's table of saved cells halves
 after 64 saving slots each filled below an eighth of it. The code is out of

@@ -240,7 +240,11 @@ static struct llg_fixed_block* fixed_array_block(const sv4_t* target) {
 static llg_fixed_array_t fixed_dense_array;
 static struct llg_fixed_block fixed_dense_block = {.array = &fixed_dense_array};
 
-/* Nothing here calls out, and without images it is the block lookup alone:
+/* A packed publication calls this once while `fixed_marked_arrays` is set.
+ * It returns the block holding `target` when that is a cell of a marked
+ * descriptor array, `fixed_dense_block` when it lies within the cells of the
+ * dense arrays with an image, else NULL.
+ * Nothing here calls out, and without images it is the block lookup alone:
  * the publication then keeps its values in the same registers (a call or a
  * different branch shape made GCC spill one on every publication). */
 static struct llg_fixed_block* fixed_marked_written(const sv4_t* target) {
@@ -252,16 +256,6 @@ static struct llg_fixed_block* fixed_marked_written(const sv4_t* target) {
     }
     uintptr_t address = (uintptr_t)target;
     return address >= fixed_dense_low && address < fixed_dense_high ? &fixed_dense_block : NULL;
-}
-
-// Every packed publication calls this once. It returns the block holding
-// `target` when that is a cell of a marked descriptor array,
-// `fixed_dense_block` when it lies within the cells of the dense arrays with
-// an image, else NULL.
-static struct llg_fixed_block* fixed_array_written(const sv4_t* target) {
-    // Predicted unmarked: a publication's hot path keeps only this test.
-    if (LLG_CO_LIKELY(!fixed_marked_arrays)) return NULL;
-    return fixed_marked_written(target);
 }
 
 // A real publication, or a store that publishes nothing (a private store, a
