@@ -1,0 +1,9 @@
+startup
+compiletf
+compiletf
+calltf 1 (call 1)
+calltf 2 (call 2)
+  k=42 p=10
+cbEndOfCompile: k=42 y=20 p=10
+cbStartOfSimulation: k=42 y=20 p=10
+initial k=42 y=20 p=10

@@ -10,8 +10,11 @@ static vpiHandle first_handle;
 static PLI_INT32 d10_compile(PLI_BYTE8* data) {
     (void)data;
     vpiHandle call = vpi_handle(vpiSysTfCall, NULL);
-    if (vpi_get_userdata(call) != NULL || sites >= 4) return 1;
-    return vpi_put_userdata(call, &counters[sites++]) == 1 ? 0 : 1;
+    /* A compiletf's return value is ignored (S43-D13): report instead. */
+    if (vpi_get_userdata(call) != NULL || sites >= 4 ||
+        vpi_put_userdata(call, &counters[sites++]) != 1)
+        vpi_printf("compiletf: user data not stored\n");
+    return 0;
 }
 
 static PLI_INT32 d10(PLI_BYTE8* data) {

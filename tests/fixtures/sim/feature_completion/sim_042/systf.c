@@ -36,12 +36,17 @@ static const char* shown(vpiHandle handle, PLI_INT32 format) {
 
 static PLI_INT32 sum_compile(PLI_BYTE8* data) {
     ++compile_calls;
-    if (strcmp(data, "sum-data") != 0) return 1;
+    /* A compiletf's return value is ignored (S43-D13): report instead. */
+    if (strcmp(data, "sum-data") != 0) {
+        vpi_printf("sum compiletf: wrong user data\n");
+        return 0;
+    }
     vpiHandle call = vpi_handle(vpiSysTfCall, NULL);
     vpiHandle arguments = vpi_iterate(vpiArgument, call);
     int count = 0;
     while (vpi_scan(arguments)) ++count;
-    return count == 2 ? 0 : 1;
+    if (count != 2) vpi_printf("sum compiletf: %d arguments\n", count);
+    return 0;
 }
 
 static PLI_INT32 sum_size(PLI_BYTE8* data) {
@@ -168,8 +173,10 @@ static PLI_INT32 count_compile(PLI_BYTE8* data) {
     static int used;
     int* counter = used < 8 ? &counters[used++] : NULL;
     vpiHandle call = vpi_handle(vpiSysTfCall, NULL);
-    if (vpi_get_userdata(call) != NULL) return 1;
-    return counter && vpi_put_userdata(call, counter) == 1 ? 0 : 1;
+    /* A compiletf's return value is ignored (S43-D13): report instead. */
+    if (vpi_get_userdata(call) != NULL || !counter || vpi_put_userdata(call, counter) != 1)
+        vpi_printf("count compiletf: user data not stored\n");
+    return 0;
 }
 
 static PLI_INT32 count_call(PLI_BYTE8* data) {

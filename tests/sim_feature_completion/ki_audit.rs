@@ -498,12 +498,13 @@ fn typename_of_a_type_parameter_prints_the_first_spelling() {
     sim_cli::run_case(SUITE, "typename_type_parameter", expected, "", &[]);
 }
 
-/// A known issue, pinned: a user VPI system function called from a static
-/// declaration initializer runs before the application registers it, so the
-/// call fails as an uncompiled call site and nothing runs. A fix (static
-/// initializers after VPI startup) updates this test.
+/// A user VPI system function called from a static declaration initializer
+/// runs, since the application starts before static initialization
+/// (S43-D12). A known issue stays pinned: the delayed put its calltf
+/// schedules matures at time 1 instead of stopping the run with the S13-D5
+/// error; its fix updates this test.
 #[test]
-fn vpi_function_called_from_a_static_initializer_is_not_registered_yet() {
+fn vpi_function_called_from_a_static_initializer_runs_its_delayed_put() {
     let directory = sim_harness::TempDir::new("ki-audit-vpi").expect("temporary directory");
     let Some(library) =
         super::sim_040::plugin_library(SUITE, &directory, "vpi_static_initializer", &[])
@@ -517,10 +518,10 @@ fn vpi_function_called_from_a_static_initializer_is_not_registered_yet() {
         &[("LLG_VPI_PLUGIN", &library)],
         &|label, output| {
             let seen = sim_cli::observed_output(output);
-            assert!(output.stdout.is_empty(), "{label}: {seen}");
+            assert!(output.status.success(), "{label}: {seen}");
+            assert_eq!(output.stdout, b"x=5 y=7\n", "{label}: {seen}");
             assert!(
-                String::from_utf8_lossy(&output.stderr)
-                    .contains("VPI error: uncompiled or inconsistent VPI call site"),
+                !String::from_utf8_lossy(&output.stderr).contains("VPI error"),
                 "{label}: {seen}"
             );
         },

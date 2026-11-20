@@ -407,6 +407,29 @@ pub(in crate::sim::emit_c) fn main(
     {
         out.push_str("    llg_model_unobserved_contents();\n");
     }
+    // VPI applications start before static initialization (decision
+    // S43-D12): the startup routines register their system tasks and
+    // functions and every call site is compiled (compiletf, sizetf), so a
+    // static declaration initializer can call a user system function;
+    // cbEndOfCompile and cbStartOfSimulation run after the initializers.
+    // How `vpi_put_delays` may write the model's delays (38.32).
+    if model.vpi_catalog && (model.vpi_delays_writable || model.vpi_delay_select != 1) {
+        out.push_str(&format!(
+            "    llg_vpi_model_delays({}, {});\n",
+            u8::from(model.vpi_delays_writable),
+            model.vpi_delay_select
+        ));
+    }
+    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count){} || !llg_vpi_model_types(llg_vpi_type_tables) || !llg_vpi_model_dynamic(llg_vpi_dynamic_tables) || !llg_vpi_model_code(llg_vpi_code_tables) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name()), crate::sim::emit_c::model::vpi::vpi_packed_registration(model)));
+    if let Some(check) = crate::sim::emit_c::model::vpi::vpi_builtin_check(model) {
+        out.push_str(&format!("    if (!{check}) goto start_failed;\n"));
+    }
+    let scopes = crate::sim::emit_c::model::vpi::vpi_call_scopes(model);
+    for ((index, call), scope) in model.vpi_compile_calls.iter().enumerate().zip(&scopes) {
+        out.push_str(&format!("    if (!llg_vpi_compile_call_site_at({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL, {scope}, {}, {})) goto start_failed;\n",
+            c_string_literal(&call.name), call.args.len(), call.time_unit_fs,
+            call.file.as_deref().map_or_else(|| "NULL".to_owned(), c_string_literal), call.line));
+    }
     // A run-time error in a static initializer is the same error as in a
     // process: one that ends the run (`$finish`, `$fatal`, a null handle
     // access) stops the initializers and `llg_rt_run` returns before any
@@ -597,24 +620,6 @@ pub(in crate::sim::emit_c) fn main(
             "    llg_dpi_model_init(llg_dpi_scopes, {}u);\n",
             model.dpi_scopes().len()
         ));
-    }
-    // How `vpi_put_delays` may write the model's delays (38.32).
-    if model.vpi_catalog && (model.vpi_delays_writable || model.vpi_delay_select != 1) {
-        out.push_str(&format!(
-            "    llg_vpi_model_delays({}, {});\n",
-            u8::from(model.vpi_delays_writable),
-            model.vpi_delay_select
-        ));
-    }
-    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count){} || !llg_vpi_model_types(llg_vpi_type_tables) || !llg_vpi_model_dynamic(llg_vpi_dynamic_tables) || !llg_vpi_model_code(llg_vpi_code_tables) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name()), crate::sim::emit_c::model::vpi::vpi_packed_registration(model)));
-    if let Some(check) = crate::sim::emit_c::model::vpi::vpi_builtin_check(model) {
-        out.push_str(&format!("    if (!{check}) goto start_failed;\n"));
-    }
-    let scopes = crate::sim::emit_c::model::vpi::vpi_call_scopes(model);
-    for ((index, call), scope) in model.vpi_compile_calls.iter().enumerate().zip(&scopes) {
-        out.push_str(&format!("    if (!llg_vpi_compile_call_site_at({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL, {scope}, {}, {})) goto start_failed;\n",
-            c_string_literal(&call.name), call.args.len(), call.time_unit_fs,
-            call.file.as_deref().map_or_else(|| "NULL".to_owned(), c_string_literal), call.line));
     }
     out.push_str("    llg_vpi_start_simulation();\n    if (llg_vpi_failed()) goto start_failed;\n");
     // First executable process per C name, matching the former linear search.

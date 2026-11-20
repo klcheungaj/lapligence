@@ -1,9 +1,9 @@
-// Known issue (docs/known_issues.md, VPI work during static initialization):
 // $sched (vpi_static_initializer.c) is called from a static declaration
-// initializer, which the model runs before the VPI application's startup
-// routines register it. The call stops the run with a VPI error at time 0,
-// so nothing is printed. 13.4.4 also asks for an error once
-// the call runs, since its calltf schedules a delayed put (S13-D5).
+// initializer and runs: the VPI application starts before static
+// initialization (decision S43-D12). Known issue (docs/known_issues.md, VPI
+// work during static initialization): its calltf schedules a delayed put,
+// for which 13.4.4 asks for an error (S13-D5); the put matures at time 1
+// instead, so the run prints x=5 y=7.
 `timescale 1ns/1ns
 module tb;
   int x;

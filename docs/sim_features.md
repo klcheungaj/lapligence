@@ -3173,11 +3173,14 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   events of the target slot in scheduling order, decision S42-D5),
   `vpiReturnEvent`/`vpiCancelEvent`, force and release. User system tasks and
   functions run compiletf, sizetf (once per registration) and calltf with the
-  38.34 return conventions and per-call-site user data. Handles are
+  38.34 return conventions and per-call-site user data; the values compiletf,
+  calltf and callback routines return are ignored (decision S43-D13). Handles are
   generation-checked: stale, released or invalid handles give a
   `vpi_chk_error` level, never a use-after-free. Applications load from
   `LLG_VPI_PLUGIN` (a Windows DLL links against the model's import library,
-  `llg --dpi-import-lib`) or link as a static archive with `--dpi-lib`. Decisions S42-D1..D13 and A19-D1..D13 in `docs/lrm_decisions.md`; limits in
+  `llg --dpi-import-lib`) or link as a static archive with `--dpi-lib`, and
+  start before the static initializers, which may call user system functions
+  (decision S43-D12). Decisions S42-D1..D13 and A19-D1..D13 in `docs/lrm_decisions.md`; limits in
   `docs/known_issues.md` ("VPI object model limits"). Callbacks (SIM-043):
   `cbValueChange` on variables, nets, ports, array elements, whole unpacked
   arrays (each element write, with its index) and bit/part selects (value,
