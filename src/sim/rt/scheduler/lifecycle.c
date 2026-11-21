@@ -204,8 +204,8 @@ static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
  * its start time. With `only`, visit just the attempts that began at
  * `start`. Raises `event` for each visited attempt when `event` >= 0 and
  * returns how many were visited. */
-static uint64_t assertion_attempts_visit(const llg_concurrent_assertion_t* assertion, int only,
-                                         uint64_t start, int event) {
+static uint64_t assertion_attempts_visit(const llg_concurrent_assertion_t* assertion, int32_t only,
+                                         uint64_t start, int32_t event) {
     uint64_t count = 0;
 #define LLG_VISIT(begun)                                                                \
     do {                                                                                \
@@ -241,8 +241,8 @@ static uint64_t assertion_attempts_in_progress(const llg_concurrent_assertion_t*
 
 /* Raise the end event of every attempt in progress of a watched assertion
  * that disable iff (`killed` 0) or a control (`killed` 1) ends. */
-static void assertion_attempts_notify_end(const llg_concurrent_assertion_t* assertion, int killed,
-                                          int only, uint64_t start) {
+static void assertion_attempts_notify_end(const llg_concurrent_assertion_t* assertion, int32_t killed,
+                                          int32_t only, uint64_t start) {
     (void)assertion_attempts_visit(assertion, only, start,
                                    killed ? LLG_ACOV_EVENT_KILLED : LLG_ACOV_EVENT_DISABLED);
 }
@@ -418,7 +418,7 @@ void llg_rt_cleanup(void) {
     llg_rt_report_summary();
     value_scopes_unwind(NULL);
     while (root_reference_top) llg_ref_scope_end(root_reference_top);
-    for (int i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);
+    for (int32_t i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);
     module_paths_release();
     switches_release();
     timing_checks_release();
@@ -445,7 +445,7 @@ void llg_rt_cleanup(void) {
     free_sets_release();
     // Groups own only child-list nodes; process objects are owned once by
     // all_procs and are released separately below.
-    for (int i = 0; i < g.n_procs; i++) {
+    for (int32_t i = 0; i < g.n_procs; i++) {
         llg_proc_t* p = g.all_procs[i];
         if (p && p->fork_groups) {
             free_group_storage(p->fork_groups);
@@ -490,10 +490,10 @@ void llg_rt_cleanup(void) {
     llg_string_destroy(&g.time_format.suffix);
 
     free_delayed_calls();
-    for (int i = 0; i < g.n_procs; i++) {
+    for (int32_t i = 0; i < g.n_procs; i++) {
         if (g.all_procs[i]) free_proc_storage(g.all_procs[i]);
     }
-    for (int level = 0; level < g.proc_free_levels; level++)
+    for (int32_t level = 0; level < g.proc_free_levels; level++)
         free(g.proc_free_bits[level]);
     free_value_watches();
     free(g.wait_sources);
@@ -574,7 +574,7 @@ void llg_rt_cleanup(void) {
     llg_rt_co_cache_release();
 }
 
-void llg_rt_init_with_args_and_precision(int argc, char** argv,
+void llg_rt_init_with_args_and_precision(int32_t argc, char** argv,
                                          uint64_t precision_fs) {
     llg_clear_final_timeformat();
     llg_rt_cleanup();
@@ -620,7 +620,7 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
     g.argv = g.argc > 0 ? argv : NULL;
 }
 
-void llg_rt_init_with_args(int argc, char** argv) {
+void llg_rt_init_with_args(int32_t argc, char** argv) {
     llg_rt_init_with_args_and_precision(argc, argv, 1);
 }
 

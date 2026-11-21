@@ -2,11 +2,11 @@
 // Wait and trigger evaluators run only in the scheduler loop, never under a
 // static initializer, so they test the current process alone; the static
 // initialization case of llg_rt_exiting stays out of these hot paths.
-static inline int evaluator_exiting(void) {
+static inline int32_t evaluator_exiting(void) {
     return g.current && g.current->chain.exiting != LLG_EXIT_NONE;
 }
 
-static int expression_qualifies(const llg_expr_event_spec_t* spec) {
+static int32_t expression_qualifies(const llg_expr_event_spec_t* spec) {
     if (!spec->condition) return 1;
     llg_value_scope_t* scope = llg_value_scope_begin(1);
     sv4_t* result = llg_value_scope_values(scope);
@@ -15,7 +15,7 @@ static int expression_qualifies(const llg_expr_event_spec_t* spec) {
         llg_value_scope_end(scope);
         return 0;
     }
-    int qualifies = sv4_to_bool(*result);
+    int32_t qualifies = sv4_to_bool(*result);
     llg_value_scope_end(scope);
     return qualifies;
 }
@@ -53,7 +53,7 @@ static void wake_proc(llg_proc_t* p) {
     }
 }
 
-static int wait_is_event_control(llg_wait_kind_t kind) {
+static int32_t wait_is_event_control(llg_wait_kind_t kind) {
     return kind == W_EVENTS || kind == W_EVENTS_INLINE || kind == W_EVENT ||
            kind == W_MIXED || kind == W_EXPR;
 }
@@ -62,7 +62,7 @@ static int wait_is_event_control(llg_wait_kind_t kind) {
  * is suspended on an event expression (SV 9.7 resensitization). The wait
  * stays registered; snapshots the caller keeps current make resume see only
  * later changes. */
-static int wait_held_by_suspension(llg_wait_t* w) {
+static int32_t wait_held_by_suspension(llg_wait_t* w) {
     llg_proc_t* p = w->proc;
     if (!p || !p->suspended || p->wait_control == LLG_WAIT_CONDITION) return 0;
     p->wait_missed = 1;

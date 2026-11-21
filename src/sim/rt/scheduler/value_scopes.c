@@ -29,19 +29,19 @@ static sv4_t value_scope_deleted_key = SV4_EMPTY;
 #define LLG_VALUE_SCOPE_INDEX_RECLAIM_DIVISOR 8u
 
 /* 64 - log2(value_scope_capacity) while the index exists. */
-static unsigned value_scope_shift;
+static uint32_t value_scope_shift;
 
 /* Home slot: the top bits of a multiplicative (Fibonacci) hash, which depend
  * on every bit of the address. It runs on every lookup, insertion and
  * removal, so it is one multiply rather than a full mixer. */
-static size_t value_scope_home(const void* target, unsigned shift) {
+static size_t value_scope_home(const void* target, uint32_t shift) {
     return (size_t)(((uint64_t)(uintptr_t)target * UINT64_C(0x9e3779b97f4a7c15)) >> shift);
 }
 
 static void value_scope_index_rebuild(size_t capacity) {
     llg_value_scope_entry_t* entries = (llg_value_scope_entry_t*)llg_checked_calloc(
         capacity, sizeof(*entries), "value scope address index");
-    unsigned shift = 64;
+    uint32_t shift = 64;
     for (size_t size = capacity; size > 1; size >>= 1) --shift;
     for (size_t i = 0; i < value_scope_capacity; ++i) {
         llg_value_scope_entry_t entry = value_scope_index[i];
@@ -60,7 +60,7 @@ static void value_scope_index_rebuild(size_t capacity) {
 /* Marks a runtime-private scope (value_scope_begin_private). */
 static void value_scope_private_tag(void* object) { (void)object; }
 
-static int value_scope_is_private(const llg_value_scope_t* scope) {
+static int32_t value_scope_is_private(const llg_value_scope_t* scope) {
     return scope->destroy_object == value_scope_private_tag;
 }
 
@@ -165,7 +165,7 @@ static void value_scope_release(llg_value_scope_t* scope) {
     if (scope->all_prev) scope->all_prev->all_next = scope->all_next;
     else all_value_scopes = scope->all_next;
     if (scope->all_next) scope->all_next->all_prev = scope->all_prev;
-    int private_scope = value_scope_is_private(scope);
+    int32_t private_scope = value_scope_is_private(scope);
     if (!private_scope) {
         for (size_t i = 0; i < scope->count; ++i)
             llg_clocking_forget_signal(&scope->values[i]);

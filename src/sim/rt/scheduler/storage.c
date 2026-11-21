@@ -63,26 +63,26 @@ typedef struct llg_nba {
     llg_fixed_array_t *fixed_target, *fixed_value;
     llg_value_scope_t* target_scope;
     llg_net_t* net_target;
-    int net_slot;
+    int32_t net_slot;
     llg_event_object_t* event_target;
     sv4_t value;
     sv4_t mask;
-    int has_mask;
+    int32_t has_mask;
     uint32_t range_offset;
     uint32_t range_width;
-    int has_range;
+    int32_t has_range;
     uint64_t time;
     uint64_t sequence;
     llg_region_t region;
     llg_proc_t* owner;
-    int is_real;
-    int is_event;
+    int32_t is_real;
+    int32_t is_event;
     double* real_target;
     double real_value;
-    int is_string;
-    int is_chandle;
-    int is_values;
-    int is_container;
+    int32_t is_string;
+    int32_t is_chandle;
+    int32_t is_values;
+    int32_t is_container;
     // Persistent native destination and its owned issue-time value;
     // is_string, is_chandle, is_values or is_container selects the member.
     union {
@@ -101,14 +101,14 @@ typedef struct llg_nba {
         struct {
             llg_dyn_value_array_t* target;
             llg_dyn_value_array_t* payload;
-            int whole;
+            int32_t whole;
         } values;
         // Whole-container write: a deep copy of the source, replacing
         // `target`, or the located item when `target` is NULL.
         struct {
             void* target;
             void* payload;
-            int kind;
+            int32_t kind;
         } container;
     } native;
     // Owned copy of a tagged-member write's commit-time checks, or NULL.
@@ -138,7 +138,7 @@ static void nba_locator_destroy(llg_nba_locator_t* locator) {
     free(locator);
 }
 
-static void nba_container_destroy(int kind, void* payload) {
+static void nba_container_destroy(int32_t kind, void* payload) {
     switch (kind) {
     case LLG_NBA_CONTAINER_DYN: llg_dyn_destroy(payload); break;
     case LLG_NBA_CONTAINER_QUEUE: llg_queue_destroy(payload); break;
@@ -209,14 +209,14 @@ struct llg_inertial {
                                 // `current` and `value` holding {strength1, strength0} halves
     uint32_t part_lsb;
     uint32_t part_width;
-    int slot;
-    int pending;
+    int32_t slot;
+    int32_t pending;
     uint64_t time;
     llg_region_t region;
     sv4_t current;
     sv4_t value;
     sv4_t mask;
-    int has_mask;
+    int32_t has_mask;
     uint64_t rise;
     uint64_t fall;
     uint64_t turn_off;
@@ -234,38 +234,38 @@ typedef struct {
     // Qualifier latched at the last matching write of each entry of a
     // gate-at-write wait (llg_wait_gate_at_write), else NULL.
     uint8_t* gate_open;
-    int n;
-    int n_evs;
+    int32_t n;
+    int32_t n_evs;
     llg_event_object_t** evs;
-    int* event_slots; // positions in named-event waiter tables
+    int32_t* event_slots; // positions in named-event waiter tables
 } llg_wait_expression_payload_t;
 
 typedef struct {
     llg_event_object_t** evs;
-    int* event_slots; // positions in named-event waiter tables
-    int n_evs;
+    int32_t* event_slots; // positions in named-event waiter tables
+    int32_t n_evs;
     llg_event_object_t* triggered_ev;
     llg_event_object_t* inline_ev;
-    int inline_slot;
+    int32_t inline_slot;
 } llg_wait_event_payload_t;
 
 typedef struct {
     llg_event_spec_t* specs;
     sv4_t* last;
-    int n;
+    int32_t n;
     llg_event_object_t** evs;
-    int* event_slots; // positions in named-event waiter tables
-    int n_evs;
+    int32_t* event_slots; // positions in named-event waiter tables
+    int32_t n_evs;
 } llg_wait_mixed_payload_t;
 
 typedef struct {
     llg_event_object_t** evs;
-    int* event_slots; // positions in named-event waiter tables
-    int n_evs;
+    int32_t* event_slots; // positions in named-event waiter tables
+    int32_t n_evs;
     llg_event_object_t** sequence;
-    int n_order;
-    int next;
-    int* result;
+    int32_t n_order;
+    int32_t next;
+    int32_t* result;
 } llg_wait_order_payload_t;
 
 typedef struct {
@@ -287,7 +287,7 @@ typedef struct {
     struct llg_wait* next;
     llg_mailbox_t* mailbox;
     llg_mailbox_target_t target;
-    int peek;
+    int32_t peek;
 } llg_wait_mailbox_get_payload_t;
 
 typedef struct {
@@ -451,7 +451,7 @@ typedef struct {
 typedef struct {
     llg_wait_dependency_t* dependencies;
     sv4_t* last;
-    int n;
+    int32_t n;
     llg_wait_subscription_t* subscriptions;
     size_t n_subscriptions;
     // Change order of an ordered wait (llg_wait_changes), else NULL.
@@ -517,7 +517,7 @@ typedef struct llg_mailbox_message {
 
 struct llg_mailbox {
     uint64_t bound;              // zero is unbounded
-    int kind;                    // LLG_MAILBOX_* expected message kind
+    int32_t kind;                    // LLG_MAILBOX_* expected message kind
     uint32_t width;
     int8_t is_signed;
     int8_t two_state;
@@ -541,12 +541,12 @@ typedef struct llg_fork_child {
 } llg_fork_child_t;
 
 struct llg_fork_group {
-    int join_kind;                // LLG_JOIN / LLG_JOIN_NONE / LLG_JOIN_ANY
-    int remaining;                // live children; decremented on done AND on kill
-    int resumed;                  // join_any: parent already woken
-    int terminal;                 // group was moved to the zombie list
-    int started;                  // join_none children became eligible to run
-    int holding;                  // finished children still holding live descendants
+    int32_t join_kind;                // LLG_JOIN / LLG_JOIN_NONE / LLG_JOIN_ANY
+    int32_t remaining;                // live children; decremented on done AND on kill
+    int32_t resumed;                  // join_any: parent already woken
+    int32_t terminal;                 // group was moved to the zombie list
+    int32_t started;                  // join_none children became eligible to run
+    int32_t holding;                  // finished children still holding live descendants
     llg_proc_t* parent;          // spawning proc
     llg_fork_child_t* children;  // for disable_fork
     llg_fork_child_t* children_tail; // source-order O(1) append
@@ -554,7 +554,7 @@ struct llg_fork_group {
     struct llg_fork_group* prev_g; // live-list predecessor, NULL when detached
     uint32_t target_declaration;
     uint32_t target_instance;
-    int has_target;
+    int32_t has_target;
     llg_region_t child_region;    // region inherited by children at the fork site
     llg_activation_t* owner_activation;
 };
@@ -616,8 +616,8 @@ struct llg_activation {
     struct llg_activation** all_prev_link;
     struct llg_activation** proc_prev_link;
     size_t refs;
-    int disabled;
-    int detached;
+    int32_t disabled;
+    int32_t detached;
 };
 
 // Process handles intentionally outlive the coroutine they identify. The
@@ -631,9 +631,9 @@ struct llg_process_handle {
     // The process running static initialization (S13-D7): no coroutine,
     // the stream of its initialization scope while it runs. NULL otherwise.
     llg_rng_state_t* init_rng;
-    int status;
-    int linked;
-    int pinned; // one permanent reference for uncounted storage
+    int32_t status;
+    int32_t linked;
+    int32_t pinned; // one permanent reference for uncounted storage
     struct llg_process_handle* next;
     struct llg_process_handle** prev_link;
 };
@@ -647,8 +647,8 @@ typedef struct llg_process_local_ref {
 typedef struct llg_program {
     uint64_t instance;
     size_t live_initials;
-    int had_initial;
-    int closed;
+    int32_t had_initial;
+    int32_t closed;
     struct llg_program* next;
 } llg_program_t;
 
@@ -659,7 +659,7 @@ struct llg_proc {
     llg_nba_t* nba_head;
     llg_nba_t* nba_tail;
     llg_region_t wait_resume_region;
-    int has_wait_resume_region;
+    int32_t has_wait_resume_region;
     // Flags are bytes so the suspension state below fits the same padding.
     uint8_t completed;
     uint8_t killed;
@@ -716,11 +716,11 @@ struct llg_proc {
     llg_ref_scope_t* reference_top; // retained call-argument cells
     llg_rng_state_t rng;           // process-local random stream
     llg_program_t* program;         // runtime-owned originating program instance
-    int registry_slot;             // stable all_procs position
-    int program_live;              // counted initial, never a fork descendant
+    int32_t registry_slot;             // stable all_procs position
+    int32_t program_live;              // counted initial, never a fork descendant
     uint64_t assertion_owner;      // stable per-run identity for deferred reports
     uint64_t action_assertion;     // assertion whose Reactive action spawned us
-    int is_assertion_action;
+    int32_t is_assertion_action;
     // Index + 1 of this process's newest pending deferred assertion report
     // (validated against the report owner; fits the existing padding).
     uint32_t deferred_last;
@@ -735,8 +735,8 @@ struct llg_proc {
     const char* name;
     llg_proc_t* next_region;
     llg_region_t region;
-    int queued;
-    int status;
+    int32_t queued;
+    int32_t status;
     uint64_t budget_steps;
     uint64_t budget_time;
     llg_wait_t wait;
@@ -744,20 +744,20 @@ struct llg_proc {
 };
 
 /* Set only once a model starts a foreign call context (ADV-018). */
-static void (*process_end_hook)(llg_proc_t* proc, int unwind) = NULL;
+static void (*process_end_hook)(llg_proc_t* proc, int32_t unwind) = NULL;
 
-void llg_rt_set_process_end_hook(void (*hook)(llg_proc_t* proc, int unwind)) {
+void llg_rt_set_process_end_hook(void (*hook)(llg_proc_t* proc, int32_t unwind)) {
     process_end_hook = hook;
 }
 
 /* Set only while a VPI application needs thread events (llg_rt.h). */
-static void (*thread_hook)(int slot, uint64_t identity, int event) = NULL;
+static void (*thread_hook)(int32_t slot, uint64_t identity, int32_t event) = NULL;
 
-void llg_rt_set_thread_hook(void (*hook)(int slot, uint64_t identity, int event)) {
+void llg_rt_set_thread_hook(void (*hook)(int32_t slot, uint64_t identity, int32_t event)) {
     thread_hook = hook;
 }
 
-static void thread_event(const llg_proc_t* proc, int event) {
+static void thread_event(const llg_proc_t* proc, int32_t event) {
     if (thread_hook && proc->registry_slot >= 0)
         thread_hook(proc->registry_slot, proc->assertion_owner, event);
 }
@@ -795,7 +795,7 @@ static void llg_runtime_service_enter(const llg_proc_t* self,
 #endif
 }
 
-static int region_can_mutate(const char* action);
+static int32_t region_can_mutate(const char* action);
 static llg_nba_t* new_nba(uint64_t ticks);
 static llg_nba_t* new_clocking_nba(uint64_t ticks);
 static void enqueue_nba(llg_nba_t* n);
@@ -820,16 +820,16 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                            sv4_t value);
 struct llg_concurrent_assertion;
 static void free_assertion_clock_events(struct llg_concurrent_assertion* assertion);
-static int proc_is_delayed_call(const llg_proc_t* proc);
+static int32_t proc_is_delayed_call(const llg_proc_t* proc);
 static void free_delayed_calls(void);
 static void wake_proc(llg_proc_t* p);
-static int wait_held_by_suspension(llg_wait_t* w);
+static int32_t wait_held_by_suspension(llg_wait_t* w);
 static void wake_assertion_waiter(uint64_t identity);
 static void semaphore_waiter_unlink(llg_wait_t* wait);
 static void mailbox_drop_delivery(llg_proc_t* proc);
 static void semaphore_wake_available(llg_semaphore_t* semaphore);
 static void llg_kill_proc_tree(llg_proc_t* p);
-static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent);
+static void llg_kill_proc_tree_internal(llg_proc_t* p, int32_t notify_parent);
 static void llg_fork_group_child_done(llg_fork_group_t* grp);
 static void flush_deferred_assertions(void);
 static void run_deferred_assertions_now(void);
@@ -877,7 +877,7 @@ static void frame_clear_alias(llg_frame_slot_t* entry) {
 
 static void frame_kind_error(llg_frame_slot_kind_t expected,
                              llg_frame_slot_kind_t actual) {
-    llg_msg(LLG_MSG_INTERNAL, NULL, "activation frame slot type mismatch (expected %d, got %d)", (int)expected, (int)actual);
+    llg_msg(LLG_MSG_INTERNAL, NULL, "activation frame slot type mismatch (expected %" PRId32 ", got %" PRId32 ")", (int32_t)expected, (int32_t)actual);
     abort();
 }
 
@@ -1061,7 +1061,7 @@ void** llg_frame_opaque_address(llg_frame_t* frame, size_t slot) {
     return &entry->value.opaque;
 }
 
-sv4_t* llg_frame_opaque_marker(llg_frame_t* frame, size_t slot, int allocate) {
+sv4_t* llg_frame_opaque_marker(llg_frame_t* frame, size_t slot, int32_t allocate) {
     llg_frame_slot_t* entry = frame_slot(frame, slot);
     if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
         return llg_frame_opaque_marker(entry->alias.slot.frame, entry->alias.slot.slot,
@@ -1168,19 +1168,19 @@ void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value) {
 }
 
 typedef struct {
-    int active;
-    int is_real;
+    int32_t active;
+    int32_t is_real;
     llg_force_part_t* parts;
     sv4_t* masks; // live coverage in target coordinates
-    int n_parts;
+    int32_t n_parts;
     uint32_t stream_slice;
-    int stream_right_to_left;
+    int32_t stream_right_to_left;
     double* real_target;
     llg_force_eval_fn eval;
     llg_force_real_eval_fn real_eval;
     llg_force_read_t* reads;
-    int n_reads;
+    int32_t n_reads;
     sv4_t value;
     double real_value;
-    int evaluating;
+    int32_t evaluating;
 } llg_force_entry_t;

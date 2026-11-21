@@ -3,7 +3,7 @@
 //  1 completes the sequence, 0 keeps waiting, and -1 takes the failure arm.
 // Repeated occurrences of already-consumed events are ignored, while an
 // event that is still ahead in the sequence is an ordering violation.
-static int event_order_match(llg_wait_t* w, llg_event_object_t* ev) {
+static int32_t event_order_match(llg_wait_t* w, llg_event_object_t* ev) {
     llg_wait_order_payload_t* order =
         w->payload.rare ? &w->payload.rare->order : NULL;
     if (!order || !order->sequence || order->next < 0 ||
@@ -13,7 +13,7 @@ static int event_order_match(llg_wait_t* w, llg_event_object_t* ev) {
         order->next++;
         return order->next == order->n_order ? 1 : 0;
     }
-    for (int i = 0; i < order->next; i++) {
+    for (int32_t i = 0; i < order->next; i++) {
         if (order->sequence[i] == ev) return 0;
     }
     return -1;
@@ -39,7 +39,7 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
     // unless earlier partial unlinks (swap-with-last) reordered it. The
     // snapshots are heap scratch because the waiter tables grow without a
     // fixed ceiling.
-    int n_triggered = ev->n_triggered_waiters;
+    int32_t n_triggered = ev->n_triggered_waiters;
     llg_proc_t** triggered = n_triggered
         ? (llg_proc_t**)llg_checked_malloc(
               (size_t)n_triggered, sizeof(*triggered),
@@ -48,29 +48,29 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
     if (triggered)
         memcpy(triggered, ev->triggered_waiters,
                (size_t)n_triggered * sizeof(*triggered));
-    for (int i = 0; i < n_triggered; i++)
+    for (int32_t i = 0; i < n_triggered; i++)
         triggered[i]->wait.payload.event.inline_slot = -1;
     ev->n_triggered_waiters = 0;
-    for (int i = 0; i < n_triggered; i++) wake_proc(triggered[i]);
+    for (int32_t i = 0; i < n_triggered; i++) wake_proc(triggered[i]);
     free(triggered);
 
-    int n = ev->n_waiters;
+    int32_t n = ev->n_waiters;
     llg_proc_t** wake = n
         ? (llg_proc_t**)llg_checked_malloc(
               (size_t)n, sizeof(*wake), "event wake snapshot")
         : NULL;
     if (wake)
         memcpy(wake, ev->waiters, (size_t)n * sizeof(*wake));
-    for (int i = 0; i < n; i++) {
-        int* slot = event_wait_slot(&wake[i]->wait, ev, i);
+    for (int32_t i = 0; i < n; i++) {
+        int32_t* slot = event_wait_slot(&wake[i]->wait, ev, i);
         if (!slot) abort();
         *slot = -1;
     }
     ev->n_waiters = 0;
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         llg_wait_t* w = &wake[i]->wait;
         if (w->kind == W_EVENT_ORDER) {
-            int result = event_order_match(w, ev);
+            int32_t result = event_order_match(w, ev);
             if (result != 0) {
                 *w->payload.rare->order.result = result;
                 wake_proc(wake[i]);
@@ -79,10 +79,10 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
             }
             continue;
         }
-        int matched = w->kind != W_EXPR;
+        int32_t matched = w->kind != W_EXPR;
         if (!matched) {
             llg_wait_expression_payload_t* expression = &w->payload.expression;
-            for (int j = 0; j < expression->n; j++) {
+            for (int32_t j = 0; j < expression->n; j++) {
                 if (expression->expressions[j].event_object == ev &&
                     expression_qualifies(&expression->expressions[j]))
                     matched = 1;
@@ -109,7 +109,7 @@ static void clocking_event_callback(void* data) {
     event_trigger_object_unchecked(event ? event->object : NULL);
 }
 
-int llg_clocking_event_observed(llg_event_t* event) {
+int32_t llg_clocking_event_observed(llg_event_t* event) {
     if (!event) return 0;
     // Event handles are runtime-owned until cleanup. Earlier Observed sample
     // callbacks are FIFO, so this callback sees the complete block publication.
@@ -133,7 +133,7 @@ void llg_event_watch_remove(llg_event_object_t* ev) {
     if (ev && ev->vpi_watches) ev->vpi_watches--;
 }
 
-int llg_event_triggered(const llg_event_t* ev) {
+int32_t llg_event_triggered(const llg_event_t* ev) {
     llg_event_object_t* object = ev ? ev->object : NULL;
     if (!object || !object->triggered ||
         object->triggered_generation != llg_event_generation)
@@ -164,11 +164,11 @@ llg_event_t* llg_event_array_select(llg_event_t* const* elements,
                                     const int32_t* left,
                                     const int32_t* right,
                                     const sv4_t* indices,
-                                    int n) {
+                                    int32_t n) {
     if (!elements || !left || !right || !indices || n <= 0 || !total)
         return NULL;
     uint64_t linear = 0;
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         int64_t value;
         if (!sv4_to_index_i64(indices[i], &value)) return NULL;
         int64_t lo = left[i] < right[i] ? left[i] : right[i];
@@ -190,7 +190,7 @@ llg_co_arm_t llg_arm_event(llg_proc_t* self, llg_event_t* ev) {
 }
 
 llg_co_arm_t llg_arm_events(llg_proc_t* self,
-                            const llg_event_t* const* evs, int n) {
+                            const llg_event_t* const* evs, int32_t n) {
     llg_runtime_service_enter(self, "event wait");
     if (n <= 0 || !self || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
@@ -207,7 +207,7 @@ llg_co_arm_t llg_arm_events(llg_proc_t* self,
     } else {
         w->payload.event.evs = event_wait_list_new(n, &w->payload.event.event_slots);
     }
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         w->payload.event.evs[i] = evs[i] ? evs[i]->object : NULL;
         event_list_add(w->payload.event.evs[i], self, &w->payload.event.event_slots[i]);
     }
@@ -249,15 +249,15 @@ llg_co_arm_t llg_arm_assertion(llg_proc_t* self, uint64_t identity) {
 }
 
 llg_co_arm_t llg_arm_order(llg_proc_t* self,
-                           const llg_event_t* const* evs, int n,
-                           int* result) {
+                           const llg_event_t* const* evs, int32_t n,
+                           int32_t* result) {
     llg_runtime_service_enter(self, "wait_order");
     if (n <= 0 || !result || !self || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
     // SV 15.5.4: "Only the first event in the list can wait for the
     // persistent triggered property." A first event already triggered in
     // this time step counts as observed; the rest need new occurrences.
-    int first_done = llg_event_triggered(evs[0]);
+    int32_t first_done = llg_event_triggered(evs[0]);
     if (first_done && n == 1) {
         *result = 1;
         return LLG_CO_ARM_READY;
@@ -277,12 +277,12 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
         (size_t)n, sizeof(llg_event_object_t*), "wait_order sequence");
     order->evs = event_wait_list_new(n, &order->event_slots);
     order->n_evs = 0;
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         llg_event_object_t* object = evs[i] ? evs[i]->object : NULL;
         order->sequence[i] = object;
         if (!object) continue;
-        int seen = 0;
-        for (int j = 0; j < order->n_evs; j++) {
+        int32_t seen = 0;
+        for (int32_t j = 0; j < order->n_evs; j++) {
             if (order->evs[j] == object) {
                 seen = 1;
                 break;
@@ -298,14 +298,14 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
 }
 
 llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
-                           const llg_wait_src_t* srcs, int n) {
+                           const llg_wait_src_t* srcs, int32_t n) {
     llg_runtime_service_enter(self, "mixed wait");
     if (!self || n < 0 || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
     llg_wait_t* w = &self->wait;
-    int nsig = 0;
-    int nev = 0;
-    for (int i = 0; i < n; i++) {
+    int32_t nsig = 0;
+    int32_t nev = 0;
+    for (int32_t i = 0; i < n; i++) {
         if (srcs[i].sig) nsig++;
         else nev++;
     }
@@ -322,9 +322,9 @@ llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
         (size_t)nsig, sizeof(sv4_t), "mixed wait snapshots") : NULL;
     mixed->n_evs = nev;
     mixed->evs = nev ? event_wait_list_new(nev, &mixed->event_slots) : NULL;
-    int si = 0;
-    int ei = 0;
-    for (int i = 0; i < n; i++) {
+    int32_t si = 0;
+    int32_t ei = 0;
+    for (int32_t i = 0; i < n; i++) {
         if (srcs[i].sig) {
             mixed->specs[si].sig = srcs[i].sig;
             mixed->specs[si].kind = srcs[i].kind;
@@ -341,8 +341,8 @@ llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
 }
 
 llg_co_arm_t llg_arm_clocking_cycle(llg_proc_t* self,
-                                    const llg_wait_src_t* srcs, int n,
-                                    int accept_current) {
+                                    const llg_wait_src_t* srcs, int32_t n,
+                                    int32_t accept_current) {
     llg_runtime_service_enter(self, "clocking cycle wait");
     if (!srcs || n <= 0 || !self ||
         !region_can_mutate("clocking cycle wait"))
@@ -353,7 +353,7 @@ llg_co_arm_t llg_arm_clocking_cycle(llg_proc_t* self,
 }
 
 llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
-                                 const llg_expr_event_spec_t* specs, int n) {
+                                 const llg_expr_event_spec_t* specs, int32_t n) {
     if (n < 0) abort();
     llg_runtime_service_enter(self, "expression wait");
     if (!self || !region_can_mutate("wait scheduling")) {
@@ -379,7 +379,7 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
         expression->gate_open = (uint8_t*)llg_checked_calloc(
             (size_t)n, sizeof(uint8_t), "expression event gate latches");
     expression->evs = event_wait_list_new(n, &expression->event_slots);
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         if (specs[i].n_reads < 0 || specs[i].n_dependencies < 0) abort();
         expression->expressions[i] = specs[i];
         expression->expressions[i].event_object = specs[i].event ? specs[i].event->object : NULL;
@@ -397,7 +397,7 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
             expression->expressions[i].dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
                 (size_t)specs[i].n_dependencies, sizeof(llg_wait_dependency_t),
                 "typed expression dependencies");
-            for (int j = 0; j < specs[i].n_dependencies; j++) {
+            for (int32_t j = 0; j < specs[i].n_dependencies; j++) {
                 if ((specs[i].dependencies[j].sig == NULL) ==
                     (specs[i].dependencies[j].real == NULL))
                     abort();
@@ -409,11 +409,11 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
     // Adopt every descriptor/context before invoking user code. An evaluator
     // can finish the process on its first call; teardown must also discover
     // contexts belonging to later entries which have not been evaluated yet.
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         if (specs[i].event) {
             llg_event_object_t* object = specs[i].event->object;
-            int seen = 0;
-            for (int j = 0; j < expression->n_evs; j++)
+            int32_t seen = 0;
+            for (int32_t j = 0; j < expression->n_evs; j++)
                 if (expression->evs[j] == object) seen = 1;
             if (!seen) {
                 expression->evs[expression->n_evs] = object;
@@ -446,7 +446,7 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
 
 uint64_t llg_repeat_count(sv4_t value) {
     sv4_t count = sv4_repeat_count(value);
-    for (int i = 1; i < llg_sv4_nlimbs(llg_sv4_width(count)); i++) {
+    for (int32_t i = 1; i < llg_sv4_nlimbs(llg_sv4_width(count)); i++) {
         if (llg_sv4_word(count, i, LLG_SV4_BITS)) {
             llg_msg(LLG_MSG_INTERNAL, NULL, "nonblocking repeat count exceeds 64 bits");
             abort();
@@ -458,7 +458,7 @@ uint64_t llg_repeat_count(sv4_t value) {
 }
 
 static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
-                                      int n, uint64_t repeat,
+                                      int32_t n, uint64_t repeat,
                                       llg_event_object_t* target,
                                       llg_event_assignment_fn action,
                                       llg_frame_t* action_frame) {
@@ -500,7 +500,7 @@ static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
         (size_t)n, sizeof(*trigger->last), "deferred event snapshots");
     trigger->real_last = (double*)llg_checked_calloc(
         (size_t)n, sizeof(*trigger->real_last), "deferred real event snapshots");
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         if (specs[i].n_reads < 0 || specs[i].n_dependencies < 0) abort();
         trigger->specs[i] = specs[i];
         trigger->specs[i].event_object = specs[i].event ? specs[i].event->object : NULL;
@@ -544,13 +544,13 @@ static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
     g.deferred_trigger_tail = trigger;
 }
 
-void llg_nba_event_when(const llg_expr_event_spec_t* specs, int n,
+void llg_nba_event_when(const llg_expr_event_spec_t* specs, int32_t n,
                         llg_event_t* target, uint64_t repeat) {
     register_deferred_trigger(specs, n, repeat,
                               target ? target->object : NULL, NULL, NULL);
 }
 
-void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int n,
+void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int32_t n,
                                uint64_t repeat,
                                llg_event_assignment_fn action,
                                llg_frame_t* frame) {

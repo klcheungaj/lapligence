@@ -16,7 +16,7 @@ static struct {
 } sdf_limit_tables;
 
 // `value` added to `current` (INCREMENT) or replacing it, never below 0.
-static uint64_t sdf_value(uint64_t current, int64_t value, int increment) {
+static uint64_t sdf_value(uint64_t current, int64_t value, int32_t increment) {
     if (!increment) return value < 0 ? 0u : (uint64_t)value;
     if (value < 0) {
         uint64_t decrease = (uint64_t)(-(value + 1)) + 1u;
@@ -71,14 +71,14 @@ static uint64_t* sdf_path_limits(llg_module_path_t* path) {
 
 static void sdf_path(const llg_sdf_op_t* op, const int64_t* values) {
     llg_module_path_t* path = op->path;
-    int increment = (op->flags & LLG_SDF_INCREMENT) != 0;
+    int32_t increment = (op->flags & LLG_SDF_INCREMENT) != 0;
     if ((op->flags & LLG_SDF_KEEP_LIMITS) && op->delay) sdf_path_limits(path);
     for (uint32_t t = 0; t < LLG_PATH_TRANSITIONS; t++) {
         if (op->delay >> t & 1u) path->delays[t] = sdf_value(path->delays[t], *values++, increment);
     }
     if (op->reject | op->error) {
         uint64_t* limits = sdf_path_limits(path);
-        for (int error = 0; error < 2; error++) {
+        for (int32_t error = 0; error < 2; error++) {
             uint16_t mask = error ? op->error : op->reject;
             uint64_t* row = limits + (error ? LLG_PATH_TRANSITIONS : 0u);
             for (uint32_t t = 0; t < LLG_PATH_TRANSITIONS; t++) {
@@ -112,7 +112,7 @@ static void sdf_path(const llg_sdf_op_t* op, const int64_t* values) {
 // IOPATH.
 static void sdf_load(const llg_sdf_op_t* op, const int64_t* values) {
     llg_sdf_load_t* load = op->load;
-    int increment = (op->flags & LLG_SDF_INCREMENT) != 0;
+    int32_t increment = (op->flags & LLG_SDF_INCREMENT) != 0;
     uint32_t first = op->index ? op->index : 0u;
     uint32_t last = op->index ? op->index : load->n_entries - 1u;
     for (uint32_t entry = first; entry <= last && entry < load->n_entries; entry++) {
@@ -123,7 +123,7 @@ static void sdf_load(const llg_sdf_op_t* op, const int64_t* values) {
         }
         load->annotated[entry] = 1u;
     }
-    unsigned policy = (op->flags >> LLG_SDF_MIPD_SHIFT) & 3u;
+    uint32_t policy = (op->flags >> LLG_SDF_MIPD_SHIFT) & 3u;
     llg_module_path_t* path = load->path;
     for (uint32_t t = 0; t < LLG_PATH_TRANSITIONS; t++) {
         if (!(op->delay >> t & 1u)) continue;
@@ -160,7 +160,7 @@ static void sdf_load(const llg_sdf_op_t* op, const int64_t* values) {
 }
 
 static void sdf_gate(const llg_sdf_op_t* op, const int64_t* values) {
-    int increment = (op->flags & LLG_SDF_INCREMENT) != 0;
+    int32_t increment = (op->flags & LLG_SDF_INCREMENT) != 0;
     for (uint32_t index = 0; index < 3u; index++) {
         if (op->delay >> index & 1u)
             op->gate[index] = sdf_value(op->gate[index], *values++, increment);
@@ -181,8 +181,8 @@ typedef struct {
 } sdf_constraint_t;
 
 // Edge classes an event touches: bit 0 rise (01, 0x, x1), bit 1 fall.
-static unsigned sdf_edge_classes(uint8_t edges) {
-    unsigned classes = 0;
+static uint32_t sdf_edge_classes(uint8_t edges) {
+    uint32_t classes = 0;
     if (!edges || (edges & LLG_TIMING_EDGE_RISING)) classes |= 1u;
     if (!edges || (edges & (LLG_TIMING_EDGE_10 | LLG_TIMING_EDGE_1X | LLG_TIMING_EDGE_X0)))
         classes |= 2u;
@@ -210,7 +210,7 @@ static void sdf_pairs_resolve(llg_timing_check_set_t* set) {
         after[index] = a;
     }
     uint32_t count = 0;
-    int solved = 0;
+    int32_t solved = 0;
     for (;;) {
         count = 0;
         for (uint32_t index = 0; index < n; index++) {
@@ -218,8 +218,8 @@ static void sdf_pairs_resolve(llg_timing_check_set_t* set) {
             int64_t margin = before[index] + after[index] >= 2 ? 1 : 0;
             int64_t a = before[index] != 0 ? margin : 0;
             int64_t b = after[index] != 0 ? margin : 0;
-            unsigned references = sdf_edge_classes(pair->reference_edges);
-            unsigned datas = sdf_edge_classes(pair->data_edges);
+            uint32_t references = sdf_edge_classes(pair->reference_edges);
+            uint32_t datas = sdf_edge_classes(pair->data_edges);
             for (uint32_t rc = 0; rc < 2u; rc++) {
                 if (!(references >> rc & 1u)) continue;
                 for (uint32_t dc = 0; dc < 2u; dc++) {
@@ -296,9 +296,9 @@ static void sdf_pairs_resolve(llg_timing_check_set_t* set) {
     for (uint32_t index = 0; index < n; index++) {
         const llg_timing_pair_t* pair = &set->pairs[index];
         int64_t b = before[index], a = after[index];
-        int negative = b < 0 || a < 0;
-        int reports = !negative || b + a > 1;
-        for (int part = 0; part < 2; part++) {
+        int32_t negative = b < 0 || a < 0;
+        int32_t reports = !negative || b + a > 1;
+        for (int32_t part = 0; part < 2; part++) {
             int32_t row = part ? pair->after_row : pair->before_row;
             if (row < 0) continue;
             llg_timing_check_t* check = &set->checks[row];

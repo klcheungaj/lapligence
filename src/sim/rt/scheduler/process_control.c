@@ -6,7 +6,7 @@ static void llg_kill_proc_tree(llg_proc_t* p); // mutual recursion below
 // `hold`: the process finished with live descendants and keeps its handle
 // linked, with the process-owned reference, until they end (see "Holding
 // descendants" below).
-static void process_handle_terminal(llg_proc_t* proc, int status, int hold) {
+static void process_handle_terminal(llg_proc_t* proc, int32_t status, int32_t hold) {
     llg_process_handle_t* handle = proc ? proc->handle : NULL;
     if (!handle) return;
     proc->status = status;
@@ -49,7 +49,7 @@ static llg_proc_t* process_handle_live(const llg_process_handle_t* handle) {
 // count moves to the parent's `held_groups` instead of the zombie list.
 
 // End the handle link of a finished process; return whether it held.
-static int proc_tree_unlink_handle(llg_proc_t* proc) {
+static int32_t proc_tree_unlink_handle(llg_proc_t* proc) {
     llg_process_handle_t* handle = proc->handle;
     if (!proc->completed || !handle) return 0;
     proc->handle = NULL;
@@ -91,7 +91,7 @@ static void release_killed_proc_resources(llg_proc_t* proc) {
 // Unlink a suspended or queued proc from every scheduler queue, free its
 // pending NBA list, and retire its storage. A named disable may cancel the
 // executing coroutine; its destruction is deferred until the scheduler resumes.
-static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
+static void llg_kill_proc(llg_proc_t* p, int32_t notify_parent) {
     if (!p || p->killed) return;
     p->killed = 1;
     // A finished process reached through an ancestor keeps FINISHED; its
@@ -202,7 +202,7 @@ static void proc_retire_completed(llg_proc_t* proc) {
 // Natural completion paths only: kill paths detach whole subtrees instead.
 static void proc_tree_released(llg_proc_t* p) {
     while (p && p->completed && !p->killed && !p->fork_groups && !p->held_groups) {
-        int held = proc_tree_unlink_handle(p);
+        int32_t held = proc_tree_unlink_handle(p);
         llg_fork_group_t* grp = p->grp;
         if (!grp) {
             proc_retire_completed(p);
@@ -259,7 +259,7 @@ static void llg_kill_proc_tree(llg_proc_t* p) {
     llg_kill_proc_tree_internal(p, 1);
 }
 
-static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent) {
+static void llg_kill_proc_tree_internal(llg_proc_t* p, int32_t notify_parent) {
     llg_kill_proc_groups(p);
     llg_kill_proc(p, notify_parent);
 }
@@ -281,7 +281,7 @@ llg_process_handle_t* llg_process_self(llg_proc_t* self) {
 
 // Process control of the running static initialization (S13-D7) has no
 // coroutine to act on: the call reports a run-time error and does nothing.
-static int init_process_control(const llg_process_handle_t* handle, const char* method) {
+static int32_t init_process_control(const llg_process_handle_t* handle, const char* method) {
     if (!handle || !handle->init_rng) return 0;
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL,
             "process::%s of the process running static initialization is not supported (llg limitation)",
@@ -290,7 +290,7 @@ static int init_process_control(const llg_process_handle_t* handle, const char* 
     return 1;
 }
 
-int llg_process_status(const llg_process_handle_t* handle) {
+int32_t llg_process_status(const llg_process_handle_t* handle) {
     if (!handle) {
         process_handle_null("status");
         return LLG_PROCESS_KILLED;
@@ -531,10 +531,10 @@ llg_string_t llg_process_handle_get_randstate(llg_process_handle_t* handle) {
     return rng ? llg_rng_state_get(rng) : llg_string_bytes("", 0);
 }
 
-int llg_process_handle_set_randstate(llg_process_handle_t* handle,
+int32_t llg_process_handle_set_randstate(llg_process_handle_t* handle,
                                      llg_string_t state) {
     llg_rng_state_t* rng = process_handle_rng(handle, "set_randstate");
-    int ok = rng && llg_rng_state_set(rng, &state);
+    int32_t ok = rng && llg_rng_state_set(rng, &state);
     if (rng && !ok) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "random runtime: invalid randstate string");
         llg_last_failure = 1;
@@ -620,7 +620,7 @@ llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
     return LLG_CO_ARM_SUSPEND;
 }
 
-int llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count) {
+int32_t llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count) {
     if (!region_can_mutate("semaphore try_get") ||
         !semaphore_valid(semaphore, "try_get"))
         return 0;

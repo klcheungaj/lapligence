@@ -20,16 +20,16 @@ static size_t llg_format_scratch_size(size_t payload, size_t precision) {
 // conversions. `%%` prints '%', and an unknown or missing specifier prints
 // verbatim without consuming an argument.
 static void llg_format_array(char* out, size_t cap, const char* fmt,
-                              const sv4_t* args, int n) {
+                              const sv4_t* args, int32_t n) {
     size_t len = 0;
     const char* p = fmt;
-    int argi = 0;
+    int32_t argi = 0;
     while (*p && len + 1 < cap) {
         char c = *p++;
         if (c == '%') {
-            int has_width;
-            int width;
-            int zero;
+            int32_t has_width;
+            int32_t width;
+            int32_t zero;
             p = llg_parse_legacy_spec(p, &has_width, &width, &zero);
             c = *p;
             if (c) ++p;
@@ -74,9 +74,9 @@ static void llg_print_line(const char* line) {
     fflush(stdout);
 }
 
-static void llg_print_array(const char* fmt, const sv4_t* args, int n) {
+static void llg_print_array(const char* fmt, const sv4_t* args, int32_t n) {
     size_t cap = strlen(fmt) + 1;
-    for (int i = 0; i < n; ++i) {
+    for (int32_t i = 0; i < n; ++i) {
         size_t extra = (size_t)llg_sv4_width(args[i]) + 2u;
         if ((size_t)g.time_format.minimum_field_width > SIZE_MAX - extra)
             llg_fatal_allocation("formatted line", 1, SIZE_MAX);
@@ -96,9 +96,9 @@ static void llg_print_array(const char* fmt, const sv4_t* args, int n) {
     free(out);
 }
 
-static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int n) {
+static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int32_t n) {
     if (!args) return;
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         if (args[i].kind == LLG_FMT_STRING || args[i].kind == LLG_FMT_TEXT)
             llg_string_destroy(&args[i].value.string);
         else if (args[i].kind == LLG_FMT_PACKED || args[i].kind == LLG_FMT_STRENGTH)
@@ -122,15 +122,15 @@ static void llg_append_text(char* out, size_t cap, size_t* len,
 }
 
 typedef struct {
-    int left;
-    int plus;
-    int space;
-    int alternate;
-    int zero;
-    int width;
-    int has_width;
-    int precision;
-    int has_precision;
+    int32_t left;
+    int32_t plus;
+    int32_t space;
+    int32_t alternate;
+    int32_t zero;
+    int32_t width;
+    int32_t has_width;
+    int32_t precision;
+    int32_t has_precision;
 } llg_fmt_spec_t;
 
 static const char* llg_parse_typed_spec(const char* start, const char* p,
@@ -164,7 +164,7 @@ static const char* llg_parse_typed_spec(const char* start, const char* p,
     return p;
 }
 
-static int llg_decimal_increment(char* digits, size_t* length, size_t cap) {
+static int32_t llg_decimal_increment(char* digits, size_t* length, size_t cap) {
     for (size_t i = *length; i > 0; --i) {
         if (digits[i - 1] != '9') {
             digits[i - 1]++;
@@ -179,10 +179,10 @@ static int llg_decimal_increment(char* digits, size_t* length, size_t cap) {
     return 1;
 }
 
-static int llg_time_format_exponents(int* source, int* display) {
-    int display_exponent = llg_time_unit_exponent(g.time_format.unit_fs);
+static int32_t llg_time_format_exponents(int32_t* source, int32_t* display) {
+    int32_t display_exponent = llg_time_unit_exponent(g.time_format.unit_fs);
     if (display_exponent == INT_MIN) return 0;
-    int source_exponent = llg_time_unit_exponent(g.design_precision_fs);
+    int32_t source_exponent = llg_time_unit_exponent(g.design_precision_fs);
     if (source_exponent == INT_MIN) source_exponent = display_exponent;
     *source = source_exponent;
     *display = display_exponent;
@@ -202,15 +202,15 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
     sv4_to_dec_string(value, decimal, decimal_cap);
     size_t decimal_len = strlen(decimal);
     size_t len = 0;
-    int source_exponent;
-    int display_exponent;
-    int metadata_exponent;
-    int negative;
+    int32_t source_exponent;
+    int32_t display_exponent;
+    int32_t metadata_exponent;
+    int32_t negative;
     const char* digits;
     size_t digits_len;
-    int scale;
+    int32_t scale;
     size_t scaled_len;
-    int precision;
+    int32_t precision;
     if (decimal_len == 0) goto cleanup;
     if (strchr("xXzZ", decimal[0])) {
         llg_append_text(raw, cap, &len, decimal, decimal_len);
@@ -242,7 +242,7 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
                                      digits_len + (size_t)scale + 1u);
             memcpy(scaled, digits, digits_len);
             scaled_len = digits_len;
-            for (int i = 0; i < scale; ++i)
+            for (int32_t i = 0; i < scale; ++i)
                 scaled[scaled_len++] = '0';
         }
     } else {
@@ -254,7 +254,7 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
         // If the value has fewer digits than the discarded scale, the
         // leading discarded decimal digits are zero (for example 7/10^9),
         // so inspect the first actually discarded digit only when it exists.
-        int round_up = drop <= digits_len && digits[digits_len - drop] >= '5';
+        int32_t round_up = drop <= digits_len && digits[digits_len - drop] >= '5';
         if (round_up) (void)llg_decimal_increment(scaled, &scaled_len, scaled_cap);
     }
     precision = g.time_format.precision;
@@ -286,12 +286,12 @@ cleanup:
 
 static size_t llg_format_time_real(double value, uint64_t source_unit_fs,
                                    char* raw, size_t cap) {
-    int source_exponent;
-    int display_exponent;
+    int32_t source_exponent;
+    int32_t display_exponent;
     if (!llg_time_format_exponents(&source_exponent, &display_exponent)) {
         source_exponent = display_exponent = 0;
     }
-    int metadata_exponent = llg_time_unit_exponent(source_unit_fs);
+    int32_t metadata_exponent = llg_time_unit_exponent(source_unit_fs);
     if (metadata_exponent != INT_MIN) source_exponent = metadata_exponent;
     double scale = (double)llg_time_unit_from_exponent(source_exponent) /
                    (double)llg_time_unit_from_exponent(display_exponent);
@@ -301,13 +301,13 @@ static size_t llg_format_time_real(double value, uint64_t source_unit_fs,
     // decimal domain before asking snprintf only to render the fixed digits.
     double scaled = value * scale;
     double factor = 1.0;
-    for (int i = 0; i < g.time_format.precision && isfinite(factor); ++i)
+    for (int32_t i = 0; i < g.time_format.precision && isfinite(factor); ++i)
         factor *= 10.0;
     if (isfinite(scaled)) {
         double rounded = round(scaled * factor);
         if (isfinite(rounded)) scaled = rounded / factor;
     }
-    int written = snprintf(raw, cap, "%.*f", g.time_format.precision,
+    int32_t written = snprintf(raw, cap, "%.*f", g.time_format.precision,
                            scaled);
     size_t len = written < 0 ? 0 : (size_t)written;
     if (len >= cap) len = cap ? cap - 1 : 0;
@@ -398,15 +398,15 @@ static size_t llg_format_strength(sv4_t value, char* raw, size_t cap) {
 // always use the mnemonic of their driven level.
 static void llg_format_strength_byte(uint8_t code, char text[4]) {
     static const char* const names[8] = {"Hi", "Sm", "Me", "We", "La", "Pu", "St", "Su"};
-    int lo = (int)(code & 0x0fu) - 7;
-    int hi = (int)(code >> 4) - 7;
+    int32_t lo = (int32_t)(code & 0x0fu) - 7;
+    int32_t hi = (int32_t)(code >> 4) - 7;
     if (lo < -7 || hi > 7 || lo > hi) {
         lo = -LLG_STRENGTH_STRONG;
         hi = LLG_STRENGTH_STRONG;
     }
     char value;
-    int first;
-    int second;
+    int32_t first;
+    int32_t second;
     if (hi < 0) {
         value = '0';
         first = -lo;
@@ -493,10 +493,10 @@ static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
 // takes the field of a 32-bit integer, 11 characters, and a wider signed
 // value the digits of its width with no extra column for the sign (decision
 // S24-D1, industry-standard behaviour).
-static int llg_decimal_field_width(uint32_t width, int is_signed) {
+static int32_t llg_decimal_field_width(uint32_t width, int32_t is_signed) {
     if (width == 0) return 0;
     if (is_signed && width >= 2u && width <= 32u) return 11;
-    return (int)ceil((double)width / 3.32192809488736234787);
+    return (int32_t)ceil((double)width / 3.32192809488736234787);
 }
 
 // The packed operand of an integral conversion: the argument itself, or an
@@ -529,7 +529,7 @@ static size_t llg_format_word(char conversion, sv4_t value, char* raw,
     if ((llg_sv4_word(value, 0, LLG_SV4_X) | llg_sv4_word(value, 0, LLG_SV4_Z)) & mask)
         return 0;
     uint64_t bits = llg_sv4_word(value, 0, LLG_SV4_BITS) & mask;
-    int written;
+    int32_t written;
     switch (conversion) {
     case 'd':
         if (llg_sv4_signed(value) && ((bits >> (width - 1u)) & 1u))
@@ -539,18 +539,18 @@ static size_t llg_format_word(char conversion, sv4_t value, char* raw,
             written = snprintf(raw, cap, "%llu", (unsigned long long)bits);
         break;
     case 'h':
-        written = snprintf(raw, cap, "%0*llx", (int)((width + 3u) / 4u),
+        written = snprintf(raw, cap, "%0*llx", (int32_t)((width + 3u) / 4u),
                            (unsigned long long)bits);
         break;
     case 'o':
-        written = snprintf(raw, cap, "%0*llo", (int)((width + 2u) / 3u),
+        written = snprintf(raw, cap, "%0*llo", (int32_t)((width + 2u) / 3u),
                            (unsigned long long)bits);
         break;
     case 'b':
         for (uint32_t bit = width; bit > 0; --bit)
             raw[width - bit] = (char)('0' + ((bits >> (bit - 1u)) & 1u));
         raw[width] = 0;
-        written = (int)width;
+        written = (int32_t)width;
         break;
     default:
         return 0;
@@ -585,7 +585,7 @@ static size_t llg_format_pattern_string(const char* data, size_t length,
     size_t len = 0;
     llg_append(raw, cap, &len, '"');
     for (size_t i = 0; i < length; ++i) {
-        unsigned char byte = (unsigned char)data[i];
+        uint8_t byte = (uint8_t)data[i];
         if (byte == '"' || byte == '\\') {
             llg_append(raw, cap, &len, '\\');
             llg_append(raw, cap, &len, (char)byte);
@@ -610,7 +610,7 @@ static size_t llg_format_pattern_string(const char* data, size_t length,
 // `%p` of a real prints it as an unformatted real argument displays: the
 // default `%f` conversion (SV 21.2.1.7).
 static size_t llg_format_pattern_real(double value, char* raw, size_t cap) {
-    int written = snprintf(raw, cap, "%f", value);
+    int32_t written = snprintf(raw, cap, "%f", value);
     if (written < 0) return 0;
     return (size_t)written < cap ? (size_t)written : cap - 1;
 }
@@ -650,7 +650,7 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
             n += prefix_len;
         }
     }
-    int numeric = strchr("dhbotxfeg", conversion) != NULL;
+    int32_t numeric = strchr("dhbotxfeg", conversion) != NULL;
     if (numeric && n > 0 && field[0] != '-' && spec.plus) {
         if (n + 1 < field_cap) {
             memmove(field + 1, field, n + 1);
@@ -698,10 +698,10 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
 static const char* llg_format_binding;
 
 static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
-                               const llg_fmt_arg_t* args, int n,
+                               const llg_fmt_arg_t* args, int32_t n,
                                const char* scope) {
     size_t len = 0;
-    int argi = 0;
+    int32_t argi = 0;
     const char* p = fmt;
     while (*p && len + 1 < cap) {
         if (*p != '%') {
@@ -743,10 +743,10 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             // Only run-time format strings reach here: literal formats are
             // checked against their arguments during lowering. The
             // specification is printed as written and reported once.
-            static int reported_missing_argument;
+            static int32_t reported_missing_argument;
             if (conversion && !reported_missing_argument) {
                 reported_missing_argument = 1;
-                llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "format specification `%.*s` has no argument; printed as written", (int)(p - start), start);
+                llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "format specification `%.*s` has no argument; printed as written", (int32_t)(p - start), start);
             }
             llg_append_text(out, cap, &len, start, (size_t)(p - start));
             continue;
@@ -827,7 +827,7 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             if (spec_len >= sizeof(real_fmt) - 1) spec_len = sizeof(real_fmt) - 2;
             memcpy(real_fmt, start, spec_len);
             real_fmt[spec_len] = 0;
-            int written = snprintf(raw, raw_cap, real_fmt, real);
+            int32_t written = snprintf(raw, raw_cap, real_fmt, real);
             raw_len = written < 0 ? 0 : (size_t)written < raw_cap
                                            ? (size_t)written
                                            : raw_cap - 1;
@@ -864,10 +864,10 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
 }
 
 static void llg_print_typed_to(uint32_t descriptor, const char* fmt,
-                               llg_fmt_arg_t* args, int n, const char* scope,
-                               int newline);
+                               llg_fmt_arg_t* args, int32_t n, const char* scope,
+                               int32_t newline);
 
-static void llg_print_typed(const char* fmt, llg_fmt_arg_t* args, int n,
-                            const char* scope, int newline) {
+static void llg_print_typed(const char* fmt, llg_fmt_arg_t* args, int32_t n,
+                            const char* scope, int32_t newline) {
     llg_print_typed_to(1u, fmt, args, n, scope, newline);
 }

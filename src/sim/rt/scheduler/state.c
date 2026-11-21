@@ -7,49 +7,49 @@
 // and lives until `$fclose` removes its last channel (SV 21.3.1, 21.3.2).
 typedef struct llg_monitor_state {
     struct llg_monitor_state* next;
-    int primary;         // the `$monitor` display list
-    int dead;            // every channel closed; swept at the next safe point
-    int poll;            // re-evaluate every slot (handle-selected reads)
-    int dirty;           // a trigger signal changed since the last check
-    int force_report;    // registration or enable requires one report
+    int32_t primary;         // the `$monitor` display list
+    int32_t dead;            // every channel closed; swept at the next safe point
+    int32_t poll;            // re-evaluate every slot (handle-selected reads)
+    int32_t dirty;           // a trigger signal changed since the last check
+    int32_t force_report;    // registration or enable requires one report
     char* fmt;           // strdup'd format string
-    int n;               // number of displayed arguments
+    int32_t n;               // number of displayed arguments
     llg_mon_eval_fn eval;
     sv4_t* last;         // last-printed argument values (n)
     sv4_t* work;         // scratch buffer the eval fn fills (n)
     sv4_t** reads;       // trigger signal pointers (not display-only values)
-    int n_reads;
+    int32_t n_reads;
     llg_display_eval_fn typed_eval;
     llg_fmt_arg_t* typed_last;
     llg_fmt_arg_t* typed_work;
     llg_display_read_t* typed_reads;  // fixed entries, then resolved ones
-    int n_typed_reads;
+    int32_t n_typed_reads;
     llg_monitor_reads_fn resolve;     // refills the last n_resolved entries
-    int n_resolved;
+    int32_t n_resolved;
     void* context;       // class-method receiver of `typed_eval`; a GC root
-    unsigned char* time_args;  // per argument: only reads time; NULL when none
+    uint8_t* time_args;  // per argument: only reads time; NULL when none
     char* scope;
-    int typed;
+    int32_t typed;
     uint32_t descriptor;
     llg_region_t region;
 } llg_monitor_state_t;
 
 // Defined with the monitors; the write paths and run teardown call them.
-static void llg_monitor_target_changed(const void* target, int kind);
+static void llg_monitor_target_changed(const void* target, int32_t kind);
 static void llg_monitors_free_all(void);
-static void llg_monitors_cancel_slot(unsigned slot);
+static void llg_monitors_cancel_slot(uint32_t slot);
 
 typedef struct llg_strobe {
     struct llg_strobe* next;
     char* fmt;           // strdup'd format string
-    int n;
+    int32_t n;
     llg_mon_eval_fn eval;
     sv4_t* work;         // scratch buffer the eval fn fills (n)
     llg_display_eval_fn typed_eval;
     llg_fmt_arg_t* typed_work;
     void* context;       // class-method receiver of `typed_eval`; a GC root
     char* scope;
-    int typed;
+    int32_t typed;
     uint32_t descriptor;
     llg_region_t region;
 } llg_strobe_t;
@@ -123,8 +123,8 @@ typedef struct llg_assertion_rule {
     uint64_t assertion_type, directive_type;
     /* Which control the rule sets: checking (SV 20.11) or one action class
      * (SV 20.12); see LLG_ASSERTION_RULE_*. */
-    int field;
-    int enabled;
+    int32_t field;
+    int32_t enabled;
 } llg_assertion_rule_t;
 static llg_assertion_rule_t* llg_assertion_rules;
 enum {
@@ -168,7 +168,7 @@ typedef struct llg_sampled_cells {
     uint8_t* listed;       // 1 while the cell is in `changed`
     size_t* changed;       // cells written since the last sample, at most `count`
     size_t changed_count;
-    int whole;             // the next sample copies every cell
+    int32_t whole;             // the next sample copies every cell
 } llg_sampled_cells_t;
 
 typedef struct llg_sampled_history {
@@ -197,7 +197,7 @@ typedef struct llg_sampled_domain {
     // tick; Preponed values cannot change within the step.
     sv4_t current;
     uint64_t current_time;
-    int current_valid;
+    int32_t current_valid;
 } llg_sampled_domain_t;
 
 /* Ticks shared by every domain sampled on one clocking event and gate. Edge
@@ -206,7 +206,7 @@ typedef struct llg_sampled_domain {
 typedef struct llg_sampled_clock {
     struct llg_sampled_clock* next_edge;
     sv4_t* signal;
-    int edge;
+    int32_t edge;
     llg_sampled_gate_fn gate;
     void* data;
     llg_sampled_domain_t** domains;
@@ -222,7 +222,7 @@ typedef struct llg_sampled_clock {
 static llg_sampled_value_t* find_sampled_value(const sv4_t* signal);
 static void sampled_record_write(sv4_t* signal);
 static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
-                                                sv4_t value, int deferred);
+                                                sv4_t value, int32_t deferred);
 static void sampled_clock_gates_latch(sv4_t* signal, sv4_t old, sv4_t value);
 
 typedef struct llg_assertion_attempt {
@@ -236,7 +236,7 @@ typedef struct llg_assertion_attempt {
 typedef struct {
     uint64_t time, tick;
     sv4_t* clock;
-    int edge;
+    int32_t edge;
 } llg_sequence_mark_t;
 
 /* Shared state of one forked join invocation. Each side is represented by
@@ -261,10 +261,10 @@ typedef struct llg_sequence_scope {
     struct llg_sequence_scope* parent;
     size_t refs;
     uint32_t identity;
-    int matched;
+    int32_t matched;
     uint64_t time, tick;
     sv4_t* clock;
-    int edge;
+    int32_t edge;
     llg_sequence_join_instance_t* join;
     uint8_t side;
 } llg_sequence_scope_t;
@@ -274,9 +274,9 @@ typedef struct llg_sequence_endpoint {
     struct llg_sequence_endpoint* next;
     sv4_t* locals;
     sv4_t* clock;
-    int edge;
+    int32_t edge;
     uint64_t time, order, tick;
-    int empty;
+    int32_t empty;
     /* Number of distinct matches this endpoint stands for (16.9.5-16.9.8). */
     uint64_t mult;
 } llg_sequence_endpoint_t;
@@ -287,13 +287,13 @@ typedef struct llg_sequence_token {
     uint32_t state;
     uint32_t transition; /* UINT32_MAX expands this state; otherwise one pending edge. */
     llg_sequence_scope_t* scope;
-    int checked;
+    int32_t checked;
     uint64_t last_order;
     uint64_t entered_time;
     uint64_t entered_order;
     uint64_t entered_tick;
     sv4_t* entered_clock;
-    int entered_edge;
+    int32_t entered_edge;
     /* Number of distinct paths (ways of matching) merged into this thread.
      * Paths that no match item or local variable distinguishes are counted,
      * not enumerated, so `(a or a)[*n]` stays one thread. */
@@ -320,15 +320,15 @@ typedef struct llg_sequence_attempt {
     struct llg_sequence_attempt* next;
     /* Shared evaluation attempt of an implication, NULL otherwise. */
     llg_assertion_eval_t* eval;
-    int eval_owner; /* this is the antecedent attempt of `eval` */
+    int32_t eval_owner; /* this is the antecedent attempt of `eval` */
     const llg_sequence_graph_t* graph;
     llg_sequence_token_t* tokens;
     /* Diagnostic creation ordinal; launch uses the endpoint's clock/time. */
     uint64_t due_cycle;
-    int matched;
-    int started;
-    int launch_pending;
-    int launch_strict;
+    int32_t matched;
+    int32_t started;
+    int32_t launch_pending;
+    int32_t launch_strict;
     llg_sequence_endpoint_t launch;
     llg_sequence_endpoint_t* endpoints;
     uint8_t* inherited;
@@ -356,7 +356,7 @@ typedef struct llg_property_locals {
  * clocks compare simulation time. */
 typedef struct llg_property_launch {
     sv4_t* clock;
-    int edge;
+    int32_t edge;
     uint64_t time;
     uint64_t tick;
     uint64_t order;
@@ -409,7 +409,7 @@ typedef struct llg_property_inst {
 typedef struct llg_assertion_clock_event {
     struct llg_assertion_clock_event* next;
     sv4_t* signal;
-    int edge;
+    int32_t edge;
     uint64_t time;
     uint64_t order;
     uint64_t tick;
@@ -452,7 +452,7 @@ typedef struct llg_assertion_lag {
  * keeps a later match visible at the tick after it. */
 typedef struct llg_matched_slot {
     sv4_t* clock;
-    int edge;
+    int32_t edge;
     uint8_t has_match;
     uint8_t also_next;
     uint64_t visible_tick;
@@ -464,12 +464,12 @@ typedef struct llg_matched_slot {
  * attempt began, reported to VPI assertion callbacks (39.4.2). */
 static llg_acov_item_t* llg_acov_find(uint64_t identity);
 static void llg_acov_attempt(llg_acov_item_t* item, uint64_t start);
-static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous, uint64_t start);
-static void llg_acov_end_attempts(llg_acov_item_t* item, uint64_t count, int killed);
+static void llg_acov_result(llg_acov_item_t* item, int32_t success, int32_t vacuous, uint64_t start);
+static void llg_acov_end_attempts(llg_acov_item_t* item, uint64_t count, int32_t killed);
 static void llg_acov_disabled_attempt(llg_acov_item_t* item, uint64_t start);
 // One attempt of a watched item ended (`event` LLG_ACOV_EVENT_DISABLED or
 // _KILLED); the counters are updated separately, per batch.
-static void llg_acov_notify(llg_acov_item_t* item, int event, uint64_t start);
+static void llg_acov_notify(llg_acov_item_t* item, int32_t event, uint64_t start);
 // The assertion engines bracket their work so that attempt events raised
 // inside reach VPI callbacks only when the engine returns.
 static void assertion_events_enter(void);
@@ -485,7 +485,7 @@ typedef struct {
     const llg_acov_item_t* item;
     uint64_t cb_time;
     uint64_t start;
-    int event;
+    int32_t event;
     uint32_t seq; /* queue position while a tick's events are ordered */
 } llg_acov_event_t;
 
@@ -542,17 +542,17 @@ typedef struct llg_concurrent_assertion {
     const llg_co_desc_t* fail_desc;
     void* data;
     /* `cover sequence`: report every match, never a failure. */
-    int cover_sequence;
-    int overlapped;
-    int abort_reject;
+    int32_t cover_sequence;
+    int32_t overlapped;
+    int32_t abort_reject;
     /* An armed expect starts exactly one attempt (IEEE 1800-2009 16.18). */
-    int expect_started;
+    int32_t expect_started;
     /* An initial-procedure assertion starts one attempt (16.15.6). */
-    int single_attempt;
-    int single_attempt_started;
+    int32_t single_attempt;
+    int32_t single_attempt_started;
     /* A procedural concurrent assertion (16.15.6): a leading clock event
      * begins one attempt per matured instance, never one on its own. */
-    int procedural;
+    int32_t procedural;
     /* Matured instances that begin at the next leading clock event. */
     uint64_t procedural_matured;
     /* g.now + 1 of the time step whose leading clock event the assertion
@@ -566,9 +566,9 @@ typedef struct llg_concurrent_assertion {
     uint64_t procedural_disabled_tick;
     /* Result of the last expect evaluation for its caller's inline action
      * block: 0 none, 1 success, 2 failure. */
-    int expect_outcome;
+    int32_t expect_outcome;
     /* The caller's expect has an else arm, so no default failure report. */
-    int expect_has_fail;
+    int32_t expect_has_fail;
     /* Action controls (SV 20.12). Zero, the registration default, executes
      * the action; they gate actions only, never the result counters. */
     uint8_t pass_action_off;
@@ -588,7 +588,7 @@ typedef struct llg_concurrent_assertion {
     const char* label;
     const char* location;
     const char* scope;
-    int edge_pending;
+    int32_t edge_pending;
     llg_assertion_attempt_t* attempts;
     llg_assertion_attempt_t* attempts_tail;
     const llg_sequence_graph_t* antecedent_sequence;
@@ -614,7 +614,7 @@ typedef struct llg_concurrent_assertion {
     llg_property_inst_t* property_attempts;
     llg_property_inst_t* property_attempts_tail;
     /* The program has an asynchronous accept_on/reject_on. */
-    int property_async;
+    int32_t property_async;
     /* Global clocking future sampled value functions (16.9.4): the global
      * clock, the capture callback and slot count, the deferred evaluation
      * queue with its recycled entries, and the replay state (the entry's
@@ -645,15 +645,15 @@ typedef struct llg_concurrent_assertion {
 /* Discard the running attempts of an assertion whose disable iff holds or
  * that a control task kills, counting them for assertion coverage
  * (concurrent_assertions.c). */
-static void end_assertion_attempts(llg_concurrent_assertion_t* assertion, int killed);
+static void end_assertion_attempts(llg_concurrent_assertion_t* assertion, int32_t killed);
 /* Saved values of matured procedural instances (concurrent_assertions.c). */
 static void queued_values_push(llg_concurrent_assertion_t* assertion, llg_frame_t* frame);
 static void queued_values_clear(llg_concurrent_assertion_t* assertion);
 
 typedef struct {
     uint64_t unit_fs;
-    int precision;
-    int minimum_field_width;
+    int32_t precision;
+    int32_t minimum_field_width;
     llg_string_t suffix;
 } llg_timeformat_state_t;
 
@@ -667,8 +667,8 @@ typedef struct llg_clocking_edge {
     uint64_t time;
     uint64_t posedge_count;
     uint64_t negedge_count;
-    unsigned occurred;
-    int keep_ticks;
+    uint32_t occurred;
+    int32_t keep_ticks;
     // A pending rowless record of this signal (LLG_CHANGE_ROWLESS), else NULL.
     struct llg_change* change;
 } llg_clocking_edge_t;
@@ -681,19 +681,19 @@ typedef struct llg_clocking_edge {
 typedef struct llg_clocking_drive {
     struct llg_clocking_drive* next;
     llg_wait_src_t* specs;
-    int n_specs;
+    int32_t n_specs;
     sv4_t* target;
     llg_value_scope_t* target_scope;
     llg_net_t* net_target;
-    int net_slot;
+    int32_t net_slot;
     double* real_target;
     sv4_t value;
     sv4_t mask;
-    int has_mask;
+    int32_t has_mask;
     uint32_t range_offset;
     uint32_t range_width;
-    int has_range;
-    int is_real;
+    int32_t has_range;
+    int32_t is_real;
     double real_value;
     uint64_t ticks;
     // Matching clocking events still to occur before the drive matures.
@@ -719,7 +719,7 @@ typedef struct llg_deferred_trigger {
     llg_expr_event_spec_t* specs;
     sv4_t* last;
     double* real_last;
-    int n;
+    int32_t n;
     uint64_t remaining;
 } llg_deferred_trigger_t;
 
@@ -736,7 +736,7 @@ typedef struct llg_q_entry {
 typedef struct llg_q_queue {
     struct llg_q_queue* next;
     int64_t id;
-    int type;                 // 1 = FIFO, 2 = LIFO
+    int32_t type;                 // 1 = FIFO, 2 = LIFO
     uint64_t capacity;
     uint64_t length;
     llg_q_entry_t* head;
@@ -746,23 +746,23 @@ typedef struct llg_q_queue {
     uint64_t interarrival_sum;
     uint64_t maximum_length;
     uint64_t shortest_wait;
-    int has_arrival;
-    int has_shortest_wait;
+    int32_t has_arrival;
+    int32_t has_shortest_wait;
 } llg_q_queue_t;
 
 typedef struct {
-    int initialized;
-    int process_turn_active;
-    int deferred_stop;
+    int32_t initialized;
+    int32_t process_turn_active;
+    int32_t deferred_stop;
     // A `$stop` executed by a static initializer, held until llg_rt_run
     // starts (SV 20.2 gives no rule for a stop before any process runs).
-    int held_stop;
+    int32_t held_stop;
     // Set from init until llg_rt_run starts: the static schedule, where no
     // process exists, so a fork there has no parent (SV 13.4.4).
-    int static_init_phase;
-    int static_spawn_reported;
+    int32_t static_init_phase;
+    int32_t static_spawn_reported;
     // simulator.index_checks (LLG_INDEX_CHECKS), on unless set to `off`.
-    int index_checks;
+    int32_t index_checks;
     llg_proc_t* current;
     llg_proc_queue_t process_queues[LLG_REGION_COUNT];
     llg_nba_queue_t nba_queues[LLG_REGION_COUNT];
@@ -780,7 +780,7 @@ typedef struct {
     llg_wait_t* timed_head;   // sorted ascending by time
     llg_wait_queue_t zero_waits[LLG_REGION_COUNT];
     llg_wait_t* waiters;      // all active waits
-    int wait_count;           // armed waits of processes that can still finish
+    int32_t wait_count;           // armed waits of processes that can still finish
     llg_wait_source_t** wait_sources;
     size_t wait_sources_capacity;
     size_t n_wait_sources;
@@ -815,7 +815,7 @@ typedef struct {
     size_t clocking_drive_source_capacity;
     size_t clocking_drive_event_refs;
     uint64_t sampled_time;
-    int sampled_time_valid;
+    int32_t sampled_time_valid;
     // Value changes of this process turn or NBA region, in first-write order
     // (T1-D11, dependencies.c); a forgotten one leaves NULL.
     llg_change_t** changes;
@@ -846,7 +846,7 @@ typedef struct {
     // Set when a clock edge reaches a concurrent assertion and cleared when
     // the Observed region evaluates them. An edge enabled by the reactive
     // set sends the time slot back around through Observed (SV 24.3.1).
-    int assertion_edges_pending;
+    int32_t assertion_edges_pending;
     llg_concurrent_assertion_t* assertion_tail;
     // Sequence endpoints by their model index, for `.matched` queries.
     llg_concurrent_assertion_t** sequence_endpoints;
@@ -880,7 +880,7 @@ typedef struct {
     uint32_t assertion_event_depth;
     llg_acov_event_queue_t assertion_events;
     // vpiAssertionSysEnd ran: no control enables an assertion again.
-    int assertions_ended;
+    int32_t assertions_ended;
     // Registered property assertions with an asynchronous abort condition,
     // and with any, a signal written since their last check (S38-D13: they
     // are checked in Observed, after the clock ticks, with current values).
@@ -901,33 +901,33 @@ typedef struct {
     uint32_t procedural_assertion_count;
     llg_concurrent_assertion_t** procedural_assertions;
     uint32_t deferred_matured_next;
-    int deferred_matured_scheduled;
+    int32_t deferred_matured_scheduled;
     uint64_t next_process_identity;
-    int in_deferred_action;
+    int32_t in_deferred_action;
     // Set while Postponed display evaluators run. Lowering admits only
     // helpers whose stores target their own static storage (SV 4.4.2.9
     // forbids visible writes there); those stores apply without publication.
-    int private_evaluation;
-    int running;
-    int finish;
-    int suspended;
-    int stop_policy;
+    int32_t private_evaluation;
+    int32_t running;
+    int32_t finish;
+    int32_t suspended;
+    int32_t stop_policy;
     llg_proc_t* stop_proc;
     llg_region_t stop_region;
-    int config_error;
+    int32_t config_error;
     uint64_t zero_loop_limit;
     uint64_t process_step_limit;
     uint64_t region_passes;    // zero-delay guard units in the current time step (region passes + coroutine resumes)
     const char* last_process_name; // survives completed-process reclamation
     llg_proc_t** all_procs;   // checked-growable slot table; NULL holes are free
-    int n_procs;
-    int all_procs_capacity;
+    int32_t n_procs;
+    int32_t all_procs_capacity;
     // Six radix-64 levels cover the entire int-indexed registry.
     uint64_t* proc_free_bits[6];
-    int proc_free_levels;
+    int32_t proc_free_levels;
     size_t program_processes;       // live program initial procedures only
     llg_program_t* programs;        // stable origins, owned until runtime cleanup
-    int program_completion_pending; // service after the full cancellation batch
+    int32_t program_completion_pending; // service after the full cancellation batch
     llg_proc_t* retired_procs; // cancelled coroutines awaiting a safe destroy point
     llg_proc_t* delayed_calls; // pending carriers of llg_schedule_delayed_call
     llg_process_handle_t* process_handles; // stable identities for live/exited procs
@@ -938,21 +938,21 @@ typedef struct {
     llg_activation_t* activations; // active named block/task invocations
     llg_monitor_state_t* monitors;      // registration order; `$monitor` is one entry
     llg_monitor_state_t* monitors_tail;
-    int monitor_off;                    // `$monitoroff` flag (default on, SV 21.2.3)
-    int monitors_sweeping;              // a check is walking the list
+    int32_t monitor_off;                    // `$monitoroff` flag (default on, SV 21.2.3)
+    int32_t monitors_sweeping;              // a check is walking the list
     llg_strobe_t* strobes;     // pending $strobe lines, last issued first
     // Active procedural forces. Entries own copied target/source descriptors;
     // no pre-force value is retained because release is object-specific.
     llg_force_entry_t* force_table;   // checked-growable live-entry table
-    int force_count;
-    int force_capacity;
+    int32_t force_count;
+    int32_t force_capacity;
     llg_rng_state_t rng_root;
     // Runtime-owned processes spawned so far: the ordinal that derives each
     // one's random stream from the root without drawing from it.
     uint64_t owned_spawns;
     // Per-instance initialization streams of static processes (18.14.1),
     // an open-addressing table keyed by instance name.
-    int rng_instance_streams;  // seed static processes per instance
+    int32_t rng_instance_streams;  // seed static processes per instance
     struct llg_rng_scope_entry* rng_scopes;
     // Instance stream of the static initializer being run outside any
     // process, or NULL (the root stream).
@@ -961,7 +961,7 @@ typedef struct {
     // running initialization outside every labelled scope (S13-D7).
     const char* rng_initializer_label;
     llg_process_handle_t* init_process_root;
-    int init_processes;  // some initialization process handle exists
+    int32_t init_processes;  // some initialization process handle exists
     size_t rng_scope_capacity;
     size_t rng_scope_count;
     // Free checker variable sets (free_variables.c), in registration order;
@@ -969,8 +969,8 @@ typedef struct {
     struct llg_free_set* free_sets;
     struct llg_free_set* free_solving;
     llg_rng_state_t* free_rng;
-    int free_sets_resolved;
-    int argc;
+    int32_t free_sets_resolved;
+    int32_t argc;
     char** argv;
     llg_q_queue_t* q_queues;
     // The saved values (16.15.6.1) of the procedural assertion attempt being
@@ -996,7 +996,7 @@ static inline void change_check(void) {
 // Defined in free_variables.c, after the assertion engine it reads.
 static void free_sets_release(void);
 
-static void process_status_set(llg_proc_t* proc, int status) {
+static void process_status_set(llg_proc_t* proc, int32_t status) {
     if (!proc) return;
     proc->status = status;
     if (proc->handle) proc->handle->status = status;
@@ -1043,22 +1043,22 @@ typedef struct {
     // The path the file was opened with (owned), served by vpi_mcd_name();
     // NULL for the preopened host streams.
     char* name;
-    int open;
-    int owned;
-    int error;
-    int eof;
+    int32_t open;
+    int32_t owned;
+    int32_t error;
+    int32_t eof;
     char message[160];
-    unsigned char pushback[LLG_FILE_PUSHBACK];
+    uint8_t pushback[LLG_FILE_PUSHBACK];
     size_t pushback_len;
 } llg_file_slot_t;
 
 static llg_file_slot_t llg_file_slots[LLG_FILE_SLOTS];
-static int llg_files_initialized;
-static int llg_file_global_error;
+static int32_t llg_files_initialized;
+static int32_t llg_file_global_error;
 static char llg_file_global_message[160];
 // Keep ordinary streams alive between the scheduler and registered final
 // blocks; the final phase's cleanup closes them after its last output.
-static int llg_file_defer_cleanup;
+static int32_t llg_file_defer_cleanup;
 
 static void llg_file_cleanup(void);
 
@@ -1067,7 +1067,7 @@ static void llg_file_cleanup(void);
 // a cloned snapshot across that teardown and move it back for the finals.
 static llg_timeformat_state_t llg_final_time_format;
 static uint64_t llg_final_design_precision_fs;
-static int llg_final_timeformat_valid;
+static int32_t llg_final_timeformat_valid;
 
 static void llg_clear_final_timeformat(void) {
     if (!llg_final_timeformat_valid) return;
@@ -1116,8 +1116,8 @@ static uint64_t llg_time_unit_from_exponent(int64_t exponent) {
     return units[(size_t)(exponent + 15)];
 }
 
-static int llg_time_unit_exponent(uint64_t unit_fs) {
-    for (int exponent = -15; exponent <= 2; ++exponent) {
+static int32_t llg_time_unit_exponent(uint64_t unit_fs) {
+    for (int32_t exponent = -15; exponent <= 2; ++exponent) {
         if (llg_time_unit_from_exponent(exponent) == unit_fs) return exponent;
     }
     return INT_MIN;
@@ -1157,15 +1157,15 @@ static size_t llg_dependency_binding_count;
 
 // Kept outside `g`: every completed run cleans the context, but callers need
 // to inspect whether that run stopped with a controlled runtime failure.
-static int llg_last_failure;
-static int llg_last_config_error;
+static int32_t llg_last_failure;
+static int32_t llg_last_config_error;
 // A `$fatal` ran (20.9: the run ends "with an error code"). Separate from
 // llg_last_failure, which also suppresses the end-of-simulation assertion
 // settling that a `$fatal` finish still performs.
-static int llg_fatal_severity_ran;
+static int32_t llg_fatal_severity_ran;
 // A run-ending simulator error that skips the final procedures
 // (llg_rt_skip_finals); read by llg_rt_run_finals after the scheduler exit.
-static int llg_skip_final_procedures;
+static int32_t llg_skip_final_procedures;
 static uint64_t llg_severity_counts[4];
 static uint64_t llg_assertion_failure_counts[4];
 static uint64_t llg_assertion_cover_count;
@@ -1178,8 +1178,8 @@ static uint64_t llg_assertion_event_order;
 static uint64_t llg_event_generation;
 static uint64_t llg_configured_zero_loop_limit;
 static uint64_t llg_configured_process_step_limit;
-static int llg_configured_stop_policy = LLG_STOP_POLICY_RESUME;
-static int llg_stop_policy_override;
+static int32_t llg_configured_stop_policy = LLG_STOP_POLICY_RESUME;
+static int32_t llg_stop_policy_override;
 
 static const char* const llg_region_names[LLG_REGION_COUNT] = {
     "Preponed",

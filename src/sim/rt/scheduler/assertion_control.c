@@ -1,6 +1,6 @@
 
 static llg_rt_error_fn llg_error_hook;
-static int llg_error_hook_active;
+static int32_t llg_error_hook_active;
 
 void llg_rt_error_hook(llg_rt_error_fn hook) { llg_error_hook = hook; }
 
@@ -8,7 +8,7 @@ void llg_rt_error_hook(llg_rt_error_fn hook) { llg_error_hook = hook; }
 // is not reported to it again. The observer gets plain text: a framed site
 // gives only its `file:line:col` part (the scope before the unit separator
 // is message context), and a simulator text ends before its hint separator.
-void llg_rt_note_error(int fatal, const char* message, const char* location) {
+void llg_rt_note_error(int32_t fatal, const char* message, const char* location) {
     if (!llg_error_hook || llg_error_hook_active) return;
     const char* separator = location ? strchr(location, LLG_RT_SITE_SEPARATOR) : NULL;
     if (separator) location = separator + 1;
@@ -16,7 +16,7 @@ void llg_rt_note_error(int fatal, const char* message, const char* location) {
     const char* hint = message ? strchr(message, LLG_RT_HINT_SEPARATOR) : NULL;
     if (hint) {
         size_t len = (size_t)(hint - message);
-        snprintf(text, sizeof text, "%.*s", len > 511u ? 511 : (int)len, message);
+        snprintf(text, sizeof text, "%.*s", len > 511u ? 511 : (int32_t)len, message);
         message = text;
     }
     llg_error_hook_active = 1;
@@ -24,11 +24,11 @@ void llg_rt_note_error(int fatal, const char* message, const char* location) {
     llg_error_hook_active = 0;
 }
 
-static void llg_report_severity_typed(int severity, const char* fmt,
-                                      llg_fmt_arg_t* args, int n,
+static void llg_report_severity_typed(int32_t severity, const char* fmt,
+                                      llg_fmt_arg_t* args, int32_t n,
                                       const char* scope, const char* location) {
     if (severity < LLG_SEVERITY_INFO || severity > LLG_SEVERITY_FATAL) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid severity level %d", severity);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid severity level %" PRId32, severity);
         abort();
     }
     if (n < 0) {
@@ -67,23 +67,23 @@ static void llg_report_severity_typed(int severity, const char* fmt,
     llg_report_emit(&report, stderr);
     if (severity >= LLG_SEVERITY_ERROR && llg_error_hook) {
         char message[512];
-        snprintf(message, sizeof message, "%.*s", len > 511u ? 511 : (int)len, out);
+        snprintf(message, sizeof message, "%.*s", len > 511u ? 511 : (int32_t)len, out);
         llg_rt_note_error(severity == LLG_SEVERITY_FATAL, message, location);
     }
     free(out);
 }
 
-void llg_rt_severity_typed(int severity, const char* fmt, llg_fmt_arg_t* args,
-                           int n, const char* scope, const char* location) {
+void llg_rt_severity_typed(int32_t severity, const char* fmt, llg_fmt_arg_t* args,
+                           int32_t n, const char* scope, const char* location) {
     llg_report_severity_typed(severity, fmt, args, n, scope, location);
     llg_fmt_args_destroy(args, n);
 }
 
-void llg_rt_fatal_typed(int finish_number, const char* fmt,
-                        llg_fmt_arg_t* args, int n,
+void llg_rt_fatal_typed(int32_t finish_number, const char* fmt,
+                        llg_fmt_arg_t* args, int32_t n,
                         const char* scope, const char* location) {
     if (finish_number < 0 || finish_number > 2) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid $fatal finish number %d", finish_number);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid $fatal finish number %" PRId32, finish_number);
         llg_fmt_args_destroy(args, n);
         abort();
     }
@@ -105,7 +105,7 @@ void llg_rt_null_handle(const char* site) {
     llg_report_t out;
     llg_report_init(&text);
     llg_report_init(&out);
-    llg_report_printf(&text, "null class handle access: %.*s", (int)(framed - site), site);
+    llg_report_printf(&text, "null class handle access: %.*s", (int32_t)(framed - site), site);
     llg_rt_framed(&out, LLG_MSG_RUNTIME_ERROR, llg_msg_default_severity(LLG_MSG_RUNTIME_ERROR),
                   framed + 1, NULL, text.data, text.len, NULL);
     llg_report_free(&text);
@@ -114,12 +114,12 @@ void llg_rt_null_handle(const char* site) {
     llg_rt_fatal_typed(0, "null class handle access", NULL, 0, "", framed + 1);
 }
 
-uint64_t llg_rt_severity_count(int severity) {
+uint64_t llg_rt_severity_count(int32_t severity) {
     if (severity < LLG_SEVERITY_INFO || severity > LLG_SEVERITY_FATAL) return 0;
     return llg_severity_counts[severity];
 }
 
-static const char* llg_assertion_name(int kind) {
+static const char* llg_assertion_name(int32_t kind) {
     switch (kind) {
         case LLG_ASSERTION_ASSERT: return "assert";
         case LLG_ASSERTION_ASSUME: return "assume";
@@ -128,7 +128,7 @@ static const char* llg_assertion_name(int kind) {
     }
 }
 
-static void assertion_record_failure(int kind) {
+static void assertion_record_failure(int32_t kind) {
     if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_EXPECT ||
         llg_assertion_failure_counts[kind] == UINT64_MAX) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "invalid assertion kind or counter overflow");
@@ -137,7 +137,7 @@ static void assertion_record_failure(int kind) {
     llg_assertion_failure_counts[kind]++;
 }
 
-static void assertion_report_failure(int kind, const char* label,
+static void assertion_report_failure(int32_t kind, const char* label,
                                       const char* location) {
     if (llg_severity_counts[LLG_SEVERITY_ERROR] == UINT64_MAX) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "severity counter overflow");
@@ -163,7 +163,7 @@ static void assertion_report_failure(int kind, const char* label,
     }
 }
 
-void llg_assertion_failure(int kind, uint64_t identity, const char* label,
+void llg_assertion_failure(int32_t kind, uint64_t identity, const char* label,
                            const char* location) {
     (void)identity;
     assertion_record_failure(kind);
@@ -181,7 +181,7 @@ void llg_assertion_cover(uint64_t identity, const char* label, const char* locat
     llg_assertion_cover_count++;
 }
 
-uint64_t llg_assertion_count(int kind) {
+uint64_t llg_assertion_count(int32_t kind) {
     if (kind == LLG_ASSERTION_COVER) return llg_assertion_cover_count;
     if (kind >= LLG_ASSERTION_ASSERT && kind <= LLG_ASSERTION_EXPECT)
         return llg_assertion_failure_counts[kind];
@@ -200,7 +200,7 @@ static llg_concurrent_assertion_t* find_assertion(uint64_t identity) {
     return NULL;
 }
 
-static int path_matches_selector(const char* path, const char* selector) {
+static int32_t path_matches_selector(const char* path, const char* selector) {
     if (!path || !selector || !path[0] || !selector[0]) return 0;
     if (strcmp(path, selector) == 0) return 1;
     size_t path_len = strlen(path);
@@ -214,7 +214,7 @@ static int path_matches_selector(const char* path, const char* selector) {
            path[selector_len] == '.';
 }
 
-static int assertion_matches_scope(const llg_concurrent_assertion_t* assertion,
+static int32_t assertion_matches_scope(const llg_concurrent_assertion_t* assertion,
                                    const char* selector) {
     if (!selector || !selector[0]) return 0;
     if (path_matches_selector(assertion->scope, selector)) return 1;
@@ -232,12 +232,12 @@ static int assertion_matches_scope(const llg_concurrent_assertion_t* assertion,
     }
     memcpy(full + scope_len + (scope_len != 0), label, label_len);
     full[full_len] = '\0';
-    int matched = path_matches_selector(full, selector);
+    int32_t matched = path_matches_selector(full, selector);
     free(full);
     return matched;
 }
 
-static int assertion_matches_type(const llg_concurrent_assertion_t* assertion,
+static int32_t assertion_matches_type(const llg_concurrent_assertion_t* assertion,
                                   uint64_t assertion_type,
                                   uint64_t directive_type) {
     // Table 20-6: concurrent assertions use bit 1 and expect uses bit 16.
@@ -251,14 +251,14 @@ static int assertion_matches_type(const llg_concurrent_assertion_t* assertion,
     return (directive_type & directive_bit) != 0;
 }
 
-static int assertion_control_failure(const char* reason) {
+static int32_t assertion_control_failure(const char* reason) {
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "assertion control error: %s", reason);
     llg_last_failure = 1;
     g.finish = 1;
     return 0;
 }
 
-static int assertion_control_arg(const sv4_t* value, uint64_t* result) {
+static int32_t assertion_control_arg(const sv4_t* value, uint64_t* result) {
     if (!value || llg_sv4_width(*value) == 0 || llg_sv4_width(*value) > 64 ||
         sv4_is_unknown(*value))
         return 0;
@@ -266,7 +266,7 @@ static int assertion_control_arg(const sv4_t* value, uint64_t* result) {
     return 1;
 }
 
-static int assertion_has_attempts(const llg_concurrent_assertion_t* assertion) {
+static int32_t assertion_has_attempts(const llg_concurrent_assertion_t* assertion) {
     return assertion->attempts || assertion->sequence_antecedents ||
            assertion->sequence_consequents || assertion->property_attempts ||
            assertion->lag_head;
@@ -277,9 +277,9 @@ static int assertion_has_attempts(const llg_concurrent_assertion_t* assertion) {
 #define LLG_ASSERTION_TYPE_IMMEDIATE 2u
 #define LLG_ASSERTION_TYPE_DEFERRED 4u
 
-static int immediate_selected(uint64_t type_bit, int kind, const char* label,
+static int32_t immediate_selected(uint64_t type_bit, int32_t kind, const char* label,
                               const char* scope, uint64_t types, uint64_t directives,
-                              const char* const* scopes, int count) {
+                              const char* const* scopes, int32_t count) {
     uint64_t directive = kind == LLG_ASSERTION_COVER ? 2u :
                          kind == LLG_ASSERTION_ASSUME ? 4u : 1u;
     if (!(types & type_bit) || !(directives & directive)) return 0;
@@ -287,14 +287,14 @@ static int immediate_selected(uint64_t type_bit, int kind, const char* label,
     llg_concurrent_assertion_t view = {0};
     view.scope = scope;
     view.label = label;
-    for (int i = 0; i < count; ++i)
+    for (int32_t i = 0; i < count; ++i)
         if (assertion_matches_scope(&view, scopes[i])) return 1;
     return 0;
 }
 
 // The newest rule for `field` that selects the assertion decides; without
 // one the control is in its default, enabled state.
-static int immediate_rule_value(int field, uint64_t type_bit, int kind,
+static int32_t immediate_rule_value(int32_t field, uint64_t type_bit, int32_t kind,
                                 const char* label, const char* scope) {
     for (llg_assertion_rule_t* rule = llg_assertion_rules; rule; rule = rule->next) {
         if (rule->field != field) continue;
@@ -306,21 +306,21 @@ static int immediate_rule_value(int field, uint64_t type_bit, int kind,
     return 1;
 }
 
-int llg_deferred_assertion_enabled(int kind, const char* label, const char* scope) {
+int32_t llg_deferred_assertion_enabled(int32_t kind, const char* label, const char* scope) {
     return immediate_rule_value(LLG_ASSERTION_RULE_CHECK, LLG_ASSERTION_TYPE_DEFERRED,
                                 kind, label, scope);
 }
 
 // Whether a matured deferred report may run its action now: action controls
 // apply to actions that execute after the control task (SV 20.12).
-static int deferred_action_enabled(int kind, int passed, const char* label,
+static int32_t deferred_action_enabled(int32_t kind, int32_t passed, const char* label,
                                    const char* scope) {
     return immediate_rule_value(passed ? LLG_ASSERTION_RULE_PASS : LLG_ASSERTION_RULE_FAIL,
                                 LLG_ASSERTION_TYPE_DEFERRED, kind, label, scope);
 }
 
-int llg_immediate_assertion_controls(int kind, const char* label, const char* scope) {
-    int state = LLG_IMMEDIATE_CHECKED | LLG_IMMEDIATE_PASS_ACTION | LLG_IMMEDIATE_FAIL_ACTION;
+int32_t llg_immediate_assertion_controls(int32_t kind, const char* label, const char* scope) {
+    int32_t state = LLG_IMMEDIATE_CHECKED | LLG_IMMEDIATE_PASS_ACTION | LLG_IMMEDIATE_FAIL_ACTION;
     if (!llg_assertion_rules) return state;
     if (!immediate_rule_value(LLG_ASSERTION_RULE_CHECK, LLG_ASSERTION_TYPE_IMMEDIATE, kind,
                               label, scope))
@@ -334,11 +334,11 @@ int llg_immediate_assertion_controls(int kind, const char* label, const char* sc
     return state;
 }
 
-void llg_assertion_failure_quiet(int kind) {
+void llg_assertion_failure_quiet(int32_t kind) {
     assertion_record_failure(kind);
 }
 
-static void assertion_remember_control(int field, int enabled, uint64_t types,
+static void assertion_remember_control(int32_t field, int32_t enabled, uint64_t types,
                                        uint64_t directives, const char* scope) {
     // Replace equal selector/mask rules; repeated control in a loop must not
     // retain an unbounded history of identical commands.
@@ -374,7 +374,7 @@ static void assertion_remember_control(int field, int enabled, uint64_t types,
 // The rules one control operation records for immediate and deferred
 // assertions: ON/OFF/KILL set checking; each action task sets the action
 // classes it names (SV 20.12). A pass-action pair is (nonvacuous, vacuous).
-static void assertion_remember_operation(int operation, uint64_t types,
+static void assertion_remember_operation(int32_t operation, uint64_t types,
                                          uint64_t directives, const char* scope) {
     switch (operation) {
         case LLG_ASSERTION_CONTROL_ON:
@@ -386,7 +386,7 @@ static void assertion_remember_operation(int operation, uint64_t types,
             break;
         case LLG_ASSERTION_CONTROL_PASS_ON:
         case LLG_ASSERTION_CONTROL_PASS_OFF: {
-            int enabled = operation == LLG_ASSERTION_CONTROL_PASS_ON;
+            int32_t enabled = operation == LLG_ASSERTION_CONTROL_PASS_ON;
             assertion_remember_control(LLG_ASSERTION_RULE_PASS, enabled, types, directives, scope);
             assertion_remember_control(LLG_ASSERTION_RULE_VACUOUS, enabled, types, directives,
                                        scope);
@@ -410,7 +410,7 @@ static void assertion_remember_operation(int operation, uint64_t types,
 }
 
 static void assertion_apply_action_control(llg_concurrent_assertion_t* assertion,
-                                           int operation) {
+                                           int32_t operation) {
     switch (operation) {
         case LLG_ASSERTION_CONTROL_PASS_ON:
             assertion->pass_action_off = 0;
@@ -443,7 +443,7 @@ static void assertion_kill_actions(llg_concurrent_assertion_t* assertion) {
     // Cancellation changes the process table; restart each scan.
     for (;;) {
         llg_proc_t* victim = NULL;
-        for (int i = 0; i < g.n_procs; ++i) {
+        for (int32_t i = 0; i < g.n_procs; ++i) {
             llg_proc_t* p = g.all_procs[i];
             if (p && p->is_assertion_action &&
                 p->action_assertion == assertion->identity && !p->killed && !p->completed) {
@@ -468,7 +468,7 @@ static void assertion_kill_actions(llg_concurrent_assertion_t* assertion) {
 // (SV 20.11). Matured reports can no longer be flushed (SV 16.4.1), so a
 // kill issued by a Reactive action leaves them to execute.
 static void assertion_kill_deferred(uint64_t types, uint64_t directives,
-                                    const char* const* scopes, int count) {
+                                    const char* const* scopes, int32_t count) {
     if (!g.deferred_pending_live) return;
     for (uint32_t i = 0; i < g.deferred_pending.count; i++) {
         llg_deferred_assertion_report_t* report = &g.deferred_pending.items[i];
@@ -485,25 +485,25 @@ static void assertion_kill_deferred(uint64_t types, uint64_t directives,
     }
 }
 
-static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
-                                   const char* const* scopes, int n_scopes) {
+static int32_t assertion_control_apply(int32_t kind, const sv4_t* args, int32_t n_args,
+                                   const char* const* scopes, int32_t n_scopes) {
     if (!region_can_mutate("assertion control")) return 0;
     if (kind < LLG_ASSERTION_CONTROL_ON || kind > LLG_ASSERTION_CONTROL_VACUOUS_OFF ||
         n_args < 0 || n_args > 4 || n_scopes < 0 ||
         (n_args != 0 && !args) || (n_scopes != 0 && !scopes))
         return assertion_control_failure("invalid control argument shape");
 
-    for (int i = 0; i < n_scopes; ++i)
+    for (int32_t i = 0; i < n_scopes; ++i)
         if (!scopes[i] || !scopes[i][0])
             return assertion_control_failure("empty assertion scope selector");
 
     uint64_t values[4] = {0, 0, 0, 0};
-    for (int index = 0; index < n_args; index++) {
+    for (int32_t index = 0; index < n_args; index++) {
         if (!assertion_control_arg(&args[index], &values[index]))
             return assertion_control_failure("control arguments must be known 64-bit integers");
     }
 
-    int operation = kind;
+    int32_t operation = kind;
     uint64_t assertion_type = UINT64_C(255);
     uint64_t directive_type = UINT64_C(7);
     if (kind == LLG_ASSERTION_CONTROL_FULL) {
@@ -511,7 +511,7 @@ static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
         uint64_t control_type = values[0];
         if (control_type < 3 || control_type > 5)
             return assertion_control_failure("bounded $assertcontrol supports only ON, OFF, and KILL");
-        operation = (int)(control_type - 3);
+        operation = (int32_t)(control_type - 3);
         if (n_args > 1) assertion_type = values[1];
         if (n_args > 2) directive_type = values[2];
         // The optional fourth argument is `levels`. This bounded registry
@@ -530,7 +530,7 @@ static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
 
     if (n_scopes == 0)
         assertion_remember_operation(operation, assertion_type, directive_type, NULL);
-    for (int i = 0; i < n_scopes; ++i)
+    for (int32_t i = 0; i < n_scopes; ++i)
         assertion_remember_operation(operation, assertion_type, directive_type, scopes[i]);
     if (operation == LLG_ASSERTION_CONTROL_KILL)
         assertion_kill_deferred(assertion_type, directive_type, scopes, n_scopes);
@@ -542,8 +542,8 @@ static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
         if (kind == LLG_ASSERTION_CONTROL_FULL &&
             !assertion_matches_type(assertion, assertion_type, directive_type))
             continue;
-        int selected = n_scopes == 0;
-        for (int index = 0; !selected && index < n_scopes; index++)
+        int32_t selected = n_scopes == 0;
+        for (int32_t index = 0; !selected && index < n_scopes; index++)
             selected = assertion_matches_scope(assertion, scopes[index]);
         if (!selected) continue;
         switch (operation) {
@@ -602,10 +602,10 @@ static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
     return 1;
 }
 
-int llg_assertion_control(int kind, const sv4_t* args, int n_args,
-                          const char* const* scopes, int n_scopes) {
+int32_t llg_assertion_control(int32_t kind, const sv4_t* args, int32_t n_args,
+                          const char* const* scopes, int32_t n_scopes) {
     assertion_events_enter();
-    int result = assertion_control_apply(kind, args, n_args, scopes, n_scopes);
+    int32_t result = assertion_control_apply(kind, args, n_args, scopes, n_scopes);
     assertion_events_leave();
     return result;
 }
@@ -629,7 +629,7 @@ static LLG_OUTLYING void expect_values_arm(llg_concurrent_assertion_t* assertion
     assertion->expect_values = NULL;
 }
 
-int llg_assertion_expect_start(uint64_t identity, int has_fail_action) {
+int32_t llg_assertion_expect_start(uint64_t identity, int32_t has_fail_action) {
     if (!region_can_mutate("expect scheduling")) return 0;
     llg_concurrent_assertion_t* assertion = find_assertion(identity);
     llg_proc_t* current = llg_current();
@@ -647,7 +647,7 @@ int llg_assertion_expect_start(uint64_t identity, int has_fail_action) {
     return 1;
 }
 
-int llg_assertion_expect_outcome(uint64_t identity) {
+int32_t llg_assertion_expect_outcome(uint64_t identity) {
     llg_concurrent_assertion_t* assertion = find_assertion(identity);
     return assertion && assertion->hot->kind == LLG_ASSERTION_EXPECT ? assertion->expect_outcome
                                                                      : 0;

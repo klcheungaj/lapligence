@@ -11,9 +11,9 @@ enum {
 typedef struct {
     sv4_t value;
     uint64_t digits;
-    int too_wide;
+    int32_t too_wide;
     int64_t address;
-    int invalid_index;
+    int32_t invalid_index;
 } llg_memory_value_t;
 
 // The words of a load come from a file or, for `$sreadmemb/$sreadmemh`
@@ -33,7 +33,7 @@ typedef struct {
 static struct {
     const char* data;
     size_t length;
-    int active;
+    int32_t active;
 } llg_memory_text;
 
 void llg_memory_text_begin(const char* data, size_t length) {
@@ -46,13 +46,13 @@ void llg_memory_text_end(void) {
     memset(&llg_memory_text, 0, sizeof(llg_memory_text));
 }
 
-static int llg_memory_getc(llg_memory_stream_t* stream) {
+static int32_t llg_memory_getc(llg_memory_stream_t* stream) {
     if (stream->file) return fgetc(stream->file);
-    return stream->offset < stream->length ? (unsigned char)stream->text[stream->offset++] : EOF;
+    return stream->offset < stream->length ? (uint8_t)stream->text[stream->offset++] : EOF;
 }
 
 // Pushes back one character that `llg_memory_getc` just returned.
-static void llg_memory_ungetc(int c, llg_memory_stream_t* stream) {
+static void llg_memory_ungetc(int32_t c, llg_memory_stream_t* stream) {
     if (stream->file) {
         (void)ungetc(c, stream->file);
     } else if (stream->offset != 0) {
@@ -64,7 +64,7 @@ static void llg_memory_close(llg_memory_stream_t* stream) {
     if (stream->file) fclose(stream->file);
 }
 
-static int llg_memory_stream_failed(const llg_memory_stream_t* stream) {
+static int32_t llg_memory_stream_failed(const llg_memory_stream_t* stream) {
     return stream->file && ferror(stream->file);
 }
 
@@ -108,7 +108,7 @@ static void llg_memory_error(const char* path, const char* format, ...) {
 
 // Opens the source of a load; returns 0, with the warning reported, when a
 // file cannot be opened. Text sources always open.
-static int llg_memory_open_read(const char* label, llg_memory_stream_t* stream) {
+static int32_t llg_memory_open_read(const char* label, llg_memory_stream_t* stream) {
     memset(stream, 0, sizeof(*stream));
     if (llg_memory_text.active) {
         stream->text = llg_memory_text.data;
@@ -133,8 +133,8 @@ static char* llg_memory_path_copy(llg_string_t path) {
 
 // Append one binary or hexadecimal digit, retaining the least significant
 // token-capacity bits. The caller diagnoses an over-width token separately.
-static void llg_memory_append_digit(llg_memory_value_t* value, unsigned bits,
-                                    int state, unsigned numeric) {
+static void llg_memory_append_digit(llg_memory_value_t* value, uint32_t bits,
+                                    int32_t state, uint32_t numeric) {
     if (value->too_wide) return;
     if (value->digits >= (LLG_SUPPORTED_WIDTH_LIMIT - 1u) / bits) {
         value->too_wide = 1;
@@ -150,7 +150,7 @@ static void llg_memory_append_digit(llg_memory_value_t* value, unsigned bits,
     ++value->digits;
 }
 
-static int llg_memory_digit(int c, int radix, int* state, unsigned* numeric) {
+static int32_t llg_memory_digit(int32_t c, int32_t radix, int32_t* state, uint32_t* numeric) {
     if (c == 'x' || c == 'X') {
         *state = 1;
         *numeric = 0;
@@ -163,42 +163,42 @@ static int llg_memory_digit(int c, int radix, int* state, unsigned* numeric) {
     }
     if (c >= '0' && c <= '1') {
         *state = 0;
-        *numeric = (unsigned)(c - '0');
+        *numeric = (uint32_t)(c - '0');
         return 1;
     }
     if (radix == 16) {
         if (c >= '2' && c <= '9') {
             *state = 0;
-            *numeric = (unsigned)(c - '0');
+            *numeric = (uint32_t)(c - '0');
             return 1;
         }
         if (c >= 'a' && c <= 'f') {
             *state = 0;
-            *numeric = (unsigned)(c - 'a' + 10);
+            *numeric = (uint32_t)(c - 'a' + 10);
             return 1;
         }
         if (c >= 'A' && c <= 'F') {
             *state = 0;
-            *numeric = (unsigned)(c - 'A' + 10);
+            *numeric = (uint32_t)(c - 'A' + 10);
             return 1;
         }
     }
     return 0;
 }
 
-static int llg_memory_next_noncomment(llg_memory_stream_t* stream) {
+static int32_t llg_memory_next_noncomment(llg_memory_stream_t* stream) {
     for (;;) {
-        int c = llg_memory_getc(stream);
-        if (c == EOF || !isspace((unsigned char)c)) {
+        int32_t c = llg_memory_getc(stream);
+        if (c == EOF || !isspace((uint8_t)c)) {
             if (c != '/') return c;
-            int next = llg_memory_getc(stream);
+            int32_t next = llg_memory_getc(stream);
             if (next == '/') {
                 while ((c = llg_memory_getc(stream)) != EOF && c != '\n') {}
                 continue;
             }
             if (next == '*') {
-                int previous = 0;
-                int closed = 0;
+                int32_t previous = 0;
+                int32_t closed = 0;
                 while ((c = llg_memory_getc(stream)) != EOF) {
                     if (previous == '*' && c == '/') {
                         closed = 1;
@@ -216,9 +216,9 @@ static int llg_memory_next_noncomment(llg_memory_stream_t* stream) {
 }
 
 static void llg_memory_consume_bad_token(llg_memory_stream_t* stream) {
-    int c;
+    int32_t c;
     while ((c = llg_memory_getc(stream)) != EOF) {
-        if (isspace((unsigned char)c)) break;
+        if (isspace((uint8_t)c)) break;
         if (c == '/') {
             llg_memory_ungetc(c, stream);
             break;
@@ -226,21 +226,21 @@ static void llg_memory_consume_bad_token(llg_memory_stream_t* stream) {
     }
 }
 
-static int llg_memory_parse_digits(llg_memory_stream_t* stream, int radix, int first,
+static int32_t llg_memory_parse_digits(llg_memory_stream_t* stream, int32_t radix, int32_t first,
                                    llg_memory_value_t* value) {
-    const unsigned bits = radix == 2 ? 1u : 4u;
-    int c = first;
-    int saw_digit = 0;
-    int malformed = 0;
+    const uint32_t bits = radix == 2 ? 1u : 4u;
+    int32_t c = first;
+    int32_t saw_digit = 0;
+    int32_t malformed = 0;
     while (c != EOF) {
-        int state = 0;
-        unsigned numeric;
+        int32_t state = 0;
+        uint32_t numeric;
         if (llg_memory_digit(c, radix, &state, &numeric)) {
             llg_memory_append_digit(value, bits, state, numeric);
             saw_digit = 1;
         } else if (c == '_') {
             // Underscores are separators inside a memory word.
-        } else if (isspace((unsigned char)c)) {
+        } else if (isspace((uint8_t)c)) {
             break;
         } else if (c == '/') {
             llg_memory_ungetc(c, stream);
@@ -261,18 +261,18 @@ static int llg_memory_parse_digits(llg_memory_stream_t* stream, int radix, int f
 // With `wide_address`, an `@` address keeps all its hexadecimal digits in
 // `value->value` (an unsigned number without sign or X/Z) instead of a host
 // index, for associative-array keys of any width.
-static int llg_memory_next_token(llg_memory_stream_t* stream, int radix, int wide_address,
+static int32_t llg_memory_next_token(llg_memory_stream_t* stream, int32_t radix, int32_t wide_address,
                                  llg_memory_value_t* value) {
     sv4_destroy(&value->value);
     memset(value, 0, sizeof(*value));
-    int c = llg_memory_next_noncomment(stream);
+    int32_t c = llg_memory_next_noncomment(stream);
     if (c == EOF) return LLG_MEMORY_TOKEN_EOF;
     if (c == -2) return LLG_MEMORY_TOKEN_ERROR;
     if (c == '@' && wide_address) {
         c = llg_memory_getc(stream);
-        int state = 0;
-        if (!llg_memory_digit(c, 16, &state, &(unsigned){0}) || state != 0) {
-            if (c != EOF && !isspace((unsigned char)c)) llg_memory_consume_bad_token(stream);
+        int32_t state = 0;
+        if (!llg_memory_digit(c, 16, &state, &(uint32_t){0}) || state != 0) {
+            if (c != EOF && !isspace((uint8_t)c)) llg_memory_consume_bad_token(stream);
             return LLG_MEMORY_TOKEN_ERROR;
         }
         if (llg_memory_parse_digits(stream, 16, c, value) != LLG_MEMORY_TOKEN_DATA ||
@@ -283,15 +283,15 @@ static int llg_memory_next_token(llg_memory_stream_t* stream, int radix, int wid
     }
     if (c == '@') {
         c = llg_memory_getc(stream);
-        int negative = 0;
+        int32_t negative = 0;
         uint64_t magnitude = 0;
-        int saw_digit = 0;
+        int32_t saw_digit = 0;
         if (c == '-' || c == '+') {
             negative = c == '-';
             c = llg_memory_getc(stream);
         }
-        int state;
-        unsigned numeric = 0;
+        int32_t state;
+        uint32_t numeric = 0;
         while (c != EOF) {
             if (llg_memory_digit(c, 16, &state, &numeric) && state == 0) {
                 saw_digit = 1;
@@ -302,7 +302,7 @@ static int llg_memory_next_token(llg_memory_stream_t* stream, int radix, int wid
                 }
             } else if (c == '_') {
                 // Underscores are separators inside an address.
-            } else if (isspace((unsigned char)c)) {
+            } else if (isspace((uint8_t)c)) {
                 break;
             } else if (c == '/') {
                 llg_memory_ungetc(c, stream);
@@ -323,14 +323,14 @@ static int llg_memory_next_token(llg_memory_stream_t* stream, int radix, int wid
         }
         return LLG_MEMORY_TOKEN_ADDRESS;
     }
-    if (!llg_memory_digit(c, radix, &(int){0}, &(unsigned){0})) {
+    if (!llg_memory_digit(c, radix, &(int32_t){0}, &(uint32_t){0})) {
         llg_memory_consume_bad_token(stream);
         return LLG_MEMORY_TOKEN_ERROR;
     }
     return llg_memory_parse_digits(stream, radix, c, value);
 }
 
-static int llg_memory_extent(int32_t left_value, int32_t right_value,
+static int32_t llg_memory_extent(int32_t left_value, int32_t right_value,
                              uint64_t* extent) {
     int64_t left = left_value;
     int64_t right = right_value;
@@ -341,7 +341,7 @@ static int llg_memory_extent(int32_t left_value, int32_t right_value,
     return 1;
 }
 
-static int llg_memory_address_offset(int64_t address, int32_t left_value,
+static int32_t llg_memory_address_offset(int64_t address, int32_t left_value,
                                      int32_t right_value, uint64_t* offset) {
     int64_t left = left_value;
     int64_t right = right_value;
@@ -352,8 +352,8 @@ static int llg_memory_address_offset(int64_t address, int32_t left_value,
     return 1;
 }
 
-static int llg_memory_descriptor(const char* path, uint64_t total,
-                                 const int32_t* dims, int n_dims,
+static int32_t llg_memory_descriptor(const char* path, uint64_t total,
+                                 const int32_t* dims, int32_t n_dims,
                                  const uint64_t* strides, uint64_t origin,
                                  uint64_t view_total, uint64_t* inner_total) {
     if (origin == UINT64_MAX) {
@@ -368,7 +368,7 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
         return 0;
     }
     uint64_t expected_total = 1;
-    for (int dimension = 0; dimension < n_dims; ++dimension) {
+    for (int32_t dimension = 0; dimension < n_dims; ++dimension) {
         uint64_t extent;
         if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
             expected_total > UINT64_MAX / extent) {
@@ -382,7 +382,7 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
         return 0;
     }
     uint64_t expected_stride = 1;
-    for (int dimension = n_dims - 1; dimension >= 0; --dimension) {
+    for (int32_t dimension = n_dims - 1; dimension >= 0; --dimension) {
         uint64_t extent;
         if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
             strides[dimension] != expected_stride ||
@@ -393,7 +393,7 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
         expected_stride *= extent;
     }
     uint64_t max_offset = 0;
-    for (int dimension = 0; dimension < n_dims; ++dimension) {
+    for (int32_t dimension = 0; dimension < n_dims; ++dimension) {
         uint64_t extent;
         if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
             extent == 0 ||
@@ -418,8 +418,8 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
     return 1;
 }
 
-static int llg_memory_view_index(int64_t address, uint64_t inner_ordinal,
-                                 const int32_t* dims, int n_dims,
+static int32_t llg_memory_view_index(int64_t address, uint64_t inner_ordinal,
+                                 const int32_t* dims, int32_t n_dims,
                                  const uint64_t* strides, uint64_t origin,
                                  uint64_t view_total, uint64_t total,
                                  uint64_t* index) {
@@ -436,7 +436,7 @@ static int llg_memory_view_index(int64_t address, uint64_t inner_ordinal,
     uint64_t flat = origin + outer_offset * strides[0];
     if (flat < origin) return 0;
     uint64_t ordinal = inner_ordinal;
-    for (int dimension = n_dims - 1; dimension >= 1; --dimension) {
+    for (int32_t dimension = n_dims - 1; dimension >= 1; --dimension) {
         uint64_t extent;
         if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
             extent == 0) {
@@ -467,19 +467,19 @@ static uint64_t llg_memory_range_length(int64_t first, int64_t last) {
 /* X and Z bits of a start or finish address read as 0 (decision S27-D26,
  * industry-standard behaviour; 21.4 gives no meaning to an unknown
  * address). */
-static int llg_memory_address_index(sv4_t address, int64_t* index) {
+static int32_t llg_memory_address_index(sv4_t address, int64_t* index) {
     sv4_t known = sv4_to_two_state(address);
-    int converted = sv4_to_index_i64(known, index);
+    int32_t converted = sv4_to_index_i64(known, index);
     sv4_destroy(&known);
     return converted;
 }
 
-static int llg_memory_bounds(const char* path, uint64_t total,
-                             const int32_t* dims, int n_dims,
+static int32_t llg_memory_bounds(const char* path, uint64_t total,
+                             const int32_t* dims, int32_t n_dims,
                              const uint64_t* strides, uint64_t origin,
                              uint64_t view_total, sv4_t start, sv4_t finish,
-                             int has_start, int has_finish, int addressing_policy,
-                             int reject_outside, int64_t* first, int64_t* last,
+                             int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                             int32_t reject_outside, int64_t* first, int64_t* last,
                              uint64_t* inner_total) {
     if (!llg_memory_descriptor(path, total, dims, n_dims, strides, origin,
                                view_total, inner_total)) {
@@ -518,7 +518,7 @@ static int llg_memory_bounds(const char* path, uint64_t total,
     return 1;
 }
 
-static int llg_memory_in_requested_range(int64_t address, int64_t first,
+static int32_t llg_memory_in_requested_range(int64_t address, int64_t first,
                                          int64_t last) {
     return first <= last ? address >= first && address <= last
                          : address <= first && address >= last;
@@ -548,9 +548,9 @@ typedef struct {
     uint32_t image_offset;
     // Published image: 0 = no store allowed, 1 = private store, 2 = store and
     // publish once at the end (see `llg_memory_image_begin`).
-    int publish;
-    int image_mode;
-    int image_changed;
+    int32_t publish;
+    int32_t image_mode;
+    int32_t image_changed;
     sv4_t image_old_lsb;
     // Rows of a container whose elements are fixed arrays of packed words:
     // cell `i` is item `i % row_cells` of row `i / row_cells`.
@@ -643,7 +643,7 @@ static void llg_memory_store(llg_memory_storage_t* storage, uint64_t index,
 // Format one cell into `digits`.
 static void llg_memory_format_cell(const llg_memory_storage_t* storage,
                                    uint64_t index, uint64_t total,
-                                   uint32_t elem_width, int radix,
+                                   uint32_t elem_width, int32_t radix,
                                    char* digits, size_t capacity) {
     char conversion = radix == 2 ? 'b' : 'h';
     if (storage->image) {
@@ -666,7 +666,7 @@ static void llg_memory_format_cell(const llg_memory_storage_t* storage,
 
 // Create the associative element a load targets. Returns 0, with the error
 // reported, when the element cannot be created.
-static int llg_memory_storage_resolve(const char* path, llg_memory_storage_t* storage) {
+static int32_t llg_memory_storage_resolve(const char* path, llg_memory_storage_t* storage) {
     if (!storage->assoc || storage->rows) return 1;
     storage->rows = llg_assoc_value_element_integral(storage->assoc, &storage->assoc_key, 1, 1);
     if (!storage->rows) {
@@ -678,7 +678,7 @@ static int llg_memory_storage_resolve(const char* path, llg_memory_storage_t* st
 
 // An image must lie within its storage: `total` cells of the element width
 // from `image_offset`.
-static int llg_memory_storage_valid(const char* path,
+static int32_t llg_memory_storage_valid(const char* path,
                                     const llg_memory_storage_t* storage,
                                     uint64_t total, uint32_t elem_width) {
     if (!storage->image) return 1;
@@ -697,9 +697,9 @@ static int llg_memory_storage_valid(const char* path,
 // word is an unsized unsigned literal at the element width. An enum element
 // takes any such word, member or not (S27-D4, industry-standard behaviour).
 // Returns 0, with the error reported, when the load must terminate.
-static int llg_memory_convert_word(const char* filename, llg_memory_value_t* token,
+static int32_t llg_memory_convert_word(const char* filename, llg_memory_value_t* token,
                                    uint32_t elem_width, int8_t elem_signed,
-                                   int8_t two_state, int* warned_unknown,
+                                   int8_t two_state, int32_t* warned_unknown,
                                    sv4_t* converted) {
     // A number with a whole digit more than the element holds, leading zeros
     // included, is an error that ends the load (S27-D2, industry-standard
@@ -710,7 +710,7 @@ static int llg_memory_convert_word(const char* filename, llg_memory_value_t* tok
             "memory word has more digits than the element holds; load terminated");
         return 0;
     }
-    int had_unknown = sv4_is_unknown(token->value);
+    int32_t had_unknown = sv4_is_unknown(token->value);
     if (two_state && had_unknown) {
         sv4_replace(&token->value, sv4_to_two_state(token->value));
     }
@@ -724,11 +724,11 @@ static int llg_memory_convert_word(const char* filename, llg_memory_value_t* tok
 
 static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* storage, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix) {
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix) {
     char* filename = llg_memory_path_copy(path);
     llg_memory_stream_t stream_storage;
     llg_memory_stream_t* stream = &stream_storage;
@@ -764,12 +764,12 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
     int64_t current = first;
     int64_t step = first <= last ? 1 : -1;
     uint64_t inner = 0;
-    int warned_extra = 0;
-    int warned_unknown = 0;
-    int saw_address = 0;
+    int32_t warned_extra = 0;
+    int32_t warned_unknown = 0;
+    int32_t saw_address = 0;
     llg_memory_value_t token = {0};
     for (;;) {
-        int kind = llg_memory_next_token(stream, radix, 0, &token);
+        int32_t kind = llg_memory_next_token(stream, radix, 0, &token);
         if (kind == LLG_MEMORY_TOKEN_EOF) break;
         if (kind == LLG_MEMORY_TOKEN_ERROR) {
             // The text admits only white space, comments, numbers and `@`
@@ -868,11 +868,11 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
 
 static void fixed_memory_write_view(llg_string_t path, const llg_memory_storage_t* storage, uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                           const int32_t* dims, int n_dims,
+                           const int32_t* dims, int32_t n_dims,
                            const uint64_t* strides, uint64_t origin,
                            uint64_t view_total, sv4_t start, sv4_t finish,
-                           int has_start, int has_finish, int addressing_policy,
-                           int radix) {
+                           int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                           int32_t radix) {
     (void)two_state;
     char* requested = llg_memory_path_copy(path);
     char* filename = llg_output_path(requested);
@@ -898,7 +898,7 @@ static void fixed_memory_write_view(llg_string_t path, const llg_memory_storage_
     char* digits = (char*)llg_checked_malloc(capacity, 1, "memory file word");
     int64_t current = first;
     int64_t step = first <= last ? 1 : -1;
-    int warned_extra = 0;
+    int32_t warned_extra = 0;
     uint64_t inner = 0;
     for (;;) {
         uint64_t index;
@@ -934,9 +934,9 @@ static void fixed_memory_write_view(llg_string_t path, const llg_memory_storage_
 
 void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                     const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                     int has_start, int has_finish, int addressing_policy,
-                     int radix) {
+                     const int32_t* dims, int32_t n_dims, sv4_t start, sv4_t finish,
+                     int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                     int32_t radix) {
     uint64_t stride = 1;
     llg_memory_read_view(path, memory, total, elem_width, elem_signed, two_state,
                          dims, n_dims, n_dims == 1 ? &stride : NULL, 0, total,
@@ -946,9 +946,9 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
 
 void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
                       uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                      int has_start, int has_finish, int addressing_policy,
-                      int radix) {
+                      const int32_t* dims, int32_t n_dims, sv4_t start, sv4_t finish,
+                      int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                      int32_t radix) {
     uint64_t stride = 1;
     llg_memory_write_view(path, memory, total, elem_width, elem_signed, two_state,
                           dims, n_dims, n_dims == 1 ? &stride : NULL, 0, total,
@@ -958,7 +958,7 @@ void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
 
 static void llg_file_cleanup(void) {
     if (!llg_files_initialized) return;
-    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+    for (uint32_t i = 0; i < LLG_FILE_SLOTS; i++) {
         if (llg_file_slots[i].owned && llg_file_slots[i].open && llg_file_slots[i].stream)
             fclose(llg_file_slots[i].stream);
         free(llg_file_slots[i].name);
@@ -971,22 +971,22 @@ static void llg_file_cleanup(void) {
 
 void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix) {
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix) {
     llg_memory_storage_t storage = {0};
     storage.memory = memory;
     fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
 }
 void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix) {
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix) {
     llg_memory_storage_t storage = {0};
     storage.fixed = memory;
     fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
@@ -994,11 +994,11 @@ void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, ui
 void llg_image_memory_read_view(llg_string_t path, const llg_memory_image_t* memory,
                           uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix) {
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix) {
     llg_memory_storage_t storage = {0};
     storage.image = memory->storage;
     storage.image_offset = memory->offset;
@@ -1010,22 +1010,22 @@ void llg_image_memory_read_view(llg_string_t path, const llg_memory_image_t* mem
 
 void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix) {
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix) {
     llg_memory_storage_t storage = {0};
     storage.memory = memory;
     fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
 }
 void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix) {
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix) {
     llg_memory_storage_t storage = {0};
     storage.fixed = memory;
     fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
@@ -1033,11 +1033,11 @@ void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, u
 void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* memory,
                           uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix) {
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix) {
     llg_memory_storage_t storage = {0};
     storage.image = memory->storage;
     storage.image_offset = memory->offset;
@@ -1047,8 +1047,8 @@ void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* me
 // Whether a runtime-sized container of `size` elements can be addressed;
 // otherwise report it and return 0. An empty array loads nothing with a
 // warning and dumps as an empty file (decision S27-D10).
-static int llg_container_memory_addressable(int write, llg_string_t path, size_t size,
-                                            int has_start, int has_finish) {
+static int32_t llg_container_memory_addressable(int32_t write, llg_string_t path, size_t size,
+                                            int32_t has_start, int32_t has_finish) {
     if (size != 0 && size - 1u <= (size_t)INT32_MAX) return 1;
     char* filename = llg_memory_path_copy(path);
     if (size != 0) {
@@ -1073,7 +1073,7 @@ static int llg_container_memory_addressable(int write, llg_string_t path, size_t
 // indices within `[0:size-1]` of the current size (decision S27-D14);
 // reversed queue bounds select no element (S27-D20). Otherwise report it and
 // return 0.
-static int llg_container_memory_slice_valid(llg_string_t path, const int32_t* dims,
+static int32_t llg_container_memory_slice_valid(llg_string_t path, const int32_t* dims,
                                             size_t size) {
     const char* problem = NULL;
     if (dims[0] >= 0 && dims[0] > dims[1]) {
@@ -1094,15 +1094,15 @@ static int llg_container_memory_slice_valid(llg_string_t path, const int32_t* di
 // (IEEE 1800-2009 21.4.1); a slice of one (`total` 0, one ascending dimension)
 // must lie within that size; a fixed-size view must match the size. A load that
 // placed any word sends one contents notification, like `$fread`.
-static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
+static void llg_container_memory_view(int32_t write, llg_string_t path, sv4_t* data,
                                       size_t size, llg_container_notify_fn notify,
                                       sv4_t* contents, sv4_t* shape, uint64_t total,
                                       uint32_t elem_width, int8_t elem_signed,
-                                      int8_t two_state, const int32_t* dims, int n_dims,
+                                      int8_t two_state, const int32_t* dims, int32_t n_dims,
                                       const uint64_t* strides, uint64_t origin,
                                       uint64_t view_total, sv4_t start, sv4_t finish,
-                                      int has_start, int has_finish, int addressing_policy,
-                                      int radix) {
+                                      int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                                      int32_t radix) {
     int32_t runtime_dims[2];
     uint64_t runtime_stride = 1;
     if (n_dims == 0) {
@@ -1137,11 +1137,11 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
 
 #define LLG_CONTAINER_MEMORY_ENTRY(name, type, write)                              \
     void name(llg_string_t path, type* memory, uint64_t total, uint32_t elem_width,  \
-              int8_t elem_signed, int8_t two_state, const int32_t* dims, int n_dims, \
+              int8_t elem_signed, int8_t two_state, const int32_t* dims, int32_t n_dims, \
               const uint64_t* strides, uint64_t origin, uint64_t view_total,         \
-              sv4_t start, sv4_t finish, int has_start, int has_finish,              \
-              int addressing_policy, \
-              int radix) {                                                           \
+              sv4_t start, sv4_t finish, int32_t has_start, int32_t has_finish,              \
+              int32_t addressing_policy, \
+              int32_t radix) {                                                           \
         llg_container_memory_view(write, path, memory->data, memory->size,           \
                                   memory->notify, memory->contents_dependency,       \
                                   memory->shape_dependency, total, elem_width,       \
@@ -1157,8 +1157,8 @@ LLG_CONTAINER_MEMORY_ENTRY(llg_queue_memory_write_view, struct llg_queue_t, 1)
 
 // Whether `element` describes fixed arrays of `row_cells` packed words of
 // `elem_width` bits, viewed through `dims`.
-static int llg_rows_descriptor_valid(const llg_value_desc_t* element, uint64_t row_cells,
-                                     uint32_t elem_width, const int32_t* dims, int n_dims) {
+static int32_t llg_rows_descriptor_valid(const llg_value_desc_t* element, uint64_t row_cells,
+                                     uint32_t elem_width, const int32_t* dims, int32_t n_dims) {
     return element && element->kind == LLG_VALUE_FIXED_ARRAY &&
            element->item_count == row_cells && row_cells != 0 && element->element &&
            element->element->kind == LLG_VALUE_PACKED &&
@@ -1171,15 +1171,15 @@ static int llg_rows_descriptor_valid(const llg_value_desc_t* element, uint64_t r
 // `view_total` inside it; an unknown or missing element is an error. The
 // container is never resized (IEEE 1800-2009 21.4.1). A load that placed any
 // word sends one contents notification.
-static void llg_rows_memory_view(int write, llg_string_t path, llg_value_t* data, size_t size,
+static void llg_rows_memory_view(int32_t write, llg_string_t path, llg_value_t* data, size_t size,
                                  const llg_value_desc_t* element,
                                  llg_container_notify_fn notify, sv4_t* contents,
                                  sv4_t* shape, sv4_t row, uint64_t row_cells,
                                  uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                                 const int32_t* dims, int n_dims, const uint64_t* strides,
+                                 const int32_t* dims, int32_t n_dims, const uint64_t* strides,
                                  uint64_t origin, uint64_t view_total, sv4_t start,
-                                 sv4_t finish, int has_start, int has_finish,
-                                 int addressing_policy, int radix) {
+                                 sv4_t finish, int32_t has_start, int32_t has_finish,
+                                 int32_t addressing_policy, int32_t radix) {
     if (!llg_rows_descriptor_valid(element, row_cells, elem_width, dims, n_dims)) {
         char* filename = llg_memory_path_copy(path);
         llg_memory_error(filename, "memory descriptor does not match its container");
@@ -1207,9 +1207,9 @@ static void llg_rows_memory_view(int write, llg_string_t path, llg_value_t* data
 #define LLG_ROWS_MEMORY_ENTRY(name, type, write)                                        \
     void name(llg_string_t path, type* memory, sv4_t row, uint64_t row_cells,            \
               uint32_t elem_width, int8_t elem_signed, int8_t two_state,                 \
-              const int32_t* dims, int n_dims, const uint64_t* strides, uint64_t origin, \
-              uint64_t view_total, sv4_t start, sv4_t finish, int has_start,             \
-              int has_finish, int addressing_policy, int radix) {                                          \
+              const int32_t* dims, int32_t n_dims, const uint64_t* strides, uint64_t origin, \
+              uint64_t view_total, sv4_t start, sv4_t finish, int32_t has_start,             \
+              int32_t has_finish, int32_t addressing_policy, int32_t radix) {                                          \
         llg_rows_memory_view(write, path, memory->data, memory->size, memory->element,   \
                              memory->notify, memory->contents_dependency,                \
                              memory->shape_dependency, row, row_cells, elem_width,       \
@@ -1244,15 +1244,15 @@ static sv4_t llg_assoc_memory_key(llg_assoc_keys_t keys, sv4_t value) {
     return sv4_cast(value, keys.index_width, keys.index_signed);
 }
 
-static int llg_assoc_memory_less(sv4_t a, sv4_t b) {
+static int32_t llg_assoc_memory_less(sv4_t a, sv4_t b) {
     sv4_t less = sv4_lt(a, b);
-    int result = sv4_to_bool(less);
+    int32_t result = sv4_to_bool(less);
     sv4_destroy(&less);
     return result;
 }
 
-static int llg_assoc_memory_in_range(sv4_t key, sv4_t first, sv4_t last) {
-    int ascending = !llg_assoc_memory_less(last, first);
+static int32_t llg_assoc_memory_in_range(sv4_t key, sv4_t first, sv4_t last) {
+    int32_t ascending = !llg_assoc_memory_less(last, first);
     sv4_t low = ascending ? first : last;
     sv4_t high = ascending ? last : first;
     return !llg_assoc_memory_less(key, low) && !llg_assoc_memory_less(high, key);
@@ -1260,9 +1260,9 @@ static int llg_assoc_memory_in_range(sv4_t key, sv4_t first, sv4_t last) {
 
 // Start and finish arguments of an associative memory task. Without a start
 // a load begins at index 0 (S27-D15) and a dump at the lowest index.
-static int llg_assoc_memory_bounds(const char* filename, llg_assoc_keys_t keys,
-                                   sv4_t start, sv4_t finish, int has_start,
-                                   int has_finish, sv4_t* first, sv4_t* last) {
+static int32_t llg_assoc_memory_bounds(const char* filename, llg_assoc_keys_t keys,
+                                   sv4_t start, sv4_t finish, int32_t has_start,
+                                   int32_t has_finish, sv4_t* first, sv4_t* last) {
     if (keys.kind != LLG_ASSOC_INTEGRAL || keys.index_width == 0) {
         llg_memory_error(filename, "associative memory needs an integral index type");
         return 0;
@@ -1288,7 +1288,7 @@ static int llg_assoc_memory_bounds(const char* filename, llg_assoc_keys_t keys,
 // Move `current` one key in the load direction. Stepping past the index
 // type's maximum (or minimum) wraps, so the following words have no index
 // (S27-D8 for fixed memories); returns 0 then and leaves `current` alone.
-static int llg_assoc_memory_advance(sv4_t* current, sv4_t one, int descending,
+static int32_t llg_assoc_memory_advance(sv4_t* current, sv4_t one, int32_t descending,
                                     int8_t key_signed) {
     sv4_t next = descending ? sv4_sub(*current, one) : sv4_add(*current, one);
     llg_sv4_set_signed(&next, key_signed);
@@ -1308,8 +1308,8 @@ static int llg_assoc_memory_advance(sv4_t* current, sv4_t one, int descending,
 static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
                                   uint32_t elem_width, int8_t elem_signed,
                                   int8_t two_state, sv4_t start, sv4_t finish,
-                                  int has_start, int has_finish,
-                                  int radix) {
+                                  int32_t has_start, int32_t has_finish,
+                                  int32_t radix) {
     char* filename = llg_memory_path_copy(path);
     llg_memory_stream_t stream_storage;
     llg_memory_stream_t* stream = &stream_storage;
@@ -1325,13 +1325,13 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
         return;
     }
     sv4_t first = sv4_clone(&current);
-    int descending = has_finish && llg_assoc_memory_less(last, first);
+    int32_t descending = has_finish && llg_assoc_memory_less(last, first);
     sv4_t one = sv4_from_u64(1, array->key_width, array->key_signed);
-    int exhausted = 0, warned_extra = 0, warned_unknown = 0, saw_address = 0;
-    int terminated = 0;
+    int32_t exhausted = 0, warned_extra = 0, warned_unknown = 0, saw_address = 0;
+    int32_t terminated = 0;
     llg_memory_value_t token = {0};
     for (;;) {
-        int kind = llg_memory_next_token(stream, radix, 1, &token);
+        int32_t kind = llg_memory_next_token(stream, radix, 1, &token);
         if (kind == LLG_MEMORY_TOKEN_EOF) break;
         if (kind == LLG_MEMORY_TOKEN_ERROR) {
             llg_memory_error(filename, "malformed or over-width memory token; load terminated");
@@ -1402,7 +1402,7 @@ static void llg_assoc_memory_format_key(sv4_t key, char* digits, size_t capacity
 // and its direction.
 static void llg_assoc_memory_write(llg_string_t path, const llg_assoc_t* array,
                                    uint32_t elem_width, sv4_t start, sv4_t finish,
-                                   int has_start, int has_finish, int radix) {
+                                   int32_t has_start, int32_t has_finish, int32_t radix) {
     char* requested = llg_memory_path_copy(path);
     char* filename = llg_output_path(requested);
     free(requested);
@@ -1420,7 +1420,7 @@ static void llg_assoc_memory_write(llg_string_t path, const llg_assoc_t* array,
         free(filename);
         return;
     }
-    int descending = has_finish && llg_assoc_memory_less(last, first);
+    int32_t descending = has_finish && llg_assoc_memory_less(last, first);
     size_t key_capacity = (size_t)array->key_width + 2u;
     size_t word_capacity = (size_t)elem_width + 2u;
     char* key_digits = (char*)llg_checked_malloc(key_capacity, 1, "memory file address");
@@ -1451,10 +1451,10 @@ static void llg_assoc_memory_write(llg_string_t path, const llg_assoc_t* array,
 
 void llg_assoc_memory_read_view(llg_string_t path, struct llg_assoc_t* memory, uint64_t total,
                                 uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                                const int32_t* dims, int n_dims, const uint64_t* strides,
+                                const int32_t* dims, int32_t n_dims, const uint64_t* strides,
                                 uint64_t origin, uint64_t view_total, sv4_t start,
-                                sv4_t finish, int has_start, int has_finish,
-                                int addressing_policy, int radix) {
+                                sv4_t finish, int32_t has_start, int32_t has_finish,
+                                int32_t addressing_policy, int32_t radix) {
     (void)total; (void)dims; (void)n_dims; (void)strides; (void)origin;
     (void)view_total; (void)addressing_policy;
     llg_assoc_memory_read(path, memory, elem_width, elem_signed, two_state, start,
@@ -1463,10 +1463,10 @@ void llg_assoc_memory_read_view(llg_string_t path, struct llg_assoc_t* memory, u
 
 void llg_assoc_memory_write_view(llg_string_t path, struct llg_assoc_t* memory, uint64_t total,
                                  uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                                 const int32_t* dims, int n_dims, const uint64_t* strides,
+                                 const int32_t* dims, int32_t n_dims, const uint64_t* strides,
                                  uint64_t origin, uint64_t view_total, sv4_t start,
-                                 sv4_t finish, int has_start, int has_finish,
-                                 int addressing_policy, int radix) {
+                                 sv4_t finish, int32_t has_start, int32_t has_finish,
+                                 int32_t addressing_policy, int32_t radix) {
     (void)total; (void)elem_signed; (void)two_state; (void)dims; (void)n_dims;
     (void)strides; (void)origin; (void)view_total; (void)addressing_policy;
     llg_assoc_memory_write(path, memory, elem_width, start, finish, has_start,
@@ -1477,14 +1477,14 @@ void llg_assoc_memory_write_view(llg_string_t path, struct llg_assoc_t* memory, 
 // key) is a fixed memory addressed through the view inside it. A load creates
 // a missing element once its range is valid (S27-D23); a dump of a missing or
 // unknown key writes the default value and creates nothing (S27-D24).
-static void llg_assoc_rows_memory_view(int write, llg_string_t path, llg_assoc_value_t* array,
+static void llg_assoc_rows_memory_view(int32_t write, llg_string_t path, llg_assoc_value_t* array,
                                        sv4_t row, uint64_t row_cells,
                                        uint32_t elem_width, int8_t elem_signed,
-                                       int8_t two_state, const int32_t* dims, int n_dims,
+                                       int8_t two_state, const int32_t* dims, int32_t n_dims,
                                        const uint64_t* strides, uint64_t origin,
                                        uint64_t view_total, sv4_t start, sv4_t finish,
-                                       int has_start, int has_finish, int addressing_policy,
-                                       int radix) {
+                                       int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                                       int32_t radix) {
     if (!llg_rows_descriptor_valid(array->element, row_cells, elem_width, dims, n_dims) ||
         array->key_kind != LLG_ASSOC_INTEGRAL || array->key_width == 0) {
         char* filename = llg_memory_path_copy(path);
@@ -1530,10 +1530,10 @@ static void llg_assoc_rows_memory_view(int write, llg_string_t path, llg_assoc_v
 #define LLG_ASSOC_ROWS_MEMORY_ENTRY(name, write)                                        \
     void name(llg_string_t path, struct llg_assoc_value_t* memory, sv4_t row,            \
               uint64_t row_cells, uint32_t elem_width, int8_t elem_signed,               \
-              int8_t two_state, const int32_t* dims, int n_dims, const uint64_t* strides, \
+              int8_t two_state, const int32_t* dims, int32_t n_dims, const uint64_t* strides, \
               uint64_t origin, uint64_t view_total, sv4_t start, sv4_t finish,           \
-              int has_start, int has_finish, int addressing_policy,                      \
-              int radix) {                \
+              int32_t has_start, int32_t has_finish, int32_t addressing_policy,                      \
+              int32_t radix) {                \
         llg_assoc_rows_memory_view(write, path, memory, row, row_cells, elem_width,       \
                                    elem_signed, two_state, dims, n_dims, strides,        \
                                    origin, view_total, start, finish, has_start,         \
