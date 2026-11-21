@@ -17,9 +17,10 @@
 //!   [`MSVC_W4_FLOW_ERRORS`].
 //! - Truncating constant casts (C4310): a source scan, since no GCC or Clang
 //!   warning covers explicit casts.
-//! - Platform-width integer types: a source scan for `short`, `long` and
-//!   `long long` in the runtime, since `long` is 32-bit under MSVC and every
-//!   other host compiler makes it 64-bit.
+//! - Platform-width integer types: a source scan for `int`, `unsigned`,
+//!   `short`, `long` and `long long` in the runtime, since `long` is 32-bit
+//!   under MSVC and every other host compiler makes it 64-bit, and the runtime
+//!   states every width (`int32_t`, `uint32_t`, ...).
 //!
 //! The compiler checks are skipped without a Clang driver and on Windows,
 //! where the same sources build with MSVC itself.
@@ -786,54 +787,212 @@ fn c_code_only(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Whether a line of code (comments and literals removed by [`c_code_only`])
-/// names `short`, `long` or `long long`, signed or unsigned. Two forms stay
-/// allowed: `long double`, a floating type (docs/cross_platform.md, arm64),
-/// and the casts `(long long)` and `(unsigned long long)` that hand a 64-bit
-/// value to a printf-family `%lld` or `%llu`.
-fn names_platform_integer_type(code: &str) -> bool {
+/// The keywords of C11: never a routine name, so a file-scope
+/// `void (*hook)(int)` is not taken for a standard routine's declaration.
+const C_KEYWORDS: &[&str] = &[
+    "auto",
+    "break",
+    "case",
+    "char",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extern",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "inline",
+    "int",
+    "long",
+    "register",
+    "restrict",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "struct",
+    "switch",
+    "typedef",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+    "while",
+    "_Alignas",
+    "_Alignof",
+    "_Atomic",
+    "_Bool",
+    "_Complex",
+    "_Generic",
+    "_Imaginary",
+    "_Noreturn",
+    "_Static_assert",
+    "_Thread_local",
+    "defined",
+];
+
+/// The standard foreign-interface headers (IEEE 1800-2009 Annex I `svdpi.h`,
+/// Annex K `vpi_user.h`, Annex M `sv_vpi_user.h`), copied with the types the
+/// standard gives them. The integer-type scan skips their `int`, `unsigned`
+/// and `signed`, and allows those types in the runtime's own declarations and
+/// definitions of the routines they declare.
+const STANDARD_INTERFACE_HEADERS: &[&str] = &["svdpi.h", "vpi_user.h", "sv_vpi_user.h"];
+
+/// Identifier and punctuation tokens of code (comments and literals removed
+/// by [`c_code_only`]), each with its zero-based line.
+fn c_tokens(code: &str) -> Vec<(&str, usize)> {
     let mut tokens = Vec::new();
-    let mut chars = code.char_indices().peekable();
-    while let Some((start, c)) = chars.next() {
-        if c.is_ascii_alphanumeric() || c == '_' {
-            let mut end = start + c.len_utf8();
-            while let Some(&(at, next)) = chars.peek() {
-                if !(next.is_ascii_alphanumeric() || next == '_') {
-                    break;
+    for (line_index, line) in code.lines().enumerate() {
+        let mut chars = line.char_indices().peekable();
+        while let Some((start, c)) = chars.next() {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                let mut end = start + c.len_utf8();
+                while let Some(&(at, next)) = chars.peek() {
+                    if !(next.is_ascii_alphanumeric() || next == '_') {
+                        break;
+                    }
+                    end = at + next.len_utf8();
+                    chars.next();
                 }
-                end = at + next.len_utf8();
-                chars.next();
+                tokens.push((&line[start..end], line_index));
+            } else if !c.is_whitespace() {
+                tokens.push((&line[start..start + c.len_utf8()], line_index));
             }
-            tokens.push(&code[start..end]);
-        } else if !c.is_whitespace() {
-            tokens.push(&code[start..start + c.len_utf8()]);
         }
     }
-    let token = |index: usize| tokens.get(index).copied().unwrap_or("");
+    tokens
+}
+
+/// The routines `code` (a standard header, comments and literals removed)
+/// declares: every identifier followed by `(` that is not a keyword.
+fn declared_routines(code: &str, routines: &mut std::collections::BTreeSet<String>) {
+    let tokens = c_tokens(code);
+    for pair in tokens.windows(2) {
+        let name = pair[0].0;
+        if pair[1].0 == "("
+            && name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && !C_KEYWORDS.contains(&name)
+        {
+            routines.insert(name.to_string());
+        }
+    }
+}
+
+/// Zero-based lines of `code` (comments and literals removed by
+/// [`c_code_only`]) that name a platform-width integer type: `short`, `long`
+/// or `long long`, signed or unsigned, and, when `scan_int` is set, `int`,
+/// `unsigned` or `signed`. Two `long` forms stay allowed: `long double`, a
+/// floating type (docs/cross_platform.md, arm64), and the casts
+/// `(long long)` and `(unsigned long long)` that hand a 64-bit value to a
+/// printf-family `%lld` or `%llu`. `int`, `unsigned` and `signed` are allowed
+/// in a file-scope declaration of `main` or of a routine in `standard`, from
+/// the start of the declaration through the `)` that closes its parameters:
+/// the standard fixes those signatures.
+fn platform_integer_type_lines(
+    code: &str,
+    scan_int: bool,
+    standard: &std::collections::BTreeSet<String>,
+) -> Vec<usize> {
+    let tokens = c_tokens(code);
+    let token = |index: usize| tokens.get(index).map_or("", |(text, _)| *text);
+    // Preprocessor lines, with their backslash continuations.
+    let mut directive = Vec::new();
+    let mut continued = false;
+    for line in code.lines() {
+        let is_directive = continued || line.trim_start().starts_with('#');
+        continued = is_directive && line.trim_end().ends_with('\\');
+        directive.push(is_directive);
+    }
+    let mut standard_signature = vec![false; tokens.len()];
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (index, &(text, line)) in tokens.iter().enumerate() {
+        if directive[line] {
+            start = index + 1;
+            continue;
+        }
+        match text {
+            "{" => depth += 1,
+            "}" => {
+                depth -= 1;
+                if depth == 0 {
+                    start = index + 1;
+                }
+            }
+            ";" if depth == 0 => start = index + 1,
+            _ if depth == 0
+                && token(index + 1) == "("
+                && (text == "main" || standard.contains(text)) =>
+            {
+                let mut parens = 0i32;
+                let mut close = index + 1;
+                while close < tokens.len() {
+                    match tokens[close].0 {
+                        "(" => parens += 1,
+                        ")" => {
+                            parens -= 1;
+                            if parens == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    close += 1;
+                }
+                let end = close.min(tokens.len() - 1);
+                standard_signature[start..=end].fill(true);
+            }
+            _ => {}
+        }
+    }
+    let mut lines = Vec::new();
     let mut index = 0;
     while index < tokens.len() {
-        match tokens[index] {
-            "short" => return true,
-            "long" if token(index + 1) == "double" => index += 2,
-            "long" => {
-                let opened = token(index.wrapping_sub(1)) == "("
-                    || (token(index.wrapping_sub(1)) == "unsigned"
-                        && token(index.wrapping_sub(2)) == "(");
-                if opened && token(index + 1) == "long" && token(index + 2) == ")" {
-                    index += 3;
-                } else {
-                    return true;
-                }
+        let (text, line) = tokens[index];
+        let names = match text {
+            "(" if token(index + 1) == "long"
+                && token(index + 2) == "long"
+                && token(index + 3) == ")" =>
+            {
+                index += 4;
+                continue;
             }
-            _ => index += 1,
+            "(" if token(index + 1) == "unsigned"
+                && token(index + 2) == "long"
+                && token(index + 3) == "long"
+                && token(index + 4) == ")" =>
+            {
+                index += 5;
+                continue;
+            }
+            "long" if token(index + 1) == "double" => {
+                index += 2;
+                continue;
+            }
+            "short" | "long" => true,
+            "int" | "unsigned" | "signed" => scan_int && !standard_signature[index],
+            _ => false,
+        };
+        if names && lines.last() != Some(&line) {
+            lines.push(line);
         }
+        index += 1;
     }
-    false
+    lines
 }
 
 #[test]
-fn platform_integer_type_scan_finds_short_long_and_long_long() {
-    let names = |line: &str| names_platform_integer_type(&c_code_only(line));
+fn platform_integer_type_scan_finds_platform_widths_and_plain_int() {
+    let standard: std::collections::BTreeSet<String> =
+        ["svSize".to_string(), "svGetBitselBit".to_string()].into();
+    let names =
+        |code: &str| !platform_integer_type_lines(&c_code_only(code), true, &standard).is_empty();
     assert!(names("long point = 0;"));
     assert!(names("static unsigned long id(void);"));
     assert!(names("x = (long)y;"));
@@ -842,24 +1001,90 @@ fn platform_integer_type_scan_finds_short_long_and_long_long() {
     assert!(names("static const unsigned short table[] = {0};"));
     assert!(names("short s;"));
     assert!(names("f((long long)a + b, (long)c);"));
+    assert!(names("int count = 0;"));
+    assert!(names("static unsigned flags;"));
+    assert!(names("unsigned int width;"));
+    assert!(names("signed char s;"));
+    assert!(names("x = (int)y;"));
+    assert!(names("static void (*hook)(int signal);"));
+    assert!(names("#define LLG_COUNT(x) ((int)(x))"));
+    assert!(names("int helper(int a) { return a; }"));
+    assert!(names("void f(void) { int svSize = 0; (void)svSize; }"));
+    assert!(names(
+        "svBit svGetBitselBit(const svBitVecVal* s, int i);\nint other;"
+    ));
     assert!(!names(
         "printf(\"%lld %llu\", (long long)a, (unsigned long long)b);"
     ));
     assert!(!names("x = (double)((long double)t * p);"));
-    assert!(!names("// a long comment about short values"));
-    assert!(!names("/* long */ int64_t longest = shortest;"));
-    assert!(!names("llg_msg(id, \"too long\");"));
+    assert!(!names("// a long comment about short int values"));
+    assert!(!names(
+        "/* long */ int64_t longest = shortest; uint32_t interval;"
+    ));
+    assert!(!names("llg_msg(id, \"too long for an int\");"));
     assert!(!names("char c = 'l';"));
+    assert!(!names("int32_t a; uint8_t b; int_fast16_t c; uintptr_t p;"));
+    assert!(!names(
+        "int main(int argc, char** argv) {\n    return argc;\n}"
+    ));
+    assert!(!names(
+        "int svSize(const svOpenArrayHandle h,\n           int d) {\n    return llg_size(h, d);\n}"
+    ));
+    assert!(!names(
+        "static int32_t before(void);\nsvBit svGetBitselBit(const svBitVecVal* s, int i) {\n    return 0;\n}"
+    ));
+    let lines = platform_integer_type_lines(
+        &c_code_only(
+            "int svSize(const svOpenArrayHandle h, int d) {\n    int i = d;\n    return i;\n}",
+        ),
+        true,
+        &standard,
+    );
+    assert_eq!(lines, vec![1]);
+    let platform_only =
+        |code: &str| !platform_integer_type_lines(&c_code_only(code), false, &standard).is_empty();
+    assert!(!platform_only(
+        "XXTERN int svDimensions(const svOpenArrayHandle h);"
+    ));
+    assert!(platform_only("XXTERN long svBad(void);"));
 }
 
-/// Where a C library, OS or standard-header interface fixes `long`,
-/// `long long` or `short`: (file under `src/sim/rt`, code fragment of the
-/// line, reason). Each entry must still match a line.
+#[test]
+fn standard_header_routines_are_their_declared_names() {
+    let mut routines = std::collections::BTreeSet::new();
+    declared_routines(
+        &c_code_only(
+            "XXTERN int svSize(const svOpenArrayHandle h, int d);\n\
+             typedef void (*svCallback)(void* data);\n\
+             PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle object);\n",
+        ),
+        &mut routines,
+    );
+    let expected: std::collections::BTreeSet<String> = ["svSize", "vpi_get"]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    assert_eq!(routines, expected);
+}
+
+/// Where a standard header or the platform fixes a platform-width integer
+/// type: (file under `src/sim/rt`, code fragment of the line, reason). Each
+/// entry must still match a line.
 const PLATFORM_INTEGER_TYPE_EXCEPTIONS: &[(&str, &str, &str)] = &[
     (
         "llg_co.h",
         "long long ll;",
         "llg_co_max_align_t mirrors C11 max_align_t's widest standard types",
+    ),
+    (
+        "llg_platform.h",
+        "_Generic((int32_t)0, int: 1, default: 0)",
+        "asserts that int32_t is int, which keeps the ABI and printf `*` widths",
+    ),
+    (
+        "llg_platform.h",
+        "_Generic((uint32_t)0, unsigned int: 1, default: 0)",
+        "asserts that uint32_t is unsigned int, which keeps the ABI",
     ),
     (
         "llg_platform.h",
@@ -896,15 +1121,26 @@ const PLATFORM_INTEGER_TYPE_EXCEPTIONS: &[(&str, &str, &str)] = &[
 /// The runtime spells integers with fixed-width types (`src/sim/rt/AGENTS.md`):
 /// `long` is 32-bit on Windows (LLP64) and 64-bit on Linux and macOS (LP64),
 /// so code that compiles everywhere can still compute differently on one
-/// platform. `short`, `long` and `long long`, signed or unsigned, appear only
-/// in [`PLATFORM_INTEGER_TYPE_EXCEPTIONS`] and the forms
-/// [`names_platform_integer_type`] allows. Plain `int` is not checked yet: the
-/// runtime-wide `int` conversion is a separate change, which extends this
-/// check when it lands.
+/// platform, and `int` and `unsigned` leave the width to the compiler.
+/// `short`, `long`, `long long`, `int`, `unsigned` and `signed` appear only in
+/// [`PLATFORM_INTEGER_TYPE_EXCEPTIONS`] and the forms
+/// [`platform_integer_type_lines`] allows; the standard foreign-interface
+/// headers ([`STANDARD_INTERFACE_HEADERS`]) keep the standard's `int`.
 #[test]
 fn runtime_sources_use_fixed_width_integer_types() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let rt = root.join("src/sim/rt");
+    let mut standard = std::collections::BTreeSet::new();
+    for header in STANDARD_INTERFACE_HEADERS {
+        let path = rt.join(header);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        declared_routines(&c_code_only(&text), &mut standard);
+    }
+    assert!(
+        standard.contains("svSize") && standard.contains("vpi_get"),
+        "standard routines not found in {STANDARD_INTERFACE_HEADERS:?}"
+    );
     let mut pending = vec![rt.clone()];
     let mut used = vec![false; PLATFORM_INTEGER_TYPE_EXCEPTIONS.len()];
     let mut findings = Vec::new();
@@ -930,10 +1166,10 @@ fn runtime_sources_use_fixed_width_integer_types() {
             let text = std::fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
             let code = c_code_only(&text);
-            for (number, line) in code.lines().enumerate() {
-                if !names_platform_integer_type(line) {
-                    continue;
-                }
+            let scan_int = !STANDARD_INTERFACE_HEADERS.contains(&relative.as_str());
+            let lines: Vec<&str> = code.lines().collect();
+            for number in platform_integer_type_lines(&code, scan_int, &standard) {
+                let line = lines[number];
                 let exception = PLATFORM_INTEGER_TYPE_EXCEPTIONS
                     .iter()
                     .position(|(file, fragment, _)| *file == relative && line.contains(fragment));
@@ -951,10 +1187,10 @@ fn runtime_sources_use_fixed_width_integer_types() {
     assert!(scanned > 0, "no runtime C sources found");
     assert!(
         findings.is_empty(),
-        "use fixed-width integer types (int64_t, uint32_t, ...; size_t for sizes) \
-         instead of short, long or long long; `long` is 32-bit on Windows. A C \
-         library or OS interface that fixes the type goes in \
-         PLATFORM_INTEGER_TYPE_EXCEPTIONS:\n{}",
+        "use fixed-width integer types (int32_t, uint32_t, int64_t, uint8_t, ...; \
+         size_t for sizes) instead of int, unsigned, signed, short, long or long \
+         long; `long` is 32-bit on Windows. A C library, OS or standard-header \
+         interface that fixes the type goes in PLATFORM_INTEGER_TYPE_EXCEPTIONS:\n{}",
         findings.join("\n")
     );
     let stale: Vec<String> = PLATFORM_INTEGER_TYPE_EXCEPTIONS
