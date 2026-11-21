@@ -41,8 +41,13 @@ it is never linked into Rust binaries. Module overview and component map:
 
 - Generated code and other runtime parts use only the public value facade
   ([facade contract](value/facade.md), [ownership](value/ownership.md)).
-- Compiler/OS conditionals: only in the platform layer
-  ([platform notes](readme.md#platform-notes)).
+- Compiler/OS conditionals only in the platform layer; all C also passes MSVC
+  `/W4 /WX` ([platform notes](readme.md#platform-notes)).
+- Integer types are fixed-width (`int8_t`..`uint64_t`; `size_t`, `ptrdiff_t`,
+  `uintptr_t` for sizes and pointers); never `short`, `int`, `long`, `long long`
+  or their unsigned forms, whose widths differ by platform (`long` is 32-bit
+  on Windows). Exceptions only where a C library, OS or standard
+  foreign-interface API fixes the type; `runtime_strict_sources` lists them.
 - Keep `llg_co` free of globals and TLS.
 - `llg_arm_*` copy contract: `llg_rt.h`; an arm that must retain a pointer
   says so there, and the emitter keeps it in a frame field or registered cell.
@@ -50,8 +55,6 @@ it is never linked into Rust binaries. Module overview and component map:
 - Keep the original runtime and waveform self-tests active; component tests do
   not replace emitted-model, HDL, parity, sanitizer or native-platform gates.
 - Keep facade-only translation units and the flat embedding order in step.
-- Write C that also passes MSVC `/W4 /WX`
-  ([platform notes](readme.md#platform-notes)).
 - Feature/status inventories live in [sim_features](../../../docs/sim_features.md).
 
 ## Commands

@@ -17,6 +17,9 @@
 //!   [`MSVC_W4_FLOW_ERRORS`].
 //! - Truncating constant casts (C4310): a source scan, since no GCC or Clang
 //!   warning covers explicit casts.
+//! - Platform-width integer types: a source scan for `short`, `long` and
+//!   `long long` in the runtime, since `long` is 32-bit under MSVC and every
+//!   other host compiler makes it 64-bit.
 //!
 //! The compiler checks are skipped without a Clang driver and on Windows,
 //! where the same sources build with MSVC itself.
@@ -735,5 +738,249 @@ fn msvc_w4_flow_errors_reject_a_local_a_short_circuit_can_leave_unset() {
     assert!(
         !output.status.success() && diagnostics.contains("conditional-uninitialized"),
         "{diagnostics}"
+    );
+}
+
+/// C source text with comments, string literals and character literals
+/// replaced by spaces; newlines are kept, so line numbers stay.
+fn c_code_only(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let blank = |byte: u8| if byte == b'\n' { b'\n' } else { b' ' };
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'/' if bytes.get(at + 1) == Some(&b'/') => {
+                while at < bytes.len() && bytes[at] != b'\n' {
+                    out.push(b' ');
+                    at += 1;
+                }
+            }
+            b'/' if bytes.get(at + 1) == Some(&b'*') => {
+                let end = text[at + 2..]
+                    .find("*/")
+                    .map_or(bytes.len(), |offset| at + 2 + offset + 2);
+                out.extend(bytes[at..end].iter().map(|&byte| blank(byte)));
+                at = end;
+            }
+            quote @ (b'"' | b'\'') => {
+                out.push(b' ');
+                at += 1;
+                while at < bytes.len() && bytes[at] != quote && bytes[at] != b'\n' {
+                    let step = if bytes[at] == b'\\' { 2 } else { 1 };
+                    let end = (at + step).min(bytes.len());
+                    out.extend(bytes[at..end].iter().map(|&byte| blank(byte)));
+                    at = end;
+                }
+                if at < bytes.len() && bytes[at] == quote {
+                    out.push(b' ');
+                    at += 1;
+                }
+            }
+            byte => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether a line of code (comments and literals removed by [`c_code_only`])
+/// names `short`, `long` or `long long`, signed or unsigned. Two forms stay
+/// allowed: `long double`, a floating type (docs/cross_platform.md, arm64),
+/// and the casts `(long long)` and `(unsigned long long)` that hand a 64-bit
+/// value to a printf-family `%lld` or `%llu`.
+fn names_platform_integer_type(code: &str) -> bool {
+    let mut tokens = Vec::new();
+    let mut chars = code.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            let mut end = start + c.len_utf8();
+            while let Some(&(at, next)) = chars.peek() {
+                if !(next.is_ascii_alphanumeric() || next == '_') {
+                    break;
+                }
+                end = at + next.len_utf8();
+                chars.next();
+            }
+            tokens.push(&code[start..end]);
+        } else if !c.is_whitespace() {
+            tokens.push(&code[start..start + c.len_utf8()]);
+        }
+    }
+    let token = |index: usize| tokens.get(index).copied().unwrap_or("");
+    let mut index = 0;
+    while index < tokens.len() {
+        match tokens[index] {
+            "short" => return true,
+            "long" if token(index + 1) == "double" => index += 2,
+            "long" => {
+                let opened = token(index.wrapping_sub(1)) == "("
+                    || (token(index.wrapping_sub(1)) == "unsigned"
+                        && token(index.wrapping_sub(2)) == "(");
+                if opened && token(index + 1) == "long" && token(index + 2) == ")" {
+                    index += 3;
+                } else {
+                    return true;
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    false
+}
+
+#[test]
+fn platform_integer_type_scan_finds_short_long_and_long_long() {
+    let names = |line: &str| names_platform_integer_type(&c_code_only(line));
+    assert!(names("long point = 0;"));
+    assert!(names("static unsigned long id(void);"));
+    assert!(names("x = (long)y;"));
+    assert!(names("long long value = 0;"));
+    assert!(names("unsigned long long total;"));
+    assert!(names("static const unsigned short table[] = {0};"));
+    assert!(names("short s;"));
+    assert!(names("f((long long)a + b, (long)c);"));
+    assert!(!names(
+        "printf(\"%lld %llu\", (long long)a, (unsigned long long)b);"
+    ));
+    assert!(!names("x = (double)((long double)t * p);"));
+    assert!(!names("// a long comment about short values"));
+    assert!(!names("/* long */ int64_t longest = shortest;"));
+    assert!(!names("llg_msg(id, \"too long\");"));
+    assert!(!names("char c = 'l';"));
+}
+
+/// Where a C library, OS or standard-header interface fixes `long`,
+/// `long long` or `short`: (file under `src/sim/rt`, code fragment of the
+/// line, reason). Each entry must still match a line.
+const PLATFORM_INTEGER_TYPE_EXCEPTIONS: &[(&str, &str, &str)] = &[
+    (
+        "llg_co.h",
+        "long long ll;",
+        "llg_co_max_align_t mirrors C11 max_align_t's widest standard types",
+    ),
+    (
+        "llg_platform.h",
+        "typedef volatile long llg_atomic_int_t;",
+        "the Win32 _Interlocked* intrinsics operate on long",
+    ),
+    (
+        "llg_platform.h",
+        "_InterlockedExchange(p, (long)v)",
+        "the Win32 _Interlocked* intrinsics operate on long",
+    ),
+    (
+        "llg_platform.h",
+        "_InterlockedCompareExchange(p, (long)desired, (long)expected) == (long)expected",
+        "the Win32 _Interlocked* intrinsics operate on long",
+    ),
+    (
+        "llg_platform_native.h",
+        "(unsigned long)GetLastError()",
+        "GetLastError returns a DWORD, printed with %lu",
+    ),
+    (
+        "llg_vpi.c",
+        "long long value = open ? strtoll(",
+        "strtoll returns long long",
+    ),
+    (
+        "llg_vpi_runtime.c",
+        "long long value = strtoll(",
+        "strtoll returns long long",
+    ),
+    (
+        "llg_wave_selftest.c",
+        "long size = ftell(",
+        "ftell returns long",
+    ),
+    (
+        "scheduler/file_io.c",
+        "long position = ftell(",
+        "ftell returns long",
+    ),
+    (
+        "scheduler/file_io.c",
+        "fseek(slot->stream, (long)",
+        "fseek takes a long offset",
+    ),
+];
+
+/// The runtime spells integers with fixed-width types (`src/sim/rt/AGENTS.md`):
+/// `long` is 32-bit on Windows (LLP64) and 64-bit on Linux and macOS (LP64),
+/// so code that compiles everywhere can still compute differently on one
+/// platform. `short`, `long` and `long long`, signed or unsigned, appear only
+/// in [`PLATFORM_INTEGER_TYPE_EXCEPTIONS`] and the forms
+/// [`names_platform_integer_type`] allows. Plain `int` is not checked yet: the
+/// runtime-wide `int` conversion is a separate change, which extends this
+/// check when it lands.
+#[test]
+fn runtime_sources_use_fixed_width_integer_types() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rt = root.join("src/sim/rt");
+    let mut pending = vec![rt.clone()];
+    let mut used = vec![false; PLATFORM_INTEGER_TYPE_EXCEPTIONS.len()];
+    let mut findings = Vec::new();
+    let mut scanned = 0usize;
+    while let Some(directory) = pending.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()));
+        for entry in entries {
+            let path = entry.expect("read directory entry").path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if !matches!(path.extension().and_then(|e| e.to_str()), Some("c" | "h")) {
+                continue;
+            }
+            scanned += 1;
+            let relative = path
+                .strip_prefix(&rt)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            let code = c_code_only(&text);
+            for (number, line) in code.lines().enumerate() {
+                if !names_platform_integer_type(line) {
+                    continue;
+                }
+                let exception = PLATFORM_INTEGER_TYPE_EXCEPTIONS
+                    .iter()
+                    .position(|(file, fragment, _)| *file == relative && line.contains(fragment));
+                match exception {
+                    Some(index) => used[index] = true,
+                    None => findings.push(format!(
+                        "src/sim/rt/{relative}:{}: {}",
+                        number + 1,
+                        line.trim()
+                    )),
+                }
+            }
+        }
+    }
+    assert!(scanned > 0, "no runtime C sources found");
+    assert!(
+        findings.is_empty(),
+        "use fixed-width integer types (int64_t, uint32_t, ...; size_t for sizes) \
+         instead of short, long or long long; `long` is 32-bit on Windows. A C \
+         library or OS interface that fixes the type goes in \
+         PLATFORM_INTEGER_TYPE_EXCEPTIONS:\n{}",
+        findings.join("\n")
+    );
+    let stale: Vec<String> = PLATFORM_INTEGER_TYPE_EXCEPTIONS
+        .iter()
+        .zip(&used)
+        .filter(|(_, used)| !**used)
+        .map(|((file, fragment, reason), _)| format!("{file}: `{fragment}` ({reason})"))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "remove exceptions that no longer match a line:\n{}",
+        stale.join("\n")
     );
 }

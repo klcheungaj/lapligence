@@ -374,7 +374,7 @@ static int llg_scan_time_value(const unsigned char* bytes, size_t length,
     if (at < length && (bytes[at] == '+' || bytes[at] == '-')) negative = bytes[at++] == '-';
     char* digits = (char*)llg_checked_malloc(length + 2u, 1, "time input digits");
     size_t count = 0;
-    long point = 0;
+    int64_t point = 0;
     int seen_dot = 0;
     for (; at < length && bytes[at] != 'e' && bytes[at] != 'E'; ++at) {
         if (bytes[at] == '.') { seen_dot = 1; continue; }
@@ -382,7 +382,7 @@ static int llg_scan_time_value(const unsigned char* bytes, size_t length,
         if (!seen_dot) ++point;
     }
     if (at < length) {
-        long exponent = 0;
+        int64_t exponent = 0;
         int exponent_negative = 0;
         ++at;
         if (at < length && (bytes[at] == '+' || bytes[at] == '-'))
@@ -396,8 +396,8 @@ static int llg_scan_time_value(const unsigned char* bytes, size_t length,
     if (scope == INT_MIN) scope = llg_time_unit_exponent(g.design_precision_fs);
     if (display == INT_MIN || scope == INT_MIN) display = scope = 0;
     // Round half away from zero at the display precision.
-    long keep = point + (long)g.time_format.precision;
-    if (keep < (long)count) {
+    int64_t keep = point + (int64_t)g.time_format.precision;
+    if (keep < (int64_t)count) {
         int up = keep >= 0 && digits[keep] >= '5';
         if (keep < 0) keep = 0;
         count = (size_t)keep;
@@ -414,13 +414,13 @@ static int llg_scan_time_value(const unsigned char* bytes, size_t length,
             }
         }
     }
-    point += (long)display - (long)scope;
+    point += (int64_t)display - (int64_t)scope;
     double value = 0.0;
     if (count > 0 && point > 400) value = HUGE_VAL;
     else if (count > 0 && point > -400) {
         // Render "0.<zeros><digits>" or "<digits><zeros>.<rest>" for strtod.
         size_t lead = point < 0 ? (size_t)(-point) : 0;
-        size_t trail = point > (long)count ? (size_t)point - count : 0;
+        size_t trail = point > (int64_t)count ? (size_t)point - count : 0;
         size_t size = count + lead + trail + 4u;
         char* text = (char*)llg_checked_malloc(size, 1, "time input text");
         size_t used = 0;

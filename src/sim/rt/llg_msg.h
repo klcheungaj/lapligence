@@ -301,8 +301,8 @@ LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity
 #include "llg_msg_ids.def"
 #undef LLG_MSG_ID
     };
-    static const unsigned short indices[] = {
-#define LLG_MSG_ID(name, tool, index, severity, meaning, disable) (unsigned short)(index),
+    static const uint16_t indices[] = {
+#define LLG_MSG_ID(name, tool, index, severity, meaning, disable) (uint16_t)(index),
 #include "llg_msg_ids.def"
 #undef LLG_MSG_ID
     };

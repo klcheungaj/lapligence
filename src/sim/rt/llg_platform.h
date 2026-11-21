@@ -23,6 +23,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -175,12 +176,13 @@ static inline int llg_path_is_dir(const char* dir) {
 #endif
 }
 
-// The current process identifier, for temporary file names.
-static inline unsigned long llg_process_id(void) {
+// The current process identifier, for temporary file names (print it with
+// PRIu64).
+static inline uint64_t llg_process_id(void) {
 #if defined(_WIN32)
-    return (unsigned long)_getpid();
+    return (uint64_t)_getpid();
 #else
-    return (unsigned long)getpid();
+    return (uint64_t)getpid();
 #endif
 }
 

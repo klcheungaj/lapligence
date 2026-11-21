@@ -12,6 +12,7 @@
 
 #include <stdlib.h>
 #ifndef LLG_CO_HOST_ALLOC
+#include <inttypes.h>
 #include <stdio.h>
 #endif
 
@@ -62,9 +63,8 @@ void llg_co_arena_release(llg_co_arena_t* arena) {
  * (see LLG_CO_BAD_STATE), so a model never prints this line. */
 void llg_co_bad_state(const llg_co_frame_t* co, const char* fn) {
     fprintf(stderr,
-            "llg: fatal: invalid coroutine state in %s: frame=%p state=%lu\n",
-            fn ? fn : "<unknown>", (const void*)co,
-            co ? (unsigned long)co->state : 0ul);
+            "llg: fatal: invalid coroutine state in %s: frame=%p state=%" PRIu32 "\n",
+            fn ? fn : "<unknown>", (const void*)co, co ? co->state : UINT32_C(0));
     abort();
 }
 #endif

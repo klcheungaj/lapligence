@@ -105,9 +105,8 @@ LLG_CO_NORETURN void llg_co_host_bad_state(const llg_co_frame_t* co, const char*
     llg_report_t text;
     llg_report_init(&report);
     llg_report_init(&text);
-    llg_report_printf(&text, "invalid coroutine state in %s: frame=%p state=%lu",
-                      fn ? fn : "<unknown>", (const void*)co,
-                      co ? (unsigned long)co->state : 0ul);
+    llg_report_printf(&text, "invalid coroutine state in %s: frame=%p state=%" PRIu32,
+                      fn ? fn : "<unknown>", (const void*)co, co ? co->state : UINT32_C(0));
     llg_msg_append(&report, LLG_MSG_INTERNAL, LLG_SEVERITY_FATAL, NULL, NULL, NULL, text.data,
                    text.len, NULL);
     llg_report_free(&text);

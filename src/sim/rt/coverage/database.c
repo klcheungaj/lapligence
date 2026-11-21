@@ -284,9 +284,9 @@ static uint64_t llg_cov_functional_hash(void) {
     return hash;
 }
 
-static long llg_cov_model_group_index(const llg_cov_group_t* group) {
+static int64_t llg_cov_model_group_index(const llg_cov_group_t* group) {
     for (size_t i = 0; i < llg_cov_n_model_groups; ++i)
-        if (llg_cov_model_groups[i] == group) return (long)i;
+        if (llg_cov_model_groups[i] == group) return (int64_t)i;
     return -1;
 }
 
@@ -588,7 +588,7 @@ static void llg_cov_put_functional(llg_cov_buf_t* buf) {
         uint32_t records = 0;
         for (size_t i = 0; i < n; ++i) {
             if (written[i] || !all[i]->ready) continue;
-            long index = llg_cov_model_group_index(all[i]->group);
+            int64_t index = llg_cov_model_group_index(all[i]->group);
             if (index < 0) continue;
             const llg_cov_inst_t* recs[2] = {all[i], NULL};
             size_t used = 1;
@@ -675,7 +675,7 @@ static int llg_cov_db_save(const char* name, uint32_t sections, const char* what
     char* path = llg_output_path(name);
     size_t len = strlen(path);
     char* temporary = (char*)llg_checked_malloc(len + 32u, 1, "coverage database");
-    snprintf(temporary, len + 32u, "%s.tmp%lu", path, llg_process_id());
+    snprintf(temporary, len + 32u, "%s.tmp%" PRIu64, path, llg_process_id());
     llg_cov_buf_t buf = {0};
     llg_cov_db_image(&buf, sections);
     const char* error = NULL;
