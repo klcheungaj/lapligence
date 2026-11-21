@@ -322,6 +322,9 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
                 NodeKind::SysCall { name } => CONSTANT_SYSTEM_FUNCTIONS.contains(&name.as_str()),
+                // A declaration below a pattern (the member a structure
+                // pattern key names) is no read.
+                NodeKind::Var { .. } => continue,
                 _ => false,
             };
             if !constant {

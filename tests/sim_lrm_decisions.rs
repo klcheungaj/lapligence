@@ -2057,6 +2057,14 @@ fn s22_d8_constants_per_scope() {
 }
 
 #[test]
+fn s22_d8_constant_kinds() {
+    run_decision(
+        "S22-D8_constant_kinds",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_constant_kinds.out"),
+    );
+}
+
+#[test]
 fn s22_d8_array_query_preset() {
     run_decision(
         "S22-D8_array_query_preset",
