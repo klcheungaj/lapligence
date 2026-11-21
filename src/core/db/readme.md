@@ -63,6 +63,11 @@ A member path through a virtual interface lists every scope named by
 scope a reference node of its own), and
 `Db::virtual_interface_call_scopes` keeps the same names for a method call
 through one (`v.tx.f()`); those edges are metadata, never children.
+`Db::forward_typedef` gives the class definition each forward typedef names
+(`typedef class c;` or `typedef c;`, IEEE 1800-2009 6.18, 8.25; the generic
+definition of a parameterized class) and whether it names the `class`
+keyword, from `LLG_SLANG_EDGE_FORWARD_DECLARATION`; the typedef stays a member
+of its scope, so consumers find where a class is first declared.
 `Db::instance_array_range` keeps the declared `(left, right)` of every
 instance array level (`NodeKind::InstanceArray`), for VPI instance array
 objects (37.11).

@@ -3620,6 +3620,22 @@ public:
         capture.semanticRole(id, baseConstructor, LLG_SLANG_EDGE_BASE_CONSTRUCTOR);
       }
     }
+    // The forward typedefs of a class (IEEE 1800-2009 6.18, 8.25), which
+    // Slang links to the definition in declaration order: a consumer needs
+    // where a class is first declared, which may be such a typedef, and
+    // whether it names the `class` keyword. A specialization has none; they
+    // belong to its generic class.
+    if constexpr (std::same_as<T, ClassType> || std::same_as<T, GenericClassDefSymbol>) {
+      uint32_t ordinal = 0;
+      for (const ForwardingTypedefSymbol* forward = symbol.getFirstForwardDecl(); forward;
+           forward = forward->getNextForwardDecl()) {
+        const uint32_t keyword = forward->typeRestriction == ForwardTypeRestriction::Class
+            ? LLG_SLANG_FORWARD_DECLARATION_CLASS
+            : 0;
+        capture.semanticEdge(id, LLG_SLANG_EDGE_FORWARD_DECLARATION,
+                             capture.ensureSemantic(forward), ordinal++ | keyword);
+      }
+    }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
       if (symbol.subroutineKind == SubroutineKind::Task)
         result.flags |= LLG_SLANG_SEMANTIC_TASK;

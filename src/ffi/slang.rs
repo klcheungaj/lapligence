@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 77;
+const ABI_VERSION: u32 = 78;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1085,6 +1085,10 @@ pub const CHECKER_UNIT_TIME_SCALE: u64 = 1 << 3;
 /// Index bit of a [`SemanticEdgeRole::CheckerActual`] edge naming a formal's
 /// default value rather than an explicit actual argument.
 pub const CHECKER_ACTUAL_DEFAULT: u32 = 1 << 31;
+/// Index bit of a [`SemanticEdgeRole::ForwardDeclaration`] edge whose forward
+/// typedef names the `class` keyword (`typedef class c;`, IEEE 1800-2009
+/// 8.25) rather than none (`typedef c;`).
+pub const FORWARD_DECLARATION_CLASS: u32 = 1 << 31;
 /// An anonymous program (SV 24.6): a scope whose members belong to the
 /// enclosing package or compilation-unit namespace.
 pub const SEMANTIC_SCOPE_ANONYMOUS_PROGRAM: u32 = 235;
@@ -1436,6 +1440,11 @@ pub enum SemanticEdgeRole {
     /// is, or lies in, a nested interface instance, outermost first; the
     /// index is the ordinal.
     VirtualInterfaceScope,
+    /// From a class or generic class definition to each forward typedef
+    /// that names it (IEEE 1800-2009 6.18, 8.25), in declaration order; the
+    /// index is the ordinal, with [`FORWARD_DECLARATION_CLASS`] set for
+    /// `typedef class c;`.
+    ForwardDeclaration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

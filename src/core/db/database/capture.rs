@@ -34,6 +34,7 @@ impl Db {
         // declaration supplied to a name reference, in edge-index order.
         let mut imported_items = HashMap::<NodeId, Vec<(u32, NodeId)>>::new();
         let mut virtual_interface_call_scopes = HashMap::<NodeId, Vec<(u32, String)>>::new();
+        let mut forward_typedefs = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
             let id = NodeId::from_index(semantic.id as usize);
             if semantic.detail.as_str() == "TypeAlias"
@@ -44,6 +45,23 @@ impl Db {
             for edge in semantic_edges(snapshot, semantic)? {
                 if edge.role == SemanticEdgeRole::SourceIdentity {
                     source_identities.insert(id, semantic_id(&ids, edge.target_id)?);
+                }
+                if edge.role == SemanticEdgeRole::ForwardDeclaration {
+                    if semantic.kind != SemanticKind::Class {
+                        return Err(DbError::InvalidSnapshot(format!(
+                            "forward declaration edge from non-class node {}",
+                            semantic.id
+                        )));
+                    }
+                    forward_typedefs.insert(
+                        semantic_id(&ids, edge.target_id)?,
+                        ForwardTypedef {
+                            class: id,
+                            class_keyword: edge.index
+                                & crate::ffi::slang::FORWARD_DECLARATION_CLASS
+                                != 0,
+                        },
+                    );
                 }
                 if edge.role == SemanticEdgeRole::Imported {
                     imported_items
@@ -622,6 +640,7 @@ impl Db {
                         | SemanticEdgeRole::ProceduralChecker
                         | SemanticEdgeRole::Imported
                         | SemanticEdgeRole::VirtualInterfaceScope
+                        | SemanticEdgeRole::ForwardDeclaration
                 ) {
                     children.push(semantic_id(&ids, edge.target_id)?);
                 }
@@ -1671,6 +1690,7 @@ impl Db {
             source_libraries,
             declaration_time_scales,
             class_declaring_scopes,
+            forward_typedefs,
             source_map,
             legacy_directives,
             tops,
@@ -2951,5 +2971,112 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(statements, vec![vec![u]]);
+    }
+
+    /// Every forward typedef of a class (IEEE 1800-2009 6.18, 8.25) names
+    /// its class definition, before or after it, also inside a class, and
+    /// records whether it names the `class` keyword; a generic class's
+    /// typedefs name the generic definition, never a specialization. The
+    /// typedefs stay members of their scope, not children of the class.
+    #[test]
+    fn forward_typedefs_name_their_class_definitions() {
+        let source = "package p;\n\
+            typedef class b;\n\
+            class a; class n; endclass typedef class m; class m; endclass endclass\n\
+            class b; endclass\n\
+            typedef class a;\n\
+            typedef b;\n\
+            typedef class g;\n\
+            class g #(int w = 1); static int v = w; endclass\n\
+            endpackage\n\
+            module top; initial $display(p::g#(2)::v); endmodule\n";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "forward_typedefs.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let named = |name: &str, detail: &str| {
+            db.node_ids()
+                .filter(|id| db.node(*id).name == name && db.semantic_detail(*id) == Some(detail))
+                .collect::<Vec<_>>()
+        };
+        let forward = |typedefs: &[NodeId]| {
+            typedefs
+                .iter()
+                .map(|typedef| db.forward_typedef(*typedef))
+                .collect::<Vec<_>>()
+        };
+        let keyword = |class| {
+            Some(ForwardTypedef {
+                class,
+                class_keyword: true,
+            })
+        };
+        let package = named("p", "Package")[0];
+        let [a] = named("a", "ClassType")[..] else {
+            panic!("one class a")
+        };
+        let [b] = named("b", "ClassType")[..] else {
+            panic!("one class b")
+        };
+        let [m] = named("m", "ClassType")[..] else {
+            panic!("one class m")
+        };
+        let [g] = named("g", "GenericClassDef")[..] else {
+            panic!("one generic class g")
+        };
+        let typedefs_b = named("b", "ForwardingTypedef");
+        assert_eq!(
+            forward(&typedefs_b),
+            [
+                keyword(b),
+                Some(ForwardTypedef {
+                    class: b,
+                    class_keyword: false,
+                })
+            ]
+        );
+        assert_eq!(forward(&named("a", "ForwardingTypedef")), [keyword(a)]);
+        assert_eq!(forward(&named("g", "ForwardingTypedef")), [keyword(g)]);
+        let typedefs_m = named("m", "ForwardingTypedef");
+        assert_eq!(forward(&typedefs_m), [keyword(m)]);
+        assert!(db.node(a).children.contains(&typedefs_m[0]));
+        for typedef in typedefs_b.iter().chain(&named("g", "ForwardingTypedef")) {
+            assert!(db.node(package).children.contains(typedef));
+        }
+        for class in [a, b, g] {
+            assert_eq!(db.forward_typedef(class), None);
+            assert!(db
+                .node(class)
+                .children
+                .iter()
+                .all(
+                    |child| db.semantic_detail(*child) != Some("ForwardingTypedef")
+                        || *child == typedefs_m[0]
+                ));
+        }
+        // A forward declaration edge from anything but a class is malformed.
+        let mut snapshot = output.snapshot;
+        let edge = snapshot
+            .semantic_edges
+            .iter_mut()
+            .find(|edge| {
+                edge.role == SemanticEdgeRole::Child
+                    && edge.target_id == typedefs_b[0].index() as u64
+            })
+            .expect("the package member edge of a typedef");
+        edge.role = SemanticEdgeRole::ForwardDeclaration;
+        let error = Db::from_slang(&snapshot).expect_err("edge from a package");
+        assert!(
+            error.to_string().contains("forward declaration edge"),
+            "{error}"
+        );
     }
 }

@@ -43,8 +43,8 @@ use types::TypedefNames;
 pub use types::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta,
     AssignmentPatternKeyType, AssociativeIndex, ClassMetadata, DpiImportInfo, DpiOpenType,
-    ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, MemberVisibility, PackedMember,
-    PackedRange, TypeDescriptor, TypeId, TypeShape, TypedefRef, ValueCopySemantics,
+    ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, ForwardTypedef, MemberVisibility,
+    PackedMember, PackedRange, TypeDescriptor, TypeId, TypeShape, TypedefRef, ValueCopySemantics,
     ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
 };
 mod constraints;
@@ -352,6 +352,9 @@ pub struct Db {
     /// parent): the nearest enclosing class, package, compilation unit,
     /// module instance, generate block or definition.
     class_declaring_scopes: HashMap<NodeId, NodeId>,
+    /// The class each forward typedef names (IEEE 1800-2009 6.18, 8.25), by
+    /// typedef node.
+    forward_typedefs: HashMap<NodeId, ForwardTypedef>,
     /// Logical `` `line`` positions, kept apart from the physical node
     /// positions that remain the diagnostic identity.
     source_map: super::SourceMap,
@@ -557,6 +560,7 @@ impl Db {
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
+            forward_typedefs: HashMap::new(),
             source_map: super::SourceMap::default(),
             legacy_directives: Vec::new(),
             tops: Vec::new(),
@@ -666,6 +670,7 @@ impl Db {
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
+            forward_typedefs: HashMap::new(),
             source_map: super::SourceMap::default(),
             legacy_directives: Vec::new(),
             tops,
@@ -851,6 +856,16 @@ impl Db {
     /// databases have none.
     pub fn class_declaring_scope(&self, id: NodeId) -> Option<NodeId> {
         self.class_declaring_scopes.get(&id).copied()
+    }
+
+    /// The class that forward typedef `id` names (`typedef class c;` or
+    /// `typedef c;`, IEEE 1800-2009 6.18, 8.25), with whether it names the
+    /// `class` keyword. The typedef is a member of the scope that declares
+    /// the class, before or after the definition. `None` for any other node
+    /// and for a forward typedef of a type other than a class; synthetic
+    /// test databases have none.
+    pub fn forward_typedef(&self, id: NodeId) -> Option<ForwardTypedef> {
+        self.forward_typedefs.get(&id).copied()
     }
 
     /// Active `` `default_decay_time``, `` `default_trireg_strength`` and

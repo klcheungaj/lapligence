@@ -107,6 +107,10 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   `LLG_SLANG_EDGE_VIRTUAL_INTERFACE_SCOPE` edge per scope, outermost first,
   each target named as written (an instance array element with its indices).
   A member of the interface itself or a clockvar (`v.x`, `v.cb.x`) gets none.
+- Each class definition (and generic class definition) links its forward
+  typedefs (`typedef class c;`, IEEE 1800-2009 6.18), which are scope members
+  of their own, with one `LLG_SLANG_EDGE_FORWARD_DECLARATION` edge each, in
+  declaration order, as Slang links them; specializations carry none.
 - An instance array node stores its declared range in `auxiliary` (left in
   bits 0-31, right in bits 32-63); the instances it holds keep their indexed
   names.

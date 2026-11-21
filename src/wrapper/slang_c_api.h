@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 77u
+#define LLG_SLANG_ABI_VERSION 78u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1363,8 +1363,19 @@ enum {
    * consumer rebuilds. An instance array element is
    * named with its indices (`ls[1]`), as the member is when it is one.
    * Simulation captures only. Not a child edge. */
-  LLG_SLANG_EDGE_VIRTUAL_INTERFACE_SCOPE = 46
+  LLG_SLANG_EDGE_VIRTUAL_INTERFACE_SCOPE = 46,
+  /* (ABI v78) From a class definition (a CLASS node with detail ClassType or
+   * GenericClassDef) to each forward typedef that names it (`typedef class
+   * c;` or `typedef c;`, IEEE 1800-2009 6.18, 8.25; a node with detail
+   * ForwardingTypedef in the same scope), in declaration order, before or
+   * after the definition. The index is the ordinal, with
+   * LLG_SLANG_FORWARD_DECLARATION_CLASS set when the typedef names the
+   * `class` keyword. A specialization of a generic class has none: its
+   * generic class holds them. Not a child edge. */
+  LLG_SLANG_EDGE_FORWARD_DECLARATION = 47
 };
+/* FORWARD_DECLARATION index bit: the forward typedef is `typedef class c;`. */
+#define LLG_SLANG_FORWARD_DECLARATION_CLASS 0x80000000u
 
 /* Checker instance auxiliary bits and CHECKER_ACTUAL index flag. */
 enum {
