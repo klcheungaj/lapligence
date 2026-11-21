@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 76u
+#define LLG_SLANG_ABI_VERSION 77u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -806,7 +806,14 @@ enum {
    * effect, no compilation-unit timeunit; IEEE 1800-2009 3.14.2.3), so the
    * request's default_time_scale applies. Only set for definitions declared
    * outside every other definition: a nested one inherits (rule a). */
-  LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE = 1ull << 28
+  LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE = 1ull << 28,
+  /* (ABI v77) The definition of a plain instance, or a package, declared
+   * outside every other definition, has a time scale of its own: a
+   * timeunit or timeprecision, a `timescale directive in effect or a
+   * compilation-unit time unit. Never set together with
+   * LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE; a nested definition carries
+   * neither. */
+  LLG_SLANG_INSTANCE_DECLARED_TIME_SCALE = 1ull << 29
 };
 #define LLG_SLANG_INSTANCE_NET_TYPE_SHIFT 20u
 #define LLG_SLANG_INSTANCE_NET_TYPE_MASK 0xffull

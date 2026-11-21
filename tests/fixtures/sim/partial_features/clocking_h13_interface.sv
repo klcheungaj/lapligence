@@ -1,4 +1,4 @@
-interface bus_if(input logic clk);
+interface bus_if(input logic clk); timeunit 1ns; timeprecision 1ps;
   logic data = 0;
   logic alias_data = 0;
 

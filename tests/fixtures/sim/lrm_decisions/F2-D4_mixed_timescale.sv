@@ -1,18 +1,16 @@
 // Decision F2-D4: a design in which some design elements have a time scale
-// and others do not is accepted. The elements without one take the default
-// time scale (1ns/1ps, decision F2-D3) and llg reports them with its
-// `missing-timescale` lint warning; the run continues. Here `sub` has no
-// time scale (no `timescale precedes it), `tb` has 1us/1ns, so the global
-// precision is 1ps: sub's #1 is 1ns (%t prints 1000 in 1ps units) and tb's
-// #2 is 2us (2000000).
+// and others do not is an error, reported before simulation. Here `sub` has
+// no time scale (no `timescale precedes it, it declares no timeunit or
+// timeprecision) and `tb` has 1us/1ns, so the design must not run and prints
+// nothing. llg names both elements in the error. A default time scale given
+// on the command line (llg `--timescale`, as industry-standard tools offer)
+// applies to the elements without one and makes such a design legal; this
+// portable case gives none.
 //
 // IEEE 1800-2009 3.14.2.3 (SystemVerilog-1800-2009.txt L2962-2964): "The
 // default time unit and precision are implementation-specific." / "It shall
 // be an error if some design elements have a time unit and precision
-// specified and others do not." llg departs from the second sentence (an
-// error there would stop designs llg used to accept); industry-standard
-// behaviour reports the error unless a default time scale is given on its
-// command line.
+// specified and others do not."
 module sub;
   initial #1 $display("sub t=%0t", $realtime);
 endmodule

@@ -5,7 +5,8 @@ time scale take the default 1ns/1ps; `--timescale <unit>/<precision>` (or
 `compile.timescale` in the `--config` file, which the command line replaces)
 chooses another default, and the `missing-timescale` lint rule warns when the
 built-in default applies. Decision F2-D4: a design in which only some
-elements declare a time scale is accepted with that warning. The suite is
+elements declare a time scale is an error (`ELAB-006`) unless `--timescale` or
+`compile.timescale` gives the others one. The suite is
 `tests/sim_feature_completion/ki_timescale_option.rs`.
 
 ## Clauses
@@ -19,7 +20,8 @@ IEEE 1800-2009, `SystemVerilog-1800-2009.txt`:
 - 3.14.2.3 L2962: "The default time unit and precision are
   implementation-specific."
 - 3.14.2.3 L2964: "It shall be an error if some design elements have a time
-  unit and precision specified and others do not." (llg departs, F2-D4.)
+  unit and precision specified and others do not." (F2-D4: an explicit
+  default time scale gives the others one.)
 - 22.7 L39668-39669: "If there is no `timescale specified or it has been reset
   by a `resetall directive, the default time unit and precision are
   tool-specific."
@@ -91,11 +93,18 @@ a `timescale directive allows blanks between the parts (Syntax 22-6).
 `tb t=2000000 W=4`. No element takes the default, so `--timescale 10us/1ns`
 changes nothing (`declared.out` for both).
 
-`mixed.sv`: `pkg` and `sub` precede the `timescale 1us/1ns of `tb`. Default:
-`sub` is 1ns/1ps, so the global precision is 1ps and the lines are those of
-`declared.sv` (`mixed.out`). With `--timescale 1us/1ns` every element is
-1us/1ns, global precision 1ns: `sub` at 1us = `sub t=1000`, `tb` at 2us =
-`tb t=2000 W=4` (`mixed_1us.out`).
+`mixed.sv`: `pkg` and `sub` precede the `timescale 1us/1ns of `tb`, so only
+some elements have a time scale: without a default time scale the run stops
+before lint with one error at `pkg`, the first element without one, naming
+`tb`, which has one (3.14.2.3 L2964, F2-D4):
+``ERROR mixed.sv:2:9 package `pkg` has no `timescale, timeunit or
+timeprecision, but module `tb` at <path>/mixed.sv:11:8 has a time scale; ...``
+(`ELAB-006`, exit 1, nothing printed). `--timescale 1ns/1ps`: `sub` is
+1ns/1ps, so the global precision is 1ps and the lines are those of
+`declared.sv` (`mixed.out`). With `--timescale 1us/1ns` (or
+`compile.timescale = "1us/1ns"`) every element is 1us/1ns, global precision
+1ns: `sub` at 1us = `sub t=1000`, `tb` at 2us = `tb t=2000 W=4`
+(`mixed_1us.out`). Neither prints a `missing-timescale` warning.
 
 ## `wave.sv`
 
@@ -121,8 +130,6 @@ takes the built-in default, counting the others:
 - `consumers.sv:3:9`: "package `p` and 2 other design elements have no
   `timescale, timeunit or timeprecision and use the default time scale
   1ns/1ps (missing-timescale)".
-- `mixed.sv:2:9`: "package `pkg` and 1 other design element ..." (`tb` has a
-  time scale).
 - `wave.sv:2:8`: "module `tb` has no `timescale, timeunit or timeprecision
   and uses the default time scale 1ns/1ps (missing-timescale)".
 - none for `declared.sv`, and none whenever `--timescale` is given.

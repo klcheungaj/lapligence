@@ -3,7 +3,7 @@
 // has a single-form neg_2001_*.v companion; this whole file also rejects
 // under --edition v2001. Values in sv_forms_2009.out are derived by hand.
 module leaf #(parameter int W = 4, localparam int D = W * 2)
-             (input logic [W-1:0] a, output logic [D-1:0] y);
+             (input logic [W-1:0] a, output logic [D-1:0] y); timeunit 1ns; timeprecision 1ps;
   assign y = {a, a};
 endmodule
 

@@ -250,6 +250,13 @@ pub const ELAB_RESTRICT: MessageDef = def(
     "a `restrict property` statement, which simulation does not verify (SV 16.15.4); one per statement",
     NONE,
 );
+pub const ELAB_MIXED_TIME_SCALE: MessageDef = def(
+    Tool::Elab,
+    6,
+    Severity::Error,
+    "some design elements have a time scale and others do not (SV 3.14.2.3)",
+    "give a default time scale with `--timescale` or `compile.timescale`",
+);
 
 pub const LINT_SUMMARY: MessageDef = def(
     Tool::Lint,
@@ -467,6 +474,7 @@ pub const HOST_MESSAGES: &[&MessageDef] = &[
     &ELAB_PROTECTED,
     &ELAB_EDITION,
     &ELAB_RESTRICT,
+    &ELAB_MIXED_TIME_SCALE,
     &LINT_SUMMARY,
     &CODEGEN_SUMMARY,
     &CODEGEN_UNSUPPORTED,

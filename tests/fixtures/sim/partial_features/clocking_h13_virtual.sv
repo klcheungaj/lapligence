@@ -1,4 +1,4 @@
-interface vif_if(input logic clk);
+interface vif_if(input logic clk); timeunit 1ns; timeprecision 1ps;
   logic data = 0;
   clocking cb @(posedge clk);
     input #1step data;

@@ -85,19 +85,77 @@ fn consumers_follow_the_default_time_scale() {
 }
 
 /// A design whose elements all declare their time scale is unaffected by
-/// `--timescale`; in a mixed design only the elements without one change.
+/// `--timescale`; in a mixed design, which needs it (decision F2-D4), only
+/// the elements without one change.
 #[test]
 fn declared_time_scales_win_over_the_default() {
     for args in [&[][..], &["--timescale", "10us/1ns"][..]] {
         sim_cli::run_case_backend_parity(SUITE, "declared", fixture!("declared.out"), args, &[]);
     }
-    sim_cli::run_case_backend_parity(SUITE, "mixed", fixture!("mixed.out"), &[], &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "mixed",
+        fixture!("mixed.out"),
+        &["--timescale", "1ns/1ps"],
+        &[],
+    );
     sim_cli::run_case_backend_parity(
         SUITE,
         "mixed",
         fixture!("mixed_1us.out"),
         &["--timescale", "1us/1ns"],
         &[],
+    );
+}
+
+/// Decision F2-D4: when only some design elements have a time scale
+/// (IEEE 1800-2009 3.14.2.3), the run stops before lint with one located
+/// error at the first element without one, naming an element with one; a
+/// default time scale from `--timescale` or `compile.timescale` makes the
+/// design legal without a `missing-timescale` warning.
+#[test]
+fn mixed_time_scales_need_a_default() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "mixed",
+        "ELAB-006",
+        Some("2:9"),
+        "package `pkg` has no `timescale, timeunit or timeprecision, but module `tb` at ",
+    );
+    let (_directory, output) = sim_cli::run_case_keeping_dir(SUITE, "mixed", true, &[], &[]);
+    let message = stderr(&output)
+        .lines()
+        .filter_map(llg::core::report::parse)
+        .find(|message| message.id == "ELAB-006")
+        .expect("ELAB-006 error");
+    assert!(
+        message.text.ends_with(
+            "mixed.sv:11:8 has a time scale; a design in which only some elements have one \
+             needs a default time scale (`--timescale`) (IEEE 1800-2009 3.14.2.3)"
+        ),
+        "{}",
+        message.text
+    );
+    assert!(
+        timescale_findings(&stderr(&output)).is_empty(),
+        "lint did not run"
+    );
+
+    let (_directory, output) =
+        sim_cli::run_case_keeping_dir(SUITE, "mixed", true, &["--timescale", "1ns/1ps"], &[]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), fixture!("mixed.out"));
+    assert!(!stderr(&output).contains("ELAB-006"), "{}", stderr(&output));
+    assert!(timescale_findings(&stderr(&output)).is_empty());
+
+    let config = "schema_version = 1\n\n[compile]\ntimescale = \"1us/1ns\"\n";
+    sim_cli::run_case_backend_parity_with_files(
+        SUITE,
+        "mixed",
+        fixture!("mixed_1us.out"),
+        &["--config", "llg.toml"],
+        &[],
+        &[("llg.toml", config)],
     );
 }
 
@@ -166,21 +224,12 @@ fn vpi_time_properties_follow_the_default_time_scale() {
 /// default.
 #[test]
 fn missing_timescale_warns_once_at_the_first_element() {
-    let cases: [(&str, &[&str], &[&str]); 6] = [
+    let cases: [(&str, &[&str], &[&str]); 5] = [
         (
             "consumers",
             &[],
             &[
                 "WARNING consumers.sv:3:9 package `p` and 2 other design elements have no \
-               `timescale, timeunit or timeprecision and use the default time scale 1ns/1ps \
-               (missing-timescale)",
-            ],
-        ),
-        (
-            "mixed",
-            &[],
-            &[
-                "WARNING mixed.sv:2:9 package `pkg` and 1 other design element have no \
                `timescale, timeunit or timeprecision and use the default time scale 1ns/1ps \
                (missing-timescale)",
             ],

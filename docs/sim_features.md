@@ -2484,8 +2484,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   §§1 and 6. Elements without a time scale take 1ns/1ps or the
   `--timescale`/`compile.timescale` value, which delays, time reporting,
   `$timeformat` defaults, VPI time properties and waveform headers follow;
-  the `missing-timescale` lint warning reports the built-in default (F2-D3,
-  F2-D4). V §19.8; SV §§3.14.2.3, 22.7 **[1995/SV-2009]**.
+  the `missing-timescale` lint warning reports the built-in default (F2-D3);
+  a design in which only some elements have a time scale is an error unless
+  a default is given (F2-D4). V §19.8; SV §§3.14.2.3, 22.7 **[1995/SV-2009]**.
 - 🟦 **`` `default_nettype `` / `` `resetall ``** — Control implicit-net admission
   and reset later directive state; `none` rejects undeclared nets, `wire`
   restores them, and separate/merged units retain their specified boundaries.

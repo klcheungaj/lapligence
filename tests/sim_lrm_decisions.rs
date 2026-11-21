@@ -4381,9 +4381,14 @@ fn f2_d3_default_timescale() {
 
 #[test]
 fn f2_d4_mixed_timescale() {
-    run_decision(
+    // Negative case: the expected stdout is empty because elaboration fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/F2-D4_mixed_timescale.out").is_empty());
+    sim_cli::reject_case_with_id(
+        SUITE,
         "F2-D4_mixed_timescale",
-        include_str!("fixtures/sim/lrm_decisions/F2-D4_mixed_timescale.out"),
+        "ELAB-006",
+        Some("14:8"),
+        "module `sub` has no `timescale, timeunit or timeprecision, but module `tb` at ",
     );
 }
 

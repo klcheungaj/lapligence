@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 76;
+const ABI_VERSION: u32 = 77;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -947,6 +947,11 @@ pub(crate) const INSTANCE_AUTOMATIC: u64 = 1 << 19;
 /// a compilation unit, declares no time scale, so the compilation's default
 /// time scale applies (IEEE 1800-2009 3.14.2.3).
 pub(crate) const INSTANCE_DEFAULT_TIME_SCALE: u64 = 1 << 28;
+/// On a plain instance or a package (ABI v77): its definition, declared in
+/// a compilation unit, has a time scale of its own (a timeunit or
+/// timeprecision, a `` `timescale`` directive or a compilation-unit time
+/// unit). Never set with [`INSTANCE_DEFAULT_TIME_SCALE`].
+pub(crate) const INSTANCE_DECLARED_TIME_SCALE: u64 = 1 << 29;
 pub(crate) const INSTANCE_NET_TYPE_SHIFT: u32 = 20;
 pub(crate) const INSTANCE_NET_TYPE_MASK: u64 = 0xff;
 /// On a typedef node: the typedef renames a built-in type keyword

@@ -2571,26 +2571,28 @@ bool compilationUnitDeclaresTimeScale(const CompilationUnitSymbol& unit) {
   return false;
 }
 
-// Whether the design element `element` (a definition or a package) takes the
+// The time-scale flag of the design element `element` (a definition or a
+// package): LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE when it takes the
 // compilation's default time scale (IEEE 1800-2009 3.14.2.3 d): it declares
 // no timeunit or timeprecision, no `timescale directive was in effect where
-// it was parsed (b) and its compilation unit declares no time unit (c). Slang
-// reports the default as the element's own scale, so it cannot tell. Only
-// elements declared in a compilation unit count: a nested definition
-// inherits its parent's scale (a) and is never reported.
-bool takesDefaultTimeScale(Capture& capture, const Symbol& element) {
+// it was parsed (b) and its compilation unit declares no time unit (c);
+// LLG_SLANG_INSTANCE_DECLARED_TIME_SCALE when one of those gives it a scale.
+// Slang reports the default as the element's own scale, so it cannot tell.
+// Only elements declared in a compilation unit count: a nested definition
+// inherits its parent's scale (a) and carries neither flag.
+uint64_t elementTimeScaleFlag(Capture& capture, const Symbol& element) {
   const Scope* parent = element.getParentScope();
   const syntax::SyntaxNode* node = element.getSyntax();
   if (!parent || parent->asSymbol().kind != SymbolKind::CompilationUnit || !node ||
       !syntax::ModuleDeclarationSyntax::isKind(node->kind))
-    return false;
+    return 0;
   const auto& declaration = node->as<syntax::ModuleDeclarationSyntax>();
   for (const syntax::MemberSyntax* member : declaration.members) {
     if (member->kind == syntax::SyntaxKind::TimeUnitsDeclaration)
-      return false;
+      return LLG_SLANG_INSTANCE_DECLARED_TIME_SCALE;
   }
   if (compilationUnitDeclaresTimeScale(parent->asSymbol().as<CompilationUnitSymbol>()))
-    return false;
+    return LLG_SLANG_INSTANCE_DECLARED_TIME_SCALE;
   if (!capture.directiveTimeScaledReady) {
     capture.directiveTimeScaledReady = true;
     for (const auto& tree : parent->getCompilation().getSyntaxTrees()) {
@@ -2600,7 +2602,9 @@ bool takesDefaultTimeScale(Capture& capture, const Symbol& element) {
       }
     }
   }
-  return !capture.directiveTimeScaled.contains(&declaration);
+  return capture.directiveTimeScaled.contains(&declaration)
+             ? LLG_SLANG_INSTANCE_DECLARED_TIME_SCALE
+             : LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE;
 }
 
 uint32_t semanticDriveStrength(const std::optional<DriveStrength>& strength) {
@@ -3289,8 +3293,7 @@ public:
         result.auxiliary |= LLG_SLANG_INSTANCE_CELL_DEFINE;
       if (definition.defaultLifetime == VariableLifetime::Automatic)
         result.auxiliary |= LLG_SLANG_INSTANCE_AUTOMATIC;
-      if (takesDefaultTimeScale(capture, definition))
-        result.auxiliary |= LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE;
+      result.auxiliary |= elementTimeScaleFlag(capture, definition);
       result.auxiliary |=
           (uint64_t(semanticNetKind(definition.defaultNetType.netKind)) &
            LLG_SLANG_INSTANCE_NET_TYPE_MASK)
@@ -3299,8 +3302,7 @@ public:
     if constexpr (std::same_as<T, PackageSymbol>) {
       addTimeScale(result, symbol.timeScale);
       addPackageDefinition(result, symbol);
-      if (takesDefaultTimeScale(capture, symbol))
-        result.auxiliary |= LLG_SLANG_INSTANCE_DEFAULT_TIME_SCALE;
+      result.auxiliary |= elementTimeScaleFlag(capture, symbol);
     }
     // An undeclared `$unit` scale is left unset rather than reporting the
     // compilation default as if it were declared.

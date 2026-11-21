@@ -199,14 +199,12 @@ pub struct LegacyDirective {
     pub column: u32,
 }
 
-/// A design element of the elaborated design that takes the compilation's
-/// default time scale: no `` `timescale`` directive, `timeunit`,
-/// `timeprecision` or compilation-unit time unit applies to it
-/// (IEEE 1800-2009 3.14.2.3 d). Modules, interfaces and programs instantiated
-/// in the design and packages count once each; nested definitions inherit
-/// their parent's scale and `$unit` is not one.
+/// A design element of the elaborated design, as the time-scale rules of
+/// IEEE 1800-2009 3.14.2.3 count them: modules, interfaces and programs
+/// instantiated in the design and packages count once each; nested
+/// definitions inherit their parent's scale and `$unit` is not one.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DefaultTimeScaleElement {
+pub struct TimeScaleElement {
     /// `module`, `interface`, `program` or `package`.
     pub kind: &'static str,
     pub name: String,
@@ -286,7 +284,8 @@ pub struct Db {
     /// built-in default (see [`Db::default_time_scale`]).
     default_time_scale: Option<SemanticTimeScale>,
     /// Design elements that take the default time scale, in source order.
-    default_time_scale_elements: Vec<DefaultTimeScaleElement>,
+    default_time_scale_elements: Vec<TimeScaleElement>,
+    declared_time_scale_element: Option<TimeScaleElement>,
     overridden_parameters: HashSet<NodeId>,
     /// Native semantic categories retained for coverage checks when the
     /// frontend-neutral [`NodeKind`] intentionally has no direct variant.
@@ -539,6 +538,7 @@ impl Db {
             delay_selection: DelaySelection::Typical,
             default_time_scale: None,
             default_time_scale_elements: Vec::new(),
+            declared_time_scale_element: None,
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
@@ -647,6 +647,7 @@ impl Db {
             delay_selection: DelaySelection::Typical,
             default_time_scale: None,
             default_time_scale_elements: Vec::new(),
+            declared_time_scale_element: None,
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
@@ -1686,9 +1687,33 @@ impl Db {
         self.default_time_scale.is_some()
     }
 
-    /// Design elements that take the default time scale, in source order.
-    pub fn default_time_scale_elements(&self) -> &[DefaultTimeScaleElement] {
+    /// Design elements that take the default time scale (no `` `timescale``
+    /// directive, `timeunit`, `timeprecision` or compilation-unit time unit
+    /// applies to them; IEEE 1800-2009 3.14.2.3 d), in source order.
+    pub fn default_time_scale_elements(&self) -> &[TimeScaleElement] {
         &self.default_time_scale_elements
+    }
+
+    /// The first design element in source order that has a time scale of its
+    /// own (one of those applies to it).
+    pub fn declared_time_scale_element(&self) -> Option<&TimeScaleElement> {
+        self.declared_time_scale_element.as_ref()
+    }
+
+    /// A design element without a time scale and one with a time scale, when
+    /// the design has both and no `--timescale` default was chosen: "It shall
+    /// be an error if some design elements have a time unit and precision
+    /// specified and others do not" (IEEE 1800-2009 3.14.2.3). An explicit
+    /// default applies to the elements without one and makes the design
+    /// legal (decision F2-D4). Each is the first such element in source order.
+    pub fn mixed_time_scale_elements(&self) -> Option<(&TimeScaleElement, &TimeScaleElement)> {
+        if self.default_time_scale_is_explicit() {
+            return None;
+        }
+        Some((
+            self.default_time_scale_elements.first()?,
+            self.declared_time_scale_element.as_ref()?,
+        ))
     }
 
     /// Whether Slang replaced this parameter's declaration initializer with

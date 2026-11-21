@@ -378,6 +378,7 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
 }
 
 fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError> {
+    let time_scale = super::INSTANCE_DEFAULT_TIME_SCALE | super::INSTANCE_DECLARED_TIME_SCALE;
     let valid = match (node.kind, node.subkind, node.operation) {
         // An instance array level keeps its declared range: left in bits
         // 0-31, right in bits 32-63 (ABI v54); any pair of int32 is valid.
@@ -399,19 +400,22 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
             let allowed = drive
                 | super::INSTANCE_CELL_DEFINE
                 | super::INSTANCE_AUTOMATIC
-                | super::INSTANCE_DEFAULT_TIME_SCALE
+                | time_scale
                 | super::INSTANCE_NET_TYPE_MASK << super::INSTANCE_NET_TYPE_SHIFT;
-            node.auxiliary & !allowed == 0 && (node.auxiliary & drive).count_ones() <= 1
+            node.auxiliary & !allowed == 0
+                && (node.auxiliary & drive).count_ones() <= 1
+                && (node.auxiliary & time_scale).count_ones() <= 1
         }
         // A package carries its default lifetime and net type in the
         // instance layout (ABI v68), and whether it takes the default time
-        // scale (ABI v76).
+        // scale (ABI v76) or declares one (ABI v77).
         (2, _, _) => {
             node.auxiliary
                 & !(super::INSTANCE_AUTOMATIC
-                    | super::INSTANCE_DEFAULT_TIME_SCALE
+                    | time_scale
                     | super::INSTANCE_NET_TYPE_MASK << super::INSTANCE_NET_TYPE_SHIFT)
                 == 0
+                && (node.auxiliary & time_scale).count_ones() <= 1
         }
         (1 | 24, _, _) => {
             let allowed = UNCONNECTED_PULL0 | UNCONNECTED_PULL1;

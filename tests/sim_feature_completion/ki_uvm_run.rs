@@ -242,10 +242,17 @@ fn duplicate_package_definition() {
         include_str!(
             "../fixtures/sim/feature_completion/ki_uvm_run/duplicate_package_definition.out"
         ),
-        &[concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/sim/feature_completion/ki_uvm_run/duplicate_package_definition_pkg.svh"
-        )],
+        // The header's first definition has no time scale and `tb` has one,
+        // so the design needs a default time scale (decision F2-D4), as a
+        // verification library's flow gives on its command line.
+        &[
+            "--timescale",
+            "1ns/1ns",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/sim/feature_completion/ki_uvm_run/duplicate_package_definition_pkg.svh"
+            ),
+        ],
         &[],
     );
 }

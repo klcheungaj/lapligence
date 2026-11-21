@@ -380,6 +380,35 @@ fn generate_and_build(options: DriverOptions, reporter: &mut Reporter) -> Next {
         }
     };
     drop(out);
+    // "It shall be an error if some design elements have a time unit and
+    // precision specified and others do not" (IEEE 1800-2009 3.14.2.3);
+    // `--timescale` gives the others one (decision F2-D4).
+    if let Some((without, with)) = codegen_db.mixed_time_scale_elements() {
+        reporter.emit(
+            Message::new(
+                &catalog::ELAB_MIXED_TIME_SCALE,
+                format!(
+                    "{} `{}` has no `timescale, timeunit or timeprecision, but {} `{}` at {}:{}:{} \
+                     has a time scale; a design in which only some elements have one needs a \
+                     default time scale (`--timescale`) (IEEE 1800-2009 3.14.2.3)",
+                    without.kind,
+                    without.name,
+                    with.kind,
+                    with.name,
+                    with.file.as_deref().unwrap_or("<unknown>"),
+                    with.line,
+                    with.col,
+                ),
+            )
+            .location(format!(
+                "{}:{}:{}",
+                without.file.as_deref().unwrap_or("<unknown>"),
+                without.line.max(1),
+                without.col.max(1)
+            )),
+        );
+        return Next::Exit(1);
+    }
     let lint_stage = llg::profile::Stage::new("lint");
     let model = llg::core::model::DesignModel::from_db(&codegen_db);
     let mut findings = llg::core::lint::lint_with_config(&codegen_db, &model, &lint_config);

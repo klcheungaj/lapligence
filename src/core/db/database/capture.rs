@@ -433,8 +433,8 @@ impl Db {
             .collect();
         let instance_definitions =
             instance_definitions(snapshot, &ids, &mut source_positions, &instance_configs)?;
-        let default_time_scale_elements =
-            default_time_scale_elements(snapshot, &mut source_positions)?;
+        let (default_time_scale_elements, declared_time_scale_element) =
+            time_scale_elements(snapshot, &mut source_positions)?;
         let attributes = attribute_instances(snapshot, &ids, &mut source_positions)?;
         let primitive_array_positions = primitive_array_positions(snapshot);
         let instance_array_ranges = instance_array_ranges(snapshot);
@@ -1652,6 +1652,7 @@ impl Db {
             delay_selection: snapshot.delay_selection,
             default_time_scale: snapshot.default_time_scale,
             default_time_scale_elements,
+            declared_time_scale_element,
             overridden_parameters,
             semantic_kinds,
             semantic_details,
@@ -1859,16 +1860,25 @@ fn instance_definitions(
 
 /// The design elements that take the default time scale, each once, in
 /// source order (file, then offset): the definitions of plain instances and
-/// the packages whose node carries `INSTANCE_DEFAULT_TIME_SCALE`.
-fn default_time_scale_elements(
+/// the packages whose node carries `INSTANCE_DEFAULT_TIME_SCALE`; and the
+/// first in that order whose node carries `INSTANCE_DECLARED_TIME_SCALE`.
+fn time_scale_elements(
     snapshot: &SlangSnapshot,
     positions: &mut SourcePositions<'_>,
-) -> Result<Vec<super::DefaultTimeScaleElement>, DbError> {
-    use crate::ffi::slang::INSTANCE_DEFAULT_TIME_SCALE;
+) -> Result<
+    (
+        Vec<super::TimeScaleElement>,
+        Option<super::TimeScaleElement>,
+    ),
+    DbError,
+> {
+    use crate::ffi::slang::{INSTANCE_DECLARED_TIME_SCALE, INSTANCE_DEFAULT_TIME_SCALE};
     let mut found = Vec::new();
+    let mut declared: Option<((u64, u64), &crate::ffi::slang::SemanticNode, &'static str)> = None;
     let mut seen = HashSet::new();
     for semantic in snapshot.semantic_nodes.iter() {
-        if semantic.auxiliary & INSTANCE_DEFAULT_TIME_SCALE == 0 {
+        let default = semantic.auxiliary & INSTANCE_DEFAULT_TIME_SCALE != 0;
+        if !default && semantic.auxiliary & INSTANCE_DECLARED_TIME_SCALE == 0 {
             continue;
         }
         let (element, kind) = match semantic.kind {
@@ -1891,26 +1901,43 @@ fn default_time_scale_elements(
             }
             _ => continue,
         };
-        if !seen.insert(element.id) {
-            continue;
-        }
         let order = element
             .range
             .map_or((u64::MAX, u64::MAX), |range| (range.file_id, range.start));
-        let (file, line, col, _, _) = positions.position(element)?;
-        found.push((
-            order,
-            super::DefaultTimeScaleElement {
-                kind,
-                name: element.name.to_string(),
-                file,
-                line,
-                col,
-            },
-        ));
+        if !default {
+            if declared.is_none_or(|(first, _, _)| order < first) {
+                declared = Some((order, element, kind));
+            }
+            continue;
+        }
+        if !seen.insert(element.id) {
+            continue;
+        }
+        found.push((order, time_scale_element(element, kind, positions)?));
     }
     found.sort_by_key(|(order, _)| *order);
-    Ok(found.into_iter().map(|(_, element)| element).collect())
+    let declared = declared
+        .map(|(_, element, kind)| time_scale_element(element, kind, positions))
+        .transpose()?;
+    Ok((
+        found.into_iter().map(|(_, element)| element).collect(),
+        declared,
+    ))
+}
+
+fn time_scale_element(
+    element: &crate::ffi::slang::SemanticNode,
+    kind: &'static str,
+    positions: &mut SourcePositions<'_>,
+) -> Result<super::TimeScaleElement, DbError> {
+    let (file, line, col, _, _) = positions.position(element)?;
+    Ok(super::TimeScaleElement {
+        kind,
+        name: element.name.to_string(),
+        file,
+        line,
+        col,
+    })
 }
 
 /// The attribute instances of every owner. A single instance lists its own

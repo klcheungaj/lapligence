@@ -274,7 +274,9 @@ Required integer; must be `1`.
   precision coarser than the unit is an error. Without it the default is
   1ns/1ps and the `missing-timescale` lint rule warns once, at the first
   element that uses it; with it (even `"1ns/1ps"`) the choice is explicit and
-  the rule is quiet. `llg_ls` applies it too.
+  the rule is quiet. A design in which only some elements have a time scale
+  needs it: without it `llg` stops with an error (`ELAB-006`, IEEE 1800-2009
+  3.14.2.3). `llg_ls` applies it too.
 - `include_dirs` (array of strings) — additional include-search directories
   (may be external); source directories are already include dirs. In `llg`
   they are also searched for module definitions: a module, interface, program
