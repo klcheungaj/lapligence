@@ -29,12 +29,13 @@ pub enum ConcurrentAssertionKind {
 impl Db {
     /// The `restrict property` statements of the elaborated design (16.15.4),
     /// one per source statement: instances, generate iterations and repeated
-    /// bodies that share a statement's position report it once. In source
+    /// bodies that share a statement's position report it once; one of an
+    /// untaken generate block does not exist (27.3). In source
     /// position order; empty for a design without one.
     pub fn restrict_property_statements(&self) -> Vec<NodeId> {
         let mut seen = HashSet::new();
         let mut statements: Vec<NodeId> = self
-            .node_ids()
+            .instantiated_node_ids()
             .filter(|&id| {
                 let node = self.node(id);
                 matches!(

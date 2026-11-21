@@ -78,6 +78,8 @@ mod macro_tokens;
 mod package_imports;
 #[path = "lsp_stdio/semantic_token_requirements.rs"]
 mod semantic_token_requirements;
+#[path = "lsp_stdio/time_scales.rs"]
+mod time_scales;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/lsp");
 const MODULE_EXPLORER_FIXTURE_DIR: &str = concat!(

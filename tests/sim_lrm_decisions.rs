@@ -2073,10 +2073,121 @@ fn s22_d8_array_query_preset() {
 }
 
 #[test]
+fn s22_d8_class_first_declaration() {
+    run_decision(
+        "S22-D8_class_first_declaration",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_class_first_declaration.out"),
+    );
+}
+
+#[test]
+fn s22_d8_nested_class_order() {
+    run_decision(
+        "S22-D8_nested_class_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_nested_class_order.out"),
+    );
+}
+
+#[test]
+fn s22_d8_generate_class_order() {
+    run_decision(
+        "S22-D8_generate_class_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_generate_class_order.out"),
+    );
+}
+
+#[test]
+fn s22_d8_generate_block_order() {
+    run_decision(
+        "S22-D8_generate_block_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_generate_block_order.out"),
+    );
+}
+
+#[test]
 fn s22_d9_initializer_finish_runs_finals() {
     run_decision(
         "S22-D9_initializer_finish_runs_finals",
         include_str!("fixtures/sim/lrm_decisions/S22-D9_initializer_finish_runs_finals.out"),
+    );
+}
+
+#[test]
+fn s22_d10_untaken_generate_class() {
+    run_decision(
+        "S22-D10_untaken_generate_class",
+        include_str!("fixtures/sim/lrm_decisions/S22-D10_untaken_generate_class.out"),
+    );
+}
+
+#[test]
+fn s22_d10_untaken_class_forward_typedef_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/S22-D10_untaken_class_forward_typedef_rejected.out"
+    )
+    .is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S22-D10_untaken_class_forward_typedef_rejected",
+        "S22-D10_untaken_class_forward_typedef_rejected.sv:14:17 forward typedef 'X' does not \
+         resolve to a data type",
+    );
+}
+
+#[test]
+fn s22_d10_untaken_generate_checks() {
+    run_decision(
+        "S22-D10_untaken_generate_checks",
+        include_str!("fixtures/sim/lrm_decisions/S22-D10_untaken_generate_checks.out"),
+    );
+}
+
+/// The nearest illegal cases of `S22-D10_untaken_generate_checks`: each
+/// parameter instantiates its block, whose code the design checks again.
+#[test]
+fn s22_d10_taken_generate_checks_rejected() {
+    let case = "S22-D10_untaken_generate_checks";
+    for (parameter, diagnostic) in [
+        (
+            "GATE=1",
+            "process `tb.always_comb` has multiple writers for `tb.y`",
+        ),
+        (
+            "CONST=1",
+            "`push_back` modifies `q`, which is declared const",
+        ),
+        (
+            "VIF=1",
+            "`v.i` writes `i`, an input port variable of interface `bus_if`",
+        ),
+        (
+            "GCLK=1",
+            "global clocking cannot be declared in a generate block",
+        ),
+    ] {
+        sim_cli::reject_case_with_args(SUITE, case, diagnostic, &["-G", parameter]);
+    }
+}
+
+#[test]
+fn s22_d10_untaken_generate_vpi() {
+    run_vpi_decision(
+        "S22-D10_untaken_generate_vpi",
+        &["task $p()"],
+        include_str!("fixtures/sim/lrm_decisions/S22-D10_untaken_generate_vpi.out"),
+    );
+}
+
+#[test]
+fn s22_d10_untaken_sdf_annotate() {
+    run_sdf_decision(
+        "S22-D10_untaken_sdf_annotate",
+        include_str!("fixtures/sim/lrm_decisions/S22-D10_untaken_sdf_annotate.out"),
+        &[(
+            "S22-D10_untaken_sdf_annotate.sdf",
+            include_str!("fixtures/sim/lrm_decisions/S22-D10_untaken_sdf_annotate.sdf"),
+        )],
     );
 }
 

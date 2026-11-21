@@ -132,6 +132,16 @@ pub struct TypeDescriptor {
     pub shape: TypeShape,
 }
 
+/// What a forward typedef declares (IEEE 1800-2009 6.18, 8.25): the class
+/// definition it names (the generic class definition of a parameterized
+/// class) and whether it names the `class` keyword (`typedef class c;`
+/// rather than `typedef c;`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForwardTypedef {
+    pub class: NodeId,
+    pub class_keyword: bool,
+}
+
 /// The typedef a declared type names (IEEE 1800-2009 37.23): the typedef
 /// declaration node and the number of packed and unpacked (fixed-size,
 /// dynamic, queue or associative) dimensions declared above it (0: the

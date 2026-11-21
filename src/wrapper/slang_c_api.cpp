@@ -2998,6 +2998,30 @@ public:
     }
   }
 
+  // Links each class definition to its forward typedefs (IEEE 1800-2009
+  // 6.18, 8.25), which Slang chains in declaration order: a consumer needs
+  // where a class is first declared, which may be such a typedef, and
+  // whether it names the `class` keyword. Called after the root traversal,
+  // when every typedef the traversal reached as a scope member has its
+  // node; a typedef without one is skipped, so the links add no node and
+  // leave the node numbering as the traversal made it.
+  void captureForwardDeclarations() {
+    for (const auto& [id, first] : forwardDeclarationSites) {
+      uint32_t ordinal = 0;
+      for (const ForwardingTypedefSymbol* forward = first; forward;
+           forward = forward->getNextForwardDecl()) {
+        const auto target = capture.semanticIds.find(forward);
+        if (target == capture.semanticIds.end())
+          continue;
+        const uint32_t keyword = forward->typeRestriction == ForwardTypeRestriction::Class
+            ? LLG_SLANG_FORWARD_DECLARATION_CLASS
+            : 0;
+        capture.semanticEdge(id, LLG_SLANG_EDGE_FORWARD_DECLARATION, target->second,
+                             ordinal++ | keyword);
+      }
+    }
+  }
+
   // Slang elaborates and looks up one definition per name in a scope; a
   // same-named definition in another file is elaborated only when an
   // explicit top selection makes it an unreferenced definition. Capture
@@ -3618,6 +3642,15 @@ public:
         baseConstructor->visit(*this);
         parents.pop_back();
         capture.semanticRole(id, baseConstructor, LLG_SLANG_EDGE_BASE_CONSTRUCTOR);
+      }
+    }
+    // A class's forward typedefs (IEEE 1800-2009 6.18, 8.25) are linked
+    // after the traversal (captureForwardDeclarations). A specialization has
+    // none; they belong to its generic class.
+    if constexpr (std::same_as<T, ClassType> || std::same_as<T, GenericClassDefSymbol>) {
+      if (!capture.declarationOnly) {
+        if (const ForwardingTypedefSymbol* forward = symbol.getFirstForwardDecl())
+          forwardDeclarationSites.emplace_back(id, forward);
       }
     }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
@@ -6068,6 +6101,9 @@ private:
   // Import declarations (node ID, symbol) in capture order; captureImports
   // resolves their used items once every lookup has run.
   std::vector<std::pair<uint64_t, const Symbol*>> importSites;
+  // Class definitions (node ID, first forward typedef) in capture order;
+  // captureForwardDeclarations links them once the traversal is complete.
+  std::vector<std::pair<uint64_t, const ForwardingTypedefSymbol*>> forwardDeclarationSites;
   // A re-export chain (26.6) passes through at most this many packages; a
   // longer chain is cut, never followed around a cycle.
   static constexpr size_t kMaxImportExportDepth = 256;
@@ -10867,6 +10903,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
       definition->visit(semanticCapture);
     semanticCapture.captureShadowedDefinitions(compilation, root);
     semanticCapture.captureImports(compilation);
+    semanticCapture.captureForwardDeclarations();
   }
   semanticStage.finish();
   // Every body is captured now: the `auto_bin_max` write rejections outside

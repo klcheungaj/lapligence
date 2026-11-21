@@ -177,9 +177,10 @@ impl Codegen<'_> {
         tops: &[NodeId],
         commands: &[SdfCommand],
     ) -> Result<(), String> {
+        // A call of an untaken generate block does not exist (27.3).
         let calls = self
             .db
-            .node_ids()
+            .instantiated_node_ids()
             .filter(|id| matches!(self.kind(*id), NodeKind::SysCall { name } if name == "$sdf_annotate"))
             .collect::<Vec<_>>();
         if calls.is_empty() && commands.is_empty() {

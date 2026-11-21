@@ -69,6 +69,11 @@ pub struct Analysis {
     /// published), produced alongside the Slang diagnostics.  1-based
     /// positions.  Empty when compilation failed or no semantic DB design was built.
     pub lint: Vec<LintDiag>,
+    /// Design-wide elaboration errors the `llg` driver stops on
+    /// ([`llg::core::design_checks`]), published as `source: "llg"` with the
+    /// catalog id as code. They leave the outcome alone: the design elaborated
+    /// and its navigation data is complete. Empty when no semantic DB was built.
+    pub design: Vec<DesignDiag>,
     /// Source-level module definitions and instance edges retained while the
     /// Slang parse tree was alive.  The module explorer uses this graph for
     /// definitions that configured elaboration did not instantiate.
@@ -237,6 +242,7 @@ impl Analysis {
             unresolved_bindings: connections.unresolved_bindings,
             decl_details: HashMap::new(),
             lint,
+            design: Vec::new(),
             module_graph: ModuleGraph::default(),
             configured_top: None,
             macros: macros::MacroTable::default(),
@@ -959,7 +965,7 @@ pub(crate) fn analyze_with_config_context_parent(
             AnalysisOutcome::Valid => "ok",
             AnalysisOutcome::Fatal | AnalysisOutcome::Parse | AnalysisOutcome::Compile => "error",
         },
-        analysis.diagnostics.len() + analysis.lint.len(),
+        analysis.diagnostics.len() + analysis.lint.len() + analysis.design.len(),
     );
     analysis
 }
@@ -1122,14 +1128,18 @@ pub(super) fn analyze_inner_slang(
         &source_texts,
         database.as_ref().and_then(|result| result.as_ref().ok()),
     );
-    let (model, lint_diags, db_error) = match database {
+    let (model, lint_diags, design_diags, db_error) = match database {
         Some(Ok(db)) => {
+            // `compile.timescale` is the server's only default time scale.
+            let design_diags: Vec<_> = design_checks::mixed_time_scale(&db, Reporter::Server)
+                .into_iter()
+                .collect();
             let model = DesignModel::from_db(&db);
             let mut lint_diags = lint::lint_with_config(&db, &model, lint_cfg);
             if !protected_extents.is_empty() {
                 lint_diags.retain(|finding| !inside_extents(&protected_extents, finding));
             }
-            (model, lint_diags, None)
+            (model, lint_diags, design_diags, None)
         }
         other => {
             let mut model = empty_design();
@@ -1147,6 +1157,7 @@ pub(super) fn analyze_inner_slang(
                 .collect();
             (
                 model,
+                Vec::new(),
                 Vec::new(),
                 other.and_then(Result::err).map(|error| error.to_string()),
             )
@@ -1190,6 +1201,7 @@ pub(super) fn analyze_inner_slang(
     .with_module_graph(module_graph)
     .with_configured_top(opts.top.clone());
     analysis.attach_frontend_diagnostics(frontend_diagnostics);
+    analysis.design = design_diags;
     analysis
 }
 

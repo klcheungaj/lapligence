@@ -699,11 +699,19 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   lexical package references remain distinct. Static initializers run
   packages first in declaration order, then `$unit`, then the design
   hierarchy in post-order (an instance after the instances below it), each
-  scope its class static properties, then its generate blocks, then its own
-  declarations, each of these its constant initializers first and the others
+  scope its class static properties (each class at its first declaration, a
+  forward `typedef class` included), then its generate blocks (in reverse
+  pre-order: nested blocks first, the later sibling or loop iteration
+  first), then its own declarations, each of these its constant initializers first and the others
   in declaration order, so a forward read sees the default value of a later
   non-constant initializer; a static local initializes at its subroutine's
   place, a constant one with its scope's constants (decision S22-D8). A
+  class of a generate block that elaboration does not instantiate (an
+  untaken if or case branch, a block nested in one) does not exist: its
+  static initializers, method static locals and covergroups never run or
+  count, and the block's gates, calls (`$sdf_annotate`, built-ins a VPI
+  application registers), global clocking, VPI objects and unnamed
+  primitive numbers are not part of the model either (decision S22-D10). A
   package defined twice (a guarded header compiled on its own and included
   again in another compilation unit; the frontend warns) is simulated once, as
   every reference binds the first definition

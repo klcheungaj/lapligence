@@ -262,3 +262,107 @@ fn lint_diagnostics_add_their_line_mapped_origin() {
     let related = diagnostic.related_information.as_ref().expect("origin");
     assert_eq!(related[0].message, "`line origin: orig.sv:12");
 }
+
+/// Analysis of in-memory compilation units with an optional default time
+/// scale (`compile.timescale`, the server's only source of one).
+fn analyze_time_scale_units(sources: &[(&'static str, &str)], timescale: Option<&str>) -> Analysis {
+    analyze(&CompileOpts {
+        sources: sources
+            .iter()
+            .map(|(name, text)| compile::OwnedSource::compilation_unit(hp(name), *text))
+            .collect(),
+        top: Some("tb".to_owned()),
+        default_time_scale: timescale.map(|text| text.parse().expect("time scale")),
+        ..Default::default()
+    })
+}
+
+const UNTIMED_SUB: &str = "module sub;\nendmodule\n";
+const TIMED_TB: &str = "`timescale 1ns/1ps\nmodule tb;\n  sub u();\nendmodule\n";
+
+/// F2-D4: a design in which only some elements have a time scale publishes
+/// ELAB-006 as an error at the first element without one, with the first
+/// element that has one as related information, like `llg` reports it.
+#[test]
+fn mixed_time_scales_publish_elab_006_with_the_timed_element_related() {
+    let _guards = analysis_guards();
+    let a = analyze_time_scale_units(&[("/x/sub.sv", UNTIMED_SUB), ("/x/tb.sv", TIMED_TB)], None);
+    assert!(a.is_valid(), "navigation stays servable: {:?}", a.outcome);
+    let map = lsp_diagnostics(&a);
+    let errors: Vec<_> = map
+        .values()
+        .flatten()
+        .filter(|d| d.code == Some(NumberOrString::String("ELAB-006".to_owned())))
+        .collect();
+    assert_eq!(errors.len(), 1, "{map:?}");
+    let error = errors[0];
+    assert!(map[hp("/x/sub.sv")].contains(error), "{map:?}");
+    assert_eq!(error.severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(error.source.as_deref(), Some("llg"));
+    assert_eq!(error.range.start, Position::new(0, 7));
+    // The text leaves the position to the related information, which the
+    // server maps from its staging copies to the user's files.
+    assert_eq!(
+        error.message,
+        "module `sub` has no `timescale, timeunit or timeprecision, but module `tb` has a time \
+         scale; a design in which only some elements have one needs a default time scale \
+         (`compile.timescale` in llg.toml) (IEEE 1800-2009 3.14.2.3)"
+    );
+    let related = error
+        .related_information
+        .as_ref()
+        .expect("related information");
+    assert_eq!(related.len(), 1, "{related:?}");
+    assert_eq!(related[0].message, "module `tb` has a time scale");
+    assert_eq!(
+        related[0].location.uri,
+        Url::from_file_path(hp("/x/tb.sv")).expect("file URI")
+    );
+    assert_eq!(related[0].location.range.start, Position::new(1, 7));
+}
+
+/// `compile.timescale` gives the untimed elements a time scale: no error and,
+/// the default being explicit, no `missing-timescale` warning either.
+#[test]
+fn a_configured_default_time_scale_clears_elab_006() {
+    let _guards = analysis_guards();
+    let a = analyze_time_scale_units(
+        &[("/x/sub.sv", UNTIMED_SUB), ("/x/tb.sv", TIMED_TB)],
+        Some("1ns/1ps"),
+    );
+    assert!(a.design.is_empty(), "{:?}", a.design);
+    assert!(
+        !a.lint.iter().any(|d| d.rule == "missing-timescale"),
+        "{:?}",
+        a.lint
+    );
+}
+
+/// A design without any time scale is legal (F2-D3): only the
+/// `missing-timescale` warning, no ELAB-006.
+#[test]
+fn a_design_without_time_scales_warns_only() {
+    let _guards = analysis_guards();
+    let a = analyze_time_scale_units(
+        &[
+            ("/x/sub.sv", UNTIMED_SUB),
+            ("/x/tb.sv", "module tb;\n  sub u();\nendmodule\n"),
+        ],
+        None,
+    );
+    assert!(a.design.is_empty(), "{:?}", a.design);
+    let map = lsp_diagnostics(&a);
+    let published: Vec<_> = map.values().flatten().collect();
+    assert!(
+        !published
+            .iter()
+            .any(|d| d.severity == Some(DiagnosticSeverity::ERROR)),
+        "{published:?}"
+    );
+    let warnings: Vec<_> = published
+        .iter()
+        .filter(|d| d.code == Some(NumberOrString::String("missing-timescale".to_owned())))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{published:?}");
+    assert_eq!(warnings[0].severity, Some(DiagnosticSeverity::WARNING));
+}

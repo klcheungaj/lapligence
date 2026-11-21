@@ -136,7 +136,12 @@ impl Codegen<'_> {
         tops: &[NodeId],
     ) -> VpiTimingMetadata {
         let mut metadata = VpiTimingMetadata::default();
+        // A node of an untaken generate block keeps its parent chain but
+        // does not exist (27.3).
         let reachable = |cg: &Self, node: NodeId| {
+            if cg.db.is_uninstantiated(node) {
+                return false;
+            }
             let mut current = Some(node);
             while let Some(id) = current {
                 if tops.contains(&id) {

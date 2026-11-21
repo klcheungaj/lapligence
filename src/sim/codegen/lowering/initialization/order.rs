@@ -9,9 +9,13 @@
 //! initializers by scope and position (decision S22-D8): packages, the
 //! compilation unit, then the design hierarchy in post-order; in each the
 //! class static properties, then (in an instance) each generate block, then
-//! the scope's own declarations. Each of these runs its constant
-//! initializers first, then the others in declaration order, the class
-//! static properties of one scope as a whole. An initializer reads whatever
+//! the scope's own declarations. The generate blocks of an instance run in
+//! reverse pre-order (`generate_slot`): a block's nested blocks before its
+//! own declarations, sibling blocks and loop iterations last first. Each of
+//! these runs its constant initializers first, then the others in
+//! declaration order, the class
+//! static properties of one scope as a whole, class by class in the order
+//! the classes are first declared (`class_ranks`). An initializer reads whatever
 //! the declarations it names hold when it runs, so a forward read sees the
 //! default value of a later non-constant initializer. A static local of a
 //! subroutine or procedure takes the place of its subroutine or procedure
@@ -186,6 +190,155 @@ impl<'a> Codegen<'a> {
         path
     }
 
+    /// The place of class `class` among the classes whose static
+    /// initializers one package, compilation unit or instance runs (decision
+    /// S22-D8): its rank in the scope that declares it (`class_ranks`; for a
+    /// nested class, the scope of its outermost class), then that scope's
+    /// position path below the instance, empty for the instance itself, so
+    /// the module's classes and those of its generate blocks (in pre-order)
+    /// interleave rank by rank, as industry-standard behaviour runs them.
+    /// Specializations of one generic class share its place. A class whose
+    /// scope declares no rank for it sorts after the ranked ones.
+    fn class_slot(
+        &self,
+        class: NodeId,
+        ranks: &mut HashMap<NodeId, HashMap<NodeId, usize>>,
+        positions: &mut HashMap<NodeId, HashMap<NodeId, usize>>,
+    ) -> (usize, Vec<usize>) {
+        let mut scope = self.db.class_declaring_scope(class);
+        while let Some(node) = scope.filter(|node| matches!(self.kind(*node), NodeKind::ClassDef)) {
+            scope = self.db.class_declaring_scope(node);
+        }
+        let Some(scope) = scope else {
+            return (usize::MAX, Vec::new());
+        };
+        let rank = ranks
+            .entry(scope)
+            .or_insert_with(|| self.class_ranks(scope))
+            .get(&class)
+            .copied()
+            .unwrap_or(usize::MAX);
+        let mut path = Vec::new();
+        let mut current = scope;
+        while matches!(
+            self.kind(current),
+            NodeKind::GenScope | NodeKind::GenScopeArray
+        ) {
+            let Some(parent) = self.node(current).parent else {
+                break;
+            };
+            let children = positions.entry(parent).or_insert_with(|| {
+                self.node(parent)
+                    .children
+                    .iter()
+                    .enumerate()
+                    .map(|(position, child)| (*child, position))
+                    .collect()
+            });
+            path.push(children.get(&current).copied().unwrap_or(0));
+            current = parent;
+        }
+        path.reverse();
+        (rank, path)
+    }
+
+    /// The rank of each class declared in `scope` (decision S22-D8): the
+    /// order in which a walk of the scope's members first declares the
+    /// classes, by a forward class declaration (`typedef class c;`, IEEE
+    /// 1800-2009 8.25) or the definition, whichever comes first, a class
+    /// body being walked at the definition, so its nested classes rank after
+    /// it and after what precedes the definition. Industry-standard
+    /// behaviour does not place a class at a `typedef c;` without the
+    /// `class` keyword. A generic class takes one rank, which its
+    /// specializations share. Classes without static initializers rank too.
+    fn class_ranks(&self, scope: NodeId) -> HashMap<NodeId, usize> {
+        let mut ranks = HashMap::new();
+        let mut count = 0;
+        let mut walked = HashSet::new();
+        let mut stack = vec![self.node(scope).children.iter()];
+        while let Some(members) = stack.last_mut() {
+            let Some(&member) = members.next() else {
+                stack.pop();
+                continue;
+            };
+            let definition = matches!(self.kind(member), NodeKind::ClassDef);
+            let Some(class) = definition.then_some(member).or_else(|| {
+                self.db
+                    .forward_typedef(member)
+                    .filter(|forward| forward.class_keyword)
+                    .map(|forward| forward.class)
+            }) else {
+                continue;
+            };
+            let rank = *ranks.entry(class).or_insert_with(|| {
+                count += 1;
+                count - 1
+            });
+            if !definition || !walked.insert(member) {
+                continue;
+            }
+            if self.db.semantic_detail(member) != Some("GenericClassDef") {
+                stack.push(self.node(member).children.iter());
+                continue;
+            }
+            let specializations = self
+                .node(member)
+                .children
+                .iter()
+                .copied()
+                .filter(|child| matches!(self.kind(*child), NodeKind::ClassDef))
+                .collect::<Vec<_>>();
+            for specialization in specializations.iter().rev() {
+                ranks.insert(*specialization, rank);
+                if walked.insert(*specialization) {
+                    stack.push(self.node(*specialization).children.iter());
+                }
+            }
+        }
+        ranks
+    }
+
+    /// The place of generate block `scope` among the generate blocks of its
+    /// instance (decision S22-D8): reverse pre-order, as industry-standard
+    /// behaviour runs them. Each position on the path from the instance
+    /// counts down, so a later sibling block or loop iteration sorts first,
+    /// and the closing `usize::MAX` sorts a block after the blocks nested
+    /// in it. Empty for any other scope.
+    fn generate_slot(
+        &self,
+        scope: Option<NodeId>,
+        positions: &mut HashMap<NodeId, HashMap<NodeId, usize>>,
+    ) -> Vec<usize> {
+        let mut path = Vec::new();
+        let mut current = scope;
+        while let Some(node) = current.filter(|node| {
+            matches!(
+                self.kind(*node),
+                NodeKind::GenScope | NodeKind::GenScopeArray
+            )
+        }) {
+            let Some(parent) = self.node(node).parent else {
+                break;
+            };
+            let children = positions.entry(parent).or_insert_with(|| {
+                self.node(parent)
+                    .children
+                    .iter()
+                    .enumerate()
+                    .map(|(position, child)| (*child, position))
+                    .collect()
+            });
+            let position = children.get(&node).copied().unwrap_or(0);
+            path.push(usize::MAX - 1 - position);
+            current = Some(parent);
+        }
+        if !path.is_empty() {
+            path.reverse();
+            path.push(usize::MAX);
+        }
+        path
+    }
+
     /// The declaring scope of an initialized declaration and its position
     /// path there (decision S22-D8). A declaration nested in a subroutine or
     /// procedure (a static local, also in a block of it) belongs to the
@@ -345,8 +498,10 @@ impl<'a> Codegen<'a> {
     /// first, each in declaration order, then the compilation unit, then the
     /// design hierarchy in post-order (an instance after the instances below
     /// it). In each scope the class static properties run first, the
-    /// constant ones of every class before the others; then, in an instance,
-    /// each generate block; then the scope's own declarations. A generate
+    /// constant ones of every class before the others, class by class at
+    /// each class's place (`class_slot`); then, in an instance, each
+    /// generate block in reverse pre-order (`generate_slot`); then the
+    /// scope's own declarations. A generate
     /// block and the scope's own declarations each run their constant
     /// initializers first, then the others in declaration order, a static
     /// local at the place of its subroutine or procedure. Ties keep the
@@ -396,6 +551,9 @@ impl<'a> Codegen<'a> {
         }
         scope_order.extend(nested_order);
         let mut instance_keys: HashMap<NodeId, Vec<usize>> = HashMap::new();
+        let mut class_ranks: HashMap<NodeId, HashMap<NodeId, usize>> = HashMap::new();
+        let mut class_slots: HashMap<NodeId, (usize, Vec<usize>)> = HashMap::new();
+        let mut generate_slots: HashMap<NodeId, Vec<usize>> = HashMap::new();
         let mut constants: HashMap<u32, bool> = HashMap::new();
         let keys = declarations
             .iter()
@@ -424,12 +582,33 @@ impl<'a> Codegen<'a> {
                 // Sub-rank 0 is the class static properties of the scope:
                 // their constants run before every class's other ones.
                 let class_variable = sub == 0 && !constant;
+                // A class property or method static local runs at its
+                // class's place; specializations of one generic class keep
+                // the order collection reached them.
+                let class_slot = match scope {
+                    Some(class) if matches!(self.kind(class), NodeKind::ClassDef) => class_slots
+                        .entry(class)
+                        .or_insert_with(|| self.class_slot(class, &mut class_ranks, &mut positions))
+                        .clone(),
+                    _ => (0, Vec::new()),
+                };
+                // A generate block's declarations (also its static locals)
+                // run at the block's place among the instance's blocks.
+                let generate_slot = match scope {
+                    Some(block) if sub == 1 => generate_slots
+                        .entry(block)
+                        .or_insert_with(|| self.generate_slot(Some(block), &mut positions))
+                        .clone(),
+                    _ => Vec::new(),
+                };
                 (
                     group,
                     index,
                     path,
                     sub,
                     class_variable,
+                    class_slot,
+                    generate_slot,
                     scope_order.get(&scope).copied().unwrap_or(unordered),
                     !constant,
                     position,
