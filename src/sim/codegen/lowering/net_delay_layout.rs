@@ -15,7 +15,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::sim::ir::{
-    IrConst, IrExpr, IrExprKind, IrInitStep, IrLhs, IrModel, IrNetAliasBinding, IrNetKind, IrStmt,
+    IrBinOp, IrConst, IrExpr, IrExprKind, IrInitStep, IrLhs, IrModel, IrNetAliasBinding, IrNetKind,
+    IrStmt,
 };
 
 #[derive(Default)]
@@ -430,20 +431,70 @@ fn unknown_bits(model: &IrModel, signal: usize, site: &mut SiteBits) {
     }
 }
 
+/// A select position that is an elaboration constant. Lowering keeps the
+/// arithmetic of a position such as `y[6 + i]` in a loop generate block (the
+/// genvar is a constant per block) and only the optimizer folds it later, so
+/// the position is evaluated here; an unresolved position would count the
+/// site as writing every bit of its groups. A negative or larger position saturates to `u32::MAX`, past every group
+/// bit, since such a write changes no bit.
 fn constant_u32(expression: &IrExpr) -> Option<u32> {
+    let width = expression.width();
+    let bits = constant_bits(expression)?;
+    if expression.signed() && bits >> (width - 1) & 1 != 0 {
+        return Some(u32::MAX);
+    }
+    Some(u32::try_from(bits).unwrap_or(u32::MAX))
+}
+
+/// The two's-complement bits of a known integral constant expression of at
+/// most 128 bits: literals, their resizes and conversions, and wrapping
+/// addition, subtraction and multiplication of operands of the result width.
+fn constant_bits(expression: &IrExpr) -> Option<u128> {
+    let width = expression.width();
+    if width == 0 || width > 128 {
+        return None;
+    }
+    let mask = u128::MAX >> (128 - width);
+    // Fit bits of width `from` to this node's width, extending by sign when
+    // `signed`.
+    let fit = |bits: u128, from: u32, signed: bool| -> u128 {
+        if from < width && signed && bits >> (from - 1) & 1 != 0 {
+            (bits | (u128::MAX << from)) & mask
+        } else {
+            bits & mask
+        }
+    };
     match expression.kind() {
         IrExprKind::Const(value) => {
+            let from = value.width();
             if value.real_value().is_some()
                 || value.fill().is_some()
+                || from == 0
+                || from > 128
                 || value.x_mask().iter().any(|mask| *mask != 0)
                 || value.z_mask().iter().any(|mask| *mask != 0)
-                || value.bits().iter().skip(1).any(|limb| *limb != 0)
+                || value.bits().iter().skip(2).any(|limb| *limb != 0)
             {
                 return None;
             }
-            u32::try_from(value.bits().first().copied().unwrap_or(0)).ok()
+            let limb = |index: usize| u128::from(value.bits().get(index).copied().unwrap_or(0));
+            let bits = (limb(0) | limb(1) << 64) & (u128::MAX >> (128 - from));
+            Some(fit(bits, from, value.signed()))
         }
-        IrExprKind::Convert { a } | IrExprKind::Resize { a } => constant_u32(a),
+        // `Resize` extends by the node's signedness, `Convert` by the
+        // operand's (`IrExprKind` docs).
+        IrExprKind::Resize { a } => Some(fit(constant_bits(a)?, a.width(), expression.signed())),
+        IrExprKind::Convert { a } => Some(fit(constant_bits(a)?, a.width(), a.signed())),
+        IrExprKind::Bin { op, a, b } if a.width() == width && b.width() == width => {
+            let (a, b) = (constant_bits(a)?, constant_bits(b)?);
+            let value = match op {
+                IrBinOp::Add => a.wrapping_add(b),
+                IrBinOp::Sub => a.wrapping_sub(b),
+                IrBinOp::Mul => a.wrapping_mul(b),
+                _ => return None,
+            };
+            Some(value & mask)
+        }
         _ => None,
     }
 }

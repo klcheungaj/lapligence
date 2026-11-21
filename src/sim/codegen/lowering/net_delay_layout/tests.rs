@@ -319,3 +319,99 @@ fn constant_z_driver_bits_keep_their_z_start() {
     assert_eq!(runs(2), [(0, 3)]);
     assert_eq!(runs(3), [(0, 1)]);
 }
+
+fn signed_constant(value: u64, width: u32) -> IrExpr {
+    let mut expression = constant(value, width);
+    if let IrExprKind::Const(constant) = &mut expression.kind {
+        constant.signed = true;
+    }
+    IrExpr::new(expression.kind, width, true, None)
+}
+
+fn binary(op: IrBinOp, a: IrExpr, b: IrExpr) -> IrExpr {
+    let (width, signed) = (a.width(), a.signed());
+    IrExpr::new(
+        IrExprKind::Bin {
+            op,
+            a: Box::new(a),
+            b: Box::new(b),
+        },
+        width,
+        signed,
+        None,
+    )
+}
+
+fn resize(a: IrExpr, width: u32, signed: bool) -> IrExpr {
+    IrExpr::new(IrExprKind::Resize { a: Box::new(a) }, width, signed, None)
+}
+
+#[test]
+fn arithmetic_constant_positions_resolve_their_bits() {
+    // `y[6 + i]` of a loop generate block keeps its arithmetic until the
+    // optimizer runs: bits 6 and 7 driven, the rest keep their Z start.
+    let mut fixture = fixture(&[(12, 2, false), (8, 1, false), (8, 1, false)]);
+    let slots = fixture.slots.clone();
+    for (slot, genvar) in [(slots[0][0], 0), (slots[0][1], 1)] {
+        let position = binary(
+            IrBinOp::Add,
+            resize(signed_constant(6, 32), 33, true),
+            resize(signed_constant(genvar, 32), 33, true),
+        );
+        drive(&mut fixture, IrLhs::Bit(slot, Box::new(position), false), 1);
+    }
+    // `w[2 * 2 - 1 +: 2]`: an indexed part at an arithmetic base.
+    let base = binary(
+        IrBinOp::Sub,
+        binary(IrBinOp::Mul, constant(2, 32), constant(2, 32)),
+        constant(1, 32),
+    );
+    drive(
+        &mut fixture,
+        IrLhs::IdxPart(
+            slots[1][0],
+            Box::new(base),
+            Box::new(constant(2, 32)),
+            2,
+            false,
+            false,
+        ),
+        2,
+    );
+    // A negative position writes no bit.
+    let negative = binary(IrBinOp::Sub, signed_constant(1, 32), signed_constant(3, 32));
+    drive(
+        &mut fixture,
+        IrLhs::Bit(slots[2][0], Box::new(negative), false),
+        1,
+    );
+    assign_net_delay_layouts(&mut fixture.model);
+    assert_eq!(fixture.model.net_groups[0].driven_runs(), &[(6, 2)]);
+    assert_eq!(fixture.model.net_groups[1].driven_runs(), &[(3, 2)]);
+    assert!(fixture.model.net_groups[2].driven_runs().is_empty());
+}
+
+#[test]
+fn constant_positions_follow_resize_and_conversion_extension() {
+    // 4'b1111 sign-extended by a signed `Resize` is -1; zero-extended by a
+    // `Convert` of an unsigned operand it is 15.
+    let ones = constant(0b1111, 4);
+    assert_eq!(
+        constant_u32(&resize(ones.clone(), 32, true)),
+        Some(u32::MAX)
+    );
+    let convert = IrExpr::new(IrExprKind::Convert { a: Box::new(ones) }, 32, true, None);
+    assert_eq!(constant_u32(&convert), Some(15));
+    // An operand narrower than the result is not an operation of that width.
+    let mixed = IrExpr::new(
+        IrExprKind::Bin {
+            op: IrBinOp::Add,
+            a: Box::new(constant(1, 8)),
+            b: Box::new(constant(1, 32)),
+        },
+        32,
+        false,
+        None,
+    );
+    assert_eq!(constant_u32(&mixed), None);
+}

@@ -843,3 +843,14 @@ fn force_release_selected_collapsed_inout_preserves_underlying_drivers() {
         &[],
     );
 }
+
+#[test]
+fn undriven_bits_beside_generate_offset_drivers_stay_z() {
+    sim_cli::run_case(
+        "net_resolution",
+        "generate_offset_drivers",
+        include_str!("fixtures/sim/net_resolution/generate_offset_drivers.out"),
+        "",
+        &[],
+    );
+}
