@@ -1,9 +1,9 @@
-t1 n=4 s=set q='{3, 4} d='{3, 4}
+t1 n=4 s=set q='{3, 4}  d='{3, 4} 
 t0 n=0 s= q='{} d='{}
-tm n=2 s=set q='{2} d='{2}
+tm n=2 s=set q='{2}  d='{2} 
 sum 7
-3 slow n=77 q='{3, 4, 50, 60}
-4 body n=77 s=set q='{3, 4, 50, 60} d='{3, 4}
-whole n=5 s= q='{1, 2} d='{}
-made n=8 s= q='{8} d='{} / n=9 s= q='{9} d='{}
-none n=8 s= q='{8} d='{} / n=9 s= q='{9} d='{}
+3 slow n=77 q='{3, 4, 50, 60} 
+4 body n=77 s=set q='{3, 4, 50, 60}  d='{3, 4} 
+whole n=5 s= q='{1, 2}  d='{}
+made n=8 s= q='{8}  d='{} / n=9 s= q='{9}  d='{}
+none n=8 s= q='{8}  d='{} / n=9 s= q='{9}  d='{}

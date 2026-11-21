@@ -440,10 +440,13 @@ typedef struct {
 } llg_pattern_enum_t;
 // `flat_width` is the packed or flattened width; `count` the members, enum
 // members or fixed dimensions (`bounds` holds left/right per dimension).
+// `spaced` marks an array whose non-empty full-form pattern is followed by
+// one space after its closing brace (decided by the generator).
 struct llg_pattern_type {
     uint8_t kind;
     uint8_t signed_flag;
     uint8_t shortreal;
+    uint8_t spaced;
     uint32_t flat_width;
     size_t count;
     const llg_pattern_member_t* members;

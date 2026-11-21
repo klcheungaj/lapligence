@@ -946,6 +946,14 @@ fn s24_d1_signed_decimal_field_width() {
 }
 
 #[test]
+fn s24_d2_pattern_closing_space() {
+    run_decision(
+        "S24-D2_pattern_closing_space",
+        include_str!("fixtures/sim/lrm_decisions/S24-D2_pattern_closing_space.out"),
+    );
+}
+
+#[test]
 fn s26_d1_scan_selector_snapshot() {
     run_decision(
         "S26-D1_scan_selector_snapshot",

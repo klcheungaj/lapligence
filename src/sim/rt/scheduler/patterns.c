@@ -13,7 +13,9 @@
 // the walk never reaches a collected object; a reclaimed object kept by
 // LLG_GC_VERIFY prints `(reclaimed)` instead of being read. Other handles
 // print `null` or a fixed word (`chandle`, `event`, `interface`, `process`).
-// Output stops at LLG_PATTERN_OUTPUT_LIMIT bytes with a warning.
+// Output stops at LLG_PATTERN_OUTPUT_LIMIT bytes with a warning. The full
+// form follows the closing brace of a non-empty array with one space when the
+// generator marks its type `spaced` (decision S24-D2); `%0p` never does.
 
 static const llg_pattern_class_t* g_pattern_classes;
 static uint32_t g_pattern_class_count;
@@ -75,6 +77,17 @@ static void llg_pattern_text(llg_pattern_out_t* out, const char* text) {
 // Element separator: `, ` in the full form and `,` in the `%0p` form.
 static void llg_pattern_separator(llg_pattern_out_t* out) {
     llg_pattern_text(out, out->abbreviated ? "," : ", ");
+}
+
+// Closing brace of an unpacked array (`type` NULL for an inner dimension or
+// an untyped generic form). A non-empty array whose type is `spaced` is
+// followed by one space in the full form.
+static void llg_pattern_close_array(llg_pattern_out_t* out,
+                                    const llg_pattern_type_t* type,
+                                    int32_t nonempty) {
+    llg_pattern_put(out, "}", 1);
+    if (nonempty && type && type->spaced && !out->abbreviated)
+        llg_pattern_put(out, " ", 1);
 }
 
 static void llg_pattern_label(llg_pattern_out_t* out, const char* name) {
@@ -203,7 +216,7 @@ static void llg_pattern_flat_array(llg_pattern_out_t* out,
             llg_pattern_flat(out, llg_pattern_at(out, type->element), whole,
                              element_msb - (uint32_t)stride);
     }
-    llg_pattern_put(out, "}", 1);
+    llg_pattern_close_array(out, dim == 0 ? type : NULL, extent != 0);
 }
 
 // Walk a value stored as packed bits: the first member or element occupies
@@ -294,7 +307,7 @@ static void llg_pattern_value_items(llg_pattern_out_t* out,
             llg_pattern_value(out, type ? llg_pattern_at(out, type->element) : NULL,
                               &items[i]);
     }
-    llg_pattern_put(out, "}", 1);
+    llg_pattern_close_array(out, dim == 0 ? type : NULL, extent != 0);
 }
 
 // Packed cells of a multidimensional fixed array kept in one packed
@@ -313,7 +326,7 @@ static void llg_pattern_packed_items(llg_pattern_out_t* out,
         else
             llg_pattern_flat(out, llg_pattern_at(out, type->element), items[i], 0);
     }
-    llg_pattern_put(out, "}", 1);
+    llg_pattern_close_array(out, dim == 0 ? type : NULL, extent != 0);
 }
 
 static void llg_pattern_value(llg_pattern_out_t* out,
@@ -398,7 +411,7 @@ static void llg_pattern_value(llg_pattern_out_t* out,
                 break;
             }
         }
-        llg_pattern_put(out, "}", 1);
+        llg_pattern_close_array(out, type, size != 0);
         return;
     }
     case LLG_VALUE_ASSOC:
@@ -467,9 +480,11 @@ static void llg_pattern_container(llg_pattern_out_t* out,
         llg_pattern_put(out, "}", 1);
         return;
     }
+    size_t printed = 0;
     if (storage == LLG_PATTERN_FROM_PACKED_CONTAINER) {
         if (assoc) {
             const llg_assoc_t* array = container;
+            printed = array->size;
             for (size_t i = 0; i < array->size && !out->truncated; ++i) {
                 const llg_assoc_entry_t* entry = &array->entries[i];
                 if (i) llg_pattern_separator(out);
@@ -483,6 +498,7 @@ static void llg_pattern_container(llg_pattern_out_t* out,
                                       : ((const llg_dyn_array_t*)container)->data;
             size_t size = queue ? ((const llg_queue_t*)container)->size
                                 : ((const llg_dyn_array_t*)container)->size;
+            printed = size;
             for (size_t i = 0; i < size && !out->truncated; ++i) {
                 if (i) llg_pattern_separator(out);
                 llg_pattern_flat(out, element, data[i], 0);
@@ -490,6 +506,7 @@ static void llg_pattern_container(llg_pattern_out_t* out,
         }
     } else if (assoc) {
         const llg_assoc_value_t* array = container;
+        printed = array->size;
         for (size_t i = 0; i < array->size && !out->truncated; ++i) {
             const llg_assoc_value_entry_t* entry = &array->entries[i];
             if (i) llg_pattern_separator(out);
@@ -511,12 +528,13 @@ static void llg_pattern_container(llg_pattern_out_t* out,
             data = ((const llg_dyn_value_array_t*)container)->data;
             size = ((const llg_dyn_value_array_t*)container)->size;
         }
+        printed = size;
         for (size_t i = 0; i < size && !out->truncated; ++i) {
             if (i) llg_pattern_separator(out);
             llg_pattern_value(out, element, &data[i]);
         }
     }
-    llg_pattern_put(out, "}", 1);
+    llg_pattern_close_array(out, type, printed != 0);
 }
 
 static void llg_pattern_field(llg_pattern_out_t* out,

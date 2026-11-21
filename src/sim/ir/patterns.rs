@@ -87,6 +87,78 @@ impl IrPatternType {
         }
     }
 
+    /// Whether the full (`%p`) pattern of a non-empty value of this array
+    /// type is followed by one space after its closing brace, as the
+    /// industry-standard formatter prints it (the clause leaves white space
+    /// to the implementation). An associative array always has it; a queue
+    /// or dynamic array has it unless its elements are unpacked arrays; a
+    /// fixed array (all its unpacked dimensions together) has it when its
+    /// element is [`Self::plain_fixed_element`]. Other types never do.
+    pub(in crate::sim) fn spaced_close(&self, types: &[IrPatternType]) -> bool {
+        let at = |index: usize| types.get(index);
+        match self {
+            Self::Associative { .. } => true,
+            Self::Queue { element } | Self::Dynamic { element } => {
+                at(*element).is_some_and(|element| !element.is_unpacked_array())
+            }
+            Self::FixedArray { element, .. } => {
+                at(*element).is_some_and(|element| element.plain_fixed_element(types))
+            }
+            _ => false,
+        }
+    }
+
+    /// A fixed-array element whose array pattern ends with a space: a
+    /// non-enum packed value, a real, a string or a chandle, or an unpacked
+    /// structure or union whose members are all [`Self::bit_like`]. Enums,
+    /// events, class and interface handles, containers and records holding a
+    /// string, an event, a handle or a container are not.
+    pub(in crate::sim) fn plain_fixed_element(&self, types: &[IrPatternType]) -> bool {
+        match self {
+            Self::Packed { enum_members, .. } => enum_members.is_empty(),
+            Self::PackedStruct { .. } | Self::Real { .. } | Self::String | Self::Chandle => true,
+            Self::Struct { members, .. } | Self::Union { members, .. } => {
+                Self::members_bit_like(members, types)
+            }
+            _ => false,
+        }
+    }
+
+    /// A record member kept as plain bits: packed values (enums included),
+    /// reals, chandles, and records or fixed arrays of those.
+    fn bit_like(&self, types: &[IrPatternType]) -> bool {
+        match self {
+            Self::Packed { .. } | Self::PackedStruct { .. } | Self::Real { .. } | Self::Chandle => {
+                true
+            }
+            Self::Struct { members, .. } | Self::Union { members, .. } => {
+                Self::members_bit_like(members, types)
+            }
+            Self::FixedArray { element, .. } => types
+                .get(*element)
+                .is_some_and(|element| element.bit_like(types)),
+            _ => false,
+        }
+    }
+
+    fn members_bit_like(members: &[IrPatternMember], types: &[IrPatternType]) -> bool {
+        members.iter().all(|member| {
+            types
+                .get(member.ty)
+                .is_some_and(|member| member.bit_like(types))
+        })
+    }
+
+    fn is_unpacked_array(&self) -> bool {
+        matches!(
+            self,
+            Self::FixedArray { .. }
+                | Self::Queue { .. }
+                | Self::Dynamic { .. }
+                | Self::Associative { .. }
+        )
+    }
+
     fn children(&self) -> Vec<usize> {
         match self {
             Self::PackedStruct { members, .. }

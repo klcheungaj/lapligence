@@ -1,5 +1,5 @@
 S0 a=1 x=0000 r=1.00 s=a
-S2 q='{7} a=50
+S2 q='{7}  a=50
 S1 a=50 inc=51 s=latelate
 L a=53 q=4
 L a=53 q=4
