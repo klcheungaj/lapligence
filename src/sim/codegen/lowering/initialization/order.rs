@@ -9,8 +9,11 @@
 //! initializers by scope and position (decision S22-D8): packages, the
 //! compilation unit, then the design hierarchy in post-order; in each the
 //! class static properties, then (in an instance) each generate block, then
-//! the scope's own declarations. Each of these runs its constant
-//! initializers first, then the others in declaration order, the class
+//! the scope's own declarations. The generate blocks of an instance run in
+//! reverse pre-order (`generate_slot`): a block's nested blocks before its
+//! own declarations, sibling blocks and loop iterations last first. Each of
+//! these runs its constant initializers first, then the others in
+//! declaration order, the class
 //! static properties of one scope as a whole, class by class in the order
 //! the classes are first declared (`class_ranks`). An initializer reads whatever
 //! the declarations it names hold when it runs, so a forward read sees the
@@ -295,6 +298,47 @@ impl<'a> Codegen<'a> {
         ranks
     }
 
+    /// The place of generate block `scope` among the generate blocks of its
+    /// instance (decision S22-D8): reverse pre-order, as industry-standard
+    /// behaviour runs them. Each position on the path from the instance
+    /// counts down, so a later sibling block or loop iteration sorts first,
+    /// and the closing `usize::MAX` sorts a block after the blocks nested
+    /// in it. Empty for any other scope.
+    fn generate_slot(
+        &self,
+        scope: Option<NodeId>,
+        positions: &mut HashMap<NodeId, HashMap<NodeId, usize>>,
+    ) -> Vec<usize> {
+        let mut path = Vec::new();
+        let mut current = scope;
+        while let Some(node) = current.filter(|node| {
+            matches!(
+                self.kind(*node),
+                NodeKind::GenScope | NodeKind::GenScopeArray
+            )
+        }) {
+            let Some(parent) = self.node(node).parent else {
+                break;
+            };
+            let children = positions.entry(parent).or_insert_with(|| {
+                self.node(parent)
+                    .children
+                    .iter()
+                    .enumerate()
+                    .map(|(position, child)| (*child, position))
+                    .collect()
+            });
+            let position = children.get(&node).copied().unwrap_or(0);
+            path.push(usize::MAX - 1 - position);
+            current = Some(parent);
+        }
+        if !path.is_empty() {
+            path.reverse();
+            path.push(usize::MAX);
+        }
+        path
+    }
+
     /// The declaring scope of an initialized declaration and its position
     /// path there (decision S22-D8). A declaration nested in a subroutine or
     /// procedure (a static local, also in a block of it) belongs to the
@@ -456,7 +500,8 @@ impl<'a> Codegen<'a> {
     /// it). In each scope the class static properties run first, the
     /// constant ones of every class before the others, class by class at
     /// each class's place (`class_slot`); then, in an instance, each
-    /// generate block; then the scope's own declarations. A generate
+    /// generate block in reverse pre-order (`generate_slot`); then the
+    /// scope's own declarations. A generate
     /// block and the scope's own declarations each run their constant
     /// initializers first, then the others in declaration order, a static
     /// local at the place of its subroutine or procedure. Ties keep the
@@ -508,6 +553,7 @@ impl<'a> Codegen<'a> {
         let mut instance_keys: HashMap<NodeId, Vec<usize>> = HashMap::new();
         let mut class_ranks: HashMap<NodeId, HashMap<NodeId, usize>> = HashMap::new();
         let mut class_slots: HashMap<NodeId, (usize, Vec<usize>)> = HashMap::new();
+        let mut generate_slots: HashMap<NodeId, Vec<usize>> = HashMap::new();
         let mut constants: HashMap<u32, bool> = HashMap::new();
         let keys = declarations
             .iter()
@@ -546,6 +592,15 @@ impl<'a> Codegen<'a> {
                         .clone(),
                     _ => (0, Vec::new()),
                 };
+                // A generate block's declarations (also its static locals)
+                // run at the block's place among the instance's blocks.
+                let generate_slot = match scope {
+                    Some(block) if sub == 1 => generate_slots
+                        .entry(block)
+                        .or_insert_with(|| self.generate_slot(Some(block), &mut positions))
+                        .clone(),
+                    _ => Vec::new(),
+                };
                 (
                     group,
                     index,
@@ -553,6 +608,7 @@ impl<'a> Codegen<'a> {
                     sub,
                     class_variable,
                     class_slot,
+                    generate_slot,
                     scope_order.get(&scope).copied().unwrap_or(unordered),
                     !constant,
                     position,

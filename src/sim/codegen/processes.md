@@ -69,7 +69,8 @@ resizable initialization rather than fabricating storage.
 Static initializers form one schedule (`lowering/initialization/order.rs`)
 sorted by scope and position only (S22-D8): packages, `$unit`, then the
 design in post-order; in each the class static properties, then each generate
-block, then the scope's own declarations, each of these its constant
+block in reverse pre-order (`generate_slot`: nested blocks first, the later
+sibling first), then the scope's own declarations, each of these its constant
 initializers (no call, no variable value read; array queries may name a
 variable) first, then the others in declaration order. Classes run at their
 first declaration (`class_ranks`: a `typedef class` forward declaration

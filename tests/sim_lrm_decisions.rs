@@ -2097,6 +2097,14 @@ fn s22_d8_generate_class_order() {
 }
 
 #[test]
+fn s22_d8_generate_block_order() {
+    run_decision(
+        "S22-D8_generate_block_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_generate_block_order.out"),
+    );
+}
+
+#[test]
 fn s22_d9_initializer_finish_runs_finals() {
     run_decision(
         "S22-D9_initializer_finish_runs_finals",

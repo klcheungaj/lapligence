@@ -700,8 +700,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   packages first in declaration order, then `$unit`, then the design
   hierarchy in post-order (an instance after the instances below it), each
   scope its class static properties (each class at its first declaration, a
-  forward `typedef class` included), then its generate blocks, then its own
-  declarations, each of these its constant initializers first and the others
+  forward `typedef class` included), then its generate blocks (in reverse
+  pre-order: nested blocks first, the later sibling or loop iteration
+  first), then its own declarations, each of these its constant initializers first and the others
   in declaration order, so a forward read sees the default value of a later
   non-constant initializer; a static local initializes at its subroutine's
   place, a constant one with its scope's constants (decision S22-D8). A
