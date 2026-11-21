@@ -265,6 +265,46 @@ fn analyze_full_pipeline_ignores_untaken_generate_accesses_in_lint() {
     }
 }
 
+/// The language server shares the lint rules: a variable read only in
+/// another declaration's initializer is used, one named only by its own
+/// initializer is not.
+#[test]
+fn analyze_full_pipeline_counts_declaration_initializer_reads_in_lint() {
+    let _guards = analysis_guards();
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_init_reads_{}", std::process::id()));
+    let orig_cwd = std::env::current_dir().expect("current dir");
+    let _restore = TempDirGuard {
+        dir: dir.clone(),
+        orig: orig_cwd,
+    };
+    std::env::set_current_dir(&dir).expect("chdir to temp dir");
+    let sv = dir.join("init_reads_fixture.sv");
+    std::fs::write(
+        &sv,
+        "module tb;\n  int a = 3;\n  int b = a + 1;\n  int self_ref = self_ref;\n\
+         \x20 initial $display(b);\nendmodule\n",
+    )
+    .expect("write design");
+    let opts = CompileOpts {
+        files: vec![sv.to_string_lossy().into_owned()],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    };
+    let a = analyze(&opts);
+    let map = lsp_diagnostics(&a);
+    let diags = map
+        .iter()
+        .find(|(f, _)| f.ends_with("init_reads_fixture.sv"))
+        .map(|(_, v)| v)
+        .expect("diagnostics for the fixture file");
+    let unused: Vec<&str> = diags
+        .iter()
+        .filter(|d| d.code == Some(NumberOrString::String("unused-signal".to_owned())))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(unused, ["signal `self_ref` in `tb` is never used"]);
+}
+
 /// Full pipeline over a syntax-broken project: one clean unit plus one file
 /// with a real syntax error. The outcome stays Parse with unchanged diagnostics,
 /// while Slang's lexical snapshot retains declaration-level navigation data.

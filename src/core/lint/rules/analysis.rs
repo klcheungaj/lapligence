@@ -1115,6 +1115,26 @@ pub fn subroutine_formal_defaults(db: &Db, id: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
+/// Every declaration initializer that exists in the elaborated model, as
+/// `(declared signal, initializer expression)` pairs in arbitrary order:
+/// variable initializers (module, interface, package, `$unit`, class and
+/// subroutine-local declarations) and array initializers. A declaration in
+/// an untaken generate block does not exist (SV 27.3), so its initializer
+/// is skipped.
+pub fn declaration_initializers(db: &Db) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
+    let variables = db
+        .var_initializers()
+        .iter()
+        .map(|(signal, init)| (*signal, *init));
+    let arrays = db
+        .arrays()
+        .iter()
+        .filter_map(|(signal, meta)| meta.init.map(|init| (*signal, init)));
+    variables
+        .chain(arrays)
+        .filter(|(signal, init)| !db.is_uninstantiated(*signal) && !db.is_uninstantiated(*init))
+}
+
 /// Every node in the design tree (from the top instances), depth-first, in
 /// deterministic order.
 pub fn all_nodes(db: &Db) -> Vec<NodeId> {

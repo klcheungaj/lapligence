@@ -19,7 +19,11 @@ See [shared lint](../readme.md).
   connected to a black box (an instance of an unknown module,
   `black_box_connection_signals`) are skipped.
   The `default disable iff` condition a checker instance takes for
-  `$inferred_disable` counts as read.
+  `$inferred_disable` counts as read. A declaration initializer anywhere
+  (module, generate block, `$unit`, package, class, subroutine or process
+  local; `declaration_initializers`) reads the signals it names except its own
+  declaration, so `int a = a;` alone leaves `a` unused; one in an untaken
+  generate block reads nothing.
 - `width-mismatch` (`width.rs`): a port link compares the port or port expression
   with the connected expression (`.a(n[0])` is one bit), not the whole selected
   signal. A concatenated port (`.p({a, b})`) is judged once, by its name or

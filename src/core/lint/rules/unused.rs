@@ -15,7 +15,14 @@
 //!
 //! Reads and writes inside any subroutine body count as well (a variable read
 //! only by a DPI-exported function is used); a write there alone leaves the
-//! signal "never read". A member read or written through a virtual interface
+//! signal "never read".
+//!
+//! A declaration initializer (`int b = a + 1;`, `real r[2] = '{x, x};`, in a
+//! module, generate block, package, `$unit`, class or subroutine) reads the
+//! signals it names, except the declared signal itself: `int a = a;` leaves
+//! `a` unused. The initializer itself is not a write, so a variable with
+//! only an initializer stays "never used" when nothing reads it. Net
+//! declaration assignments are continuous assignments and count as such. A member read or written through a virtual interface
 //! counts for that member of every instance of the interface.
 //!
 //! Severity is Warning for both findings; the two cases are:
@@ -27,9 +34,9 @@ use std::collections::HashSet;
 use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
     all_design_nodes, black_box_connection_signals, collect_reads, collect_writes_with_members,
-    extend_virtual_interface_members, gate_terminal_drivers, gate_terminal_reads, is_signal,
-    iter_instances, port_connected_signals, signal_scope_path, subroutine_body,
-    subroutine_formal_defaults, timing_check_activity, virtual_interface_members,
+    declaration_initializers, extend_virtual_interface_members, gate_terminal_drivers,
+    gate_terminal_reads, is_signal, iter_instances, port_connected_signals, signal_scope_path,
+    subroutine_body, subroutine_formal_defaults, timing_check_activity, virtual_interface_members,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -73,6 +80,15 @@ impl LintRule for UnusedSignalRule {
                     reads.extend(collect_reads(db, default));
                 }
             }
+        }
+        // A declaration initializer reads its operands when it runs (SV 6.8,
+        // 10.5); one naming its own declaration reads no other signal.
+        for (signal, init) in declaration_initializers(db) {
+            reads.extend(
+                collect_reads(db, init)
+                    .into_iter()
+                    .filter(|read| *read != signal),
+            );
         }
         // Primitive instances (gates and UDPs) read their input terminals and
         // drive their output terminals, like a continuous assignment does.
@@ -676,6 +692,103 @@ endmodule
             unused_paths(&source(1), "tb"),
             Vec::<String>::new(),
             "a taken block reads `d` through `v` and connects `w`"
+        );
+    }
+
+    #[test]
+    fn reads_in_declaration_initializers_count_as_uses() {
+        // A variable declaration assignment assigns a value (SV 10.5), so the
+        // signals its expression names are read. Every declaration kind
+        // reads one signal that nothing else names; only `dead` is unused.
+        let paths = unused_paths(
+            "module top #(parameter int P = 1);\n\
+             \x20 int a = 3;\n  int b = a + 1;\n\
+             \x20 real x = 1.5;\n  real r[2] = '{x, x};\n\
+             \x20 int by_param = 4;\n  int dep = (P > 0) ? by_param : 0;\n\
+             \x20 logic by_net = 1'b1;\n  wire w = by_net;\n\
+             \x20 int by_generate = 5;\n\
+             \x20 int by_static_property = 6;\n  int by_instance_property = 7;\n\
+             \x20 int by_automatic_local = 8;\n  int by_static_local = 9;\n\
+             \x20 int by_process_local = 10;\n  int dead;\n\
+             \x20 if (P == 1) begin : g\n    int gv = by_generate;\n  end\n\
+             \x20 class K;\n    static int s = by_static_property;\n\
+             \x20   int i = by_instance_property;\n  endclass\n\
+             \x20 task automatic t();\n    int la = by_automatic_local;\n\
+             \x20   static int sa = by_static_local;\n    $display(la, sa);\n  endtask\n\
+             \x20 initial begin\n    automatic int pl = by_process_local;\n\
+             \x20   automatic K k = new;\n    t();\n\
+             \x20   $display(b, r[0], dep, w, g.gv, K::s, k.i, pl);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top` is never used"]);
+    }
+
+    #[test]
+    fn compilation_unit_initializer_reads_count_as_uses() {
+        // A `$unit` item may name design signals hierarchically (SV 3.12.1).
+        let paths = unused_paths(
+            "int ux = top.by_unit;\n\
+             module top;\n  int by_unit = 1;\n  int dead;\n  initial $display(ux);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top` is never used"]);
+    }
+
+    #[test]
+    fn own_initializer_alone_is_not_a_use() {
+        // A variable and an array that only their own initializers name stay
+        // unused; an initializer is no write, so a signal with only an
+        // initializer is "never used", not "never read".
+        let paths = unused_paths(
+            "module top;\n  int self_ref = self_ref;\n\
+             \x20 int self_arr[2] = '{self_arr[1], 0};\n  int only_init = 2;\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            [
+                "signal `only_init` in `top` is never used",
+                "signal `self_arr` in `top` is never used",
+                "signal `self_ref` in `top` is never used",
+            ]
+        );
+    }
+
+    #[test]
+    fn initializers_in_untaken_generate_blocks_do_not_count() {
+        // Nothing of an untaken generate block exists (SV 27.3, S22-D10): not
+        // its variables, arrays or class static properties, nor their
+        // initializers. The taken block is the control.
+        let source = |taken: u8| {
+            format!(
+                "module top;\n  int v_src = 1;\n  int a_src = 2;\n  int c_src = 3;\n\
+                 \x20 if ({taken}) begin : h\n    int hv = v_src;\n\
+                 \x20   int ha[2] = '{{a_src, 0}};\n\
+                 \x20   class HK;\n      static int s = c_src;\n    endclass\n\
+                 \x20   initial $display(hv, ha[0], HK::s);\n  end\nendmodule\n"
+            )
+        };
+        assert_eq!(
+            unused_paths(&source(0), "top"),
+            [
+                "signal `a_src` in `top` is never used",
+                "signal `c_src` in `top` is never used",
+                "signal `v_src` in `top` is never used",
+            ]
+        );
+        assert_eq!(unused_paths(&source(1), "top"), Vec::<String>::new());
+        // A loop generate without iterations creates no block either.
+        assert_eq!(
+            unused_paths(
+                "module top;\n  int v_src = 1;\n  int c_src = 3;\n\
+                 \x20 for (genvar i = 0; i < 0; i++) begin : h\n    int hv = v_src;\n\
+                 \x20   class HK;\n      static int s = c_src;\n    endclass\n  end\nendmodule\n",
+                "top",
+            ),
+            [
+                "signal `c_src` in `top` is never used",
+                "signal `v_src` in `top` is never used",
+            ]
         );
     }
 }
