@@ -52,7 +52,7 @@ sv4_select_plan_t sv4_select_plan_part(uint32_t storage_width,
 }
 
 sv4_select_plan_t sv4_select_plan_indexed(uint32_t storage_width, sv4_t base,
-                                          uint32_t width, int negative) {
+                                          uint32_t width, int32_t negative) {
     sv4_require_width(width, "indexed part-select");
     int64_t index = 0;
     if (!sv4_to_index_i64(base, &index))
@@ -110,7 +110,7 @@ sv4_t sv4_select_plan_read(sv4_t source, const sv4_select_plan_t* plan) {
 }
 
 sv4_t sv4_select_plan_slice(sv4_t source, const sv4_select_plan_t* plan,
-                            int reverse) {
+                            int32_t reverse) {
     sv4_select_plan_check(plan);
     if (source.width != plan->width) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "packed selection source width mismatch");
@@ -124,7 +124,7 @@ sv4_t sv4_select_plan_slice(sv4_t source, const sv4_select_plan_t* plan,
     for (uint32_t i = 0; i < plan->count; ++i) {
         uint32_t logical = plan->value_lsb + i;
         uint32_t source_bit = reverse ? plan->width - 1 - logical : logical;
-        sv4_lsb_bit_set(&result, (int)i, sv4_lsb_bit(source, (int)source_bit));
+        sv4_lsb_bit_set(&result, (int32_t)i, sv4_lsb_bit(source, (int32_t)source_bit));
     }
     return result;
 }

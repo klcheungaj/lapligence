@@ -56,19 +56,19 @@ typedef llg_gmp_sv4_t g4_t;
  * Foreign records have stride >=8 and hold count records without size overflow. */
 void llg_gmp_sv4_masked_merge(g4_t* target, g4_t source, g4_t mask);
 void llg_gmp_sv4_masked_copy(g4_t* target, g4_t source, g4_t mask);
-int llg_gmp_sv4_masked_same(g4_t a, g4_t b, const g4_t* mask);
-int llg_gmp_sv4_range_same(g4_t target, uint32_t offset, g4_t source);
+int32_t llg_gmp_sv4_masked_same(g4_t a, g4_t b, const g4_t* mask);
+int32_t llg_gmp_sv4_range_same(g4_t target, uint32_t offset, g4_t source);
 void llg_gmp_sv4_range_copy(g4_t* target, uint32_t offset, g4_t source);
-void llg_gmp_sv4_range_fill(g4_t* target, uint32_t low, uint32_t count, unsigned state);
+void llg_gmp_sv4_range_fill(g4_t* target, uint32_t low, uint32_t count, uint32_t state);
 void llg_gmp_sv4_mask_remove(g4_t* target, g4_t removed);
 void llg_gmp_sv4_mask_top_wide(g4_t* value);
 void llg_gmp_sv4_mul_add_known_wide(g4_t* value, uint32_t factor, uint32_t addend);
 void llg_gmp_sv4_negate_known_wide(g4_t* value);
 void llg_gmp_sv4_two_state_inplace_wide(g4_t* value);
-void llg_gmp_sv4_append_digit_wide(g4_t* value, unsigned count, unsigned state, unsigned digit);
+void llg_gmp_sv4_append_digit_wide(g4_t* value, uint32_t count, uint32_t state, uint32_t digit);
 void llg_gmp_sv4_export_vpi32(g4_t value, void* output, size_t count, size_t stride);
 void llg_gmp_sv4_import_vpi32(g4_t* value, const void* input, size_t count, size_t stride);
-int llg_gmp_sv4_same_vpi_words(g4_t value, const llg_gmp_sv4_vpi_word_t* words, size_t count);
+int32_t llg_gmp_sv4_same_vpi_words(g4_t value, const llg_gmp_sv4_vpi_word_t* words, size_t count);
 void llg_gmp_sv4_export_text(g4_t value, uint32_t width, char* output);
 /* End V05d consumer declarations. */
 
@@ -82,7 +82,7 @@ llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_bit(uint32_t storage_width, ui
 llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_part(uint32_t storage_width, int64_t left,
                                                        int64_t right);
 llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_indexed(uint32_t storage_width, g4_t base,
-                                                          uint32_t width, int negative);
+                                                          uint32_t width, int32_t negative);
 // All bases are borrowed. Unknown or unrepresentable bases select no bits.
 void llg_gmp_sv4_select_plan_step(llg_gmp_sv4_select_plan_t* plan, g4_t base, uint32_t width);
 // Read returns an independent unsigned owner, with X at missing positions.
@@ -90,28 +90,28 @@ g4_t llg_gmp_sv4_select_plan_read_wide(g4_t source, const llg_gmp_sv4_select_pla
 // Return only the plan's valid contiguous interval. Reverse maps ascending
 // declared part-selects into increasing storage-bit order.
 g4_t llg_gmp_sv4_select_plan_slice_wide(g4_t source, const llg_gmp_sv4_select_plan_t* plan,
-                                        int reverse);
+                                        int32_t reverse);
 // Set borrows source; supports aliasing and changes only the valid interval.
 void llg_gmp_sv4_select_plan_set_wide(g4_t* destination, const llg_gmp_sv4_select_plan_t* plan,
                                       g4_t source);
 
 // Pure validation; runtime-facing reference access reports a failed check.
-int llg_gmp_ref_view_valid(const llg_gmp_ref_view_t* view, const g4_t* parent,
+int32_t llg_gmp_ref_view_valid(const llg_gmp_ref_view_t* view, const g4_t* parent,
                            size_t* failed_check);
 g4_t llg_gmp_ref_read(const llg_gmp_ref_t* ref);
 
 g4_t llg_gmp_sv4_part_select_wide(g4_t v, int64_t left, int64_t right);
 void llg_gmp_sv4_part_select_set_wide(g4_t* tgt, int64_t left, int64_t right, g4_t value);
-g4_t llg_gmp_sv4_idx_part_select_wide(g4_t v, uint64_t base, uint32_t width, int neg);
-void llg_gmp_sv4_idx_part_select_set_wide(g4_t* tgt, uint64_t base, uint32_t width, int neg,
+g4_t llg_gmp_sv4_idx_part_select_wide(g4_t v, uint64_t base, uint32_t width, int32_t neg);
+void llg_gmp_sv4_idx_part_select_set_wide(g4_t* tgt, uint64_t base, uint32_t width, int32_t neg,
                                           g4_t value);
-g4_t llg_gmp_sv4_idx_part_select_value_wide(g4_t v, g4_t base, uint32_t width, int neg);
-void llg_gmp_sv4_idx_part_select_set_value_wide(g4_t* tgt, g4_t base, uint32_t width, int neg,
+g4_t llg_gmp_sv4_idx_part_select_value_wide(g4_t v, g4_t base, uint32_t width, int32_t neg);
+void llg_gmp_sv4_idx_part_select_set_value_wide(g4_t* tgt, g4_t base, uint32_t width, int32_t neg,
                                                 g4_t value);
 g4_t llg_gmp_sv4_concat_wide(g4_t hi, g4_t lo);
 g4_t llg_gmp_sv4_repeat_wide(g4_t pat, uint64_t n);
 g4_t llg_gmp_sv4_repeat_count_wide(g4_t v);
-g4_t llg_gmp_sv4_stream_wide(g4_t value, uint32_t slice, int right_to_left);
+g4_t llg_gmp_sv4_stream_wide(g4_t value, uint32_t slice, int32_t right_to_left);
 g4_t llg_gmp_sv4_array_conditional_merge_wide(g4_t a, g4_t b, g4_t element_default);
 g4_t llg_gmp_sv4_record_conditional_merge(g4_t a, g4_t b, g4_t period_default,
                                          g4_t leaf_starts);
@@ -128,21 +128,21 @@ void llg_gmp_sv4_destroy_wide(g4_t* value);
 void llg_gmp_sv4_copy_wide(g4_t* destination, const g4_t* source);
 g4_t llg_gmp_sv4_from_limbs_wide(const uint64_t* bits, const uint64_t* x, const uint64_t* z,
                                  uint32_t width, int8_t sign);
-g4_t llg_gmp_sv4_convert_wide(g4_t value, uint32_t width, int8_t sign, int extend);
+g4_t llg_gmp_sv4_convert_wide(g4_t value, uint32_t width, int8_t sign, int32_t extend);
 g4_t llg_gmp_sv4_two_state_wide(g4_t value);
-g4_t llg_gmp_sv4_binary_wide(g4_t a, g4_t b, unsigned op);
+g4_t llg_gmp_sv4_binary_wide(g4_t a, g4_t b, uint32_t op);
 /* Private wide kernel: canonical known planes, equal width >64, op != 2. */
 g4_t llg_gmp_sv4_binary_known_equal(const uint64_t* a, const uint64_t* b, uint32_t width,
-                                    int8_t sign, unsigned op);
-g4_t llg_gmp_sv4_unary_wide(g4_t value, int bitwise);
-g4_t llg_gmp_sv4_compare_wide(g4_t a, g4_t b, unsigned op);
+                                    int8_t sign, uint32_t op);
+g4_t llg_gmp_sv4_unary_wide(g4_t value, int32_t bitwise);
+g4_t llg_gmp_sv4_compare_wide(g4_t a, g4_t b, uint32_t op);
 g4_t llg_gmp_sv4_mux_wide(g4_t a, g4_t b);
-g4_t llg_gmp_sv4_divmod_wide(g4_t a, g4_t b, int remainder);
+g4_t llg_gmp_sv4_divmod_wide(g4_t a, g4_t b, int32_t remainder);
 g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b);
 g4_t llg_gmp_sv4_clog2_wide(g4_t value);
-int llg_gmp_sv4_truth_wide(g4_t value);
-int llg_gmp_sv4_same_wide(g4_t a, g4_t b);
-int llg_gmp_sv4_has_plane_wide(g4_t value, int z);
+int32_t llg_gmp_sv4_truth_wide(g4_t value);
+int32_t llg_gmp_sv4_same_wide(g4_t a, g4_t b);
+int32_t llg_gmp_sv4_has_plane_wide(g4_t value, int32_t z);
 void llg_gmp_sv4_set_ab_wide(g4_t* value, size_t word, uint64_t a, uint64_t b);
 void llg_gmp_sv4_import_words_wide(g4_t* value, size_t first, const llg_gmp_sv4_word_t* input,
                                    size_t count);
@@ -162,7 +162,7 @@ static inline size_t llg_gmp_sv4_words(g4_t v) { return ((size_t)v.width + 63u) 
 static inline size_t llg_gmp_sv4_bytes(const g4_t* v) {
     return v->width <= 64 ? 0 : 8u * llg_gmp_sv4_words(*v) * (v->data.wide.b ? 2u : 1u);
 }
-static inline int llg_gmp_sv4_is_unknown(g4_t v) {
+static inline int32_t llg_gmp_sv4_is_unknown(g4_t v) {
     return v.width <= 64 ? v.data.small.b != 0 : v.data.wide.b != NULL;
 }
 static inline g4_t g4_small(uint64_t a, uint64_t b, uint32_t w, int8_t s) {
@@ -241,12 +241,12 @@ static inline void llg_gmp_sv4_copy(g4_t* v, const g4_t* source) {
     llg_gmp_sv4_copy_wide(v, source);
 }
 static inline void llg_gmp_sv4_assign(g4_t* v, g4_t source) { llg_gmp_sv4_copy(v, &source); }
-static inline uint64_t g4_extend(uint64_t word, uint32_t source, uint32_t w, int sign) {
+static inline uint64_t g4_extend(uint64_t word, uint32_t source, uint32_t w, int32_t sign) {
     if (sign && source && w > source && ((word >> (source - 1u)) & 1u))
         word |= ~g4_mask(source);
     return word & g4_mask(w);
 }
-static inline g4_t g4_convert(g4_t v, uint32_t w, int8_t s, int extend) {
+static inline g4_t g4_convert(g4_t v, uint32_t w, int8_t s, int32_t extend) {
     g4_width_check(w);
     if (v.width <= 64 && w <= 64)
         return g4_small(g4_extend(v.data.small.a, v.width, w, extend),
@@ -273,14 +273,14 @@ static inline uint64_t llg_gmp_sv4_to_u64(g4_t v) {
     uint64_t b = v.width <= 64 ? v.data.small.b : v.data.wide.b ? v.data.wide.b[0] : 0;
     return a & ~b;
 }
-static inline int g4_truth(g4_t v) {
+static inline int32_t g4_truth(g4_t v) {
     if (v.width > 64)
         return llg_gmp_sv4_truth_wide(v);
     return (v.data.small.a & ~v.data.small.b) ? 1 : v.data.small.b ? 2 : 0;
 }
-static inline int llg_gmp_sv4_to_bool(g4_t v) { return g4_truth(v) == 1; }
+static inline int32_t llg_gmp_sv4_to_bool(g4_t v) { return g4_truth(v) == 1; }
 /* Operations 0..2 arithmetic, 3..6 bitwise. */
-static inline g4_t g4_binary(g4_t a, g4_t b, unsigned op) {
+static inline g4_t g4_binary(g4_t a, g4_t b, uint32_t op) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
     if (w > 64) {
@@ -325,23 +325,23 @@ static inline g4_t llg_gmp_sv4_bitneg(g4_t v) {
         return llg_gmp_sv4_unary_wide(v, 1);
     return g4_small(~v.data.small.a | v.data.small.b, v.data.small.b, v.width, v.is_signed);
 }
-static inline g4_t g4_predicate(int truth) { return llg_gmp_sv4_fill((uint8_t)truth, 1, 0); }
+static inline g4_t g4_predicate(int32_t truth) { return llg_gmp_sv4_fill((uint8_t)truth, 1, 0); }
 static inline g4_t llg_gmp_sv4_lognot(g4_t v) {
-    int t = g4_truth(v);
+    int32_t t = g4_truth(v);
     return g4_predicate(t == 2 ? 2 : !t);
 }
 static inline g4_t llg_gmp_sv4_logand(g4_t a, g4_t b) {
-    int x = g4_truth(a), y = g4_truth(b);
+    int32_t x = g4_truth(a), y = g4_truth(b);
     return g4_predicate(!x || !y ? 0 : x == 1 && y == 1 ? 1 : 2);
 }
 static inline g4_t llg_gmp_sv4_logor(g4_t a, g4_t b) {
-    int x = g4_truth(a), y = g4_truth(b);
+    int32_t x = g4_truth(a), y = g4_truth(b);
     return g4_predicate(x == 1 || y == 1 ? 1 : !x && !y ? 0 : 2);
 }
 /* Compare op: 0 equality, 1 case equality, 2..5 ordered predicates. */
-static inline g4_t g4_compare(g4_t a, g4_t b, unsigned op) {
+static inline g4_t g4_compare(g4_t a, g4_t b, uint32_t op) {
     uint32_t w = g4_maxw(a, b);
-    int s = a.is_signed && b.is_signed;
+    int32_t s = a.is_signed && b.is_signed;
     if (w > 64)
         return llg_gmp_sv4_compare_wide(a, b, op);
     uint64_t aa = g4_extend(a.data.small.a, a.width, w, s),
@@ -354,15 +354,15 @@ static inline g4_t g4_compare(g4_t a, g4_t b, unsigned op) {
         return g4_predicate(((aa ^ ba) & ~(ab | bb)) ? 0 : (ab | bb) ? 2 : 1);
     if (ab | bb)
         return g4_predicate(2);
-    int c = aa < ba ? -1 : aa > ba ? 1 : 0;
+    int32_t c = aa < ba ? -1 : aa > ba ? 1 : 0;
     if (s && w) {
-        int an = (int)(aa >> (w - 1)), bn = (int)(ba >> (w - 1));
+        int32_t an = (int32_t)(aa >> (w - 1)), bn = (int32_t)(ba >> (w - 1));
         if (an != bn)
             c = an ? -1 : 1;
     }
     return g4_predicate(op == 2 ? c < 0 : op == 3 ? c <= 0 : op == 4 ? c > 0 : c >= 0);
 }
-static inline int llg_gmp_sv4_same(g4_t a, g4_t b) {
+static inline int32_t llg_gmp_sv4_same(g4_t a, g4_t b) {
     return g4_maxw(a, b) <= 64
                ? a.data.small.a == b.data.small.a && a.data.small.b == b.data.small.b
                : llg_gmp_sv4_same_wide(a, b);
@@ -370,7 +370,7 @@ static inline int llg_gmp_sv4_same(g4_t a, g4_t b) {
 static inline g4_t llg_gmp_sv4_mux(g4_t sel, g4_t a, g4_t b) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
-    int t = g4_truth(sel);
+    int32_t t = g4_truth(sel);
     if (t != 2)
         return llg_gmp_sv4_resize(t ? a : b, w, s);
     if (w > 64)
@@ -382,7 +382,7 @@ static inline g4_t llg_gmp_sv4_mux(g4_t sel, g4_t a, g4_t b) {
     uint64_t unknown = (aa ^ ba) | ab | bb;
     return g4_small((aa & ~unknown) | unknown, unknown, w, s);
 }
-static inline g4_t g4_divmod(g4_t a, g4_t b, int remainder) {
+static inline g4_t g4_divmod(g4_t a, g4_t b, int32_t remainder) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
     if (w > 64)
@@ -393,7 +393,7 @@ static inline g4_t g4_divmod(g4_t a, g4_t b, int remainder) {
              y = g4_extend(b.data.small.a, b.width, w, s);
     if (!y)
         return llg_gmp_sv4_x(w, s);
-    int xn = s && w && ((x >> (w - 1)) & 1), yn = s && w && ((y >> (w - 1)) & 1);
+    int32_t xn = s && w && ((x >> (w - 1)) & 1), yn = s && w && ((y >> (w - 1)) & 1);
     if (xn)
         x = (UINT64_C(0) - x) & g4_mask(w);
     if (yn)
@@ -434,7 +434,7 @@ static inline g4_t llg_gmp_sv4_clog2(g4_t v) {
     if (v.data.small.b)
         return llg_gmp_sv4_x(32, 0);
     uint64_t n = v.data.small.a;
-    unsigned r = 0;
+    uint32_t r = 0;
     if (n)
         --n;
     while (n) {
@@ -456,25 +456,25 @@ static inline llg_gmp_sv4_vpi_word_t llg_gmp_sv4_vpi_word(g4_t v, size_t word) {
     }
     return r;
 }
-static inline uint64_t llg_gmp_sv4_word(g4_t v, size_t word, unsigned plane) {
+static inline uint64_t llg_gmp_sv4_word(g4_t v, size_t word, uint32_t plane) {
     llg_gmp_sv4_vpi_word_t r = llg_gmp_sv4_vpi_word(v, word);
     return plane == 0 ? r.aval & ~r.bval : plane == 1 ? r.aval & r.bval : ~r.aval & r.bval;
 }
 /* Internal zero-padded logical-plane slice, count in 1..64. */
 static inline uint64_t llg_gmp_sv4_plane_slice(g4_t value, uint32_t low,
-                                             unsigned count, unsigned plane) {
+                                             uint32_t count, uint32_t plane) {
     size_t word = low / 64u;
-    unsigned shift = low % 64u;
+    uint32_t shift = low % 64u;
     uint64_t result = llg_gmp_sv4_word(value, word, plane) >> shift;
     if (shift && count > 64u - shift)
         result |= llg_gmp_sv4_word(value, word + 1u, plane) << (64u - shift);
     return result & g4_mask(count);
 }
-static inline unsigned llg_gmp_sv4_state(g4_t v, uint64_t bit) {
+static inline uint32_t llg_gmp_sv4_state(g4_t v, uint64_t bit) {
     if (bit >= v.width)
         return 2;
     llg_gmp_sv4_vpi_word_t r = llg_gmp_sv4_vpi_word(v, (size_t)(bit / 64));
-    unsigned a = (unsigned)((r.aval >> (bit % 64)) & 1), b = (unsigned)((r.bval >> (bit % 64)) & 1);
+    uint32_t a = (uint32_t)((r.aval >> (bit % 64)) & 1), b = (uint32_t)((r.bval >> (bit % 64)) & 1);
     return b ? (a ? 2u : 3u) : a;
 }
 static inline void llg_gmp_sv4_set_vpi_word(g4_t* v, size_t word, llg_gmp_sv4_vpi_word_t input) {
@@ -491,7 +491,7 @@ static inline void llg_gmp_sv4_set_word(g4_t* v, size_t word, uint64_t bits, uin
     llg_gmp_sv4_vpi_word_t r = {(bits & ~(x | z)) | x, x | z};
     llg_gmp_sv4_set_vpi_word(v, word, r);
 }
-static inline void llg_gmp_sv4_set_state(g4_t* v, uint64_t bit, unsigned state) {
+static inline void llg_gmp_sv4_set_state(g4_t* v, uint64_t bit, uint32_t state) {
     if (state > 3)
         llg_gmp_sv4_fail("invalid scalar state");
     if (bit >= v->width)
@@ -503,18 +503,18 @@ static inline void llg_gmp_sv4_set_state(g4_t* v, uint64_t bit, unsigned state) 
     r.bval = (r.bval & ~mask) | (state >= 2 ? mask : 0);
     llg_gmp_sv4_set_vpi_word(v, word, r);
 }
-static inline int llg_gmp_sv4_has_x(g4_t v) {
+static inline int32_t llg_gmp_sv4_has_x(g4_t v) {
     return v.width <= 64 ? (v.data.small.a & v.data.small.b) != 0
                          : llg_gmp_sv4_has_plane_wide(v, 0);
 }
-static inline int llg_gmp_sv4_has_z(g4_t v) {
+static inline int32_t llg_gmp_sv4_has_z(g4_t v) {
     return v.width <= 64 ? (~v.data.small.a & v.data.small.b) != 0
                          : llg_gmp_sv4_has_plane_wide(v, 1);
 }
-static inline unsigned llg_gmp_sv4_state_to_dpi(unsigned state) {
+static inline uint32_t llg_gmp_sv4_state_to_dpi(uint32_t state) {
     return state < 2 ? state : state ^ 1u;
 }
-static inline unsigned llg_gmp_sv4_state_from_dpi(unsigned state) {
+static inline uint32_t llg_gmp_sv4_state_from_dpi(uint32_t state) {
     return state < 2 ? state : state ^ 1u;
 }
 static inline size_t llg_gmp_sv4_word_range(g4_t v, size_t first, size_t count) {
@@ -527,9 +527,9 @@ void llg_gmp_sv4_export_vpi_words_wide(g4_t v, size_t first, llg_gmp_sv4_vpi_wor
 static inline g4_t llg_gmp_sv4_add(g4_t a, g4_t b) { return g4_binary(a, b, 0); }
 static inline g4_t llg_gmp_sv4_sub(g4_t a, g4_t b) { return g4_binary(a, b, 1); }
 static inline g4_t llg_gmp_sv4_mul(g4_t a, g4_t b) { return g4_binary(a, b, 2); }
-void llg_gmp_sv4_arithmetic_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op);
+void llg_gmp_sv4_arithmetic_into_wide(g4_t* dst, g4_t a, g4_t b, uint32_t op);
 /* Borrow operands; exact destination aliases are supported. */
-static inline void g4_arithmetic_into(g4_t* dst, g4_t a, g4_t b, unsigned op) {
+static inline void g4_arithmetic_into(g4_t* dst, g4_t a, g4_t b, uint32_t op) {
     if (g4_maxw(a, b) <= 64)
         llg_gmp_sv4_replace(dst, g4_binary(a, b, op));
     else
@@ -544,9 +544,9 @@ static inline void llg_gmp_sv4_sub_into(g4_t* dst, g4_t a, g4_t b) {
 static inline void llg_gmp_sv4_mul_into(g4_t* dst, g4_t a, g4_t b) {
     g4_arithmetic_into(dst, a, b, 2);
 }
-void llg_gmp_sv4_bitwise_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op);
+void llg_gmp_sv4_bitwise_into_wide(g4_t* dst, g4_t a, g4_t b, uint32_t op);
 /* Bitwise destinations: borrow operands; exact destination aliases are supported. */
-static inline void g4_bitwise_into(g4_t* dst, g4_t a, g4_t b, unsigned op) {
+static inline void g4_bitwise_into(g4_t* dst, g4_t a, g4_t b, uint32_t op) {
     if (g4_maxw(a, b) <= 64)
         llg_gmp_sv4_replace(dst, g4_binary(a, b, op));
     else
@@ -575,24 +575,24 @@ static inline g4_t llg_gmp_sv4_case_neq(g4_t a, g4_t b) {
     return llg_gmp_sv4_lognot(llg_gmp_sv4_case_eq(a, b));
 }
 /* V05/S2: shifts and reductions. Counts are unsigned bit patterns. */
-g4_t llg_gmp_sv4_shift_wide(g4_t value, g4_t count, int right, int arithmetic);
-g4_t llg_gmp_sv4_reduce_wide(g4_t value, unsigned op);
+g4_t llg_gmp_sv4_shift_wide(g4_t value, g4_t count, int32_t right, int32_t arithmetic);
+g4_t llg_gmp_sv4_reduce_wide(g4_t value, uint32_t op);
 g4_t llg_gmp_sv4_countones_wide(g4_t value);
-g4_t llg_gmp_sv4_onehot_wide(g4_t value, int allow_zero);
-static inline unsigned g4_popcount(uint64_t x) {
+g4_t llg_gmp_sv4_onehot_wide(g4_t value, int32_t allow_zero);
+static inline uint32_t g4_popcount(uint64_t x) {
     x -= (x >> 1) & UINT64_C(0x5555555555555555);
     x = (x & UINT64_C(0x3333333333333333)) + ((x >> 2) & UINT64_C(0x3333333333333333));
     x = (x + (x >> 4)) & UINT64_C(0x0f0f0f0f0f0f0f0f);
-    return (unsigned)((x * UINT64_C(0x0101010101010101)) >> 56);
+    return (uint32_t)((x * UINT64_C(0x0101010101010101)) >> 56);
 }
-static inline g4_t g4_shift(g4_t v, g4_t count, int right, int arithmetic) {
+static inline g4_t g4_shift(g4_t v, g4_t count, int32_t right, int32_t arithmetic) {
     if (v.width > 64 || count.width > 64)
         return llg_gmp_sv4_shift_wide(v, count, right, arithmetic);
     if (count.data.small.b)
         return llg_gmp_sv4_x(v.width, v.is_signed);
     uint64_t sh = count.data.small.a;
     uint64_t a = v.data.small.a, b = v.data.small.b;
-    unsigned top = v.width ? v.width - 1u : 0;
+    uint32_t top = v.width ? v.width - 1u : 0;
     uint64_t fill_a =
         right && arithmetic && v.is_signed && v.width && ((a >> top) & 1) ? UINT64_MAX : 0;
     uint64_t fill_b =
@@ -612,18 +612,18 @@ static inline g4_t llg_gmp_sv4_shl(g4_t a, g4_t b) { return g4_shift(a, b, 0, 0)
 static inline g4_t llg_gmp_sv4_shr(g4_t a, g4_t b) { return g4_shift(a, b, 1, 0); }
 static inline g4_t llg_gmp_sv4_ashl(g4_t a, g4_t b) { return g4_shift(a, b, 0, 1); }
 static inline g4_t llg_gmp_sv4_ashr(g4_t a, g4_t b) { return g4_shift(a, b, 1, 1); }
-static inline g4_t g4_reduce(g4_t v, unsigned op) {
+static inline g4_t g4_reduce(g4_t v, uint32_t op) {
     if (v.width > 64)
         return llg_gmp_sv4_reduce_wide(v, op);
     uint64_t a = v.data.small.a, b = v.data.small.b;
-    unsigned kind = op % 3u;
-    int t;
+    uint32_t kind = op % 3u;
+    int32_t t;
     if (kind == 0)
         t = (~a & ~b & g4_mask(v.width)) ? 0 : b ? 2 : 1;
     else if (kind == 1)
         t = (a & ~b) ? 1 : b ? 2 : 0;
     else
-        t = b ? 2 : (int)(g4_popcount(a) & 1u);
+        t = b ? 2 : (int32_t)(g4_popcount(a) & 1u);
     return g4_predicate(op >= 3 && t != 2 ? !t : t);
 }
 static inline g4_t llg_gmp_sv4_reduce_and(g4_t v) { return g4_reduce(v, 0); }
@@ -636,7 +636,7 @@ static inline g4_t llg_gmp_sv4_countones(g4_t v) {
     return v.width > 64 ? llg_gmp_sv4_countones_wide(v)
                         : g4_small(g4_popcount(v.data.small.a & ~v.data.small.b), 0, 32, 1);
 }
-static inline g4_t llg_gmp_sv4_onehot(g4_t v, int allow_zero) {
+static inline g4_t llg_gmp_sv4_onehot(g4_t v, int32_t allow_zero) {
     if (v.width > 64)
         return llg_gmp_sv4_onehot_wide(v, allow_zero);
     uint64_t ones = v.data.small.a & ~v.data.small.b;
@@ -645,12 +645,12 @@ static inline g4_t llg_gmp_sv4_onehot(g4_t v, int allow_zero) {
 /* End V05/S2. */
 
 /* V05/S3: case modes, directional wildcards and range membership. */
-g4_t llg_gmp_sv4_match_wide(g4_t a, g4_t b, unsigned mode);
-static inline g4_t g4_match(g4_t a, g4_t b, unsigned mode) {
+g4_t llg_gmp_sv4_match_wide(g4_t a, g4_t b, uint32_t mode);
+static inline g4_t g4_match(g4_t a, g4_t b, uint32_t mode) {
     if (g4_maxw(a, b) > 64)
         return llg_gmp_sv4_match_wide(a, b, mode);
     uint32_t w = g4_maxw(a, b);
-    int sign = mode == 2 && a.is_signed && b.is_signed;
+    int32_t sign = mode == 2 && a.is_signed && b.is_signed;
     uint64_t aa = g4_extend(a.data.small.a, a.width, w, sign);
     uint64_t ab = g4_extend(a.data.small.b, a.width, w, sign);
     uint64_t ba = g4_extend(b.data.small.a, b.width, w, sign);
@@ -673,11 +673,11 @@ static inline g4_t llg_gmp_sv4_wild_neq(g4_t a, g4_t b) {
     return llg_gmp_sv4_lognot(llg_gmp_sv4_wild_eq(a, b));
 }
 static inline g4_t llg_gmp_sv4_logimpl(g4_t a, g4_t b) {
-    int x = g4_truth(a), y = g4_truth(b);
+    int32_t x = g4_truth(a), y = g4_truth(b);
     return g4_predicate(x == 0 || y == 1 ? 1 : x == 1 && y == 0 ? 0 : 2);
 }
 static inline g4_t llg_gmp_sv4_logequiv(g4_t a, g4_t b) {
-    int x = g4_truth(a), y = g4_truth(b);
+    int32_t x = g4_truth(a), y = g4_truth(b);
     return g4_predicate(x == 2 || y == 2 ? 2 : x == y);
 }
 static inline g4_t llg_gmp_sv4_inside_range(g4_t value, g4_t low, g4_t high) {
@@ -754,16 +754,16 @@ enum {
     LLG_GMP_STRENGTH_STRONG = 6, LLG_GMP_STRENGTH_SUPPLY = 7
 };
 g4_t llg_gmp_sv4_enum_navigate(g4_t current, g4_t step, const g4_t* values,
-                                uint32_t count, g4_t default_value, int direction);
-g4_t llg_gmp_sv4_resolve(const g4_t* const* drivers, int count, uint32_t width,
-                          int8_t sign, int mode);
+                                uint32_t count, g4_t default_value, int32_t direction);
+g4_t llg_gmp_sv4_resolve(const g4_t* const* drivers, int32_t count, uint32_t width,
+                          int8_t sign, int32_t mode);
 g4_t llg_gmp_sv4_resolve_strengths(const g4_t* const* drivers, const uint8_t* strength0,
-                                    const uint8_t* strength1, int count, uint32_t width,
-                                    int8_t sign, int mode);
+                                    const uint8_t* strength1, int32_t count, uint32_t width,
+                                    int8_t sign, int32_t mode);
 g4_t llg_gmp_sv4_resolve_strengths_range(const g4_t* const* drivers, const uint8_t* strength0,
-                                          const uint8_t* strength1, const int* indices, int count,
+                                          const uint8_t* strength1, const int32_t* indices, int32_t count,
                                           uint32_t source_width, uint32_t offset, uint32_t width,
-                                          int8_t sign, int mode);
+                                          int8_t sign, int32_t mode);
 g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_count,
                            const g4_t* const* inputs);
 /* End V05/S6. */
@@ -773,7 +773,7 @@ g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_co
 #endif
 /* V05/S8: low-bit scalar coercion versus exact host index conversion.
  * Formatting borrows values and writes only a bounded NUL-terminated prefix. */
-int llg_gmp_sv4_fits_i64_wide(g4_t value);
+int32_t llg_gmp_sv4_fits_i64_wide(g4_t value);
 uint64_t llg_gmp_sv4_to_index_wide(g4_t value);
 /* IEEE 1800-2009 21.2.1.4: a group or %d value with every bit unknown prints
  * lowercase x/z; a partial one prints uppercase with X taking precedence over Z.
@@ -793,7 +793,7 @@ static inline int64_t llg_gmp_sv4_to_i64(g4_t value) {
         bits |= ~g4_mask(value.width);
     return bits <= INT64_MAX ? (int64_t)bits : -1 - (int64_t)~bits;
 }
-static inline int llg_gmp_sv4_fits_i64(g4_t value) {
+static inline int32_t llg_gmp_sv4_fits_i64(g4_t value) {
     if (value.width > 64)
         return llg_gmp_sv4_fits_i64_wide(value);
     return !value.data.small.b &&
@@ -807,7 +807,7 @@ static inline uint64_t llg_gmp_sv4_to_index(g4_t value) {
         return UINT64_MAX;
     return value.data.small.a;
 }
-static inline int llg_gmp_sv4_to_index_i64(g4_t value, int64_t* out) {
+static inline int32_t llg_gmp_sv4_to_index_i64(g4_t value, int64_t* out) {
     if (!out || !llg_gmp_sv4_fits_i64(value))
         return 0;
     *out = value.is_signed ? llg_gmp_sv4_to_i64(value) : (int64_t)llg_gmp_sv4_to_u64(value);
@@ -831,7 +831,7 @@ static inline void llg_gmp_sv4_to_dec_string(g4_t value, char* buf, size_t cap) 
         return;
     }
     uint64_t bits = value.data.small.a;
-    int negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
+    int32_t negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
     if (negative) {
         bits = (UINT64_C(0) - bits) & g4_mask(value.width);
         if (len + 1u < cap)
@@ -860,7 +860,7 @@ static inline double llg_gmp_sv4_to_real(g4_t value) {
     if (value.width > 64)
         return llg_gmp_sv4_to_real_wide(value);
     uint64_t bits = value.data.small.a & ~value.data.small.b;
-    int negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
+    int32_t negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
     uint64_t magnitude = negative ? (UINT64_C(0) - bits) & g4_mask(value.width) : bits;
     return negative ? -(double)magnitude : (double)magnitude;
 }
@@ -905,7 +905,7 @@ static inline double llg_gmp_sv4_bitstoshortreal(g4_t value) {
     memcpy(&out, &bits, sizeof(out));
     return (double)out;
 }
-static inline int llg_gmp_real_to_bool(double value) { return value != 0.0; }
+static inline int32_t llg_gmp_real_to_bool(double value) { return value != 0.0; }
 /* End V05/S7. */
 
 /* V05/S9: checked widths and owner-free facade helper types. */

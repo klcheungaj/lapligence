@@ -19,7 +19,7 @@ typedef struct {
 typedef struct llg_queue_t llg_queue_t;
 typedef g4_t (*llg_gmp_queue_ref_read_fn)(const llg_queue_t* queue,
                                        uint64_t identity);
-typedef int (*llg_gmp_queue_ref_write_fn)(llg_queue_t* queue, uint64_t identity,
+typedef int32_t (*llg_gmp_queue_ref_write_fn)(llg_queue_t* queue, uint64_t identity,
                                       g4_t value);
 
 // Canonical lvalue descriptor used by subroutine `ref` arguments.  The
@@ -61,7 +61,7 @@ typedef struct {
     llg_gmp_queue_ref_write_fn queue_write;
     void* retained;
     g4_t (*retained_read)(const void*);
-    int (*retained_write)(void*, g4_t);
+    int32_t (*retained_write)(void*, g4_t);
 } llg_gmp_ref_t;
 
 /* Borrowed descriptor graphs. Generated call scopes own the graph storage;

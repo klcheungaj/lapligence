@@ -1,6 +1,6 @@
 #include "internal.h"
 
-int llg_gmp_sv4_truth_wide(g4_t v) {
+int32_t llg_gmp_sv4_truth_wide(g4_t v) {
     size_t n = llg_gmp_sv4_words(v);
     const uint64_t *a = v.data.wide.a, *b = v.data.wide.b;
     if (!b) {
@@ -14,7 +14,7 @@ int llg_gmp_sv4_truth_wide(g4_t v) {
             return 1;
     return 2;
 }
-int llg_gmp_sv4_has_plane_wide(g4_t v, int z) {
+int32_t llg_gmp_sv4_has_plane_wide(g4_t v, int32_t z) {
     if (!v.data.wide.b)
         return 0;
     size_t n = llg_gmp_sv4_words(v);
@@ -30,7 +30,7 @@ int llg_gmp_sv4_has_plane_wide(g4_t v, int z) {
     }
     return 0;
 }
-int llg_gmp_sv4_same_wide(g4_t a, g4_t b) {
+int32_t llg_gmp_sv4_same_wide(g4_t a, g4_t b) {
     size_t an = llg_gmp_sv4_words(a), bn = llg_gmp_sv4_words(b), n = an < bn ? an : bn;
     const uint64_t *aa = g4_a(&a), *ab = g4_b(&a), *ba = g4_a(&b), *bb = g4_b(&b);
     if (n && memcmp(aa, ba, n * 8u))
@@ -52,9 +52,9 @@ int llg_gmp_sv4_same_wide(g4_t a, g4_t b) {
             return 0;
     return 1;
 }
-g4_t llg_gmp_sv4_compare_wide(g4_t a, g4_t b, unsigned op) {
+g4_t llg_gmp_sv4_compare_wide(g4_t a, g4_t b, uint32_t op) {
     uint32_t w = g4_maxw(a, b);
-    int s = a.is_signed && b.is_signed;
+    int32_t s = a.is_signed && b.is_signed;
     if (op >= 2 && (llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b)))
         return g4_predicate(2);
     if (a.width == b.width &&
@@ -67,7 +67,7 @@ g4_t llg_gmp_sv4_compare_wide(g4_t a, g4_t b, unsigned op) {
     }
     g4_span x = g4_span_of(&a, s), y = g4_span_of(&b, s);
     size_t n = ((size_t)w + 63) / 64;
-    int unknown = 0, c = 0;
+    int32_t unknown = 0, c = 0;
     for (size_t i = n; i-- > 0;) {
         uint64_t mask = i + 1 == n ? g4_topmask(w) : UINT64_MAX;
         uint64_t aa = G4_SPAN_A(x, i) & mask, ab = G4_SPAN_B(x, i) & mask;

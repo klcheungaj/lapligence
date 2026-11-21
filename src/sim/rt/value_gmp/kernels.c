@@ -17,7 +17,7 @@ _Static_assert(sizeof(mp_limb_t) == 8, "64-bit GMP limb storage required");
  * the arrays directly; otherwise operands are memcpy'd into native limb
  * scratch (same 64-bit representation) and results copied back. A const
  * object, not a constant expression, avoids MSVC's constant-condition warning. */
-static const int g4_limbs_native = _Generic((uint64_t*)0, mp_limb_t*: 1, default: 0);
+static const int32_t g4_limbs_native = _Generic((uint64_t*)0, mp_limb_t*: 1, default: 0);
 #define G4_LIMBS(p) _Generic((p), mp_limb_t*: (p), default: (mp_limb_t*)0)
 #define G4_CLIMBS(p) _Generic((p), const mp_limb_t*: (p), default: (const mp_limb_t*)0)
 static mp_limb_t* g4_limb_scratch(size_t limbs) {
@@ -79,7 +79,7 @@ void llg_gmp_sv4_kernel_mul(uint64_t* out, const uint64_t* a, const uint64_t* b,
 
 #if LLG_SV4_GMP_KERNELS
 void llg_gmp_sv4_kernel_div(uint64_t* out, const uint64_t* a, const uint64_t* b, size_t n,
-                            int remainder) {
+                            int32_t remainder) {
     size_t an = n, bn = n;
     while (an && !a[an - 1])
         --an;
@@ -105,17 +105,17 @@ void llg_gmp_sv4_kernel_div(uint64_t* out, const uint64_t* a, const uint64_t* b,
     free(scratch);
 }
 #else
-static uint32_t word32(const uint64_t* v, int index) {
+static uint32_t word32(const uint64_t* v, int32_t index) {
     return (uint32_t)(v[index / 2] >> ((index % 2) * 32));
 }
-static void set_word32(uint64_t* v, int index, uint32_t word) {
-    unsigned shift = (unsigned)(index % 2) * 32u;
+static void set_word32(uint64_t* v, int32_t index, uint32_t word) {
+    uint32_t shift = (uint32_t)(index % 2) * 32u;
     uint64_t mask = (uint64_t)UINT32_MAX << shift;
     v[index / 2] = (v[index / 2] & ~mask) | ((uint64_t)word << shift);
 }
 void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const uint64_t* divisor,
-                            size_t words, int want_remainder) {
-    int cmp = 0;
+                            size_t words, int32_t want_remainder) {
+    int32_t cmp = 0;
     for (size_t i = words; i-- > 0;)
         if (dividend[i] != divisor[i]) {
             cmp = dividend[i] < divisor[i] ? -1 : 1;
@@ -126,8 +126,8 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
             memcpy(result, dividend, words * 8u);
         return;
     }
-    int n = (int)(2u * words);
-    int m = n;
+    int32_t n = (int32_t)(2u * words);
+    int32_t m = n;
     while (n && !word32(dividend, n - 1))
         --n;
     while (m && !word32(divisor, m - 1))
@@ -135,7 +135,7 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
     if (m == 1) {
         uint64_t remainder = 0;
         uint32_t denominator = word32(divisor, 0);
-        for (int i = n - 1; i >= 0; --i) {
+        for (int32_t i = n - 1; i >= 0; --i) {
             uint64_t partial = (remainder << 32) | word32(dividend, i);
             if (!want_remainder)
                 set_word32(result, i, (uint32_t)(partial / denominator));
@@ -158,18 +158,18 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
     }
     uint32_t* u = scratch;
     uint32_t* v = u + n + 1;
-    unsigned shift = 0;
+    uint32_t shift = 0;
     uint32_t top = word32(divisor, m - 1);
     while (!(top & UINT32_C(0x80000000))) {
         top <<= 1;
         ++shift;
     }
-    for (int i = 0; i < m; ++i) {
+    for (int32_t i = 0; i < m; ++i) {
         v[i] = word32(divisor, i) << shift;
         if (shift && i)
             v[i] |= word32(divisor, i - 1) >> (32u - shift);
     }
-    for (int i = 0; i < n; ++i) {
+    for (int32_t i = 0; i < n; ++i) {
         u[i] = word32(dividend, i) << shift;
         if (shift && i)
             u[i] |= word32(dividend, i - 1) >> (32u - shift);
@@ -177,7 +177,7 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
     if (shift)
         u[n] = word32(dividend, n - 1) >> (32u - shift);
     const uint64_t radix = UINT64_C(1) << 32;
-    for (int j = n - m; j >= 0; --j) {
+    for (int32_t j = n - m; j >= 0; --j) {
         uint64_t q, rem;
         if (u[j + m] == v[m - 1]) {
             q = UINT32_MAX;
@@ -192,7 +192,7 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
             rem += v[m - 1];
         }
         uint64_t borrow = 0;
-        for (int i = 0; i < m; ++i) {
+        for (int32_t i = 0; i < m; ++i) {
             uint64_t product = q * v[i] + borrow;
             uint32_t low = (uint32_t)product;
             uint32_t before = u[j + i];
@@ -204,7 +204,7 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
         if ((uint64_t)before < borrow) {
             --q;
             uint64_t carry = 0;
-            for (int i = 0; i < m; ++i) {
+            for (int32_t i = 0; i < m; ++i) {
                 uint64_t sum = (uint64_t)u[j + i] + v[i] + carry;
                 u[j + i] = (uint32_t)sum;
                 carry = sum >> 32;
@@ -215,7 +215,7 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
             set_word32(result, j, (uint32_t)q);
     }
     if (want_remainder) {
-        for (int i = 0; i < m; ++i) {
+        for (int32_t i = 0; i < m; ++i) {
             uint32_t word = u[i] >> shift;
             if (shift)
                 word |= u[i + 1] << (32u - shift);
@@ -237,7 +237,7 @@ size_t llg_gmp_sv4_kernel_scratch_allocations(void) {
 
 /* Decimal digits, most significant first. The input is operation-local mutable
  * magnitude storage; GMP's get_str may destroy it for non-power-of-two bases. */
-size_t llg_gmp_sv4_kernel_decimal(unsigned char* out, uint64_t* magnitude, size_t n) {
+size_t llg_gmp_sv4_kernel_decimal(uint8_t* out, uint64_t* magnitude, size_t n) {
 #if LLG_SV4_GMP_KERNELS
     if (n >= LLG_SV4_DECIMAL_GMP_THRESHOLD) {
         if (g4_limbs_native)
@@ -260,16 +260,16 @@ size_t llg_gmp_sv4_kernel_decimal(unsigned char* out, uint64_t* magnitude, size_
         }
         while (n && !magnitude[n - 1u])
             --n;
-        unsigned digits = n ? 9u : 0u;
+        uint32_t digits = n ? 9u : 0u;
         do {
-            out[count++] = (unsigned char)(rem % 10u);
+            out[count++] = (uint8_t)(rem % 10u);
             rem /= 10u;
             if (digits)
                 --digits;
         } while (digits || rem);
     }
     for (size_t i = 0; i < count / 2u; ++i) {
-        unsigned char digit = out[i];
+        uint8_t digit = out[i];
         out[i] = out[count - 1u - i];
         out[count - 1u - i] = digit;
     }

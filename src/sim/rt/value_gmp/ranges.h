@@ -78,7 +78,7 @@ static inline void g4_copy_reverse(g4_t* dst, uint32_t dst_bit, g4_t src, uint32
         count -= take;
     }
 }
-static inline void g4_fill_bits(g4_t* dst, uint32_t bit, uint32_t count, int state) {
+static inline void g4_fill_bits(g4_t* dst, uint32_t bit, uint32_t count, int32_t state) {
     if (count && state >= 2 && dst->width > 64 && !dst->data.wide.b)
         llg_gmp_sv4_promote(dst);
     uint64_t *a = g4_mut_a(dst), *b = g4_mut_b(dst);
@@ -153,7 +153,7 @@ static inline void g4_reverse_window(g4_t* dst, int64_t dst_bit, g4_t src, int64
         g4_copy_reverse(dst, start, src, (uint32_t)(src_high + 1 - take), take);
     g4_fill_bits(dst, start + take, length - take, 2);
 }
-static inline int g4_alias(g4_t a, g4_t b) {
+static inline int32_t g4_alias(g4_t a, g4_t b) {
     return a.width > 64 && b.width > 64 && a.data.wide.a == b.data.wide.a;
 }
 #endif

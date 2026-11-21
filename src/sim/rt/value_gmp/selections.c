@@ -1,13 +1,13 @@
 #include "ranges.h"
 
 /* Selection only needs representability, not a lossy scalar conversion. */
-static int g4_selection_index(g4_t v, int64_t* out) {
+static int32_t g4_selection_index(g4_t v, int64_t* out) {
     if (llg_gmp_sv4_is_unknown(v))
         return 0;
     uint64_t low = v.width ? g4_a(&v)[0] : 0;
-    int negative = v.is_signed && v.width && llg_gmp_sv4_state(v, v.width - 1) == 1;
+    int32_t negative = v.is_signed && v.width && llg_gmp_sv4_state(v, v.width - 1) == 1;
     if (v.width > 64) {
-        if ((int)(low >> 63) != negative)
+        if ((int32_t)(low >> 63) != negative)
             return 0;
         size_t n = llg_gmp_sv4_words(v);
         const uint64_t* a = g4_a(&v);
@@ -55,14 +55,14 @@ void llg_gmp_sv4_part_select_set_wide(g4_t* tgt, int64_t left, int64_t right, g4
 }
 
 // A negative indexed select with a negative base is entirely out of range.
-static int llg_gmp_sv4_indexed_low(int64_t base, uint32_t width, int neg, int64_t* low) {
+static int32_t llg_gmp_sv4_indexed_low(int64_t base, uint32_t width, int32_t neg, int64_t* low) {
     if (!width || (neg && base < 0))
         return 0;
     *low = neg ? base - ((int64_t)width - 1) : base;
     return 1;
 }
 
-g4_t llg_gmp_sv4_idx_part_select_wide(g4_t v, uint64_t base, uint32_t width, int neg) {
+g4_t llg_gmp_sv4_idx_part_select_wide(g4_t v, uint64_t base, uint32_t width, int32_t neg) {
     g4_selection_width(width);
     g4_t result = llg_gmp_sv4_zero(width, 0);
     int64_t low;
@@ -74,7 +74,7 @@ g4_t llg_gmp_sv4_idx_part_select_wide(g4_t v, uint64_t base, uint32_t width, int
     return result;
 }
 
-void llg_gmp_sv4_idx_part_select_set_wide(g4_t* tgt, uint64_t base, uint32_t width, int neg,
+void llg_gmp_sv4_idx_part_select_set_wide(g4_t* tgt, uint64_t base, uint32_t width, int32_t neg,
                                           g4_t value) {
     g4_selection_width(width);
     int64_t low;
@@ -90,7 +90,7 @@ void llg_gmp_sv4_idx_part_select_set_wide(g4_t* tgt, uint64_t base, uint32_t wid
     llg_gmp_sv4_destroy(&snapshot);
 }
 
-g4_t llg_gmp_sv4_idx_part_select_value_wide(g4_t v, g4_t base, uint32_t width, int neg) {
+g4_t llg_gmp_sv4_idx_part_select_value_wide(g4_t v, g4_t base, uint32_t width, int32_t neg) {
     g4_selection_width(width);
     int64_t signed_base = 0, low = 0;
     g4_t result = llg_gmp_sv4_zero(width, 0);
@@ -103,7 +103,7 @@ g4_t llg_gmp_sv4_idx_part_select_value_wide(g4_t v, g4_t base, uint32_t width, i
     return result;
 }
 
-void llg_gmp_sv4_idx_part_select_set_value_wide(g4_t* tgt, g4_t base, uint32_t width, int neg,
+void llg_gmp_sv4_idx_part_select_set_value_wide(g4_t* tgt, g4_t base, uint32_t width, int32_t neg,
                                                 g4_t value) {
     g4_selection_width(width);
     int64_t signed_base, low;
@@ -161,7 +161,7 @@ llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_part(uint32_t storage_width, i
 }
 
 llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_indexed(uint32_t storage_width, g4_t base,
-                                                          uint32_t width, int negative) {
+                                                          uint32_t width, int32_t negative) {
     if (!width)
         llg_gmp_sv4_fail("packed selection width must be positive");
     g4_selection_width(width);
@@ -223,7 +223,7 @@ g4_t llg_gmp_sv4_select_plan_read_wide(g4_t source, const llg_gmp_sv4_select_pla
 }
 
 g4_t llg_gmp_sv4_select_plan_slice_wide(g4_t source, const llg_gmp_sv4_select_plan_t* plan,
-                                        int reverse) {
+                                        int32_t reverse) {
     g4_selection_plan_check(plan);
     if (source.width != plan->width) {
         llg_gmp_sv4_fail("packed selection source width mismatch");
