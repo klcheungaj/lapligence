@@ -69,9 +69,10 @@ Expected values are computed by hand from the clauses below.
 `whole_read_4096.sv`: 4096-record and 4096-byte arrays copied whole, merged
 under an `x` condition, passed through a task, compared and formatted with
 `%p`. `rb[4095].i = 4095`, `rc[17] = {1, 17}` (4 bits of 17), `copy[4095]` is
-255, both comparisons are 1, and the `%p` text has 18,721 characters: the
+255, both comparisons are 1, and the `%p` text has 18,722 characters: the
 values `k mod 256` take 16 * (10 + 90 * 2 + 156 * 3) = 10,528 digits, the 4,095
-separators `, ` take 8,190 and the braces `'{` and `}` take 3.
+separators `, ` take 8,190, the braces `'{` and `}` take 3 and the space after
+the closing brace of a non-empty array (decision S24-D2) takes 1.
 
 `descriptor_runs.sv`: 5000-element arrays, above the 4096-cell dense-storage
 threshold, so they use lazily allocated descriptor storage and unwritten
@@ -89,8 +90,9 @@ cells keep their default value (6.8 Table 6-7, L5309-5315: "4-state integral
   `bytes[1]` prints `xx` with `%h`.
 - `%p` prints each element "as they would unformatted" (21.2.1.7, L36415),
   decimal: 4995 `x` and the five single digits take 5000 characters, the
-  4999 separators `, ` take 9998, and `'{` and `}` take 3, giving 15001; the
-  last 8 characters are `x, x, 6}`.
+  4999 separators `, ` take 9998, `'{` and `}` take 3, and the space after
+  the closing brace (decision S24-D2) takes 1, giving 15002; the last 8
+  characters are `, x, 6} `.
 
 `size_mismatch.sv`: nearest illegal form, a whole copy between arrays of 10
 and 24 elements (7.6: "the source array shall have the same number of

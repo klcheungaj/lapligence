@@ -1,15 +1,15 @@
-da[1][2] 7 da[k][j+1] 8 da '{'{0, 0, 0, 0}, '{0, 0, 7, 8}}
+da[1][2] 7 da[k][j+1] 8 da '{'{0, 0, 0, 0} , '{0, 0, 7, 8} }
 inc 13
-inner oob 0 da[0] '{0, 0, 0, 0}
-q[0][j] 3 q '{'{1, 2, 9, 4}}
-append size 2 q[1] '{4, 0, 0, 0}
-aa '{"a":'{0, 3, 0, 0}} num 1
+inner oob 0 da[0] '{0, 0, 0, 0} 
+q[0][j] 3 q '{'{1, 2, 9, 4} }
+append size 2 q[1] '{4, 0, 0, 0} 
+aa '{"a":'{0, 3, 0, 0} }  num 1
 missing 0 num 1
 ai 9 num 1
 lb a3 bit 1
 sa 'hi' len 2
 ra 3.0
-qq '{'{'{1, 2, 8, 4}}}
+qq '{'{'{1, 2, 8, 4} }}
 out 42 call 84
 woke at 3
 event at 5 1

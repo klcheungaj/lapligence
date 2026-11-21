@@ -1,11 +1,11 @@
-at size: '{1, 5} size 2
-past end: '{1, 5} size 2
-plain: '{1, 5}
-strings: '{"a", "b"} size 2
+at size: '{1, 5}  size 2
+past end: '{1, 5}  size 2
+plain: '{1, 5} 
+strings: '{"a", "b"}  size 2
 reals: size 2 2.5
 records: size 2 2 y
-whole element: size 2 '{7, 8}
+whole element: size 2 '{7, 8} 
 keyed: size 2
 bounded: size 2
-dynamic: size 1 '{1, 2}
+dynamic: size 1 '{1, 2} 
 done

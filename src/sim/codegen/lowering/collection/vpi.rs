@@ -1157,17 +1157,22 @@ impl Codegen<'_> {
     }
 
     /// The names of the primitive instances written without one (decision
-    /// A19-D6): `<keyword>$<n>` for a gate or switch and `udp$<n>` for a
-    /// UDP, `n` counting the unnamed primitives of the enclosing module
-    /// instance from 1, its UDP instances first, each kind in elaboration
-    /// order (generate blocks included, untaken ones not: their primitives
-    /// do not exist, IEEE 1800-2009 27.3). Elements of primitive arrays are
-    /// named by their array.
+    /// A19-D6), with the module instance that holds them: `<keyword>$<n>`
+    /// for a gate or switch and `udp$<n>` for a UDP, `n` counting the
+    /// unnamed primitives of the enclosing module instance from 1, its UDP
+    /// instances first. Each kind is counted scope by scope: the module's
+    /// own primitives in source order, then each generate block in source
+    /// order, a block's own primitives before its nested blocks. Untaken
+    /// blocks are skipped: their primitives do not exist (IEEE 1800-2009
+    /// 27.3). Elements of primitive arrays are named by their array.
     fn vpi_unnamed_primitive_names(
         &self,
         array_of: &HashMap<NodeId, NodeId>,
-    ) -> HashMap<NodeId, String> {
-        let mut by_instance: HashMap<NodeId, (Vec<NodeId>, Vec<NodeId>)> = HashMap::new();
+    ) -> HashMap<NodeId, (String, NodeId)> {
+        // Sort key: one (nested block, id) step per generate block between
+        // the instance and the primitive, then (own item, id).
+        type Ordered = Vec<(Vec<(bool, usize)>, NodeId)>;
+        let mut by_instance: HashMap<NodeId, (Ordered, Ordered)> = HashMap::new();
         for id in self.db.instantiated_node_ids() {
             let NodeKind::Gate { prim_type, .. } = self.kind(id) else {
                 continue;
@@ -1175,28 +1180,33 @@ impl Codegen<'_> {
             if !self.node(id).name.is_empty() || array_of.contains_key(&id) {
                 continue;
             }
+            let mut order = vec![(false, id.index())];
             let mut owner = self.node(id).parent;
             while let Some(scope) = owner {
                 if matches!(self.kind(scope), NodeKind::ModuleInst { .. }) {
                     break;
                 }
+                order.push((true, scope.index()));
                 owner = self.node(scope).parent;
             }
             let Some(instance) = owner else { continue };
+            order.reverse();
             let (udps, gates) = by_instance.entry(instance).or_default();
             if matches!(
                 prim_type,
                 PrimitiveType::Sequential | PrimitiveType::Combinational
             ) {
-                udps.push(id);
+                udps.push((order, id));
             } else {
-                gates.push(id);
+                gates.push((order, id));
             }
         }
         let mut names = HashMap::new();
-        for (udps, gates) in by_instance.into_values() {
+        for (instance, (mut udps, mut gates)) in by_instance {
+            udps.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+            gates.sort_unstable_by(|left, right| left.0.cmp(&right.0));
             let udp_count = udps.len();
-            for (ordinal, id) in udps.into_iter().chain(gates).enumerate() {
+            for (ordinal, (_, id)) in udps.into_iter().chain(gates).enumerate() {
                 let keyword = match self.kind(id) {
                     NodeKind::Gate { prim_type, .. } if ordinal >= udp_count => {
                         vpi_prim_type(*prim_type).map(|(_, keyword)| keyword)
@@ -1204,7 +1214,7 @@ impl Codegen<'_> {
                     _ => Some("udp"),
                 };
                 if let Some(keyword) = keyword {
-                    names.insert(id, format!("{keyword}${}", ordinal + 1));
+                    names.insert(id, (format!("{keyword}${}", ordinal + 1), instance));
                 }
             }
         }
@@ -1213,12 +1223,13 @@ impl Codegen<'_> {
 
     /// The structure rows of a gate, switch or UDP instance (37.31). An
     /// element of a primitive array is named after the array and its index;
-    /// an instance written without a name by `unnamed_names`.
+    /// an instance written without a name by `unnamed_names`, in the scope of
+    /// its module instance even inside a generate block (decision A19-D6).
     fn vpi_primitive_row(
         &self,
         id: NodeId,
         array_of: &HashMap<NodeId, NodeId>,
-        unnamed_names: &HashMap<NodeId, String>,
+        unnamed_names: &HashMap<NodeId, (String, NodeId)>,
         template: IrVpiObject,
     ) -> Option<IrVpiObject> {
         let NodeKind::Gate {
@@ -1254,8 +1265,9 @@ impl Codegen<'_> {
         // A generated name keeps the source-ordered key of an unnamed
         // object; the emitted full name is its scope's and the name.
         let (full_name, unnamed) = match unnamed_names.get(&id) {
-            Some(generated) if name.is_empty() => {
+            Some((generated, instance)) if name.is_empty() => {
                 name = generated.clone();
+                let scope = self.vpi_full_name(*instance);
                 (self.vpi_unnamed_key(&scope, 'g', id), false)
             }
             _ if name.is_empty() => (self.vpi_unnamed_key(&scope, 'g', id), true),

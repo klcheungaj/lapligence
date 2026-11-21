@@ -1,7 +1,7 @@
-methods: '{'{3}}
-writes: '{'{3}}
-dynamic: '{'{}} '{'{4}}
+methods: '{'{3} }
+writes: '{'{3} }
+dynamic: '{'{}} '{'{4} }
 size: 0
-pop: 0 '{'{3}}
+pop: 0 '{'{3} }
 element: 0
-after: '{'{3, 6}}
+after: '{'{3, 6} }

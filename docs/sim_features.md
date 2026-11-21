@@ -2129,6 +2129,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   and depth-64 markers), and `null`/`chandle`/`event`/`interface`/`process`
   for other handles; output is capped at 1 MiB with a warning
   ([sim_024](../tests/fixtures/sim/feature_completion/sim_024/readme.md)).
+  A non-empty array pattern may be followed by one space after its closing
+  brace, as industry-standard output places it ([S24-D2](lrm_decisions.md#display-formatting-sim-024)).
   A class pattern leaves embedded covergroup instances out ([ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
   Tagged unions and semaphore/mailbox handles reject under `%p`; non-`%p`
   conversions of unpacked values or handles reject. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.

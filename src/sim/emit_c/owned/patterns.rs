@@ -18,7 +18,7 @@ pub(in crate::sim::emit_c) fn pattern_tables(model: &IrModel) -> String {
     let mut out = String::new();
     let mut entries = Vec::with_capacity(model.pattern_types.len());
     for (index, ty) in model.pattern_types.iter().enumerate() {
-        entries.push(type_entry(index, ty, &mut out));
+        entries.push(type_entry(index, ty, &model.pattern_types, &mut out));
     }
     out.push_str(&format!(
         "static const llg_pattern_type_t {TYPES}[{}] = {{\n{}\n}};\n",
@@ -115,8 +115,13 @@ fn storage_code(storage: IrPatternStorage) -> &'static str {
 }
 
 /// One `llg_pattern_type_t` initializer; auxiliary member, enum and bound
-/// tables are appended to `out` first.
-fn type_entry(index: usize, ty: &IrPatternType, out: &mut String) -> String {
+/// tables are appended to `out` first. `types` is the whole table.
+fn type_entry(
+    index: usize,
+    ty: &IrPatternType,
+    types: &[IrPatternType],
+    out: &mut String,
+) -> String {
     let mut members = "NULL".to_owned();
     let mut enums = "NULL".to_owned();
     let mut bounds_table = "NULL".to_owned();
@@ -232,9 +237,10 @@ fn type_entry(index: usize, ty: &IrPatternType, out: &mut String) -> String {
         IrPatternType::Process => "LLG_PATTERN_PROCESS",
     };
     format!(
-        "    {{{kind}, {}, {}, {}u, {count}u, {members}, {enums}, {bounds_table}, {element}}}",
+        "    {{{kind}, {}, {}, {}, {}u, {count}u, {members}, {enums}, {bounds_table}, {element}}}",
         u8::from(signed),
         u8::from(shortreal),
+        u8::from(ty.spaced_close(types)),
         ty.width()
     )
 }

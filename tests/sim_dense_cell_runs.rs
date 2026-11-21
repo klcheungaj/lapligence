@@ -30,15 +30,15 @@ fn whole_values_keep_element_semantics() {
          out -1 10 70\n\
          m2 10 14 24\n\
          m0 30 34 10\n\
-         overlap '{1, 1, 2, 3, 4, 5, 6, 8}\n\
+         overlap '{1, 1, 2, 3, 4, 5, 6, 8} \n\
          cont 1 1 8\n\
-         inout '{2, 2, 3, 4, 5, 6, 7, 9}\n\
-         func '{9, 7, 6, 5, 4, 3, 2, 2}\n\
+         inout '{2, 2, 3, 4, 5, 6, 7, 9} \n\
+         func '{9, 7, 6, 5, 4, 3, 2, 2} \n\
          fill 5a 5a\n\
-         default '{51, 51, 68, 51, 51, 51, 51, 51}\n\
+         default '{51, 51, 68, 51, 51, 51, 51, 51} \n\
          records c 7 c 7\n\
-         bits '{100, 101, 102, 103, 104, 105, 106, 107} 1\n\
-         short '{1, 2, 3, 4, 5} '{8, 9, 10, 11, 12, 13}\n\
+         bits '{100, 101, 102, 103, 104, 105, 106, 107}  1\n\
+         short '{1, 2, 3, 4, 5}  '{8, 9, 10, 11, 12, 13} \n\
          wide 00000008z0000000000000003 x000001400000000000000006 \
          0000001c00000000000000008 0c0000000000000003\n\
          nba-before 0\n\
@@ -78,7 +78,7 @@ fn whole_read_of_4096_elements_is_bounded_and_exact() {
     sim_cli::run_case(
         SUITE,
         "whole_read_4096",
-        "4095 17 1 255 1 1 18721\n",
+        "4095 17 1 255 1 1 18722\n",
         "",
         &[],
     );
@@ -91,7 +91,7 @@ fn descriptor_array_runs_are_bounded_and_exact() {
         SUITE,
         "descriptor_runs",
         "pass 1 10 x 7 z -2 x 0 1\n\
-         bump 2 6 xx 15001 x, x, 6}\n",
+         bump 2 6 xx 15002 , x, 6} \n",
         "",
         &[],
     );

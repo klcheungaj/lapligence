@@ -172,6 +172,14 @@ impl Codegen<'_> {
             &mut format,
             &mut args,
         );
+        // The space after a fixed array of reals (decision S24-D2).
+        let real = IrPatternType::Real {
+            shortreal: false,
+            width: 64,
+        };
+        if !abbreviated && real.plain_fixed_element(&[]) {
+            format.push(b' ');
+        }
         Ok(IrDisplayArg::Text(IrStringExpr::Format {
             format: Box::new(IrStringExpr::Literal(format)),
             args,
@@ -294,15 +302,24 @@ impl Codegen<'_> {
             TypeShape::FixedArray {
                 dimensions,
                 element,
-            } => self.record_array_template(
-                dimensions,
-                element,
-                path,
-                leaves,
-                abbreviated,
-                format,
-                args,
-            ),
+            } => {
+                self.record_array_template(
+                    dimensions,
+                    element,
+                    path,
+                    leaves,
+                    abbreviated,
+                    format,
+                    args,
+                )?;
+                if !abbreviated {
+                    let ty = self.pattern_type(descriptor)?;
+                    if self.model.pattern_types[ty].spaced_close(&self.model.pattern_types) {
+                        format.push(b' ');
+                    }
+                }
+                Ok(())
+            }
             _ => Err(format!(
                 "record leaf `{}` of type `{}` has no readable value",
                 aggregate_path_suffix(path),

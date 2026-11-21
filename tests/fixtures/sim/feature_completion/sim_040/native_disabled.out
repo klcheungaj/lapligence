@@ -1,4 +1,4 @@
 c task: export returned 1 disabled 1
-task o=1.5 keep a='{7, 8} s=s0 s1 q=0.25 0.5
+task o=1.5 keep a='{7, 8}  s=s0 s1 q=0.25 0.5
 c function: disabled 1
-func o=1.5 keep a='{7, 8} s=s0 s1 q=0.25 0.5
+func o=1.5 keep a='{7, 8}  s=s0 s1 q=0.25 0.5

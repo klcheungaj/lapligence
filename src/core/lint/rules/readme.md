@@ -14,8 +14,10 @@ See [shared lint](../readme.md).
   for each member, and a write to an unpacked element or record member counts
   for the whole object (`collect_writes_with_members`). Every index, key and
   select bound of a write target is a read (`q[i][j] = v` reads `i` and `j`). A member read or written through a virtual interface (`v.d`, `va[i].d`, a class property `kv.d`; not through a modport) counts for that member of every instance of the interface (`virtual_interface_members`), and the write reads the handle. Generate scopes (loop, if,
-  case) are analysed like module scopes. Signals connected to a black box (an
-  instance of an unknown module, `black_box_connection_signals`) are skipped.
+  case) are analysed like module scopes; an untaken generate block does not
+  exist (SV 27.3), so its accesses and connections count for nothing. Signals
+  connected to a black box (an instance of an unknown module,
+  `black_box_connection_signals`) are skipped.
   The `default disable iff` condition a checker instance takes for
   `$inferred_disable` counts as read.
 - `width-mismatch` (`width.rs`): a port link compares the port or port expression

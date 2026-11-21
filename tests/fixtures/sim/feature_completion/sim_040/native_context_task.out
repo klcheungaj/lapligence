@@ -1,5 +1,5 @@
 c before size=2 r=1.5 start names=a b w=3
-other process at 3 d='{1, 2}
-tick at 5 d='{1, 2, 0, 0, 0} r.s=export
+other process at 3 d='{1, 2} 
+tick at 5 d='{1, 2, 0, 0, 0}  r.s=export
 c after size=2 r=1.5 start names=a b w=3
-after at 5 d='{10, 20} r=2.5 start names=b b
+after at 5 d='{10, 20}  r=2.5 start names=b b
