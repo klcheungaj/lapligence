@@ -135,8 +135,8 @@ static void llg_pattern_packed_leaf(llg_pattern_out_t* out,
 }
 
 static void llg_pattern_real(llg_pattern_out_t* out, double value) {
-    // `%f` of the largest double needs 317 characters.
-    char text[512];
+    // The `%g` form of any double fits in 16 characters.
+    char text[32];
     size_t len = llg_format_pattern_real(value, text, sizeof(text));
     llg_pattern_put(out, text, len);
 }

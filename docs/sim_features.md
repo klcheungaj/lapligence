@@ -2128,7 +2128,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   is a named block (`tb.top`, CD-D2). `%p` prints arrays (declared order), queues,
   dynamic and associative arrays, unpacked and packed structures (named
   members), packed unions, enums (names), quoted strings, other singular
-  values as unformatted display text (SV §21.2.1.7), class objects (properties, cycle
+  values as unformatted display text (SV §21.2.1.7: a top-level integral
+  argument in its automatic `%d` field, an element's digits alone, reals in
+  C's shortest `%g` form, S24-D2), class objects (properties, cycle
   and depth-64 markers), and `null`/`chandle`/`event`/`interface`/`process`
   for other handles; output is capped at 1 MiB with a warning
   ([sim_024](../tests/fixtures/sim/feature_completion/sim_024/readme.md)).

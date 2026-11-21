@@ -46,9 +46,9 @@ Section numbers refer to IEEE 1800-2009.
 - A `\0` in a string literal assigned to a string is dropped (6.16): `"a\000b"`
   is `ab` with length 2.
 - `%f`/`%e`/`%g` follow C `printf` with default precision 6. `%p` of a real
-  prints it as an unformatted real argument displays (see the `%p` rule
-  below), i.e. the default `%f` text: `3.141593`, `2.500000`, `0.100000`,
-  `1000000.000000`, `-0.000000`, `0.333333`.
+  prints the shortest form of C's `%g` (decision S24-D2; the clause does not
+  define the text of an unformatted real): `3.14159`, `2.5`, `0.1`, `1e+06`,
+  `-0`, `0.333333`.
 - A format held in a string variable is interpreted when the call runs
   (21.3.3); `$sformat` with a literal format and `$swrite` argument lists use
   the same conversions.
@@ -92,13 +92,15 @@ derives every expectation below:
 - Other integral singular values (including packed arrays) print as an
   unformatted `$display` argument would: decimal with the X/Z digit rules
   of 21.2.1.4 (`'{2, 1, 0}`; `4'bx01z` → `X`, all-x → `x`; a signed 4-bit
-  -2 → `-2`; `logic [1:0][3:0]` 8'h21 → `33`). The automatic field's
-  leading spaces are dropped under the white-space allowance.
+  -2 → `-2`). Inside an aggregate the automatic field's leading spaces are
+  dropped under the white-space allowance; a singular argument printed alone
+  keeps the field of an unformatted argument (21.2.1.2, 21.2.1.3; decision
+  S24-D2): `logic [1:0][3:0]` 8'h21 → ` 33`, three characters for 8 bits.
 - Packed structures print named members by the same rules, also as array
   elements and as members of packed or unpacked structures (`R`, `S`, `T`:
   `'{c:GREEN, n:'{hi:3, lo:12}, s:-2}`). A packed union prints its first
   declared member (`bytes_u` → `raw` → `52`).
-- Reals print as unformatted reals (`1.500000`).
+- Reals print in the shortest `%g` form (`1.5`, `0.5`; decision S24-D2).
 - Queues and dynamic arrays print their elements, empty ones `'{}`;
   associative arrays print `key:value` in key order (numeric keys signed,
   string keys quoted).

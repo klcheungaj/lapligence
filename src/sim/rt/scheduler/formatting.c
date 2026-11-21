@@ -476,8 +476,9 @@ static size_t llg_format_integral(char conversion, sv4_t value,
 
 // `%p` of an integral singular value prints it "as it would unformatted"
 // (SV 21.2.1.7): the default decimal conversion with its X/Z digit rules
-// (21.2.1.3, 21.2.1.4). Pattern white space is implementation dependent, so
-// the automatic field's leading spaces are dropped.
+// (21.2.1.3, 21.2.1.4). These are its digits; a top-level `%p` argument also
+// takes the automatic decimal field (decision S24-D2), while an element of
+// an aggregate and `%0p` print the digits alone.
 static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
     llg_fmt_spec_t spec;
     memset(&spec, 0, sizeof(spec));
@@ -607,10 +608,21 @@ static size_t llg_format_pattern_string(const char* data, size_t length,
     return len;
 }
 
-// `%p` of a real prints it as an unformatted real argument displays: the
-// default `%f` conversion (SV 21.2.1.7).
+// `%p` of a real prints the shortest form of C's `%g`: six significant
+// digits, an exponent outside 1e-4..1e6 and no trailing zeros (`1.5`, `2`,
+// `1e+20`), with `inf`, `-inf`, `nan` and `-nan` spelled the same on every
+// C library (decision S24-D2, industry-standard behaviour; 21.2.1.7 leaves
+// the white space and form of a legal pattern to the implementation).
 static size_t llg_format_pattern_real(double value, char* raw, size_t cap) {
-    int32_t written = snprintf(raw, cap, "%f", value);
+    if (isnan(value) || isinf(value)) {
+        const char* text = isnan(value) ? (signbit(value) ? "-nan" : "nan")
+                                        : (value < 0 ? "-inf" : "inf");
+        size_t len = 0;
+        llg_append_text(raw, cap, &len, text, strlen(text));
+        raw[len < cap ? len : cap - 1] = 0;
+        return len;
+    }
+    int32_t written = snprintf(raw, cap, "%g", value);
     if (written < 0) return 0;
     return (size_t)written < cap ? (size_t)written : cap - 1;
 }
@@ -814,9 +826,15 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
         } else if (conversion == 'v' && arg->kind == LLG_FMT_STRENGTH) {
             raw_len = llg_format_strength_view(arg->value.packed, raw, raw_cap);
         } else if (conversion == 'p' && arg->kind == LLG_FMT_PACKED) {
-            // A packed scalar prints as it would unformatted (SV 21.2.1.7);
+            // A packed scalar prints as it would unformatted (SV 21.2.1.7),
+            // in the automatic `%d` field unless `%0p` or a width is given;
             // aggregates arrive as LLG_FMT_TEXT from the pattern walker.
             raw_len = llg_format_pattern_packed(arg->value.packed, raw, raw_cap);
+            if (!spec.has_width && !spec.zero) {
+                spec.width = llg_decimal_field_width(llg_sv4_width(arg->value.packed),
+                                                     llg_sv4_signed(arg->value.packed));
+                spec.has_width = 1;
+            }
         } else if (strchr("feg", conversion) &&
                    (arg->kind == LLG_FMT_REAL || arg->kind == LLG_FMT_PACKED)) {
             // An integral argument converts to real, X/Z bits as zero.

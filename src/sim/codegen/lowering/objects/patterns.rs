@@ -229,8 +229,18 @@ impl Codegen<'_> {
     ) -> Result<(), String> {
         let separator: &[u8] = if abbreviated { b"," } else { b", " };
         if let Some(leaf) = leaves.remove(path.as_slice()) {
-            format.extend_from_slice(if abbreviated { b"%0p" } else { b"%p" });
             let needs_type = self.pattern_needs_type(descriptor);
+            // An integral member prints its decimal digits alone: only a
+            // top-level `%p` argument takes the automatic `%d` field
+            // (decision S24-D2).
+            let plain_packed = matches!(leaf, LeafValue::Packed(_)) && !needs_type;
+            format.extend_from_slice(if plain_packed {
+                b"%0d"
+            } else if abbreviated {
+                b"%0p"
+            } else {
+                b"%p"
+            });
             let typed = |codegen: &mut Self, source| -> Result<IrDisplayArg, String> {
                 let ty = codegen.pattern_type(descriptor)?;
                 Ok(IrDisplayArg::Text(IrStringExpr::Pattern(Box::new(
