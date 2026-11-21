@@ -698,9 +698,12 @@ impl<'a> Codegen<'a> {
                         lower_container_element(element)?,
                         IrContainerElement::Packed { .. }
                     ) {
-                        return Err(format!(
-                            "multidimensional fixed array class property `{}` needs packed elements (SIM-011)",
-                            self.node(child).full_name
+                        return Err(self.locate_error(
+                            child,
+                            format!(
+                                "multidimensional fixed array class property `{}` needs packed elements (SIM-011)",
+                                self.node(child).full_name
+                            ),
                         ));
                     }
                     multidimensional = Some(dimensions.clone());

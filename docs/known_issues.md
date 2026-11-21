@@ -735,8 +735,10 @@ handle or record cells copied to or from an array variable (`sr = sd[k]`); a
 row or slice of a larger array copied to or from a whole element
 (`m2[1] = da[k]`); a row of a multidimensional class property passed to a
 fixed-array formal or compared with `==`, and a bit select of one of its
-elements (`o.g[i][j][3]`); and a member of a packed element of a class array
-property as an output or inout actual. A whole member array read from an
+elements (`o.g[i][j][3]`); a member of a packed element of a class array
+property as an output or inout actual; and a multidimensional class property
+of real, string, handle or record cells (`static real g[2][2]`), which rejects
+at its declaration. A whole member array read from an
 element (`x = oq[0].arr`, `x = oq[0].e[1].arr`) fails without a location
 ("hierarchical reference ... is not supported").
 
@@ -757,8 +759,8 @@ native value, and the row operand for fixed-array formals and equality.
 
 `neg_container_native_row.sv` and `neg_container_row_slice.sv` in
 `tests/fixtures/sim/feature_completion/sim_027/`; `neg_multidim_property_row_value.sv`,
-`neg_multidim_property_row_equality.sv`, `neg_multidim_property_cell_select.sv`
-and `neg_class_packed_member_actual.sv` in
+`neg_multidim_property_row_equality.sv`, `neg_multidim_property_cell_select.sv`,
+`neg_multidim_property_real_cells.sv` and `neg_class_packed_member_actual.sv` in
 `tests/fixtures/sim/feature_completion/sim_011/`.
 
 ## Bit-stream limits (SIM-020)

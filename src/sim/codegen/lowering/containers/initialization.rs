@@ -21,11 +21,14 @@ impl<'a> Codegen<'a> {
                 .array_globals
                 .get(&declaration)
                 .is_some_and(|array| self.model.arrays[array.ir].sparse())
+                || self.array_of(declaration).is_some_and(|array| array.real)
             {
                 // Descriptor storage initializes through the same typed pattern,
                 // view and call transport as assignments; packed transport would
                 // impose the packed width limit and constant expansion would scale
-                // generated source with the element count.
+                // generated source with the element count. Real cells have no
+                // packed payload, so a real array whose initializer is not a
+                // flat constant list takes the same assignment path.
                 let body = self
                     .lower_p30_fixed_array_assignment(
                         &path,

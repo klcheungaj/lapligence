@@ -290,6 +290,11 @@ fn multidimensional_property_rows_are_array_operands() {
 fn multidimensional_property_row_boundaries_reject() {
     sim_cli::reject_case(
         SUITE,
+        "neg_multidim_property_real_cells",
+        "neg_multidim_property_real_cells.sv:5:15: [CODEGEN-003] multidimensional fixed array class property `grid_c.g` needs packed elements (SIM-011)",
+    );
+    sim_cli::reject_case(
+        SUITE,
         "neg_multidim_property_row_value",
         "neg_multidim_property_row_value.sv:14:25: [CODEGEN-001] this use of a row of a multidimensional class property in `tb` is not supported; assign the row to or from an array variable, or print it (SIM-011)",
     );

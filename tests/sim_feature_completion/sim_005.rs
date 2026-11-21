@@ -29,6 +29,20 @@ fn real_arrays_cross_subroutine_boundaries_by_value_and_reference() {
 }
 
 #[test]
+fn multidimensional_real_array_declaration_initializers_run_as_assignments() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/sim_005/real_array_declaration_initializers.out"
+    );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "real_array_declaration_initializers",
+        expected,
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn real_array_methods_compare_numbers() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_005/real_array_methods.out");

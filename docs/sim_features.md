@@ -303,6 +303,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   §§3, 5, 7 and 9. Real/shortreal arrays copy, compare numerically, merge
   under an ambiguous conditional (equal elements kept, others 0.0) and pass
   through subroutine formals, results and locals as numeric cells (SIM-005);
+  declaration initializers of any dimension (patterns, replications, index
+  labels, copies, calls) run as assignments in the static schedule or at each
+  automatic entry (`real_array_declaration_initializers`);
   element-wise real-array expressions are limited to 4,096 elements. Native/
   resizable elements remain restricted. Integral arrays
   through 16,777,216 cells copy, compare, select rows, pass through formals and
