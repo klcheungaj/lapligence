@@ -111,8 +111,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// Static container initializers join the declaration initialization
-    /// schedule, so each runs after the static declarations it reads and
-    /// before the declarations that read it (SV 6.21, 10.5).
+    /// schedule at their declaration's place (SV 6.21, 10.5; S22-D8).
     pub(in super::super) fn emit_container_initializers(&mut self) -> Result<(), String> {
         let initializers = std::mem::take(&mut self.container_initializers);
         for (owner, container) in initializers {

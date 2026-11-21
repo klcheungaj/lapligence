@@ -1993,6 +1993,14 @@ fn s22_d1_handle_initializers_before_processes() {
 }
 
 #[test]
+fn s22_d1_handle_initializers_declaration_order() {
+    run_decision(
+        "S22-D1_handle_initializers_declaration_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D1_handle_initializers_declaration_order.out"),
+    );
+}
+
+#[test]
 fn s22_d8_package_initializers_before_design() {
     run_decision(
         "S22-D8_package_initializers_before_design",
@@ -2029,6 +2037,30 @@ fn s22_d8_static_local_constant_preset() {
     run_decision(
         "S22-D8_static_local_constant_preset",
         include_str!("fixtures/sim/lrm_decisions/S22-D8_static_local_constant_preset.out"),
+    );
+}
+
+#[test]
+fn s22_d8_initializers_declaration_order() {
+    run_decision(
+        "S22-D8_initializers_declaration_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_initializers_declaration_order.out"),
+    );
+}
+
+#[test]
+fn s22_d8_constants_per_scope() {
+    run_decision(
+        "S22-D8_constants_per_scope",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_constants_per_scope.out"),
+    );
+}
+
+#[test]
+fn s22_d8_array_query_preset() {
+    run_decision(
+        "S22-D8_array_query_preset",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_array_query_preset.out"),
     );
 }
 

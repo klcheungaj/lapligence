@@ -2207,14 +2207,13 @@ struct Codegen<'a> {
     /// (descriptor-backed fixed arrays), as `(declaration, body)`.
     declaration_statements: Vec<(u32, IrStmt)>,
     /// `(object, declaration)` of string objects whose `initial` value
-    /// joins the static schedule at its declaration's slot, so other
-    /// initializers that read the string run after it.
+    /// joins the static schedule at its declaration's slot.
     object_initializers: Vec<(usize, u32)>,
     /// Declaration identity -> collection-time declaration order, the
     /// tie-break of the static initialization schedule.
     initializer_order: HashMap<u32, usize>,
-    /// Declaration identity -> source initializer expressions, whose reads
-    /// order the static initialization schedule.
+    /// Declaration identity -> source initializer expressions, whose calls
+    /// select the static-effect checks (`initialization/effects.rs`).
     initializer_sources: HashMap<u32, Vec<NodeId>>,
     /// Deferred statements a static initializer can reach (SV 13.4.4).
     static_effect_sites: HashMap<NodeId, initialization::effects::StaticEffectSite>,

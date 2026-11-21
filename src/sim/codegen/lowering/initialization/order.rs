@@ -1,23 +1,23 @@
 //! Static declaration-initializer ordering.
 //!
-//! SystemVerilog static initialization (SV §§6.21, 10.5) runs before any
-//! process starts, and a declaration must precede its simple references.
-//! Collection discovers initializers out of source order: initializers that
-//! call subroutines or read storage of not-yet-collected scopes are lowered
-//! late, static subroutine locals are found while lowering bodies, and
-//! descriptor-backed fixed arrays are lowered after every array is collected.
-//! The schedule therefore orders initializers by the static declarations
-//! their values read, directly or through called functions, and otherwise
-//! by scope (packages, the compilation unit, then the design hierarchy in
-//! post-order; class statics first in each),
-//! the order in which collection first reached each declaring scope, and
-//! declaration order within the scope. A static local of a subroutine or
-//! procedure takes the place of its subroutine or procedure among the
-//! scope's declarations; a call does not move it earlier.
+//! SystemVerilog static initialization (SV §§6.8, 6.21, 10.5) runs before
+//! any process starts. Collection discovers initializers out of source
+//! order: initializers that call subroutines or read storage of
+//! not-yet-collected scopes are lowered late, static subroutine locals are
+//! found while lowering bodies, and descriptor-backed fixed arrays are
+//! lowered after every array is collected. The schedule therefore sorts
+//! initializers by scope and position (decision S22-D8): packages, the
+//! compilation unit, then the design hierarchy in post-order; in each the
+//! class static properties, then (in an instance) each generate block, then
+//! the scope's own declarations. Each of these runs its constant
+//! initializers first, then the others in declaration order, the class
+//! static properties of one scope as a whole. An initializer reads whatever
+//! the declarations it names hold when it runs, so a forward read sees the
+//! default value of a later non-constant initializer. A static local of a
+//! subroutine or procedure takes the place of its subroutine or procedure
+//! among the scope's declarations; a call does not move it.
 
 use super::*;
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 
 /// Elaboration-time system functions (IEEE 1800-2009 11.2.1, 20.5-20.9) that
 /// keep a call-free initializer constant: conversions, data and array
@@ -69,144 +69,28 @@ const CONSTANT_SYSTEM_FUNCTIONS: &[&str] = &[
     "$isunknown",
 ];
 
+/// Data and array queries (IEEE 1800-2009 20.6.2, 20.7) whose first operand
+/// may name a variable: they read its type or current extent, not its value,
+/// so the initializer stays a constant (industry-standard behaviour presets
+/// it, also for a dynamic array or queue, with the extent it has then).
+const QUERY_SYSTEM_FUNCTIONS: &[&str] = &[
+    "$bits",
+    "$dimensions",
+    "$unpacked_dimensions",
+    "$left",
+    "$right",
+    "$low",
+    "$high",
+    "$increment",
+    "$size",
+];
+
 /// The scope whose initialization runs a static initializer (S22-D8).
 #[derive(Clone, Copy)]
 enum InitializerOwner {
     Package(NodeId),
     Unit,
     Instance(NodeId),
-}
-
-/// Dependency graph over initializer entries followed by pass-through
-/// subroutine and multi-entry declaration nodes. `dependencies[node]` lists nodes that must complete
-/// before `node`; only entries (`node < priorities.len()`) are emitted.
-pub(super) struct InitializerGraph {
-    /// Base order of each entry; smaller runs first among ready entries.
-    pub(super) priorities: Vec<usize>,
-    pub(super) dependencies: Vec<Vec<usize>>,
-}
-
-impl InitializerGraph {
-    /// Topologically order the strongly connected components, choosing the
-    /// ready component with the earliest-declared entry first, so independent
-    /// initializers keep declaration order. A dependency cycle (possible only
-    /// through recursive helpers or forward reads the frontend accepts) runs
-    /// its entries in declaration order, as plain declaration order would.
-    pub(super) fn schedule(&self) -> Vec<usize> {
-        let entries = self.priorities.len();
-        let components = self.components();
-        let count = components.iter().max().map_or(0, |last| last + 1);
-        let mut members = vec![Vec::new(); count];
-        for (node, component) in components.iter().enumerate() {
-            if node < entries {
-                members[*component].push(node);
-            }
-        }
-        for list in &mut members {
-            list.sort_by_key(|entry| (self.priorities[*entry], *entry));
-        }
-        // Components without entries are pass-through nodes; they sort
-        // before every entry once ready and never delay one.
-        let key = |component: usize| {
-            members[component]
-                .first()
-                .map_or((0, 0, component), |entry| {
-                    (1, self.priorities[*entry], *entry)
-                })
-        };
-        let mut pending = vec![0usize; count];
-        let mut dependents = vec![Vec::new(); count];
-        for (node, dependencies) in self.dependencies.iter().enumerate() {
-            for dependency in dependencies {
-                let (from, to) = (components[*dependency], components[node]);
-                if from != to {
-                    pending[to] += 1;
-                    dependents[from].push(to);
-                }
-            }
-        }
-        let mut ready: BinaryHeap<_> = (0..count)
-            .filter(|component| pending[*component] == 0)
-            .map(|component| Reverse(key(component)))
-            .collect();
-        let mut order = Vec::with_capacity(entries);
-        while let Some(Reverse((class, _, id))) = ready.pop() {
-            let component = if class == 0 { id } else { components[id] };
-            order.extend(members[component].iter().copied());
-            for dependent in &dependents[component] {
-                pending[*dependent] -= 1;
-                if pending[*dependent] == 0 {
-                    ready.push(Reverse(key(*dependent)));
-                }
-            }
-        }
-        order
-    }
-
-    /// Iterative Tarjan strongly connected components; returns each node's
-    /// component index. Edges run from a node to its dependencies.
-    fn components(&self) -> Vec<usize> {
-        const UNVISITED: usize = usize::MAX;
-        let nodes = self.dependencies.len();
-        let mut index = vec![UNVISITED; nodes];
-        let mut low = vec![0usize; nodes];
-        let mut on_stack = vec![false; nodes];
-        let mut component = vec![UNVISITED; nodes];
-        let mut stack = Vec::new();
-        let mut next_index = 0usize;
-        let mut next_component = 0usize;
-        for root in 0..nodes {
-            if index[root] != UNVISITED {
-                continue;
-            }
-            let mut frames = vec![(root, 0usize)];
-            index[root] = next_index;
-            low[root] = next_index;
-            next_index += 1;
-            stack.push(root);
-            on_stack[root] = true;
-            while let Some((node, edge)) = frames.last_mut() {
-                let node = *node;
-                if let Some(next) = self.dependencies[node].get(*edge).copied() {
-                    *edge += 1;
-                    if index[next] == UNVISITED {
-                        index[next] = next_index;
-                        low[next] = next_index;
-                        next_index += 1;
-                        stack.push(next);
-                        on_stack[next] = true;
-                        frames.push((next, 0));
-                    } else if on_stack[next] {
-                        low[node] = low[node].min(index[next]);
-                    }
-                    continue;
-                }
-                frames.pop();
-                if let Some((parent, _)) = frames.last() {
-                    low[*parent] = low[*parent].min(low[node]);
-                }
-                if low[node] == index[node] {
-                    while let Some(member) = stack.pop() {
-                        on_stack[member] = false;
-                        component[member] = next_component;
-                        if member == node {
-                            break;
-                        }
-                    }
-                    next_component += 1;
-                }
-            }
-        }
-        component
-    }
-}
-
-/// Static declarations and subroutines an initializer expression or
-/// subroutine body reaches directly.
-#[derive(Default)]
-struct DirectReads {
-    declarations: Vec<NodeId>,
-    subroutines: Vec<NodeId>,
 }
 
 impl<'a> Codegen<'a> {
@@ -221,7 +105,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// Remember the source expression of one lowered declaration initializer
-    /// for dependency ordering.
+    /// for the static-effect checks (`effects.rs`).
     pub(in super::super) fn record_initializer_source(
         &mut self,
         declaration: NodeId,
@@ -359,42 +243,47 @@ impl<'a> Codegen<'a> {
         (scope, path)
     }
 
-    /// Whether a static local initializes at its subroutine's place in the
-    /// scope, out of reach of earlier callers (decision S22-D8): every
-    /// static local but one whose initializer is a constant without calls.
-    /// Industry-standard behaviour presets such a value, so even a caller
-    /// before the subroutine reads it; the schedule runs it before every
-    /// other initializer instead (it reads nothing and has no effect).
-    fn is_placed_static_local(&self, declaration: NodeId) -> bool {
-        self.is_static_local(declaration)
-            && !self
-                .db
-                .var_initializer(declaration)
-                .or_else(|| {
-                    self.db
-                        .array_meta(declaration)
-                        .and_then(|meta| meta.initializer())
-                })
-                .is_some_and(|initializer| self.is_call_free_constant(initializer))
+    /// Whether a declaration's initializer is a constant (decision S22-D8):
+    /// it runs with its scope's constants, before the scope's other
+    /// initializers. Industry-standard behaviour presets such a value, so a
+    /// subroutine called by an earlier initializer of the scope already reads
+    /// it; it reads no variable value and has no effect, so running it first
+    /// is equivalent.
+    fn has_constant_initializer(&self, declaration: NodeId) -> bool {
+        self.db
+            .var_initializer(declaration)
+            .or_else(|| {
+                self.db
+                    .array_meta(declaration)
+                    .and_then(|meta| meta.initializer())
+            })
+            .is_some_and(|initializer| self.is_constant_initializer(initializer))
     }
 
     /// Whether an initializer is a constant expression without subroutine
     /// calls: literals, parameters and enumeration constants combined by
     /// operators, casts, selections, patterns and the constant system
-    /// functions of `CONSTANT_SYSTEM_FUNCTIONS`, reading no variable.
-    fn is_call_free_constant(&self, initializer: NodeId) -> bool {
-        let mut stack = vec![initializer];
-        while let Some(current) = stack.pop() {
+    /// functions of `CONSTANT_SYSTEM_FUNCTIONS`, reading no variable value.
+    /// The first operand of a `QUERY_SYSTEM_FUNCTIONS` query may name a
+    /// variable.
+    fn is_constant_initializer(&self, initializer: NodeId) -> bool {
+        // Each node carries whether it lies in a query's first operand.
+        let mut stack = vec![(initializer, false)];
+        while let Some((current, queried)) = stack.pop() {
             let constant = match self.kind(current) {
                 NodeKind::Expr(ExprKind::Ref {
                     target: Some(target),
-                }) => matches!(
-                    self.kind(*target),
-                    NodeKind::Param { .. }
-                        | NodeKind::ParamAssign { .. }
-                        | NodeKind::EnumConst { .. }
-                        | NodeKind::Genvar { .. }
-                ),
+                }) => {
+                    queried
+                        || matches!(
+                            self.kind(*target),
+                            NodeKind::Param { .. }
+                                | NodeKind::ParamAssign { .. }
+                                | NodeKind::EnumConst { .. }
+                                | NodeKind::Genvar { .. }
+                        )
+                }
+                NodeKind::Expr(ExprKind::HierPath { .. }) => queried,
                 NodeKind::Expr(ExprKind::Operation { op, assignment, .. }) => {
                     !*assignment
                         && !matches!(
@@ -423,8 +312,14 @@ impl<'a> Codegen<'a> {
                 NodeKind::Expr(ExprKind::TaggedPattern {
                     index_key, value, ..
                 }) => {
-                    stack.extend(index_key.iter().chain(value).copied());
+                    stack.extend(index_key.iter().chain(value).map(|item| (*item, queried)));
                     true
+                }
+                NodeKind::SysCall { name } if QUERY_SYSTEM_FUNCTIONS.contains(&name.as_str()) => {
+                    let operands = &self.node(current).children;
+                    stack.extend(operands.first().map(|operand| (*operand, true)));
+                    stack.extend(operands.iter().skip(1).map(|operand| (*operand, queried)));
+                    continue;
                 }
                 NodeKind::SysCall { name } => CONSTANT_SYSTEM_FUNCTIONS.contains(&name.as_str()),
                 _ => false,
@@ -432,48 +327,33 @@ impl<'a> Codegen<'a> {
             if !constant {
                 return false;
             }
-            stack.extend(self.node(current).children.iter().copied());
+            stack.extend(
+                self.node(current)
+                    .children
+                    .iter()
+                    .map(|child| (*child, queried)),
+            );
         }
         true
     }
 
-    /// Whether a static declaration is nested in a subroutine or procedure
-    /// (a static local, also in a block of one).
-    fn is_static_local(&self, declaration: NodeId) -> bool {
-        if self.db.variable_lifetime(declaration) != VariableLifetime::Static {
-            return false;
-        }
-        let mut current = self.node(declaration).parent;
-        while let Some(node) = current {
-            match self.kind(node) {
-                _ if self.is_compilation_unit(node) => return false,
-                NodeKind::FuncTask { .. } | NodeKind::Process { .. } | NodeKind::Stmt(_) => {
-                    return true
-                }
-                NodeKind::ModuleInst { .. }
-                | NodeKind::Package
-                | NodeKind::ClassDef
-                | NodeKind::GenScope
-                | NodeKind::GenScopeArray => return false,
-                _ => {}
-            }
-            current = self.node(node).parent;
-        }
-        false
-    }
-
-    /// The base order of each entry (decision S22-D8): packages first, each
-    /// in declaration order, then the compilation unit, then the design
-    /// hierarchy in post-order (an instance after the instances below it);
-    /// in each scope class static properties, then (in an instance) the
-    /// variables of its generate blocks, then its own variables. Ties keep
-    /// the declaring scopes in the order collection first reached them and
-    /// declaration order within the scope, a static local at the place of
-    /// its subroutine or procedure. Collection reaches the kinds of
-    /// one scope (patterns, handles, strings, containers, records) in
-    /// separate passes, so its order alone does not follow the source; the
-    /// position among the scope's members does.
-    fn initializer_priorities(&self, declarations: &[u32]) -> Vec<usize> {
+    /// Order initializer entries identified by their declaration identities
+    /// (decision S22-D8). Returns entry indices in execution order: packages
+    /// first, each in declaration order, then the compilation unit, then the
+    /// design hierarchy in post-order (an instance after the instances below
+    /// it). In each scope the class static properties run first, the
+    /// constant ones of every class before the others; then, in an instance,
+    /// each generate block; then the scope's own declarations. A generate
+    /// block and the scope's own declarations each run their constant
+    /// initializers first, then the others in declaration order, a static
+    /// local at the place of its subroutine or procedure. Ties keep the
+    /// declaring scopes in the order collection first reached them.
+    /// Collection reaches the kinds of one scope (patterns, handles,
+    /// strings, containers, records) in separate passes, so its order alone
+    /// does not follow the source; the position among the scope's members
+    /// does. The entries of one declaration (unpacked aggregate leaves) keep
+    /// their order.
+    pub(super) fn initializer_schedule(&self, declarations: &[u32]) -> Vec<usize> {
         let unordered = self.initializer_order.len();
         let order_of = |declaration: &u32| {
             self.initializer_order
@@ -513,6 +393,7 @@ impl<'a> Codegen<'a> {
         }
         scope_order.extend(nested_order);
         let mut instance_keys: HashMap<NodeId, Vec<usize>> = HashMap::new();
+        let mut constants: HashMap<u32, bool> = HashMap::new();
         let keys = declarations
             .iter()
             .zip(anchors)
@@ -534,207 +415,28 @@ impl<'a> Codegen<'a> {
                         (2, 0, path)
                     }
                 };
-                // A static local with a call-free constant initializer is a
-                // preset value: it runs before every other initializer.
-                let preset = self.is_static_local(node) && !self.is_placed_static_local(node);
+                let constant = *constants
+                    .entry(*declaration)
+                    .or_insert_with(|| self.has_constant_initializer(node));
+                // Sub-rank 0 is the class static properties of the scope:
+                // their constants run before every class's other ones.
+                let class_variable = sub == 0 && !constant;
                 (
-                    !preset,
                     group,
                     index,
                     path,
                     sub,
+                    class_variable,
                     scope_order.get(&scope).copied().unwrap_or(unordered),
+                    !constant,
                     position,
                     order_of(declaration),
                 )
             })
             .collect::<Vec<_>>();
-        let mut sorted = keys.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-        keys.iter()
-            .map(|key| sorted.binary_search(key).unwrap_or_else(|index| index))
-            .collect()
-    }
-
-    /// Order initializer entries identified by their declaration identities.
-    /// Returns entry indices in execution order.
-    pub(super) fn initializer_schedule(&self, declarations: &[u32]) -> Vec<usize> {
-        let mut entries_of: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
-        for (entry, declaration) in declarations.iter().enumerate() {
-            entries_of.entry(*declaration).or_default().push(entry);
-        }
-        let priorities = self.initializer_priorities(declarations);
-        let mut dependencies: Vec<Vec<usize>> = vec![Vec::new(); declarations.len()];
-        // A declaration with several entries (unpacked aggregate leaves) is
-        // reached through one pass-through hub, so readers add one edge each
-        // instead of one per leaf.
-        let mut declaration_nodes: HashMap<u32, usize> = HashMap::new();
-        for (declaration, entries) in &entries_of {
-            let node = match entries.as_slice() {
-                [entry] => *entry,
-                _ => {
-                    dependencies.push(entries.clone());
-                    dependencies.len() - 1
-                }
-            };
-            declaration_nodes.insert(*declaration, node);
-        }
-        let mut subroutine_nodes: HashMap<NodeId, usize> = HashMap::new();
-        let mut worklist: Vec<(NodeId, usize)> = Vec::new();
-        let mut add_reads = |node: usize,
-                             own: Option<u32>,
-                             reads: DirectReads,
-                             dependencies: &mut Vec<Vec<usize>>,
-                             worklist: &mut Vec<(NodeId, usize)>| {
-            for declaration in reads.declarations {
-                let identity = declaration.index() as u32;
-                if Some(identity) == own {
-                    continue;
-                }
-                if let Some(target) = declaration_nodes.get(&identity) {
-                    dependencies[node].push(*target);
-                }
-            }
-            for subroutine in reads.subroutines {
-                let target = *subroutine_nodes.entry(subroutine).or_insert_with(|| {
-                    dependencies.push(Vec::new());
-                    worklist.push((subroutine, dependencies.len() - 1));
-                    dependencies.len() - 1
-                });
-                dependencies[node].push(target);
-            }
-        };
-        for (entry, declaration) in declarations.iter().enumerate() {
-            let mut reads = DirectReads::default();
-            for source in self
-                .initializer_sources
-                .get(declaration)
-                .into_iter()
-                .flatten()
-            {
-                self.collect_direct_reads(*source, false, &mut reads);
-            }
-            add_reads(
-                entry,
-                Some(*declaration),
-                reads,
-                &mut dependencies,
-                &mut worklist,
-            );
-        }
-        while let Some((subroutine, node)) = worklist.pop() {
-            let mut reads = DirectReads::default();
-            self.collect_direct_reads(subroutine, true, &mut reads);
-            add_reads(node, None, reads, &mut dependencies, &mut worklist);
-        }
-        for list in &mut dependencies {
-            list.sort_unstable();
-            list.dedup();
-        }
-        InitializerGraph {
-            priorities,
-            dependencies,
-        }
-        .schedule()
-    }
-
-    /// Collect direct declaration reads and subroutine calls below `node`.
-    /// Inside a subroutine body automatic local initializers execute as part
-    /// of the call, so their reads count. A placed static local is not a
-    /// read of the call: it initializes at its subroutine's place in the
-    /// scope (S22-D8), and a call before that place reads its default value.
-    fn collect_direct_reads(&self, node: NodeId, in_subroutine: bool, reads: &mut DirectReads) {
-        let mut stack = vec![node];
-        while let Some(current) = stack.pop() {
-            match self.kind(current) {
-                NodeKind::Expr(ExprKind::Ref {
-                    target: Some(target),
-                }) => {
-                    if !(in_subroutine && self.is_placed_static_local(*target)) {
-                        reads.declarations.push(*target);
-                    }
-                }
-                NodeKind::Var { .. } | NodeKind::Array { .. }
-                    if in_subroutine && self.is_placed_static_local(current) =>
-                {
-                    continue;
-                }
-                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
-                    reads.declarations.extend(
-                        refs.iter().flatten().copied().filter(|target| {
-                            !(in_subroutine && self.is_placed_static_local(*target))
-                        }),
-                    );
-                }
-                NodeKind::Expr(ExprKind::AssertionInstance { body, bindings, .. }) => {
-                    stack.push(*body);
-                    stack.extend(bindings.iter().map(|binding| binding.actual));
-                }
-                NodeKind::FuncCall {
-                    name,
-                    is_task,
-                    callee,
-                    ..
-                } => {
-                    let resolved = callee.or_else(|| {
-                        let instance = self.owner_instance(current)?;
-                        self.resolve_callee_env(instance, name, *is_task, None)
-                            .ok()
-                            .map(|(subroutine, _)| subroutine)
-                    });
-                    reads.subroutines.extend(resolved);
-                }
-                NodeKind::Var { .. } | NodeKind::Array { .. } if in_subroutine => {
-                    reads.declarations.push(current);
-                    if let Some(initializer) = self.db.var_initializer(current) {
-                        stack.push(initializer);
-                    }
-                }
-                _ => {}
-            }
-            stack.extend(self.node(current).children.iter().copied());
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::InitializerGraph;
-
-    #[test]
-    fn independent_initializers_keep_declaration_order() {
-        let graph = InitializerGraph {
-            priorities: vec![2, 0, 1],
-            dependencies: vec![Vec::new(); 3],
-        };
-        assert_eq!(graph.schedule(), vec![1, 2, 0]);
-    }
-
-    #[test]
-    fn readers_follow_late_lowered_writers_through_subroutines() {
-        // Entry 0 (`int b = a + 1`) reads entry 1 (`int a = f()`, lowered
-        // late); entry 2 calls subroutine node 3, which reads entry 1.
-        let graph = InitializerGraph {
-            priorities: vec![1, 0, 2],
-            dependencies: vec![vec![1], vec![], vec![3], vec![1]],
-        };
-        assert_eq!(graph.schedule(), vec![1, 0, 2]);
-        let late = InitializerGraph {
-            priorities: vec![0, 5, 1],
-            dependencies: vec![vec![1], vec![], vec![3], vec![1]],
-        };
-        assert_eq!(late.schedule(), vec![1, 0, 2]);
-    }
-
-    #[test]
-    fn cycles_break_at_the_earliest_declaration() {
-        // Entries 0 and 1 reach each other through recursive subroutines 3
-        // and 4; entry 2 is independent and declared last.
-        let graph = InitializerGraph {
-            priorities: vec![1, 0, 2],
-            dependencies: vec![vec![3], vec![4], vec![], vec![4, 1], vec![3, 0]],
-        };
-        assert_eq!(graph.schedule(), vec![1, 0, 2]);
+        let mut order = (0..declarations.len()).collect::<Vec<_>>();
+        // A stable sort: the entries of one declaration keep their order.
+        order.sort_by(|left, right| keys[*left].cmp(&keys[*right]));
+        order
     }
 }
