@@ -85,7 +85,8 @@ pub fn virtual_interface_members(db: &Db) -> HashMap<NodeId, Vec<NodeId>> {
     if instances.is_empty() {
         return out;
     }
-    for id in db.node_ids() {
+    // An access inside an untaken generate block does not exist (SV 27.3).
+    for id in db.instantiated_node_ids() {
         let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = db.node_kind(id) else {
             continue;
         };
@@ -1641,8 +1642,9 @@ pub fn unconnected_port_signals(db: &Db) -> HashSet<NodeId> {
 /// snapshots that already carry the frontend error contain such instances.
 pub fn black_box_connection_signals(db: &Db) -> HashSet<NodeId> {
     // A flat arena scan: this runs on every lint pass, including valid
-    // simulator designs that never contain a black box.
-    db.node_ids()
+    // simulator designs that never contain a black box. An instance inside
+    // an untaken generate block does not exist (SV 27.3).
+    db.instantiated_node_ids()
         .filter(|id| {
             matches!(db.node_kind(*id), NodeKind::Other)
                 && db.semantic_detail(*id) == Some("UninstantiatedDef")

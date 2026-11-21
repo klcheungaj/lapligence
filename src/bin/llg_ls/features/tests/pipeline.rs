@@ -213,6 +213,58 @@ fn analyze_full_pipeline_reports_unused_signal_lint() {
     );
 }
 
+/// The language server shares the lint rules: a virtual-interface access and
+/// an instance connection inside an untaken generate block do not exist
+/// (SV 27.3), so they do not hide `unused-signal` findings.
+#[test]
+fn analyze_full_pipeline_ignores_untaken_generate_accesses_in_lint() {
+    let _guards = analysis_guards();
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_untaken_{}", std::process::id()));
+    let orig_cwd = std::env::current_dir().expect("current dir");
+    let _restore = TempDirGuard {
+        dir: dir.clone(),
+        orig: orig_cwd,
+    };
+    std::env::set_current_dir(&dir).expect("chdir to temp dir");
+    let sv = dir.join("untaken_fixture.sv");
+    std::fs::write(
+        &sv,
+        "interface ifc; logic d; endinterface\n\
+         module sub(input logic a); endmodule\n\
+         module tb; ifc i0(); virtual ifc v; logic w;\n\
+         \x20 initial v = i0;\n\
+         \x20 if (0) begin : g\n\
+         \x20   initial $display(v.d);\n\
+         \x20   sub u (.a(w));\n\
+         \x20 end\n\
+         endmodule\n",
+    )
+    .expect("write design");
+    let opts = CompileOpts {
+        files: vec![sv.to_string_lossy().into_owned()],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    };
+    let a = analyze(&opts);
+    let map = lsp_diagnostics(&a);
+    let diags = map
+        .iter()
+        .find(|(f, _)| f.ends_with("untaken_fixture.sv"))
+        .map(|(_, v)| v)
+        .expect("diagnostics for the fixture file");
+    let unused: Vec<&str> = diags
+        .iter()
+        .filter(|d| d.code == Some(NumberOrString::String("unused-signal".to_owned())))
+        .map(|d| d.message.as_str())
+        .collect();
+    for message in [
+        "signal `d` in `tb.i0` is never used",
+        "signal `w` in `tb` is never used",
+    ] {
+        assert!(unused.contains(&message), "{message} missing: {unused:?}");
+    }
+}
+
 /// Full pipeline over a syntax-broken project: one clean unit plus one file
 /// with a real syntax error. The outcome stays Parse with unchanged diagnostics,
 /// while Slang's lexical snapshot retains declaration-level navigation data.

@@ -645,4 +645,37 @@ endmodule
             ]
         );
     }
+
+    #[test]
+    fn accesses_in_untaken_generate_blocks_do_not_count() {
+        // A block that is not taken does not exist (SV 27.3): neither its
+        // virtual-interface member accesses nor its instance connections use
+        // a signal. The taken block is the control.
+        let source = |taken: u8| {
+            format!(
+                "interface ifc; logic d; endinterface\n\
+                 module sub(input logic a); endmodule\n\
+                 module tb; ifc i0(); virtual ifc v; logic w;\n\
+                 \x20 initial v = i0;\n\
+                 \x20 if ({taken}) begin : g\n\
+                 \x20   initial $display(v.d);\n\
+                 \x20   sub u (.a(w));\n\
+                 \x20 end\n\
+                 endmodule\n"
+            )
+        };
+        assert_eq!(
+            unused_paths(&source(0), "tb"),
+            [
+                "signal `d` in `tb.i0` is never used",
+                "signal `v` in `tb` is never read",
+                "signal `w` in `tb` is never used",
+            ]
+        );
+        assert_eq!(
+            unused_paths(&source(1), "tb"),
+            Vec::<String>::new(),
+            "a taken block reads `d` through `v` and connects `w`"
+        );
+    }
 }
