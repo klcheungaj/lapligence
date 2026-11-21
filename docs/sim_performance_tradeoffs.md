@@ -1270,7 +1270,7 @@ processes or clock edges, at the cost of a few bytes per object.
   allocations of that growth cost these two burst rows +0.5% and +0.7%
   instructions: memory at the peak of a burst is traded for re-growth time
   after it. Wall clock (48 rows, 100 alternating pairs in both orders):
-  @@TIMING@@.
+  sarr4096 82% faster, the burst rows 10% and 3% faster, m_worst 2% faster; most other rows within 0.5%. Rows slower by more than 0.5% were timed again against the base relinked with its globals at the new address: m_nba2, plain4096, m_assert, zero-delay and the glitch and worst waveform rows then fall within noise (data placement). k1_onestep (+1.6%), k1_history (+1.0%), svec16 (+1.5%) and m_glitch_vec-wave (+1.9%) stay slower with equal or fewer instructions (k1 rows run identical instruction counts), so the remainder is the placement of the grown runtime code.
 
 ## Rejected or deferred
 
