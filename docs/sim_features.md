@@ -700,7 +700,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   nothing from one another, packages run first in declaration order, then
   `$unit`, then the design hierarchy in post-order (an instance after the
   instances below it), each scope its class static properties before its
-  variables (decision S22-D8). A
+  variables; a static local initializes at its subroutine's place, a
+  call-free constant one before every other initializer (decision S22-D8). A
   package defined twice (a guarded header compiled on its own and included
   again in another compilation unit; the frontend warns) is simulated once, as
   every reference binds the first definition

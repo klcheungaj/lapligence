@@ -1,0 +1,7 @@
+consts: a=1 b=0 e=32 f=-1 g=16 h=9 i=0 k=4 l=8
+consts: s2=23 s3=lpy s4=0 s6= s8=3,40
+kinds: hd=-1 q=3 d=2 m=1 arr=17 pr=7 mb=-1
+seen_str=<init>
+consts: a=1 b=2 e=32 f=-1 g=16 h=9 i=6 k=4 l=8
+consts: s2=23 s3=lpy s4=25 s6=f6 s8=3,40
+kinds: hd=5 q=3 d=2 m=1 arr=17 pr=7 mb=0

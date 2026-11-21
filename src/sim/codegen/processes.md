@@ -68,9 +68,11 @@ on first call. Reject unavailable lifetime/provenance or unrepresented native/
 resizable initialization rather than fabricating storage.
 Static initializers form one schedule (`lowering/initialization/order.rs`): an
 initializer runs after every static declaration its value reads, directly or
-through called functions (including their static locals), and otherwise keeps
-the declaration order reserved at collection, so deferred and late-lowered
-initializers keep their declaration slot. Package and `$unit` parameters are
+through called functions, and otherwise keeps the declaration order reserved at
+collection, so deferred and late-lowered initializers keep their declaration
+slot. A static local takes its subroutine's or procedure's place in the scope
+and is no read of a call, so an earlier caller reads its default; one with a
+call-free constant initializer runs before every other initializer (S22-D8). Package and `$unit` parameters are
 collected before any module initializer folds them. Descriptor-backed fixed
 arrays (module, package, function-static and block-static) initialize through
 the typed pattern transport as `IrInitStep::Execute` in SystemVerilog and as an

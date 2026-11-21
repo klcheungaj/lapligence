@@ -1,0 +1,25 @@
+1 p.D.da
+2 p.D.df.ds
+3 p.D.db
+4 p.pa
+  pg called ps=0
+5 p.pg.ps
+6 p.pb
+  pg called ps=5
+7 p.pc
+8 unit.ua
+9 unit.ug.us
+10 unit.ub
+11 tb.C.ca
+12 tb.C.cf.cs
+13 tb.C.cb
+14 tb.C.mf.ms
+  f2 called s2=0
+15 tb.f2.s2
+16 tb.ma
+17 tb.f4.s4
+  f4 called s4=17
+  pg called ps=5
+  ph called hs=1005
+pz=0 qb=2 dz=0 uz=0
+cz=0 m=12 x=1000 w=1017 um=9 pm=5 pk=1005

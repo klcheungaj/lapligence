@@ -11,11 +11,63 @@
 //! by scope (packages, the compilation unit, then the design hierarchy in
 //! post-order; class statics first in each),
 //! the order in which collection first reached each declaring scope, and
-//! declaration order within the scope.
+//! declaration order within the scope. A static local of a subroutine or
+//! procedure takes the place of its subroutine or procedure among the
+//! scope's declarations; a call does not move it earlier.
 
 use super::*;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+
+/// Elaboration-time system functions (IEEE 1800-2009 11.2.1, 20.5-20.9) that
+/// keep a call-free initializer constant: conversions, data and array
+/// queries, math and bit-vector functions.
+const CONSTANT_SYSTEM_FUNCTIONS: &[&str] = &[
+    "$signed",
+    "$unsigned",
+    "$rtoi",
+    "$itor",
+    "$realtobits",
+    "$bitstoreal",
+    "$shortrealtobits",
+    "$bitstoshortreal",
+    "$bits",
+    "$clog2",
+    "$ln",
+    "$log10",
+    "$exp",
+    "$sqrt",
+    "$pow",
+    "$floor",
+    "$ceil",
+    "$sin",
+    "$cos",
+    "$tan",
+    "$asin",
+    "$acos",
+    "$atan",
+    "$atan2",
+    "$hypot",
+    "$sinh",
+    "$cosh",
+    "$tanh",
+    "$asinh",
+    "$acosh",
+    "$atanh",
+    "$dimensions",
+    "$unpacked_dimensions",
+    "$left",
+    "$right",
+    "$low",
+    "$high",
+    "$increment",
+    "$size",
+    "$countbits",
+    "$countones",
+    "$onehot",
+    "$onehot0",
+    "$isunknown",
+];
 
 /// The scope whose initialization runs a static initializer (S22-D8).
 #[derive(Clone, Copy)]
@@ -250,13 +302,174 @@ impl<'a> Codegen<'a> {
         path
     }
 
+    /// The declaring scope of an initialized declaration and its position
+    /// path there (decision S22-D8). A declaration nested in a subroutine or
+    /// procedure (a static local, also in a block of it) belongs to the
+    /// scope that holds the subroutine or procedure, at the position of that
+    /// subroutine or procedure, then its position inside; any other
+    /// declaration belongs to its parent at its own position.
+    fn initializer_anchor(
+        &self,
+        declaration: NodeId,
+        positions: &mut HashMap<NodeId, HashMap<NodeId, usize>>,
+    ) -> (Option<NodeId>, Vec<usize>) {
+        let parent = self.node(declaration).parent;
+        let mut chain = vec![declaration];
+        let mut nested = false;
+        let mut scope = parent;
+        while let Some(node) = scope {
+            match self.kind(node) {
+                NodeKind::ModuleInst { .. }
+                | NodeKind::Package
+                | NodeKind::ClassDef
+                | NodeKind::GenScope
+                | NodeKind::GenScopeArray => break,
+                _ if self.is_compilation_unit(node) => break,
+                NodeKind::FuncTask { .. } | NodeKind::Process { .. } | NodeKind::Stmt(_) => {
+                    nested = true
+                }
+                _ => {}
+            }
+            chain.push(node);
+            scope = self.node(node).parent;
+        }
+        if !nested {
+            chain.truncate(1);
+            scope = parent;
+        }
+        let mut path = Vec::with_capacity(chain.len());
+        let mut holder = scope;
+        for node in chain.iter().rev() {
+            let position = holder
+                .map(|holder| {
+                    let children = positions.entry(holder).or_insert_with(|| {
+                        self.node(holder)
+                            .children
+                            .iter()
+                            .enumerate()
+                            .map(|(position, child)| (*child, position))
+                            .collect()
+                    });
+                    children.get(node).copied().unwrap_or(0)
+                })
+                .unwrap_or(0);
+            path.push(position);
+            holder = Some(*node);
+        }
+        (scope, path)
+    }
+
+    /// Whether a static local initializes at its subroutine's place in the
+    /// scope, out of reach of earlier callers (decision S22-D8): every
+    /// static local but one whose initializer is a constant without calls.
+    /// Industry-standard behaviour presets such a value, so even a caller
+    /// before the subroutine reads it; the schedule runs it before every
+    /// other initializer instead (it reads nothing and has no effect).
+    fn is_placed_static_local(&self, declaration: NodeId) -> bool {
+        self.is_static_local(declaration)
+            && !self
+                .db
+                .var_initializer(declaration)
+                .or_else(|| {
+                    self.db
+                        .array_meta(declaration)
+                        .and_then(|meta| meta.initializer())
+                })
+                .is_some_and(|initializer| self.is_call_free_constant(initializer))
+    }
+
+    /// Whether an initializer is a constant expression without subroutine
+    /// calls: literals, parameters and enumeration constants combined by
+    /// operators, casts, selections, patterns and the constant system
+    /// functions of `CONSTANT_SYSTEM_FUNCTIONS`, reading no variable.
+    fn is_call_free_constant(&self, initializer: NodeId) -> bool {
+        let mut stack = vec![initializer];
+        while let Some(current) = stack.pop() {
+            let constant = match self.kind(current) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => matches!(
+                    self.kind(*target),
+                    NodeKind::Param { .. }
+                        | NodeKind::ParamAssign { .. }
+                        | NodeKind::EnumConst { .. }
+                        | NodeKind::Genvar { .. }
+                ),
+                NodeKind::Expr(ExprKind::Operation { op, assignment, .. }) => {
+                    !*assignment
+                        && !matches!(
+                            op,
+                            Operation::Assignment
+                                | Operation::PostIncrement
+                                | Operation::PreIncrement
+                                | Operation::PostDecrement
+                                | Operation::PreDecrement
+                        )
+                }
+                NodeKind::Expr(
+                    ExprKind::Constant { .. }
+                    | ExprKind::Conditional { .. }
+                    | ExprKind::Cast { .. }
+                    | ExprKind::DataType
+                    | ExprKind::Unbounded
+                    | ExprKind::BitSelect { .. }
+                    | ExprKind::PartSelect { .. }
+                    | ExprKind::IndexedPartSelect { .. }
+                    | ExprKind::ArraySelect { .. }
+                    | ExprKind::MemberSelect { .. },
+                ) => true,
+                // An assignment-pattern item: its key and value are checked
+                // like any operand.
+                NodeKind::Expr(ExprKind::TaggedPattern {
+                    index_key, value, ..
+                }) => {
+                    stack.extend(index_key.iter().chain(value).copied());
+                    true
+                }
+                NodeKind::SysCall { name } => CONSTANT_SYSTEM_FUNCTIONS.contains(&name.as_str()),
+                _ => false,
+            };
+            if !constant {
+                return false;
+            }
+            stack.extend(self.node(current).children.iter().copied());
+        }
+        true
+    }
+
+    /// Whether a static declaration is nested in a subroutine or procedure
+    /// (a static local, also in a block of one).
+    fn is_static_local(&self, declaration: NodeId) -> bool {
+        if self.db.variable_lifetime(declaration) != VariableLifetime::Static {
+            return false;
+        }
+        let mut current = self.node(declaration).parent;
+        while let Some(node) = current {
+            match self.kind(node) {
+                _ if self.is_compilation_unit(node) => return false,
+                NodeKind::FuncTask { .. } | NodeKind::Process { .. } | NodeKind::Stmt(_) => {
+                    return true
+                }
+                NodeKind::ModuleInst { .. }
+                | NodeKind::Package
+                | NodeKind::ClassDef
+                | NodeKind::GenScope
+                | NodeKind::GenScopeArray => return false,
+                _ => {}
+            }
+            current = self.node(node).parent;
+        }
+        false
+    }
+
     /// The base order of each entry (decision S22-D8): packages first, each
     /// in declaration order, then the compilation unit, then the design
     /// hierarchy in post-order (an instance after the instances below it);
     /// in each scope class static properties, then (in an instance) the
     /// variables of its generate blocks, then its own variables. Ties keep
     /// the declaring scopes in the order collection first reached them and
-    /// declaration order within the scope. Collection reaches the kinds of
+    /// declaration order within the scope, a static local at the place of
+    /// its subroutine or procedure. Collection reaches the kinds of
     /// one scope (patterns, handles, strings, containers, records) in
     /// separate passes, so its order alone does not follow the source; the
     /// position among the scope's members does.
@@ -268,36 +481,43 @@ impl<'a> Codegen<'a> {
                 .copied()
                 .unwrap_or(unordered)
         };
-        let mut scope_order: HashMap<Option<NodeId>, usize> = HashMap::new();
         let mut positions: HashMap<NodeId, HashMap<NodeId, usize>> = HashMap::new();
-        for declaration in declarations {
-            let node = NodeId::from_index(*declaration as usize);
-            let scope = self.node(node).parent;
-            let order = order_of(declaration);
-            scope_order
-                .entry(scope)
-                .and_modify(|first| *first = (*first).min(order))
-                .or_insert(order);
-            if let Some(scope) = scope {
-                positions.entry(scope).or_insert_with(|| {
-                    self.node(scope)
-                        .children
-                        .iter()
-                        .enumerate()
-                        .map(|(position, child)| (*child, position))
-                        .collect()
-                });
+        let anchors = declarations
+            .iter()
+            .map(|declaration| {
+                self.initializer_anchor(NodeId::from_index(*declaration as usize), &mut positions)
+            })
+            .collect::<Vec<_>>();
+        // A scope's slot comes from its own declarations; a static local
+        // names its scope's slot only when the scope has no other entry, so
+        // static locals never move the scopes' landed order.
+        let mut scope_order: HashMap<Option<NodeId>, usize> = HashMap::new();
+        for ((scope, path), declaration) in anchors.iter().zip(declarations) {
+            if path.len() == 1 {
+                let order = order_of(declaration);
+                scope_order
+                    .entry(*scope)
+                    .and_modify(|first| *first = (*first).min(order))
+                    .or_insert(order);
             }
         }
+        let mut nested_order: HashMap<Option<NodeId>, usize> = HashMap::new();
+        for ((scope, path), declaration) in anchors.iter().zip(declarations) {
+            if path.len() > 1 && !scope_order.contains_key(scope) {
+                let order = order_of(declaration);
+                nested_order
+                    .entry(*scope)
+                    .and_modify(|first| *first = (*first).min(order))
+                    .or_insert(order);
+            }
+        }
+        scope_order.extend(nested_order);
         let mut instance_keys: HashMap<NodeId, Vec<usize>> = HashMap::new();
         let keys = declarations
             .iter()
-            .map(|declaration| {
+            .zip(anchors)
+            .map(|(declaration, (scope, position))| {
                 let node = NodeId::from_index(*declaration as usize);
-                let scope = self.node(node).parent;
-                let position = scope
-                    .and_then(|scope| positions.get(&scope)?.get(&node).copied())
-                    .unwrap_or(0);
                 let (owner, sub) = self.initializer_owner(node);
                 let (group, index, path) = match owner {
                     InitializerOwner::Package(package) => (0, package.index(), Vec::new()),
@@ -314,7 +534,11 @@ impl<'a> Codegen<'a> {
                         (2, 0, path)
                     }
                 };
+                // A static local with a call-free constant initializer is a
+                // preset value: it runs before every other initializer.
+                let preset = self.is_static_local(node) && !self.is_placed_static_local(node);
                 (
+                    !preset,
                     group,
                     index,
                     path,
@@ -416,18 +640,32 @@ impl<'a> Codegen<'a> {
     }
 
     /// Collect direct declaration reads and subroutine calls below `node`.
-    /// Inside a subroutine body every local declaration is also a read, so
-    /// a static local initializes before any initializer calls its owner,
-    /// and automatic local initializers execute as part of the call.
+    /// Inside a subroutine body automatic local initializers execute as part
+    /// of the call, so their reads count. A placed static local is not a
+    /// read of the call: it initializes at its subroutine's place in the
+    /// scope (S22-D8), and a call before that place reads its default value.
     fn collect_direct_reads(&self, node: NodeId, in_subroutine: bool, reads: &mut DirectReads) {
         let mut stack = vec![node];
         while let Some(current) = stack.pop() {
             match self.kind(current) {
                 NodeKind::Expr(ExprKind::Ref {
                     target: Some(target),
-                }) => reads.declarations.push(*target),
+                }) => {
+                    if !(in_subroutine && self.is_placed_static_local(*target)) {
+                        reads.declarations.push(*target);
+                    }
+                }
+                NodeKind::Var { .. } | NodeKind::Array { .. }
+                    if in_subroutine && self.is_placed_static_local(current) =>
+                {
+                    continue;
+                }
                 NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
-                    reads.declarations.extend(refs.iter().flatten().copied());
+                    reads.declarations.extend(
+                        refs.iter().flatten().copied().filter(|target| {
+                            !(in_subroutine && self.is_placed_static_local(*target))
+                        }),
+                    );
                 }
                 NodeKind::Expr(ExprKind::AssertionInstance { body, bindings, .. }) => {
                     stack.push(*body);

@@ -2009,6 +2009,30 @@ fn s22_d8_scope_initialization_order() {
 }
 
 #[test]
+fn s22_d8_static_local_place() {
+    run_decision(
+        "S22-D8_static_local_place",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_static_local_place.out"),
+    );
+}
+
+#[test]
+fn s22_d8_static_local_scopes() {
+    run_decision(
+        "S22-D8_static_local_scopes",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_static_local_scopes.out"),
+    );
+}
+
+#[test]
+fn s22_d8_static_local_constant_preset() {
+    run_decision(
+        "S22-D8_static_local_constant_preset",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_static_local_constant_preset.out"),
+    );
+}
+
+#[test]
 fn s22_d9_initializer_finish_runs_finals() {
     run_decision(
         "S22-D9_initializer_finish_runs_finals",
